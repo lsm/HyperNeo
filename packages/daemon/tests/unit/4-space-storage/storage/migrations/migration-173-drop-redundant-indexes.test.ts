@@ -2,12 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration173 } from '../../../../../src/storage/schema/migrations';
 
-/**
- * The pre-173 `sdk_messages` index set: the two redundant indexes that M173
- * drops are present, alongside the M163 column index (`session_uuid`) that
- * supersedes `idx_sdk_messages_uuid_status`. Mirrors an existing database —
- * one that already ran M163 — being upgraded in place.
- */
 function createPre173SdkMessages(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE sdk_messages (
@@ -70,8 +64,6 @@ describe('Migration 173: drop redundant sdk_messages indexes', () => {
   test('uuid lookups seek idx_sdk_messages_session_uuid after the drop (sargable)', () => {
     createPre173SdkMessages(db);
     runMigration173(db);
-    // Seed a realistic mix so the planner has stats and prefers the selective
-    // (session_id, sdk_uuid) seek over a session partition walk.
     const insert = db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
        VALUES (?, ?, ?, ?, ?, ?, ?)`

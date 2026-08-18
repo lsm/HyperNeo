@@ -22,9 +22,7 @@ import { SessionProjectGroup } from '../components/SessionProjectGroup.tsx';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 
 interface SessionsSidebarProps {
-  /** Called when a session is selected (for mobile drawer close). */
   onSessionSelect?: () => void;
-  /** Called from the mobile-only close affordance. */
   onClose?: () => void;
 }
 
@@ -40,11 +38,6 @@ interface ProjectGroup {
   sortTime: number;
 }
 
-/**
- * Build the grouped sidebar view: sessions grouped by project root, merged with
- * workspace history so explicitly-added folders appear even with no sessions.
- * Sessions without a workspace stay ungrouped.
- */
 function buildView(
   sessionsList: Session[],
   history: WorkspaceHistoryEntry[]
@@ -63,7 +56,6 @@ function buildView(
     }
   }
 
-  // Seed empty projects from workspace history.
   const historyTime = new Map<string, number>();
   for (const entry of history) {
     historyTime.set(entry.path, entry.lastUsedAt);
@@ -83,16 +75,9 @@ function buildView(
   return { projects, ungrouped };
 }
 
-/**
- * Codex-style chats sidebar: a borderless "New chat" row on top, then sessions
- * grouped into collapsible Projects (folders, backed by workspace history) plus
- * a flat Chats section for sessions that have no workspace yet.
- */
 export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarProps) {
   const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
-  // Project paths that are collapsed; empty means every project is expanded.
   const [collapsed, setCollapsed] = useState<Set<string>>(() => getCollapsedProjects());
-  // Session pending archive-with-commit-loss confirmation.
   const [archiveConfirm, setArchiveConfirm] = useState<{
     sessionId: string;
     commitStatus: WorktreeCommitStatus;
@@ -104,7 +89,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   const [addProjectBusy, setAddProjectBusy] = useState(false);
   const [nativeFolderPickerAvailable] = useState(() => hasNativeFolderPicker());
 
-  // Load workspace history once so explicitly-added (empty) projects show.
   useEffect(() => {
     getWorkspaceHistory()
       .then(setHistory)
@@ -113,7 +97,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
       });
   }, []);
 
-  // Only show user-created sessions (not internal orchestration agents).
   const sessionsList = sessions.value.filter(isUserSession);
   const { projects, ungrouped } = buildView(sessionsList, history);
   const hasContent = sessionsList.length > 0 || projects.length > 0;
@@ -191,9 +174,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     }
   };
 
-  // Archive a session. Worktree sessions with unmerged commits get a confirm
-  // dialog listing what would be lost; everything else archives immediately.
-  // The session list refreshes reactively from the session-state channel.
   const handleArchive = async (sessionId: string) => {
     try {
       const result = await archiveSession(sessionId, false);
@@ -223,8 +203,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     }
   };
 
-  // "New chat" opens the empty-state landing; the session is created when the
-  // user submits text there.
   const handleNewChat = () => {
     navigateToSessions();
     onSessionSelect?.();
@@ -232,7 +210,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 
   return (
     <div class="flex flex-col h-full">
-      {/* Top: mobile close + New chat */}
       <div class="p-2">
         {onClose && (
           <button
@@ -270,7 +247,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
         </button>
       </div>
 
-      {/* Grouped session list */}
       <div class="flex-1 overflow-y-auto px-2 pb-2">
         {!hasContent ? (
           <div class="px-2 py-10 text-center">
@@ -279,7 +255,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
           </div>
         ) : (
           <>
-            {/* Projects */}
             <div class="flex items-center justify-between px-2.5 pt-2 pb-1">
               <span class="text-xs font-medium text-gray-500">Projects</span>
               <button
@@ -364,7 +339,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
               </div>
             )}
 
-            {/* Chats — sessions with no workspace */}
             {ungrouped.length > 0 && (
               <>
                 <div class="px-2.5 pt-3 pb-1 text-xs font-medium text-gray-500">Chats</div>

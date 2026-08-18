@@ -1,10 +1,3 @@
-/**
- * code-review-graph benchmark arm.
- *
- * Usage:
- *   bun scripts/benchmark/graph-tools/run-crg.ts
- */
-
 import {
   BENCHMARK_PROMPT_UNSEDED,
   runWithGlm,

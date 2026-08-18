@@ -7,7 +7,6 @@ export function useTextValue(ref: { current: HTMLElement | null }): () => string
     const el = ref.current;
     if (!el) return '';
 
-    // Walk the DOM tree and collect text nodes
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
     let text = '';
     let node = walker.nextNode();

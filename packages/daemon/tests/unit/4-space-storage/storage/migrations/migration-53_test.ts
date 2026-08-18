@@ -1,24 +1,3 @@
-/**
- * Migration 53 Tests
- *
- * Migration 53 adds a dedicated `channels TEXT` column to `space_workflows`.
- * Channels are moved from the `config` JSON blob to this first-class column
- * (JSON-serialized WorkflowChannel[]).
- *
- * NOTE: M74 later drops `config` and `max_iterations` from space_workflows, so
- * tests that query `config` after a full migration run must be updated.
- *
- * Covers:
- * - channels column exists after migration on a fresh DB
- * - Migration is idempotent (running twice does not throw)
- * - New rows without channels have NULL in the channels column
- * - Channels round-trip correctly through create/read via the repository
- * - Tags column exists (added by M74, replaces config for metadata storage)
- * - Channels are updated correctly via the repository
- * - Clearing channels via update sets the column to NULL
- * - Data migration: existing rows with channels in config JSON get migrated to the column
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -27,16 +6,11 @@ import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { runMigration53 } from '../../../../../src/storage/schema/migrations.ts';
 import { SpaceWorkflowRepository } from '../../../../../src/storage/repositories/space-workflow-repository.ts';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function columnExists(db: BunDatabase, table: string, column: string): boolean {
   const info = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   return info.some((c) => c.name === column);
 }
 
-/** Create a minimal space_workflows table without the channels column, simulating pre-M53 state. */
 function createMinimalWorkflowsTable(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = OFF');
   db.exec(`
@@ -54,10 +28,6 @@ function createMinimalWorkflowsTable(db: BunDatabase): void {
 		)
 	`);
 }
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 describe('Migration 53: channels column on space_workflows', () => {
   let testDir: string;
@@ -137,7 +107,6 @@ describe('Migration 53: channels column on space_workflows', () => {
       completionAutonomyLevel: 3,
     });
 
-    // Verify the channels column is written at the DB level
     const raw = db.prepare(`SELECT channels FROM space_workflows WHERE id = ?`).get(wf.id) as {
       channels: string | null;
     };
@@ -145,7 +114,6 @@ describe('Migration 53: channels column on space_workflows', () => {
     const stored = JSON.parse(raw.channels!) as unknown[];
     expect(stored).toHaveLength(2);
 
-    // Verify round-trip via repository read
     const fetched = repo.getWorkflow(wf.id);
     expect(fetched).not.toBeNull();
     expect(fetched!.channels).toHaveLength(2);
@@ -176,7 +144,6 @@ describe('Migration 53: channels column on space_workflows', () => {
       completionAutonomyLevel: 3,
     });
 
-    // After M74, config column is dropped. Verify tags column exists and has default.
     expect(columnExists(db, 'space_workflows', 'config')).toBe(false);
     expect(columnExists(db, 'space_workflows', 'tags')).toBe(true);
     const raw = db.prepare(`SELECT tags FROM space_workflows WHERE id = ?`).get(wf.id) as {
@@ -241,7 +208,6 @@ describe('Migration 53: channels column on space_workflows', () => {
   });
 
   test('data migration: existing rows with channels in config JSON are migrated to the channels column', () => {
-    // Set up a minimal pre-M53 DB: space_workflows table without the channels column.
     createMinimalWorkflowsTable(db);
 
     const now = Date.now();
@@ -255,16 +221,12 @@ describe('Migration 53: channels column on space_workflows', () => {
 			 VALUES ('wf-legacy', 'sp-legacy', 'Legacy WF', '${legacyConfig}', ${now}, ${now})`
     );
 
-    // The column should not exist yet
     expect(columnExists(db, 'space_workflows', 'channels')).toBe(false);
 
-    // Run the migration
     runMigration53(db);
 
-    // Column now exists
     expect(columnExists(db, 'space_workflows', 'channels')).toBe(true);
 
-    // The channels were migrated from config to the channels column
     const raw = db.prepare(`SELECT channels FROM space_workflows WHERE id = 'wf-legacy'`).get() as {
       channels: string | null;
     };

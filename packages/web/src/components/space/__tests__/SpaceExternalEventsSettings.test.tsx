@@ -55,8 +55,6 @@ vi.mock('../../ui/Spinner', () => ({
   Spinner: () => <span>spinner</span>,
 }));
 
-// The health panel is exercised by its own test file; stub it here so the
-// parent panel's tests don't need to mock the space.github.health RPC.
 vi.mock('../GitHubHealthPanel', () => ({
   GitHubHealthPanel: () => <div data-testid="github-health-panel-stub" />,
 }));
@@ -638,9 +636,6 @@ describe('SpaceExternalEventsSettings', () => {
   });
 
   it('allows the first polling-only watch after enabling polling in a space with no polling rows', async () => {
-    // No polling-configured repos yet, but the user has toggled the
-    // connection-card polling checkbox so pollingIntent is true. The next
-    // no-secret add must default to polling rather than be rejected.
     mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
     mockRequest.mockImplementation((method) => {
       if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
@@ -678,10 +673,6 @@ describe('SpaceExternalEventsSettings', () => {
   });
 
   it('requires a webhook secret when space polling is off even if daemon-wide capability is on', async () => {
-    // Daemon-wide polling capability is on (extensionResult default), but
-    // this space has no polling-enabled repos, so spacePollingActive is false.
-    // Adding a repo with no webhook secret must be rejected rather than
-    // silently defaulting the new repo to polling.
     setupRequests();
     const { findByText, getByPlaceholderText, getByText } = render(
       <SpaceExternalEventsSettings spaceId="space-1" />
@@ -1240,7 +1231,6 @@ describe('SpaceExternalEventsSettings', () => {
     fireEvent.input(input, { target: { value: 'ghp_replacement_token_value' } });
     fireEvent.click(getByText('Replace token'));
 
-    // confirm() returned false → setToken must not fire.
     expect(confirmSpy).toHaveBeenCalledWith('Replace the existing daemon-wide GitHub token?');
     expect(mockRequest).not.toHaveBeenCalledWith('space.github.setToken', {
       token: 'ghp_replacement_token_value',
@@ -1344,8 +1334,6 @@ describe('SpaceExternalEventsSettings', () => {
           settings: {},
         });
       }
-      // Current space has no auto-registered hooks; the warning must come from
-      // the daemon-wide count in getTokenStatus, not the local repos array.
       if (method === 'space.github.listWatchedRepos') return Promise.resolve({ repositories: [] });
       if (method === 'space.github.getTokenStatus') {
         return Promise.resolve({
@@ -1417,9 +1405,6 @@ describe('SpaceExternalEventsSettings', () => {
     });
 
     const { findByText, queryByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
-    // Panel is interactive (shows watched repo) while token status is still
-    // pending — proves refresh() did not await getTokenStatus before
-    // setLoading(false).
     expect(await findByText('acme/widgets')).toBeTruthy();
     expect(queryByText('Loading external event sources…')).toBeNull();
     resolveTokenStatus({ configured: false, source: 'none' });
@@ -1495,7 +1480,6 @@ describe('SpaceExternalEventsSettings', () => {
     const { findByPlaceholderText, getByText } = render(
       <SpaceExternalEventsSettings spaceId="space-1" />
     );
-    // Status has env + error → tokenInvalid true → input visible.
     const input = await findByPlaceholderText('ghp_…');
     fireEvent.input(input, { target: { value: 'ghp_replacement_token_value' } });
     fireEvent.click(getByText('Save token'));

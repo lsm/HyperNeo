@@ -1,21 +1,4 @@
 // @ts-nocheck
-/**
- * Unit tests for SpaceCreateTaskDialog
- *
- * Tests:
- * - Dialog renders when open / hidden when closed
- * - Title required validation
- * - Submit calls spaceStore.createTask with correct params
- * - Shows toast and calls onCreated on success
- * - Shows error message on failure
- * - Cancel closes and resets form
- * - Priority and type selectors update form state
- * - Schedule toggle shows/hides schedule options
- * - One-time schedule validation (runAt required, must be future)
- * - Recurring schedule validation (cron required, must be valid)
- * - Cron preset buttons populate the expression
- * - Submit calls spaceStore.createSchedule when scheduling enabled
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
@@ -246,8 +229,6 @@ describe('SpaceCreateTaskDialog', () => {
     });
   });
 
-  // ─── Schedule tests ───────────────────────────────────────────────────────
-
   it('shows schedule options when toggle is checked', () => {
     const { getByLabelText, getByText } = render(
       <SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
@@ -311,7 +292,6 @@ describe('SpaceCreateTaskDialog', () => {
     fireEvent.click(getByText('One-time'));
 
     const dtInput = container.querySelector('input[type="datetime-local"]');
-    // Use a date 2 days ago in local time so it's definitely past
     const past = new Date(Date.now() - 172800000);
     const pad = (n) => String(n).padStart(2, '0');
     const pastValue = `${past.getFullYear()}-${pad(past.getMonth() + 1)}-${pad(past.getDate())}T${pad(past.getHours())}:${pad(past.getMinutes())}`;
@@ -394,7 +374,6 @@ describe('SpaceCreateTaskDialog', () => {
     fireEvent.click(getByText('One-time'));
 
     const dtInput = container.querySelector('input[type="datetime-local"]');
-    // Use a local datetime 24h in the future so it's valid
     const future = new Date(Date.now() + 86400000);
     const pad = (n) => String(n).padStart(2, '0');
     const futureValue = `${future.getFullYear()}-${pad(future.getMonth() + 1)}-${pad(future.getDate())}T${pad(future.getHours())}:${pad(future.getMinutes())}`;
@@ -466,21 +445,17 @@ describe('SpaceCreateTaskDialog', () => {
     const { getByLabelText, getByText, queryByText, rerender } = render(
       <SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
     );
-    // Enable schedule, select recurring, pick a preset
     fireEvent.click(getByLabelText('Schedule this task'));
     fireEvent.click(getByText('Recurring'));
     fireEvent.click(getByText('@daily'));
     expect(getByText('Create Schedule')).toBeTruthy();
     expect(queryByText('Cron expression')).toBeTruthy();
 
-    // Close the dialog
     fireEvent.click(getByText('Cancel'));
     expect(onClose).toHaveBeenCalled();
 
-    // Reopen the dialog
     rerender(<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />);
 
-    // Schedule state should be reset
     expect(getByText('Create Task')).toBeTruthy();
     expect(queryByText('Cron expression')).toBeNull();
     expect(queryByText('Schedule this task')).toBeTruthy();

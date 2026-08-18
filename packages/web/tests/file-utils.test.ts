@@ -42,7 +42,7 @@ describe('file-utils', () => {
     };
 
     test('should accept valid image files', () => {
-      const file = createMockFile('image/png', 1024 * 1024); // 1MB PNG
+      const file = createMockFile('image/png', 1024 * 1024);
       expect(validateImageFile(file)).toBeNull();
     });
 
@@ -54,7 +54,7 @@ describe('file-utils', () => {
     });
 
     test('should reject oversized files', () => {
-      const file = createMockFile('image/png', 10 * 1024 * 1024); // 10MB
+      const file = createMockFile('image/png', 10 * 1024 * 1024);
       const error = validateImageFile(file);
       expect(error).not.toBeNull();
       expect(error).toContain('must be under');
@@ -70,16 +70,13 @@ describe('file-utils', () => {
   });
 
   describe('fileToBase64', () => {
-    // Mock FileReader for browser environment
     class MockFileReader {
       result: string | null = null;
       onload: ((this: FileReader, ev: ProgressEvent<FileReader>) => void) | null = null;
       onerror: ((this: FileReader, ev: ProgressEvent<FileReader>) => void) | null = null;
 
       readAsDataURL(file: File): void {
-        // Simulate FileReader behavior
         setTimeout(() => {
-          // Create a mock base64 data URL
           const mockBase64 =
             'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
           this.result = `data:${file.type};base64,${mockBase64}`;
@@ -99,7 +96,6 @@ describe('file-utils', () => {
       const file = new File(['test'], 'test.png', { type: 'image/png' });
       const base64 = await fileToBase64(file);
 
-      // Should return base64 string without data URL prefix
       expect(base64).toBeTruthy();
       expect(base64).not.toContain('data:');
       expect(base64).not.toContain('base64,');

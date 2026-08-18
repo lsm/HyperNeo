@@ -7,8 +7,6 @@ import type { ElementType } from '../../internal/types.ts';
 import { useControllable } from '../../internal/use-controllable.ts';
 import { useId } from '../../internal/use-id.ts';
 
-// --- Comparison helpers ---
-
 function resolveCompare<T>(by?: string | ((a: T, b: T) => boolean)): (a: T, b: T) => boolean {
   if (typeof by === 'function') return by;
   if (typeof by === 'string') {
@@ -19,8 +17,6 @@ function resolveCompare<T>(by?: string | ((a: T, b: T) => boolean)): (a: T, b: T
   return (a: T, b: T) => a === b;
 }
 
-// --- Context types ---
-
 interface RadioData {
   id: string;
   ref: { current: HTMLElement | null };
@@ -28,7 +24,6 @@ interface RadioData {
   value: unknown;
 }
 
-// Use unknown for context so it can hold any typed RadioGroupState
 interface RadioGroupContextValue {
   value: unknown;
   setValue: (value: unknown) => void;
@@ -60,8 +55,6 @@ function sortByDomOrder<TItem extends { ref: { current: HTMLElement | null } }>(
     return 0;
   });
 }
-
-// --- RadioGroup ---
 
 interface RadioGroupProps<T> {
   as?: ElementType;
@@ -104,7 +97,6 @@ function RadioGroupFn<T>({
     };
   }, []);
 
-  // Wrap typed compare/setValue to match context interface (unknown-typed)
   const setValue = useCallback(
     (v: unknown) => {
       setValueT(v as T);
@@ -150,12 +142,9 @@ function RadioGroupFn<T>({
 }
 
 RadioGroupFn.displayName = 'RadioGroup';
-// Generic component export: cast to preserve generic signature while exposing displayName
 const RadioGroupWithName = RadioGroupFn as typeof RadioGroupFn & { displayName: string };
 RadioGroupWithName.displayName = 'RadioGroup';
 export const RadioGroup = RadioGroupWithName;
-
-// --- Radio ---
 
 interface RadioProps<T> {
   as?: ElementType;
@@ -192,7 +181,6 @@ function RadioFn<T>({
     return registerRadio(radioData);
   }, [id, registerRadio, disabled, radioValue]);
 
-  // Compute tabIndex using roving tabindex
   const myIndex = radios.findIndex((r) => r.id === id);
   const hasChecked = radios.some((r) => r.value !== undefined && compare(value, r.value));
   const firstNonDisabledIndex = radios.findIndex((r) => !r.disabled);

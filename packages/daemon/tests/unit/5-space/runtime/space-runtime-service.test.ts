@@ -1,15 +1,3 @@
-/**
- * SpaceRuntimeService Unit Tests
- *
- * Covers:
- * - createOrGetRuntime(): throws if space not found
- * - createOrGetRuntime(): starts runtime and returns SpaceRuntime instance
- * - createOrGetRuntime(): returns the same runtime on repeated calls
- * - stopRuntime(): is a no-op (doesn't throw)
- * - start() / stop() lifecycle: idempotent, starts/stops underlying runtime
- * - setTaskAgentManager(): wires TaskAgentManager into the underlying SpaceRuntime
- */
-
 import {
   describe,
   test,
@@ -67,8 +55,6 @@ import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/space/m
 import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/space-manager.ts';
 import { createTestInternalEventBus } from '../../../helpers/database.ts';
 
-// ─── Fixtures ────────────────────────────────────────────────────────────────
-
 const NOW = Date.now();
 
 const mockSpace: Space = {
@@ -84,8 +70,6 @@ const mockSpace: Space = {
   createdAt: NOW,
   updatedAt: NOW,
 };
-
-// ─── Mock helpers ─────────────────────────────────────────────────────────────
 
 function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
   return {
@@ -117,8 +101,6 @@ function makeNoopNodeExecutionRepo(): NodeExecutionRepository {
   } as unknown as NodeExecutionRepository;
 }
 
-// Minimal long-horizon agent record for config-builder tests. Only the fields the
-// builder reads are populated; the rest are defaulted and cast.
 function buildLongHorizonAgent(
   overrides: Partial<SpaceLongHorizonAgent> = {}
 ): SpaceLongHorizonAgent {
@@ -143,16 +125,10 @@ function buildLongHorizonAgent(
   } as SpaceLongHorizonAgent;
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 describe('SpaceRuntimeService', () => {
   let spaceManager: SpaceManager;
   let service: SpaceRuntimeService;
 
-  // v2 long-horizon delivery awaits the durable job's SDK consumption before
-  // confirming the source record. These tests don't drive a real SDK turn, so
-  // the wait would hit its timeout; shorten it so the suite stays fast. The
-  // dedicated consumption test signals explicitly and ignores this.
   const previousConsumptionTimeout = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
   beforeAll(() => {
     process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '50';
@@ -170,8 +146,6 @@ describe('SpaceRuntimeService', () => {
     service = new SpaceRuntimeService(buildConfig(spaceManager));
   });
 
-  // ─── createOrGetRuntime ──────────────────────────────────────────────────
-
   describe('createOrGetRuntime()', () => {
     test('throws if space not found', async () => {
       const noSpaceManager = createMockSpaceManager(null);
@@ -185,7 +159,6 @@ describe('SpaceRuntimeService', () => {
     test('starts runtime and returns a SpaceRuntime instance', async () => {
       const runtime = await service.createOrGetRuntime('space-1');
 
-      // Should return a runtime object (SpaceRuntime has start/stop methods)
       expect(runtime).toBeDefined();
       expect(typeof runtime.start).toBe('function');
       expect(typeof runtime.stop).toBe('function');
@@ -193,7 +166,6 @@ describe('SpaceRuntimeService', () => {
     });
 
     test('auto-starts the service when not yet started', async () => {
-      // Service not explicitly started — createOrGetRuntime should auto-start it
       expect((service as unknown as { started: boolean }).started).toBe(false);
       await service.createOrGetRuntime('space-1');
       expect((service as unknown as { started: boolean }).started).toBe(true);
@@ -203,7 +175,6 @@ describe('SpaceRuntimeService', () => {
       const runtime1 = await service.createOrGetRuntime('space-1');
       const runtime2 = await service.createOrGetRuntime('space-1');
 
-      // Shared runtime — same instance
       expect(runtime1).toBe(runtime2);
     });
 
@@ -218,12 +189,9 @@ describe('SpaceRuntimeService', () => {
       const runtime1 = await svc.createOrGetRuntime('space-1');
       const runtime2 = await svc.createOrGetRuntime('space-2');
 
-      // One shared runtime handles all spaces
       expect(runtime1).toBe(runtime2);
     });
   });
-
-  // ─── stopRuntime ─────────────────────────────────────────────────────────
 
   describe('stopRuntime()', () => {
     test('is a no-op — does not throw', () => {
@@ -234,24 +202,16 @@ describe('SpaceRuntimeService', () => {
     test('does not stop the service (shared runtime remains running)', async () => {
       service.start();
       service.stopRuntime('space-1');
-      // Service should still be started
       expect((service as unknown as { started: boolean }).started).toBe(true);
     });
   });
 
-  // ─── stopActiveWork ──────────────────────────────────────────────────────
-
   describe('stopActiveWork() — Task #85 invariant', () => {
     test('routes tasks through TaskAgentManager.cleanup (DB-preserving) and never deleteSession*', async () => {
-      // Regression guard for Task #85: `space.stop` calls `stopActiveWork`,
-      // which must only interrupt the in-memory SDK subprocess for each
-      // active task's agent session — never touch the DB row, SDK `.jsonl`,
-      // or worktree. That is gated behind the UI-only archive/delete
-      // primitives.
       const activeTasks = [
         { id: 't1', status: 'in_progress' as const },
         { id: 't2', status: 'open' as const },
-        { id: 't3', status: 'done' as const }, // should be filtered out
+        { id: 't3', status: 'done' as const },
       ];
 
       const cleanupCalls: Array<{ taskId: string; reason: string }> = [];
@@ -284,15 +244,9 @@ describe('SpaceRuntimeService', () => {
 
       await svc.stopActiveWork('space-1');
 
-      // Only in_progress / open tasks are cleaned up.
       expect(cleanupCalls).toHaveLength(2);
       expect(cleanupCalls.map((c) => c.taskId).sort()).toEqual(['t1', 't2']);
-      // All cleanup calls use the 'cancelled' reason — the non-destructive
-      // path that preserves worktrees + DB rows. This is the sentinel that
-      // TaskAgentManager.cleanup uses to pick the DB-preserving branch.
       expect(cleanupCalls.every((c) => c.reason === 'cancelled')).toBe(true);
-      // Tasks are marked cancelled in the DB, but their sessions / SDK
-      // transcripts are never deleted by this path.
       expect(updateCalls).toHaveLength(2);
       expect(
         updateCalls.every((c) => (c.updates as { status: string }).status === 'cancelled')
@@ -329,13 +283,10 @@ describe('SpaceRuntimeService', () => {
       });
       svc.setTaskAgentManager(mockTaskAgentManager);
 
-      // Must not throw — Promise.allSettled swallows per-task failures.
       await expect(svc.stopActiveWork('space-1')).resolves.toBeUndefined();
       expect(cleanupCalls.sort()).toEqual(['broken', 'ok-1', 'ok-2']);
     });
   });
-
-  // ─── setTaskAgentManager ─────────────────────────────────────────────────
 
   describe('setTaskAgentManager()', () => {
     test('method exists and is callable', () => {
@@ -349,7 +300,6 @@ describe('SpaceRuntimeService', () => {
 
     test('delegates to the underlying SpaceRuntime', () => {
       const mockManager = {} as TaskAgentManager;
-      // Access the private runtime to verify propagation
       const runtime = (
         service as unknown as { runtime: { config: { taskAgentManager?: TaskAgentManager } } }
       ).runtime;
@@ -372,8 +322,6 @@ describe('SpaceRuntimeService', () => {
     });
   });
 
-  // ─── start / stop lifecycle ───────────────────────────────────────────────
-
   describe('start() / stop()', () => {
     test('start() sets started to true', () => {
       expect((service as unknown as { started: boolean }).started).toBe(false);
@@ -383,7 +331,7 @@ describe('SpaceRuntimeService', () => {
 
     test('start() is idempotent — calling twice is safe', () => {
       service.start();
-      service.start(); // should not throw or double-start
+      service.start();
       expect((service as unknown as { started: boolean }).started).toBe(true);
     });
 
@@ -396,7 +344,7 @@ describe('SpaceRuntimeService', () => {
     test('stop() is idempotent — calling twice is safe', async () => {
       service.start();
       await service.stop();
-      await service.stop(); // should not throw
+      await service.stop();
       expect((service as unknown as { started: boolean }).started).toBe(false);
     });
 
@@ -410,19 +358,13 @@ describe('SpaceRuntimeService', () => {
       service.start();
       expect((service as unknown as { started: boolean }).started).toBe(true);
 
-      // createOrGetRuntime should still work after restart
       const runtime = await service.createOrGetRuntime('space-1');
       expect(runtime).toBeDefined();
     });
 
     test('start() runs recoverStalledWorkflowRuns after provisioning, before ready() resolves (Task #120)', async () => {
-      // Daemon-restart safety net: the stalled-run scan must run as part of
-      // the provisioning chain so the daemon never accepts queries while a
-      // run sits in_progress with no driveable executions.
       const order: string[] = [];
 
-      // Build a service whose provisionExistingSpaces and recovery both log
-      // when they execute, then assert ordering.
       const svc = new SpaceRuntimeService(buildConfig(spaceManager));
 
       const originalProvision = (
@@ -457,10 +399,8 @@ describe('SpaceRuntimeService', () => {
         throw new Error('explode');
       };
 
-      // Should not throw
       await expect(svc.recoverStalledWorkflowRuns()).resolves.toBeUndefined();
 
-      // And start() should still ready successfully even if recovery throws.
       svc.start();
       await expect(svc.ready()).resolves.toBeUndefined();
 
@@ -521,14 +461,9 @@ describe('SpaceRuntimeService', () => {
     });
   });
 
-  // ─── setupSpaceAgentSession ──────────────────────────────────────────────
-
   describe('setupSpaceAgentSession()', () => {
     function makeSession() {
       return {
-        // Exposed so a regression test can assert the replace-all variant is
-        // never used from `setupSpaceAgentSession` — that path must merge so
-        // it doesn't wipe other subsystems' attachments.
         setRuntimeMcpServers: mock(() => {}),
         mergeRuntimeMcpServers: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
@@ -542,9 +477,6 @@ describe('SpaceRuntimeService', () => {
       return {
         getSessionAsync: mock(async () => session),
         createSession: mock(async () => 'space:chat:space-1'),
-        // Startup backfill calls listSessions() for the non-space-chat
-        // member-session sweep. Default to empty — tests that care
-        // override this mock.
         listSessions: mock(() => [] as Session[]),
         registerSessionResetSubscriber: mock(() => () => {}),
       } as unknown as SessionManager;
@@ -581,14 +513,6 @@ describe('SpaceRuntimeService', () => {
       };
     }
 
-    /**
-     * A reactiveDb whose db façade records durable delivery: a saveUserMessage
-     * spy + an inert jobQueue repo. injectLongTermAgentMessage now persists the
-     * message via saveUserMessage then enqueues a message_delivery job via
-     * deliverMessage (v2), so long-horizon delivery tests assert on
-     * saveUserMessage (the durable persist) instead of the removed inline
-     * session.messageQueue.enqueueWithId feed.
-     */
     function buildDurableDeliveryReactiveDb(): {
       reactiveDb: SpaceRuntimeServiceConfig['reactiveDb'];
       saveUserMessage: ReturnType<typeof mock>;
@@ -598,17 +522,12 @@ describe('SpaceRuntimeService', () => {
         db: {
           saveUserMessage,
           getSDKMessageRepo: () => ({
-            getDeliveryContent: () => null, // first attempt — no existing row
+            getDeliveryContent: () => null,
             markDeliveryFailedByUuid: () => null,
             reopenDeliveryByUuid: () => null,
           }),
           getJobQueueRepo: () => ({
             getActiveDeliveryRole: () => null,
-            // Test simplification: signal SDK consumption at enqueue time so
-            // injectLongTermAgentMessage's consumption-await resolves and the
-            // delivery is acknowledged. (Production signals from the bridge on
-            // the SDK's onSent; these tests don't drive a real turn.) The
-            // dedicated timeout test uses a repo that does NOT signal.
             enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
               const uuid = args?.payload?.messageUuid;
               if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
@@ -628,9 +547,6 @@ describe('SpaceRuntimeService', () => {
       await svc.setupSpaceAgentSession(mockSpace);
 
       expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(`space:chat:${mockSpace.id}`);
-      // Must merge (additive) — never the deprecated replace-all. The
-      // replace-all variant silently wipes other subsystems' MCP servers
-      // already attached to the space_chat session.
       expect(session.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
       expect(session.setRuntimeMcpServers).not.toHaveBeenCalled();
       const [mcpArg] = (
@@ -648,9 +564,6 @@ describe('SpaceRuntimeService', () => {
     });
 
     test('provisions the coordinator space:chat session with the 24-tool sdkToolsPreset (Task #794)', async () => {
-      // The coordinator runs in the space:chat session. setupSpaceAgentSession
-      // must persist the curated read-only preset on its config so the
-      // query-time builder honors it instead of the hardcoded restricted list.
       const session = makeSession();
       const sessionManager = makeSessionManager(session);
       const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
@@ -666,7 +579,6 @@ describe('SpaceRuntimeService', () => {
 
     test('does not rewrite sdkToolsPreset when the coordinator preset is already set (idempotent)', async () => {
       const session = makeSession();
-      // Pre-set the exact preset so the idempotency guard skips the write.
       (session.getSessionData as Mock<typeof session.getSessionData>).mockReturnValue({
         id: 'session-1',
         metadata: {},
@@ -700,18 +612,15 @@ describe('SpaceRuntimeService', () => {
     });
 
     test('no-op when session does not exist in DB', async () => {
-      const sessionManager = makeSessionManager(null); // session not found
+      const sessionManager = makeSessionManager(null);
       const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
 
-      // Should not throw
       await expect(svc.setupSpaceAgentSession(mockSpace)).resolves.toBeUndefined();
     });
 
     test('no-op when sessionManager is not configured', async () => {
-      // buildConfig (no sessionManager)
       const svc = new SpaceRuntimeService(buildConfig(createMockSpaceManager()));
 
-      // Should not throw and silently skip
       await expect(svc.setupSpaceAgentSession(mockSpace)).resolves.toBeUndefined();
     });
 
@@ -719,7 +628,6 @@ describe('SpaceRuntimeService', () => {
       const session = makeSession();
       const sessionManager = makeSessionManager(session);
 
-      // Mock workflowRunRepo with one active run
       const activeRun = { id: 'run-flush-wiring', status: 'in_progress', spaceId: mockSpace.id };
       const workflowRunRepo = {
         getActiveRuns: mock(() => [activeRun]),
@@ -740,7 +648,6 @@ describe('SpaceRuntimeService', () => {
       svc.setTaskAgentManager(mockTaskAgentManager);
 
       await svc.setupSpaceAgentSession(mockSpace);
-      // Allow any void-dispatched promises to resolve
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       expect(flushCalls).toHaveLength(1);
@@ -757,11 +664,9 @@ describe('SpaceRuntimeService', () => {
       const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager, spaceMgr));
 
       svc.start();
-      // Allow async provisioning microtasks to run
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       expect(spaceMgr.listSpaces).toHaveBeenCalled();
-      // getSessionAsync was called for the existing space
       expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(`space:chat:${mockSpace.id}`);
 
       await svc.stop();
@@ -782,7 +687,6 @@ describe('SpaceRuntimeService', () => {
 
       svc.start();
 
-      // InternalEventBus.on should have been called with 'space.created'
       const onCalls = (internalEventBus.subscribe as Mock<typeof internalEventBus.subscribe>).mock
         .calls;
       const spaceCreatedCall = onCalls.find(([event]) => event === 'space.created');
@@ -913,10 +817,6 @@ describe('SpaceRuntimeService', () => {
 
       expect(deliveredSessionId).toBe(sessionId);
       expect(inboxRepo.enqueue).not.toHaveBeenCalled();
-      // injectLongTermAgentMessage persists durably + enqueues a message_delivery
-      // job (v2); assert the durable persist instead of the removed inline feed.
-      // The delivery now reuses the message record's stable id ('message-1') so a
-      // consumption-timeout retry doesn't mint a second durable job. (Codex P1.)
       expect(saveUserMessage).toHaveBeenCalledWith(
         sessionId,
         expect.objectContaining({ uuid: 'message-1', type: 'user' }),
@@ -1233,8 +1133,6 @@ describe('SpaceRuntimeService', () => {
         })
       );
       expect(existingSession.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
-      // The standing scheduling/task-system guardrail is appended to every
-      // long-horizon agent's preset system prompt (after its own instructions).
       const updateCall = (existingSession.updateConfig as Mock).mock.calls[0]![0] as {
         systemPrompt: { append: string };
       };
@@ -1284,14 +1182,12 @@ describe('SpaceRuntimeService', () => {
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
 
-      // A reactiveDb whose durable-enqueue throws, simulating a transient SQLite
-      // failure at the persist→deliver boundary (the window P1 guards).
       const markDeliveryFailedByUuid = mock(() => null);
       const reactiveDb = {
         db: {
           saveUserMessage: mock(() => 'db-msg'),
           getSDKMessageRepo: () => ({
-            getDeliveryContent: () => null, // first attempt
+            getDeliveryContent: () => null,
             markDeliveryFailedByUuid,
             reopenDeliveryByUuid: () => null,
           }),
@@ -1310,8 +1206,6 @@ describe('SpaceRuntimeService', () => {
         longHorizonAgentRepo,
       });
 
-      // The throw propagates out of deliverLongHorizonExternalEvent (no internal
-      // catch wraps injectLongTermAgentMessage).
       await expect(
         (
           svc as unknown as {
@@ -1330,8 +1224,6 @@ describe('SpaceRuntimeService', () => {
         })
       ).rejects.toThrow('sqlite locked');
 
-      // The row was saved 'enqueued' before the throw; the catch must terminalize
-      // it so it is not stranded ownerless and replayed as an orphan on restart.
       expect(markDeliveryFailedByUuid).toHaveBeenCalledWith(sessionId, 'delivery-1');
     });
 
@@ -1372,9 +1264,6 @@ describe('SpaceRuntimeService', () => {
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
 
-      // The message already reached a terminal status (consumed) on a prior
-      // attempt. A crash-retry with the same idempotency key must NOT insert a
-      // duplicate sdk_messages row or re-enqueue a job that re-drives it.
       const saveUserMessage = mock(() => 'db-msg');
       const enqueue = mock(() => ({ id: 'job-1' }));
       const reopenDeliveryByUuid = mock(() => null);
@@ -1413,9 +1302,9 @@ describe('SpaceRuntimeService', () => {
       });
 
       expect(result).toEqual({ delivered: true });
-      expect(saveUserMessage).not.toHaveBeenCalled(); // no duplicate row
-      expect(enqueue).not.toHaveBeenCalled(); // no re-drive
-      expect(reopenDeliveryByUuid).not.toHaveBeenCalled(); // consumed ≠ retryable
+      expect(saveUserMessage).not.toHaveBeenCalled();
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(reopenDeliveryByUuid).not.toHaveBeenCalled();
     });
 
     test('long-horizon crash-retry reopens a failed row and re-enqueues it', async () => {
@@ -1455,13 +1344,7 @@ describe('SpaceRuntimeService', () => {
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
 
-      // A prior attempt's durable enqueue threw and terminalized this row
-      // (send_status='failed'). The handler skips `failed` rows, so the retry
-      // must reopen it (→ enqueued) and re-enqueue the job — not treat `failed`
-      // as success and silently drop the delivery.
       const saveUserMessage = mock(() => 'db-msg');
-      // Signal consumption at enqueue so the consumption-await resolves (test
-      // simplification — see buildDurableDeliveryReactiveDb).
       const enqueue = mock((args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
         const uuid = args?.payload?.messageUuid;
         if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
@@ -1503,16 +1386,12 @@ describe('SpaceRuntimeService', () => {
       });
 
       expect(result).toEqual({ delivered: true });
-      expect(saveUserMessage).not.toHaveBeenCalled(); // row already exists — no dup
-      expect(reopenDeliveryByUuid).toHaveBeenCalledWith(sessionId, 'delivery-1'); // un-failed
-      expect(enqueue).toHaveBeenCalled(); // re-driven
+      expect(saveUserMessage).not.toHaveBeenCalled();
+      expect(reopenDeliveryByUuid).toHaveBeenCalledWith(sessionId, 'delivery-1');
+      expect(enqueue).toHaveBeenCalled();
     });
 
     test('long-horizon delivery not consumed within the timeout rejects — no premature delivered (Codex P1)', async () => {
-      // If the durable job stays parked/retrying past the consumption timeout,
-      // the delivery must NOT be acknowledged (the job may yet dead-letter).
-      // injectLongTermAgentMessage rejects; deliverLongHorizonExternalEvent
-      // propagates so the caller retries the source record.
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
       const createdSession = {
         ...makeSession(),
@@ -1548,8 +1427,6 @@ describe('SpaceRuntimeService', () => {
         })),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
-      // enqueue succeeds but does NOT signal consumption (no real SDK turn) →
-      // the consumption-await hits its (shortened) timeout and rejects.
       const reactiveDb = {
         db: {
           saveUserMessage: mock(() => 'db-msg'),
@@ -1666,23 +1543,9 @@ describe('SpaceRuntimeService', () => {
       svc.start();
       await svc.stop();
 
-      // Ten InternalEventBus subscriptions are registered: externalEvent.published,
-      // sdk.toolUse.created, sdk.toolUse.consumed, space.created, session.created,
-      // session.deleted (which releases per-session db-query servers), space.archived,
-      // space.deleted (tear down notification services), space.updated (refresh
-      // autonomy level), and space.task.updated (task-owned subscription cleanup).
-      // Hard-reset reprovisioning uses SessionManager's awaited in-process
-      // subscriber instead of InternalEventBus.
       expect(unsubFn).toHaveBeenCalledTimes(10);
     });
   });
-
-  // ─── attachSpaceToolsToMemberSession ─────────────────────────────────────
-  //
-  // These tests cover the role policy used for SpaceRuntime-owned sessions:
-  // ad-hoc Space members get `space-agent-tools` merged into their runtime MCP
-  // map without touching their system prompt; coordinator and workflow-worker
-  // sessions are owned by other paths and skipped here.
 
   describe('attachSpaceToolsToMemberSession()', () => {
     function makeMemberAgentSession(overrides: Partial<Session> = {}) {
@@ -1788,9 +1651,7 @@ describe('SpaceRuntimeService', () => {
       expect(mergeMock).toHaveBeenCalledTimes(1);
       const [additional] = mergeMock.mock.calls[0];
       expect(additional).toHaveProperty('space-agent-tools');
-      // No db-query attached when dbPath is not configured.
       expect(additional).not.toHaveProperty('db-query');
-      // System prompt must NOT be touched on member sessions.
       expect(agent.setRuntimeSystemPrompt).not.toHaveBeenCalled();
     });
 
@@ -1798,7 +1659,6 @@ describe('SpaceRuntimeService', () => {
       const agent = makeMemberAgentSession();
       const sessionManager = makeSessionManager(agent);
 
-      // db-query opens a real read-only connection, so the file must exist.
       const dir = join(
         process.cwd(),
         'tmp',
@@ -1869,16 +1729,8 @@ describe('SpaceRuntimeService', () => {
     });
 
     test('self-suppresses for a session that belongs to a long-horizon agent (first-activation race)', async () => {
-      // session.created fires before ensureLongHorizonAgentSession persists
-      // promptProvenance.agentId, so a brand-new long-term agent session is
-      // momentarily classified as an ad-hoc member and routed here. The guard
-      // must self-suppress so the generic (uncapped) server does not overwrite
-      // the capped one attached by the dedicated long-term path.
       const agent = makeMemberAgentSession();
       const sessionManager = makeSessionManager(agent);
-      // No provenance → resolves as an ad-hoc member (passes the early policy
-      // gate), but the long-horizon repo reports this session as an LH agent's
-      // live session (as ensureLongHorizonAgentSession sets synchronously).
       const racedSession = makeMemberSession({ id: 'lh-session-race' });
       const longHorizonAgentRepo = {
         listBySpaceId: mock(() => [{ sessionId: racedSession.id, status: 'active' }]),
@@ -1925,7 +1777,6 @@ describe('SpaceRuntimeService', () => {
         makeMemberSession({ id: 'member-1' }),
         makeMemberSession({ id: 'member-2' }),
         longTermSession,
-        // A session without spaceId — should be skipped.
         makeMemberSession({ id: 'no-space', context: {} }),
       ];
       const svc = new SpaceRuntimeService(
@@ -1933,12 +1784,9 @@ describe('SpaceRuntimeService', () => {
       );
 
       svc.start();
-      // Allow the provisioning microtasks to resolve.
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
-      // Two ad-hoc members plus one long-term agent are reprovisioned. The no-space
-      // session is filtered out before getSessionAsync is consulted.
       expect(mergeMock).toHaveBeenCalledTimes(3);
       expect(mergeMock.mock.calls[2][0]).toHaveProperty('space-agent-tools');
 
@@ -2120,7 +1968,6 @@ describe('SpaceRuntimeService', () => {
         ['space-agent-tools']
       );
 
-      // Self-heal should re-call attachSpaceToolsToMemberSession, which calls merge again
       expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(2);
     });
 
@@ -2164,14 +2011,6 @@ describe('SpaceRuntimeService', () => {
     });
 
     test('long-term agent reactivation resolves the LH handle alias so @handle delegation survives restart', async () => {
-      // F: attachLongTermAgentMcpServersForSession must load the long-horizon
-      // record and pass its immutable @handle alias — persistedAgent comes from
-      // the worker repo and is null for an LH agent id, so without this the
-      // writer-auth alias set would be empty after restart and @handle gate
-      // writers would stop matching. The @handle match semantics themselves are
-      // covered by the space-agent-tools writers-allowlist tests; this guards
-      // the reactivation wiring resolves the alias without depending on the
-      // worker repo.
       const agent = makeMemberAgentSession({
         id: longTermAgentSessionId(mockSpace.id, 'agent-lh'),
         metadata: {
@@ -2196,7 +2035,7 @@ describe('SpaceRuntimeService', () => {
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const actorRegistryRepos = {
         sessionRepo: { updateSession: mock(() => {}) },
-        spaceAgentRepo: { getById: mock(() => null) }, // worker repo: null for an LH agent id
+        spaceAgentRepo: { getById: mock(() => null) },
       } as unknown as SpaceRuntimeServiceConfig['actorRegistryRepos'];
       const svc = new SpaceRuntimeService(
         buildMemberConfig({ sessionManager, longHorizonAgentRepo, actorRegistryRepos })
@@ -2208,9 +2047,7 @@ describe('SpaceRuntimeService', () => {
         }
       ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
 
-      // The LH record was consulted (not just the worker repo)…
       expect(longHorizonAgentRepo.getById).toHaveBeenCalledWith('agent-lh');
-      // …and the capped server was merged.
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
       expect(mergeMock).toHaveBeenCalledTimes(1);
       expect(mergeMock.mock.calls[0][0]).toHaveProperty('space-agent-tools');
@@ -2268,22 +2105,6 @@ describe('SpaceRuntimeService', () => {
     });
   });
 
-  // ─── internalEventBus session.created subscription regression (Task #137) ───────
-  //
-  // Before this fix, subscribeToSpaceEvents() registered the session.created
-  // and session.deleted handlers with `{ sessionId: 'global' }`. TypedHub
-  // stores that under the literal `'global'` key, NOT under the `'__global__'`
-  // GLOBAL_KEY used for unfiltered subscriptions, AND its cross-transport
-  // hubHandler filters with `if (sessionId && eventData.sessionId !== sessionId)
-  // return`. Both checks reject events emitted with a UUID `sessionId` (which
-  // is what `SessionLifecycle.create()` and `deleteResources()` actually emit),
-  // so the handlers never fired. The visible symptom: ad-hoc Space worker /
-  // coder / room_chat / general sessions silently came up missing
-  // `space-agent-tools` and `db-query`.
-  //
-  // These tests use a real InternalEventBus so the bug reproduces end-to-end if the
-  // `{ sessionId: 'global' }` filter is reintroduced.
-
   describe('internalEventBus session.created subscription (Task #137 regression)', () => {
     function makeMemberAgentSession() {
       return {
@@ -2332,13 +2153,8 @@ describe('SpaceRuntimeService', () => {
       svc.start();
 
       const session = makeMemberSession();
-      // Emit with the actual session UUID — exactly what SessionLifecycle.create
-      // does. With the broken `{ sessionId: 'global' }` filter, neither
-      // dispatchLocally nor the cross-transport hubHandler matches this.
       await internalEventBus.publish('session.created', { sessionId: session.id, session });
 
-      // Allow microtasks to flush (dispatchLocally schedules via queueMicrotask
-      // and does not await the async handler).
       await new Promise<void>((resolve) => setTimeout(resolve, 10));
 
       const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
@@ -2529,9 +2345,6 @@ describe('SpaceRuntimeService', () => {
     });
 
     test('session.deleted handler runs when internalEventBus emits with a UUID sessionId', async () => {
-      // Arrange a service in a state where it has a per-session db-query
-      // server cached for the deleted session, so we can observe whether the
-      // handler ran by checking the cache state after the emit.
       const sessionManager = {
         getSessionAsync: mock(async () => null),
         listSessions: mock(() => [] as Session[]),
@@ -2551,10 +2364,6 @@ describe('SpaceRuntimeService', () => {
         internalEventBus,
       });
 
-      // Stub a db-query server entry so we can observe its removal as proof
-      // the session.deleted handler actually ran. Doing this via internals is
-      // the lightest-weight way; the production code paths that populate this
-      // map are integration-level (require a real db file).
       const memberDbQueryServers = (
         svc as unknown as {
           memberSessionDbQueryServers: Map<string, { close: () => void }>;
@@ -2568,22 +2377,12 @@ describe('SpaceRuntimeService', () => {
       await internalEventBus.publish('session.deleted', { sessionId: 'worker-session-uuid-456' });
       await new Promise<void>((resolve) => setTimeout(resolve, 10));
 
-      // Handler ran → the cached server was closed and removed.
       expect(closeMock).toHaveBeenCalledTimes(1);
       expect(memberDbQueryServers.has('worker-session-uuid-456')).toBe(false);
 
       await svc.stop();
     });
   });
-
-  // ─── ready() — startup provisioning race fix ─────────────────────────────
-  //
-  // Regression guard for task #83 / this task: before this change,
-  // `provisionExistingSpaces()` ran as a fire-and-forget `void (async () => …)`
-  // promise, so a session-bound RPC arriving right after `start()` could run
-  // before its MCP servers were attached. `ready()` now resolves only after
-  // *both* the space_chat provisioning AND the member-session sweep have
-  // completed, and the daemon bootstrap awaits it before binding Bun.serve.
 
   describe('ready() — startup provisioning gate', () => {
     function makeSession() {
@@ -2618,9 +2417,6 @@ describe('SpaceRuntimeService', () => {
     }
 
     test('ready() resolves only after BOTH the chat-session sweep and the member-session sweep have completed', async () => {
-      // Arrange: block both sweeps until we manually resolve their gating
-      // promises. This proves `ready()` waits on each — if either were
-      // fire-and-forget, `ready()` would resolve before the gate opens.
       const chatAgent = makeSession();
       const memberAgent = makeMemberAgentSession();
 
@@ -2634,8 +2430,6 @@ describe('SpaceRuntimeService', () => {
       });
 
       const sessionManager = {
-        // The space-chat session lookup is awaited inside
-        // setupSpaceAgentSession; gate the chat sweep on `chatGate`.
         getSessionAsync: mock(async (id: string) => {
           if (id === `space:chat:${mockSpace.id}`) {
             await chatGate;
@@ -2670,7 +2464,6 @@ describe('SpaceRuntimeService', () => {
         sessionManager,
       });
 
-      // Act: start() returns sync; ready() must not resolve yet.
       svc.start();
 
       let readyResolved = false;
@@ -2678,22 +2471,17 @@ describe('SpaceRuntimeService', () => {
         readyResolved = true;
       });
 
-      // Yield so any microtasks that *could* have resolved do — they should not.
       await new Promise<void>((r) => setTimeout(r, 5));
       expect(readyResolved).toBe(false);
 
-      // Open just the chat gate; member sweep still blocks ready().
       resolveChat();
       await new Promise<void>((r) => setTimeout(r, 5));
       expect(readyResolved).toBe(false);
 
-      // Open the member gate; ready() must now resolve.
       resolveMember();
       await readyPromise;
       expect(readyResolved).toBe(true);
 
-      // And both sweeps actually attached MCP servers — proving the
-      // returned promise tracks real work, not an empty resolution.
       expect(chatAgent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
       expect(memberAgent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
 
@@ -2706,8 +2494,6 @@ describe('SpaceRuntimeService', () => {
     });
 
     test('ready() does not reject when a sweep throws — errors are logged, not propagated', async () => {
-      // If the member-session sweep throws, ready() must still resolve so
-      // the daemon boot path isn't blocked by a transient read failure.
       const spaceMgr: SpaceManager = {
         getSpace: mock(async () => mockSpace),
         listSpaces: mock(async () => {
@@ -2746,21 +2532,12 @@ describe('SpaceRuntimeService', () => {
   });
 });
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 function makeTestDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
   return db;
 }
-
-// ─── activateWorkflowNode — InternalEventBus forwarding ─────────────────────
-//
-// Regression guard: SpaceRuntimeService.activateWorkflowNode must forward the
-// InternalEventBus into the scoped ChannelRouter so that ChannelRouter.activateNode()'s
-// `workflow_run_reopened` events propagate to subscribers. Without the bus wiring,
-// reopens of terminal runs would be silently dropped.
 
 describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
   test('publishes space.workflowRun.reopened to InternalEventBus when reopening a done run', async () => {
@@ -2771,7 +2548,6 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
       const NODE_A = 'node-act-a';
       const NODE_B = 'node-act-b';
 
-      // Seed space + agents
       db.prepare(
         `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
 				 allowed_models, session_ids, slug, status, created_at, updated_at)
@@ -2782,7 +2558,6 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
 				 VALUES (?, ?, 'A', '', null, '[]', '', ?, ?)`
       ).run(AGENT_ID, SPACE_ID, Date.now(), Date.now());
 
-      // Build real repos/managers on this DB
       const taskRepo = new SpaceTaskRepo(db);
       const workflowRunRepo = new SpaceWorkflowRunRepo(db);
       const { ChannelCycleRepository } = await import(
@@ -2809,7 +2584,6 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
         { subscriberName: 'test-activate-subscriber' }
       );
 
-      // Minimal two-node workflow
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: `WF ${Date.now()}`,
@@ -2827,7 +2601,6 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
         completionAutonomyLevel: 3,
       });
 
-      // Create a run + canonical task, then mark the run as `done`.
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
@@ -2842,7 +2615,6 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
       });
       workflowRunRepo.updateStatusUnchecked(run.id, 'done');
 
-      // Build the service with all deps the activateWorkflowNode path needs.
       const service = new SpaceRuntimeService({
         db,
         spaceManager: spaceManager as unknown as SpaceManager,
@@ -2855,7 +2627,6 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
         internalEventBus: bus,
       });
 
-      // Activating a node on a `done` run must reopen it and publish to bus.
       await service.activateWorkflowNode(run.id, NODE_B);
 
       expect(busEvents).toHaveLength(1);
@@ -2873,18 +2644,9 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
   });
 });
 
-// ─── Long-horizon agent provider inference (Task #768) ──────────────────────
-//
-// A LH/worker agent whose settings set `model` but left `provider` null used to
-// run fine (provider inferred at query time) but was hard-blocked from switching
-// models ("Session has no provider configured"). The config builders now infer
-// the provider from the model, mirroring the worker pattern in custom-agent.ts.
-
 describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)', () => {
   const service = new SpaceRuntimeService(buildConfig(createMockSpaceManager(mockSpace)));
 
-  // The builder resolves cached model metadata first, heuristic as cache-miss
-  // fallback. Keep the cache empty unless a test seeds it explicitly.
   beforeEach(() => clearModelsCache());
   afterEach(() => clearModelsCache());
 
@@ -2932,29 +2694,18 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
   });
 
   test('leaves provider undefined for anthropic-family models so cached metadata resolves the variant', async () => {
-    // inferProviderForModel('claude-sonnet-4.6') → 'anthropic' via the catch-all.
-    // Persisting that would override the correct provider createSession resolves
-    // from cached model metadata (e.g. anthropic-copilot), so the builder must
-    // leave it undefined.
     const config = await callBuilder(buildLongHorizonAgent({ model: 'claude-sonnet-4.6' }));
     expect(config.model).toBe('claude-sonnet-4.6');
     expect(config.provider).toBeUndefined();
   });
 
   test('leaves provider undefined for anthropic catch-all models (P1: Copilot Gemini)', async () => {
-    // Regression: gemini-3.1-pro-preview is cached under anthropic-copilot, but
-    // Anthropic's ownsModel catch-all claims it, so inference returns 'anthropic'.
-    // Persisting that launched the session against the Anthropic API ("model not
-    // found"); undefined lets session-lifecycle resolve the cached provider.
     const config = await callBuilder(buildLongHorizonAgent({ model: 'gemini-3.1-pro-preview' }));
     expect(config.model).toBe('gemini-3.1-pro-preview');
     expect(config.provider).toBeUndefined();
   });
 
   test('leaves provider undefined for contested gpt-* models (P1: Codex/Copilot)', async () => {
-    // gpt-* IDs claimed by an AVAILABLE anthropic-copilot are contested:
-    // persisting the codex inference would reject the cached Copilot match, so
-    // the builder leaves provider undefined for cache resolution.
     const claiming = (id: string) =>
       ({
         id,
@@ -2981,10 +2732,6 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
   });
 
   test('resolves the cached provider for contested models (P1: Copilot Gemini/gpt-*)', async () => {
-    // With the cache populated, the builder must persist the same provider
-    // createSession resolves — otherwise refreshLongHorizonAgentSessionConfig
-    // stomps it back to undefined on the next wake and the query falls back to
-    // Anthropic.
     seedModels([
       cachedModel('gemini-3.1-pro-preview', 'anthropic-copilot'),
       cachedModel('gpt-5.4', 'anthropic-copilot'),
@@ -2999,9 +2746,6 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
   });
 
   test('resolves the cached provider for custom-endpoint models with built-in-looking IDs (P1)', async () => {
-    // A custom endpoint may serve a model whose ID looks like a built-in
-    // (`glm-4`). Heuristic inference would claim 'glm'; the cached
-    // custom-endpoint entry is authoritative.
     seedModels([cachedModel('glm-4', 'custom-endpoint')]);
 
     const config = await callBuilder(buildLongHorizonAgent({ model: 'glm-4' }));
@@ -3009,20 +2753,14 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
   });
 
   test('preserves the session provider across wakes when the cache still offers the model (P1)', async () => {
-    // A model cached under MULTIPLE providers: created while only Copilot was
-    // available → session runs 'anthropic-copilot'. After Anthropic connects,
-    // its entry lands first in the cache — recomputing blindly would flip the
-    // live session to 'anthropic' and restart it against a different API.
     seedModels([
       cachedModel('claude-sonnet-4.6', 'anthropic'),
       cachedModel('claude-sonnet-4.6', 'anthropic-copilot'),
     ]);
 
-    // Create path (no current provider): first cache entry wins.
     expect(
       (await callBuilder(buildLongHorizonAgent({ model: 'claude-sonnet-4.6' }))).provider
     ).toBe('anthropic');
-    // Wake path: the session's resolved provider is preserved.
     expect(
       (
         await callBuilder(
@@ -3034,8 +2772,6 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
   });
 
   test('recomputes when the preferred provider no longer offers the model', async () => {
-    // Model edited to one Copilot doesn't serve → fall through to normal
-    // resolution (failover / model-change both land here).
     seedModels([cachedModel('claude-sonnet-4.6', 'anthropic-copilot')]);
 
     expect(
@@ -3050,10 +2786,6 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
   });
 
   test('retains the live provider across a transient cache miss when the model is unchanged (P2)', async () => {
-    // A custom endpoint serving glm-4 was unreachable during cache init, so the
-    // cache has no entry for the model at all. Flipping to the heuristic 'glm'
-    // would stick (real GLM also offers glm-4, so the next wake would keep it).
-    // With the model unchanged, the live provider must be retained.
     seedModels([cachedModel('claude-sonnet-4.6', 'anthropic')]);
 
     expect(
@@ -3063,9 +2795,6 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
   });
 
   test('retains the live provider even when another provider offers the same ID (P2)', async () => {
-    // No silent cross-provider failover: while the model is unchanged, the
-    // session's provider stays authoritative even if the cache positively
-    // offers the ID elsewhere. Deliberate moves happen via agent config edits.
     seedModels([cachedModel('glm-4', 'glm')]);
 
     expect(
@@ -3083,8 +2812,8 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
 
   test('falls back to the default model, provider left undefined, when neither is set', async () => {
     const config = await callBuilder(buildLongHorizonAgent({}));
-    expect(config.model).toBe('claude-sonnet-4-6'); // DEFAULT_LONG_HORIZON_AGENT_MODEL
-    expect(config.provider).toBeUndefined(); // anthropic-family → cache resolves at createSession
+    expect(config.model).toBe('claude-sonnet-4-6');
+    expect(config.provider).toBeUndefined();
   });
 });
 
@@ -3099,9 +2828,6 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
     };
 
   test('updates provider undefined → kimi on the next wake', async () => {
-    // A stranded session (provider never stored) is refreshed with a config whose
-    // provider was inferred from the model. refresh must detect the change and
-    // call updateConfig + resetQuery so the session repairs itself.
     const updateConfig = mock(async () => {});
     const resetQuery = mock(async () => ({ success: true }));
     const stranded = {
@@ -3148,11 +2874,6 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
   });
 
   test('does not stomp the provider createSession resolved from the cache (P1)', async () => {
-    // A provider-less agent on a contested model: createSession resolved
-    // 'anthropic-copilot' from cached metadata and persisted it. The rebuilt
-    // config must resolve the SAME provider so the wake refresh is a no-op —
-    // rebuilding undefined would stomp the resolved provider and restart the
-    // query against the wrong API.
     const cache = new Map<string, ModelInfo[]>();
     cache.set('global', [
       {
@@ -3182,8 +2903,6 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
       );
       expect(built.provider).toBe('anthropic-copilot');
 
-      // Session config as createSession persisted it: the builder's config with
-      // the cache-resolved provider filled in.
       const updateConfig = mock(async () => {});
       const resetQuery = mock(async () => ({ success: true }));
       const session = {
@@ -3230,8 +2949,6 @@ describe('ensureLongTermAgentSession — regular worker agent provider inference
       sessionManager,
       spaceAgentManager,
     });
-    // longHorizonAgentRepo intentionally unset → regular worker-agent branch.
-    // Avoid real MCP wiring; the config under test is built before attach runs.
     (
       svc as unknown as { attachLongTermAgentMcpServers: () => void }
     ).attachLongTermAgentMcpServers = () => {};
@@ -3379,8 +3096,6 @@ describe('clearLongTermAgentSessionProvider — provider-override clear (P2)', (
   }
 
   test('clears the session persisted provider so the next wake re-resolves', async () => {
-    // An explicit provider-override clear (edit sends provider: null) must not
-    // be defeated by wake-time provider retention restoring the stale value.
     const updateConfig = mock(async () => {});
     const session = {
       getSessionData: () => ({ config: { model: 'kimi-for-coding', provider: 'openrouter' } }),

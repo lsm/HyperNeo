@@ -214,12 +214,10 @@ describe('TaskAuxiliaryPanel', () => {
       <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />
     );
 
-    // Header + badges
     expect(getByText('Ship task panel')).toBeTruthy();
     expect(getByText('#42')).toBeTruthy();
     expect(getByText('High Priority')).toBeTruthy();
 
-    // Sections present in one scroll
     expect(getByText('Description')).toBeTruthy();
     expect(getByText('Launch Goal')).toBeTruthy();
     await waitFor(() => expect(getByText('Launch Scope')).toBeTruthy());
@@ -227,7 +225,6 @@ describe('TaskAuxiliaryPanel', () => {
     expect(getByTestId('task-timeline-section')).toBeTruthy();
     expect(getByTestId('task-artifacts-section')).toBeTruthy();
 
-    // No tab bar remains
     for (const tab of ['Details', 'Workflow', 'Agents', 'Gates', 'Timeline', 'Log']) {
       expect(queryByRole('button', { name: tab })).toBeNull();
     }
@@ -355,7 +352,6 @@ describe('TaskAuxiliaryPanel', () => {
   });
 
   it('scrolls to the focus section requested by a legacy deep-link', () => {
-    // jsdom does not implement scrollIntoView; stub it for this assertion.
     const scrollSpy = vi.fn();
     Element.prototype.scrollIntoView = scrollSpy;
     try {
@@ -400,7 +396,6 @@ describe('TaskAuxiliaryPanel', () => {
     ];
     const { getByText } = render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />);
 
-    // Run execution status is distinct from the task's own status.
     const runStatusRow = getByText('Run status').parentElement;
     expect(runStatusRow?.textContent).toContain('Succeeded');
   });
@@ -428,7 +423,6 @@ describe('TaskAuxiliaryPanel', () => {
     ];
     const { getByText } = render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />);
 
-    // Auto-select resolved to a different workflow than the (null) preference.
     const executedRow = getByText('Executed workflow').parentElement;
     expect(executedRow?.textContent).toContain('Review Workflow');
   });

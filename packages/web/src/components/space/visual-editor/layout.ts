@@ -1,18 +1,6 @@
-/**
- * Workflow auto-layout for the visual editor.
- *
- * The layout is driven by workflow semantics rather than a simple vertical chain:
- * - workflow channels are resolved into node-to-node relations
- * - backward / feedback edges are ignored for rank placement by orienting edges
- *   using the workflow node order
- * - reviewer-oriented nodes are biased into a side lane so the graph uses
- *   horizontal space to make relationships clearer by default
- */
-
 import type { WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
 import type { VisualTransition } from './types';
 
-/** A 2D point in canvas coordinates */
 export interface Point {
   x: number;
   y: number;

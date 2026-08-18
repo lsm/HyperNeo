@@ -1,20 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for InputTextarea Component
- *
- * Key bug fix covered: Signal-based re-renders causing lost keystrokes
- *
-import { describe, it, expect, vi } from 'vitest';
- * Previously, InputTextarea directly read `isAgentWorking.value` signal inside
- * the component. When signals updated from server-pushed state changes,
- * the component re-rendered with stale `content` prop (from parent's last render),
- * causing:
- * 1. Lost keystrokes when typing fast
- * 2. Cursor position reset when holding arrow keys
- *
- * Fix: `isAgentWorking` is now passed as a prop, ensuring the component only
- * re-renders when its parent re-renders, keeping content and isAgentWorking in sync.
- */
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { InputTextarea } from '../InputTextarea';
@@ -71,8 +55,6 @@ describe('InputTextarea', () => {
     });
 
     it('should preserve content value when isAgentWorking prop changes', () => {
-      // This test verifies the bug fix: changing isAgentWorking should not
-      // affect the content value since both are now controlled by props
       const onContentChange = vi.fn(() => {});
       const { container, rerender } = render(
         <InputTextarea
@@ -87,7 +69,6 @@ describe('InputTextarea', () => {
       const textarea = container.querySelector('textarea')!;
       expect(textarea.value).toBe('typed text');
 
-      // Simulate signal change by re-rendering with new isAgentWorking value
       rerender(
         <InputTextarea
           content="typed text"
@@ -98,7 +79,6 @@ describe('InputTextarea', () => {
         />
       );
 
-      // Content should be preserved after re-render
       expect(textarea.value).toBe('typed text');
     });
 
@@ -120,7 +100,6 @@ describe('InputTextarea', () => {
 
       const textarea = container.querySelector('textarea')!;
 
-      // Simulate rapid typing
       fireEvent.input(textarea, { target: { value: 'h' } });
       rerender(
         <InputTextarea
@@ -154,14 +133,11 @@ describe('InputTextarea', () => {
         />
       );
 
-      // Verify all characters were captured
       expect(values).toEqual(['h', 'he', 'hel']);
       expect(textarea.value).toBe('hel');
     });
 
     it('should not re-render due to signal when isAgentWorking is passed as prop', () => {
-      // This test documents the expected behavior: isAgentWorking is a prop,
-      // not read from a signal, so re-renders are controlled by the parent
       const onContentChange = vi.fn(() => {});
 
       const { container } = render(
@@ -176,7 +152,6 @@ describe('InputTextarea', () => {
 
       const textarea = container.querySelector('textarea')!;
 
-      // Verify the component renders correctly with prop
       expect(textarea.value).toBe('test');
     });
   });
@@ -409,7 +384,7 @@ describe('InputTextarea', () => {
   describe('Character Counter', () => {
     it('should show character counter when near max limit', () => {
       const maxChars = 100;
-      const content = 'a'.repeat(85); // 85% of limit
+      const content = 'a'.repeat(85);
 
       const { container } = render(
         <InputTextarea
@@ -421,14 +396,13 @@ describe('InputTextarea', () => {
         />
       );
 
-      // Character counter should be visible
       const counterText = container.textContent;
       expect(counterText).toContain('85/100');
     });
 
     it('should not show character counter when well below limit', () => {
       const maxChars = 100;
-      const content = 'hello'; // 5% of limit
+      const content = 'hello';
 
       const { container } = render(
         <InputTextarea
@@ -440,7 +414,6 @@ describe('InputTextarea', () => {
         />
       );
 
-      // Character counter should not be visible (below 80% threshold)
       const counterText = container.textContent;
       expect(counterText).not.toContain('/100');
     });
@@ -458,29 +431,12 @@ describe('InputTextarea', () => {
         />
       );
 
-      // The disabled prop affects the container styling, not the textarea element
       const containerDiv = container.querySelector('.rounded-3xl');
       expect(containerDiv?.className).toContain('border-dark-700');
     });
   });
 
   describe('Cursor Position Preservation', () => {
-    /**
-     * These tests verify the "uncontrolled with sync" pattern that prevents
-     * cursor position reset during re-renders.
-     *
-     * ROOT CAUSE OF BUG:
-     * With controlled inputs (value={content}), Preact sets textarea.value
-     * on every render. Even when DOM already has the correct value, setting
-     * element.value programmatically resets cursor position.
-     *
-     * SYMPTOMS:
-     * - Lost keystrokes when typing fast
-     * - Arrow keys "stop working" after a few presses (cursor keeps resetting)
-     *
-     * FIX: Use useLayoutEffect to sync content to DOM only when they differ.
-     */
-
     it('should not update DOM value when content matches textarea.value', () => {
       const { container, rerender } = render(
         <InputTextarea
@@ -494,13 +450,10 @@ describe('InputTextarea', () => {
 
       const textarea = container.querySelector('textarea')!;
 
-      // Set cursor position in the middle
       textarea.setSelectionRange(2, 2);
       expect(textarea.selectionStart).toBe(2);
       expect(textarea.selectionEnd).toBe(2);
 
-      // Re-render with same content but different isAgentWorking
-      // This simulates signal-triggered re-renders from server push
       rerender(
         <InputTextarea
           content="hello"
@@ -511,9 +464,6 @@ describe('InputTextarea', () => {
         />
       );
 
-      // Cursor position should be preserved because:
-      // 1. content prop didn't change
-      // 2. textarea.value === content, so no DOM write happens
       expect(textarea.selectionStart).toBe(2);
       expect(textarea.selectionEnd).toBe(2);
     });
@@ -531,10 +481,8 @@ describe('InputTextarea', () => {
 
       const textarea = container.querySelector('textarea')!;
 
-      // Position cursor at "hello |world"
       textarea.setSelectionRange(6, 6);
 
-      // Simulate multiple rapid re-renders (like from WebSocket state updates)
       for (let i = 0; i < 5; i++) {
         rerender(
           <InputTextarea
@@ -547,7 +495,6 @@ describe('InputTextarea', () => {
         );
       }
 
-      // Cursor should still be at position 6
       expect(textarea.selectionStart).toBe(6);
       expect(textarea.selectionEnd).toBe(6);
     });
@@ -564,11 +511,8 @@ describe('InputTextarea', () => {
 
       const textarea = container.querySelector('textarea')!;
 
-      // Position cursor at end of "hello world" (position 11)
       textarea.setSelectionRange(11, 11);
 
-      // External content change (e.g., loading a draft)
-      // New content is shorter, so cursor needs to be clamped
       rerender(
         <InputTextarea
           content="hi"
@@ -578,10 +522,8 @@ describe('InputTextarea', () => {
         />
       );
 
-      // Value should be updated
       expect(textarea.value).toBe('hi');
 
-      // Cursor should be clamped to valid range (max is 2)
       expect(textarea.selectionStart).toBeLessThanOrEqual(2);
       expect(textarea.selectionEnd).toBeLessThanOrEqual(2);
     });
@@ -603,18 +545,12 @@ describe('InputTextarea', () => {
 
       const textarea = container.querySelector('textarea')!;
 
-      // Position cursor at position 5 (end of "hello")
       textarea.setSelectionRange(5, 5);
 
-      // Simulate user typing "x" - browser updates DOM before our handler runs
-      // This mimics what happens in a real browser
       fireEvent.input(textarea, { target: { value: 'hellox' } });
 
-      // onContentChange should have been called with new value
       expect(onContentChange).toHaveBeenCalledWith('hellox');
 
-      // Now simulate the re-render with updated content
-      // (in real app, signal updates synchronously)
       rerender(
         <InputTextarea
           content="hellox"
@@ -624,7 +560,6 @@ describe('InputTextarea', () => {
         />
       );
 
-      // Value should match
       expect(textarea.value).toBe('hellox');
     });
   });
@@ -703,7 +638,6 @@ describe('InputTextarea', () => {
       const sendButton = container.querySelector(
         '[data-testid="send-button"]'
       ) as HTMLButtonElement;
-      // The button should have disabled styling (cursor-not-allowed class)
       expect(sendButton?.className).toContain('cursor-not-allowed');
     });
   });
@@ -727,8 +661,6 @@ describe('InputTextarea', () => {
         />
       );
 
-      // CommandAutocomplete should be rendered
-      // It renders a list of commands
       const textContent = container.textContent;
       expect(textContent).toContain('/help');
     });
@@ -746,7 +678,6 @@ describe('InputTextarea', () => {
         />
       );
 
-      // Without onCommandSelect and onCommandClose, autocomplete should not render
       const textContent = container.textContent;
       expect(textContent).not.toContain('/help');
     });
@@ -845,9 +776,7 @@ describe('InputTextarea', () => {
         />
       );
 
-      // Reference should be shown
       expect(container.textContent).toContain('A Task');
-      // Command should NOT be shown
       expect(container.textContent).not.toContain('/help');
     });
   });
@@ -959,7 +888,6 @@ describe('InputTextarea', () => {
 
       const textarea = container.querySelector('textarea')!;
 
-      // Should not throw when onPaste is undefined
       expect(() => {
         fireEvent.paste(textarea);
       }).not.toThrow();
@@ -967,25 +895,6 @@ describe('InputTextarea', () => {
   });
 
   describe('Auto-resize timing (autoscroll race regression)', () => {
-    /**
-     * Regression test for: messages appearing behind the chat composer
-     * when sending multiline messages with autoscroll enabled.
-     *
-     * Root cause: the textarea height was previously updated inside a
-     * requestAnimationFrame callback (one frame later). When a new message
-     * caused the parent to recompute scroll/footer padding, the footer height
-     * still reflected the OLD textarea size, so the scroller stopped short
-     * and the new message was hidden behind the composer.
-     *
-     * Fix: switched to useLayoutEffect with a synchronous height update so
-     * onHeightChange fires before the browser paints — the parent's
-     * syncMessagesContainerPadding always sees the up-to-date footer height.
-     *
-     * What this test guarantees:
-     * - onHeightChange is invoked synchronously during render commit
-     *   (no rAF, no setTimeout). If anyone reverts to a deferred resize,
-     *   this test fails.
-     */
     it('invokes onHeightChange synchronously when content changes', () => {
       const onHeightChange = vi.fn();
       const { rerender } = render(
@@ -998,7 +907,6 @@ describe('InputTextarea', () => {
         />
       );
 
-      // Cleared after initial mount so we can observe the next pass cleanly
       onHeightChange.mockClear();
 
       rerender(
@@ -1011,7 +919,6 @@ describe('InputTextarea', () => {
         />
       );
 
-      // Must be called synchronously — no awaiting frames or timers.
       expect(onHeightChange).toHaveBeenCalled();
     });
 

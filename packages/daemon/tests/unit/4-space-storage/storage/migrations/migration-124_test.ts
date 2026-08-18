@@ -1,15 +1,3 @@
-/**
- * Migration 124 Tests — simplify external-event schema.
- *
- * Covers:
- *   - Fresh DB: space_external_events has the simplified schema (no pr_number,
- *     repo_owner, repo_name, branch, routed_task_id columns).
- *   - Pre-124 schema with rows: legacy columns are backfilled into payload_json,
- *     state values are migrated, delivery rows are preserved (FK off during DROP).
- *   - Re-running the migration is a no-op (idempotent).
- *   - Crash recovery: leftover space_external_events_new is cleaned up.
- */
-
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
@@ -39,10 +27,6 @@ function indexExists(db: BunDatabase, name: string): boolean {
   return !!row?.name;
 }
 
-/**
- * Build the pre-M124 shape: space_external_events with legacy columns plus
- * the deliveries child table.
- */
 function seedPreM124Schema(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = OFF');
   db.exec(`
@@ -146,7 +130,6 @@ describe('Migration 124: simplify external-event schema', () => {
     });
 
     test('space_external_events has the simplified state CHECK', () => {
-      // Attempting to insert an old state should fail.
       expect(() =>
         db.exec(`
 					INSERT INTO space_external_events (
@@ -175,7 +158,6 @@ describe('Migration 124: simplify external-event schema', () => {
         `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
       ).run('sp-1', 'sp-1', '/tmp/test', 'Test Space', 1, 1);
 
-      // Event with legacy columns and minimal payload.
       db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
@@ -206,7 +188,6 @@ describe('Migration 124: simplify external-event schema', () => {
         1_700_000_000_000
       );
 
-      // Event with legacy columns that are already duplicated in payload.
       db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
@@ -242,7 +223,6 @@ describe('Migration 124: simplify external-event schema', () => {
         1_700_000_000_000
       );
 
-      // Event with no legacy columns (NULL).
       db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
@@ -273,7 +253,6 @@ describe('Migration 124: simplify external-event schema', () => {
         1_700_000_000_000
       );
 
-      // Event with legacy columns that differ from payload — payload should win.
       db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
@@ -309,7 +288,6 @@ describe('Migration 124: simplify external-event schema', () => {
         1_700_000_000_000
       );
 
-      // Event with valid non-object JSON root (array) — should be coerced to {}.
       db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
@@ -340,7 +318,6 @@ describe('Migration 124: simplify external-event schema', () => {
         1_700_000_000_000
       );
 
-      // Event with routed_task_id — should be preserved in payload.
       db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
@@ -371,7 +348,6 @@ describe('Migration 124: simplify external-event schema', () => {
         1_700_000_000_000
       );
 
-      // Event with malformed payload_json — should not abort migration.
       db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
@@ -402,7 +378,6 @@ describe('Migration 124: simplify external-event schema', () => {
         1_700_000_000_000
       );
 
-      // Delivery row for evt-legacy — should survive the migration.
       db.prepare(`
 				INSERT INTO space_external_event_deliveries (
 					event_id, delivery_key, workflow_run_id, task_id, node_id, agent_name,
@@ -432,7 +407,6 @@ describe('Migration 124: simplify external-event schema', () => {
       expect(payload.repoOwner).toBe('lsm');
       expect(payload.repoName).toBe('neokai');
       expect(payload.branch).toBe('feature-42');
-      // Original payload keys are preserved.
       expect(payload.action).toBe('opened');
     });
 
@@ -442,7 +416,6 @@ describe('Migration 124: simplify external-event schema', () => {
         .prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
         .get('evt-payload-dup') as { payload_json: string };
       const payload = JSON.parse(row.payload_json);
-      // The payload already had these values — they should be preserved.
       expect(payload.prNumber).toBe(99);
       expect(payload.repoOwner).toBe('acme');
       expect(payload.repoName).toBe('widget');
@@ -454,9 +427,7 @@ describe('Migration 124: simplify external-event schema', () => {
       const row = db
         .prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
         .get('evt-malformed') as { payload_json: string };
-      // Should be valid JSON now.
       const payload = JSON.parse(row.payload_json);
-      // Legacy columns should still be backfilled into the coerced payload.
       expect(payload.prNumber).toBe(77);
       expect(payload.repoOwner).toBe('acme');
       expect(payload.repoName).toBe('widget');
@@ -469,8 +440,6 @@ describe('Migration 124: simplify external-event schema', () => {
         .prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
         .get('evt-payload-wins') as { payload_json: string };
       const payload = JSON.parse(row.payload_json);
-      // Payload had normalized values; legacy columns had padded/case-variant
-      // strings. Payload should be preserved.
       expect(payload.prNumber).toBe(99);
       expect(payload.repoOwner).toBe('acme');
       expect(payload.repoName).toBe('widget');
@@ -483,7 +452,6 @@ describe('Migration 124: simplify external-event schema', () => {
         .prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
         .get('evt-array-root') as { payload_json: string };
       const payload = JSON.parse(row.payload_json);
-      // Array root [1,2,3] should be coerced to {}, then backfilled.
       expect(Array.isArray(payload)).toBe(false);
       expect(payload.prNumber).toBe(55);
       expect(payload.repoOwner).toBe('acme');
@@ -498,7 +466,6 @@ describe('Migration 124: simplify external-event schema', () => {
         .get('evt-routed-task') as { payload_json: string };
       const payload = JSON.parse(row.payload_json);
       expect(payload.routedTaskId).toBe('task-routed-1');
-      // State migrated to published so the event remains retryable.
       const stateRow = db
         .prepare(`SELECT state FROM space_external_events WHERE id = ?`)
         .get('evt-routed-task') as { state: string };
@@ -510,17 +477,17 @@ describe('Migration 124: simplify external-event schema', () => {
       const legacy = db
         .prepare(`SELECT state FROM space_external_events WHERE id = ?`)
         .get('evt-legacy') as { state: string };
-      expect(legacy.state).toBe('published'); // routed → published
+      expect(legacy.state).toBe('published');
 
       const payloadDup = db
         .prepare(`SELECT state FROM space_external_events WHERE id = ?`)
         .get('evt-payload-dup') as { state: string };
-      expect(payloadDup.state).toBe('published'); // delivery_failed → published
+      expect(payloadDup.state).toBe('published');
 
       const minimal = db
         .prepare(`SELECT state FROM space_external_events WHERE id = ?`)
         .get('evt-minimal') as { state: string };
-      expect(minimal.state).toBe('ignored'); // ambiguous → ignored
+      expect(minimal.state).toBe('ignored');
     });
 
     test('delivery rows are preserved (not cascade-deleted)', () => {
@@ -569,7 +536,6 @@ describe('Migration 124: simplify external-event schema', () => {
     });
 
     test('restores original foreign_keys pragma after migration', () => {
-      // Start with FKs explicitly disabled.
       db.exec('PRAGMA foreign_keys = OFF');
       const before = db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number };
       expect(before.foreign_keys).toBe(0);
@@ -577,7 +543,7 @@ describe('Migration 124: simplify external-event schema', () => {
       runMigration124(db);
 
       const after = db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number };
-      expect(after.foreign_keys).toBe(0); // restored to OFF, not forced ON
+      expect(after.foreign_keys).toBe(0);
     });
   });
 
@@ -590,7 +556,6 @@ describe('Migration 124: simplify external-event schema', () => {
     });
 
     test('cleans up leftover space_external_events_new from interrupted migration', () => {
-      // Simulate an interrupted migration by creating the temp table.
       db.exec(`
 				CREATE TABLE space_external_events_new (
 					id TEXT PRIMARY KEY
@@ -598,25 +563,21 @@ describe('Migration 124: simplify external-event schema', () => {
 			`);
       expect(tableExists(db, 'space_external_events_new')).toBe(true);
 
-      // The migration should drop the leftover table before starting.
       expect(() => runMigration124(db)).not.toThrow();
       expect(tableExists(db, 'space_external_events_new')).toBe(false);
     });
 
     test('recovers when old table was dropped but new table remains', () => {
-      // Simulate a crash after DROP space_external_events but before RENAME.
       db.exec(`ALTER TABLE space_external_events RENAME TO space_external_events_new`);
       expect(tableExists(db, 'space_external_events')).toBe(false);
       expect(tableExists(db, 'space_external_events_new')).toBe(true);
 
-      // The migration should detect this state and rename _new back.
       expect(() => runMigration124(db)).not.toThrow();
       expect(tableExists(db, 'space_external_events')).toBe(true);
       expect(tableExists(db, 'space_external_events_new')).toBe(false);
     });
 
     test('recovers when empty old table was recreated and new table still has data', () => {
-      // First, insert a row into the old-schema table so _new will have data.
       db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
@@ -647,11 +608,7 @@ describe('Migration 124: simplify external-event schema', () => {
         1_700_000_000_000
       );
 
-      // Simulate: M123 recreated an empty old table, but _new still has data
-      // from an interrupted migration.
       db.exec(`ALTER TABLE space_external_events RENAME TO space_external_events_new`);
-      // Now recreate an empty old table (as M123 would do) — use IF NOT EXISTS
-      // since spaces already exists from beforeEach.
       db.exec(`
 				CREATE TABLE IF NOT EXISTS space_external_events (
 					id TEXT PRIMARY KEY,
@@ -681,13 +638,10 @@ describe('Migration 124: simplify external-event schema', () => {
       expect(tableExists(db, 'space_external_events')).toBe(true);
       expect(tableExists(db, 'space_external_events_new')).toBe(true);
 
-      // The migration should detect _new has data while old is empty,
-      // drop the empty old table, and rename _new back.
       expect(() => runMigration124(db)).not.toThrow();
       expect(tableExists(db, 'space_external_events')).toBe(true);
       expect(tableExists(db, 'space_external_events_new')).toBe(false);
 
-      // Verify the data from _new was preserved.
       const count = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events`).get() as {
         n: number;
       };

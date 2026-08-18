@@ -1,13 +1,4 @@
 // @ts-nocheck
-/**
- * Unit tests for ChannelInfoPanel
- *
- * Tests:
- * 1. Renders from→to node names
- * 2. Shows ↩ loop badge when isCyclic=true
- * 3. Calls onClose when close button is clicked
- * 4. Shows ⇄ arrow for bidirectional channels, → for one-way
- */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/preact';

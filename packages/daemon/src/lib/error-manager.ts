@@ -1,10 +1,3 @@
-/**
- * ErrorManager - Centralized error handling and categorization
- *
- * Provides structured error handling with proper user-facing messages
- * and error categorization for better debugging and user experience.
- */
-
 import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
 import { Logger } from './logger';
@@ -21,9 +14,7 @@ export enum ErrorCategory {
   TIMEOUT = 'timeout',
   PERMISSION = 'permission',
   RATE_LIMIT = 'rate_limit',
-  /** Provider-specific authentication failure (expired token, OAuth revoked, etc.) */
   PROVIDER_AUTH_ERROR = 'provider_auth_error',
-  /** Provider bridge/service is unreachable or temporarily unavailable */
   PROVIDER_UNAVAILABLE = 'provider_unavailable',
 }
 
@@ -35,7 +26,6 @@ export interface StructuredError {
   details?: unknown;
   recoverable: boolean;
   timestamp: string;
-  // Rich error context for debugging and UI improvements
   stack?: string;
   sessionContext?: {
     sessionId: string;
@@ -52,14 +42,12 @@ export interface StructuredError {
 
 export class ErrorManager {
   private logger = new Logger('ErrorManager');
-  // Error throttling: track recent errors to prevent flooding client with duplicates
   private recentErrors: Map<string, { count: number; lastSeen: number; firstSeen: number }> =
     new Map();
-  private readonly ERROR_THROTTLE_WINDOW_MS = 10000; // 10 second window
-  private readonly MAX_ERRORS_PER_WINDOW = 3; // Max 3 identical errors per window
+  private readonly ERROR_THROTTLE_WINDOW_MS = 10000;
+  private readonly MAX_ERRORS_PER_WINDOW = 3;
 
-  // API connection state tracking
-  private apiConnectionErrors = 0; // Consecutive connection errors
+  private apiConnectionErrors = 0;
   private lastApiError: string | undefined;
   private lastSuccessfulApiCall = Date.now();
   private currentApiStatus: 'connected' | 'degraded' | 'disconnected' = 'connected';
@@ -69,9 +57,6 @@ export class ErrorManager {
     private internalEventBus?: InternalEventBus<DaemonInternalEventMap>
   ) {}
 
-  /**
-   * Create a structured error from various error types
-   */
   createError(
     error: Error | string,
     category: ErrorCategory = ErrorCategory.SYSTEM,
@@ -83,10 +68,8 @@ export class ErrorManager {
     const errorCode = this.extractErrorCode(errorMessage);
     const stack = error instanceof Error ? error.stack : undefined;
 
-    // Capture additional error properties (cause, code, etc.)
     const enhancedMetadata = { ...metadata };
     if (error instanceof Error) {
-      // Capture error.cause if available (Node.js 16.9.0+)
       if ('cause' in error && error.cause) {
         enhancedMetadata.errorCause =
           error.cause instanceof Error
@@ -98,7 +81,6 @@ export class ErrorManager {
             : String(error.cause);
       }
 
-      // Capture any additional properties on the error object
       const errorObj = error as unknown as Record<string, unknown>;
       const standardProps = ['name', 'message', 'stack', 'cause'];
       for (const [key, value] of Object.entries(errorObj)) {
@@ -120,17 +102,12 @@ export class ErrorManager {
       metadata: enhancedMetadata,
     };
 
-    // Add recovery suggestions
     structuredError.recoverySuggestions = this.getRecoverySuggestions(category, errorCode);
 
     return structuredError;
   }
 
-  /**
-   * Extract error code from error message
-   */
   private extractErrorCode(message: string): string {
-    // Check for common error patterns
     if (message.includes('401') || message.includes('unauthorized')) {
       return 'UNAUTHORIZED';
     }
@@ -170,15 +147,11 @@ export class ErrorManager {
     return 'UNKNOWN';
   }
 
-  /**
-   * Generate user-friendly error message
-   */
   private getUserFriendlyMessage(
     category: ErrorCategory,
     code: string,
     originalMessage: string
   ): string {
-    // Category-specific messages
     switch (category) {
       case ErrorCategory.AUTHENTICATION:
         switch (code) {
@@ -263,11 +236,7 @@ export class ErrorManager {
     }
   }
 
-  /**
-   * Determine if error is recoverable
-   */
   private isRecoverable(category: ErrorCategory, code: string): boolean {
-    // Non-recoverable errors
     if (category === ErrorCategory.AUTHENTICATION && code === 'INVALID_API_KEY') {
       return false;
     }
@@ -278,13 +247,9 @@ export class ErrorManager {
       return false;
     }
 
-    // Most other errors are recoverable (can retry)
     return true;
   }
 
-  /**
-   * Get recovery suggestions for error
-   */
   private getRecoverySuggestions(category: ErrorCategory, code: string): string[] {
     const suggestions: string[] = [];
 
@@ -352,37 +317,28 @@ export class ErrorManager {
     return suggestions;
   }
 
-  /**
-   * Check if error should be throttled based on recent occurrences
-   */
   private shouldThrottleError(sessionId: string, category: ErrorCategory, code: string): boolean {
     const key = `${sessionId}:${category}:${code}`;
     const now = Date.now();
     const existing = this.recentErrors.get(key);
 
     if (!existing) {
-      // First occurrence - allow and track
       this.recentErrors.set(key, { count: 1, lastSeen: now, firstSeen: now });
       return false;
     }
 
-    // Check if we're still in the throttle window
     const timeSinceFirst = now - existing.firstSeen;
     if (timeSinceFirst > this.ERROR_THROTTLE_WINDOW_MS) {
-      // Window expired - reset and allow
       this.recentErrors.set(key, { count: 1, lastSeen: now, firstSeen: now });
       return false;
     }
 
-    // Still in window - check count
     existing.count++;
     existing.lastSeen = now;
     this.recentErrors.set(key, existing);
 
     if (existing.count > this.MAX_ERRORS_PER_WINDOW) {
-      // Throttle this error
       if (existing.count === this.MAX_ERRORS_PER_WINDOW + 1) {
-        // Log once when throttling starts
         this.logger.error(
           `[ErrorManager] Throttling error ${category}:${code} for session ${sessionId} (${existing.count} occurrences in ${timeSinceFirst}ms)`
         );
@@ -393,9 +349,6 @@ export class ErrorManager {
     return false;
   }
 
-  /**
-   * Cleanup old throttle entries (called periodically)
-   */
   private cleanupThrottleMap(): void {
     const now = Date.now();
     for (const [key, value] of this.recentErrors.entries()) {
@@ -405,9 +358,6 @@ export class ErrorManager {
     }
   }
 
-  /**
-   * Update API connection status and broadcast if changed
-   */
   private async updateApiConnectionStatus(
     category: ErrorCategory,
     code: string,
@@ -415,7 +365,6 @@ export class ErrorManager {
   ): Promise<void> {
     let newStatus: 'connected' | 'degraded' | 'disconnected' = this.currentApiStatus;
 
-    // Track connection-related errors
     if (
       category === ErrorCategory.CONNECTION ||
       category === ErrorCategory.TIMEOUT ||
@@ -424,7 +373,6 @@ export class ErrorManager {
       this.apiConnectionErrors++;
       this.lastApiError = errorMessage;
 
-      // Determine status based on consecutive errors
       if (this.apiConnectionErrors >= 5) {
         newStatus = 'disconnected';
       } else if (this.apiConnectionErrors >= 2) {
@@ -432,12 +380,9 @@ export class ErrorManager {
       }
     }
 
-    // Broadcast if status changed
     if (newStatus !== this.currentApiStatus) {
       this.currentApiStatus = newStatus;
 
-      // Emit via InternalEventBus<DaemonInternalEventMap> for internal server-side listeners (StateManager)
-      // API connection is a global event (not session-specific)
       if (this.internalEventBus) {
         this.internalEventBus.publishAsync('api.connection', {
           sessionId: 'global',
@@ -455,21 +400,15 @@ export class ErrorManager {
     }
   }
 
-  /**
-   * Mark successful API call (resets error count)
-   */
   async markApiSuccess(): Promise<void> {
     const hadErrors = this.apiConnectionErrors > 0;
     this.apiConnectionErrors = 0;
     this.lastApiError = undefined;
     this.lastSuccessfulApiCall = Date.now();
 
-    // If we had errors, broadcast recovery
     if (hadErrors && this.currentApiStatus !== 'connected') {
       this.currentApiStatus = 'connected';
 
-      // Emit via InternalEventBus<DaemonInternalEventMap> for internal server-side listeners (StateManager)
-      // API connection is a global event (not session-specific)
       if (this.internalEventBus) {
         this.internalEventBus.publishAsync('api.connection', {
           sessionId: 'global',
@@ -484,9 +423,6 @@ export class ErrorManager {
     }
   }
 
-  /**
-   * Get current API connection state
-   */
   getApiConnectionState() {
     return {
       status: this.currentApiStatus,
@@ -497,30 +433,16 @@ export class ErrorManager {
     };
   }
 
-  /**
-   * Broadcast error to clients (with throttling)
-   * Emits via EventBus for StateManager to fold into state.session
-   */
   async broadcastError(sessionId: string, error: StructuredError): Promise<void> {
-    // Update API connection status (for connection/timeout errors)
     await this.updateApiConnectionStatus(error.category, error.code, error.message);
 
-    // Check if this error should be throttled. Delivery-terminal errors
-    // (auth/permission/quota — see isTerminalTurnError) are NEVER throttled:
-    // the message-delivery bridge classifies the turn from this event, and a
-    // throttled 4th rapid failure would misclassify as recoverable, burning the
-    // retry budget against a credential that cannot succeed. Terminal turns
-    // dead-letter on the first occurrence (no retry storm to damp), so
-    // unthrottling them cannot flood the client. (Codex P2.)
     if (
       !isTerminalTurnError(error) &&
       this.shouldThrottleError(sessionId, error.category, error.code)
     ) {
-      // Don't broadcast throttled errors
       return;
     }
 
-    // Emit via InternalEventBus<DaemonInternalEventMap> for StateManager to fold into state.session
     if (this.internalEventBus) {
       this.internalEventBus.publishAsync('session.error', {
         sessionId,
@@ -529,15 +451,11 @@ export class ErrorManager {
       });
     }
 
-    // Periodically cleanup old entries (every 100 errors)
     if (this.recentErrors.size > 100) {
       this.cleanupThrottleMap();
     }
   }
 
-  /**
-   * Handle and broadcast error with rich context
-   */
   async handleError(
     sessionId: string,
     error: Error | string,
@@ -550,7 +468,6 @@ export class ErrorManager {
     },
     metadata?: Record<string, unknown>
   ): Promise<StructuredError> {
-    // Build session context
     const sessionContext: StructuredError['sessionContext'] = {
       sessionId,
       processingState,
@@ -564,7 +481,6 @@ export class ErrorManager {
       metadata
     );
 
-    // Log for debugging (include stack trace in dev mode)
     if (structuredError.stack) {
       this.logger.error(`[ErrorManager] ${category}:`, {
         code: structuredError.code,
@@ -580,7 +496,6 @@ export class ErrorManager {
       });
     }
 
-    // Broadcast to client
     await this.broadcastError(sessionId, structuredError);
 
     return structuredError;

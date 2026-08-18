@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ShortcutsSettings panel.
- */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen } from '@testing-library/preact';
@@ -38,7 +35,6 @@ describe('ShortcutsSettings', () => {
       shortcut: { code: 'KeyN', mod: true, shift: true },
       run: () => {},
     });
-    // Command without shortcut must not appear.
     commandRegistry.register({
       id: 'c',
       label: 'No shortcut command',
@@ -50,10 +46,8 @@ describe('ShortcutsSettings', () => {
     expect(screen.getByText('Open palette')).toBeTruthy();
     expect(screen.getByText('New session')).toBeTruthy();
     expect(screen.queryByText('No shortcut command')).toBeNull();
-    // Categories rendered as section headings.
     expect(screen.getByText('Help')).toBeTruthy();
     expect(screen.getByText('Sessions')).toBeTruthy();
-    // Display strings rendered — assert generated labels contain the key.
     expect(screen.getAllByText(/K/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/N/).length).toBeGreaterThan(0);
   });

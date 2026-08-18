@@ -6,17 +6,6 @@ import {
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
-/**
- * Acceptance test for task #676: a GLM overloaded error returned in the body
- * (200-with-body or non-2xx-with-body) is normalized to a retryable Anthropic
- * type (overloaded_error / rate_limit_error) with a status the Claude Agent SDK
- * retries (429 / 529) and an `x-should-retry: true` header.
- *
- * GLM (open.bigmodel.cn) frequently returns 200 with a JSON error body instead
- * of an SSE stream — there is no HTTP status for the SDK to retry on, so the
- * error would otherwise surface as terminal.
- */
-
 type FetchImpl = typeof fetch;
 
 function makeServer(upstream: FetchImpl): AnthropicMessagesBridgeServer {
@@ -62,8 +51,6 @@ describe.skipIf(!isBun)(
     });
 
     it('normalizes a 200-with-body GLM overloaded error to retryable overloaded_error', async () => {
-      // GLM returns 200 OK with a JSON error body (application/json), not an SSE
-      // stream. Without normalization the SDK sees a 200 "success".
       server = makeServer(
         async () =>
           new Response(
@@ -102,8 +89,6 @@ describe.skipIf(!isBun)(
     });
 
     it('reclassifies a non-2xx GLM body carrying an overload code to retryable', async () => {
-      // GLM returns 400 but the body carries code 1305 — the status would map to
-      // invalid_request_error (non-retryable) without body inspection.
       server = makeServer(
         async () =>
           new Response(JSON.stringify({ error: { code: '1305', message: '访问量过大' } }), {
@@ -136,9 +121,6 @@ describe.skipIf(!isBun)(
     });
 
     it('recognizes an Anthropic-shaped rate_limit_error body (even on a hard 4xx)', async () => {
-      // The pass-through bridge serves Anthropic-compatible upstreams; an explicit
-      // Anthropic rate_limit_error is the strongest structured signal and must be
-      // retried even when the HTTP status is 400.
       server = makeServer(
         async () =>
           new Response(
@@ -184,15 +166,11 @@ describe.skipIf(!isBun)(
       );
 
       const res = await postMessages(server.port);
-      // Not a recognized transient error → not reclassified. The buffered body is
-      // returned to the SDK unchanged so it isn't silently swallowed.
       expect(res.status).toBe(200);
       expect(await res.text()).toBe(raw);
     });
 
     it('normalizes a count_tokens 200-with-body GLM overload too', async () => {
-      // GLM can return the same overload body from /v1/messages/count_tokens; the
-      // normalization must not be gated to /v1/messages only.
       server = makeServer(
         async () =>
           new Response(JSON.stringify({ error: { code: '1305', message: '访问量过大' } }), {

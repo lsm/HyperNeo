@@ -1,13 +1,3 @@
-/**
- * SpaceWorkflowRepository — completionAutonomyLevel round-trip tests (Task #39).
- *
- * Covers:
- *   - createWorkflow defaults to 3 when `completionAutonomyLevel` is omitted.
- *   - createWorkflow stores the provided value; getWorkflow reads it back.
- *   - updateWorkflow can raise or lower the value, preserving other fields.
- *   - listWorkflows returns the value for every row.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';

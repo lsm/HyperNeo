@@ -1,17 +1,3 @@
-/**
- * PendingAgentMessageRepository Unit Tests
- *
- * Covers:
- *   - enqueue: inserts new row, preserves FIFO order
- *   - enqueue with idempotencyKey: de-duplicates matching tuples
- *   - listPendingForTarget / listPendingForRun: filters and orders correctly
- *   - markDelivered: flips status and records delivery metadata
- *   - markAttemptFailed: increments attempts and transitions to 'failed' at cap
- *   - expireStale: moves expired pending rows to 'expired'
- *   - deleteByRun: removes every row for a run
- *   - FK cascade: deleting the parent workflow run removes its pending rows
- */
-
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import {
@@ -21,10 +7,6 @@ import {
   DEFAULT_PENDING_MESSAGE_RETENTION_MS,
 } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
-
-// ---------------------------------------------------------------------------
-// Test setup
-// ---------------------------------------------------------------------------
 
 let db: Database;
 let repo: PendingAgentMessageRepository;
@@ -53,10 +35,6 @@ beforeEach(() => {
   db = freshDb();
   repo = new PendingAgentMessageRepository(db);
 });
-
-// ---------------------------------------------------------------------------
-// enqueue
-// ---------------------------------------------------------------------------
 
 describe('PendingAgentMessageRepository — enqueue', () => {
   test('inserts a new row with defaults', () => {
@@ -87,12 +65,10 @@ describe('PendingAgentMessageRepository — enqueue', () => {
     expect(record.lastError).toBeNull();
     expect(record.expiresAt).toBeGreaterThan(Date.now());
     expect(typeof record.createdAt).toBe('number');
-    expect(record.deliveryMode).toBeNull(); // omitted → immediate (legacy behavior)
+    expect(record.deliveryMode).toBeNull();
   });
 
   test('persists deliveryMode and reads it back (defer survives the queue)', () => {
-    // A deferred ("queue for next turn") human message must retain its mode so
-    // the flush replays it as 'defer' instead of defaulting to immediate.
     const { record } = repo.enqueue({
       workflowRunId: RUN_ID,
       spaceId: SPACE_ID,
@@ -102,7 +78,6 @@ describe('PendingAgentMessageRepository — enqueue', () => {
       deliveryMode: 'defer',
     });
     expect(record.deliveryMode).toBe('defer');
-    // Round-trips through the DB on read-back too.
     expect(repo.getById(record.id)?.deliveryMode).toBe('defer');
     expect(repo.listPendingForTarget(RUN_ID, 'coder')[0].deliveryMode).toBe('defer');
   });
@@ -118,7 +93,6 @@ describe('PendingAgentMessageRepository — enqueue', () => {
       ttlMs: 500,
     });
     expect(record.expiresAt).toBeGreaterThanOrEqual(before + 500);
-    // Allow some slack but ensure TTL is short-lived.
     expect(record.expiresAt).toBeLessThanOrEqual(Date.now() + 1000);
   });
 
@@ -168,7 +142,6 @@ describe('PendingAgentMessageRepository — enqueue', () => {
     expect(first.deduped).toBe(false);
     expect(second.deduped).toBe(true);
     expect(second.record.id).toBe(first.record.id);
-    // The original message is preserved — re-enqueue does not overwrite.
     expect(second.record.message).toBe('msg-1');
   });
 
@@ -189,15 +162,11 @@ describe('PendingAgentMessageRepository — enqueue', () => {
       message: 'for-reviewer',
       idempotencyKey: 'shared',
     });
-    // Different target → different row even with same key.
     expect(a.record.id).not.toBe(b.record.id);
     expect(b.deduped).toBe(false);
   });
 
   test('listPendingForTarget scopes by workflowNodeId so same-named nodes do not cross-drain', () => {
-    // Two unstarted nodes reuse the 'reviewer' slot; each gets a queued message
-    // stamped with its node ID. Draining for node-2 must return only node-2's
-    // message (+ legacy null-node rows), never node-1's.
     repo.enqueue({
       workflowRunId: RUN_ID,
       spaceId: SPACE_ID,
@@ -214,14 +183,11 @@ describe('PendingAgentMessageRepository — enqueue', () => {
       message: 'for-node-2',
       workflowNodeId: 'node-2',
     });
-    // No node filter (legacy caller) → both rows.
     expect(repo.listPendingForTarget(RUN_ID, 'reviewer')).toHaveLength(2);
-    // Scoped to node-2 → only node-2's row.
     const forNode2 = repo.listPendingForTarget(RUN_ID, 'reviewer', 'node-2');
     expect(forNode2).toHaveLength(1);
     expect(forNode2[0].message).toBe('for-node-2');
     expect(forNode2[0].workflowNodeId).toBe('node-2');
-    // Scoped to node-1 → only node-1's row.
     expect(repo.listPendingForTarget(RUN_ID, 'reviewer', 'node-1')[0].message).toBe('for-node-1');
   });
 
@@ -232,7 +198,6 @@ describe('PendingAgentMessageRepository — enqueue', () => {
       targetKind: 'node_agent',
       targetAgentName: 'coder',
       message: 'legacy',
-      // no workflowNodeId
     });
     const forAnyNode = repo.listPendingForTarget(RUN_ID, 'coder', 'node-9');
     expect(forAnyNode).toHaveLength(1);
@@ -258,10 +223,6 @@ describe('PendingAgentMessageRepository — enqueue', () => {
     expect(b.deduped).toBe(false);
   });
 });
-
-// ---------------------------------------------------------------------------
-// listPending
-// ---------------------------------------------------------------------------
 
 describe('PendingAgentMessageRepository — listPending', () => {
   test('listPendingForTarget returns rows in FIFO order', () => {
@@ -343,10 +304,6 @@ describe('PendingAgentMessageRepository — listPending', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// markDelivered
-// ---------------------------------------------------------------------------
-
 describe('PendingAgentMessageRepository — markDelivered', () => {
   test('transitions a pending row to delivered with session id', () => {
     const { record } = repo.enqueue({
@@ -377,17 +334,12 @@ describe('PendingAgentMessageRepository — markDelivered', () => {
       message: 'hi',
     });
     repo.markDelivered(record.id, 'sess-1');
-    // Second call must not overwrite the first delivery metadata.
     repo.markDelivered(record.id, 'sess-2');
 
     const after = repo.getById(record.id);
     expect(after!.deliveredSessionId).toBe('sess-1');
   });
 });
-
-// ---------------------------------------------------------------------------
-// markAttemptFailed
-// ---------------------------------------------------------------------------
 
 describe('PendingAgentMessageRepository — markAttemptFailed', () => {
   test('increments attempts and records last_error', () => {
@@ -404,7 +356,6 @@ describe('PendingAgentMessageRepository — markAttemptFailed', () => {
     expect(after!.attempts).toBe(1);
     expect(after!.lastError).toBe('boom');
     expect(after!.lastAttemptAt).not.toBeNull();
-    // Still pending because 1 < 3.
     expect(after!.status).toBe('pending');
   });
 
@@ -423,17 +374,12 @@ describe('PendingAgentMessageRepository — markAttemptFailed', () => {
 
     expect(after!.attempts).toBe(2);
     expect(after!.status).toBe('failed');
-    // Subsequent failure calls should be ignored (status is no longer 'pending').
     repo.markAttemptFailed(record.id, 'err-3');
     const again = repo.getById(record.id);
     expect(again!.attempts).toBe(2);
     expect(again!.lastError).toBe('err-2');
   });
 });
-
-// ---------------------------------------------------------------------------
-// expireStale
-// ---------------------------------------------------------------------------
 
 describe('PendingAgentMessageRepository — enforceRetention', () => {
   test('expires pending rows older than the retention window', () => {
@@ -567,10 +513,6 @@ describe('PendingAgentMessageRepository — enforceRetention', () => {
   });
 
   test('partitions the maxPerTarget cap by workflow node (same-slot nodes are independent)', () => {
-    // Two nodes reuse the 'reviewer' slot; each has maxPerTarget rows (so each
-    // is at its own per-node cap, but combined they exceed a name-only cap).
-    // The cap must apply per (run, agent, node) so neither node starves the
-    // other's valid queued messages.
     const now = Date.now();
     for (const [nodeId, idx] of [
       ['node-a', 0],
@@ -593,20 +535,14 @@ describe('PendingAgentMessageRepository — enforceRetention', () => {
     }
 
     const count = repo.enforceRetention({ now: now + 3, maxPerTarget: 2 });
-    // Each node keeps both rows (its own per-node partition is at cap, not over).
     expect(count).toBe(0);
     expect(repo.listPendingForTarget(RUN_ID, 'reviewer', 'node-a')).toHaveLength(2);
     expect(repo.listPendingForTarget(RUN_ID, 'reviewer', 'node-b')).toHaveLength(2);
   });
 });
 
-// ---------------------------------------------------------------------------
-// expireStale
-// ---------------------------------------------------------------------------
-
 describe('PendingAgentMessageRepository — expireStale', () => {
   test('moves expired pending rows to expired', () => {
-    // Row that expires immediately
     const { record: stale } = repo.enqueue({
       workflowRunId: RUN_ID,
       spaceId: SPACE_ID,
@@ -615,7 +551,6 @@ describe('PendingAgentMessageRepository — expireStale', () => {
       message: 'stale',
       expiresAt: Date.now() - 1_000,
     });
-    // Fresh row with far-future expiry
     const { record: fresh } = repo.enqueue({
       workflowRunId: RUN_ID,
       spaceId: SPACE_ID,
@@ -635,7 +570,6 @@ describe('PendingAgentMessageRepository — expireStale', () => {
   });
 
   test('runId=null sweeps across all runs', () => {
-    // Add a second workflow run
     const now = Date.now();
     db.exec(
       `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, started_at, completed_at, created_at, updated_at) VALUES ('run-002', '${SPACE_ID}', 'wf1', 'Run 2', 'in_progress', NULL, NULL, ${now}, ${now})`
@@ -662,10 +596,6 @@ describe('PendingAgentMessageRepository — expireStale', () => {
     expect(count).toBe(2);
   });
 });
-
-// ---------------------------------------------------------------------------
-// deleteByRun + FK cascade
-// ---------------------------------------------------------------------------
 
 describe('PendingAgentMessageRepository — delete + cascade', () => {
   test('deleteByRun removes every row for a run', () => {
@@ -702,10 +632,6 @@ describe('PendingAgentMessageRepository — delete + cascade', () => {
     expect(repo.listAllForRun(RUN_ID)).toHaveLength(0);
   });
 });
-
-// ---------------------------------------------------------------------------
-// findByIdempotencyKey
-// ---------------------------------------------------------------------------
 
 describe('PendingAgentMessageRepository — findByIdempotencyKey', () => {
   test('returns null for unknown keys', () => {

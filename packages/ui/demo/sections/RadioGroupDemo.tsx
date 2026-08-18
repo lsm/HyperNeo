@@ -46,18 +46,15 @@ export function RadioGroupDemo() {
             >
               {(slot: { checked: boolean }) => (
                 <>
-                  {/* Radio circle */}
                   <span class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 border-surface-border transition-colors data-[checked]:border-accent-500">
                     {slot.checked && <span class="h-2 w-2 rounded-full bg-accent-500" />}
                   </span>
 
-                  {/* Label */}
                   <span class="flex flex-1 flex-col">
                     <span class="text-sm font-medium text-text-primary">{plan.name}</span>
                     <span class="text-xs text-text-tertiary mt-0.5">{plan.description}</span>
                   </span>
 
-                  {/* Price */}
                   <span class="text-sm font-semibold text-text-secondary">{plan.price}</span>
                 </>
               )}

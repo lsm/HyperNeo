@@ -1,7 +1,3 @@
-/**
- * Tests for StatusDot component.
- */
-
 import { cleanup, render } from '@testing-library/preact';
 import { afterEach, describe, expect, it } from 'vitest';
 import { StatusDot } from '../StatusDot';

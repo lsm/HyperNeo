@@ -72,9 +72,6 @@ function selectedAgentThinkingLevel(detail: SelectedAgentDetail): ThinkingLevel 
   return detail.agent.thinkingLevel;
 }
 
-// ── Agent editor ─────────────────────────────────────────────────────────────
-
-/** Returns the next free handle: base → base-2 → base-3 … */
 function nextFreeHandle(base: string, existingHandles: Set<string>): string {
   if (!existingHandles.has(base)) return base;
   for (let i = 2; i < 100; i++) {
@@ -288,8 +285,6 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
   );
 }
 
-// ── Template editor ──────────────────────────────────────────────────────────
-
 function TemplateEditor({ onCancel }: { onCancel: () => void }) {
   const [displayName, setDisplayName] = useState('');
   const [key, setKey] = useState('');
@@ -414,8 +409,6 @@ function TemplateEditor({ onCancel }: { onCancel: () => void }) {
     </div>
   );
 }
-
-// ── Agent card ────────────────────────────────────────────────────────────────
 
 interface AgentCardProps {
   agent: SpaceLongHorizonAgent;
@@ -549,8 +542,6 @@ function AgentCard({
   );
 }
 
-// ── Template card ─────────────────────────────────────────────────────────────
-
 function TemplateCard({
   template,
   addedCount,
@@ -597,8 +588,6 @@ function TemplateCard({
   );
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
-
 export function SpaceLongHorizonAgents({
   spaceId,
   navigationSpaceId,
@@ -614,7 +603,6 @@ export function SpaceLongHorizonAgents({
   const templates = spaceStore.longHorizonAgentTemplates.value;
   const loading = !spaceStore.configDataLoaded.value;
 
-  // Trigger lazy config load (agents + templates) if landing here on hard refresh
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
   }, [spaceId]);
@@ -630,10 +618,6 @@ export function SpaceLongHorizonAgents({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Load active-reminder counts for all long-horizon agents in a single batched
-  // RPC (was: N per-agent `listReminders` calls fanned out on every tab visit).
-  // Reminder badges are non-critical, so a failure is swallowed and leaves the
-  // previous counts in place.
   useEffect(() => {
     if (agents.length === 0) return;
     let cancelled = false;
@@ -691,7 +675,6 @@ export function SpaceLongHorizonAgents({
       : null;
   const existingHandles = new Set(agents.map((a) => a.handle));
 
-  // Count active instances by stable template provenance, not mutable agent handles.
   const templateInstanceCounts = new Map<string, number>();
   for (const agent of agents.filter((agent) => agent.status !== 'archived')) {
     if (!agent.templateKey) continue;
@@ -795,7 +778,6 @@ export function SpaceLongHorizonAgents({
           </section>
         )}
 
-        {/* Configured agents */}
         <section aria-label="Configured agents">
           {sortedAgents.length === 0 ? (
             <div class={`rounded-2xl border px-5 py-8 text-center ${FLAT_SURFACE}`}>
@@ -828,7 +810,6 @@ export function SpaceLongHorizonAgents({
           )}
         </section>
 
-        {/* Templates */}
         <section>
           <div class="mb-3 flex items-end justify-between gap-3">
             <div>

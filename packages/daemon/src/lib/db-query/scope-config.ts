@@ -1,83 +1,41 @@
 import type { SessionContext } from '@hyperneo/shared';
 
-// ── Types ──────────────────────────────────────────────────────────────────────
-
-/** The three scope levels that determine table access and filter injection. */
 export type DbScopeType = 'global' | 'room' | 'space';
 
-/** Configuration for indirect scope resolution via a join table. */
 export interface ScopeJoinConfig {
-  /** Column on the target table that references the join table (e.g., 'goal_id'). */
   localColumn: string;
-  /** The intermediate table used for scope resolution (e.g., 'goals'). */
   joinTable: string;
-  /** Primary key column on the join table (e.g., 'id'). */
   joinPkColumn: string;
-  /** The scope column on the join table (e.g., 'room_id' or 'space_id'). */
   scopeColumn: string;
-  /**
-   * When set, uses `LIKE ?` instead of `= ?` for the join's WHERE clause.
-   * The LIKE parameter is constructed as: `likePrefix + scopeValue + likeSuffix`.
-   * Example: likePrefix='space:', likeSuffix=':%' → WHERE session_id LIKE 'space:abc:%'
-   */
   likePrefix?: string;
-  /** Suffix for the LIKE pattern. Only used when likePrefix is set. Defaults to ''. */
   likeSuffix?: string;
 }
 
-/**
- * Configuration for LIKE-based scope filtering on a direct column.
- *
- * Used for tables where scope is encoded in a column value via a prefix pattern,
- * such as session IDs with the format `space:<spaceId>:<rest>`.
- *
- * The LIKE parameter is constructed as: `patternPrefix + scopeValue + patternSuffix`.
- */
 export interface ScopeLikeConfig {
-  /** Column to apply LIKE filter on (e.g., 'id', 'session_id'). */
   column: string;
-  /** Text before the scope value in the LIKE pattern (e.g., 'space:'). */
   patternPrefix: string;
-  /** Text after the scope value in the LIKE pattern (e.g., ':%'). */
   patternSuffix: string;
 }
 
-/** Full configuration for a table within a given scope. */
 export interface ScopeTableConfig {
-  /** Must match the actual table name in the SQLite schema. */
   tableName: string;
-  /** Direct scope column on this table (e.g., 'room_id', 'space_id'). */
   scopeColumn?: string;
-  /** Indirect scope resolution via a join table. */
   scopeJoin?: ScopeJoinConfig;
-  /** LIKE-based scope filter for prefix-encoded IDs (e.g., session ID prefix). */
   scopeLike?: ScopeLikeConfig;
-  /** Columns to exclude from `db_describe_table` and `SELECT *`. */
   blacklistedColumns: string[];
-  /** Human-readable description for the agent. */
   description: string;
 }
 
-/** Resolved scope information for a given session context. */
 export interface ResolvedScope {
   scopeType: DbScopeType;
   scopeValue: string;
 }
 
-/** Parameterized WHERE clause result from `buildScopeFilter`. */
 export interface ScopeFilterResult {
   whereClause: string;
   params: unknown[];
 }
 
-// ── Global column blacklist (applied regardless of scope) ─────────────────────
-
-/**
- * Per-table column blacklists. These columns are excluded from
- * `db_describe_table` output and `SELECT *` expansion.
- *
- * Blacklists are global per-table, not scope-dependent.
- */
 const COLUMN_BLACKLISTS: Record<string, string[]> = {
   sessions: ['config', 'session_context'],
   rooms: ['config'],
@@ -87,16 +45,10 @@ const COLUMN_BLACKLISTS: Record<string, string[]> = {
   job_queue: ['payload'],
   space_agents: ['system_prompt'],
   space_workflows: ['config', 'gates', 'channels', 'hooks'],
-  tasks: ['restrictions'], // internal use — agent-imposed task constraints
+  tasks: ['restrictions'],
   space_workflow_nodes: ['config'],
 };
 
-// ── Scope configurations ──────────────────────────────────────────────────────
-
-/**
- * Tables visible in the **global** scope (no entity filter).
- * No WHERE clause injection — the agent can read all rows.
- */
 const GLOBAL_SCOPE_TABLES: ScopeTableConfig[] = [
   {
     tableName: 'sessions',
@@ -125,9 +77,6 @@ const GLOBAL_SCOPE_TABLES: ScopeTableConfig[] = [
   {
     tableName: 'skills',
     blacklistedColumns: [],
-    // Note: skills.config stores structured config (McpServerSkillConfig with appMcpServerId UUID,
-    // PluginSkillConfig with local path) — no raw credentials. If credential-bearing config is
-    // ever added to skill configs, it must be blacklisted here and in COLUMN_BLACKLISTS.
     description:
       'Available skills (plugins, MCP servers, built-ins) with config, enablement, and validation status.',
   },
@@ -149,10 +98,6 @@ const GLOBAL_SCOPE_TABLES: ScopeTableConfig[] = [
   },
 ];
 
-/**
- * Tables visible in the **room** scope (room agent).
- * Auto-injects `WHERE room_id = ?` (or indirect equivalent) on all queries.
- */
 const ROOM_SCOPE_TABLES: ScopeTableConfig[] = [
   {
     tableName: 'tasks',
@@ -211,10 +156,6 @@ const ROOM_SCOPE_TABLES: ScopeTableConfig[] = [
   },
 ];
 
-/**
- * Tables visible in the **space** scope (space agent).
- * Auto-injects `WHERE space_id = ?` (or indirect equivalent) on all queries.
- */
 const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
   {
     tableName: 'space_agents',
@@ -443,7 +384,6 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
     description:
       'Forge automation cursor state for deduplicating goal-triggered retrospectives and external event runs.',
   },
-  // ── Main-DB tables exposed with space-scoped filtering via session ID prefix ──
   {
     tableName: 'sessions',
     scopeLike: { column: 'id', patternPrefix: 'space:', patternSuffix: ':%' },
@@ -481,50 +421,24 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
   },
 ];
 
-/**
- * Tables that are intentionally excluded from ALL scopes.
- * These include sensitive config tables and internal infrastructure.
- *
- * Note: `sdk_messages`, `session_groups`, and `session_group_members` are now
- * accessible in the **space** scope (with session ID prefix filtering) and are
- * therefore NOT in this list. They remain inaccessible in global and room scopes.
- */
 const EXCLUDED_TABLE_NAMES: string[] = [
-  // Sensitive configuration (contains auth tokens, API keys)
   'auth_config',
   'global_tools_config',
   'global_settings',
-  // Provider registry and credential store — admin tables, not queryable by agents
   'providers',
   'provider_credentials',
-  // session_groups, session_group_members, and sdk_messages are now in SPACE_SCOPE_TABLES.
-  // task_group_events remains excluded — internal event log, not useful for ad-hoc queries.
   'task_group_events',
-  // Space GitHub tables are internal webhook/polling state and can include raw PR/comment payloads
-  // plus webhook secret metadata; use Space task activity surfaces instead of ad-hoc DB queries.
   'space_github_events',
   'space_github_watched_repos',
-  // Node execution tracking — transient per-run agent state, not useful for ad-hoc queries
   'node_executions',
-  // Tool continuation recovery — internal bridge/runtime recovery state for orphaned tool_result chunks
   'tool_continuation_recovery',
   'tool_continuation_inbox',
-  // Pending agent messages — internal queue-until-active infrastructure for Task Agent
-  // send_message delivery; flushed by TaskAgentManager when target sessions activate.
   'pending_agent_messages',
-  // Internal relational projection of replacement metadata embedded in sdk_messages.
   'sdk_message_replacements',
-  // Long-term agent inbox — internal queue-until-active infrastructure for Space agents.
   'space_agent_inbox_messages',
-  // Dynamically created tables (managed by FilterConfigManager, not part of static schema)
   'github_filter_configs',
-  // Workspace history — user-level path bookmarks, not useful for agent queries
   'workspace_history',
-  // MCP enablement overrides — infrastructure config spanning multiple scopes
-  // (space/room/session), not useful for ad-hoc agent queries. Agents should
-  // read MCP state through the resolver rather than hitting the table directly.
   'mcp_enablement',
-  // Message search FTS projection and FTS5 shadow tables — queried through message.search RPC.
   'message_search_content',
   'message_search_fts',
   'message_search_fts_config',
@@ -532,54 +446,36 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'message_search_fts_data',
   'message_search_fts_docsize',
   'message_search_fts_idx',
-  // External Event Bus — internal event routing/delivery/config state, not useful for ad-hoc agent queries.
   'external_event_source_configs',
   'external_event_extension_configs',
   'space_external_event_source_configs',
   'space_external_events',
   'space_external_event_deliveries',
-  // Durable delivery-turn completion markers — internal message-delivery v2
-  // re-claim state (delivery_turn_end), not useful for ad-hoc agent queries.
   'delivery_turn_end',
-  // Monotonic consumption-watermark counter — internal message-delivery v2
-  // sequence state (delivery_consumed_seq), not useful for ad-hoc agent queries.
   'delivery_consumed_seq',
-  // Agent memory search index/vector storage — query through space_agent_memory instead.
   'memory_vectors',
   'space_agent_memory_fts',
   'space_agent_memory_fts_config',
   'space_agent_memory_fts_data',
   'space_agent_memory_fts_docsize',
   'space_agent_memory_fts_idx',
-  // Migration bookkeeping — internal one-time migration markers.
   'migration_markers',
-  // Dropped tables (no longer exist in schema)
   'space_session_groups',
   'space_session_group_members',
   'space_workflow_transitions',
-  // Immutable append-only workflow-definition version history (RFC §4 Phase 1) — internal
-  // audit/pinning substrate, not useful for ad-hoc agent queries.
   'space_workflow_definition_versions',
-  // Legacy dropped tables
   'messages',
   'tool_calls',
-  // Long-horizon Space agent persistence — internal goal/scope/reminder/subscription state
   'space_long_horizon_agents',
   'space_long_horizon_agent_goals',
   'space_long_horizon_agent_forge_scopes',
   'space_long_horizon_agent_reminders',
   'space_long_horizon_agent_event_subscriptions',
-  // Workflow-run event subscription routing — internal pub/sub trie source of
-  // truth, not useful for ad-hoc agent queries.
   'space_workflow_event_subscriptions',
-  // Space agent management tables — agent goal/scope assignments and reminders;
-  // internal MCP tool state, not useful for ad-hoc agent queries.
   'space_agent_goal_assignments',
   'space_agent_forge_scope_assignments',
   'space_agent_reminders',
 ];
-
-// ── Scope config registry ─────────────────────────────────────────────────────
 
 const SCOPE_CONFIGS: Record<DbScopeType, ScopeTableConfig[]> = {
   global: GLOBAL_SCOPE_TABLES,
@@ -587,22 +483,10 @@ const SCOPE_CONFIGS: Record<DbScopeType, ScopeTableConfig[]> = {
   space: SPACE_SCOPE_TABLES,
 };
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
-/**
- * Returns the full table configurations for a given scope type.
- */
 export function getScopeConfig(scopeType: DbScopeType): ScopeTableConfig[] {
   return SCOPE_CONFIGS[scopeType];
 }
 
-/**
- * Resolves the scope type and value from a session context.
- *
- * - roomId present → room scope
- * - spaceId present (no roomId) → space scope
- * - Neither → global scope
- */
 export function getScopeForSession(context: SessionContext): ResolvedScope {
   if (context.roomId) {
     return { scopeType: 'room', scopeValue: context.roomId };
@@ -613,50 +497,26 @@ export function getScopeForSession(context: SessionContext): ResolvedScope {
   return { scopeType: 'global', scopeValue: '' };
 }
 
-/**
- * Returns the list of table names accessible within a given scope.
- */
 export function getAccessibleTableNames(scopeType: DbScopeType): string[] {
   return SCOPE_CONFIGS[scopeType].map((cfg) => cfg.tableName);
 }
 
-/**
- * Returns column blacklists for a given table.
- * Blacklists are global per-table (not scope-dependent).
- * Returns an empty array for tables with no blacklisted columns.
- */
 export function getBlacklistedColumns(tableName: string): string[] {
   return COLUMN_BLACKLISTS[tableName] ?? [];
 }
 
-/**
- * Returns the list of tables that are excluded from all scopes.
- * Used for schema evolution validation to ensure sensitive/infrastructure
- * tables are never accidentally exposed.
- */
 export function getExcludedTableNames(): string[] {
   return [...EXCLUDED_TABLE_NAMES];
 }
 
-/**
- * Builds a parameterized WHERE clause for a scoped table configuration.
- *
- * Direct scope:       `room_id = ?`  (one param)
- * LIKE direct scope:  `id LIKE ?`    (one param — pattern is prefix+scopeValue+suffix)
- * Indirect scope:     `goal_id IN (SELECT id FROM goals WHERE room_id = ?)`  (one param)
- * LIKE indirect scope:`id IN (SELECT group_id FROM members WHERE session_id LIKE ?)`
- * Global scope:       returns empty clause (no filtering)
- */
 export function buildScopeFilter(
   tableConfig: ScopeTableConfig,
   scopeValue: string
 ): ScopeFilterResult {
-  // Global tables have no scope column, join, or like — no filter needed
   if (!tableConfig.scopeColumn && !tableConfig.scopeJoin && !tableConfig.scopeLike) {
     return { whereClause: '', params: [] };
   }
 
-  // Direct scope filter
   if (tableConfig.scopeColumn) {
     return {
       whereClause: `${tableConfig.scopeColumn} = ?`,
@@ -664,7 +524,6 @@ export function buildScopeFilter(
     };
   }
 
-  // LIKE-based direct scope filter (e.g., session ID prefix matching)
   if (tableConfig.scopeLike) {
     const { column, patternPrefix, patternSuffix } = tableConfig.scopeLike;
     return {
@@ -673,11 +532,9 @@ export function buildScopeFilter(
     };
   }
 
-  // Indirect scope filter via join table
   if (tableConfig.scopeJoin) {
     const join = tableConfig.scopeJoin;
     if (join.likePrefix !== undefined) {
-      // LIKE-based join: e.g., session_groups scoped via session_group_members.session_id
       return {
         whereClause: `${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} LIKE ?)`,
         params: [`${join.likePrefix}${scopeValue}${join.likeSuffix ?? ''}`],

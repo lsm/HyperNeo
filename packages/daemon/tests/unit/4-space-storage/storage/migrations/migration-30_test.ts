@@ -1,34 +1,13 @@
-/**
- * Migration 30 Tests
- *
- * Tests for Migration 30: Add `layout` column to `space_workflows`.
- *
- * Covers:
- * - layout column exists after migration on a fresh DB
- * - Migration is idempotent (running twice does not throw)
- * - Existing rows without layout read as NULL
- * - layout column accepts and round-trips valid JSON
- * - Migration adds column to existing DB that pre-dates it (upgrade path)
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function columnExists(db: BunDatabase, table: string, column: string): boolean {
   const info = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   return info.some((c) => c.name === column);
 }
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 describe('Migration 30: layout column on space_workflows', () => {
   let testDir: string;
@@ -111,16 +90,10 @@ describe('Migration 30: layout column on space_workflows', () => {
   });
 
   test('adding layout column to existing DB without it (upgrade path)', () => {
-    // Simulate a DB that went through migration 29 but not 30 by running
-    // migrations up to 29, then manually dropping the layout column simulation
-    // by verifying the ALTER TABLE path in migration 30 works.
     runMigrations(db, () => {});
 
-    // At this point migration 30 already ran. Verify the column is present.
     expect(columnExists(db, 'space_workflows', 'layout')).toBe(true);
 
-    // Running migrations again (idempotency check) should not fail
-    // even if the column already exists — the try/catch guard handles it.
     expect(() => runMigrations(db, () => {})).not.toThrow();
   });
 });

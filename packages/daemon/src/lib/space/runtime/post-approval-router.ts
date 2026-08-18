@@ -1,53 +1,3 @@
-/**
- * PostApprovalRouter — deterministic dispatch for workflow post-approval routes.
- *
- * PR 2/5 of the task-agent-as-post-approval-executor refactor. See
- * `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
- * §1.4 for the runtime-driven routing mechanics and §2.3 for the event shapes.
- *
- * ## What it does
- *
- * When a task transitions into `approved` (from the end-node `approve_task`
- * path in `space-runtime.ts`, or from the human `approvePendingCompletion`
- * RPC handler in `space-task-handlers.ts`), this router consults the approving
- * workflow node's `postApproval` route (falling back to legacy
- * `workflow.postApproval`) and performs one of three deterministic actions:
- *
- *   1. **No route declared** → runtime transitions `approved → done` directly
- *      and emits `task.status-transition: approved → done source=no-post-approval`.
- *   2. **Any `targetAgent`** (a *space task node agent* — see terminology
- *      below) → spawn a fresh sub-session for that agent with the interpolated
- *      kickoff message, and stamp `post_approval_session_id` +
- *      `post_approval_started_at` on the task.
- *
- * ## Terminology — "space task node agent"
- *
- * Throughout this plan, "space task node agent" refers to an agent session
- * spawned for a node in a space workflow run — distinct from the Task Agent
- * (the orchestrator) and from ad-hoc chat sessions. In the current codebase
- * this is the `'node_agent'` kind in
- * `packages/shared/src/types/space.ts` (`SpaceMemberSession.kind`). See
- * `PostApprovalRoute.targetAgent` in the same file: the validator in
- * `post-approval-validator.ts` restricts valid targets to the `name` of a declared `WorkflowNodeAgent`.
- *
- * ## Double-fire guard (§3.4)
- *
- * The router is idempotent against double-invocation for the node-agent-spawn
- * case: if a task already has `postApprovalSessionId` set AND the referenced
- * session is alive (not terminal), the router returns a no-op result with
- * `mode: 'already-routed'`.
- *
- *  * ## Feature flag (kill switch only)
- *
- * As of PR 4/5 the completion-action pipeline has been deleted — the
- * PostApprovalRouter is the only approval path. The
- * `HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING` env var and
- * `isPostApprovalRoutingEnabled()` helper are retained as an emergency kill
- * switch: production call sites no longer consult it (PR 4/5 removed the
- * branch), but operators can still inspect the flag state in diagnostics.
- * There is no longer a fallback path to switch to.
- */
-
 import type {
   SpaceTask,
   SpaceWorkflow,
@@ -65,23 +15,8 @@ import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-vali
 
 const log = new Logger('post-approval-router');
 
-/**
- * Feature-flag env var. Call-sites read this and only invoke the router when
- * it is truthy (`'1'` or `'true'`). Exported so tests can assert on it and
- * so the RPC handler + space-runtime share a single key.
- */
 export const POST_APPROVAL_ROUTING_FLAG_ENV = 'HYPERNEO_TASK_AGENT_POST_APPROVAL_ROUTING';
 
-/**
- * Returns true when the feature flag indicates post-approval routing should
- * remain enabled. Retained as an emergency kill switch only — as of PR 4/5
- * the production call sites have been collapsed (no legacy path to fall back
- * to), so the helper is consulted only in diagnostics and tests.
- *
- * Default-ON as of PR 3/5. Set the env var to any of `0` / `false` / `no` /
- * `off` to read as disabled. An absent value (`undefined`) or any unrecognised
- * string keeps routing enabled.
- */
 export function isPostApprovalRoutingEnabled(
   env: Readonly<Record<string, string | undefined>> = process.env
 ): boolean {
@@ -93,22 +28,6 @@ export function isPostApprovalRoutingEnabled(
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// Dispatch delegates
-// ---------------------------------------------------------------------------
-
-/**
- * Delegate for spawning the post-approval sub-session on the
- * space-task-node-agent path. Production wires this to
- * `TaskAgentManager.spawnPostApprovalSubSession`; tests pass a stub.
- *
- * The delegate is responsible for everything that differs between a regular
- * node activation and a post-approval activation:
- *   - Creating a `NodeExecution` row (or reusing the agent's existing session).
- *   - Attaching the same MCP server set that the target node would have.
- *   - Injecting the `kickoffMessage` as the first user turn.
- *   - Returning the spawned session ID so the router can stamp it on the task.
- */
 export interface PostApprovalSubSessionSpawner {
   spawnPostApprovalSubSession(args: {
     task: SpaceTask;
@@ -118,13 +37,6 @@ export interface PostApprovalSubSessionSpawner {
   }): Promise<{ sessionId: string }>;
 }
 
-/**
- * Optional delegate used to confirm that a previously-recorded
- * `postApprovalSessionId` still points at a live session. When omitted the
- * router treats any non-null `postApprovalSessionId` as live (conservative:
- * it skips the second spawn). Production wires this to
- * `TaskAgentManager.isSessionAlive`.
- */
 export interface SessionLivenessProbe {
   isSessionAlive(sessionId: string): boolean;
 }
@@ -133,53 +45,22 @@ export interface PostApprovalRouterDeps {
   taskRepo: Pick<SpaceTaskRepository, 'updateTask' | 'getTask'>;
   spawner: PostApprovalSubSessionSpawner;
   livenessProbe?: SessionLivenessProbe;
-  /** Optional hook that fills task outcome fields before terminal side effects run. */
   resolveCompletionOutcome?: (task: SpaceTask) => UpdateSpaceTaskParams | null;
-  /** Optional goal service for processing terminal goal-task side effects. */
   goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
-  /** Optional Forge scope service for automatic terminal task evidence capture. */
   evolutionScopeService?: Pick<
     import('../evolution-scope-service').EvolutionScopeService,
     'captureCompletedTaskEvidence'
   >;
 }
 
-// ---------------------------------------------------------------------------
-// Route inputs + outputs
-// ---------------------------------------------------------------------------
-
-/**
- * Runtime context assembled by the caller. Includes every key that the
- * template interpolator recognises (see
- * `post-approval-template.ts:POST_APPROVAL_TEMPLATE_KEYS`) plus arbitrary
- * extra keys signalled by the end-node agent (e.g. `pr_url`).
- */
 export interface PostApprovalRouteContext extends PostApprovalTemplateContext {
-  /** How the task reached `approved`. Included in post-approval routing context. */
   approvalSource: SpaceApprovalSource;
-  /** Slot/name of the agent that approved the task. */
   reviewerName?: string;
-  /** Owning space ID. */
   spaceId?: string;
-  /** Workspace path for the space's worktree. */
   workspacePath?: string;
-  /** Space's autonomy level at routing time. */
   autonomyLevel?: number;
 }
 
-/**
- * Discriminated union describing which branch the router took.
- *
- *   - `mode: 'no-route'`        — no `postApproval` declared; task transitioned
- *                                 directly `approved → done`.
- *   - `mode: 'spawn'`           — a node-agent sub-session was spawned; its
- *                                 ID was stamped on the task.
- *   - `mode: 'already-routed'`  — idempotency guard: a prior spawn's session
- *                                 is still alive, so this call is a no-op.
- *   - `mode: 'skipped'`         — router precondition failed (e.g. missing
- *                                 workflow, empty instructions for inline path).
- *                                 Not a failure — caller may choose to surface.
- */
 export type PostApprovalRouteResult =
   | { mode: 'no-route'; taskStatus: 'done' }
   | {
@@ -190,10 +71,6 @@ export type PostApprovalRouteResult =
     }
   | { mode: 'already-routed'; postApprovalSessionId: string }
   | { mode: 'skipped'; reason: string };
-
-// ---------------------------------------------------------------------------
-// Event shapes (§2.3)
-// ---------------------------------------------------------------------------
 
 const POST_APPROVAL_COMPLETION_INSTRUCTIONS =
   `When the post-approval work is finished, call mark_complete to transition the\n` +
@@ -210,24 +87,12 @@ export function appendPostApprovalCompletionInstructions(interpolatedInstruction
   return `${trimmed}\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`;
 }
 
-/**
- * Collect every declared post-approval route in a workflow. Approval is a
- * task-level event, so collection scans EVERY node (plus the legacy workflow-
- * level route as a fallback) regardless of which node submitted or approved —
- * this is what lets the merger route fire no matter who submitted. The router
- * then dispatches AT MOST ONE route (the first); see `route()` for why
- * multi-route fan-out is not supported.
- */
 export function collectPostApprovalRoutes(workflow: SpaceWorkflow | null): PostApprovalRoute[] {
   if (!workflow) return [];
-  // Approval is a task-level event: collect post-approval routes from EVERY
-  // node, independent of which node submitted or approved.
   const nodeRoutes = workflow.nodes
     .map((node) => node.postApproval)
     .filter((route): route is PostApprovalRoute => !!route);
   if (nodeRoutes.length > 0) return nodeRoutes;
-  // Legacy workflow-level fallback (pre-node-level): only when no node declares
-  // its own route, so a workflow with both never double-dispatches.
   return workflow.postApproval ? [workflow.postApproval] : [];
 }
 
@@ -239,13 +104,6 @@ export function collectDispatchablePostApprovalRoutes(
   );
 }
 
-/**
- * Null out the four pending-completion fields on a task. Exported so the
- * dispatch layer (`SpaceRuntime.dispatchPostApproval`) can guarantee the
- * cleanup in a single location regardless of which router branch ran (or
- * whether the router threw) — see the Layer B invariant documented on
- * `dispatchPostApproval`.
- */
 export function clearPendingCompletionState(
   taskRepo: Pick<SpaceTaskRepository, 'updateTask'>,
   taskId: string
@@ -258,18 +116,6 @@ export function clearPendingCompletionState(
   });
 }
 
-/**
- * Re-frame a post-approval dispatch error (e.g. an SDK `"user interrupted"`
- * abort during sub-session spawn) as a user-facing message. The raw SDK
- * string gives the operator no context — they cannot tell what was
- * "interrupted" or that the approval itself actually succeeded. This maps
- * known abort/interrupt/cancel signatures to a clearer phrasing and always
- * makes explicit that the approval was recorded and only the post-approval
- * dispatch failed.
- *
- * Used by the `approvePendingCompletion` RPC handler (Layer C) when
- * `dispatchPostApproval` throws after the `review → approved` status commit.
- */
 export function mapPostApprovalDispatchWarning(detail: string): string {
   const trimmed = (detail ?? '').trim();
   const lower = trimmed.toLowerCase();
@@ -281,54 +127,22 @@ export function mapPostApprovalDispatchWarning(detail: string): string {
   return `Approval recorded, but ${cause}. The task is approved; you may need to manually trigger post-approval work.`;
 }
 
-// ---------------------------------------------------------------------------
-// PostApprovalRouter
-// ---------------------------------------------------------------------------
-
-/**
- * Deterministic dispatcher for the post-approval step. Instantiated once by
- * the runtime layer (see `space-runtime.ts`), reused for every approval.
- */
 export class PostApprovalRouter {
   constructor(private readonly deps: PostApprovalRouterDeps) {}
 
-  /**
-   * Route a just-`approved` task. Must be called AFTER the caller has
-   * transitioned the task into `approved` — the router inspects the
-   * current task state but never performs the `in_progress → approved`
-   * or `review → approved` hop itself (those live at the call sites so
-   * their emit + liveness semantics stay local).
-   */
   async route(
     task: SpaceTask,
     workflow: SpaceWorkflow | null,
     context: PostApprovalRouteContext
   ): Promise<PostApprovalRouteResult> {
-    // -------------------------------------------------------------------
-    // 0. Sanity: task MUST currently be in `approved`. If it isn't, the
-    //    caller misordered things — log loudly and skip.
-    // -------------------------------------------------------------------
     if (task.status !== 'approved') {
       const reason = `task ${task.id} is not in 'approved' (status=${task.status}); router will not dispatch`;
       log.warn(`PostApprovalRouter.route: ${reason}`);
       return { mode: 'skipped', reason };
     }
 
-    // Source node is informational only (logging + the no-route audit write):
-    // route RESOLUTION is task-level via `collectPostApprovalRoutes` above, so
-    // it does not depend on this value. Read it from the DURABLE
-    // `postApprovalSourceNodeId` field — NOT `pendingCompletionSubmittedByNodeId`,
-    // which is cleared atomically in the same UPDATE that commits `approved`
-    // (task #851) and is therefore null by the time the router runs. The
-    // durable field also survives a crashed dispatch, so a reconciliation retry
-    // still logs/audits the correct submitting node. Falls back to the workflow
-    // end node when no node submitted (Task Agent / UI self-submit).
     const sourceNodeId = task.postApprovalSourceNodeId || workflow?.endNodeId || null;
 
-    // Approval is a task-level event: collect post-approval routes from EVERY
-    // node (plus the legacy workflow-level route), independent of which node
-    // submitted or approved. Filter to dispatchable routes — each must name a
-    // targetAgent, and the legacy 'task-agent' target is no longer supported.
     const allRoutes = collectPostApprovalRoutes(workflow);
     const dispatchable: PostApprovalRoute[] = [];
     for (const candidate of allRoutes) {
@@ -342,9 +156,6 @@ export class PostApprovalRouter {
       dispatchable.push(candidate);
     }
 
-    // -------------------------------------------------------------------
-    // 1. No postApproval declared anywhere → close the task directly.
-    // -------------------------------------------------------------------
     if (dispatchable.length === 0) {
       const outcomeUpdates = this.deps.resolveCompletionOutcome?.(task) ?? null;
       const updates: UpdateSpaceTaskParams = {
@@ -358,14 +169,9 @@ export class PostApprovalRouter {
         postApprovalSessionId: null,
         postApprovalStartedAt: null,
         postApprovalBlockedReason: null,
-        // The task is leaving `approved` → done: drop the durable source field
-        // alongside the other post-approval tracking fields. (This branch writes
-        // status directly via taskRepo, bypassing setTaskStatus' centralised
-        // approved-exit clear, so it must null the field itself.)
         postApprovalSourceNodeId: null,
       };
       this.deps.taskRepo.updateTask(task.id, updates);
-      // Best-effort Forge evidence capture — must not block approval routing.
       try {
         this.deps.evolutionScopeService?.captureCompletedTaskEvidence({ taskId: task.id });
       } catch (err) {
@@ -373,7 +179,6 @@ export class PostApprovalRouter {
           `Forge evidence capture threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
         );
       }
-      // Best-effort goal terminal handling — must not block approval routing.
       try {
         this.deps.goalService?.handleTaskTerminal(task.id);
       } catch (err) {
@@ -390,30 +195,12 @@ export class PostApprovalRouter {
       return { mode: 'no-route', taskStatus: 'done' };
     }
 
-    // -------------------------------------------------------------------
-    // 2. Node-agent dispatch: deliver the (single) post-approval route.
-    // -------------------------------------------------------------------
-    // Approval is a task-level event, so the router scans EVERY node to find
-    // the declared route — the merger fires regardless of which node submitted
-    // or approved. But multi-route fan-out is NOT supported: completion is
-    // uncoordinated (`mark_complete` closes the shared task), the singular
-    // `postApprovalSessionId` can track only one session, and the sibling-
-    // quiesce sweep excludes only that one session. Rather than ship half-
-    // coordinated parallel post-approval workers, dispatch AT MOST ONE route
-    // (the first declared). Every built-in workflow declares exactly one route
-    // (the merger), so this is exact in practice; a custom or migrated workflow
-    // that happens to declare more degrades to the first with a warning instead
-    // of running broken parallel workers (e.g. two merge kickoffs into the same
-    // PR). When Commit 2 moves the route to the agent slot, this collapses
-    // further.
     if (dispatchable.length > 1) {
       log.warn(
         `PostApprovalRouter.route: task ${task.id} declares ${dispatchable.length} post-approval routes; multi-route fan-out is not supported. Only the first (targetAgent=${dispatchable[0]?.targetAgent}) will dispatch — extras ignored.`
       );
     }
 
-    // Double-fire guard (§3.4): if a post-approval session is already live,
-    // skip re-dispatch.
     if (task.postApprovalSessionId) {
       const alive = this.deps.livenessProbe
         ? this.deps.livenessProbe.isSessionAlive(task.postApprovalSessionId)
@@ -429,8 +216,6 @@ export class PostApprovalRouter {
       }
     }
 
-    // `workflow` is non-null whenever `dispatchable` is non-empty (routes come
-    // from it), but narrow for the spawn call below.
     if (!workflow) {
       const reason = `task ${task.id}: cannot spawn post-approval sub-session without workflow`;
       log.warn(`PostApprovalRouter.route: ${reason}`);

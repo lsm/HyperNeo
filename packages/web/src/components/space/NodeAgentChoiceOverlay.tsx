@@ -1,29 +1,10 @@
-/**
- * NodeAgentChoiceOverlay — identity-safe picker for a clicked workflow node.
- *
- * Shown when a canvas node click is ambiguous (a multi-agent node with several
- * live sessions, or several declared slots none of which have started) or has
- * no agents at all. Each live choice opens that exact session; each pending
- * choice opens the node's own pending-agent overlay (activating just that slot
- * on first send). The overlay never silently selects an unrelated session or an
- * arbitrary slot — the user picks.
- *
- * Mirrors the Modal pattern used by the other task-level overlays
- * (SubmitForReviewModal, EditTaskModal) rather than the history-backed session
- * slide-over: it is transient, and selecting a choice transitions into the
- * proper history-backed overlay.
- */
-
 import type { NodeChoice } from '../../lib/node-click-resolver';
 import { Modal } from '../ui/Modal';
 
 export interface NodeAgentChoiceOverlayProps {
   isOpen: boolean;
-  /** Node name, shown in the modal title. */
   nodeName: string;
-  /** Empty array → zero-agent empty state. */
   choices: NodeChoice[];
-  /** Called with the chosen live/pending target. */
   onSelect: (choice: NodeChoice) => void;
   onClose: () => void;
 }

@@ -1,6 +1,3 @@
-/**
- * Unit tests for shared rate-limit detection helpers.
- */
 import { describe, expect, test } from 'bun:test';
 import {
   computeRateLimitRetryMs,
@@ -50,8 +47,6 @@ describe('isRateLimitError', () => {
   });
 
   test('bare HTTP 403 without rate-limit text is NOT matched (permission failures)', () => {
-    // GitHub returns 403 for both rate-limit AND permission errors; bare
-    // status text must not classify permission errors as rate-limit retries.
     expect(isRateLimitError('HTTP 403: Resource not accessible by integration')).toBe(false);
     expect(isRateLimitError('HTTP 403')).toBe(false);
   });

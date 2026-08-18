@@ -1,10 +1,3 @@
-/**
- * SpaceManager Tests
- *
- * Tests workspace path validation, space lifecycle, and session management.
- * Uses real temporary directories to exercise path resolution.
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, realpathSync, writeFileSync } from 'node:fs';
@@ -23,7 +16,6 @@ describe('SpaceManager', () => {
     createSpaceTables(db);
     manager = new SpaceManager(db as any);
 
-    // Create a real temporary directory for workspace path tests
     tmpDir = mkdtempSync(join(tmpdir(), 'space-manager-test-'));
   });
 
@@ -45,7 +37,6 @@ describe('SpaceManager', () => {
 
       expect(space.id).toBeDefined();
       expect(space.name).toBe('My Project');
-      // Real path should be stored (symlinks resolved)
       expect(space.workspacePath).toBeTruthy();
       expect(space.status).toBe('active');
     });
@@ -57,8 +48,6 @@ describe('SpaceManager', () => {
 
       try {
         const space = await manager.createSpace({ workspacePath: linkPath, name: 'Linked' });
-        // The stored path should be the real path (with all symlinks resolved)
-        // Use realpathSync to get the canonical path for comparison (handles macOS /var -> /private/var)
         const expectedRealPath = realpathSync(realDir);
         expect(space.workspacePath).toBe(expectedRealPath);
       } finally {
@@ -90,8 +79,6 @@ describe('SpaceManager', () => {
     });
 
     it('throws if workspace path is used by an archived space (paths are permanent identifiers)', async () => {
-      // Design decision: workspace_path has a UNIQUE DB constraint with no status filter,
-      // so archived spaces permanently claim their path. This test documents that behavior.
       const space = await manager.createSpace({ workspacePath: tmpDir, name: 'First' });
       await manager.archiveSpace(space.id);
 
@@ -126,7 +113,6 @@ describe('SpaceManager', () => {
         name: 'Default Autonomy Space',
       });
 
-      // DB default is 1 (supervised)
       expect(space.autonomyLevel).toBe(1);
     });
   });

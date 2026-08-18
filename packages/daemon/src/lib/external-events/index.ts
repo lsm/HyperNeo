@@ -1,11 +1,3 @@
-/**
- * External Event Bus — public exports.
- *
- * Source-agnostic primitives consumed by extension publishers, the
- * `ExternalEventService`, the workflow runtime, and tests. GitHub-specific
- * code lives under `./github` (added in a later task).
- */
-
 export {
   type ExternalEvent,
   type ExternalEventState,

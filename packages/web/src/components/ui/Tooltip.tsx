@@ -53,7 +53,6 @@ export function Tooltip({ content, children, position = 'top', delay = 500 }: To
           role="tooltip"
         >
           {content}
-          {/* Arrow */}
           <div
             class={cn(
               'absolute w-0 h-0 border-4 border-transparent border-t-dark-800',

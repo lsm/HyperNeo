@@ -1,22 +1,11 @@
-/**
- * Tests for File RPC Handlers
- *
- * Tests the RPC handlers for file operations:
- * - file.read - Read file content
- * - file.list - List directory contents
- * - file.tree - Get file tree for UI
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import { setupFileHandlers } from '../../../../src/lib/rpc-handlers/file-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 
-// Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
-// Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -47,7 +36,6 @@ function createMockMessageHub(): {
   return { hub, handlers };
 }
 
-// Helper to create a mock AgentSession
 function createMockAgentSession(workspacePath: string = '/workspace/test'): {
   agentSession: AgentSession;
 } {
@@ -62,7 +50,6 @@ function createMockAgentSession(workspacePath: string = '/workspace/test'): {
   return { agentSession };
 }
 
-// Helper to create mock SessionManager
 function createMockSessionManager(): {
   sessionManager: SessionManager;
   getSessionAsyncMock: ReturnType<typeof mock>;
@@ -86,7 +73,6 @@ describe('File RPC Handlers', () => {
     messageHubData = createMockMessageHub();
     sessionManagerData = createMockSessionManager();
 
-    // Setup handlers with mocked dependencies
     setupFileHandlers(messageHubData.hub, sessionManagerData.sessionManager);
   });
 
@@ -110,13 +96,8 @@ describe('File RPC Handlers', () => {
       const handler = messageHubData.handlers.get('file.read');
       expect(handler).toBeDefined();
 
-      // Note: This will fail with real FileManager if file doesn't exist
-      // In a unit test, we're testing the handler logic, not FileManager implementation
       const { agentSession } = createMockAgentSession('/tmp');
       sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
-
-      // The test should verify the handler calls the right methods
-      // FileManager will throw if file doesn't exist, which is expected behavior
     });
 
     it('reads file with base64 encoding', async () => {
@@ -125,15 +106,11 @@ describe('File RPC Handlers', () => {
 
       const { agentSession } = createMockAgentSession('/tmp');
       sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
-
-      // Verify handler accepts encoding parameter
     });
 
     it('handles missing path parameter', async () => {
       const handler = messageHubData.handlers.get('file.read');
       expect(handler).toBeDefined();
-
-      // Handler should pass undefined path to FileManager which will handle error
     });
   });
 
@@ -155,8 +132,6 @@ describe('File RPC Handlers', () => {
 
       const { agentSession } = createMockAgentSession('/tmp');
       sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
-
-      // Handler should return { files: [...] }
     });
 
     it('lists directory contents recursively', async () => {
@@ -165,8 +140,6 @@ describe('File RPC Handlers', () => {
 
       const { agentSession } = createMockAgentSession('/tmp');
       sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
-
-      // Handler should pass recursive flag to FileManager
     });
 
     it('uses default path when not provided', async () => {
@@ -175,8 +148,6 @@ describe('File RPC Handlers', () => {
 
       const { agentSession } = createMockAgentSession('/tmp');
       sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
-
-      // Handler should default to '.' path
     });
   });
 
@@ -198,8 +169,6 @@ describe('File RPC Handlers', () => {
 
       const { agentSession } = createMockAgentSession('/tmp');
       sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
-
-      // Handler should default to maxDepth of 3
     });
 
     it('gets file tree with custom depth', async () => {
@@ -208,8 +177,6 @@ describe('File RPC Handlers', () => {
 
       const { agentSession } = createMockAgentSession('/tmp');
       sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
-
-      // Handler should pass custom maxDepth
     });
 
     it('uses default path when not provided', async () => {
@@ -218,8 +185,6 @@ describe('File RPC Handlers', () => {
 
       const { agentSession } = createMockAgentSession('/tmp');
       sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
-
-      // Handler should default to '.' path
     });
   });
 

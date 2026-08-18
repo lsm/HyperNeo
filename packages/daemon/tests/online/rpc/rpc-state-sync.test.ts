@@ -1,13 +1,3 @@
-/**
- * State Sync RPC Tests
- *
- * Tests state snapshot and system RPC endpoints:
- * - Global state snapshot (state.global.snapshot)
- * - Session state snapshot (state.session.snapshot)
- * - System state (state.system) — health, config, auth
- * - Per-channel versioning
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import { STATE_CHANNELS } from '@hyperneo/shared';

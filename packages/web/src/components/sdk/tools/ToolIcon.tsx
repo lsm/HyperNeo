@@ -1,15 +1,8 @@
-/**
- * ToolIcon Component - Displays icons for different tool types
- */
-
 import type { ToolIconProps } from './tool-types.ts';
 import { getToolConfig } from './tool-registry.ts';
 import { getIconSizeClasses, getToolColors } from './tool-utils.ts';
 import { cn } from '../../../lib/utils.ts';
 
-/**
- * Default icon SVGs for each tool type
- */
 function getDefaultIcon(
   toolName: string,
   sizeClass: string,
@@ -19,9 +12,7 @@ function getDefaultIcon(
   const animationClass = animated ? 'animate-spin' : '';
   const iconClass = cn(sizeClass, colorClass, animationClass, 'flex-shrink-0');
 
-  // Determine icon based on tool name
   switch (toolName) {
-    // File operations
     case 'Write':
       return (
         <svg class={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -71,7 +62,6 @@ function getDefaultIcon(
         </svg>
       );
 
-    // Search operations
     case 'Glob':
       return (
         <svg class={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -96,7 +86,6 @@ function getDefaultIcon(
         </svg>
       );
 
-    // Terminal operations
     case 'Bash':
     case 'BashOutput':
     case 'KillShell':
@@ -111,7 +100,6 @@ function getDefaultIcon(
         </svg>
       );
 
-    // Agent/Task operations
     case 'Task':
     case 'Agent':
     case 'TaskOutput':
@@ -127,7 +115,6 @@ function getDefaultIcon(
         </svg>
       );
 
-    // Web operations
     case 'WebFetch':
       return (
         <svg class={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -152,7 +139,6 @@ function getDefaultIcon(
         </svg>
       );
 
-    // Todo operations
     case 'TodoWrite':
       return (
         <svg class={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -165,7 +151,6 @@ function getDefaultIcon(
         </svg>
       );
 
-    // System operations
     case 'AskUserQuestion':
       return (
         <svg class={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -215,7 +200,6 @@ function getDefaultIcon(
         </svg>
       );
 
-    // MCP operations - use plugin icon
     default:
       if (toolName.startsWith('mcp__')) {
         return (
@@ -230,7 +214,6 @@ function getDefaultIcon(
         );
       }
 
-      // Default fallback - settings/tool icon
       return (
         <svg class={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
@@ -250,9 +233,6 @@ function getDefaultIcon(
   }
 }
 
-/**
- * ToolIcon Component
- */
 export function ToolIcon({
   toolName,
   size = 'md',
@@ -264,7 +244,6 @@ export function ToolIcon({
   const colors = getToolColors(toolName);
   const sizeClass = getIconSizeClasses(size);
 
-  // Use custom icon if provided
   if (config.icon) {
     const CustomIcon = config.icon;
     return (
@@ -274,6 +253,5 @@ export function ToolIcon({
     );
   }
 
-  // Use default icon
   return getDefaultIcon(toolName, sizeClass, colors.iconColor, animated);
 }

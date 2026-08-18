@@ -1,20 +1,3 @@
-/**
- * GLM → Anthropic Resume Test
- *
- * Focused test to investigate whether SDK session resume works when
- * switching from GLM (proxy provider, SDK model 'default') to
- * Anthropic (native provider, SDK model 'opus'/'sonnet').
- *
- * The hypothesis: the SDK model ID changes from 'default' to 'opus'
- * during the switch, and the SDK subprocess may not handle the model
- * mismatch during resume — causing a startup timeout.
- *
- * REQUIREMENTS:
- * - GLM_API_KEY or ZHIPU_API_KEY must be set
- * - ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN must be set
- * - Makes real API calls (costs money)
- */
-
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
@@ -28,8 +11,6 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-// Use realpath to resolve macOS symlinks (/var → /private/var).
-// The SDK subprocess resolves CWD via realpath, so our path must match.
 const TMP_DIR = realpathSync(process.env.TMPDIR || '/tmp');
 
 function requireCredentialsOrFail(): void {
@@ -49,9 +30,6 @@ function requireCredentialsOrFail(): void {
   }
 }
 
-/**
- * Dump thinking blocks from a JSONL session file for diagnostic comparison.
- */
 function dumpThinkingBlocks(workspacePath: string, sdkSessionId: string, label: string): void {
   const filePath = getSDKSessionFilePath(workspacePath, sdkSessionId);
   if (!existsSync(filePath)) {
@@ -113,7 +91,6 @@ async function waitForSDKSessionEstablished(
   throw new Error(`SDK session not established within ${timeout}ms.`);
 }
 
-// Skipped: all tests send real messages across providers — too slow and flaky in CI
 describe.skip('GLM → Anthropic Resume Investigation', () => {
   let daemon: DaemonServerContext & { daemonContext: DaemonAppContext };
 
@@ -131,9 +108,6 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
     }
   }, 20000);
 
-  /**
-   * Test 1: Baseline — verify GLM session works and sdkSessionId is captured
-   */
   test('baseline: GLM session starts and captures sdkSessionId', async () => {
     const { sessionId } = (await daemon.messageHub.request('session.create', {
       workspacePath: `${TMP_DIR}/test-glm-baseline-${Date.now()}`,
@@ -149,9 +123,6 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
     expect(sdkId).toBeTruthy();
   }, 120000);
 
-  /**
-   * Test 2: Baseline — verify Anthropic session works
-   */
   test('baseline: Anthropic session starts and captures sdkSessionId', async () => {
     const { sessionId } = (await daemon.messageHub.request('session.create', {
       workspacePath: `${TMP_DIR}/test-anthropic-baseline-${Date.now()}`,
@@ -167,17 +138,6 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
     expect(sdkId).toBeTruthy();
   }, 120000);
 
-  /**
-   * Test 3: THE KEY TEST — GLM → Anthropic switch with message after switch
-   *
-   * This reproduces the reported issue:
-   * 1. Create GLM session, send message, establish sdkSessionId
-   * 2. Switch to Anthropic (sonnet — cheapest)
-   * 3. Send a message — does it work or timeout?
-   *
-   * Expected behavior (desired): message works on first try
-   * Current behavior (bug): startup timeout, user must resend
-   */
   test('GLM → Anthropic sonnet: send message after switch', async () => {
     const workspacePath = `${TMP_DIR}/test-glm-to-anthropic-${Date.now()}`;
     const { sessionId } = (await daemon.messageHub.request('session.create', {
@@ -191,20 +151,17 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
     })) as { sessionId: string };
     daemon.trackSession(sessionId);
 
-    // Phase 1: Establish GLM session with a message
     await sendMessage(daemon, sessionId, 'Say "hello" in one word.');
     await waitForIdle(daemon, sessionId);
 
     const sdkIdBefore = await waitForSDKSessionEstablished(daemon, sessionId);
     expect(sdkIdBefore).toBeTruthy();
 
-    // Diagnostic: check session file exists before switch
     const filePathBefore = getSDKSessionFilePath(workspacePath, sdkIdBefore);
     const fileExistsBefore = existsSync(filePathBefore);
     // biome-ignore lint/suspicious/noConsole: test diagnostic
     console.log(`Before switch: session file exists=${fileExistsBefore}, path=${filePathBefore}`);
 
-    // Also check the SDK projects dir
     const projectKey = workspacePath.replace(/[/.]/g, '-');
     const projectDir = join(homedir(), '.claude', 'projects', projectKey);
     try {
@@ -218,7 +175,6 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
       console.log(`SDK project dir ${projectDir}: does not exist or not readable`);
     }
 
-    // Phase 2: Switch to Anthropic sonnet
     const switchResult = (await daemon.messageHub.request('session.model.switch', {
       sessionId,
       model: 'sonnet',
@@ -226,10 +182,8 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
     })) as { success: boolean; model: string };
     expect(switchResult.success).toBe(true);
 
-    // Dump thinking blocks from GLM session BEFORE switch
     dumpThinkingBlocks(workspacePath, sdkIdBefore, 'GLM→Anthropic BEFORE switch');
 
-    // Diagnostic: check session file AFTER switch (before any message)
     const fileExistsAfterSwitch = existsSync(filePathBefore);
     // biome-ignore lint/suspicious/noConsole: test diagnostic
     console.log(`After switch: session file exists=${fileExistsAfterSwitch}`);
@@ -242,24 +196,19 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
       console.log(`After switch: project dir not readable`);
     }
 
-    // Wait for the restart to settle
     await waitForIdle(daemon, sessionId);
 
-    // Phase 3: Send message on Anthropic — this is where the timeout occurs
     const systemInitPromise = waitForSystemInit(daemon, sessionId);
     await sendMessage(daemon, sessionId, 'Say "world" in one word.');
     const systemInit = await systemInitPromise;
     await waitForIdle(daemon, sessionId);
 
-    // Verify system:init arrived (no timeout)
     expect(systemInit.type).toBe('system');
     expect(systemInit.subtype).toBe('init');
 
-    // Check sdkSessionId — is it the same (resume worked) or different (new session)?
     const sdkIdAfter = getAgentSdkSessionId(daemon, sessionId);
     expect(sdkIdAfter).toBeTruthy();
 
-    // Log whether resume preserved the ID or a new one was created
     if (sdkIdAfter === sdkIdBefore) {
       // biome-ignore lint/suspicious/noConsole: test diagnostic
       console.log('✓ sdkSessionId PRESERVED — resume worked across GLM→Anthropic');
@@ -271,9 +220,6 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
     }
   }, 300000);
 
-  /**
-   * Test 4: GLM → Anthropic opus (the exact scenario from the bug report)
-   */
   test('GLM → Anthropic opus: send message after switch', async () => {
     const { sessionId } = (await daemon.messageHub.request('session.create', {
       workspacePath: `${TMP_DIR}/test-glm-to-opus-${Date.now()}`,
@@ -286,14 +232,12 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
     })) as { sessionId: string };
     daemon.trackSession(sessionId);
 
-    // Phase 1: Establish GLM session
     await sendMessage(daemon, sessionId, 'Say "hello" in one word.');
     await waitForIdle(daemon, sessionId);
 
     const sdkIdBefore = await waitForSDKSessionEstablished(daemon, sessionId);
     expect(sdkIdBefore).toBeTruthy();
 
-    // Phase 2: Switch to Anthropic opus (the reported failing case)
     const switchResult = (await daemon.messageHub.request('session.model.switch', {
       sessionId,
       model: 'opus',
@@ -301,10 +245,8 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
     })) as { success: boolean; model: string };
     expect(switchResult.success).toBe(true);
 
-    // Wait for restart to settle
     await waitForIdle(daemon, sessionId);
 
-    // Phase 3: Send message on opus
     const systemInitPromise = waitForSystemInit(daemon, sessionId);
     await sendMessage(daemon, sessionId, 'Say "world" in one word.');
     const systemInit = await systemInitPromise;
@@ -327,10 +269,6 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
     }
   }, 300000);
 
-  /**
-   * Test 5: Anthropic → GLM (reverse direction)
-   * Control test — does switching FROM Anthropic TO GLM also have issues?
-   */
   test('Anthropic sonnet → GLM: send message after switch', async () => {
     const { sessionId } = (await daemon.messageHub.request('session.create', {
       workspacePath: `${TMP_DIR}/test-anthropic-to-glm-${Date.now()}`,
@@ -343,14 +281,12 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
     })) as { sessionId: string };
     daemon.trackSession(sessionId);
 
-    // Phase 1: Establish Anthropic session
     await sendMessage(daemon, sessionId, 'Say "hello" in one word.');
     await waitForIdle(daemon, sessionId);
 
     const sdkIdBefore = await waitForSDKSessionEstablished(daemon, sessionId);
     expect(sdkIdBefore).toBeTruthy();
 
-    // Phase 2: Switch to GLM
     const switchResult = (await daemon.messageHub.request('session.model.switch', {
       sessionId,
       model: 'glm-5',
@@ -360,7 +296,6 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
 
     await waitForIdle(daemon, sessionId);
 
-    // Phase 3: Send message on GLM
     const systemInitPromise = waitForSystemInit(daemon, sessionId);
     await sendMessage(daemon, sessionId, 'Say "world" in one word.');
     const systemInit = await systemInitPromise;
@@ -383,14 +318,7 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
     }
   }, 300000);
 
-  /**
-   * Test 6: SDK model ID observation
-   *
-   * Observe what SDK model IDs are used for each provider to confirm
-   * the model mismatch hypothesis.
-   */
   test('observe SDK model IDs: GLM uses "default", Anthropic uses actual model', async () => {
-    // GLM session
     const { sessionId: glmSessionId } = (await daemon.messageHub.request('session.create', {
       workspacePath: `${TMP_DIR}/test-model-observe-glm-${Date.now()}`,
       title: 'Model Observe GLM',
@@ -403,7 +331,6 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
     const glmInit = await glmInitPromise;
     await waitForIdle(daemon, glmSessionId);
 
-    // Anthropic session
     const { sessionId: anthSessionId } = (await daemon.messageHub.request('session.create', {
       workspacePath: `${TMP_DIR}/test-model-observe-anth-${Date.now()}`,
       title: 'Model Observe Anthropic',
@@ -421,21 +348,10 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
     // biome-ignore lint/suspicious/noConsole: test diagnostic
     console.log(`Anthropic system:init model = "${anthInit.model}"`);
 
-    // Both should have model info
     expect(glmInit.model).toBeDefined();
     expect(anthInit.model).toBeDefined();
-
-    // GLM should route via ANTHROPIC_DEFAULT_*_MODEL env vars
-    // Anthropic should use the actual model name
-    // The key observation: are these different enough to cause resume issues?
   }, 300000);
 
-  /**
-   * Test 7: MiniMax M2.7 → Anthropic sonnet (comparison with GLM)
-   *
-   * Same flow as Test 3 but with MiniMax as the initial provider.
-   * Compare thinking block signatures between MiniMax and GLM.
-   */
   test('MiniMax M2.7 → Anthropic sonnet: send message after switch', async () => {
     const workspacePath = `${TMP_DIR}/test-minimax-to-anthropic-${Date.now()}`;
     const { sessionId } = (await daemon.messageHub.request('session.create', {
@@ -449,23 +365,19 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
     })) as { sessionId: string };
     daemon.trackSession(sessionId);
 
-    // Phase 1: Establish MiniMax session with a message
     await sendMessage(daemon, sessionId, 'Say "hello" in one word.');
     await waitForIdle(daemon, sessionId);
 
     const sdkIdBefore = await waitForSDKSessionEstablished(daemon, sessionId);
     expect(sdkIdBefore).toBeTruthy();
 
-    // Dump thinking blocks from MiniMax session
     dumpThinkingBlocks(workspacePath, sdkIdBefore, 'MiniMax→Anthropic BEFORE switch');
 
-    // Check session file exists before switch
     const filePathBefore = getSDKSessionFilePath(workspacePath, sdkIdBefore);
     const fileExistsBefore = existsSync(filePathBefore);
     // biome-ignore lint/suspicious/noConsole: test diagnostic
     console.log(`[MiniMax→Anthropic] Before switch: session file exists=${fileExistsBefore}`);
 
-    // Phase 2: Switch to Anthropic sonnet
     const switchResult = (await daemon.messageHub.request('session.model.switch', {
       sessionId,
       model: 'sonnet',
@@ -475,7 +387,6 @@ describe.skip('GLM → Anthropic Resume Investigation', () => {
 
     await waitForIdle(daemon, sessionId);
 
-    // Phase 3: Send message on Anthropic — compare behavior with GLM test
     const systemInitPromise = waitForSystemInit(daemon, sessionId);
     await sendMessage(daemon, sessionId, 'Say "world" in one word.');
     const systemInit = await systemInitPromise;

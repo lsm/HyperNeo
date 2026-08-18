@@ -1,7 +1,3 @@
-/**
- * Tests for the shared inspect-panel inner chrome: InspectPanel shell,
- * InspectPanelHeader, and InspectBadge.
- */
 // @ts-nocheck
 import { cleanup, render } from '@testing-library/preact';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -18,7 +14,6 @@ describe('InspectPanel', () => {
     );
     expect(container.querySelector('[data-testid="hdr"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="body"]')).toBeTruthy();
-    // Outer shell carries the shared column classes.
     expect(container.firstElementChild.className).toContain('flex h-full min-w-0 flex-col');
   });
 
@@ -42,7 +37,6 @@ describe('InspectPanelHeader', () => {
     const heading = container.querySelector('h2');
     expect(heading?.textContent).toBe('Release health');
     expect(heading.className).toContain('truncate');
-    // pr-12 keeps content clear of the floating toggle.
     expect(container.querySelector('.pr-12')).toBeTruthy();
     expect(container.querySelector('.bg-dark-700')).toBeTruthy();
   });

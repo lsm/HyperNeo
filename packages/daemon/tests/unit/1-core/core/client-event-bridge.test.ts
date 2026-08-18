@@ -1,10 +1,3 @@
-/**
- * ClientEventBridge Tests
- *
- * Verifies that the bridge declaratively maps InternalEventBus events to
- * ClientEventGateway deliveries with the correct channels.
- */
-
 import { describe, expect, it, mock } from 'bun:test';
 import {
   ClientEventBridge,
@@ -150,8 +143,6 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.start();
 
-      // 24 space + 4 session + 2 conn/auth + 1 config + 2 error = 33 unique events
-      // (context.updated has 2 handlers but is 1 unique event key)
       expect(eventHandlers.size).toBe(33);
     });
   });
@@ -163,7 +154,6 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.stop();
 
-      // 34 internalEventBus.subscribe calls total (context.updated has 2 handlers)
       expect(unsubscribers.length).toBe(34);
     });
   });
@@ -544,7 +534,6 @@ describe('ClientEventBridge', () => {
       createClientEventBridge(internalEventBus, {} as IClientEventGateway, broadcasts).start();
 
       const data = { sessionId: 'sess-1', contextInfo: { files: 5, tokens: 1000 } };
-      // The broadcast trigger is the second handler (index 1) for context.updated
       await eventHandlers.get('context.updated')![1](data);
 
       expect(broadcastCalls).toHaveLength(1);

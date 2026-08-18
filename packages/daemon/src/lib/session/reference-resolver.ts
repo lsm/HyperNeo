@@ -1,11 +1,3 @@
-/**
- * Reference Resolver
- *
- * Provides static extraction and async resolution of @ references embedded
- * in user message text. Used by MessagePersistence to attach resolved entity
- * data to persisted messages as ReferenceMetadata.
- */
-
 import type { ReferenceMention, ReferenceMetadata, ResolvedReference } from '@hyperneo/shared';
 import { REFERENCE_PATTERN } from '@hyperneo/shared';
 import type {
@@ -17,21 +9,14 @@ import { Logger } from '../logger';
 
 const log = new Logger('ReferenceResolver');
 
-// ============================================================================
-// Public interfaces
-// ============================================================================
-
 export interface ResolutionContext {
   workspacePath: string | null;
   roomId: string | null;
 }
 
 export interface PreprocessedMessage {
-  /** Original text, unchanged */
   text: string;
-  /** Resolved reference data, keyed by @ref{type:id} token */
   referenceMetadata: ReferenceMetadata;
-  /** Full resolved reference objects, keyed by @ref{type:id} token (used for agent context injection) */
   resolvedReferences: Record<string, ResolvedReference>;
 }
 
@@ -40,19 +25,9 @@ export interface ReferenceResolverDeps {
   goalRepo: GoalRepoForReference;
 }
 
-// ============================================================================
-// ReferenceResolver class
-// ============================================================================
-
 export class ReferenceResolver {
   constructor(private deps: ReferenceResolverDeps) {}
 
-  /**
-   * Extract all @ref{type:id} tokens from a text string.
-   *
-   * NOTE: REFERENCE_PATTERN uses the 'g' flag and is stateful. lastIndex is
-   * always reset to 0 before use to prevent stale state from prior calls.
-   */
   static extractReferences(text: string): ReferenceMention[] {
     REFERENCE_PATTERN.lastIndex = 0;
     const mentions: ReferenceMention[] = [];
@@ -62,7 +37,6 @@ export class ReferenceResolver {
       const type = match[1] as ReferenceMention['type'];
       const id = match[2];
 
-      // Only accept known reference types
       if (type !== 'task' && type !== 'goal' && type !== 'file' && type !== 'folder') {
         continue;
       }
@@ -73,10 +47,6 @@ export class ReferenceResolver {
     return mentions;
   }
 
-  /**
-   * Resolve a single reference mention to its entity data.
-   * Returns null when the reference cannot be found or the type is unknown.
-   */
   async resolveReference(
     mention: ReferenceMention,
     context: ResolutionContext
@@ -108,18 +78,10 @@ export class ReferenceResolver {
     }
   }
 
-  /**
-   * Resolve all mentions in parallel.
-   *
-   * Deduplicates by token before resolving to avoid redundant I/O.
-   * Returns a map keyed by the raw @ref{type:id} token string.
-   * Null (unresolved) results are excluded from the returned map.
-   */
   async resolveAllReferences(
     mentions: ReferenceMention[],
     context: ResolutionContext
   ): Promise<Record<string, ResolvedReference>> {
-    // Deduplicate by token to avoid redundant resolution work
     const seen = new Map<string, ReferenceMention>();
     for (const mention of mentions) {
       const token = `@ref{${mention.type}:${mention.id}}`;
@@ -146,10 +108,6 @@ export class ReferenceResolver {
     return metadata;
   }
 
-  // ============================================================================
-  // Private per-type resolution helpers
-  // ============================================================================
-
   private resolveTask(id: string, roomId: string | null): ResolvedReference | null {
     let task = this.deps.taskRepo.getTask(id);
     if (!task && roomId) {
@@ -160,9 +118,6 @@ export class ReferenceResolver {
       return null;
     }
 
-    // When a room context is present, confirm the task belongs to that room
-    // (prevent cross-room access via UUID). Without room context, UUID lookup
-    // is allowed for global sessions (e.g. lobby).
     if (roomId && (task as { roomId?: string }).roomId !== roomId) {
       return null;
     }
@@ -180,9 +135,6 @@ export class ReferenceResolver {
       return null;
     }
 
-    // When a room context is present, confirm the goal belongs to that room
-    // (prevent cross-room access via UUID). Without room context, UUID lookup
-    // is allowed for global sessions (e.g. lobby).
     if (roomId && (goal as { roomId?: string }).roomId !== roomId) {
       return null;
     }

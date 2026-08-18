@@ -1,19 +1,9 @@
 // @ts-nocheck
-/**
- * Tests for useMessageMaps hook
- *
- * Tests all four maps:
- * - toolResultsMap: Maps tool use IDs to their results
- * - toolInputsMap: Maps tool use IDs to their input data
- * - sessionInfoMap: Maps user message UUIDs to session init info
- * - subagentMessagesMap: Maps parent tool use IDs to sub-agent messages
- */
 
 import { renderHook } from '@testing-library/preact';
 import { useMessageMaps } from '../useMessageMaps.ts';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
-// UUID format for test data
 const uuid1 = '00000000-0000-0000-0000-000000000001';
 const uuid2 = '00000000-0000-0000-0000-000000000002';
 const uuid3 = '00000000-0000-0000-0000-000000000003';
@@ -379,7 +369,7 @@ describe('useMessageMaps', () => {
             role: 'user',
             content: [
               {
-                type: 'tool_use', // This shouldn't happen but should be ignored
+                type: 'tool_use',
                 id: 'fake-tool',
                 name: 'Fake',
                 input: {},
@@ -540,7 +530,7 @@ describe('useMessageMaps', () => {
         },
         {
           type: 'system',
-          subtype: 'result', // Not 'init'
+          subtype: 'result',
           uuid: uuid2,
           session_id: 'session-1',
           message: { summary: 'Task completed' },
@@ -584,7 +574,6 @@ describe('useMessageMaps', () => {
 
       const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
 
-      // Should attach to user message (uuid1), not assistant messages
       expect(result.current.sessionInfoMap.get(uuid1)).toBe(systemInit);
     });
   });
@@ -1005,7 +994,6 @@ describe('useMessageMaps', () => {
             content: [{ type: 'tool_use', id: 'nested-1', name: 'Bash', input: {} }],
           },
         },
-        // Nested tool_use whose parent is NOT in the slice (paginated out).
         {
           type: 'assistant',
           uuid: uuid3,
@@ -1020,9 +1008,9 @@ describe('useMessageMaps', () => {
 
       const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
       const f = result.current.foldableToolUseIds;
-      expect(f.has('task-1')).toBe(true); // top-level
-      expect(f.has('nested-1')).toBe(true); // nested, parent present
-      expect(f.has('nested-orphan')).toBe(false); // nested, parent paginated out
+      expect(f.has('task-1')).toBe(true);
+      expect(f.has('nested-1')).toBe(true);
+      expect(f.has('nested-orphan')).toBe(false);
     });
   });
 

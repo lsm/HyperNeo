@@ -1,19 +1,3 @@
-/**
- * WorkflowNode
- *
- * Renders a single workflow step as a draggable card on the visual canvas.
- *
- * Features:
- * - Card shows step number badge, step name, and assigned agent name
- * - Start node gets a green border and "START" badge
- * - Input port (top-center, hidden on start node) and output port (bottom-center)
- *   for future connection creation
- * - Draggable: mousedown on card body starts drag; delta is converted from
- *   screen-space to canvas-space using the current viewport scale
- * - Emits onPositionChange(stepId, newPosition) to parent on every move
- * - stopPropagation on port mousedown prevents drag from starting on port clicks
- */
-
 import { useEffect, useCallback, useRef } from 'preact/hooks';
 import type { SpaceWorkerAgent, WorkflowChannel } from '@hyperneo/shared';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
@@ -22,52 +6,26 @@ import type { Point } from './types';
 import type { AnchorSide } from './semanticWorkflowGraph';
 import { getVisualNodeDimensions } from './nodeMetrics';
 
-// ============================================================================
-// Props
-// ============================================================================
-
 export type PortType = 'input' | 'output';
 
 export interface WorkflowNodeProps {
-  /** Zero-based index within the steps array; used for step number badge */
   stepIndex: number;
   step: NodeDraft;
-  /** Absolute position in canvas coordinates */
   position: Point;
-  /** Full agents list — used to resolve the agent name from step.agentId */
   agents: SpaceWorkerAgent[];
-  /** Workflow-level channels (kept for canvas compatibility; not rendered inside node cards). */
   workflowChannels?: WorkflowChannel[];
   isSelected?: boolean;
-  /** First step in the workflow — hides input port, adds green border + START badge */
   isStartNode?: boolean;
-  /** Last step in the workflow — adds purple END badge */
   isEndNode?: boolean;
-  /** Current viewport scale — used to convert screen-space drag deltas to canvas-space */
   scale: number;
-  /** Called continuously while the node is being dragged */
   onPositionChange: (stepId: string, newPosition: Point) => void;
-  /** Called when a connection port is pressed */
   onPortMouseDown?: (stepId: string, portType: PortType, e: MouseEvent, portEl: Element) => void;
-  /** Called when the mouse enters a port during a connection drag */
   onPortMouseEnter?: (stepId: string, portType: PortType) => void;
-  /** Called when the mouse leaves a port during a connection drag */
   onPortMouseLeave?: (stepId: string, portType: PortType) => void;
-  /** Highlight the input port as a valid drop target (during connection drag) */
   isDropTarget?: boolean;
-  /** Called when the card body is clicked (for selection) */
   onClick?: (stepId: string) => void;
-  /**
-   * Runtime agent completion states for this node.
-   * When provided, per-agent status indicators are shown inside the node card.
-   */
   nodeTaskStates?: AgentTaskState[];
-  /** Semantic edge anchor sides currently in use for this node. */
   activeAnchorSides?: AnchorSide[];
-  /**
-   * When false, disables drag affordances — no cursor/shadow change on mousedown,
-   * and drag state is never set. Defaults to true.
-   */
   draggable?: boolean;
 }
 
@@ -143,10 +101,6 @@ function renderDock(side: AnchorSide, visible: boolean, highlighted = false) {
   );
 }
 
-// ============================================================================
-// Component
-// ============================================================================
-
 export function WorkflowNode({
   stepIndex,
   step,
@@ -179,12 +133,10 @@ export function WorkflowNode({
     agents.find((a) => a.id === resolvedSingleAgentId)?.name ??
     resolvedSingleAgentId;
 
-  // Build a lookup: agentName → AgentTaskState
   const taskStateByAgent = new Map<string | null, AgentTaskState>(
     (nodeTaskStates ?? []).map((s) => [s.agentName, s])
   );
 
-  // ---- Drag state ----
   const dragState = useRef<{
     startX: number;
     startY: number;
@@ -192,11 +144,9 @@ export function WorkflowNode({
     origY: number;
   } | null>(null);
 
-  // Track whether a meaningful drag has occurred (to suppress post-drag click)
   const hasDraggedRef = useRef(false);
-  const DRAG_THRESHOLD = 3; // px
+  const DRAG_THRESHOLD = 3;
 
-  // Keep refs to the latest values so window handlers don't close over stale data
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
 
@@ -205,20 +155,16 @@ export function WorkflowNode({
 
   const nodeRef = useRef<HTMLDivElement>(null);
 
-  // ---- Window-level listeners (always registered, guard on dragState) ----
-  // Mirrors the pattern used by VisualCanvas for its spacebar+drag pan.
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
       if (!dragState.current) return;
       const dx = e.clientX - dragState.current.startX;
       const dy = e.clientY - dragState.current.startY;
 
-      // Only start tracking drag after threshold
       if (Math.abs(dx) <= DRAG_THRESHOLD && Math.abs(dy) <= DRAG_THRESHOLD) return;
 
       hasDraggedRef.current = true;
 
-      // Convert screen-space delta to canvas-space (guard against scale=0)
       const safeScale = Math.max(scaleRef.current, 0.01);
       const canvasDx = dx / safeScale;
       const canvasDy = dy / safeScale;
@@ -245,21 +191,17 @@ export function WorkflowNode({
     };
   }, [stepId]);
 
-  // ---- Card body mousedown — starts drag (disabled when draggable=false) ----
   const handleMouseDown = useCallback(
     (e: MouseEvent) => {
-      // Read-only mode: no drag affordances, but still stop propagation so
-      // the canvas pan handler cannot capture the mousedown event.
       if (!draggable) {
         e.stopPropagation();
         return;
       }
-      // Only primary button
       if (e.button !== 0) return;
-      e.stopPropagation(); // prevent canvas pan from triggering
+      e.stopPropagation();
       e.preventDefault();
 
-      hasDraggedRef.current = false; // reset for this interaction
+      hasDraggedRef.current = false;
 
       dragState.current = {
         startX: e.clientX,
@@ -276,21 +218,19 @@ export function WorkflowNode({
     [draggable, position.x, position.y]
   );
 
-  // ---- Card click — for selection (suppressed after drag) ----
   const handleClick = useCallback(
     (e: MouseEvent) => {
       e.stopPropagation();
-      if (hasDraggedRef.current) return; // don't fire selection after drag
+      if (hasDraggedRef.current) return;
       onClick?.(stepId);
     },
     [onClick, stepId]
   );
 
-  // ---- Port handlers ----
   const handleInputPortMouseDown = useCallback(
     (e: MouseEvent) => {
-      e.preventDefault(); // prevent browser text selection while dragging from the port
-      e.stopPropagation(); // prevent card drag from starting
+      e.preventDefault();
+      e.stopPropagation();
       onPortMouseDown?.(stepId, 'input', e, e.currentTarget as Element);
     },
     [onPortMouseDown, stepId]
@@ -298,14 +238,13 @@ export function WorkflowNode({
 
   const handleOutputPortMouseDown = useCallback(
     (e: MouseEvent) => {
-      e.preventDefault(); // keep behavior consistent across both ports
-      e.stopPropagation(); // prevent card drag from starting
+      e.preventDefault();
+      e.stopPropagation();
       onPortMouseDown?.(stepId, 'output', e, e.currentTarget as Element);
     },
     [onPortMouseDown, stepId]
   );
 
-  // Prevent clicks on ports from bubbling to the card and triggering node selection
   const stopClickPropagation = useCallback((e: MouseEvent) => {
     e.stopPropagation();
   }, []);
@@ -318,7 +257,6 @@ export function WorkflowNode({
     onPortMouseLeave?.(stepId, 'input');
   }, [onPortMouseLeave, stepId]);
 
-  // ---- Styles ----
   const borderClass = isStartNode
     ? 'border-green-500'
     : isSelected
@@ -357,7 +295,6 @@ export function WorkflowNode({
       {activeAnchorSideSet.has('left') && renderDock('left', true)}
       {activeAnchorSideSet.has('right') && renderDock('right', true)}
 
-      {/* Top port */}
       {(!isStartNode || activeAnchorSideSet.has('top')) && (
         <div
           data-testid="port-input"
@@ -387,9 +324,7 @@ export function WorkflowNode({
         />
       )}
 
-      {/* Card content */}
       <div class="px-3 py-2">
-        {/* Header row: step badge + optional workflow state badges */}
         <div class="flex items-center justify-between mb-1">
           <span
             data-testid="step-badge"
@@ -426,7 +361,6 @@ export function WorkflowNode({
           </div>
         </div>
 
-        {/* Step name */}
         <p
           data-testid="step-name"
           class="text-sm font-medium text-white truncate"
@@ -435,7 +369,6 @@ export function WorkflowNode({
           {step.name || '(unnamed)'}
         </p>
 
-        {/* Agent(s) */}
         {multi ? (
           <div data-testid="agent-badges" class="flex flex-wrap gap-1 mt-1">
             {step.agents!.map((sa) => {
@@ -470,7 +403,6 @@ export function WorkflowNode({
         )}
       </div>
 
-      {/* Bottom port */}
       <div
         data-testid="port-output"
         style={{

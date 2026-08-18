@@ -93,9 +93,6 @@ export function ButtonGroupsDemo() {
         </span>
       </div>
 
-      {/* ============================================================ */}
-      {/* 05 - With Dropdown */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With dropdown</h3>
         <div class="inline-flex rounded-md shadow-xs dark:shadow-none">

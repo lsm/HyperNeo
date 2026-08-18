@@ -1,13 +1,3 @@
-/**
- * File RPC Handlers Tests
- *
- * Tests file operations via WebSocket RPC:
- * - file.read (utf-8 and base64)
- * - file.list (flat and recursive)
- * - file.tree
- * - Error handling for invalid sessions
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';

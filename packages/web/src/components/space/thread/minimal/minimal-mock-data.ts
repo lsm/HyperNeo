@@ -1,20 +1,8 @@
-/**
- * Mock data for the minimal thread style exploration page.
- *
- * Defines two turn states:
- *   - "completed" turns: agent finished, has stats + last assistant text
- *   - "active" turns:    agent currently running, has rolling tool-call roster,
- *                         a status string, and live-updating partial stats
- *
- * Used by `MinimalStyleExploration.tsx` to demonstrate all 6 visual styles
- * with realistic-feeling content.
- */
-
 export interface CompletedTurn {
   state: 'completed';
   id: string;
-  agent: string; // e.g. "coder agent" — fed to getAgentColor()
-  startedAt: number; // unix ms
+  agent: string;
+  startedAt: number;
   durationSec: number;
   stats: {
     toolCalls: number;
@@ -27,13 +15,9 @@ export interface CompletedTurn {
 }
 
 export interface ActiveTurnStats {
-  /** Cumulative tool calls so far (ticks up during simulation) */
   toolCalls: number;
-  /** Cumulative tokens consumed so far */
   tokens: number;
-  /** Cumulative cost in USD */
   costUsd: number;
-  /** Seconds elapsed since the turn started */
   elapsedSec: number;
 }
 
@@ -42,22 +26,18 @@ export interface ActiveTurn {
   id: string;
   agent: string;
   startedAt: number;
-  /** Session-status text — mirrors what ConnectionStatus shows in ChatContainer */
   status: string;
-  /** Partial stats that update in real-time */
   stats: ActiveTurnStats;
-  /** Rolling tool-call roster (most recent tool calls) */
   roster: ToolCallEntry[];
 }
 
 export interface ToolCallEntry {
-  tool: string; // "Bash" | "Read" | "Grep" | ...
-  preview: string; // short single-line preview
+  tool: string;
+  preview: string;
 }
 
 export type MinimalTurn = CompletedTurn | ActiveTurn;
 
-// Fixed timestamps so screenshots are reproducible. All within "today" 9:42 PM.
 const T_BASE = new Date('2026-04-25T21:42:00').getTime();
 
 export const MOCK_TURNS: MinimalTurn[] = [
@@ -113,8 +93,6 @@ export const MOCK_TURNS: MinimalTurn[] = [
     ],
   },
 ];
-
-/* ── small formatting helpers ─────────────────────────────────────────────── */
 
 export function formatTokens(n: number): string {
   if (n >= 1000) {

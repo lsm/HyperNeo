@@ -1,28 +1,3 @@
-/**
- * SyntheticMessageBlock — shared component for rendering synthetic
- * (system-generated) messages: compaction summaries, interrupts, and
- * agent→agent handoffs.
- *
- * Used by both `SDKUserMessage` (in the chat container) and
- * `MinimalThreadFeed`'s synthetic turn (in the task thread). One canonical
- * styling so the same kind of message looks the same everywhere.
- *
- * Design:
- * - Subtle gray panel (`bg-dark-800/60`) with amber chrome
- *   (`border-amber-700/50`) — clearly distinct from the assistant's
- *   `bg-dark-800` reply bubble without flooding the layout in color.
- * - Header: amber arrow icon + "Synthetic" label, plus an optional
- *   FROM→TO route badge when `fromAgent` and `toAgent` are provided
- *   (only the thread feed has agent metadata; the chat container omits it).
- * - Body: markdown-rendered text + JSON-ish previews for non-text blocks.
- *   Collapsed to ~12 lines with a gradient fade and a centered
- *   "Show more" / "Show less" toggle pinned to the bottom of the card.
- * - Actions row below the card via `SpaceTaskThreadMessageActions`:
- *   timestamp + copy + (optional) open-in-session.
- * - Right-aligned (synthetic is always "incoming to this session", same
- *   placement as the human bubble for visual consistency).
- */
-
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
@@ -32,57 +7,32 @@ import { DeliveryStateBadge, type DeliveryBadgeState } from '../ui/DeliveryState
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
 interface Props {
-  /** Content to display - can be a simple string or an array of content blocks. */
   content: string | Array<Record<string, unknown>>;
-  /** Optional timestamp in milliseconds. */
   timestamp?: number;
-  /** Optional UUID for data attributes. */
   uuid?: string;
-  /** Sending agent label — when both `fromAgent` and `toAgent` are
-   *  provided, the header renders a FROM→TO route badge. */
   fromAgent?: string;
-  /** Receiving agent label — see `fromAgent`. */
   toAgent?: string;
-  /** Optional CSS color for the FROM badge text. */
   fromColor?: string;
-  /** Optional CSS color for the TO badge text. */
   toColor?: string;
-  /** Optional shorter label for the FROM badge (defaults to `fromAgent`). */
   fromShort?: string;
-  /** Optional shorter label for the TO badge (defaults to `toAgent`). */
   toShort?: string;
-  /** Optional delivery state for synthetic actor messages. */
   deliveryState?: DeliveryBadgeState | null;
-  /** When provided, an "open in session" icon appears in the actions row. */
   onOpenSession?: () => void;
-  /** When provided, a session-info dropdown appears in the actions row,
-   *  surfacing the SDK system:init envelope (model, cwd, tools, mcp servers)
-   *  for the agent exec this synthetic message triggered. */
   sessionInit?: SystemInitMessage;
-  /** When `true`, render string content as plain pre-wrapped text instead
-   *  of through `MarkdownRenderer`. Used for fallback bodies that aren't
-   *  necessarily markdown. */
   renderAsPlainText?: boolean;
-  /** Placeholder shown when `content` is empty (empty string or empty array). */
   emptyMessageLabel?: string;
-  /** Optional width classes for the right-aligned card wrapper. */
   widthClass?: string;
-  /** Whether to render this block's built-in timestamp/copy actions and wrappers. */
   showActions?: boolean;
 }
 
-// Default visible height before "Show more". Matches the per-line height
-// of `text-sm` prose with `leading-relaxed` (~24px), capped at 12 lines.
 const PREVIEW_LINE_COUNT = 12;
 const LINE_HEIGHT_PX = 24;
 
-/** Returns true when `content` carries no text/blocks worth showing. */
 function isEmpty(content: string | Array<Record<string, unknown>>): boolean {
   if (typeof content === 'string') return content.length === 0;
   return content.length === 0;
 }
 
-/** Flattens content blocks into a single string for the copy button. */
 function extractCopyText(content: string | Array<Record<string, unknown>>): string {
   if (typeof content === 'string') return content;
   return content
@@ -109,7 +59,6 @@ export function SyntheticMessageBlock({
   widthClass = 'max-w-[85%] md:max-w-[70%]',
   showActions = true,
 }: Props) {
-  // Normalize content to array of blocks for the renderer below.
   const contentBlocks = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
 
   const [isExpanded, setIsExpanded] = useState(false);
@@ -117,8 +66,6 @@ export function SyntheticMessageBlock({
   const contentRef = useRef<HTMLDivElement>(null);
   const previewMaxHeight = PREVIEW_LINE_COUNT * LINE_HEIGHT_PX;
 
-  // Initial measurement + retry after 100ms so async-rendered markdown
-  // settles before we decide whether the body needs the "Show more" toggle.
   useLayoutEffect(() => {
     const measure = () => {
       if (!contentRef.current) return;
@@ -129,7 +76,6 @@ export function SyntheticMessageBlock({
     return () => window.clearTimeout(handle);
   }, [content, previewMaxHeight]);
 
-  // Re-measure when the body resizes (handles late markdown renders).
   useEffect(() => {
     const el = contentRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
@@ -149,7 +95,6 @@ export function SyntheticMessageBlock({
       class="border border-amber-700/50 rounded-lg overflow-hidden bg-dark-800/60"
       data-testid="synthetic-card"
     >
-      {/* Header — arrow icon + Synthetic label + optional FROM→TO route badge. */}
       <div class="flex items-center gap-2 px-3 py-2 border-b border-amber-700/50 flex-wrap">
         <svg
           class="w-4 h-4 flex-shrink-0 text-amber-400"
@@ -192,7 +137,6 @@ export function SyntheticMessageBlock({
         <DeliveryStateBadge state={deliveryState} test-id="synthetic-delivery-state" />
       </div>
 
-      {/* Body — capped preview + gradient fade + show more / less. */}
       <div class="relative">
         <div
           class={`px-3 py-2${!isExpanded && needsCollapse ? ' overflow-hidden' : ''}`}
@@ -259,9 +203,6 @@ export function SyntheticMessageBlock({
           </div>
         </div>
 
-        {/* Gradient fade hint — only when collapsed. Matches the
-						    card's tinted backdrop so the fade composites cleanly
-						    against the body bg. */}
         {needsCollapse && !isExpanded && (
           <div
             class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-dark-800/60 to-transparent pointer-events-none"
@@ -269,7 +210,6 @@ export function SyntheticMessageBlock({
           />
         )}
 
-        {/* Show more / Show less toggle — pinned to the bottom edge of the card. */}
         {needsCollapse && (
           <div class="flex justify-center py-2 border-t border-amber-700/50 bg-dark-800/60">
             <button
@@ -337,8 +277,6 @@ export function SyntheticMessageBlock({
       <div class={`${widthClass} w-auto`}>
         {card}
 
-        {/* Action row — timestamp + (optional) session-init + copy
-					    + (optional) open-in-session. */}
         <SpaceTaskThreadMessageActions
           timestamp={timestamp ?? Date.now()}
           copyText={copyText}

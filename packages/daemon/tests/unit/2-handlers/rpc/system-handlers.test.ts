@@ -1,12 +1,3 @@
-/**
- * Tests for System RPC Handlers
- *
- * Tests the RPC handlers for system operations:
- * - system.health - Get health status
- * - system.config - Get daemon configuration
- * - test.echo - Echo handler for testing WebSocket pub/sub flow
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import { setupSystemHandlers } from '../../../../src/lib/rpc-handlers/system-handlers';
@@ -14,10 +5,8 @@ import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { Config } from '../../../../src/config';
 
-// Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
-// Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -48,7 +37,6 @@ function createMockMessageHub(): {
   return { hub, handlers };
 }
 
-// Helper to create mock SessionManager
 function createMockSessionManager(): SessionManager {
   return {
     getActiveSessions: mock(() => 3),
@@ -56,7 +44,6 @@ function createMockSessionManager(): SessionManager {
   } as unknown as SessionManager;
 }
 
-// Helper to create mock AuthManager
 function createMockAuthManager(): {
   authManager: AuthManager;
   getAuthStatusMock: ReturnType<typeof mock>;
@@ -75,7 +62,6 @@ function createMockAuthManager(): {
   };
 }
 
-// Helper to create mock Config
 function createMockConfig(): Config {
   return {
     defaultModel: 'claude-sonnet-4-20250514',
@@ -96,7 +82,6 @@ describe('System RPC Handlers', () => {
     authManagerData = createMockAuthManager();
     config = createMockConfig();
 
-    // Setup handlers with mocked dependencies
     setupSystemHandlers(messageHubData.hub, sessionManager, authManagerData.authManager, config);
   });
 
@@ -128,7 +113,6 @@ describe('System RPC Handlers', () => {
       const handler = messageHubData.handlers.get('system.health');
       expect(handler).toBeDefined();
 
-      // Create new mocks with different values
       const customSessionManager = {
         getActiveSessions: mock(() => 5),
         getTotalSessions: mock(() => 25),

@@ -1,15 +1,3 @@
-/**
- * Unit tests for Session RPC Handlers — models.list empty-cache fallback
- *
- * These tests use real model-service functions with controlled cache state
- * to avoid mock.module cross-file contamination in the 2-handlers shard.
- *
- * NOTE: We avoid clearModelsCache() because other test files
- * install top-level mock.module on model-service.js that Bun does not
- * fully restore, leaving clearModelsCache as a no-op.  setModelsCache()
- * is unaffected, so we use setModelsCache(new Map()) to empty the cache.
- */
-
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { ModelInfo } from '@hyperneo/shared';
@@ -41,10 +29,8 @@ function createMockInternalEventBus(): InternalEventBus<DaemonInternalEventMap> 
   } as unknown as InternalEventBus<DaemonInternalEventMap>;
 }
 
-// Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
-// Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -83,13 +69,10 @@ describe('Session RPC Handlers — models.list', () => {
     messageHubData = createMockMessageHub();
     eventBus = createMockInternalEventBus();
 
-    // Fully reset provider and cache state so each test is isolated.
-    // setModelsCache(new Map()) empties modelsCache and cacheTimestamps.
     setModelsCache(new Map());
     resetProviderRegistry();
     resetProviderFactory();
 
-    // Import and set up handlers after cache is clean
     const { setupSessionHandlers } = await import(
       '../../../../src/lib/rpc-handlers/session-handlers'
     );
@@ -142,7 +125,6 @@ describe('Session RPC Handlers — models.list', () => {
   it('triggers fallback refresh when cache is empty and useCache is true', {
     timeout: 15_000,
   }, async () => {
-    // Cache is empty because beforeEach calls setModelsCache(new Map())
     const handler = messageHubData.handlers.get('models.list');
 
     const result = (await handler!({ useCache: true }, {})) as {
@@ -150,7 +132,6 @@ describe('Session RPC Handlers — models.list', () => {
       cached: boolean;
     };
 
-    // refreshModels() restores FALLBACK_MODELS when no providers are available
     expect(result.models.length).toBeGreaterThan(0);
     expect(result.models.some((m) => m.id === 'sonnet')).toBe(true);
     expect(result.cached).toBe(false);
@@ -166,7 +147,6 @@ describe('Session RPC Handlers — models.list', () => {
       cached: boolean;
     };
 
-    // With no providers, refreshModels() restores FALLBACK_MODELS
     expect(result.models.length).toBeGreaterThan(0);
     expect(result.cached).toBe(false);
   });
@@ -179,7 +159,6 @@ describe('Session RPC Handlers — models.list', () => {
       cached: boolean;
     };
 
-    // useCache: false is treated as forceRefresh
     expect(result.models.length).toBeGreaterThan(0);
     expect(result.cached).toBe(false);
   });
@@ -187,10 +166,6 @@ describe('Session RPC Handlers — models.list', () => {
   it('emits providers.changed when a stranded refresh recovers a missing provider', {
     timeout: 15_000,
   }, async () => {
-    // A concurrent models.list caller that already returned the stale catalog
-    // is claimed out of probing (the tried-set marks before awaiting), so it
-    // won't trigger its own refresh. Broadcast providers.changed when the
-    // refresh actually recovers a provider so that picker re-fetches.
     const recoveredModel = {
       id: 'glm-5',
       name: 'GLM-5',
@@ -233,9 +208,6 @@ describe('Session RPC Handlers — models.list', () => {
   });
 
   describe('detectStrandedProviders', () => {
-    // Minimal provider mock. Each test uses a unique id so the module-level
-    // retry tracking (which clearModelsCache can't reset in this contaminated
-    // shard) never bleeds across tests.
     function mockProvider(
       id: string,
       available: boolean | (() => boolean | Promise<boolean>)
@@ -286,8 +258,6 @@ describe('Session RPC Handlers — models.list', () => {
       getProviderRegistry().register(mockProvider('stranded-once', true));
       const first = await detectStrandedProviders(anthropicOnly);
       expect(first).toContain('stranded-once');
-      // Second call within the same cache lifetime must not re-probe (prevents a
-      // refresh storm when getModels() persistently fails).
       const again = await detectStrandedProviders(anthropicOnly);
       expect(again).not.toContain('stranded-once');
     });
@@ -301,10 +271,6 @@ describe('Session RPC Handlers — models.list', () => {
     });
 
     it('treats a provider whose isAvailable() never resolves as unavailable', async () => {
-      // A stalled probe (e.g. local Ollama with an unreachable OLLAMA_BASE_URL
-      // and no fetch timeout) must not block models.list — the probe is bounded
-      // by a timeout and resolves to "unavailable". Short timeout keeps the
-      // test fast.
       getProviderRegistry().register(
         mockProvider('stranded-hang', () => new Promise<boolean>(() => {}))
       );
@@ -313,9 +279,6 @@ describe('Session RPC Handlers — models.list', () => {
     });
 
     it('claims providers before probing so concurrent calls do not duplicate-probe', async () => {
-      // The filter + mark run synchronously before the first await, so a second
-      // concurrent detectStrandedProviders sees the providers as already
-      // attempted and skips them — no duplicate probes or refresh fan-out.
       let probeCount = 0;
       getProviderRegistry().register(
         mockProvider('stranded-claim', () => {
@@ -333,9 +296,6 @@ describe('Session RPC Handlers — models.list', () => {
   });
 
   describe('Session RPC Handlers — session.archive space eviction', () => {
-    // The archive handler dynamically imports WorktreeManager to check for
-    // commits-ahead. Intercept it so we can drive the requiresConfirmation path
-    // deterministically without spinning up a real git repo.
     mock.module('../../../../src/lib/worktree-manager', () => ({
       WorktreeManager: class MockWorktreeManager {
         async getCommitsAhead() {
@@ -390,10 +350,6 @@ describe('Session RPC Handlers — models.list', () => {
 
       expect(result.success).toBe(false);
       expect(result.requiresConfirmation).toBe(true);
-      // Regression: the unconfirmed probe must not remove the session from its
-      // Space. Previously the handler evicted membership before the confirmation
-      // gate, so cancelling the dialog left an active session missing from its
-      // Space permanently.
       expect(removeSessionMock).not.toHaveBeenCalled();
       expect(archiveResourcesMock).not.toHaveBeenCalled();
     });
@@ -413,8 +369,6 @@ describe('Session RPC Handlers — models.list', () => {
     });
   });
 
-  // Task #861 item 3 — the session.messages.promotePending RPC (UI "promote
-  // next-turn → current turn") routes through the durable owner under v2.
   describe('Session RPC Handlers — session.messages.promotePending (v2)', () => {
     let messageHubData: ReturnType<typeof createMockMessageHub>;
     let eventBus: ReturnType<typeof createMockInternalEventBus>;
@@ -452,7 +406,6 @@ describe('Session RPC Handlers — models.list', () => {
             AND status IN ('pending', 'processing');
       `);
       jobQueue = new JobQueueRepository(db as never);
-      // Seed one deferred user message.
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
          VALUES (?, ?, 'user', ?, ?, 'deferred', ?)`
@@ -469,9 +422,6 @@ describe('Session RPC Handlers — models.list', () => {
       );
 
       const dbFacade = {
-        // Parse the sdk_message blob into an SDK message (+dbId) the way the real
-        // SDKMessageRepository.getMessagesByStatus does, so isSDKUserMessage +
-        // toReplayContent see the expected shape.
         getMessagesByStatus: (_sid: string, status: string) =>
           (
             db
@@ -523,12 +473,10 @@ describe('Session RPC Handlers — models.list', () => {
       };
       expect(result.promoted).toBe(true);
 
-      // The deferred row was flipped to enqueued ...
       const row = db.prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`).get('db-1') as {
         send_status: string;
       };
       expect(row.send_status).toBe('enqueued');
-      // ... and a durable turn job was enqueued for it (not the legacy inline feed).
       const job = db
         .prepare(
           `SELECT json_extract(payload, '$.role') AS role FROM job_queue WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?`
@@ -538,17 +486,13 @@ describe('Session RPC Handlers — models.list', () => {
     });
   });
 
-  // Manual "Retry" affordance for a failed user message — reopens failed→
-  // enqueued and re-enqueues the durable delivery job. Mirrors promotePending.
   describe('Session RPC Handlers — session.messages.retry (v2)', () => {
     let messageHubData: ReturnType<typeof createMockMessageHub>;
     let eventBus: ReturnType<typeof createMockInternalEventBus>;
     let db: Database;
     let jobQueue: JobQueueRepository;
     let v2Previous: string | undefined;
-    /** Persisted session status returned by the mock db; defaults to active. */
     let sessionStatus: string;
-    /** Hydration spy — terminal statuses must reject BEFORE hydrating (Codex P2). */
     let hydrateSpy: ReturnType<typeof mock>;
 
     beforeEach(async () => {
@@ -582,7 +526,6 @@ describe('Session RPC Handlers — models.list', () => {
             AND status IN ('pending', 'processing');
       `);
       jobQueue = new JobQueueRepository(db as never);
-      // Seed one FAILED user message (a consumed-then-errored turn that exhausted).
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
          VALUES (?, ?, 'user', ?, ?, 'failed', ?)`
@@ -634,7 +577,6 @@ describe('Session RPC Handlers — models.list', () => {
       };
       const sessionManager = {
         // biome-ignore lint: test mock assignment — hydrateSpy captured for the
-        // terminal-status assertion (hydration must not happen at all there).
         getSessionAsync: (hydrateSpy = mock(async () => ({
           getSessionData: () => ({ id: 'sess-1', status: 'active' }),
           startQueryAndEnqueue: mock(async () => {}),
@@ -665,12 +607,10 @@ describe('Session RPC Handlers — models.list', () => {
       };
       expect(result.retried).toBe(true);
 
-      // The failed row was reopened to enqueued ...
       const row = db
         .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
         .get('db-failed') as { send_status: string };
       expect(row.send_status).toBe('enqueued');
-      // ... and a durable turn job was enqueued for it.
       const job = db
         .prepare(
           `SELECT json_extract(payload, '$.role') AS role FROM job_queue WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?`
@@ -696,12 +636,7 @@ describe('Session RPC Handlers — models.list', () => {
           {}
         )) as { retried: boolean };
         expect(result.retried).toBe(false);
-        // The session was never hydrated: constructing an AgentSession for an
-        // evicted terminal session schedules the pending-message replay, which
-        // enqueues delivery jobs for OTHER pending prompts (the archived
-        // barrier does not cover `ended`). (Codex P2.)
         expect(hydrateSpy).not.toHaveBeenCalled();
-        // The failed row was NOT reopened to enqueued.
         const row = db
           .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
           .get('db-failed') as { send_status: string };
@@ -761,11 +696,6 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
   });
 
   it('returns the folded draft value so the client can adopt it', async () => {
-    // The stale writer's local content lacks the transcripts the daemon
-    // folded in; its ack must carry the applied VALUE, or the client would
-    // advance its version cache while its composer still shows the
-    // transcript-free text — and its next edit would apply as-is and clear
-    // the baseline, deleting the transcript.
     existingPending = null;
     existingDraft = 'old draft voice words';
     existingBaseline = 'old draft';
@@ -781,10 +711,6 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
   });
 
   it('re-anchors the baseline to the new draft when a pending sequence is staged', async () => {
-    // A voice pending exists; another tab's normal draft save lands between
-    // the sequence start and its merge. The pending will merge onto the NEW
-    // draft, so the baseline must follow it — or reconciliation would treat
-    // the concurrently-typed text as transcript.
     existingPending = 'voice';
     const handler = messageHubData.handlers.get('session.update');
     await handler!({ sessionId: 's1', metadata: { inputDraft: 'a b' } }, {});
@@ -812,12 +738,6 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
   });
 
   it('folds the merged transcripts into a stale save (baseline lingers, pending cleared)', async () => {
-    // session.get merged the pending (cleared) but the sequence is still
-    // unreconciled (baseline snapshot lingers). Another tab's save — started
-    // BEFORE the merge landed — would overwrite the transcripts outright; the
-    // dedup id only stops an outbox replay, not a plain draft write. The write
-    // lands WITH the transcripts folded in, and the snapshot clears (this
-    // write is now the reconciliation point).
     existingPending = null;
     existingDraft = 'old draft voice words';
     existingBaseline = 'old draft';
@@ -826,10 +746,6 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
       metadata: {
         inputDraft: 'stale edits voice words',
-        // RE-ANCHORED (not cleared): the folded draft is again baseline +
-        // transcripts, so an in-flight or retrying clear's strip still
-        // recognizes the sequence and reduces the draft to the transcripts —
-        // clearing here would strand the strip and resurrect sent text.
         inputDraftVoiceBaseline: 'stale edits',
         inputDraftVersion: 1,
       },
@@ -837,9 +753,6 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
   });
 
   it('reduces a stale-folded draft to the transcripts on the retrying strip', async () => {
-    // End-to-end shape of the re-anchor: the stale fold re-anchored the
-    // baseline to the stale text; a retrying strip (fresh get, fresh expected)
-    // now strips to transcripts-only, keeping the user's clear effective.
     existingPending = null;
     existingDraft = 'stale edits voice words';
     existingBaseline = 'stale edits';
@@ -853,8 +766,6 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
   });
 
   it('applies a post-merge save as-is when it already carries the transcripts', async () => {
-    // The writer read the MERGED draft (its save ends with the transcripts) —
-    // folding again would duplicate the voice occurrence.
     existingPending = null;
     existingDraft = 'old draft voice words';
     existingBaseline = 'old draft';
@@ -878,11 +789,6 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
   });
 
   it('folds a stale save that coincidentally ends with the transcript phrase', async () => {
-    // The stale writer's content happens to END with the same text as the
-    // transcript — a suffix comparison cannot tell this apart from a genuine
-    // post-merge save. The DRAFT VERSION can: the stale writer echoes an
-    // older (or no) version, so the dictated occurrence is folded in rather
-    // than silently dropped.
     existingPending = null;
     existingDraft = 'please say hello';
     existingBaseline = 'please say';
@@ -960,8 +866,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
       success: boolean;
     };
     expect(result.success).toBe(true);
-    // Writes the dedicated pending field — never the live inputDraft, which the
-    // client's debounced saves could otherwise clobber.
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
       metadata: { inputDraftVoicePending: 'existing hello world' },
     });
@@ -1020,7 +924,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
       success: boolean;
     };
     expect(result.success).toBe(true);
-    // The append and the dedup marker land in ONE atomic write.
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
       metadata: {
         inputDraftVoicePending: 'existing hello',
@@ -1030,8 +933,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   });
 
   it('skips a re-append whose dedupId already merged (idempotent replay)', async () => {
-    // The socket dropped after the daemon wrote but before the client ack — the
-    // outbox retries the same entry; it must NOT merge the transcript twice.
     existingAppendLog = [{ id: 'entry-1', ts: Date.now() }];
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
     const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
@@ -1043,9 +944,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   });
 
   it('dedups an out-of-order replay even after a later entry committed', async () => {
-    // Entry A committed but its ack was lost; the loop advanced to B (which
-    // overwrote a single last-id marker). A retry of A must still be skipped —
-    // the processed-id log retains A alongside B.
     existingAppendLog = [
       { id: 'entry-1', ts: Date.now() },
       { id: 'entry-2', ts: Date.now() },
@@ -1060,11 +958,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   });
 
   it('accumulates processed ids with no count cap — only the TTL bounds the log', async () => {
-    // An outbox entry can stay retryable for its whole 24h TTL while unrelated
-    // appends keep recording ids — ANY count cap (50, 500) would evict the
-    // retryable id and let its eventual replay double-append. Logged ids come
-    // only from outbox flushes (each tab's outbox caps at 20 entries), so
-    // growth within the TTL is inherently bounded; 600 fresh ids all survive.
     existingAppendLog = Array.from({ length: 600 }, (_, i) => ({
       id: `entry-${i}`,
       ts: Date.now(),
@@ -1095,8 +988,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   });
 
   it('no longer dedups an id past the retry lifetime', async () => {
-    // Both writer and reader agree the id expired — a replay after 24h appends
-    // again (the client outbox has dropped the entry long before this point).
     existingAppendLog = [{ id: 'entry-1', ts: Date.now() - 25 * 60 * 60 * 1000 }];
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
     const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
@@ -1111,16 +1002,12 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     existingAppendLog = [{ id: 'entry-1', ts: Date.now() }];
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
     await handler!({ sessionId: 's1', text: 'hello' }, {});
-    // No dedupId → normal append, no dedup marker written.
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
       metadata: { inputDraftVoicePending: 'existing hello' },
     });
   });
 
   it('snapshots the pre-sequence draft as the merge baseline on a new pending sequence', async () => {
-    // Sequence start (pending empty): the baseline records the EXACT draft the
-    // pending will merge onto, so later reconciliation can separate the
-    // transcripts from the stale baseline regardless of which tabs appended.
     existingPending = null;
     existingDraft = 'user draft';
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
@@ -1149,8 +1036,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   it('strips the pre-sequence baseline, keeping every merged transcript (stripVoiceBaseline)', async () => {
     const handler = messageHubData.handlers.get('session.stripVoiceBaseline');
     expect(handler).toBeDefined();
-    // Two tabs' entries accumulated into the pending and merged onto the
-    // baseline snapshot — the strip keeps BOTH.
     existingBaseline = 'stale baseline';
     existingBaselineSeq = 3;
     existingDraft = 'stale baseline first second';
@@ -1163,8 +1048,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
       metadata: {
         inputDraft: 'first second',
         inputDraftVoiceBaseline: null,
-        // Records WHICH sequence was stripped, so a client retrying the strip
-        // after a lost ack can recognize it as committed.
         inputDraftVoiceLastStrippedSeq: 3,
         inputDraftVersion: 1,
       },
@@ -1172,10 +1055,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   });
 
   it('declines the strip when a NEWER sequence replaced the baseline (draft text unchanged)', async () => {
-    // The clear flow's get merged sequence A; a later append started sequence
-    // B, replacing the baseline with the (unchanged) draft. Stripping on the
-    // draft text alone would clear sequence A's transcript — the SEQUENCE id
-    // catches what the text cannot.
     const handler = messageHubData.handlers.get('session.stripVoiceBaseline');
     existingBaseline = 'stale baseline transcript';
     existingBaselineSeq = 2;
@@ -1210,14 +1089,12 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
 
   it('declines the strip without a baseline snapshot or on a draft mismatch', async () => {
     const handler = messageHubData.handlers.get('session.stripVoiceBaseline');
-    // No snapshot (no unstripped sequence) — declined, nothing written.
     existingBaseline = undefined;
     existingDraft = 'any';
     expect(await handler!({ sessionId: 's1', expected: 'any', expectedSeq: 1 }, {})).toEqual({
       updated: false,
     });
 
-    // A NEWER draft was saved after this client's read — declined.
     existingBaseline = 'old';
     existingBaselineSeq = 1;
     existingDraft = 'newer edit from elsewhere';
@@ -1230,9 +1107,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   it('pushes a backup ONTO the merged transcripts, keeping both (mergeVoiceDraftBackup)', async () => {
     const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
     expect(handler).toBeDefined();
-    // The expired-landing reload path: the draft holds baseline + merged
-    // transcripts; the client backup holds the user's newer transcript-free
-    // edits. The push must keep BOTH — never the backup alone.
     existingPending = null;
     existingBaseline = 'stale baseline';
     existingBaselineSeq = 2;
@@ -1261,8 +1135,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
       merged: boolean;
       value: string;
     };
-    // The staged pending merges onto whatever draft is current at merge time,
-    // so the push becomes the new draft and the baseline follows it.
     expect(result).toEqual({ merged: true, value: 'user edits' });
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
       metadata: {
@@ -1289,8 +1161,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
 
   it('declines the merge when the draft diverged from the baseline snapshot', async () => {
     const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
-    // A newer writer changed the draft after the sequence merged — folding
-    // against the stale snapshot would guess; decline and let the client retry.
     existingPending = null;
     existingBaseline = 'old';
     existingBaselineSeq = 1;
@@ -1318,10 +1188,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
 
   it('acknowledges a retry of an already-committed claim without rewriting (mergeVoiceDraftBackup)', async () => {
     const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
-    // The first merge committed (draft := backup + transcripts, baseline
-    // cleared) but its acknowledgement was lost; the client retries under the
-    // SAME claim id. Rewriting would take the baseline-null branch and
-    // replace the combined draft with the transcript-free backup.
     existingBaseline = 'old';
     existingBaselineSeq = 1;
     existingDraft = 'old voice';
@@ -1336,10 +1202,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
 
   it('retains every live claim across concurrent commits (merge claim LOG)', async () => {
     const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
-    // Tab A's claim committed but its ack is in flight when tab B's claim
-    // commits. A single last-marker would evict A, whose retry would then
-    // take the plain-write branch and overwrite B's newer draft with A's
-    // older transcript-free content — the LOG keeps both recognizable.
     existingPending = null;
     existingBaseline = 'old';
     existingBaselineSeq = 1;
@@ -1357,8 +1219,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
       'claim-a',
       'claim-b',
     ]);
-    // Tab A's retry (ack lost after B committed) is still acknowledged from
-    // the log without rewriting B's draft.
     const replay = (await handler!(
       { sessionId: 's1', content: 'tab a edits', claimId: 'claim-a' },
       {}
@@ -1367,10 +1227,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   });
 
   it('declines the merge when backup + transcripts would truncate at the limit', async () => {
-    // appendDraftText silently slices at the character limit; committing a
-    // truncated draft while reporting merged:true would let the client retire
-    // its only durable copy of the lost tail. Decline — the claim retries
-    // once the draft has room.
     existingPending = null;
     existingBaseline = 'old';
     existingBaselineSeq = 1;
@@ -1384,10 +1240,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   });
 
   it('re-anchors a staged baseline when clearInputDraftIf clears the draft', async () => {
-    // The retained-pending reconciliation clears a draft while the voice
-    // pending is still staged: the baseline must follow the CLEARED draft,
-    // or the next get's merge (onto empty) aligns with nothing and every
-    // later reconciliation extracts no transcript.
     const handler = messageHubData.handlers.get('session.clearInputDraftIf');
     existingDraft = 'full draft';
     existingPending = 'voice';
@@ -1404,9 +1256,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
 
   it('retains every claim for the full retry lifetime (no count cap)', async () => {
     const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
-    // More than 20 backup claims can commit inside the 24h retry window; a
-    // count cap would evict an older claim whose client is still retrying
-    // after a lost ack, sending that retry down the plain-write branch.
     existingPending = null;
     existingBaseline = 'old';
     existingBaselineSeq = 1;
@@ -1451,9 +1300,6 @@ describe('Session RPC Handlers — session.get voice draft merge', () => {
   async function setup(metadata: Record<string, unknown>) {
     messageHubData = createMockMessageHub();
     eventBus = createMockInternalEventBus();
-    // getSessionData() returns the same live object both before and after the
-    // merge so the handler reads the pending value, then re-reads for its
-    // response — mirroring the real in-memory agent session.
     const sessionData = { id: 's1', metadata };
     sessionManager = {
       getSessionAsync: mock(async () => ({ getSessionData: () => sessionData })),
@@ -1498,8 +1344,6 @@ describe('Session RPC Handlers — session.get voice draft merge', () => {
     const fullDraft = 'x'.repeat(100_000);
     const handler = await setup({ inputDraft: fullDraft, inputDraftVoicePending: 'hello' });
     await handler!({ sessionId: 's1' }, {});
-    // A partial merge writes NOTHING — writing the prefix would duplicate it
-    // once room appears and the merge retries. The staged transcript survives.
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 });

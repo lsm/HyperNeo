@@ -1,10 +1,3 @@
-/**
- * Migration 43 Tests
- *
- * Migration 43 drops the legacy session_group_messages projection table.
- * Canonical task timelines are now sourced from sdk_messages + task_group_events.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -60,7 +53,6 @@ describe('Migration 43: drop session_group_messages', () => {
   });
 
   test('existing DB: migration drops legacy table and index', () => {
-    // Minimal prerequisite for FK reference
     db.exec(`
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY,

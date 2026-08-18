@@ -1,12 +1,3 @@
-/**
- * ReadOnlyWorkflowCanvas
- *
- * Read-only runtime view of a workflow using the visual-editor's WorkflowCanvas.
- * Shows the same visual style as the full editor but with no editing affordances.
- *
- * Used in SpaceTaskPane to replace the old custom SVG WorkflowCanvas.
- */
-
 import { useRef, useEffect, useState, useCallback } from 'preact/hooks';
 import { WorkflowCanvas } from './visual-editor/WorkflowCanvas';
 import { CanvasToolbar } from './visual-editor/CanvasToolbar';
@@ -32,8 +23,6 @@ export function ReadOnlyWorkflowCanvas({
   const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
 
-  // Reset transient UI state whenever the run or workflow the canvas is
-  // displaying changes, so a stale channel selection does not survive a swap.
   useEffect(() => {
     setSelectedChannelId(null);
   }, [runId, workflowId]);
@@ -41,7 +30,6 @@ export function ReadOnlyWorkflowCanvas({
   const { nodeData, channelEdges, canvasNodePositions, viewportState, setViewportState } =
     useRuntimeCanvasData(workflowId, runId ?? null);
 
-  // Track container dimensions for the toolbar's fit-to-view
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -64,10 +52,8 @@ export function ReadOnlyWorkflowCanvas({
 
   const handleNodeSelect = useCallback(
     (stepId: string | null) => {
-      // Clicking a node clears channel selection
       setSelectedChannelId(null);
       if (!stepId || !onNodeClick) return;
-      // stepId is localId — find the persisted node ID, name, and agent names
       const nodeEntry = nodeData.find((n) => n.step.localId === stepId);
       const persistedId = nodeEntry?.step.id ?? stepId;
       const nodeName = nodeEntry?.step.name ?? '';
@@ -85,7 +71,6 @@ export function ReadOnlyWorkflowCanvas({
     ? (channelEdges.find((c) => c.id === selectedChannelId) ?? null)
     : null;
 
-  // Resolve node names for the info panel
   const getNodeName = (stepLocalId: string): string => {
     const node = nodeData.find((n) => n.step.localId === stepLocalId);
     return node?.step.name ?? stepLocalId;

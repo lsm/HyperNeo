@@ -21,14 +21,8 @@ import type {
   Placement,
 } from './use-anchor-props.ts';
 
-/**
- * CSS properties type for style objects.
- */
 export type CSSProperties = Record<string, string | number | undefined>;
 
-/**
- * Context for floating UI state.
- */
 interface FloatingContextValue {
   styles: CSSProperties | undefined;
   setReference: (node: HTMLElement | null) => void;
@@ -42,7 +36,6 @@ interface FloatingContextValue {
   };
 }
 
-// Default context value with proper implementations
 const defaultFloatingContext: FloatingContextValue = {
   styles: undefined,
   setReference: () => {},
@@ -61,31 +54,19 @@ const defaultFloatingContext: FloatingContextValue = {
 const FloatingContext = createContext<FloatingContextValue>(defaultFloatingContext);
 FloatingContext.displayName = 'FloatingContext';
 
-/**
- * Context for updating placement configuration.
- */
 type PlacementUpdateFn = (value: Exclude<AnchorPropsWithSelection, boolean> | null) => void;
 
 const PlacementContext = createContext<PlacementUpdateFn | null>(null);
 PlacementContext.displayName = 'PlacementContext';
 
-/**
- * Hook to get the setReference function from FloatingContext.
- */
 export function useFloatingReference(): (node: HTMLElement | null) => void {
   return useContext(FloatingContext).setReference;
 }
 
-/**
- * Hook to get reference props from FloatingContext.
- */
 export function useFloatingReferenceProps(): <T extends Record<string, unknown>>(props?: T) => T {
   return useContext(FloatingContext).getReferenceProps;
 }
 
-/**
- * Hook to get floating panel props with data-anchor attribute.
- */
 export function useFloatingPanelProps(): <T extends Record<string, unknown>>(
   props?: T
 ) => T & { 'data-anchor': string | undefined } {
@@ -101,31 +82,18 @@ export function useFloatingPanelProps(): <T extends Record<string, unknown>>(
   );
 }
 
-/**
- * Hook to connect a floating panel to the floating context.
- *
- * @param placement - The anchor configuration
- * @returns Tuple of [setFloating ref callback, styles object]
- */
 export function useFloatingPanel(
   placement: (AnchorPropsWithSelection & InternalFloatingPanelProps) | null = null
 ): readonly [(node: HTMLElement | null) => void, CSSProperties] {
-  // Normalize placement
-  if (placement === false) placement = null; // Disable entirely
-  if (typeof placement === 'string') placement = { to: placement }; // Simple string based value
+  if (placement === false) placement = null;
+  if (typeof placement === 'string') placement = { to: placement };
 
   const updatePlacementConfig = useContext(PlacementContext);
 
-  // Stable placement for deep comparison
   const stablePlacement = useMemo(
     () => placement,
     [
       JSON.stringify(placement, (_, v) => {
-        // When we are trying to stringify a DOM element, we want to return the
-        // `outerHTML` of the element. In all other cases, we want to return the
-        // value as-is.
-        // It's not safe enough to check whether `v` is an instanceof
-        // `HTMLElement` because some tools (like AG Grid) polyfill it to be `{}`.
         return (v as HTMLElement | undefined)?.outerHTML ?? v;
       }),
     ]
@@ -148,49 +116,24 @@ interface FloatingProviderProps {
   enabled?: boolean;
 }
 
-/**
- * Provider component for floating UI positioning.
- *
- * Wraps components that need anchor positioning and provides:
- * - Automatic position computation via @floating-ui/dom
- * - Dynamic placement updates
- * - Viewport collision detection (flip/shift)
- * - Size constraints
- *
- * @example
- * ```tsx
- * <FloatingProvider>
- *   <MenuButton ref={useFloatingReference()}>Toggle</MenuButton>
- *   <MenuItems {...useFloatingPanelProps()}>
- *     {items}
- *   </MenuItems>
- * </FloatingProvider>
- * ```
- */
 export function FloatingProvider({ children, enabled = true }: FloatingProviderProps): JSX.Element {
   const [config, setConfig] = useState<
     (AnchorPropsWithSelection & InternalFloatingPanelProps) | null
   >(null);
 
-  // Element state
   const [referenceEl, setReferenceEl] = useState<HTMLElement | null>(null);
   const [floatingEl, setFloatingEl] = useState<HTMLElement | null>(null);
 
-  // Position state
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [actualPlacement, setActualPlacement] = useState<FloatingPlacement>('bottom');
 
-  // Cleanup ref
   const cleanupRef = useRef<(() => void) | null>(null);
   const d = useRef(disposables());
 
-  // Fix scrolling pixel issue
   useFixScrollingPixel(floatingEl);
 
   const isEnabled = enabled && config !== null && floatingEl !== null;
 
-  // Resolve config values
-  // Note: 'inner' middleware support is simplified - it's parsed but full implementation is deferred
   const {
     to: placement = 'bottom',
     gap = 0,
@@ -203,7 +146,6 @@ export function FloatingProvider({ children, enabled = true }: FloatingProviderP
     Align | 'center',
   ];
 
-  // Convert placement to FloatingPlacement
   const floatingPlacement = useMemo((): FloatingPlacement => {
     if (to === 'selection') {
       return align === 'center' ? 'bottom' : `bottom-${align}`;
@@ -211,22 +153,17 @@ export function FloatingProvider({ children, enabled = true }: FloatingProviderP
     return align === 'center' ? to : `${to}-${align}`;
   }, [to, align]);
 
-  // Build middleware array
   const middleware = useMemo((): Middleware[] => {
     const m: (Middleware | false)[] = [
-      // Offset middleware for gap and cross-axis offset
       offsetMiddleware({
         mainAxis: to === 'selection' ? 0 : gap,
         crossAxis: offset,
       }),
 
-      // Shift middleware to keep panel in viewport
       shiftMiddleware({ padding }),
 
-      // Flip middleware (not compatible with selection/inner)
       to !== 'selection' && flipMiddleware({ padding }),
 
-      // Size middleware to constrain panel size
       sizeMiddleware({
         padding,
         apply({ availableWidth, availableHeight, elements }) {
@@ -242,11 +179,9 @@ export function FloatingProvider({ children, enabled = true }: FloatingProviderP
     return m.filter(Boolean) as Middleware[];
   }, [to, gap, offset, padding]);
 
-  // Compute position
   const updatePosition = useEvent(async () => {
     if (!referenceEl || !floatingEl || !isEnabled) return;
 
-    // Skip on server
     if (env.isServer) return;
 
     try {
@@ -264,24 +199,19 @@ export function FloatingProvider({ children, enabled = true }: FloatingProviderP
     }
   });
 
-  // Set up autoUpdate when elements are mounted
   useIsoMorphicEffect(() => {
     if (!isEnabled || !referenceEl || !floatingEl) {
       return;
     }
 
-    // Skip on server
     if (env.isServer) return;
 
-    // Clean up previous
     if (cleanupRef.current) {
       cleanupRef.current();
     }
 
-    // Initial position
     void updatePosition();
 
-    // Set up autoUpdate
     cleanupRef.current = autoUpdate(referenceEl, floatingEl, updatePosition, {
       ancestorScroll: true,
       ancestorResize: true,
@@ -298,14 +228,12 @@ export function FloatingProvider({ children, enabled = true }: FloatingProviderP
     };
   }, [isEnabled, referenceEl, floatingEl, updatePosition]);
 
-  // Cleanup on unmount
   useIsoMorphicEffect(() => {
     return () => {
       d.current.dispose();
     };
   }, []);
 
-  // Calculate exposed anchor data
   const [exposedTo = to, exposedAlign = align] = actualPlacement.split('-');
   const finalExposedTo = to === 'selection' ? 'selection' : exposedTo;
 
@@ -316,7 +244,6 @@ export function FloatingProvider({ children, enabled = true }: FloatingProviderP
     [finalExposedTo, exposedAlign]
   );
 
-  // Build floating styles
   const floatingStyles = useMemo((): CSSProperties => {
     if (!isEnabled) return {};
 
@@ -328,7 +255,6 @@ export function FloatingProvider({ children, enabled = true }: FloatingProviderP
     };
   }, [isEnabled, position.x, position.y]);
 
-  // Props getters
   const getReferenceProps = useCallback(
     <T extends Record<string, unknown>>(props?: T): T => props ?? ({} as T),
     []
@@ -344,12 +270,10 @@ export function FloatingProvider({ children, enabled = true }: FloatingProviderP
     [slot.anchor]
   );
 
-  // Combined setFloating that updates both refs
   const setFloatingRef = useEvent((el: HTMLElement | null) => {
     setFloatingEl(el);
   });
 
-  // Set reference element
   const setReferenceRef = useEvent((el: HTMLElement | null) => {
     setReferenceEl(el);
   });
@@ -372,12 +296,6 @@ export function FloatingProvider({ children, enabled = true }: FloatingProviderP
   );
 }
 
-/**
- * Hook to fix the scrolling pixel issue in floating panels.
- *
- * When maxHeight is set to a fractional pixel value, some browsers
- * can have scrolling issues. This rounds up to the nearest integer.
- */
 function useFixScrollingPixel(element: HTMLElement | null): void {
   useIsoMorphicEffect(() => {
     if (!element) return;
@@ -407,9 +325,6 @@ function useFixScrollingPixel(element: HTMLElement | null): void {
   }, [element]);
 }
 
-/**
- * Hook to resolve anchor config with CSS variable support.
- */
 function useResolvedConfig(
   config: (Exclude<AnchorPropsWithSelection, boolean | string> & InternalFloatingPanelProps) | null,
   element?: HTMLElement | null
@@ -421,14 +336,6 @@ function useResolvedConfig(
   return { ...config, gap, offset, padding };
 }
 
-/**
- * Hook to resolve a CSS value (number or CSS variable) to pixels.
- *
- * @param input - The value to resolve (number or CSS string)
- * @param element - The element to use for CSS variable resolution
- * @param defaultValue - Default value if resolution fails
- * @returns The resolved pixel value
- */
 function useResolvePxValue(
   input?: string | number,
   element?: HTMLElement | null,
@@ -441,13 +348,10 @@ function useResolvePxValue(
 
   const computeValue = useEvent(
     (value?: string | number, el?: HTMLElement | null): ComputeResult => {
-      // Nullish
       if (value == null) return [defaultValue, null] as const;
 
-      // Number as-is
       if (typeof value === 'number') return [value, null] as const;
 
-      // String values
       if (typeof value === 'string') {
         if (!el) return [defaultValue, null] as const;
 
@@ -456,7 +360,6 @@ function useResolvePxValue(
         const watcher: WatcherFn = (setValue: (value?: number) => void) => {
           const variables = resolveVariables(value);
 
-          // Poll for CSS variable changes (performant enough for our use case)
           const history = variables.map((variable) =>
             window.getComputedStyle(el!).getPropertyValue(variable)
           );
@@ -464,7 +367,6 @@ function useResolvePxValue(
           d.current.requestAnimationFrame(function check() {
             d.current.nextFrame(check);
 
-            // Fast path: check if any variable changed
             let changed = false;
             for (const [idx, variable] of variables.entries()) {
               const currentValue = window.getComputedStyle(el!).getPropertyValue(variable);
@@ -492,7 +394,6 @@ function useResolvePxValue(
     }
   );
 
-  // Calculate immediate value
   const immediateValue = useMemo(() => computeValue(input, element)[0], [input, element]);
 
   const [value = immediateValue, setValue] = useState<number | undefined>();
@@ -506,7 +407,6 @@ function useResolvePxValue(
     }
   }, [input, element]);
 
-  // Cleanup on unmount
   useIsoMorphicEffect(() => {
     return () => {
       d.current.dispose();
@@ -516,9 +416,6 @@ function useResolvePxValue(
   return value;
 }
 
-/**
- * Extract CSS variable names from a value string.
- */
 function resolveVariables(value: string): string[] {
   const matches = /var\((.*)\)/.exec(value);
   if (matches) {
@@ -540,24 +437,14 @@ function resolveVariables(value: string): string[] {
   return [];
 }
 
-/**
- * Resolve a CSS value to pixels using a temporary element.
- *
- * This handles CSS variables, calc(), rem, vh, etc. by letting
- * the browser compute the actual pixel value.
- */
 function resolveCSSVariablePxValue(input: string, element: HTMLElement): number {
-  // Create temporary element to compute the value
   const tmpEl = document.createElement('div');
   element.appendChild(tmpEl);
 
-  // Set initial value to 0px (fallback for invalid values)
   tmpEl.style.setProperty('margin-top', '0px', 'important');
 
-  // Set the target value
   tmpEl.style.setProperty('margin-top', input, 'important');
 
-  // Read computed value (browser converts to pixels)
   const pxValue = parseFloat(window.getComputedStyle(tmpEl).marginTop) || 0;
   element.removeChild(tmpEl);
 

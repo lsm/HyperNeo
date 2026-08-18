@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ReferenceAutocomplete Component
- */
 
 import { render, fireEvent } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -120,11 +117,9 @@ describe('ReferenceAutocomplete', () => {
       const { container } = render(
         <ReferenceAutocomplete {...defaultProps} results={[resultNoSubtitle]} />
       );
-      // Only one text span inside the button (displayText), no subtitle span
       const buttons = container.querySelectorAll('button[type="button"]');
       expect(buttons.length).toBe(1);
       const spans = buttons[0].querySelectorAll('span > span');
-      // inner column has one child: displayText only
       expect(spans.length).toBe(1);
     });
 
@@ -256,7 +251,6 @@ describe('ReferenceAutocomplete', () => {
     it('defaults to bottom positioning (above textarea) when no position is given', () => {
       const { container } = render(<ReferenceAutocomplete {...defaultProps} />);
       const dropdown = container.querySelector('div');
-      // style should have marginBottom set and no top
       expect(dropdown?.style.marginBottom).toBe('8px');
       expect(dropdown?.style.top).toBe('');
     });

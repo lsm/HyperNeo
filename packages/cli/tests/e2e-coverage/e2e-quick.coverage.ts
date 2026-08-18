@@ -1,16 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Quick E2E Coverage Tests
- *
- * Runs representative E2E tests with an in-process server to collect coverage
- * for both server-side (daemon/shared) and browser-side (web) code.
- *
- * Coverage collection:
- * - Server-side: Bun test --coverage instruments imported daemon/shared code
- * - Browser-side: Playwright CDP page.coverage API + v8-to-istanbul
- *
- * Run: bun test --coverage tests/e2e-coverage/e2e-quick.test.ts
- */
 
 import { beforeAll, afterAll, test, describe } from 'bun:test';
 import { chromium, type Browser, type Page } from 'playwright';
@@ -27,12 +15,10 @@ import {
   printCoverageSummary,
 } from './coverage-utils';
 
-// Import daemon components - these will be covered by bun --coverage
 import { createDaemonApp } from '@hyperneo/daemon/app';
 import { getConfig } from '@hyperneo/daemon/config';
 import { createWebSocketHandlers } from '@hyperneo/daemon/routes/setup-websocket';
 
-// Test fixtures
 let browser: Browser;
 let server: ReturnType<typeof Bun.serve> | null = null;
 let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
@@ -41,43 +27,34 @@ let baseUrl: string;
 let coverageCollector: BrowserCoverageCollector;
 
 describe('E2E Quick Coverage Tests', () => {
-  /**
-   * Setup: Start in-process server and browser
-   */
   beforeAll(async () => {
     serverPort = await findAvailablePort();
     baseUrl = `http://localhost:${serverPort}`;
     coverageCollector = new BrowserCoverageCollector(serverPort);
     console.log(`\n🚀 Starting E2E coverage server on port ${serverPort}...`);
 
-    // Setup workspace
     const workspace = `/tmp/e2e-cov-${Date.now()}`;
     await Bun.$`mkdir -p ${workspace}`;
 
-    // Configure
     process.env.HYPERNEO_WORKSPACE_PATH = workspace;
     const config = getConfig();
     config.port = serverPort;
     config.dbPath = `${workspace}/daemon.db`;
 
-    // Create daemon
     daemonContext = await createDaemonApp({ config, verbose: false, standalone: false });
     daemonContext.server.stop();
 
-    // Web dist path
     const distPath = resolve(import.meta.dir, '../../../web/dist');
     const distExists = await Bun.file(resolve(distPath, 'index.html')).exists();
     if (!distExists) {
       throw new Error('Web dist not found. Run: cd packages/web && bun run build');
     }
 
-    // WebSocket handlers
     const wsHandlers = createWebSocketHandlers(
       daemonContext.transport,
       daemonContext.sessionManager
     );
 
-    // Hono for static files
     const app = new Hono();
     app.use('/*', serveStatic({ root: distPath }));
     app.get('*', async (c) => {
@@ -85,7 +62,6 @@ describe('E2E Quick Coverage Tests', () => {
       return c.html(html);
     });
 
-    // Start server
     server = Bun.serve({
       hostname: '127.0.0.1',
       port: serverPort,
@@ -100,7 +76,6 @@ describe('E2E Quick Coverage Tests', () => {
       websocket: wsHandlers,
     });
 
-    // Wait for ready
     for (let i = 0; i < 50; i++) {
       try {
         const res = await fetch(baseUrl);
@@ -115,34 +90,24 @@ describe('E2E Quick Coverage Tests', () => {
     console.log('✅ Browser launched\n');
   }, 60000);
 
-  /**
-   * Teardown: Collect coverage, cleanup
-   */
   afterAll(async () => {
     console.log('\n🛑 Processing coverage and cleanup...');
 
-    // Process browser coverage
     const coverage = coverageCollector.getCoverage();
     if (coverage.length > 0) {
       const distPath = resolve(import.meta.dir, '../../../web/dist');
 
       try {
-        // Convert to Istanbul format
         const istanbulCoverage = await convertToIstanbul(coverage, distPath);
 
-        // Filter path for web source files
         const filterPath = 'packages/web/src';
 
-        // Calculate stats
         const stats = calculateStats(istanbulCoverage, filterPath);
 
-        // Print summary
         printCoverageSummary(stats);
 
-        // Generate LCOV
         const lcovContent = generateLcov(istanbulCoverage, filterPath);
 
-        // Write to file
         const outputPath = resolve(import.meta.dir, 'browser-coverage.lcov');
         await Bun.write(outputPath, lcovContent);
         console.log(`\n   📄 Browser LCOV written to: ${outputPath}`);
@@ -153,7 +118,6 @@ describe('E2E Quick Coverage Tests', () => {
       console.log('   ⚠️  No browser coverage collected');
     }
 
-    // Cleanup
     if (browser) {
       await browser.close();
     }
@@ -166,10 +130,6 @@ describe('E2E Quick Coverage Tests', () => {
 
     console.log('✅ Done');
   }, 30000);
-
-  // =============================================================================
-  // Test Helper Functions
-  // =============================================================================
 
   async function newPage(): Promise<Page> {
     const context = await browser.newContext();
@@ -188,10 +148,6 @@ describe('E2E Quick Coverage Tests', () => {
       throw new Error(`Assertion failed: ${message}`);
     }
   }
-
-  // =============================================================================
-  // Test Suites
-  // =============================================================================
 
   describe('Homepage', () => {
     test('loads and shows sidebar', async () => {
@@ -269,16 +225,12 @@ describe('E2E Quick Coverage Tests', () => {
         await page.goto(baseUrl);
         await page.locator('text=Daemon').waitFor({ state: 'visible', timeout: 15000 });
 
-        // Click New button
         await page.locator('button:has-text("New")').first().click();
 
-        // Should navigate to session page
         await page.waitForURL(/\/session\/[a-f0-9-]+(-[a-f0-9-]+)+/, { timeout: 5000 });
 
-        // Wait for textarea to appear
         await page.waitForSelector('textarea[placeholder*="Ask"]', { timeout: 10000 });
 
-        // Should show input area
         assert(
           await page.locator('textarea[placeholder*="Ask"]').first().isVisible(),
           'Should show message input'
@@ -294,14 +246,11 @@ describe('E2E Quick Coverage Tests', () => {
         await page.goto(baseUrl);
         await page.locator('text=Daemon').waitFor({ state: 'visible', timeout: 15000 });
 
-        // Create a session first
         await page.locator('button:has-text("New")').first().click();
         await page.waitForURL(/\/session\/[a-f0-9-]+(-[a-f0-9-]+)+/, { timeout: 5000 });
 
-        // Wait for textarea to appear
         await page.waitForSelector('textarea[placeholder*="Ask"]', { timeout: 10000 });
 
-        // Check for input area
         assert(
           await page.locator('textarea[placeholder*="Ask"]').first().isVisible(),
           'Should show message input'
@@ -317,15 +266,12 @@ describe('E2E Quick Coverage Tests', () => {
         await page.goto(baseUrl);
         await page.locator('text=Daemon').waitFor({ state: 'visible', timeout: 15000 });
 
-        // Create a session
         await page.locator('button:has-text("New")').first().click();
         await page.waitForURL(/\/session\/[a-f0-9-]+(-[a-f0-9-]+)+/, { timeout: 5000 });
 
-        // Go back to home
         await page.goto(baseUrl);
         await page.locator('text=Daemon').waitFor({ state: 'visible', timeout: 5000 });
 
-        // Should show session in sidebar
         const sessionCount = await page.locator('[data-testid="session-card"]').count();
         assert(sessionCount > 0, 'Should show at least one session in sidebar');
       } finally {
@@ -341,19 +287,15 @@ describe('E2E Quick Coverage Tests', () => {
         await page.goto(baseUrl);
         await page.locator('text=Daemon').waitFor({ state: 'visible', timeout: 15000 });
 
-        // Create first session
         await page.locator('button:has-text("New")').first().click();
         await page.waitForURL(/\/session\/[a-f0-9-]+(-[a-f0-9-]+)+/, { timeout: 5000 });
 
-        // Create second session
         await page.locator('button:has-text("New")').first().click();
         await page.waitForURL(/\/session\/[a-f0-9-]+(-[a-f0-9-]+)+/, { timeout: 5000 });
 
-        // Navigate to first session via sidebar
         const firstSession = page.locator('[data-testid="session-card"]').first();
         await firstSession.click();
 
-        // Should navigate
         assert(page.url().match(/\/session\/[a-f0-9-]+/), 'Should be on session page');
       } finally {
         await closePage(page);
@@ -366,14 +308,11 @@ describe('E2E Quick Coverage Tests', () => {
         await page.goto(baseUrl);
         await page.locator('text=Daemon').waitFor({ state: 'visible', timeout: 15000 });
 
-        // Create a session
         await page.locator('button:has-text("New")').first().click();
         await page.waitForURL(/\/session\/[a-f0-9-]+(-[a-f0-9-]+)+/, { timeout: 5000 });
 
-        // Go to home via navigation
         await page.goto(baseUrl);
 
-        // Should be on home page
         assert(page.url().endsWith('/') || page.url().endsWith(baseUrl), 'Should be on home page');
       } finally {
         await closePage(page);
@@ -388,14 +327,11 @@ describe('E2E Quick Coverage Tests', () => {
         await page.goto(baseUrl);
         await page.locator('text=Daemon').waitFor({ state: 'visible', timeout: 15000 });
 
-        // Create a session
         await page.locator('button:has-text("New")').first().click();
         await page.waitForURL(/\/session\/[a-f0-9-]+(-[a-f0-9-]+)+/, { timeout: 5000 });
 
-        // Wait for textarea to appear
         await page.waitForSelector('textarea[placeholder*="Ask"]', { timeout: 10000 });
 
-        // Check for send button
         assert(
           await page.locator('button[aria-label="Send message"]').isVisible(),
           'Should show send button'
@@ -422,13 +358,6 @@ describe('E2E Quick Coverage Tests', () => {
   });
 });
 
-// =============================================================================
-// Helper Functions
-// =============================================================================
-
-/**
- * Find an available port dynamically
- */
 async function findAvailablePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
     const srv = createServer();

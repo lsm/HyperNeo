@@ -5,12 +5,6 @@ import {
   normalizeReplyTargetHandle,
 } from '../../../src/lib/space/agent-handle';
 
-// Characterization tests for the agent handle / name-token normalization leaf.
-// These pin the exact observable behavior of helpers consolidated from
-// space-agent-tools.ts and node-agent-tools.ts. Expected values were captured
-// from the implementation, not invented. `handleFromName` is module-private and
-// exercised indirectly through the non-`@` branch of normalizeReplyTargetHandle.
-
 describe('normalizeAgentNameToken', () => {
   test('lowercases the value', () => {
     expect(normalizeAgentNameToken('Coder')).toBe('coder');
@@ -51,7 +45,6 @@ describe('normalizeReplyTargetHandle', () => {
     expect(normalizeReplyTargetHandle('  space-agent  ')).toBe('@coordinator');
   });
   test('does NOT treat a prefixed/embedded "space-agent" as the coordinator', () => {
-    // Only the exact trimmed literal maps; slugification applies otherwise.
     expect(normalizeReplyTargetHandle('space-agent-2')).toBe('@space-agent-2');
   });
 
@@ -63,7 +56,6 @@ describe('normalizeReplyTargetHandle', () => {
       expect(normalizeReplyTargetHandle('  @Foo  ')).toBe('@Foo');
     });
     test('does NOT lowercase or slugify @-prefixed values', () => {
-      // Case and interior punctuation are preserved once the leading @ is present.
       expect(normalizeReplyTargetHandle('@Mixed_Case!')).toBe('@Mixed_Case!');
     });
     test('a bare "@" passes through as "@"', () => {
@@ -93,8 +85,6 @@ describe('normalizeReplyTargetHandle', () => {
       expect(normalizeReplyTargetHandle('!!!')).toBeNull();
     });
     test('a leading "@" short-circuits slugification — even "@@@" passes through', () => {
-      // The startsWith('@') branch is checked before handleFromName, so any
-      // @-prefixed value (even one that would slugify to empty) is returned as-is.
       expect(normalizeReplyTargetHandle('@@@')).toBe('@@@');
     });
   });
@@ -117,7 +107,6 @@ describe('isReservedAgentHandle', () => {
     expect(isReservedAgentHandle('')).toBe(false);
   });
   test('is case-sensitive (callers must pass already-normalized handles)', () => {
-    // RESERVED_SPACE_AGENT_HANDLES is lowercase; .includes is an exact match.
     expect(isReservedAgentHandle('Coordinator')).toBe(false);
     expect(isReservedAgentHandle('COORDINATOR')).toBe(false);
   });

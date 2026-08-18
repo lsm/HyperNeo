@@ -1,24 +1,5 @@
-/**
- * Tests for SkillsStore
- *
- * Verifies:
- * - LiveQuery snapshot populates skills signal
- * - LiveQuery delta (added/removed/updated) updates signal correctly
- * - WebSocket reconnect re-subscribes automatically
- * - unsubscribe() calls liveQuery.unsubscribe and resets state
- * - Idempotent subscribe/unsubscribe behavior
- * - Stale-event guard discards events after unsubscribe
- * - Post-await unsubscribe race guard prevents dangling handlers
- * - Error propagation via subscribe() rejection and error signal
- * - Mutation methods call the correct RPC endpoints
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AppSkill, LiveQuerySnapshotEvent, LiveQueryDeltaEvent } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Mocks
-// ---------------------------------------------------------------------------
 
 type EventHandler<T = unknown> = (data: T) => void;
 
@@ -76,10 +57,6 @@ vi.mock('./connection-manager.ts', () => ({
 import { connectionManager } from './connection-manager.js';
 import { skillsStore } from './skills-store.js';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function makeSkill(id: string, overrides: Partial<AppSkill> = {}): AppSkill {
   return {
     id,
@@ -98,10 +75,6 @@ function makeSkill(id: string, overrides: Partial<AppSkill> = {}): AppSkill {
 
 const SUBSCRIPTION_ID = 'skills-global';
 
-// ---------------------------------------------------------------------------
-// SkillsStore Tests
-// ---------------------------------------------------------------------------
-
 describe('SkillsStore', () => {
   let mockHub: MockHub;
 
@@ -109,7 +82,6 @@ describe('SkillsStore', () => {
     vi.clearAllMocks();
     mockHub = createMockHub();
 
-    // Reset store signals
     skillsStore.skills.value = [];
     skillsStore.isLoading.value = false;
     skillsStore.loaded.value = false;
@@ -122,15 +94,8 @@ describe('SkillsStore', () => {
 
   afterEach(() => {
     skillsStore.unsubscribe();
-    // The idempotent-subscribe test calls subscribe() twice, pushing refCount to 2.
-    // A single unsubscribe() only decrements to 1, leaving subscribed=true and
-    // leaking state into subsequent tests. Drain fully to ensure clean isolation.
     skillsStore.unsubscribe();
   });
-
-  // ---------------------------------------------------------------------------
-  // subscribe()
-  // ---------------------------------------------------------------------------
 
   describe('subscribe()', () => {
     it('should send liveQuery.subscribe request with skills.list query', async () => {
@@ -152,18 +117,14 @@ describe('SkillsStore', () => {
       const loadingValues: boolean[] = [];
       const unsub = skillsStore.isLoading.subscribe((v) => loadingValues.push(v));
 
-      // Start subscribe but don't await — pauses at getHub()
       const subPromise = skillsStore.subscribe();
 
-      // Resolve the hub
       resolveHub!(mockHub);
 
-      // Flush microtasks so the continuation runs
       await Promise.resolve();
 
       expect(skillsStore.isLoading.value).toBe(true);
 
-      // Fire snapshot to complete
       mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
         subscriptionId: SUBSCRIPTION_ID,
         rows: [],
@@ -177,13 +138,10 @@ describe('SkillsStore', () => {
     });
 
     it('should start with loaded=false and flip to true on first snapshot', async () => {
-      // Consumers (e.g. AppMcpServersSettings) rely on `loaded` to tell
-      // "subscription still in flight" from "subscription delivered zero
-      // rows." Using skills.length > 0 would conflate them.
       expect(skillsStore.loaded.value).toBe(false);
 
       await skillsStore.subscribe();
-      expect(skillsStore.loaded.value).toBe(false); // request sent, snapshot not yet
+      expect(skillsStore.loaded.value).toBe(false);
 
       mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
         subscriptionId: SUBSCRIPTION_ID,
@@ -194,8 +152,6 @@ describe('SkillsStore', () => {
     });
 
     it('should flip loaded=true even when the snapshot delivers zero rows', async () => {
-      // Regression guard for the AppMcpServersSettings orphan-warning bug:
-      // "zero skills" is a valid steady state, not a stuck-loading state.
       await skillsStore.subscribe();
       mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
         subscriptionId: SUBSCRIPTION_ID,
@@ -254,7 +210,6 @@ describe('SkillsStore', () => {
 
       await expect(skillsStore.subscribe()).rejects.toThrow('subscribe failed');
 
-      // Subscribe again after failure — fresh handlers, no leak
       vi.mocked(mockHub.request).mockResolvedValue({ ok: true });
       await skillsStore.subscribe();
 
@@ -264,20 +219,14 @@ describe('SkillsStore', () => {
         version: 1,
       });
 
-      // If handlers were leaked, count would be wrong
       expect(skillsStore.skills.value).toHaveLength(1);
       expect(skillsStore.skills.value[0].id).toBe('fresh');
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // liveQuery.delta handling
-  // ---------------------------------------------------------------------------
-
   describe('delta handling', () => {
     beforeEach(async () => {
       await skillsStore.subscribe();
-      // Populate initial state
       mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
         subscriptionId: SUBSCRIPTION_ID,
         rows: [makeSkill('1'), makeSkill('2')],
@@ -342,10 +291,6 @@ describe('SkillsStore', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Stale-event guard
-  // ---------------------------------------------------------------------------
-
   describe('stale-event guard', () => {
     it('should discard snapshot event fired after unsubscribe', async () => {
       await skillsStore.subscribe();
@@ -359,7 +304,6 @@ describe('SkillsStore', () => {
 
       skillsStore.unsubscribe();
 
-      // Fire a stale snapshot — should be ignored
       mockHub.fire<LiveQuerySnapshotEvent>('liveQuery.snapshot', {
         subscriptionId: SUBSCRIPTION_ID,
         rows: [makeSkill('stale-skill')],
@@ -390,10 +334,6 @@ describe('SkillsStore', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Post-await unsubscribe race guard
-  // ---------------------------------------------------------------------------
-
   describe('post-await unsubscribe race guard', () => {
     it('should not leave dangling handlers when unsubscribe races with hub resolution', async () => {
       let resolveRequest: () => void;
@@ -403,13 +343,10 @@ describe('SkillsStore', () => {
       vi.mocked(mockHub.request).mockReturnValue(requestPromise as never);
       vi.mocked(connectionManager.getHub).mockResolvedValue(mockHub as never);
 
-      // Start subscribe but don't await — pauses at hub.request
       const subPromise = skillsStore.subscribe();
 
-      // Unsubscribe while subscribe request is still in-flight
       skillsStore.unsubscribe();
 
-      // Allow the request to resolve
       resolveRequest!();
 
       await subPromise;
@@ -418,10 +355,6 @@ describe('SkillsStore', () => {
       expect(skillsStore.skills.value).toHaveLength(0);
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // Reconnect handling
-  // ---------------------------------------------------------------------------
 
   describe('WebSocket reconnect', () => {
     it('should re-subscribe with same subscriptionId on reconnect', async () => {
@@ -459,10 +392,6 @@ describe('SkillsStore', () => {
       expect(mockHub.request).not.toHaveBeenCalled();
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // unsubscribe()
-  // ---------------------------------------------------------------------------
 
   describe('unsubscribe()', () => {
     it('should call liveQuery.unsubscribe', async () => {
@@ -513,10 +442,6 @@ describe('SkillsStore', () => {
       expect(() => skillsStore.unsubscribe()).not.toThrow();
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // Mutation methods
-  // ---------------------------------------------------------------------------
 
   describe('addSkill()', () => {
     it('should call skill.create RPC with params', async () => {

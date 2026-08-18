@@ -1,18 +1,3 @@
-/**
- * EventSubscriptionSetup - Sets up InternalEventBus<DaemonInternalEventMap> event subscriptions
- *
- * Extracted from AgentSession to reduce complexity.
- * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
- *
- * Handles:
- * - Model switch request subscription
- * - Interrupt request subscription
- * - Reset request subscription
- * - Message persisted subscription
- * - Query trigger subscription
- * - Send enqueued-on-turn-end subscription
- */
-
 import type { Session, MessageContent } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Logger } from '../logger';
@@ -22,37 +7,22 @@ import type { InterruptHandler } from './interrupt-handler';
 import type { QueryModeHandler } from './query-mode-handler';
 import { isMessageDeliveryV2Enabled } from './message-delivery';
 
-/**
- * Context interface - what EventSubscriptionSetup needs from AgentSession
- * Using interface instead of importing AgentSession to avoid circular deps
- */
 export interface EventSubscriptionSetupContext {
   readonly session: Session;
   readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 
-  // Handler references for event delegation
   readonly modelSwitchHandler: ModelSwitchHandler;
   readonly interruptHandler: InterruptHandler;
   readonly queryModeHandler: QueryModeHandler;
 
-  // Methods for event handling
   resetQuery(options?: {
     restartQuery?: boolean;
     hardReset?: boolean;
   }): Promise<{ success: boolean; error?: string }>;
   startQueryAndEnqueue(messageId: string, messageContent: string | MessageContent[]): Promise<void>;
-  /**
-   * Ordinary-chat entry for message-delivery v2 (flag-gated). When present AND
-   * the v2 flag is set, `message.persisted` enqueues a durable job_queue row
-   * instead of calling startQueryAndEnqueue. Optional — absent on sessions that
-   * haven't opted into v2.
-   */
   deliverChatMessage?(messageId: string): Promise<void>;
 }
 
-/**
- * Sets up InternalEventBus<DaemonInternalEventMap> event subscriptions for AgentSession
- */
 export class EventSubscriptionSetup {
   private logger: Logger;
   private unsubscribers: Array<() => void> = [];
@@ -61,16 +31,11 @@ export class EventSubscriptionSetup {
     this.logger = new LoggerClass(`EventSubscriptionSetup ${ctx.session.id}`);
   }
 
-  /**
-   * Setup all event subscriptions
-   * Internally calls context methods for event handling
-   */
   setup(): void {
     const { session, internalEventBus, modelSwitchHandler, interruptHandler, queryModeHandler } =
       this.ctx;
     const sessionId = session.id;
 
-    // Model switch request handler
     const unsubModelSwitch = internalEventBus.subscribe(
       'model.switchRequest',
       async ({ sessionId: sid, model, provider }) => {
@@ -79,7 +44,6 @@ export class EventSubscriptionSetup {
         }
         const result = await modelSwitchHandler.switchModel(model, provider);
 
-        // Emit result
         await internalEventBus.publish('model.switched', {
           sessionId: sid,
           success: result.success,
@@ -91,7 +55,6 @@ export class EventSubscriptionSetup {
     );
     this.unsubscribers.push(unsubModelSwitch);
 
-    // Interrupt request handler
     const unsubInterrupt = internalEventBus.subscribe(
       'agent.interruptRequest',
       async ({ sessionId: sid }) => {
@@ -102,7 +65,6 @@ export class EventSubscriptionSetup {
     );
     this.unsubscribers.push(unsubInterrupt);
 
-    // Reset query request handler
     const unsubReset = internalEventBus.subscribe(
       'agent.resetRequest',
       async ({ sessionId: sid, restartQuery }) => {
@@ -121,22 +83,14 @@ export class EventSubscriptionSetup {
     );
     this.unsubscribers.push(unsubReset);
 
-    // Message persisted handler
     const unsubMessagePersisted = internalEventBus.subscribe(
       'message.persisted',
       async (data) => {
         if (data.skipQueryStart) return;
-        // Message-delivery v2 (default-on): route ordinary chat through the
-        // durable job_queue chokepoint (role decided atomically by the index)
-        // instead of driving the query inline. Space / long-term-agent injectors
-        // route through the same durable path via deliverAndMarkQueued. See
-        // docs/features/message-delivery-v2.md.
         if (isMessageDeliveryV2Enabled() && this.ctx.deliverChatMessage) {
           await this.ctx.deliverChatMessage(data.messageId);
           return;
         }
-        // Start query and enqueue message
-        // Note: User messages in the DB serve as rewind points - no separate checkpoint tracking needed
         await this.ctx.startQueryAndEnqueue(
           data.messageId,
           data.messageContent as string | MessageContent[]
@@ -146,7 +100,6 @@ export class EventSubscriptionSetup {
     );
     this.unsubscribers.push(unsubMessagePersisted);
 
-    // Query trigger handler (Manual mode)
     const unsubQueryTrigger = internalEventBus.subscribe(
       'query.trigger',
       async () => {
@@ -155,18 +108,8 @@ export class EventSubscriptionSetup {
       { sessionId, subscriberName: 'EventSubscriptionSetup.queryTrigger' }
     );
     this.unsubscribers.push(unsubQueryTrigger);
-
-    // Note: `query.sendEnqueuedOnTurnEnd` was never published anywhere in the
-    // codebase (dormant since it was declared) — the turn-end / (re)hydration
-    // replay of enqueued messages runs through replayPendingMessagesForImmediateMode
-    // (sendEnqueuedMessagesOnTurnEnd), and under durable delivery the handler +
-    // reclaimStale own driving enqueued rows. The dead subscription was removed
-    // (task #861 item 14).
   }
 
-  /**
-   * Cleanup all subscriptions
-   */
   cleanup(): void {
     for (const unsubscribe of this.unsubscribers) {
       try {

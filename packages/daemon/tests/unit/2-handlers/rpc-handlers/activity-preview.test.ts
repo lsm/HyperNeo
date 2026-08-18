@@ -1,26 +1,12 @@
-/**
- * Characterization tests for the activity-preview family
- * (`packages/daemon/src/lib/rpc-handlers/activity-preview.ts`).
- *
- * These lock the current server-side preview/entry-rendering behavior for the
- * pure formatter branches that previously had only indirect coverage through
- * slow full-DB integration tests in `live-query-handlers.test.ts`. The leaf
- * formatters are module-private by design, so we exercise them through the
- * narrow public surface: `mapActiveTurnEntryRow` and
- * `buildActiveTurnSummariesFromRows`.
- */
-
 import { describe, test, expect } from 'bun:test';
 import {
   buildActiveTurnSummariesFromRows,
   mapActiveTurnEntryRow,
 } from '../../../../src/lib/rpc-handlers/activity-preview';
-// Prove the facade re-export from the source module is preserved.
 import { buildActiveTurnSummariesFromRows as fromFacade } from '../../../../src/lib/rpc-handlers/live-query-handlers';
 
 type Row = Record<string, unknown>;
 
-/** Build a raw row of a given blockType with sensible defaults. */
 function row(overrides: Row): Row {
   return {
     sessionId: 's1',
@@ -34,7 +20,6 @@ function row(overrides: Row): Row {
   };
 }
 
-/** Build a tool_use row; `input` is stringified as the SDK stores it. */
 function toolRow(toolName: string, input: Row, overrides: Row = {}): Row {
   return row({
     blockType: 'tool_use',
@@ -99,7 +84,6 @@ describe('mapActiveTurnEntryRow: tool_use previews', () => {
   test('TaskOutput/TaskStop use task_id / shell_id', () => {
     expect(previewOf('TaskOutput', { task_id: 't1' })).toBe('t1');
     expect(previewOf('TaskOutput', {})).toBe('Task output');
-    // TaskStop prefers task_id, then shell_id, then the literal fallback.
     expect(previewOf('TaskStop', { task_id: 't2' })).toBe('t2');
     expect(previewOf('TaskStop', { shell_id: 'sh1' })).toBe('sh1');
     expect(previewOf('TaskStop', {})).toBe('Stop task');

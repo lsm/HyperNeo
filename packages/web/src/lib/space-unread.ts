@@ -1,13 +1,3 @@
-/**
- * Space session unread tracking (client-local).
- *
- * Mirrors the global `session-status.ts` pattern: a localStorage-backed
- * last-seen map keyed by session id, compared against the `messageCount` the
- * `spaceSessions.bySpace` LiveQuery now carries. Space sessions aren't part of
- * the global sessions signal, so they need their own (still client-local)
- * tracking — no server-persisted unread state is introduced.
- */
-
 import { signal } from '@preact/signals';
 
 const STORAGE_KEY = 'kai:space-session-last-seen';
@@ -37,20 +27,11 @@ function saveLastSeen(counts: Map<string, number>): void {
   }
 }
 
-/**
- * Unread message count for a space session. Reactive: subscribe to
- * `lastSeenCounts` (re-exported) to recompute when a session is marked read.
- */
 export function getSpaceSessionUnreadCount(id: string, messageCount: number | undefined): number {
   const seen = lastSeenCounts.value.get(id) ?? 0;
   return Math.max(0, (messageCount ?? 0) - seen);
 }
 
-/**
- * Mark a space session as read up to its current `messageCount`. No-op when the
- * stored count is already current so the signal reference stays stable and
- * renders don't churn.
- */
 export function markSpaceSessionRead(id: string, messageCount: number | undefined): void {
   const current = messageCount ?? 0;
   if ((lastSeenCounts.value.get(id) ?? 0) >= current) return;
@@ -60,13 +41,6 @@ export function markSpaceSessionRead(id: string, messageCount: number | undefine
   saveLastSeen(next);
 }
 
-/**
- * Lower any stored last-seen baseline that exceeds the session's current
- * `messageCount`. A rewind (or message deletion) drops the count below the old
- * high-water mark; without this, new post-rewind messages read as 0 unread
- * until the count climbs past the old peak. Call reactively as the session
- * list changes.
- */
 export function syncSpaceSessionSeen(
   sessions: ReadonlyArray<{ id: string; messageCount?: number }>
 ): void {
@@ -86,12 +60,7 @@ export function syncSpaceSessionSeen(
   }
 }
 
-/** Reactive handle so components recompute unread counts when state changes. */
 export const spaceSessionLastSeen = lastSeenCounts;
-
-// ---------------------------------------------------------------------------
-// Task unread tracking (client-local)
-// ---------------------------------------------------------------------------
 
 function loadLastSeenTasks(): Map<string, number> {
   try {
@@ -114,11 +83,6 @@ function saveLastSeenTasks(counts: Map<string, number>): void {
   }
 }
 
-/**
- * Seed the last-seen `updatedAt` for any task not yet known. Called as the task
- * list renders so a task is only "unread" when it is updated AFTER the user
- * first saw it — avoiding every task flashing unread on a cold space load.
- */
 export function seedSpaceTasksSeen(tasks: ReadonlyArray<{ id: string; updatedAt: number }>): void {
   let changed = false;
   const next = new Map(lastSeenTaskUpdates.value);
@@ -134,15 +98,11 @@ export function seedSpaceTasksSeen(tasks: ReadonlyArray<{ id: string; updatedAt:
   }
 }
 
-/** Whether a task has been updated since the user last viewed it. */
 export function isSpaceTaskUnread(id: string, updatedAt: number): boolean {
   const seen = lastSeenTaskUpdates.value.get(id);
-  // Unknown task (not yet seeded) is treated as read — seeding happens as the
-  // list renders, so this just guards against a render before the seed effect.
   return seen !== undefined && updatedAt > seen;
 }
 
-/** Mark a task as seen up to its current `updatedAt`. */
 export function markSpaceTaskRead(id: string, updatedAt: number): void {
   if ((lastSeenTaskUpdates.value.get(id) ?? 0) >= updatedAt) return;
   const next = new Map(lastSeenTaskUpdates.value);
@@ -151,5 +111,4 @@ export function markSpaceTaskRead(id: string, updatedAt: number): void {
   saveLastSeenTasks(next);
 }
 
-/** Reactive handle so task rows recompute when last-seen state changes. */
 export const spaceTaskLastSeen = lastSeenTaskUpdates;

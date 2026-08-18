@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for IconButton Component
- */
 
 import { render } from '@testing-library/preact';
 import { describe, it, expect, vi } from 'vitest';

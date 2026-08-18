@@ -9,7 +9,7 @@ import type {
 } from '@hyperneo/shared';
 import { Logger } from '../logger';
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes — long enough for session/prompt turns
+const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 const CLOSE_SIGTERM_TIMEOUT_MS = 5_000;
 
 const logger = new Logger('AcpTransport');
@@ -48,12 +48,6 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
-/**
- * JSON-RPC 2.0 stdio transport for ACP agents.
- *
- * Spawns a child process, sends requests/notifications via stdin,
- * and parses line-delimited JSON-RPC messages from stdout.
- */
 export class AcpTransport {
   private process: ChildProcess | null = null;
   private nextId = 1;
@@ -215,9 +209,6 @@ export class AcpTransport {
     this.pendingRequests.clear();
   }
 
-  /**
-   * Send a JSON-RPC request and wait for the response.
-   */
   sendRequest(
     method: string,
     params?: unknown,
@@ -260,10 +251,6 @@ export class AcpTransport {
           try {
             options?.onSubmitted?.();
           } catch (err) {
-            // The submission callback runs after the write completed, so the
-            // outer try/catch cannot see a throw. Reject the request here —
-            // otherwise the exception escapes as an uncaught error and the
-            // request pends until timeout. See Codex (#3744105279).
             clearTimeout(timer);
             if (this.pendingRequests.delete(id)) {
               reject(err instanceof Error ? err : new Error(String(err)));
@@ -278,9 +265,6 @@ export class AcpTransport {
     });
   }
 
-  /**
-   * Send a JSON-RPC notification (fire-and-forget).
-   */
   sendNotification(method: string, params?: unknown): void {
     if (this.closed || !this.process || this.process.killed) {
       logger.warn('Cannot send notification: transport is closed or process is dead');
@@ -300,9 +284,6 @@ export class AcpTransport {
     }
   }
 
-  /**
-   * Send a JSON-RPC response for an inbound request.
-   */
   sendResponse(id: number | string | null, result: unknown): void {
     if (this.closed || !this.process || this.processExited) {
       logger.warn('Cannot send response: transport is closed or process has exited');
@@ -322,9 +303,6 @@ export class AcpTransport {
     }
   }
 
-  /**
-   * Send a JSON-RPC error response for an inbound request.
-   */
   sendErrorResponse(id: number | string | null, error: AcpJsonRpcError): void {
     if (this.closed || !this.process || this.processExited) {
       logger.warn('Cannot send error response: transport is closed or process has exited');
@@ -359,10 +337,6 @@ export class AcpTransport {
     proc.kill(signal);
   }
 
-  /**
-   * Close the transport.
-   * Sends SIGTERM to the process group, waits 5s, then SIGKILL if still running.
-   */
   close(): Promise<void> {
     if (this.closed) {
       return this.closePromise ?? Promise.resolve();
@@ -379,7 +353,6 @@ export class AcpTransport {
         return;
       }
 
-      // SIGTERM → wait → SIGKILL (process group on POSIX)
       this.killProcess('SIGTERM');
 
       const killTimer = setTimeout(() => {
@@ -389,8 +362,6 @@ export class AcpTransport {
         }
       }, CLOSE_SIGTERM_TIMEOUT_MS);
 
-      // Exit/error handlers in spawnProcess() already call closeResolve.
-      // Clean up the timer when they fire.
       const cleanup = () => clearTimeout(killTimer);
       this.process.once('exit', cleanup);
       this.process.once('error', cleanup);

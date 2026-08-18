@@ -1,10 +1,3 @@
-/**
- * Tests for CircularProgressIndicator Component
- *
- * Tests the circular progress display with percentage, color coding,
- * and SVG rendering.
- */
-
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/preact';
 import { CircularProgressIndicator } from '../CircularProgressIndicator';
@@ -26,7 +19,7 @@ describe('CircularProgressIndicator', () => {
       expect(svg).toBeTruthy();
 
       const circles = container.querySelectorAll('svg circle');
-      expect(circles.length).toBe(2); // Background circle + progress arc
+      expect(circles.length).toBe(2);
     });
 
     it('should display percentage text when showPercentage is true', () => {
@@ -67,11 +60,9 @@ describe('CircularProgressIndicator', () => {
     it('should show gray color for 0% progress', () => {
       const { container } = render(<CircularProgressIndicator progress={0} />);
 
-      // Gray for 0% - no progress arc should be visible
       const progressArc = container.querySelectorAll('svg circle')[1];
       expect(progressArc).toBeUndefined();
 
-      // Text should be dark gray
       const text = container.querySelector('svg text');
       expect(text?.getAttribute('class')).toContain('text-dark-500');
     });
@@ -79,7 +70,6 @@ describe('CircularProgressIndicator', () => {
     it('should show blue color for in-progress (1-99%)', () => {
       const { container } = render(<CircularProgressIndicator progress={50} />);
 
-      // Progress arc should have blue color
       const progressArc = container.querySelectorAll('svg circle')[1];
       expect(progressArc?.getAttribute('class')).toContain('text-blue-500');
     });
@@ -87,11 +77,9 @@ describe('CircularProgressIndicator', () => {
     it('should show green color for 100% progress', () => {
       const { container } = render(<CircularProgressIndicator progress={100} />);
 
-      // Progress arc should have green color
       const progressArc = container.querySelectorAll('svg circle')[1];
       expect(progressArc?.getAttribute('class')).toContain('text-green-500');
 
-      // Text should also be green
       const text = container.querySelector('svg text');
       expect(text?.getAttribute('class')).toContain('text-green-400');
     });
@@ -101,7 +89,6 @@ describe('CircularProgressIndicator', () => {
     it('should clamp progress to 100% when exceeding 100', () => {
       const { container } = render(<CircularProgressIndicator progress={150} />);
 
-      // SVG text should show clamped value
       const text = container.querySelector('svg text');
       expect(text?.textContent).toBe('100');
     });
@@ -109,7 +96,6 @@ describe('CircularProgressIndicator', () => {
     it('should clamp progress to 0% when negative', () => {
       const { container } = render(<CircularProgressIndicator progress={-20} />);
 
-      // SVG text should show 0
       const text = container.querySelector('svg text');
       expect(text?.textContent).toBe('0');
     });
@@ -145,7 +131,6 @@ describe('CircularProgressIndicator', () => {
     it('should not render progress arc when progress is 0', () => {
       const { container } = render(<CircularProgressIndicator progress={0} />);
 
-      // Only background circle should exist
       const circles = container.querySelectorAll('svg circle');
       expect(circles.length).toBe(1);
     });
@@ -163,7 +148,6 @@ describe('CircularProgressIndicator', () => {
       const progressArc = container.querySelectorAll('svg circle')[1];
       const dashArray = progressArc?.getAttribute('stroke-dasharray');
 
-      // For 50% of circumference (~94.2), should be ~47.1
       expect(dashArray).toContain('47.1');
     });
   });

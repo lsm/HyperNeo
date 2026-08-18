@@ -1,15 +1,3 @@
-/**
- * RewindHandler - Handles rewind operations for AgentSession
- *
- * Extracted from AgentSession to reduce complexity.
- * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
- *
- * Handles:
- * - Preview rewind (dry run)
- * - Execute rewind (files, conversation, or both)
- * - Checkpoint retrieval (from user messages in DB)
- */
-
 import type {
   RewindMode,
   RewindPreview,
@@ -29,49 +17,29 @@ import {
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import type { QueryLike } from './query-like';
 
-/**
- * A checkpoint/rewind point derived from a user message
- */
 export interface RewindPoint {
-  uuid: string; // User message UUID (used as checkpoint ID by SDK)
-  timestamp: number; // Message timestamp (milliseconds)
-  content: string; // Message content preview
-  turnNumber: number; // Derived turn number (1-indexed position)
+  uuid: string;
+  timestamp: number;
+  content: string;
+  turnNumber: number;
 }
 
-/**
- * Rewind case - determines which strategy to use for file rewind
- */
 export type RewindCase = 'sdk-native' | 'diff-based' | 'hybrid';
 
-/**
- * Represents a file operation (Edit or Write tool call)
- */
 export interface FileOperation {
   type: 'edit' | 'write' | 'multiEdit';
   filePath: string;
-  // For edit operations
   oldString?: string;
   newString?: string;
-  // For write operations
   content?: string;
 }
 
-/**
- * Analysis result for determining rewind strategy
- */
 export interface RewindCaseAnalysis {
   rewindCase: RewindCase;
-  /** The oldest user message in the range (for SDK checkpoint) */
   oldestUserMessage?: { uuid: string; timestamp: number };
-  /** Assistant messages before the oldest user message (for diff-based revert in hybrid case) */
   messagesBeforeUser: Array<Record<string, unknown>>;
 }
 
-/**
- * Context interface - what RewindHandler needs from AgentSession
- * Using interface instead of importing AgentSession to avoid circular deps
- */
 export interface RewindHandlerContext {
   readonly session: Session;
   readonly db: Database;
@@ -84,24 +52,13 @@ export interface RewindHandlerContext {
   clearPendingResumeSessionAt(): void;
 }
 
-/**
- * Handles rewind operations for AgentSession
- */
 export class RewindHandler {
   constructor(private ctx: RewindHandlerContext) {}
 
-  /**
-   * Get all rewind points (user messages) for this session
-   *
-   * Returns user messages from the DB, sorted newest first.
-   * Each user message is a potential rewind point since the SDK
-   * uses user message UUIDs for file checkpointing.
-   */
   getRewindPoints(): RewindPoint[] {
     const { session, db } = this.ctx;
     const userMessages = db.getUserMessages(session.id);
 
-    // Add turn numbers (1-indexed)
     return userMessages
       .map((msg, idx) => ({
         uuid: msg.uuid,
@@ -109,18 +66,14 @@ export class RewindHandler {
         content: msg.content,
         turnNumber: idx + 1,
       }))
-      .reverse(); // Newest first
+      .reverse();
   }
 
-  /**
-   * Get a single rewind point by UUID
-   */
   getRewindPoint(uuid: string): RewindPoint | undefined {
     const { session, db } = this.ctx;
     const userMessage = db.getUserMessageByUuid(session.id, uuid);
     if (!userMessage) return undefined;
 
-    // Get all messages to find turn number
     const allMessages = db.getUserMessages(session.id);
     const turnNumber = allMessages.findIndex((m) => m.uuid === uuid) + 1;
 
@@ -132,19 +85,14 @@ export class RewindHandler {
     };
   }
 
-  /**
-   * Preview a rewind operation (dry run)
-   */
   async previewRewind(checkpointId: string): Promise<RewindPreview> {
     const { db, queryObject, firstMessageReceived, logger, session } = this.ctx;
 
-    // Validate checkpoint exists (look up user message)
     const rewindPoint = this.getRewindPoint(checkpointId);
     if (!rewindPoint) {
       return { canRewind: false, error: `Rewind point ${checkpointId} not found` };
     }
 
-    // Check SDK query is active and ready
     if (!queryObject) {
       return { canRewind: false, error: 'SDK query not active. Start a conversation first.' };
     }
@@ -159,7 +107,6 @@ export class RewindHandler {
     try {
       const sdkResult = await queryObject.rewindFiles(checkpointId, { dryRun: true });
 
-      // Count messages that would be deleted
       const messagesAffected = db.countMessagesAfter(session.id, rewindPoint.timestamp);
 
       return {
@@ -176,19 +123,14 @@ export class RewindHandler {
     }
   }
 
-  /**
-   * Execute a rewind operation
-   */
   async executeRewind(checkpointId: string, mode: RewindMode): Promise<RewindResult> {
     const { session, internalEventBus, queryObject, firstMessageReceived, logger } = this.ctx;
 
-    // Validate checkpoint exists
     const rewindPoint = this.getRewindPoint(checkpointId);
     if (!rewindPoint) {
       return { success: false, error: `Rewind point ${checkpointId} not found` };
     }
 
-    // Check SDK query is active and ready
     if (!queryObject) {
       return { success: false, error: 'SDK query not active. Start a conversation first.' };
     }
@@ -197,11 +139,9 @@ export class RewindHandler {
       return { success: false, error: 'SDK not ready. Please wait for the session to initialize.' };
     }
 
-    // Emit rewind.started event
     await internalEventBus.publish('rewind.started', { sessionId: session.id, checkpointId, mode });
 
     try {
-      // Mode 1: files only
       if (mode === 'files') {
         const sdkResult = await queryObject.rewindFiles(checkpointId);
 
@@ -235,12 +175,10 @@ export class RewindHandler {
         };
       }
 
-      // Mode 2: conversation only
       if (mode === 'conversation') {
         return await this.executeConversationRewind(checkpointId, rewindPoint);
       }
 
-      // Mode 3: both - files (best-effort) then conversation
       let fileResult: { filesChanged?: string[]; insertions?: number; deletions?: number } = {};
       try {
         const sdkResult = await queryObject.rewindFiles(checkpointId);
@@ -255,7 +193,6 @@ export class RewindHandler {
         logger.error('File rewind failed (proceeding with conversation rewind):', fileError);
       }
 
-      // Always proceed with conversation rewind
       const conversationResult = await this.executeConversationRewind(checkpointId, rewindPoint);
 
       await internalEventBus.publish('rewind.completed', {
@@ -293,26 +230,14 @@ export class RewindHandler {
     }
   }
 
-  /**
-   * Execute conversation rewind (delete messages at and after checkpoint, truncate JSONL, restart)
-   *
-   * Key changes from original:
-   * 1. Deletes the checkpoint message ITSELF (not just messages after it)
-   * 2. Finds the previous user message for one-shot runtime resumeSessionAt
-   * 3. Explicitly truncates the SDK JSONL file
-   */
   private async executeConversationRewind(
     checkpointId: string,
     rewindPoint: RewindPoint
   ): Promise<RewindResult> {
     const { session, db, lifecycleManager } = this.ctx;
 
-    // Step 1: Delete the user message itself AND all messages after it from DB
     const messagesDeleted = db.deleteMessagesAtAndAfter(session.id, rewindPoint.timestamp);
 
-    // Step 2: Truncate the SDK JSONL file at this message
-    // Use worktree path when available — SDK creates session files based on CWD,
-    // which is the worktree path for worktree sessions, not session.workspacePath.
     const sdkWorkspacePath = session.worktree
       ? session.worktree.worktreePath
       : session.workspacePath;
@@ -326,8 +251,6 @@ export class RewindHandler {
       checkpointId
     );
 
-    // Step 3: Find the previous user message for one-shot runtime resumeSessionAt
-    // After deleting the checkpoint message, the remaining user messages are the ones before it
     const remainingUserMessages = db.getUserMessages(session.id);
     const previousUserMessage =
       remainingUserMessages.length > 0
@@ -345,26 +268,14 @@ export class RewindHandler {
     ) {
       this.ctx.setPendingResumeSessionAt(previousUserMessage.uuid);
     } else {
-      // No resumable predecessor — clear any stale pending value from a previous
-      // rewind that didn't complete, so it doesn't leak into the next query.
       this.ctx.clearPendingResumeSessionAt();
     }
 
-    // Step 4: Restart query to apply new state
     await lifecycleManager.restart();
 
     return { success: true, conversationRewound: true, messagesDeleted };
   }
 
-  /**
-   * Analyze which rewind case applies based on the earliest selected message
-   * and the distribution of user vs assistant messages in the range.
-   *
-   * Cases:
-   * 1. sdk-native: Earliest message is a user message -> can use SDK checkpoint directly
-   * 2. diff-based: No user messages in range -> must use diff-based revert only
-   * 3. hybrid: Earliest is assistant, but user messages exist later -> SDK to user, then diff before
-   */
   analyzeRewindCase(
     earliestMessage: Record<string, unknown>,
     messagesInRange: Array<Record<string, unknown>>,
@@ -373,7 +284,6 @@ export class RewindHandler {
     const earliestType = earliestMessage.type as string;
 
     if (earliestType === 'user') {
-      // Case 1: SDK-native - earliest message is a user message
       return {
         rewindCase: 'sdk-native',
         messagesBeforeUser: [],
@@ -381,19 +291,15 @@ export class RewindHandler {
     }
 
     if (userMessagesInRange.length === 0) {
-      // Case 2: Diff-based - no user messages in range, all assistant messages
       return {
         rewindCase: 'diff-based',
         messagesBeforeUser: messagesInRange.filter((m) => m.type === 'assistant'),
       };
     }
 
-    // Case 3: Hybrid - earliest is assistant, but user messages exist later
-    // Sort user messages chronologically and get the first one
     const sortedUserMessages = [...userMessagesInRange].sort((a, b) => a.timestamp - b.timestamp);
     const oldestUserMessage = sortedUserMessages[0];
 
-    // Get assistant messages that occur before the oldest user message
     const messagesBeforeUser = messagesInRange.filter((m) => {
       const msgTimestamp = m.timestamp as number;
       return m.type === 'assistant' && msgTimestamp < oldestUserMessage.timestamp;
@@ -406,13 +312,9 @@ export class RewindHandler {
     };
   }
 
-  /**
-   * Extract file operations (Edit and Write tool calls) from assistant messages
-   */
   extractFileOperations(messages: Array<Record<string, unknown>>): FileOperation[] {
     const operations: FileOperation[] = [];
 
-    // Filter to assistant messages only
     const assistantMessages = messages.filter((m) => m.type === 'assistant');
 
     for (const message of assistantMessages) {
@@ -458,10 +360,6 @@ export class RewindHandler {
     return operations;
   }
 
-  /**
-   * Revert file operations in reverse order (undo from latest to earliest)
-   * Write operations are skipped (cannot be automatically reverted).
-   */
   async revertFileOperations(
     operations: FileOperation[]
   ): Promise<{ reverted: string[]; failed: string[]; skipped: string[] }> {
@@ -470,17 +368,14 @@ export class RewindHandler {
     const failed: string[] = [];
     const skipped: string[] = [];
 
-    // Process in reverse order (undo latest operations first)
     const reversedOps = [...operations].reverse();
 
     for (const op of reversedOps) {
       if (op.type === 'write') {
-        // Cannot automatically revert Write operations
         skipped.push(op.filePath);
         continue;
       }
 
-      // Edit operation - revert by replacing newString with oldString
       try {
         if (!existsSync(op.filePath)) {
           failed.push(op.filePath);
@@ -490,7 +385,6 @@ export class RewindHandler {
 
         const fileContent = readFileSync(op.filePath, 'utf-8');
 
-        // Find and replace newString with oldString
         if (!op.newString || !op.oldString) {
           failed.push(op.filePath);
           logger.warn(`Diff revert failed: missing old/new strings for ${op.filePath}`);
@@ -518,13 +412,6 @@ export class RewindHandler {
     return { reverted, failed, skipped };
   }
 
-  /**
-   * Preview a selective rewind operation
-   *
-   * Selective rewind allows choosing specific messages to rewind.
-   * All messages from the earliest selected message onward will be deleted.
-   * Files will be reverted using SDK checkpoints if available, or Edit tool diffs as fallback.
-   */
   async previewSelectiveRewind(messageIds: string[]): Promise<SelectiveRewindPreview> {
     const { session, db, queryObject, firstMessageReceived, logger } = this.ctx;
 
@@ -546,7 +433,6 @@ export class RewindHandler {
       };
     }
 
-    // Get the earliest selected message (smallest timestamp)
     const { messages: allMessages } = db.getSDKMessages(session.id, 10000);
     const selectedMessages = allMessages.filter((m) => m.uuid && messageIds.includes(m.uuid));
 
@@ -559,7 +445,6 @@ export class RewindHandler {
       };
     }
 
-    // Find the earliest selected message by timestamp
     const earliestMessage = selectedMessages.reduce((earliest, current) => {
       const currentTimestamp = (current as Record<string, unknown>).timestamp as number;
       const earliestTimestamp = (earliest as Record<string, unknown>).timestamp as number;
@@ -568,24 +453,20 @@ export class RewindHandler {
 
     const earliestTimestamp = (earliestMessage as Record<string, unknown>).timestamp as number;
 
-    // Count messages that would be deleted
     const messagesToDelete = allMessages.filter((m) => {
       const msgTimestamp = (m as Record<string, unknown>).timestamp as number;
       return msgTimestamp > earliestTimestamp;
     }).length;
 
-    // Analyze files that would need to be reverted
-    // For now, we'll use the SDK rewind preview to get file information
-    // In the future, we could also scan for Edit tool diffs as a fallback strategy
-    const checkpointId = messageIds[0]; // Use the first message UUID as checkpoint
+    const checkpointId = messageIds[0];
 
     try {
       const sdkResult = await queryObject.rewindFiles(checkpointId, { dryRun: true });
 
       const filesToRevert = (sdkResult.filesChanged || []).map((path) => ({
         path,
-        hasCheckpoint: true, // SDK rewindFiles found this file
-        hasEditDiff: false, // TODO: Scan for Edit tool diffs as fallback
+        hasCheckpoint: true,
+        hasEditDiff: false,
       }));
 
       return {
@@ -605,16 +486,6 @@ export class RewindHandler {
     }
   }
 
-  /**
-   * Execute a selective rewind operation with 3-case logic
-   *
-   * Cases:
-   * 1. SDK-native: Earliest selected message is a user message -> use SDK checkpoint
-   * 2. Diff-based: Only assistant messages selected -> revert using Edit tool diffs
-   * 3. Hybrid: Mix of assistant then user messages -> SDK to user checkpoint + diff revert before it
-   *
-   * Supports file-only, conversation-only, or both modes.
-   */
   async executeSelectiveRewind(
     messageIds: string[],
     mode: RewindMode = 'both'
@@ -639,7 +510,6 @@ export class RewindHandler {
       };
     }
 
-    // Get the earliest selected message (smallest timestamp)
     const { messages: allMessages } = db.getSDKMessages(session.id, 10000);
     const selectedMessages = allMessages.filter((m) => m.uuid && messageIds.includes(m.uuid));
 
@@ -652,7 +522,6 @@ export class RewindHandler {
       };
     }
 
-    // Find the earliest selected message by timestamp
     const earliestMessage = selectedMessages.reduce((earliest, current) => {
       const currentTimestamp = (current as Record<string, unknown>).timestamp as number;
       const earliestTimestamp = (earliest as Record<string, unknown>).timestamp as number;
@@ -662,31 +531,26 @@ export class RewindHandler {
     const earliestTimestamp = (earliestMessage as Record<string, unknown>).timestamp as number;
 
     try {
-      // Step 1: Get all messages in the range (timestamp >= earliestTimestamp)
       const messagesInRange = allMessages.filter((m) => {
         const ts = (m as Record<string, unknown>).timestamp as number;
         return ts >= earliestTimestamp;
       });
 
-      // Step 2: Get user messages in the range
       const userMessages = db.getUserMessages(session.id);
       const userMessagesInRange = userMessages.filter((um) => um.timestamp >= earliestTimestamp);
 
-      // Step 3: Analyze which rewind case applies
       const analysis = this.analyzeRewindCase(
         earliestMessage as Record<string, unknown>,
         messagesInRange,
         userMessagesInRange
       );
 
-      // Step 4: File rewind (if mode includes files)
       let filesReverted: string[] = [];
       let diffRevertedFiles: string[] = [];
 
       if (mode === 'files' || mode === 'both') {
         switch (analysis.rewindCase) {
           case 'sdk-native': {
-            // Use SDK rewindFiles with earliest user message
             const checkpointUuid = (earliestMessage as { uuid?: string }).uuid;
             if (checkpointUuid) {
               try {
@@ -701,12 +565,10 @@ export class RewindHandler {
             break;
           }
           case 'diff-based': {
-            // Extract and revert file operations from assistant messages
             const ops = this.extractFileOperations(messagesInRange);
             if (ops.length > 0) {
               const result = await this.revertFileOperations(ops);
               diffRevertedFiles = result.reverted;
-              // Log failures
               if (result.failed.length > 0) {
                 logger.warn('Diff revert failed for:', result.failed);
               }
@@ -714,7 +576,6 @@ export class RewindHandler {
             break;
           }
           case 'hybrid': {
-            // SDK rewind to oldest user message
             if (analysis.oldestUserMessage) {
               try {
                 const sdkResult = await queryObject.rewindFiles(analysis.oldestUserMessage.uuid);
@@ -725,7 +586,6 @@ export class RewindHandler {
                 logger.error('SDK file rewind failed:', e);
               }
             }
-            // Diff-based revert for messages before the user message
             if (analysis.messagesBeforeUser.length > 0) {
               const ops = this.extractFileOperations(analysis.messagesBeforeUser);
               if (ops.length > 0) {
@@ -741,10 +601,8 @@ export class RewindHandler {
         }
       }
 
-      // Step 5: Conversation rewind (if mode includes conversation)
       let messagesDeleted = 0;
       if (mode === 'conversation' || mode === 'both') {
-        // Delete messages from DB at and after the earliest timestamp (inclusive)
         messagesDeleted = db.deleteMessagesAtAndAfter(session.id, earliestTimestamp);
 
         const rewindSdkPath = session.worktree
@@ -754,7 +612,6 @@ export class RewindHandler {
           throw new Error('Cannot rewind unbound session without a workspace path');
         }
 
-        // Truncate JSONL at the earliest selected message
         const jsonlUuid = (earliestMessage as { uuid?: string }).uuid;
         if (jsonlUuid) {
           const _jsonlResult = truncateSessionFileAtMessage(
@@ -765,7 +622,6 @@ export class RewindHandler {
           );
         }
 
-        // Set one-shot runtime resumeSessionAt to the previous user message
         const remainingUserMessages = db.getUserMessages(session.id);
         const previousUserMessage =
           remainingUserMessages.length > 0
@@ -783,11 +639,9 @@ export class RewindHandler {
         ) {
           this.ctx.setPendingResumeSessionAt(previousUserMessage.uuid);
         } else {
-          // No resumable predecessor — clear any stale pending value.
           this.ctx.clearPendingResumeSessionAt();
         }
 
-        // Restart query to apply new state
         await lifecycleManager.restart();
       }
 

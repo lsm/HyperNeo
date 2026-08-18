@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * SDKToolProgressMessage Component Tests
- *
- * Tests tool progress message rendering with elapsed time
- */
 import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
@@ -11,10 +6,8 @@ import { SDKToolProgressMessage } from '../SDKToolProgressMessage';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 
-// Helper to create a valid UUID
 const createUUID = (): UUID => crypto.randomUUID() as UUID;
 
-// Factory function for tool progress messages
 function createToolProgressMessage(
   toolName: string,
   elapsedSeconds: number,
@@ -51,7 +44,6 @@ describe('SDKToolProgressMessage', () => {
       const message = createToolProgressMessage('Bash', 1.5);
       const { container } = render(<SDKToolProgressMessage message={message} />);
 
-      // ToolProgressCard renders the tool name
       expect(container.textContent).toContain('Bash');
     });
   });
@@ -110,7 +102,6 @@ describe('SDKToolProgressMessage', () => {
       const message = createToolProgressMessage('mcp__filesystem__read', 2.0);
       const { container } = render(<SDKToolProgressMessage message={message} />);
 
-      // MCP tool name may be simplified (e.g., showing just 'read')
       expect(container.textContent).toContain('read');
     });
   });
@@ -120,7 +111,6 @@ describe('SDKToolProgressMessage', () => {
       const message = createToolProgressMessage('Read', 2.5);
       const { container } = render(<SDKToolProgressMessage message={message} />);
 
-      // Should show the elapsed time
       expect(container.textContent).toMatch(/2\.5|2\.50/);
     });
 
@@ -136,7 +126,6 @@ describe('SDKToolProgressMessage', () => {
       const { container } = render(<SDKToolProgressMessage message={message} />);
 
       expect(container.textContent).toContain('Bash');
-      // Long elapsed time may be formatted as "2m 0s" or similar
       expect(container.textContent).toMatch(/2m|120/);
     });
   });
@@ -180,7 +169,6 @@ describe('SDKToolProgressMessage', () => {
 
       const { container } = render(<SDKToolProgressMessage message={message} />);
 
-      // Should still render without error
       expect(container.textContent).toContain('Read');
     });
   });
@@ -191,7 +179,6 @@ describe('SDKToolProgressMessage', () => {
 
       const { container } = render(<SDKToolProgressMessage message={message} />);
 
-      // Should render normally with parent tool use id
       expect(container.textContent).toContain('Read');
     });
 
@@ -210,7 +197,6 @@ describe('SDKToolProgressMessage', () => {
 
       const { container } = render(<SDKToolProgressMessage message={message} />);
 
-      // ToolProgressCard with default variant should render
       expect(container.querySelector('div')).toBeTruthy();
     });
   });
@@ -221,8 +207,6 @@ describe('SDKToolProgressMessage', () => {
 
       const { container } = render(<SDKToolProgressMessage message={message} />);
 
-      // ToolProgressCard typically has an animation for active progress
-      // Check that the component renders content
       expect(container.innerHTML.length).toBeGreaterThan(0);
     });
   });

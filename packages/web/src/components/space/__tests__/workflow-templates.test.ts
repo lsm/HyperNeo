@@ -1,13 +1,3 @@
-/**
- * Unit tests for workflow-templates.ts
- *
- * Covers the utility functions extracted from the legacy WorkflowEditor:
- * - filterAgents: excludes 'leader' agents
- * - buildTemplateNodes: builds NodeDraft array from a template + agent list
- * - getAvailableTemplates: converts SpaceWorkflow list to WorkflowTemplate list,
- *   filtering out entries without valid start/end step names
- */
-
 import { describe, it, expect } from 'vitest';
 import type { SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 import {
@@ -51,10 +41,6 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
   };
 }
 
-// ============================================================================
-// filterAgents
-// ============================================================================
-
 describe('filterAgents', () => {
   it('removes agents named "leader" (case-insensitive)', () => {
     const agents = [
@@ -77,10 +63,6 @@ describe('filterAgents', () => {
     expect(filterAgents([])).toEqual([]);
   });
 });
-
-// ============================================================================
-// buildTemplateNodes — stepRoles (legacy single-agent)
-// ============================================================================
 
 describe('buildTemplateNodes — stepRoles', () => {
   const agents = [makeAgent('a1', 'planner'), makeAgent('a2', 'coder')];
@@ -108,14 +90,9 @@ describe('buildTemplateNodes — stepRoles', () => {
   it('falls back to first agent when no role match', () => {
     const template = { label: 'T', description: '', stepRoles: ['unknown-role'] };
     const [node] = buildTemplateNodes(template, agents);
-    // fallback uses agents[0]
     expect(node.agentId).toBe('a1');
   });
 });
-
-// ============================================================================
-// buildTemplateNodes — rich steps (multi-agent)
-// ============================================================================
 
 describe('buildTemplateNodes — rich steps', () => {
   const agents = [makeAgent('a1', 'coder'), makeAgent('a2', 'reviewer')];
@@ -194,10 +171,6 @@ describe('buildTemplateNodes — rich steps', () => {
   });
 });
 
-// ============================================================================
-// getAvailableTemplates / workflowToTemplate
-// ============================================================================
-
 describe('getAvailableTemplates', () => {
   it('converts workflows to templates', () => {
     const wf = makeWorkflow();
@@ -207,7 +180,6 @@ describe('getAvailableTemplates', () => {
   });
 
   it('filters out workflows without valid start/end step names', () => {
-    // Workflow with no endNodeId — endStepName will be undefined
     const wf = makeWorkflow({ endNodeId: undefined });
     const templates = getAvailableTemplates([wf]);
     expect(templates).toHaveLength(0);
@@ -233,10 +205,6 @@ describe('workflowToTemplate', () => {
   });
 
   it('carries handoff transitions through to template steps and built nodes', () => {
-    // A workflow cloned via the template picker must keep its handoff contract:
-    // workflowToTemplate copies node transitions onto the step, and
-    // buildTemplateNodes copies them onto the NodeDraft so the save serializer
-    // can re-emit them.
     const transitions = [{ id: 'to-code', target: 'Code' }];
     const wf = makeWorkflow({
       nodes: [
@@ -266,9 +234,6 @@ describe('workflowToTemplate', () => {
   });
 
   it('preserves workflow-level hooks through conversion', () => {
-    // Without preserving hooks, cloning a built-in workflow (e.g. the stable
-    // Coding-with-QA post_approval_only gate) silently drops its runtime
-    // enforcement. Verify hooks survive workflowToTemplate as shallow clones.
     const wf = makeWorkflow({
       hooks: [
         {
@@ -289,7 +254,6 @@ describe('workflowToTemplate', () => {
       targetNode: 'QA',
       method: 'send_message',
     });
-    // Shallow clone — not the same reference as the source hook.
     expect(template.hooks![0]).not.toBe(wf.hooks![0]);
   });
 
@@ -316,9 +280,7 @@ describe('workflowToTemplate', () => {
     });
     const template = workflowToTemplate(wf);
     expect(template.steps![0].agentSlots![0].toolGuards).toEqual([coderNoMergeGuard]);
-    // Cloned, not the same reference.
     expect(template.steps![0].agentSlots![0].toolGuards![0]).not.toBe(coderNoMergeGuard);
-    // Slots without guards stay undefined.
     expect(template.steps![0].agentSlots![1].toolGuards).toBeUndefined();
   });
 

@@ -18,8 +18,6 @@ import { useOutsideClick } from '../../internal/use-outside-click.ts';
 import { useTextValue } from '../../internal/use-text-value.ts';
 import { useTrackedPointer } from '../../internal/use-tracked-pointer.ts';
 
-// --- Comparison helpers ---
-
 function resolveCompare<T>(by?: string | ((a: T, b: T) => boolean)): (a: T, b: T) => boolean {
   if (typeof by === 'function') return by;
   if (typeof by === 'string') {
@@ -29,8 +27,6 @@ function resolveCompare<T>(by?: string | ((a: T, b: T) => boolean)): (a: T, b: T
   }
   return (a: T, b: T) => a === b;
 }
-
-// --- Types ---
 
 interface ComboboxOptionData {
   id: string;
@@ -67,8 +63,6 @@ interface ComboboxState {
   onClose?: () => void;
 }
 
-// --- Context ---
-
 const ComboboxContext = createContext<ComboboxState | null>(null);
 ComboboxContext.displayName = 'ComboboxContext';
 
@@ -79,8 +73,6 @@ function useComboboxContext(component: string): ComboboxState {
   }
   return ctx;
 }
-
-// --- Transition attributes helper ---
 
 function useTransitionAttrs(open: boolean, transition: boolean) {
   const [transitionAttrs, setTransitionAttrs] = useState<Record<string, ''>>({});
@@ -122,8 +114,6 @@ function useTransitionAttrs(open: boolean, transition: boolean) {
 
   return transitionAttrs;
 }
-
-// --- Combobox (root) ---
 
 interface ComboboxProps<T> {
   as?: ElementType;
@@ -189,7 +179,6 @@ function ComboboxFn<T>({
     setOptions((prev) => {
       if (prev.find((o) => o.id === option.id)) return prev;
 
-      // Support manual ordering via `order` prop
       if (option.order !== undefined) {
         const next = [...prev, option];
         next.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -260,7 +249,6 @@ function ComboboxFn<T>({
 
   const slot = { open, disabled, value, activeOption, activeIndex: activeOptionIndex };
 
-  // Build hidden input value for form integration
   let hiddenValue: string | string[] | undefined;
   if (name) {
     if (multiple && Array.isArray(value)) {
@@ -294,8 +282,6 @@ ComboboxFn.displayName = 'Combobox';
 const ComboboxWithName = ComboboxFn as typeof ComboboxFn & { displayName: string };
 ComboboxWithName.displayName = 'Combobox';
 export const Combobox = ComboboxWithName;
-
-// --- ComboboxInput ---
 
 interface ComboboxInputProps<T> {
   as?: ElementType;
@@ -336,7 +322,6 @@ function ComboboxInputFn<T>({
   const [hover, setHover] = useState(false);
   const [focus, setFocus] = useState(false);
 
-  // Sync display value when selection changes and options are closed
   useEffect(() => {
     if (open) return;
     const input = inputRef.current;
@@ -369,7 +354,6 @@ function ComboboxInputFn<T>({
           e.preventDefault();
           if (!open) {
             openOptions();
-            // Focus first option after open
             requestAnimationFrame(() => {
               setActiveOptionIndex(
                 calculateActiveIndex(
@@ -399,7 +383,6 @@ function ComboboxInputFn<T>({
           e.preventDefault();
           if (!open) {
             openOptions();
-            // Focus last option after open
             requestAnimationFrame(() => {
               setActiveOptionIndex(
                 calculateActiveIndex(
@@ -463,7 +446,6 @@ function ComboboxInputFn<T>({
           }
           if (open) {
             closeOptions();
-            // Restore display value
             const input = inputRef.current;
             if (input && displayValue && !multiple) {
               if (value !== undefined && value !== null) {
@@ -489,7 +471,6 @@ function ComboboxInputFn<T>({
           e.preventDefault();
           if (open) {
             closeOptions();
-            // Restore display value
             const input = inputRef.current;
             if (input && displayValue && !multiple) {
               if (value !== undefined && value !== null) {
@@ -497,7 +478,6 @@ function ComboboxInputFn<T>({
               }
             }
           } else {
-            // Clear the input
             const input = inputRef.current;
             if (input) {
               input.value = '';
@@ -509,7 +489,6 @@ function ComboboxInputFn<T>({
           break;
       }
     },
-    // selectOption is defined below and used inline — capture via closure
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       disabled,
@@ -599,8 +578,6 @@ const ComboboxInputWithName = ComboboxInputFn as typeof ComboboxInputFn & { disp
 ComboboxInputWithName.displayName = 'ComboboxInput';
 export const ComboboxInput = ComboboxInputWithName;
 
-// --- ComboboxButton ---
-
 interface ComboboxButtonProps {
   as?: ElementType;
   disabled?: boolean;
@@ -684,8 +661,6 @@ const ComboboxButtonWithName = ComboboxButtonFn as typeof ComboboxButtonFn & {
 ComboboxButtonWithName.displayName = 'ComboboxButton';
 export const ComboboxButton = ComboboxButtonWithName;
 
-// --- ComboboxOptions ---
-
 interface ComboboxOptionsProps {
   as?: ElementType;
   transition?: boolean;
@@ -722,7 +697,6 @@ function ComboboxOptionsFn({
     multiple,
   } = useComboboxContext('ComboboxOptions');
 
-  // Close on outside click — exclude both input and button from "outside"
   useOutsideClick(
     [inputRef as RefObject<HTMLElement | null>, buttonRef, optionsRef],
     useCallback(() => {
@@ -777,8 +751,6 @@ const ComboboxOptionsWithName = ComboboxOptionsFn as typeof ComboboxOptionsFn & 
 ComboboxOptionsWithName.displayName = 'ComboboxOptions';
 export const ComboboxOptions = ComboboxOptionsWithName;
 
-// --- ComboboxOption ---
-
 interface ComboboxOptionProps<T> {
   as?: ElementType;
   value: T;
@@ -820,11 +792,9 @@ function ComboboxOptionFn<T>({
   const [hover, setHover] = useState(false);
   const [focus, setFocus] = useState(false);
 
-  // Compute active state
   const activeOption = activeOptionIndex !== null ? options[activeOptionIndex] : null;
   const isActive = activeOption ? activeOption.id === id : false;
 
-  // Compute selected state
   const isSelected = (() => {
     if (multiple && Array.isArray(value)) {
       return (value as unknown[]).some((v) => compare(v, optionValue));
@@ -833,7 +803,6 @@ function ComboboxOptionFn<T>({
     return compare(value, optionValue);
   })();
 
-  // Register/unregister with combobox context on mount/unmount
   useEffect(() => {
     const optionData: ComboboxOptionData = {
       id,
@@ -847,7 +816,6 @@ function ComboboxOptionFn<T>({
     };
     registerOption(optionData);
     return () => unregisterOption(id);
-    // Only run on mount/unmount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -866,7 +834,6 @@ function ComboboxOptionFn<T>({
         } else {
           setValue([...arr, optionValue]);
         }
-        // keep open in multiple mode
       } else {
         setValue(optionValue);
         closeOptions();

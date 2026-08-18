@@ -32,14 +32,12 @@ export function dismissToast(id: string) {
   toastsSignal.value = toastsSignal.value.filter((t) => t.id !== id);
 }
 
-// Convenience methods
 export const toast = {
   success: (message: string, duration?: number) => showToast(message, 'success', duration),
   error: (message: string, duration?: number) => showToast(message, 'error', duration),
   info: (message: string, duration?: number) => showToast(message, 'info', duration),
   warning: (message: string, duration?: number) => showToast(message, 'warning', duration),
 
-  // Semantic task lifecycle methods
   approved: (title = 'Task approved') => showToast(title, 'success'),
   rejected: (title = 'Task rejected', message?: string) =>
     showToast(message ? `${title}: ${message}` : title, 'info'),

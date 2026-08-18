@@ -1,11 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ConnectionStatus Component
- *
- * Tests the connection status indicator with various connection states
- * and processing states with phase-specific colors.
-import { describe, it, expect } from 'vitest';
- */
 
 import { cleanup, render } from '@testing-library/preact';
 import ConnectionStatus from '../ConnectionStatus';
@@ -147,7 +140,6 @@ describe('ConnectionStatus', () => {
         />
       );
 
-      // No streaming phase -> falls back to the generic 'processing' tone (info/blue).
       const dot = container.querySelector('.bg-blue-500');
       expect(dot).toBeTruthy();
       expect(dot?.className).toContain('animate-pulse');
@@ -162,7 +154,6 @@ describe('ConnectionStatus', () => {
         />
       );
 
-      // Should show action, not "Online"
       expect(container.textContent).toContain('Thinking...');
       expect(container.textContent).not.toContain('Online');
     });
@@ -263,7 +254,6 @@ describe('ConnectionStatus', () => {
         <ConnectionStatus connectionState="disconnected" isProcessing={false} />
       );
 
-      // neutral tone text -> text-gray-400
       const text = container.querySelector('.text-gray-400');
       expect(text).toBeTruthy();
     });
@@ -319,7 +309,6 @@ describe('ConnectionStatus', () => {
         />
       );
 
-      // Should fall back to ready text and never show currentAction
       expect(container.textContent).toContain('Ready');
       expect(container.textContent).not.toContain('Some action');
     });
@@ -329,7 +318,6 @@ describe('ConnectionStatus', () => {
         <ConnectionStatus connectionState="connected" isProcessing={true} />
       );
 
-      // Should fall back to connected ready state
       expect(container.textContent).toContain('Ready');
     });
 
@@ -342,7 +330,6 @@ describe('ConnectionStatus', () => {
         />
       );
 
-      // Should show connection state, not processing phase
       expect(container.textContent).toContain('Ready');
     });
 
@@ -356,15 +343,11 @@ describe('ConnectionStatus', () => {
         />
       );
 
-      // Null phase -> falls back to the generic 'processing' tone (info/blue).
       const dot = container.querySelector('.bg-blue-500');
       expect(dot).toBeTruthy();
     });
 
     it('should fall back to the processing tone for an unrecognized streaming phase', () => {
-      // Persisted phase values are only cast to the union at the type level, so
-      // a future/malformed phase can reach the indicator at runtime. It must
-      // not crash — it falls back to the generic 'processing' tone (info/blue).
       const { container } = render(
         <ConnectionStatus
           connectionState="connected"

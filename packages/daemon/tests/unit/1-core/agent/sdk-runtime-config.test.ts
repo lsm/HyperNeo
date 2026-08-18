@@ -1,9 +1,3 @@
-/**
- * SDKRuntimeConfig Tests
- *
- * Tests for SDK runtime configuration management.
- */
-
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
   SDKRuntimeConfig,
@@ -36,7 +30,6 @@ describe('SDKRuntimeConfig', () => {
   let getContextUsageSpy: ReturnType<typeof mock>;
   let restartQuerySpy: ReturnType<typeof mock>;
 
-  // SDK method spies
   let setMaxThinkingTokensSpy: ReturnType<typeof mock>;
   let setPermissionModeSpy: ReturnType<typeof mock>;
   let mcpServerStatusSpy: ReturnType<typeof mock>;
@@ -81,10 +74,6 @@ describe('SDKRuntimeConfig', () => {
       emit: emitSpy,
     } as unknown as DaemonHub;
 
-    // SettingsManager no longer exposes per-server disabled lists; the legacy
-    // `setDisabledMcpServers` method was removed in M5. Tests treat the
-    // manager as opaque; runtime config no longer calls into it for MCP
-    // enablement.
     mockSettingsManager = {} as unknown as SettingsManager;
 
     updateWithDetailedBreakdownSpy = mock(() => {});
@@ -103,7 +92,6 @@ describe('SDKRuntimeConfig', () => {
       info: mock(() => {}),
     } as unknown as Logger;
 
-    // SDK method spies
     setMaxThinkingTokensSpy = mock(async () => {});
     setPermissionModeSpy = mock(async () => {});
     mcpServerStatusSpy = mock(async () => []);
@@ -242,7 +230,7 @@ describe('SDKRuntimeConfig', () => {
     });
 
     it('should handle query without setMaxThinkingTokens method', async () => {
-      config = createConfig({ queryObject: {} as Query }); // No setMaxThinkingTokens method
+      config = createConfig({ queryObject: {} as Query });
 
       const result = await config.setMaxThinkingTokens(10000);
 
@@ -319,7 +307,7 @@ describe('SDKRuntimeConfig', () => {
     });
 
     it('should handle query without setPermissionMode method', async () => {
-      config = createConfig({ queryObject: {} as Query }); // No setPermissionMode method
+      config = createConfig({ queryObject: {} as Query });
 
       const result = await config.setPermissionMode('acceptEdits');
 
@@ -360,7 +348,7 @@ describe('SDKRuntimeConfig', () => {
     });
 
     it('should return empty array when query has no mcpServerStatus method', async () => {
-      config = createConfig({ queryObject: {} as Query }); // No mcpServerStatus method
+      config = createConfig({ queryObject: {} as Query });
 
       const result = await config.getMcpServerStatus();
 
@@ -396,9 +384,6 @@ describe('SDKRuntimeConfig', () => {
     });
 
     it('does not restart query for non-MCP tool changes', async () => {
-      // `disabledMcpServers` was removed in M5 — `updateToolsConfig` no
-      // longer triggers a query restart for tool changes. The query is
-      // only restarted via the dedicated MCP enablement override flow.
       config = createConfig();
 
       const tools = { disabledTools: ['Bash'] };
@@ -436,15 +421,12 @@ describe('SDKRuntimeConfig', () => {
     });
 
     it('never injects /context into any message queue', async () => {
-      // Guard against regressions: the legacy slash-command flow is gone.
-      // A message queue spy is provided purely to assert it's not touched.
       const enqueueSpy = mock(async () => {});
       const mqStub = {
         enqueue: enqueueSpy,
         isRunning: () => true,
       };
       config = createConfig({
-        // Even if someone accidentally wires a queue in, it must not be used.
         ...({ messageQueue: mqStub } as unknown as Partial<SDKRuntimeConfigContext>),
       });
 

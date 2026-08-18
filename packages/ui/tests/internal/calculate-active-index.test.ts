@@ -27,7 +27,6 @@ describe('calculateActiveIndex', () => {
     it('returns null when all items are disabled', () => {
       const items = [makeItem('a', true), makeItem('b', true)];
       const result = calculateActiveIndex({ focus: Focus.First }, makeResolvers(items));
-      // findIndex returns -1, resolvers returns currentActiveIndex (null)
       expect(result).toBeNull();
     });
   });
@@ -68,7 +67,6 @@ describe('calculateActiveIndex', () => {
     it('returns current active when no next non-disabled item', () => {
       const items = [makeItem('a'), makeItem('b'), makeItem('c')];
       const result = calculateActiveIndex({ focus: Focus.Next }, makeResolvers(items, 2));
-      // findIndex returns -1, falls back to currentActiveIndex
       expect(result).toBe(2);
     });
   });
@@ -89,14 +87,11 @@ describe('calculateActiveIndex', () => {
     it('returns current active when no previous non-disabled item', () => {
       const items = [makeItem('a'), makeItem('b'), makeItem('c')];
       const result = calculateActiveIndex({ focus: Focus.Previous }, makeResolvers(items, 0));
-      // No item before index 0 → -1 → falls back to currentActiveIndex
       expect(result).toBe(0);
     });
 
     it('returns last non-disabled item when no active index', () => {
       const items = [makeItem('a'), makeItem('b')];
-      // When activeIndex is null (-1), condition `activeIndex !== -1` is false,
-      // so all items are considered. First match in reversed array is 'b' (index 1).
       const result = calculateActiveIndex({ focus: Focus.Previous }, makeResolvers(items, null));
       expect(result).toBe(1);
     });
@@ -115,7 +110,6 @@ describe('calculateActiveIndex', () => {
         { focus: Focus.Specific, id: 'z' },
         makeResolvers(items, 1)
       );
-      // findIndex returns -1, falls back to currentActiveIndex
       expect(result).toBe(1);
     });
 

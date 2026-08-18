@@ -1,38 +1,17 @@
 import { EventEmitter } from 'node:events';
 import { Database } from './index';
 
-/**
- * Scope metadata attached to table-change events when the change can be
- * attributed to a specific context (e.g. a single session).
- *
- * When present, LiveQueryEngine can skip re-evaluating queries that are
- * clearly unrelated to the scope — for example, a `messages.bySession`
- * subscription for session B should not re-evaluate when session A writes a
- * message.
- */
 export interface TableChangeScope {
-  /** The session that produced the write, when known. */
   sessionId?: string;
-  /** The type of session affected by the write, when known. */
   sessionType?: string;
-  /** The room associated with the changed session, when known. */
   roomId?: string;
-  /** The space associated with the changed session, when known. */
   spaceId?: string;
-  /** The Space task affected by the write, when known. */
   taskId?: string;
 }
 
 export interface TableChangeEvent {
   tables: string[];
   versions: Record<string, number>;
-  /**
-   * Scope metadata for the change. Populated for single-table, non-transaction
-   * events, and also for transaction-flush events when every pending write to a
-   * given table shares a compatible scope (see `addPendingScope` /
-   * `mergeScopes`). Left unset when transaction batches contain conflicting or
-   * unscoped writes.
-   */
   scope?: TableChangeScope;
 }
 
@@ -48,40 +27,14 @@ export interface ReactiveDatabase {
   on(event: `change:${string}`, listener: (data: TableVersionEvent) => void): void;
   off(event: string, listener: (...args: unknown[]) => void): void;
   getTableVersion(table: string): number;
-  /**
-   * Begin a batch transaction. All write events are suppressed until
-   * commitTransaction() is called, at which point a single deduplicated
-   * change event is emitted per affected table. Supports nesting.
-   */
   beginTransaction(): void;
-  /**
-   * Commit a batch transaction. If this is the outermost transaction,
-   * all pending table changes are flushed as deduplicated events.
-   */
   commitTransaction(): void;
-  /**
-   * Abort a batch transaction without emitting any events.
-   * Pending changes accumulated during this transaction are discarded.
-   * Supports nesting — only the outermost abort clears pending state.
-   */
   abortTransaction(): void;
-  /**
-   * Manually notify that a table has changed.
-   * Used for tables whose writes bypass the proxy (e.g., direct SQL via external repos).
-   * Pass a `scope` when known so the change can batch cleanly inside a reactive
-   * transaction — an unscoped notify forces the whole flushed batch to undefined
-   * scope, poisoning properly-scoped writes in the same batch.
-   */
   notifyChange(table: string, scope?: TableChangeScope): void;
 }
 
-// Mapping from facade method name to table name + optional scope extractor.
-// When a scope extractor is provided, the proxy extracts scope metadata from
-// the method arguments and attaches it to the emitted change event. This
-// allows LiveQueryEngine to skip re-evaluating unrelated queries.
 interface MethodMapping {
   table: string;
-  /** Extract scope from the method's positional arguments. */
   extractScope?: (args: unknown[], db: Database) => TableChangeScope;
 }
 
@@ -226,11 +179,9 @@ function mergeScopes(scopes: TableChangeScope[]): TableChangeScope | undefined {
 }
 
 const METHOD_TABLE_MAP: Record<string, MethodMapping> = {
-  // Session operations
   createSession: { table: 'sessions', extractScope: (args, db) => createSessionScope(db, args[0]) },
   updateSession: { table: 'sessions', extractScope: (args, db) => sessionScope(db, args[0]) },
   deleteSession: { table: 'sessions', extractScope: (args, db) => sessionScope(db, args[0]) },
-  // SDK Message operations — scoped by sessionId where available
   saveSDKMessage: {
     table: 'sdk_messages',
     extractScope: (args, db) => sdkMessageScope(db, args[0]),
@@ -259,16 +210,13 @@ const METHOD_TABLE_MAP: Record<string, MethodMapping> = {
     table: 'sdk_messages',
     extractScope: (args) => ({ sessionId: args[0] as string }),
   },
-  // Settings operations
   saveGlobalToolsConfig: { table: 'global_tools_config' },
   saveGlobalSettings: { table: 'global_settings' },
   updateGlobalSettings: { table: 'global_settings' },
-  // GitHub Mapping operations
   createGitHubMapping: { table: 'room_github_mappings' },
   updateGitHubMapping: { table: 'room_github_mappings' },
   deleteGitHubMapping: { table: 'room_github_mappings' },
   deleteGitHubMappingByRoomId: { table: 'room_github_mappings' },
-  // Inbox Item operations
   createInboxItem: { table: 'inbox_items' },
   updateInboxItemStatus: { table: 'inbox_items' },
   dismissInboxItem: { table: 'inbox_items' },
@@ -365,16 +313,11 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 
       const mapping = METHOD_TABLE_MAP[prop];
       if (!mapping) {
-        // Bind to original target so methods that access private fields (e.g.
-        // Database#rawDb or BunDatabase's internal Statement constructor) work
-        // correctly when called through the proxy.
         return (value as (...args: unknown[]) => unknown).bind(target);
       }
 
-      // Wrap the write method to emit change events on success
       return function (this: Database, ...args: unknown[]) {
         const result = (value as (...a: unknown[]) => unknown).apply(target, args);
-        // Only emit if the call didn't throw
         const scope = mapping.extractScope?.(args, target);
         incrementAndEmit(mapping.table, scope);
         return result;

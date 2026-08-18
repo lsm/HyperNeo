@@ -1,16 +1,3 @@
-/**
- * Unit Tests for Reference RPC Handlers
- *
- * Tests the reference.search RPC handler covering:
- * - Task search with room context
- * - Goal search with room context
- * - File/folder search via FileIndex
- * - Standalone sessions (no room context) — file/folder only
- * - Path traversal rejection in file queries
- * - Type filtering via the `types` parameter
- * - Relevance sorting (exact > starts-with > contains)
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../src/storage/sqlite-compat';
 import type { MessageHub } from '@hyperneo/shared';
@@ -19,8 +6,6 @@ import { setupReferenceHandlers } from '../../../src/lib/rpc-handlers/reference-
 import type { ReferenceHandlerDeps } from '../../../src/lib/rpc-handlers/reference-handlers';
 import type { FileIndex, FileIndexEntry } from '../../../src/lib/file-index';
 import type { ReactiveDatabase } from '../../../src/storage/reactive-database';
-
-// ─── Test DB helpers ──────────────────────────────────────────────────────────
 
 function createTestDb(): Database {
   const db = new Database(':memory:');
@@ -159,9 +144,6 @@ function insertGoal(
   ).run(id, roomId, title, status, now, now, shortId ?? null);
 }
 
-// ─── Mock helpers ─────────────────────────────────────────────────────────────
-
-/** Build a minimal mock MessageHub that captures registered handlers. */
 function buildMessageHub(): {
   hub: MessageHub;
   call: (method: string, data: unknown) => Promise<unknown>;
@@ -184,17 +166,14 @@ function buildMessageHub(): {
   };
 }
 
-/** Build a minimal no-op ReactiveDatabase stub. */
 function buildReactiveDb(): ReactiveDatabase {
   return { notifyChange: () => {} } as unknown as ReactiveDatabase;
 }
 
-/** Build a no-op ShortIdAllocator stub (read-only tests don't need real allocation). */
 function buildShortIdAllocator() {
   return { allocate: () => null } as never;
 }
 
-/** Build a mock SessionManager that returns sessions by ID. */
 function buildSessionManager(sessionMap: Map<string, { roomId?: string }>) {
   return {
     getSessionFromDB: (sessionId: string) => {
@@ -205,7 +184,6 @@ function buildSessionManager(sessionMap: Map<string, { roomId?: string }>) {
   };
 }
 
-/** Build a mock FileIndex. */
 function buildFileIndex(entries: FileIndexEntry[] = []): FileIndex {
   return {
     isReady: () => true,
@@ -224,8 +202,6 @@ function buildFileIndex(entries: FileIndexEntry[] = []): FileIndex {
   } as unknown as FileIndex;
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 describe('reference.search handler', () => {
   let db: Database;
   let roomId: string;
@@ -239,8 +215,6 @@ describe('reference.search handler', () => {
   afterEach(() => {
     db.close();
   });
-
-  // ── Task search ────────────────────────────────────────────────────────────
 
   describe('task search', () => {
     it('returns tasks matching the query', async () => {
@@ -333,8 +307,6 @@ describe('reference.search handler', () => {
     });
   });
 
-  // ── Goal search ────────────────────────────────────────────────────────────
-
   describe('goal search', () => {
     it('returns goals matching the query', async () => {
       insertGoal(db, roomId, 'goal-1', 'Improve code quality', 'g-1');
@@ -380,8 +352,6 @@ describe('reference.search handler', () => {
       expect(result.results[0].subtitle).toBe('completed');
     });
   });
-
-  // ── File/folder search ─────────────────────────────────────────────────────
 
   describe('file/folder search', () => {
     it('returns file results from FileIndex', async () => {
@@ -461,8 +431,6 @@ describe('reference.search handler', () => {
     });
   });
 
-  // ── Standalone sessions ────────────────────────────────────────────────────
-
   describe('standalone sessions (no room context)', () => {
     it('returns no task results for sessions without roomId', async () => {
       insertTask(db, roomId, 'task-1', 'Some task', 't-1');
@@ -526,8 +494,6 @@ describe('reference.search handler', () => {
     });
   });
 
-  // ── Path traversal prevention ──────────────────────────────────────────────
-
   describe('path traversal prevention', () => {
     it('returns empty file results for queries containing ..', async () => {
       const files: FileIndexEntry[] = [{ path: 'src/secret.ts', name: 'secret.ts', type: 'file' }];
@@ -574,7 +540,6 @@ describe('reference.search handler', () => {
     });
 
     it('traversal guard is in the file/folder branch — task search is unaffected', async () => {
-      // Add tasks whose titles match a normal (non-traversal) query
       insertTask(db, roomId, 'task-1', 'traversal fix', 't-1');
       insertTask(db, roomId, 'task-2', 'other task', 't-2');
 
@@ -588,7 +553,6 @@ describe('reference.search handler', () => {
         fileIndex: buildFileIndex(),
       });
 
-      // A normal task query still works
       const resultTask = (await call('reference.search', {
         sessionId: 'sess-1',
         query: 'traversal',
@@ -597,7 +561,6 @@ describe('reference.search handler', () => {
       expect(resultTask.results.filter((r) => r.type === 'task')).toHaveLength(1);
       expect(resultTask.results[0].id).toBe('task-1');
 
-      // The same query with file type included but no FileIndex entries returns no files
       const resultMixed = (await call('reference.search', {
         sessionId: 'sess-1',
         query: 'traversal',
@@ -607,8 +570,6 @@ describe('reference.search handler', () => {
       expect(resultMixed.results.filter((r) => r.type === 'file')).toHaveLength(0);
     });
   });
-
-  // ── Type filtering ─────────────────────────────────────────────────────────
 
   describe('type filtering', () => {
     it('returns only task results when types=["task"]', async () => {
@@ -692,8 +653,6 @@ describe('reference.search handler', () => {
     });
   });
 
-  // ── Relevance sorting ──────────────────────────────────────────────────────
-
   describe('relevance sorting', () => {
     it('sorts exact name match above starts-with above contains', async () => {
       insertTask(db, roomId, 'task-1', 'login', 't-1');
@@ -716,13 +675,11 @@ describe('reference.search handler', () => {
         types: ['task'],
       })) as { results: Array<{ id: string }> };
 
-      expect(result.results[0].id).toBe('task-1'); // exact match first
-      expect(result.results[1].id).toBe('task-2'); // starts-with second
-      expect(result.results[2].id).toBe('task-3'); // contains last
+      expect(result.results[0].id).toBe('task-1');
+      expect(result.results[1].id).toBe('task-2');
+      expect(result.results[2].id).toBe('task-3');
     });
   });
-
-  // ── Input validation ───────────────────────────────────────────────────────
 
   describe('input validation', () => {
     it('throws when sessionId is missing', async () => {
@@ -758,7 +715,6 @@ describe('reference.search handler', () => {
     it('returns empty results for whitespace-only query without room context', async () => {
       insertTask(db, roomId, 'task-1', 'Some task', 't-1');
 
-      // No room context — empty query should return nothing
       const sessions = new Map();
       const { hub, call } = buildMessageHub();
       setupReferenceHandlers(hub, {
@@ -795,14 +751,11 @@ describe('reference.search handler', () => {
         query: '   ',
       })) as { results: Array<{ type: string }> };
 
-      // Empty query with room context returns all tasks
       expect(result.results).toHaveLength(1);
       expect(result.results[0].type).toBe('task');
     });
   });
 });
-
-// ─── REFERENCE_PATTERN tests ──────────────────────────────────────────────────
 
 describe('REFERENCE_PATTERN', () => {
   it('matches @ref{task:t-42}', () => {

@@ -1,7 +1,5 @@
-// Main entry point for shared package
 export * from './types.ts';
 export * from './api.ts';
-// export * from './message-hub/index.ts';
 export * from './message-hub/message-hub.ts';
 export * from './message-hub/types.ts';
 export * from './message-hub/protocol.ts';
@@ -41,7 +39,6 @@ export * from './lib/workflow-handoff.ts';
 export * from './acp/index.ts';
 export * from './prompts/index.ts';
 
-// Unified logger
 export {
   Logger,
   LogLevel,

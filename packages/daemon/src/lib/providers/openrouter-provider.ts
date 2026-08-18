@@ -1,11 +1,3 @@
-/**
- * OpenRouter Provider
- *
- * OpenRouter exposes an Anthropic-compatible "skin" for Claude Code at
- * https://openrouter.ai/api and an OpenAI-compatible metadata API at
- * https://openrouter.ai/api/v1.
- */
-
 import type {
   Provider,
   ProviderAuthStatusInfo,
@@ -141,9 +133,6 @@ export class OpenRouterProvider implements Provider {
   private lastAuthError: string | undefined;
   private credentials: ProviderCredentials | null = null;
 
-  /**
-   * Clear the model cache so the next getModels() call re-fetches from the API.
-   */
   clearModelCache(): void {
     this.modelCache = null;
   }

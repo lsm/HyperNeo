@@ -40,7 +40,6 @@ describe('IconButton', () => {
     it('does not set type="button" when as is not "button"', () => {
       render(<IconButton as="a" label="Link" href="#" />);
       const link = screen.getByRole('link');
-      // as="a" → resolvedType = undefined → no type attribute
       expect(link.getAttribute('type')).toBeNull();
     });
 
@@ -130,13 +129,11 @@ describe('IconButton', () => {
     it('does not clear data-hover on touch pointerleave', async () => {
       render(<IconButton label="Close" data-testid="btn" />);
       const btn = screen.getByTestId('btn');
-      // Set hover via mouse
       await act(async () => {
         btn.dispatchEvent(
           new PointerEvent('pointerenter', { pointerType: 'mouse', bubbles: true })
         );
       });
-      // Leave via touch — touch leave is ignored
       await act(async () => {
         btn.dispatchEvent(
           new PointerEvent('pointerleave', { pointerType: 'touch', bubbles: true })
@@ -151,7 +148,6 @@ describe('IconButton', () => {
       render(<IconButton label="Close" data-testid="btn" />);
       const btn = screen.getByTestId('btn');
 
-      // Simulate keyboard interaction first (sets hadKeyboardEvent = true)
       await act(async () => {
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
       });
@@ -165,7 +161,6 @@ describe('IconButton', () => {
       render(<IconButton label="Close" data-testid="btn" />);
       const btn = screen.getByTestId('btn');
 
-      // Set focus via keyboard path
       await act(async () => {
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
       });
@@ -183,11 +178,9 @@ describe('IconButton', () => {
     it('does not set data-focus without preceding keyboard event', async () => {
       render(<IconButton label="Close" data-testid="btn" />);
       const btn = screen.getByTestId('btn');
-      // Focus without any keyboard event
       await act(async () => {
         btn.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
       });
-      // hadKeyboardEvent is false → data-focus not set
       expect(btn.getAttribute('data-focus')).toBeNull();
     });
   });
@@ -236,9 +229,6 @@ describe('IconButton', () => {
 
   describe('ref forwarding', () => {
     it('renders without error when ref is provided', () => {
-      // IconButton uses an internal ref for interaction state tracking.
-      // External refs attach to the component instance (not forwardRef wrapped).
-      // Verify the rendered DOM is accessible and correct.
       render(<IconButton label="Close" data-testid="icon-btn-ref" />);
       const el = screen.getByTestId('icon-btn-ref');
       expect(el).not.toBeNull();
@@ -283,14 +273,11 @@ describe('IconButton', () => {
       render(<IconButton label="Close" disabled data-testid="btn" />);
       const btn = screen.getByTestId('btn');
 
-      // Even if pointer events fire, disabled clears state
       await act(async () => {
         btn.dispatchEvent(
           new PointerEvent('pointerenter', { pointerType: 'mouse', bubbles: true })
         );
       });
-      // data-hover not set because useInteractionState early-returns when disabled
-      // (note: data-hover/focus/active reflect the hook state which starts at false)
       expect(btn.getAttribute('data-hover')).toBeNull();
     });
   });

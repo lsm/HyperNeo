@@ -293,22 +293,10 @@ export interface EvolutionScopeListParams {
   spaceId: string;
   spaceGoalId?: string | null;
   kind?: EvolutionScopeKind;
-  /**
-   * Page size. When omitted, returns all matching rows (unbounded) — internal
-   * callers (episode building, dedup, automation) rely on full lists.
-   * Mirrors SpaceTaskRepository.listBySpace.
-   */
   limit?: number;
-  /** Page offset (requires limit). */
   offset?: number;
 }
 
-/**
- * Limit/offset pagination shared by the positional `EvolutionRepository.list*`
- * methods. When omitted (or limit <= 0), returns all matching rows (unbounded);
- * internal callers that need full lists (episode building, dedup, automation)
- * simply omit it. Mirrors SpaceTaskRepository.listBySpace.
- */
 export interface EvolutionListPagination {
   limit?: number;
   offset?: number;

@@ -1,25 +1,8 @@
-/**
- * Space Export/Import E2E Tests
- *
- * Tests the export and import UI actions in the Space view:
- * - Export a single agent from Space (verify download)
- * - Export All agents (verify download content)
- * - Import with no conflicts — success toast shown
- * - Import with conflict (same name) — conflict dialog with resolution dropdown
- * - Import bundle with both agents and workflows — both sections shown, both toasted
- *
- * Setup: creates a Space (and agents/workflows) via RPC in beforeEach.
- * This is accepted infrastructure for test isolation per CLAUDE.md rules.
- * Cleanup: deletes the Space via RPC in afterEach.
- */
-
 import * as fs from 'fs';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot, getModal } from '../helpers/wait-helpers';
 import { createUniqueSpaceDir } from '../helpers/space-helpers';
-
-// ─── RPC helpers (infrastructure only) ───────────────────────────────────────
 
 const SPACE_NAME = 'E2E Export Import Space';
 
@@ -30,15 +13,12 @@ async function createTestSpace(page: Page): Promise<{
 }> {
   await waitForWebSocketConnected(page);
   const wsRoot = await getWorkspaceRoot(page);
-  // Use a unique subdirectory to avoid conflicts with other parallel tests
-  // (workspace_path has a UNIQUE constraint in the DB).
   const workspacePath = createUniqueSpaceDir(wsRoot, 'export-import');
   return page.evaluate(
     async ({ workspacePath, name }) => {
       const hub = window.__messageHub || window.appState?.messageHub;
       if (!hub?.request) throw new Error('MessageHub not available');
 
-      // Create a space
       const spaceRes = await hub.request('space.create', {
         name,
         description: 'Test space for export/import E2E tests',
@@ -46,7 +26,6 @@ async function createTestSpace(page: Page): Promise<{
       });
       const spaceId = (spaceRes as { id: string }).id;
 
-      // Create an agent in the space
       const agentRes = await hub.request('spaceAgent.create', {
         spaceId,
         name: 'Test Coder',
@@ -73,18 +52,6 @@ async function deleteTestSpace(page: Page, spaceId: string): Promise<void> {
   }
 }
 
-// ─── File injection helper ────────────────────────────────────────────────────
-
-/**
- * Temporarily patches `document.createElement` so that the next `<input type=file>`
- * element created by the component immediately fires a change event with the
- * supplied bundle JSON — simulating a file picker selection without needing a
- * real file on disk.
- *
- * The patch is scoped to a single input creation and is immediately cleaned up
- * after the input fires its change event, so subsequent createElement calls are
- * unaffected.
- */
 async function injectImportFile(page: Page, bundle: unknown): Promise<void> {
   await page.evaluate((b) => {
     const originalCreate = document.createElement.bind(document);
@@ -95,7 +62,6 @@ async function injectImportFile(page: Page, bundle: unknown): Promise<void> {
         const input = el as HTMLInputElement;
         const origClick = input.click.bind(input);
         input.click = () => {
-          // Restore immediately so only one input is patched
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (document as any).createElement = originalCreate;
 
@@ -113,15 +79,10 @@ async function injectImportFile(page: Page, bundle: unknown): Promise<void> {
   }, bundle);
 }
 
-// ─── Navigation helper ────────────────────────────────────────────────────────
-
 async function navigateToSpaceAgents(page: Page, spaceId: string): Promise<void> {
   await page.goto(`/space/${spaceId}`);
-  // Wait for the Agents tab to be visible (SpaceIsland renders it by default)
   await expect(page.locator('h2:has-text("Agents")')).toBeVisible({ timeout: 10000 });
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Space Export/Import', () => {
   let spaceId = '';
@@ -143,7 +104,6 @@ test.describe('Space Export/Import', () => {
   test('export single agent triggers download with .hyperneo.json filename', async ({ page }) => {
     await navigateToSpaceAgents(page, spaceId);
 
-    // Hover over the agent row to reveal the Export button
     const agentRow = page.locator(`li:has-text("${agentName}")`);
     await expect(agentRow).toBeVisible({ timeout: 8000 });
     await agentRow.hover();
@@ -151,7 +111,6 @@ test.describe('Space Export/Import', () => {
     const exportBtn = agentRow.locator('button:has-text("Export")');
     await expect(exportBtn).toBeVisible({ timeout: 3000 });
 
-    // Intercept the download
     const [download] = await Promise.all([page.waitForEvent('download'), exportBtn.click()]);
 
     expect(download.suggestedFilename()).toMatch(/\.hyperneo\.json$/);
@@ -171,7 +130,6 @@ test.describe('Space Export/Import', () => {
     expect(download.suggestedFilename()).toMatch(/\.hyperneo\.json$/);
     expect(download.suggestedFilename()).toContain('agents');
 
-    // Verify the downloaded JSON is valid
     const filePath = await download.path();
     if (filePath) {
       const content = fs.readFileSync(filePath, 'utf-8');
@@ -184,7 +142,6 @@ test.describe('Space Export/Import', () => {
   });
 
   test('import with no conflicts shows success toast', async ({ page }) => {
-    // Build a bundle with a NEW agent name that does not exist in the space
     const newAgentBundle = {
       version: 1,
       type: 'bundle',
@@ -207,26 +164,20 @@ test.describe('Space Export/Import', () => {
 
     await page.locator('button:has-text("Import")').click();
 
-    // ImportPreviewDialog should appear
     await expect(getModal(page)).toBeVisible({ timeout: 5000 });
     await expect(page.locator('text=Import Preview')).toBeVisible();
 
-    // The new agent should appear with "new" status
     await expect(page.locator('text=Imported Reviewer')).toBeVisible();
     await expect(page.locator('text=new').first()).toBeVisible();
 
-    // Summary should say "Will import 1 agent"
     await expect(page.locator('text=/Will import.*1.*agent/')).toBeVisible();
 
-    // Confirm import
     await getModal(page).locator('button:has-text("Import")').click();
 
-    // Success toast
     await expect(page.locator('text=/Imported.*agent/')).toBeVisible({ timeout: 8000 });
   });
 
   test('import with conflict shows conflict resolution options', async ({ page }) => {
-    // Build a bundle with the SAME agent name as the existing one
     const conflictBundle = {
       version: 1,
       type: 'bundle',
@@ -235,7 +186,7 @@ test.describe('Space Export/Import', () => {
         {
           version: 1,
           type: 'agent',
-          name: agentName, // same name → conflict
+          name: agentName,
           description: 'Duplicate agent',
           tools: [],
         },
@@ -249,28 +200,21 @@ test.describe('Space Export/Import', () => {
 
     await page.locator('button:has-text("Import")').click();
 
-    // Dialog should show conflict
     await expect(getModal(page)).toBeVisible({ timeout: 5000 });
     await expect(page.locator('text=conflict').first()).toBeVisible();
 
-    // Conflict resolution dropdown should be present
     const conflictSelect = page.locator(`select[aria-label*="${agentName}"]`);
     await expect(conflictSelect).toBeVisible();
 
-    // Default is "skip" — Import button should be disabled (0 will be imported)
     await expect(getModal(page).locator('button:has-text("Import")')).toBeDisabled();
 
-    // Change to "rename"
     await conflictSelect.selectOption('rename');
 
-    // Now 1 agent will be imported
     await expect(page.locator('text=/Will import.*1.*agent/')).toBeVisible();
     await expect(getModal(page).locator('button:has-text("Import")')).not.toBeDisabled();
 
-    // Confirm import
     await getModal(page).locator('button:has-text("Import")').click();
 
-    // Success toast
     await expect(page.locator('text=/Imported.*agent/')).toBeVisible({ timeout: 8000 });
   });
 
@@ -311,22 +255,17 @@ test.describe('Space Export/Import', () => {
 
     await page.locator('button:has-text("Import")').click();
 
-    // Dialog should show both Agents and Workflows sections
     await expect(getModal(page)).toBeVisible({ timeout: 5000 });
     await expect(page.locator('text=/Agents \\(1\\)/')).toBeVisible();
     await expect(page.locator('text=/Workflows \\(1\\)/')).toBeVisible();
 
-    // Both items should appear as "new"
     await expect(page.locator('text=Bundle Agent')).toBeVisible();
     await expect(page.locator('text=Bundle Workflow')).toBeVisible();
 
-    // Summary should reflect both — updated wording is "Will import"
     await expect(page.locator('text=/Will import.*1.*agent.*1.*workflow/')).toBeVisible();
 
-    // Import
     await getModal(page).locator('button:has-text("Import")').click();
 
-    // Success toast should mention both agents and workflows
     await expect(page.locator('text=/Imported.*agent.*workflow/')).toBeVisible({ timeout: 8000 });
   });
 });

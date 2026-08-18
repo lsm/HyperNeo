@@ -1,22 +1,3 @@
-/**
- * Migration 174 Tests — composite (space_id, status, updated_at, id) index on
- * space_tasks.
- *
- * The Tasks view renders through listByStatus / listBySpaceAndStatus /
- * listBySpace, which all filter by space_id (+ an optional status equality)
- * and ORDER BY updated_at DESC, id DESC. The legacy single-column
- * idx_space_tasks_status was dropped and never replaced, so every render
- * scanned all non-archived rows in the space and post-filtered on status.
- *
- * Covers:
- *   - Fresh, fully-migrated DB — the index exists.
- *   - Pre-174 schema — runMigration174 creates the index with the expected
- *     column order and DESC sort direction.
- *   - EXPLAIN QUERY PLAN for the Tasks-view query shapes uses the index and
- *     does not fall back to a full table scan.
- *   - Idempotent and a no-op when space_tasks is absent.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -34,11 +15,6 @@ function indexExists(db: BunDatabase, name: string): boolean {
   return !!row?.name;
 }
 
-/**
- * Minimal pre-174 space_tasks schema (the columns the indexed queries touch).
- * Mirrors the column subset the real table exposes after the status-CHECK
- * migrations; the index only needs space_id/status/updated_at/id to exist.
- */
 function seedSpaceTasks(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE space_tasks (
@@ -52,7 +28,6 @@ function seedSpaceTasks(db: BunDatabase): void {
 	`);
 }
 
-/** Ordered columns + per-column DESC flag, straight from the index definition. */
 function indexColumns(db: BunDatabase, name: string): Array<{ name: string; desc: boolean }> {
   return (
     db.prepare(`PRAGMA index_xinfo('${name}')`).all() as Array<{
@@ -132,9 +107,7 @@ describe('Migration 174: space_tasks (space_id, status, updated_at, id) index', 
       );
       const joined = plan.join(' | ');
       expect(joined).toContain('idx_space_tasks_space_status_updated');
-      // No full table scan...
       expect(joined).not.toMatch(/SCAN space_tasks/);
-      // ...and the index satisfies the ORDER BY (no spill to a temp b-tree).
       expect(joined).not.toContain('USE TEMP B-TREE FOR ORDER BY');
     });
 
@@ -156,12 +129,6 @@ describe('Migration 174: space_tasks (space_id, status, updated_at, id) index', 
         `SELECT * FROM space_tasks WHERE space_id = ? AND status != 'archived' ORDER BY updated_at DESC, id DESC`
       );
       const joined = plan.join(' | ');
-      // The (space_id, status) prefix scopes the scan to the space rather than
-      // walking the whole table. We deliberately do NOT assert the absence of
-      // "USE TEMP B-TREE FOR ORDER BY" here, unlike listByStatus above: the
-      // `status != 'archived'` inequality spans multiple status groups, so the
-      // index gives per-group but not global (updated_at, id) order, and a temp
-      // b-tree is still required for the final sort.
       expect(joined).toContain('idx_space_tasks_space_status_updated');
       expect(joined).not.toMatch(/SCAN space_tasks/);
     });
@@ -169,7 +136,6 @@ describe('Migration 174: space_tasks (space_id, status, updated_at, id) index', 
     test('is idempotent — running twice does not throw or duplicate', () => {
       runMigration174(db);
       expect(() => runMigration174(db)).not.toThrow();
-      // Still exactly one index of this name.
       const count = (
         db
           .prepare(
@@ -188,9 +154,6 @@ describe('Migration 174: space_tasks (space_id, status, updated_at, id) index', 
     });
 
     test('skips sentinel space_tasks missing the indexed columns', () => {
-      // The baseline-schema sentinels (see migration-markers-runner) carry a
-      // stub space_tasks with only id/status/task_agent_session_id. The
-      // migration must not throw on it.
       db.exec(`
 				CREATE TABLE space_tasks (
 					id TEXT PRIMARY KEY,

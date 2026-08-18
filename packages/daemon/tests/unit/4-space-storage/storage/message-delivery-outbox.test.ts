@@ -1,14 +1,3 @@
-/**
- * Transactional outbox (task #861 item 2) — atomic save + enqueue.
- *
- * Asserts the core guarantee: a user message and its durable `job_queue`
- * delivery row commit together, so a crash between save and enqueue cannot
- * strand a saved-but-not-enqueued row. Also covers role arbitration (turn vs
- * steer via the partial unique index) and that a post-commit side-effect
- * failure (e.g. FTS) does not reject the send (which would cause a duplicate
- * on client retry).
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
@@ -78,7 +67,6 @@ function setup() {
       completed_at INTEGER
     );
   `);
-  // The atomic role arbiter — must match the production migration exactly.
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS uq_message_delivery_active_turn
       ON job_queue (queue, json_extract(payload, '$.sessionId'))
@@ -125,12 +113,10 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
     });
 
     expect(role).toBe('turn');
-    // sdk_messages row persisted as enqueued.
     const row = db
       .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
       .get(dbMessageId) as { send_status: string };
     expect(row.send_status).toBe('enqueued');
-    // job_queue row enqueued as a turn.
     const payload = jobPayload(db, SESSION, uuid);
     expect(payload).not.toBeNull();
     expect(payload?.role).toBe('turn');
@@ -138,7 +124,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
   });
 
   it('inserts as steer when an active turn already owns the session', () => {
-    // First message claims the active-turn slot as a turn.
     persistAndEnqueueDelivery({
       db: db as never,
       sdkMessageRepo: sdkRepo,
@@ -148,7 +133,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       sendStatus: 'enqueued',
       delivery: { origin: 'chat' },
     });
-    // A second message, while the turn is active, must become a steer.
     const { role } = persistAndEnqueueDelivery({
       db: db as never,
       sdkMessageRepo: sdkRepo,
@@ -163,10 +147,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
   });
 
   it('rolls back BOTH writes when the enqueue fails (no stranded row)', () => {
-    // Simulate a transient job_queue failure by stubbing enqueue to throw a
-    // non-UNIQUE error. The outbox transaction must roll back the sdk_messages
-    // insert too — otherwise the row is saved-but-not-enqueued (the exact gap
-    // item 2 closes).
     const failingQueue = {
       enqueue: () => {
         throw new Error('simulated job_queue transient failure');
@@ -185,7 +165,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       })
     ).toThrow(/simulated job_queue transient failure/);
 
-    // No sdk_messages row, no job_queue row — nothing stranded.
     const sdkCount = db
       .prepare(`SELECT COUNT(*) AS c FROM sdk_messages WHERE session_id = ?`)
       .get(SESSION) as { c: number };
@@ -197,10 +176,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
   });
 
   it('does NOT reject when a post-commit side effect throws (no duplicate on retry)', () => {
-    // The outbox tx commits both the user row + the delivery job; a subsequent
-    // side-effect throw (e.g. fallible FTS index) must NOT propagate — else the
-    // client retries with a fresh UUID and the prompt is delivered twice.
-    // (Codex review.)
     const sdkMessageRepo = new Proxy(sdkRepo, {
       get(target, prop) {
         if (prop === 'runPostSaveSideEffects') {
@@ -222,7 +197,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       delivery: { origin: 'chat' },
     });
 
-    // Both writes committed and the call resolved despite the side-effect throw.
     expect(result.role).toBe('turn');
     expect(jobPayload(db, SESSION, 'msg-sideeffect')).not.toBeNull();
     const row = db
@@ -281,7 +255,6 @@ describe('reconcileStrandedDeliveries (task #861 item 4 — orphan reconciler)',
 
   it('does NOT re-enqueue a message that already has an active durable job', async () => {
     persistEnqueued('owned-1');
-    // Simulate the durable owner: enqueue a job for it.
     jobQueue.enqueue({
       queue: MESSAGE_DELIVERY,
       payload: { sessionId: SESSION, messageUuid: 'owned-1', role: 'turn', origin: 'chat' },
@@ -292,7 +265,7 @@ describe('reconcileStrandedDeliveries (task #861 item 4 — orphan reconciler)',
     const count = await reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue });
 
     expect(count).toBe(0);
-    expect(activeJobCount()).toBe(1); // no duplicate job
+    expect(activeJobCount()).toBe(1);
   });
 
   it('is idempotent: a second run after re-enqueue is a no-op', async () => {
@@ -300,7 +273,6 @@ describe('reconcileStrandedDeliveries (task #861 item 4 — orphan reconciler)',
     expect(await reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue })).toBe(
       1
     );
-    // Second run: the message now has an active job → 0 re-enqueued, no dup.
     expect(await reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue })).toBe(
       0
     );
@@ -310,7 +282,6 @@ describe('reconcileStrandedDeliveries (task #861 item 4 — orphan reconciler)',
   it('reloads content from storage — never inserts a second user row', async () => {
     persistEnqueued('content-1');
     await reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue });
-    // Exactly one sdk_messages row for the uuid (no duplicate payload).
     const rows = db
       .prepare(`SELECT COUNT(*) AS c FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
       .get(SESSION, 'content-1') as { c: number };
@@ -335,19 +306,14 @@ describe('reconcileStrandedDeliveries (task #861 item 4 — orphan reconciler)',
   });
 
   it('concurrent reconciles never double-enqueue one message (review: concurrent reconcilers)', async () => {
-    // Two reconcilers racing for the same stranded message (e.g. the idle
-    // callback firing alongside the 60s timer). The per-session lock must
-    // serialize them so exactly ONE durable job is created — not a turn + a
-    // duplicate steer for the same UUID.
     persistEnqueued('race-1');
     const results = await Promise.all([
       reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue }),
       reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue }),
       reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue }),
     ]);
-    // Only one of the racing passes re-enqueued; the others saw the active job.
     expect(results.reduce((a, b) => a + b, 0)).toBe(1);
-    expect(activeJobCount()).toBe(1); // exactly one job, no duplicate
+    expect(activeJobCount()).toBe(1);
     expect(jobPayload(db, SESSION, 'race-1')).not.toBeNull();
   });
 });

@@ -1,9 +1,3 @@
-/**
- * Router Space Slug Tests
- *
- * Verifies that space route patterns accept both UUIDs and slugs.
- */
-
 import { beforeEach, describe, test, expect } from 'vitest';
 import {
   getSpaceIdFromPath,
@@ -56,7 +50,6 @@ describe('getSpaceIdFromPath — slug support', () => {
   });
 
   test('does not match slug with uppercase (slugs are lowercase)', () => {
-    // Uppercase letters are not valid in slugs
     expect(getSpaceIdFromPath('/space/MyProject')).toBeNull();
   });
 });

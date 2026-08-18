@@ -175,7 +175,6 @@ describe('Listbox', () => {
     fireEvent.click(screen.getByText('Choose'));
     fireEvent.click(screen.getByText('Option B'));
     expect(onChange).not.toHaveBeenCalled();
-    // menu stays open when disabled option clicked
     expect(screen.queryByRole('listbox')).not.toBeNull();
   });
 
@@ -306,8 +305,8 @@ describe('Listbox', () => {
     fireEvent.click(screen.getByText('Choose'));
     const listbox = screen.getByRole('listbox');
     const options = screen.getAllByRole('option');
-    fireEvent.keyDown(listbox, { key: 'ArrowDown' }); // -> option A
-    fireEvent.keyDown(listbox, { key: 'ArrowDown' }); // -> skip B -> option C
+    fireEvent.keyDown(listbox, { key: 'ArrowDown' });
+    fireEvent.keyDown(listbox, { key: 'ArrowDown' });
     expect(listbox.getAttribute('aria-activedescendant')).toBe(options[2].getAttribute('id'));
   });
 
@@ -324,7 +323,6 @@ describe('Listbox', () => {
     );
     fireEvent.click(screen.getByText('Choose'));
     fireEvent.click(screen.getByText('Option A'));
-    // menu stays open in multiple mode
     expect(screen.queryByRole('listbox')).not.toBeNull();
     expect(onChange).toHaveBeenCalledWith(['a']);
   });
@@ -382,11 +380,7 @@ describe('Listbox', () => {
 
   it('should set data-invalid attribute when invalid prop is true', () => {
     render(<BasicListbox invalid />);
-    // The button renders with a slot that has invalid=true, which the render
-    // function uses to set data-invalid
     const btn = screen.getByText('Choose');
-    // invalid is passed as slot but not necessarily as data attribute on button
-    // unless render uses it. Let's just verify it renders without error.
     expect(btn).not.toBeNull();
   });
 
@@ -395,13 +389,10 @@ describe('Listbox', () => {
     fireEvent.click(screen.getByText('Choose'));
     const listbox = screen.getByRole('listbox');
     const options = screen.getAllByRole('option');
-    // ArrowRight with no active item → Focus.First (index 0)
     fireEvent.keyDown(listbox, { key: 'ArrowRight' });
     expect(listbox.getAttribute('aria-activedescendant')).toBe(options[0].getAttribute('id'));
-    // ArrowRight again → Focus.Next (index 1)
     fireEvent.keyDown(listbox, { key: 'ArrowRight' });
     expect(listbox.getAttribute('aria-activedescendant')).toBe(options[1].getAttribute('id'));
-    // ArrowLeft → Focus.Previous (index 0)
     fireEvent.keyDown(listbox, { key: 'ArrowLeft' });
     expect(listbox.getAttribute('aria-activedescendant')).toBe(options[0].getAttribute('id'));
   });
@@ -419,7 +410,6 @@ describe('Listbox', () => {
     );
     fireEvent.click(screen.getByText('Choose'));
     const options = screen.getAllByRole('option');
-    // Alpha should be selected since by="id" and value.id === option.id
     expect(options[0].getAttribute('aria-selected')).toBe('true');
     expect(options[1].getAttribute('aria-selected')).toBe('false');
   });
@@ -542,7 +532,6 @@ describe('Listbox', () => {
     const onChange = vi.fn();
     render(<BasicListbox value="a" onChange={onChange} />);
     fireEvent.click(screen.getByText('Choose'));
-    // Enter with no active item: no call, menu closes
     await act(async () => {
       fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Enter' });
     });
@@ -642,9 +631,7 @@ describe('Listbox', () => {
     fireEvent.click(screen.getByText('Choose'));
     const listbox = screen.getByRole('listbox');
     const options = screen.getAllByRole('option');
-    // Activate last item (Cherry)
     fireEvent.keyDown(listbox, { key: 'End' });
-    // Type 'a' — no match after Cherry, wrap to Apple at index 0
     await act(async () => {
       fireEvent.keyDown(listbox, { key: 'a' });
     });

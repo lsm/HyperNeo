@@ -120,12 +120,6 @@ function getModelLabel(modelInfo: ModelInfo | null, fallbackModelId: string | un
   return 'Model';
 }
 
-/**
- * Codex-style landing for `/sessions` when no session is selected: a centered
- * prompt, a starter input, and a project / worktree / branch context row.
- * Submitting creates a session (with the chosen workspace + worktree mode),
- * sends the typed text as its first message, and opens the chat.
- */
 export function SessionsPage() {
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -147,13 +141,9 @@ export function SessionsPage() {
     initialSelection.model
   );
 
-  // Session creation only needs a live connection — auth is exercised later by
-  // the message send, which surfaces its own error.
   const canCreate = connectionState.value === 'connected';
   const waitingForProjectGit = project !== null && gitLoading;
 
-  // Project folders shown in the picker — same set as the sidebar: folders
-  // with sessions, merged with registered workspace-history folders.
   const projectPaths = listProjectPaths(sessions.value.filter(isUserSession), history);
   const defaultModelId = globalSettings.value?.model ?? 'sonnet';
   const selectedModelInfo = useMemo(
@@ -181,7 +171,6 @@ export function SessionsPage() {
     setSelectedModel({ id: selectedModelInfo.id, provider: selectedModelInfo.provider });
   }, [selectedModel, selectedModelInfo]);
 
-  // Load registered workspace-history folders for the project picker.
   useEffect(() => {
     getWorkspaceHistory()
       .then(setHistory)
@@ -194,7 +183,6 @@ export function SessionsPage() {
     saveNewChatSelection({ project, mode, baseBranch, model: selectedModel });
   }, [project, mode, baseBranch, selectedModel]);
 
-  // Fetch git context whenever the selected project changes.
   useEffect(() => {
     if (!project) {
       setGitInfo(null);
@@ -210,7 +198,6 @@ export function SessionsPage() {
         if (cancelled) return;
         setGitInfo(info);
         if (info.isGitRepo) {
-          // Worktree needs at least one commit to fork from.
           const canWorktree = info.branches.length > 0;
           const knownBranches = getKnownBranches(info);
           setMode((currentMode) => (canWorktree ? currentMode : 'direct'));
@@ -226,7 +213,6 @@ export function SessionsPage() {
       })
       .catch(() => {
         if (cancelled) return;
-        // Treat a failed lookup as "no git info" — submit still sends the path.
         setGitInfo(null);
         setGitLoading(false);
       });
@@ -315,7 +301,6 @@ export function SessionsPage() {
       }
       if (project) {
         req.workspacePath = project;
-        // Worktree mode is only meaningful for a git repo.
         if (gitInfo?.isGitRepo) {
           req.worktreeMode = mode;
           if (mode === 'worktree' && baseBranch) {
@@ -334,7 +319,6 @@ export function SessionsPage() {
       if (!hub) throw new ConnectionNotReadyError('Not connected to server');
       await hub.request('message.send', { sessionId: response.sessionId, content });
       navigateToSession(response.sessionId);
-      // Navigation unmounts this view, so there is no state to reset.
     } catch (err) {
       if (createdSessionId) {
         toast.error('Chat was created, but the first message failed. Opened it so you can retry.');
@@ -360,12 +344,10 @@ export function SessionsPage() {
     <div class="relative flex-1 flex flex-col bg-app-content overflow-hidden">
       <div class="desktop-empty-drag-strip" data-tauri-drag-region />
 
-      {/* Mobile: open the sidebar drawer */}
       <div class="md:hidden flex items-center px-3 py-2">
         <MobileMenuButton />
       </div>
 
-      {/* Centered landing */}
       <div class="flex-1 flex flex-col items-center justify-center px-6 pb-16">
         <h1 class="text-2xl md:text-3xl font-semibold text-gray-100 mb-8 text-center">
           What should we build?
@@ -436,7 +418,6 @@ export function SessionsPage() {
             </div>
           </div>
 
-          {/* Project / worktree / branch context row */}
           <div class="mt-2 px-1">
             <WorkspaceChips
               projects={projectPaths}

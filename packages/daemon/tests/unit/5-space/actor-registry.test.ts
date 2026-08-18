@@ -388,7 +388,6 @@ describe('SpaceActorRegistryAdapter', () => {
       workflowId: workflow.id,
       title: 'R',
     });
-    // Pinned to the SECOND node that reuses the 'reviewer' slot.
     pendingMessageRepo.enqueue({
       workflowRunId: run.id,
       spaceId: space.id,
@@ -403,7 +402,6 @@ describe('SpaceActorRegistryAdapter', () => {
       .filter((a) => a.kind === 'worker')
       .map((a) => a.handle);
     expect(handles).toContain(`@worker:${encodeURIComponent(run.id)}/rev-b/reviewer`);
-    // Must NOT project through the first node (rev-a) when the row is pinned to rev-b.
     expect(handles).not.toContain(`@worker:${encodeURIComponent(run.id)}/rev-a/reviewer`);
   });
 

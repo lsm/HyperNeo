@@ -1,24 +1,3 @@
-/**
- * Migration 99 Tests — Tool-contract refactor for Task #39.
- *
- * Migration 99:
- *   - Adds `space_workflows.completion_autonomy_level` (INTEGER NOT NULL,
- *     default 3). Built-in workflow rows get per-template overrides; user
- *     rows get the default.
- *   - Adds three nullable `pending_completion_*` columns to `space_tasks`.
- *   - Historically also created the `space_task_report_results` audit table.
- *     That table was dropped by M107 once the `report_result` tool was
- *     retired, so this test no longer asserts on it; the column-related
- *     parts of M99 remain authoritative for the schema.
- *
- * Covers:
- *   - Fresh DB has the column with NOT NULL default 3.
- *   - Pre-existing rows get per-template values via backfill.
- *   - Custom (non-built-in) workflows get the generic default.
- *   - Idempotent — running the migration twice is a no-op.
- *   - `space_tasks.pending_completion_submitted_by_node_id` column exists.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -43,8 +22,6 @@ function insertWorkflow(
   }
 ): void {
   const now = Date.now();
-  // Pre-migration column set — do NOT include completion_autonomy_level so we
-  // exercise the backfill path (M99 must add the column and populate it).
   db.prepare(
     `INSERT INTO space_workflows (
 			id, space_id, name, description, tags, created_at, updated_at
@@ -114,15 +91,10 @@ describe('Migration 99: tool-contract refactor (Task #39)', () => {
       const info = columnInfo(db, 'space_workflows', 'completion_autonomy_level');
       expect(info).not.toBeNull();
       expect(info!.notnull).toBe(1);
-      // SQLite stores defaults as strings in PRAGMA output.
       expect(info!.dflt_value).toBe('3');
     });
 
     test('built-in workflows get their per-template level via backfill on a pre-M99 DB', () => {
-      // To exercise the backfill UPDATE path, recreate a pre-M99 schema on a
-      // fresh DB (the one from `beforeEach` already has M99 applied). We
-      // simulate the pre-migration state by dropping the column and recreating
-      // the table without it, then seed rows, then run M99 directly.
       const freshDir = join(
         process.cwd(),
         'tmp',
@@ -133,7 +105,6 @@ describe('Migration 99: tool-contract refactor (Task #39)', () => {
       const freshDb = new BunDatabase(join(freshDir, 'fresh.db'));
       try {
         freshDb.exec('PRAGMA foreign_keys = ON');
-        // Pre-M99 minimal schema. Only the tables M99 touches matter.
         freshDb.exec(
           `CREATE TABLE spaces (
 						id TEXT PRIMARY KEY, slug TEXT, workspace_path TEXT, name TEXT,
@@ -205,7 +176,6 @@ describe('Migration 99: tool-contract refactor (Task #39)', () => {
         spaceId: 'sp-1',
         name: 'My Custom Workflow',
       });
-      // The column default fires on INSERT — verify without rerunning M99.
       expect(getLevel(db, 'wf-custom')).toBe(3);
     });
 

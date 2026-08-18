@@ -1,10 +1,3 @@
-/**
- * AddSkillDialog Component
- *
- * Modal dialog for adding a new skill to the application-level registry.
- * Supports three source types with distinct configuration fields.
- */
-
 import { useState, useEffect } from 'preact/hooks';
 import type { SkillSourceType, AppSkillConfig } from '@hyperneo/shared';
 import type { AppMcpServer } from '@hyperneo/shared';
@@ -15,7 +8,6 @@ import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
 import { connectionManager } from '../../lib/connection-manager';
 
-/** Convert a display name to a slug-style identifier */
 function toSlug(s: string): string {
   return s
     .toLowerCase()
@@ -29,11 +21,8 @@ interface FormState {
   nameTouched: boolean;
   description: string;
   sourceType: SkillSourceType;
-  // builtin
   commandName: string;
-  // plugin
   pluginPath: string;
-  // mcp_server
   appMcpServerId: string;
 }
 
@@ -67,7 +56,6 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mcpServers, setMcpServers] = useState<AppMcpServer[]>([]);
 
-  // Fetch MCP servers when the dialog is open and source type is mcp_server
   useEffect(() => {
     if (!isOpen || form.sourceType !== 'mcp_server') return;
     const hub = connectionManager.getHubIfConnected();
@@ -152,7 +140,6 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title="Add Skill" size="md">
       <form onSubmit={handleSubmit} class="space-y-4">
-        {/* Display Name */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1">
             Display Name <span class="text-red-400">*</span>
@@ -172,7 +159,6 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
           {errors.displayName && <p class="text-xs text-red-400 mt-1">{errors.displayName}</p>}
         </div>
 
-        {/* Name (slug) */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1">
             Name <span class="text-red-400">*</span>
@@ -200,7 +186,6 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
           </p>
         </div>
 
-        {/* Description */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1">Description</label>
           <input
@@ -217,7 +202,6 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
           />
         </div>
 
-        {/* Source Type */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-2">
             Source Type <span class="text-red-400">*</span>
@@ -241,7 +225,6 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
           </div>
         </div>
 
-        {/* Conditional config fields */}
         {form.sourceType === 'builtin' && (
           <div>
             <label class="block text-sm font-medium text-gray-300 mb-1">

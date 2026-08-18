@@ -1,11 +1,3 @@
-/**
- * SpaceWorkflowDefinitionVersionRepository + shadow recording integration.
- *
- * Covers (a) the content-hash identity function, (b) the append-only history repository,
- * and (c) that SpaceWorkflowRepository.createWorkflow/updateWorkflow/updateWorkflowNodeToolGuards/deleteWorkflow
- * populate it in shadow mode — without changing any run read path.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -27,7 +19,6 @@ function seedSpace(db: Database, id: string): void {
   ).run(id, id, '/ws/x', 'Test Space', now, now);
 }
 
-/** Raw count of recorded versions for a workflow (the repo deliberately exposes no count reader). */
 function versionCount(db: Database, workflowId: string): number {
   return (
     db
@@ -36,7 +27,6 @@ function versionCount(db: Database, workflowId: string): number {
   ).n;
 }
 
-/** Minimal valid SpaceWorkflow for hash-determinism assertions. */
 function wf(overrides: Partial<SpaceWorkflow> & Pick<SpaceWorkflow, 'id'>): SpaceWorkflow {
   return {
     spaceId,
@@ -74,7 +64,6 @@ describe('computeDefinitionVersion — content-hash identity', () => {
   test('same behavioral content → same version hash, regardless of property order', () => {
     const a = wf({ id: 'x', nodes: [{ id: 'n', name: 'X', agents: [] }] });
     const b = wf({ id: 'x', nodes: [{ id: 'n', name: 'X', agents: [] }] });
-    // Same content inserted in a different key order still hashes identically.
     const reordered = JSON.parse(stableStringify(a)) as SpaceWorkflow;
     expect(computeDefinitionVersion(reordered).versionHash).toBe(
       computeDefinitionVersion(b).versionHash
@@ -213,9 +202,6 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
     createSpaceTables(db);
     seedSpace(db, spaceId);
     wfRepo = new SpaceWorkflowRepository(db);
-    // A SEPARATE repository instance over the same DB — proves the recorded versions
-    // are persisted (survive a "restart") and readable by an independent reader, not
-    // just an in-memory side-effect of the workflow repo.
     versionRepo = new SpaceWorkflowDefinitionVersionRepository(db);
   });
 
@@ -231,14 +217,12 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
     });
     expect(versionCount(db, created.id)).toBe(1);
 
-    // The recorded hash matches a freshly-computed hash of the persisted workflow.
     const fetched = wfRepo.getWorkflow(created.id)!;
     const hash = computeDefinitionVersion(fetched).versionHash;
     const v = versionRepo.getVersion(created.id, hash);
     expect(v).not.toBeNull();
     expect(v?.source).toBe('create');
 
-    // The recorded payload round-trips to the persisted definition.
     const fromPayload = JSON.parse(v!.payload);
     expect(fromPayload.id).toBe(created.id);
     expect(fromPayload.name).toBe('WF');
@@ -256,7 +240,6 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
     expect(versionCount(db, created.id)).toBe(2);
 
     const updateHash = computeDefinitionVersion(wfRepo.getWorkflow(created.id)!).versionHash;
-    // Both versions are present, with the right sources and distinct hashes.
     expect(versionRepo.getVersion(created.id, createHash)?.source).toBe('create');
     expect(versionRepo.getVersion(created.id, updateHash)?.source).toBe('update');
     expect(createHash).not.toBe(updateHash);
@@ -268,7 +251,6 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
       name: 'WF',
       nodes: [{ name: 'Only', agentId: 'agent-1' }],
     });
-    // No fields, no nodes → getWorkflow returns identical content → same hash → no-op.
     wfRepo.updateWorkflow(created.id, {});
     expect(versionCount(db, created.id)).toBe(1);
   });
@@ -280,7 +262,6 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
       nodes: [{ name: 'Only', agentId: 'agent-1' }],
     });
     const nodeId = created.nodes[0].id;
-    // Moving a node on the canvas is cosmetic, not behavioral → same hash → no-op.
     wfRepo.updateWorkflow(created.id, { layout: { [nodeId]: { x: 99, y: 99 } } });
     expect(versionCount(db, created.id)).toBe(1);
   });
@@ -293,8 +274,6 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
     });
     const fetched = wfRepo.getWorkflow(created.id)!;
     const v = versionRepo.getVersion(created.id, computeDefinitionVersion(fetched).versionHash)!;
-    // Re-hashing the STORED payload reproduces the stored hash — proves the persisted
-    // payload is the exact hash preimage (not just a synthetic object).
     expect(computeDefinitionVersion(JSON.parse(v.payload) as SpaceWorkflow).versionHash).toBe(
       v.versionHash
     );
@@ -309,8 +288,6 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
     const node = created.nodes[0];
     const beforeHash = computeDefinitionVersion(wfRepo.getWorkflow(created.id)!).versionHash;
 
-    // A tool-guard-only change (no full updateWorkflow) still mutates behavioral content
-    // (node config), so it must be recorded as a new version.
     wfRepo.updateWorkflowNodeToolGuards(created.id, [
       {
         ...node,
@@ -360,8 +337,6 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
     expect(wfRepo.deleteWorkflow(created.id)).toBe(true);
     expect(wfRepo.getWorkflow(created.id)).toBeNull();
 
-    // The head is gone, but the immutable version snapshot survives (RFC §4
-    // orphan/tombstone policy: deleting a definition must not erase a pinned version).
     expect(versionRepo.getVersion(created.id, hash)).not.toBeNull();
   });
 
@@ -373,8 +348,6 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
     });
     expect(versionCount(db, created.id)).toBe(1);
 
-    // Whole-Space deletion cascades via the space_id FK (matches space_workflow_runs),
-    // so version payloads (prompts/instructions) do not outlive the Space.
     db.prepare(`DELETE FROM spaces WHERE id = ?`).run(spaceId);
     expect(versionCount(db, created.id)).toBe(0);
   });
@@ -385,7 +358,6 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
       name: 'Pre-existing',
       nodes: [{ name: 'Only', agentId: 'agent-1' }],
     });
-    // Simulate a workflow that predates the version-history feature: wipe its record.
     db.prepare(`DELETE FROM space_workflow_definition_versions WHERE workflow_id = ?`).run(
       created.id
     );
@@ -395,7 +367,6 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
     expect(captured).toBe(1);
     expect(versionCount(db, created.id)).toBe(1);
 
-    // The backfilled hash is byte-consistent with what live writes produce.
     const fetched = wfRepo.getWorkflow(created.id)!;
     const v = versionRepo.getVersion(created.id, computeDefinitionVersion(fetched).versionHash);
     expect(v).not.toBeNull();
@@ -408,17 +379,13 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
       name: 'WF',
       nodes: [{ name: 'Only', agentId: 'agent-1' }],
     });
-    // Edit the head (records the edit version), then wipe ONLY that edit version —
-    // simulating a head committed whose version append was swallowed. An older version
-    // (the create version) remains, so a naive "has any version" predicate would skip it.
     wfRepo.updateWorkflow(created.id, { name: 'Edited' });
     const editHash = computeDefinitionVersion(wfRepo.getWorkflow(created.id)!).versionHash;
     db.prepare(`DELETE FROM space_workflow_definition_versions WHERE version_hash = ?`).run(
       editHash
     );
-    expect(versionCount(db, created.id)).toBe(1); // only the create version remains
+    expect(versionCount(db, created.id)).toBe(1);
 
-    // Backfill keys on the current head's hash and captures the missing edit version.
     const captured = wfRepo.backfillExistingDefinitionVersions();
     expect(captured).toBe(1);
     expect(versionRepo.getVersion(created.id, editHash)).not.toBeNull();
@@ -431,10 +398,8 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
       name: 'WF',
       nodes: [{ name: 'Only', agentId: 'agent-1' }],
     });
-    // createWorkflow already recorded a version → backfill finds nothing to do.
     expect(wfRepo.backfillExistingDefinitionVersions()).toBe(0);
     expect(versionCount(db, created.id)).toBe(1);
-    // A second run is also a no-op.
     expect(wfRepo.backfillExistingDefinitionVersions()).toBe(0);
   });
 
@@ -444,9 +409,6 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
       name: 'Good',
       nodes: [{ name: 'Only', agentId: 'agent-1' }],
     });
-    // A separate workflow whose node config has `agents` as a non-array — getWorkflow throws
-    // a TypeError on `cfg.agents.map(...)` (rowToNode). This must NOT propagate through the
-    // boot loop and brick the daemon; the malformed row is skipped, the good one untouched.
     const now = Date.now();
     db.prepare(
       `INSERT INTO space_workflows
@@ -461,7 +423,6 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
     ).run('n-bad', now, now);
 
     expect(() => wfRepo.backfillExistingDefinitionVersions()).not.toThrow();
-    // The good workflow's recorded version is intact; the malformed one was skipped.
     expect(versionCount(db, good.id)).toBe(1);
     expect(versionCount(db, 'wf-bad')).toBe(0);
   });

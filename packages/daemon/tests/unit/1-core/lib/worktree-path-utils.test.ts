@@ -1,10 +1,3 @@
-/**
- * worktree-path-utils unit tests
- *
- * Tests for the shared worktree path resolution utilities used by both
- * WorktreeManager (room sessions) and SpaceWorktreeManager (space task agents).
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { vi } from 'vitest';
 import {
@@ -13,10 +6,6 @@ import {
   getWorktreeBaseDir,
 } from '../../../../src/lib/worktree-path-utils';
 
-// node:fs / node:os namespace exports are not configurable in ESM, so
-// `spyOn(fs, ...)` cannot work under Vitest. Mock both modules with vi.fn()
-// indirection: each mock passes through to the real implementation until a
-// test installs its own via mockImplementation/mockReturnValue.
 const mocks = vi.hoisted(() => ({
   existsSync: vi.fn(),
   mkdirSync: vi.fn(),
@@ -29,9 +18,6 @@ function passthrough<Args extends unknown[], R>(
   mockFn: ReturnType<typeof vi.fn>,
   real: (...args: Args) => R
 ): (...args: Args) => R {
-  // Call the mock fn itself (not just its implementation) so calls are
-  // recorded for toHaveBeenCalledWith assertions; fall back to the real
-  // implementation when no mock implementation is installed.
   return (...args: Args) =>
     mockFn.getMockImplementation() ? (mockFn as (...args: Args) => R)(...args) : real(...args);
 }
@@ -98,7 +84,6 @@ describe('worktree-path-utils', () => {
     });
 
     test('handles Windows-style paths', () => {
-      // Colons (drive letter separator) are preserved, backslashes become dashes
       expect(encodeRepoPath('C:\\Users\\alice\\project')).toBe('-C:-Users-alice-project');
     });
   });
@@ -116,7 +101,6 @@ describe('worktree-path-utils', () => {
 
     test('sanitizes special characters in basename', () => {
       const key = getProjectShortKey('/Users/alice/some.weird path/my@project!');
-      // `my@project!` → `my-project-` (trailing dash from `!`), then separator `-` → `my-project--hash`
       expect(key).toMatch(/^my-project--[0-9a-f]{8}$/);
     });
 
@@ -128,7 +112,6 @@ describe('worktree-path-utils', () => {
 
     test('produces a valid key even when basename is all special chars', () => {
       const key = getProjectShortKey('/path/...');
-      // `...` sanitizes to `---`, then `-` separator + hash8 → `----<hash8>`
       expect(key).toMatch(/^----[0-9a-f]{8}$/);
     });
   });
@@ -138,7 +121,6 @@ describe('worktree-path-utils', () => {
       const repoPath = '/Users/alice/my-app';
       const shortKey = getProjectShortKey(repoPath);
 
-      // Project dir doesn't exist yet
       existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, false);
 
       const result = getWorktreeBaseDir(repoPath);
@@ -157,9 +139,7 @@ describe('worktree-path-utils', () => {
       const repoPath = '/Users/bob/cool-lib';
       const shortKey = getProjectShortKey(repoPath);
 
-      // Project dir exists
       existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
-      // Sentinel exists and matches
       existsSyncResults.set(
         `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
         true
@@ -176,14 +156,11 @@ describe('worktree-path-utils', () => {
       const shortKey = getProjectShortKey(repoPath);
       const otherPath = '/Users/dave/different-repo';
 
-      // Project dir exists
       existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
-      // Sentinel exists
       existsSyncResults.set(
         `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
         true
       );
-      // Sentinel contains a DIFFERENT repo path → collision
       readFileSyncSpy.mockImplementation(() => otherPath);
 
       const collisions: string[] = [];
@@ -199,9 +176,7 @@ describe('worktree-path-utils', () => {
       const repoPath = '/Users/legacy/app';
       const shortKey = getProjectShortKey(repoPath);
 
-      // Project dir exists
       existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
-      // No sentinel file
       existsSyncResults.set(
         `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
         false

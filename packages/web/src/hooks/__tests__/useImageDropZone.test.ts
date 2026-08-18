@@ -1,11 +1,3 @@
-/**
- * Tests for useImageDropZone — the content-column drag/drop surface.
- *
- * Verifies the semantics extracted from MessageInput's original inline handlers:
- * overlay activates only for file drags when enabled, hides only when leaving
- * the zone entirely, and forwards dropped files to onFiles.
- */
-
 import { renderHook, act } from '@testing-library/preact';
 import { describe, it, expect, vi } from 'vitest';
 import { useImageDropZone } from '../useImageDropZone.ts';
@@ -99,13 +91,11 @@ describe('useImageDropZone', () => {
     const evtInside = makeDragEvent({ relatedTarget: child });
     (evtInside.currentTarget as HTMLElement).append(child);
 
-    // Leaving onto another child inside the zone must not hide it.
     act(() => {
       result.current.dragHandlers.onDragLeave(evtInside);
     });
     expect(result.current.isDragging).toBe(true);
 
-    // Leaving the zone entirely hides it even when dragleave bubbled from a child.
     act(() => {
       result.current.dragHandlers.onDragLeave(makeDragEvent({ relatedTarget: document.body }));
     });
@@ -147,7 +137,6 @@ describe('useImageDropZone', () => {
       result.current.dragHandlers.onDrop(makeDragEvent({ types: ['Files'], files: [] }));
     });
     expect(onFiles).not.toHaveBeenCalled();
-    // Drop always resets the overlay.
     expect(result.current.isDragging).toBe(false);
   });
 });

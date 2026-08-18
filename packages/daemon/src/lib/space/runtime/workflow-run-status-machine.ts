@@ -1,36 +1,5 @@
-/**
- * WorkflowRunStatusMachine
- *
- * Defines the valid status transitions for one agent-centric workflow execution
- * attempt. Persisted values remain the DB enum values; presentation should use
- * execution-attempt labels (for example, `done` displays as Succeeded).
- *
- * Lifecycle:
- *   pending        → in_progress   (startWorkflowRun promotes immediately after creation)
- *   pending        → cancelled     (error during run initialization before tasks created)
- *   in_progress    → done          (execution attempt succeeded)
- *   in_progress    → blocked       (agent failed or gate blocked requiring human action)
- *   in_progress    → cancelled     (explicit cancellation via API)
- *   blocked        → in_progress   (human resolved the blocking issue)
- *   blocked        → cancelled     (explicit cancellation while blocked)
- *   done           → in_progress   (reopen: follow-up message to a succeeded run)
- *   cancelled      → in_progress   (reopen: resume a previously cancelled run)
- *
- * The only true tombstone for the unit of work is `SpaceTask.archivedAt`;
- * workflow-run status is an execution-attempt lifecycle state that can re-enter
- * `in_progress` as long as the parent task has not been archived. See
- * ChannelRouter for the archive check that guards reopen.
- */
-
 import type { WorkflowRunStatus } from '@hyperneo/shared';
 
-/**
- * Map from a source status to the set of allowed target statuses.
- *
- * `done` and `cancelled` are finished attempt states, not task tombstones — they
- * can re-enter `in_progress` when the parent task is still live (not archived).
- * The archive check lives in ChannelRouter; this table just permits the transition.
- */
 export const VALID_TRANSITIONS: Readonly<
   Record<WorkflowRunStatus, ReadonlySet<WorkflowRunStatus>>
 > = {
@@ -41,22 +10,10 @@ export const VALID_TRANSITIONS: Readonly<
   cancelled: new Set<WorkflowRunStatus>(['in_progress']),
 };
 
-/**
- * Returns true when transitioning from `from` to `to` is a valid lifecycle step.
- */
 export function canTransition(from: WorkflowRunStatus, to: WorkflowRunStatus): boolean {
   return VALID_TRANSITIONS[from].has(to);
 }
 
-/**
- * Throws a descriptive error when the transition is invalid.
- * No-ops when the transition is valid — callers can proceed unconditionally.
- *
- * @param from  Current status of the run.
- * @param to    Desired next status.
- * @param runId Optional run ID for a more actionable error message.
- * @throws {Error} when the transition is not permitted.
- */
 export function assertValidTransition(
   from: WorkflowRunStatus,
   to: WorkflowRunStatus,

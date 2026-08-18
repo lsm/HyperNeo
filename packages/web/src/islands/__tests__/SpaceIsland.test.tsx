@@ -1,20 +1,8 @@
 // @ts-nocheck
-/**
- * Tests for SpaceIsland.
- *
- * Covers:
- * - route-driven overview vs configure rendering
- * - workflow editor behavior inside configure
- * - content priority for session/task routes
- */
 
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Default waitFor timeout of 1000ms is too tight for lazy-loaded routes under
-// full-suite load (CI parallel workers, Vite transform pipeline). Bumping to
-// 5s for all lazy-module assertions eliminates flakiness without slowing the
-// happy path, since waitFor returns as soon as the assertion passes.
 const LAZY_LOAD_TIMEOUT = 5000;
 
 import type { Space, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
@@ -32,14 +20,11 @@ const mockEnsureWorkflowDetails = vi.fn().mockResolvedValue(undefined);
 
 const mockSelectSpace = vi.fn().mockResolvedValue(undefined);
 
-// Bridge pattern: hoisted bridge so mockNavigateToSpaceConfigure can update
-// the real Preact signal (created after import) for reactivity.
 const { configureTabBridge, idBridge } = vi.hoisted(() => ({
   configureTabBridge: { signal: null as ReturnType<typeof signal<string>> | null },
   idBridge: { signal: null as ReturnType<typeof signal<string | null>> | null },
 }));
 
-// Hoisted mock for navigateToSpaceConfigure — updates real signal at call time
 const { mockNavigateToSpaceConfigure } = vi.hoisted(() => ({
   mockNavigateToSpaceConfigure: vi.fn((_spaceId: string, tab?: string) => {
     if (configureTabBridge.signal) {
@@ -61,15 +46,12 @@ const { mockToastError } = vi.hoisted(() => ({
   mockToastError: vi.fn(),
 }));
 
-// Real Preact signal for the configure tab (read during render — needs reactivity)
 const mockCurrentSpaceConfigureTabSignal = signal<string>('agents');
 const mockCurrentSpaceIdSignal = signal<string | null>(null);
 const mockCurrentSpaceCanonicalIdSignal = signal<string | null>(null);
 const mockCurrentSpaceAgentHandleSignal = signal<string | null>(null);
 const mockCurrentSpaceViewModeSignal = signal<string>('overview');
 
-// Overlay signals (task #873) — control whether an agent overlay is open over
-// the base content so the inert/aria-hidden behavior is testable.
 const mockSpaceOverlaySessionIdSignal = signal<string | null>(null);
 const mockSpaceOverlayAgentNameSignal = signal<string | null>(null);
 const mockSpaceOverlayHighlightMessageIdSignal = signal<string | null>(null);
@@ -77,7 +59,6 @@ const mockSpaceOverlayPendingTaskIdSignal = signal<string | null>(null);
 const mockSpaceOverlayPendingAgentNameSignal = signal<string | null>(null);
 const mockSpaceOverlayTaskContextSignal = signal<unknown>(null);
 
-// Wire bridge so mockNavigateToSpaceConfigure can update the real signal
 configureTabBridge.signal = mockCurrentSpaceConfigureTabSignal;
 idBridge.signal = mockCurrentSpaceIdSignal;
 
@@ -263,9 +244,6 @@ vi.mock('../ChatContainer', () => ({
   ),
 }));
 
-// Stub the agent overlay so opening it doesn't drag in Portal/focus-trap/scroll
-// logic — the inert test only cares that the base layer is disabled when an
-// overlay is open, not the overlay's own internals.
 vi.mock('../../components/space/AgentOverlayChat', () => ({
   AgentOverlayChat: ({ sessionId, agentName }: { sessionId?: string; agentName?: string }) => (
     <div
@@ -348,10 +326,6 @@ vi.mock('../../lib/toast', () => ({
 
 import SpaceIsland from '../SpaceIsland';
 
-// Eagerly resolve the lazily-imported modules used by SpaceIsland so that
-// <Suspense> boundaries inside the component tree can resolve on the first
-// microtask in tests. Without this, test assertions race against Vite's
-// module transform pipeline under full-suite load.
 beforeAll(async () => {
   await Promise.all([
     import('../../components/space/SpaceConfigurePage'),
@@ -405,7 +379,6 @@ beforeEach(() => {
   idBridge.signal.value = null;
   mockCurrentSpaceAgentHandleSignal.value = null;
   mockCurrentSpaceCanonicalIdSignal.value = null;
-  // Reset overlay signals so each test starts with no overlay open.
   mockSpaceOverlaySessionIdSignal.value = null;
   mockSpaceOverlayAgentNameSignal.value = null;
   mockSpaceOverlayHighlightMessageIdSignal.value = null;
@@ -442,7 +415,6 @@ describe('SpaceIsland — overlay inerts the base chat (task #873)', () => {
     const { findByTestId } = render(
       <SpaceIsland spaceId="space-1" viewMode="overview" sessionViewId="session-abc" />
     );
-    // Overlay itself renders on top.
     await findByTestId('agent-overlay-chat');
     const layer = await findByTestId('space-base-session-layer');
     expect(layer.hasAttribute('inert')).toBe(true);
@@ -465,9 +437,6 @@ describe('SpaceIsland — overlay inerts the base chat (task #873)', () => {
   });
 
   it('inerts every base-content branch, not just session/task (review fix)', async () => {
-    // An overlay can persist across sidebar navigation, so the inert/hidden
-    // props must apply to the sessions view (and the other viewMode branches),
-    // not only the session + task-detail branches.
     mockSpaceOverlaySessionIdSignal.value = 'overlay-session';
     const { findByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="sessions" />);
     await findByTestId('agent-overlay-chat');
@@ -482,27 +451,23 @@ describe('SpaceIsland — route-driven views', () => {
     const { getByTestId, getByText, queryByTestId } = render(
       <SpaceIsland spaceId="space-1" viewMode="overview" />
     );
-    // Wait for lazy SpaceOverview to load through Suspense
     await waitFor(
       () => {
         expect(getByTestId('space-dashboard')).toBeTruthy();
       },
       { timeout: LAZY_LOAD_TIMEOUT }
     );
-    // Outer wrapper and Overview-only workspace treatment
     expect(getByTestId('space-overview-view')).toBeTruthy();
     expect(getByTestId('space-overview-view').getAttribute('data-overview-surface')).toBe(
       'glass-workspace'
     );
     expect(getByTestId('space-dashboard').getAttribute('data-space-id')).toBe('space-1');
     expect(getByText('Space operations and recent activity')).toBeTruthy();
-    // Legacy tab bar is removed from overview
     expect(queryByTestId('space-tab-bar')).toBeNull();
   });
 
   it('renders the configure view when requested', async () => {
     const { getByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="configure" />);
-    // Wait for lazy SpaceConfigurePage to load through Suspense
     await waitFor(
       () => {
         expect(getByTestId('space-worker-agent-list')).toBeTruthy();
@@ -544,7 +509,6 @@ describe('SpaceIsland — overview content', () => {
 describe('SpaceIsland — configure workflow editor', () => {
   async function renderConfigure() {
     const result = render(<SpaceIsland spaceId="space-1" viewMode="configure" />);
-    // Wait for lazy SpaceConfigurePage to load through Suspense
     await waitFor(
       () => {
         expect(result.getByTestId('space-configure-tab-bar')).toBeTruthy();
@@ -760,10 +724,6 @@ describe('SpaceIsland — sessions view', () => {
       spaceId: 'space-1',
       workspacePath: undefined,
     });
-    // Navigation is conditional on currentSpaceIdSignal and currentSpaceViewModeSignal
-    // matching the origin values. In tests these signals are real Preact signals
-    // but the component reads them at resolution time, not via subscription,
-    // so the guard should pass when values match.
     await waitFor(() => {
       expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'new-session-123');
     });
@@ -865,12 +825,10 @@ describe('SpaceIsland — sessions view', () => {
     );
 
     fireEvent.click(getByLabelText('Create session'));
-    // Simulate user navigating to a different space while request is in flight
     mockCurrentSpaceIdSignal.value = 'space-2';
     await waitFor(() => {
       expect(mockCreateSession).toHaveBeenCalledTimes(1);
     });
-    // Wait for the delayed promise to fully settle before asserting no navigation
     await waitFor(() => {
       expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
     });
@@ -900,7 +858,6 @@ describe('SpaceIsland — sessions view', () => {
     await waitFor(() => {
       expect(mockCreateSession).toHaveBeenCalledTimes(1);
     });
-    // Wait for the async handler to finish and re-enable the button
     await waitFor(() => {
       expect(btn.disabled).toBe(false);
     });
@@ -977,7 +934,6 @@ describe('SpaceIsland — tasks view', () => {
     );
 
     fireEvent.click(getByLabelText('Create task'));
-    // Dialog title is a heading; use getByRole to avoid matching the submit button
     await waitFor(() => {
       expect(getByRole('heading', { name: 'Create Task' })).toBeTruthy();
     });

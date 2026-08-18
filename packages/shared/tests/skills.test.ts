@@ -16,10 +16,6 @@ import type {
   UpdateSkillParams,
 } from '../src/types/skills.ts';
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 const builtinConfig: BuiltinSkillConfig = { type: 'builtin', commandName: 'update-config' };
 const pluginConfig: PluginSkillConfig = {
   type: 'plugin',
@@ -37,12 +33,8 @@ const baseSkill: AppSkill = {
   enabled: true,
   builtIn: false,
   validationStatus: 'valid',
-  createdAt: 1735689600000, // 2026-01-01T00:00:00.000Z in Unix ms
+  createdAt: 1735689600000,
 };
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('SkillSourceType', () => {
   it('accepts valid source types', () => {
@@ -219,8 +211,6 @@ describe('UpdateSkillParams', () => {
   });
 
   it('does not include name, sourceType, or validationStatus', () => {
-    // TypeScript would error if these were set — verify at runtime that
-    // a valid patch object does not contain immutable fields
     const patch: UpdateSkillParams = { displayName: 'Test' };
     expect('name' in patch).toBe(false);
     expect('sourceType' in patch).toBe(false);

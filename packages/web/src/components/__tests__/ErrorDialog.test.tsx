@@ -1,17 +1,8 @@
 // @ts-nocheck
-/**
- * Tests for ErrorDialog Component
- *
- * Note: The ErrorDialog uses a Portal component which renders content
- * outside the normal DOM tree. These tests focus on the component's
-import { describe, it, expect, vi } from 'vitest';
- * basic behavior that can be tested in this environment.
- */
 
 import { cleanup } from '@testing-library/preact';
 import type { StructuredError } from '../../types/error';
 
-// Test the formatErrorReport function behavior indirectly through component structure
 describe('ErrorDialog', () => {
   const mockOnClose = vi.fn(() => {});
 
@@ -122,9 +113,7 @@ describe('ErrorDialog', () => {
   });
 
   describe('Error Report Generation', () => {
-    // Test the structure of error report that would be generated
     it('should have all fields needed for error report', () => {
-      // Verify all fields exist that formatErrorReport would use
       expect(mockError.category).toBeDefined();
       expect(mockError.code).toBeDefined();
       expect(mockError.timestamp).toBeDefined();

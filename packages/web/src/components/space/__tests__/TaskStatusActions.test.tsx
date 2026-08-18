@@ -52,8 +52,6 @@ describe('VALID_TASK_TRANSITIONS', () => {
   });
 
   it('approved can transition to done, in_progress, archived, and cancelled', () => {
-    // G3 (task #849): approved → cancelled lets the user drop an
-    // approved-but-unwanted task directly. approved → blocked stays absent.
     expect(VALID_TASK_TRANSITIONS.approved).toEqual([
       'done',
       'in_progress',
@@ -233,23 +231,13 @@ describe('TaskStatusActions component', () => {
           pendingCheckpointType="task_completion"
         />
       );
-      // "review -> done" / "review -> cancelled" are owned by the banner now
       expect(queryByTestId('task-action-done')).toBeNull();
       expect(queryByTestId('task-action-cancelled')).toBeNull();
-      // Non-approval transitions stay visible so the user can still reopen or archive.
       expect(getByTestId('task-action-in_progress')).toBeTruthy();
       expect(getByTestId('task-action-archived')).toBeTruthy();
     });
 
     it('hides Approve / Cancel for any review task even when pendingCheckpointType is null', () => {
-      // After unification (Task #123) every fresh `review` task carries
-      // `pendingCheckpointType === 'task_completion'` because the unified
-      // `submitTaskForReview` helper stamps it on transition. Legacy data
-      // from before unification (null checkpoint type, status=review) must
-      // still route through the banner — the bare review→done button would
-      // bypass `PostApprovalRouter` and the approval-metadata stamp. So
-      // we hide the generic Approve/Cancel buttons whenever status==='review'
-      // regardless of `pendingCheckpointType`.
       const onTransition = vi.fn();
       const { queryByTestId, getByTestId } = render(
         <TaskStatusActions
@@ -260,7 +248,6 @@ describe('TaskStatusActions component', () => {
       );
       expect(queryByTestId('task-action-done')).toBeNull();
       expect(queryByTestId('task-action-cancelled')).toBeNull();
-      // Non-approval escape hatches stay visible.
       expect(getByTestId('task-action-in_progress')).toBeTruthy();
       expect(getByTestId('task-action-archived')).toBeTruthy();
     });

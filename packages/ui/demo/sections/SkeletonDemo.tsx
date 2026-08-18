@@ -29,7 +29,6 @@ export function SkeletonDemo() {
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Card skeleton (composed layout)</h3>
         <div class="max-w-sm bg-surface-2 border border-surface-border rounded-xl p-4 space-y-4">
-          {/* Header: avatar + title lines */}
           <div class="flex items-center gap-3">
             <Skeleton class="w-10 h-10 rounded-full bg-surface-3 animate-pulse shrink-0" />
             <div class="flex-1 space-y-2">
@@ -37,15 +36,12 @@ export function SkeletonDemo() {
               <Skeleton class="h-3 w-20 rounded bg-surface-3 animate-pulse" />
             </div>
           </div>
-          {/* Image placeholder */}
           <Skeleton class="w-full h-32 rounded-lg bg-surface-3 animate-pulse" />
-          {/* Body text */}
           <div class="space-y-2">
             <Skeleton class="h-3.5 w-full rounded bg-surface-3 animate-pulse" />
             <Skeleton class="h-3.5 w-11/12 rounded bg-surface-3 animate-pulse" />
             <Skeleton class="h-3.5 w-8/12 rounded bg-surface-3 animate-pulse" />
           </div>
-          {/* Action row */}
           <div class="flex gap-2">
             <Skeleton class="h-8 w-20 rounded-lg bg-surface-3 animate-pulse" />
             <Skeleton class="h-8 w-20 rounded-lg bg-surface-3 animate-pulse" />

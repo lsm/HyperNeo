@@ -1,24 +1,5 @@
-/**
- * Tests for useSpaceTaskMessages hook
- *
- * Verifies the hook subscribes to the correct LiveQuery name based on its
- * variant argument:
- *
- *   - default/undefined → `spaceTaskMessages.byTask.compact` (row-sliced + count)
- *   - 'compact'         → `spaceTaskMessages.byTask.compact`
- *   - 'full'            → `spaceTaskMessages.byTask` (legacy, unbounded)
- *
- * The compact variant is the UI default because the compact event feed only
- * needs the last N messages per session; the full variant exists for any
- * renderer that genuinely needs the unbounded history (e.g. the verbose feed).
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, renderHook } from '@testing-library/preact';
-
-// ---------------------------------------------------------------------------
-// Hoisted mock for useMessageHub
-// ---------------------------------------------------------------------------
 
 const { mockRequest, mockOnEvent, mockGetHub, mockIsConnected } = vi.hoisted(() => ({
   mockRequest: vi.fn().mockResolvedValue(undefined),
@@ -40,8 +21,6 @@ vi.mock('../useMessageHub', () => ({
   }),
 }));
 
-// Handler registry used by the empty-state flash tests to simulate LiveQuery
-// snapshot delivery.
 type EventHandler = (event: unknown) => void;
 let eventHandlers: Record<string, EventHandler[]> = {};
 
@@ -67,17 +46,10 @@ function lastActiveTurnSubscribeSubId(): string {
   return calls[calls.length - 1][1].subscriptionId;
 }
 
-// ---------------------------------------------------------------------------
-// Imports (after mocks)
-// ---------------------------------------------------------------------------
-
 import { useSpaceTaskMessages, sortActiveTurnRows, sortRows } from '../useSpaceTaskMessages';
 
 describe('sortRows', () => {
   it('breaks same-millisecond ties by insOrder (insertion), not the UUID id (#2338)', () => {
-    // Two compact rows in the same millisecond. Their UUID ids sort
-    // lexicographically (zzz before aaa), but insOrder (rowid) preserves the
-    // queue/emission order (aaa first).
     const make = (id: string, insOrder: number) =>
       ({
         id,
@@ -117,10 +89,6 @@ describe('sortRows', () => {
 
 describe('sortActiveTurnRows', () => {
   it('breaks same-timestamp ties by numeric rowid, not lexicographic id', () => {
-    // Active-turn row ids embed the numeric sdk_messages.rowid as the
-    // third component: <sessionId>:<turn>:<rowId>:<blockIdx>. A lexicographic
-    // compare would order rowid 10 before rowid 9 ("10" < "9"); the sort must
-    // treat the trailing components numerically so emission order holds.
     const make = (rowId: number, blockIdx: number) =>
       ({
         id: `space:test:task:sess:1:${rowId}:${blockIdx}`,
@@ -238,12 +206,6 @@ describe('useSpaceTaskMessages', () => {
     ]);
   });
 
-  // Regression coverage for the empty-state flash reported against
-  // SpaceTaskUnifiedThread. The consumer renders "No task-agent activity
-  // yet." when `rows.length === 0 && !isLoading`. On slow networks the old
-  // hook briefly exposed that exact combination on first render and on
-  // task switch, so the empty-state flashed before the LiveQuery snapshot
-  // arrived.
   describe('isLoading (empty-state flash prevention)', () => {
     it('reports isLoading=true on the very first render when a taskId is provided', () => {
       const { result } = renderHook(() => useSpaceTaskMessages('task-1'));
@@ -281,7 +243,6 @@ describe('useSpaceTaskMessages', () => {
         { initialProps: { taskId: 'task-1' } }
       );
 
-      // Finish loading task-1.
       const firstSubId = lastMessageSubscribeSubId();
       act(() => {
         fireEvent('liveQuery.snapshot', {
@@ -292,12 +253,9 @@ describe('useSpaceTaskMessages', () => {
       });
       expect(result.current.isLoading).toBe(false);
 
-      // Switch to task-2 — isLoading must be true again on the very next
-      // render, not one render later after the effect fires.
       rerender({ taskId: 'task-2' });
       expect(result.current.isLoading).toBe(true);
 
-      // Snapshot for task-2 closes the gate.
       const secondSubId = lastMessageSubscribeSubId();
       expect(secondSubId).not.toBe(firstSubId);
       act(() => {
@@ -317,7 +275,6 @@ describe('useSpaceTaskMessages', () => {
 
       expect(result.current.isLoading).toBe(true);
 
-      // Drain the rejection microtask.
       await act(async () => {
         await Promise.resolve();
       });

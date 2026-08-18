@@ -1,11 +1,3 @@
-/**
- * Unit tests for liveQuery.subscribe and liveQuery.unsubscribe RPC handlers.
- *
- * Room-scoped named queries are retired public contracts. These tests cover the
- * active protocol with non-Room queries and keep the legacy task-group read path
- * authorized for compatibility with preserved DB rows.
- */
-
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { ErrorCode, MessageHubHandlerError } from '@hyperneo/shared';
@@ -49,8 +41,6 @@ function createMockSetup(opts: { subscriptionCap?: number } = {}) {
     | { ok: false; reason: 'send_failed' | 'message_too_large' } = { ok: true };
   let routerEnabled = true;
 
-  // Functional per-client subscription counter mirroring MessageHubRouter, so
-  // the over-cap refusal path can be exercised (default: no limit).
   const subscriptionCap = opts.subscriptionCap ?? Number.POSITIVE_INFINITY;
   const subscriptionCounts = new Map<string, number>();
 
@@ -600,11 +590,6 @@ describe('setupLiveQueryHandlers', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Ingress fan-out guardrail: per-client subscription cap (task #899 / #2414).
-// An unbounded-subscribe page must fail fast with a structured
-// TOO_MANY_SUBSCRIPTIONS error instead of silently accumulating handlers.
-// ---------------------------------------------------------------------------
 describe('setupLiveQueryHandlers: per-client subscription cap', () => {
   let db: BunDatabase;
   let reactiveDb: ReactiveDatabase;
@@ -637,8 +622,6 @@ describe('setupLiveQueryHandlers: per-client subscription cap', () => {
       subscriptionId: 'sub-2',
     });
 
-    // The third subscribe is refused — fail fast at the boundary, before any
-    // snapshot/handler work, mirroring the #2423 MESSAGE_TOO_LARGE pattern.
     const err = await setup
       .callHandler('liveQuery.subscribe', {
         queryName: 'mcpServers.global',
@@ -663,7 +646,6 @@ describe('setupLiveQueryHandlers: per-client subscription cap', () => {
       subscriptionId: 'sub-2',
     });
 
-    // Refuse sub-3; this must not evict sub-1 or sub-2.
     await expect(
       setup.callHandler('liveQuery.subscribe', {
         queryName: 'mcpServers.global',
@@ -674,7 +656,6 @@ describe('setupLiveQueryHandlers: per-client subscription cap', () => {
 
     expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(2);
 
-    // The surviving subscriptions still receive deltas.
     setup.sentMessages.length = 0;
     insertMcpServer(db, 'mcp-2', 'beta');
     reactiveDb.notifyChange('app_mcp_servers');
@@ -700,7 +681,6 @@ describe('setupLiveQueryHandlers: per-client subscription cap', () => {
     await setup.callHandler('liveQuery.unsubscribe', { subscriptionId: 'sub-1' });
     expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(1);
 
-    // A new subscribe reclaims the freed slot.
     const result = await setup.callHandler('liveQuery.subscribe', {
       queryName: 'mcpServers.global',
       params: [],
@@ -711,7 +691,6 @@ describe('setupLiveQueryHandlers: per-client subscription cap', () => {
   });
 
   test('replacement of an existing subscriptionId is allowed at the cap (no fan-out increase)', async () => {
-    // Fill to the cap.
     await setup.callHandler('liveQuery.subscribe', {
       queryName: 'mcpServers.global',
       params: [],
@@ -724,9 +703,6 @@ describe('setupLiveQueryHandlers: per-client subscription cap', () => {
     });
     expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(2);
 
-    // Re-subscribing an existing id is a replacement (net-zero fan-out) and must
-    // succeed even at the cap — e.g. GlobalStore reuses stable subscriptionIds
-    // on refresh. The old slot is released, the new one acquired.
     const replaced = await setup.callHandler('liveQuery.subscribe', {
       queryName: 'mcpServers.global',
       params: [],
@@ -735,7 +711,6 @@ describe('setupLiveQueryHandlers: per-client subscription cap', () => {
     expect(replaced).toEqual({ ok: true });
     expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(2);
 
-    // A genuinely-new id is still refused at the cap.
     const err = await setup
       .callHandler('liveQuery.subscribe', {
         queryName: 'mcpServers.global',
@@ -749,7 +724,6 @@ describe('setupLiveQueryHandlers: per-client subscription cap', () => {
   });
 
   test('a snapshot-delivery failure aborts without consuming a subscription slot', async () => {
-    // Force the synchronous snapshot delivery to fail (e.g. client vanished).
     setup.setDetailedSendResult({ ok: false, reason: 'send_failed' });
 
     const result = await setup.callHandler('liveQuery.subscribe', {
@@ -758,14 +732,11 @@ describe('setupLiveQueryHandlers: per-client subscription cap', () => {
       subscriptionId: 'sub-1',
     });
 
-    // The handler returns ok (not a protocol error from the client's view) but
-    // must NOT have tracked the subscription — the slot is freed for reuse.
     expect(result).toEqual({ ok: true });
     expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(0);
   });
 
   test('a delta message_too_large failure releases the tracked slot (async release path)', async () => {
-    // Snapshot succeeds so the subscription is tracked (count = 1).
     await setup.callHandler('liveQuery.subscribe', {
       queryName: 'mcpServers.global',
       params: [],
@@ -773,13 +744,11 @@ describe('setupLiveQueryHandlers: per-client subscription cap', () => {
     });
     expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(1);
 
-    // Make the next delivery (the delta) too large, then mutate to fire a delta.
     setup.setDetailedSendResult({ ok: false, reason: 'message_too_large' });
     insertMcpServer(db, 'mcp-2', 'beta');
     reactiveDb.notifyChange('app_mcp_servers');
     await new Promise((r) => setTimeout(r, 10));
 
-    // The failed delta disposes the tracked handle and releases its slot.
     expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(0);
   });
 

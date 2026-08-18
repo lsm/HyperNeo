@@ -1,19 +1,8 @@
 // @ts-nocheck
-/**
- * Tests for useInterrupt Hook
- *
- * Tests agent interrupt functionality including:
- * - Initial state
- * - Session change reset
- * - Interrupt flow (connected / disconnected)
- * - Error handling
- * - Debounce behavior
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/preact';
 
-// Define mock functions
 const { mockGetHubIfConnected, mockToastError } = vi.hoisted(() => ({
   mockGetHubIfConnected: vi.fn(),
   mockToastError: vi.fn(),
@@ -68,14 +57,12 @@ describe('useInterrupt', () => {
         initialProps: { sessionId: 'session-1' },
       });
 
-      // Trigger interrupt
       await act(async () => {
         await result.current.handleInterrupt();
       });
 
       expect(result.current.interrupting).toBe(true);
 
-      // Change session - should reset interrupting
       rerender({ sessionId: 'session-2' });
       expect(result.current.interrupting).toBe(false);
     });
@@ -123,7 +110,6 @@ describe('useInterrupt', () => {
         await result.current.handleInterrupt();
       });
 
-      // Should still be true (500ms timeout hasn't elapsed)
       expect(result.current.interrupting).toBe(true);
     });
 
@@ -141,7 +127,6 @@ describe('useInterrupt', () => {
 
       expect(result.current.interrupting).toBe(true);
 
-      // Advance timer by 500ms
       await act(async () => {
         vi.advanceTimersByTime(500);
       });
@@ -161,12 +146,10 @@ describe('useInterrupt', () => {
         await result.current.handleInterrupt();
       });
 
-      // Try to interrupt again while still interrupting
       await act(async () => {
         await result.current.handleInterrupt();
       });
 
-      // Should only have been called once
       expect(mockHub.request).toHaveBeenCalledTimes(1);
     });
   });
@@ -199,10 +182,8 @@ describe('useInterrupt', () => {
         await result.current.handleInterrupt();
       });
 
-      // Should still be in interrupting state
       expect(result.current.interrupting).toBe(true);
 
-      // Should reset after 500ms
       await act(async () => {
         vi.advanceTimersByTime(500);
       });

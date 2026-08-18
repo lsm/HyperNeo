@@ -1,34 +1,12 @@
 // @ts-nocheck
-/**
- * Unit tests for AgentOverlayChat
- *
- * The overlay no longer renders its own header — the embedded `ChatContainer`
- * owns the single header, with its left-slot back button (opted in via
- * `onBack`) acting as the dismiss control. These tests verify:
- * - The outer wrapper dialog renders with `data-testid="agent-overlay-chat"`.
- * - The aria-label reflects `agentName` (or falls back to "Agent chat") so
- *   screen readers identify which agent is open.
- * - `ChatContainer` receives both `sessionId` and an `onBack` callback.
- * - Clicking the back button surfaced by ChatContainer invokes `onClose`.
- * - Escape key press invokes `onClose` (only once, only on Escape).
- * - Backdrop click invokes `onClose`.
- * - Escape listener is removed on unmount.
- */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/preact';
 
 const mockSendTaskMessage = vi.hoisted(() => vi.fn());
 
-// Captures the `store` prop forwarded to the mocked ChatContainer so tests can
-// assert the overlay owns a dedicated SessionStore instance (not the singleton)
-// and tears it down on unmount.
 const captured = vi.hoisted(() => ({ current: null as unknown, history: [] as unknown[] }));
 
-// Mock ChatContainer — it relies on WebSocket/stores not available in unit
-// tests. Expose `onBack` via a data-attribute so tests can assert it was
-// forwarded, and render a button that invokes it so the dismiss path through
-// ChatContainer's header is covered end-to-end.
 vi.mock('../../../islands/ChatContainer', () => ({
   default: ({
     sessionId,
@@ -87,7 +65,6 @@ vi.mock('../../../lib/space-store', () => ({
   },
 }));
 
-// Mock cn utility
 vi.mock('../../../lib/utils', () => ({
   cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }));
@@ -213,7 +190,6 @@ describe('AgentOverlayChat', () => {
 
   it('calls onClose when backdrop is clicked', () => {
     const { getByTestId } = render(<AgentOverlayChat sessionId={SESSION_ID} onClose={onClose} />);
-    // The backdrop is the first child of the overlay wrapper (aria-hidden div)
     const overlay = getByTestId('agent-overlay-chat');
     const backdrop = overlay.querySelector('[aria-hidden="true"]');
     expect(backdrop).toBeTruthy();
@@ -231,7 +207,6 @@ describe('AgentOverlayChat', () => {
   it('removes Escape key listener on unmount', () => {
     const { unmount } = render(<AgentOverlayChat sessionId={SESSION_ID} onClose={onClose} />);
     unmount();
-    // After unmount, pressing Escape should not call onClose
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).not.toHaveBeenCalled();
   });
@@ -240,8 +215,6 @@ describe('AgentOverlayChat', () => {
     it('passes a dedicated SessionStore to ChatContainer — not the singleton', () => {
       render(<AgentOverlayChat sessionId={SESSION_ID} onClose={onClose} />);
       expect(getStoreFromMock()).toBeTruthy();
-      // The overlay must NOT share the process-wide singleton — that is the
-      // bug that lets an overlay clobber the base chat's state.
       expect(getStoreFromMock()).not.toBe(sessionStore);
       expect(getStoreFromMock()).toBeInstanceOf(SessionStore);
     });
@@ -252,9 +225,6 @@ describe('AgentOverlayChat', () => {
 
       rerender(<AgentOverlayChat sessionId={OTHER_SESSION_ID} onClose={onClose} />);
 
-      // The overlay owns ONE store for its lifetime; switching the displayed
-      // session must reuse it (the embedded ChatContainer's key handles the
-      // internal select(null)→select(C) transition).
       expect(getStoreFromMock()).toBe(firstStore);
     });
 
@@ -272,7 +242,6 @@ describe('AgentOverlayChat', () => {
   });
 });
 
-/** Reads the store captured by the mocked ChatContainer on its latest render. */
 function getStoreFromMock(): SessionStore {
   return captured.current as SessionStore;
 }

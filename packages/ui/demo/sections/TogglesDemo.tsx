@@ -1,6 +1,5 @@
 import { useState } from 'preact/hooks';
 
-// Example 1: Simple toggle - Basic 44x20px toggle switch (w-11 h-5)
 function Example1() {
   return (
     <label class="group relative inline-flex w-11 shrink-0 rounded-full bg-gray-200 p-0.5 inset-ring inset-ring-gray-900/5 outline-offset-2 outline-indigo-600 transition-colors duration-200 ease-in-out has-checked:bg-indigo-600 has-focus-visible:outline-2 dark:bg-white/5 dark:inset-ring-white/10 dark:outline-indigo-500 dark:has-checked:bg-indigo-500 cursor-pointer">
@@ -13,7 +12,6 @@ function Example1() {
   );
 }
 
-// Example 2: Short toggle - Smaller 40x20px toggle (w-10 h-5)
 function Example2() {
   return (
     <label class="group relative inline-flex w-10 shrink-0 rounded-full bg-gray-200 p-0.5 inset-ring inset-ring-gray-900/5 outline-offset-2 outline-indigo-600 transition-colors duration-200 ease-in-out has-checked:bg-indigo-600 has-focus-visible:outline-2 dark:bg-white/5 dark:inset-ring-white/10 dark:outline-indigo-500 dark:has-checked:bg-indigo-500 cursor-pointer">
@@ -26,7 +24,6 @@ function Example2() {
   );
 }
 
-// Example 3: Toggle with icon - Toggle with X/checkmark icon that swaps on state change
 function Example3() {
   return (
     <label class="group relative inline-flex w-11 shrink-0 rounded-full bg-gray-200 p-0.5 inset-ring inset-ring-gray-900/5 outline-offset-2 outline-indigo-600 transition-colors duration-200 ease-in-out has-checked:bg-indigo-600 has-focus-visible:outline-2 dark:bg-white/5 dark:inset-ring-white/10 dark:outline-indigo-500 dark:has-checked:bg-indigo-500 cursor-pointer">
@@ -58,7 +55,6 @@ function Example3() {
   );
 }
 
-// Example 4: Toggle with left label and description
 function Example4() {
   const [checked, setChecked] = useState(false);
 
@@ -83,7 +79,6 @@ function Example4() {
   );
 }
 
-// Example 5: Toggle with right label
 function Example5() {
   return (
     <div class="flex items-center justify-between gap-4">

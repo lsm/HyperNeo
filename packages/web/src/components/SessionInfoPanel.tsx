@@ -64,17 +64,12 @@ function truncate(value: string, maxLength = 48): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value;
 }
 
-/**
- * Compute SDK project directory path from workspace path.
- * SDK replaces both / and . with - (e.g., /.hyperneo/ -> --hyperneo-).
- */
 export function getSDKProjectDir(workspacePath: string | null): string | undefined {
   if (!workspacePath) return undefined;
   const projectKey = workspacePath.replace(/[/.]/g, '-');
   return `~/.claude/projects/${projectKey}`;
 }
 
-/** Format a date string for display, falling back to the raw string on failure. */
 export function formatDate(dateString: string | undefined): string | undefined {
   if (!dateString) return undefined;
   try {
@@ -84,13 +79,11 @@ export function formatDate(dateString: string | undefined): string | undefined {
   }
 }
 
-/** Format cost as USD. Returns undefined for zero/missing cost so the row drops out. */
 export function formatCost(cost: number | undefined): string | undefined {
   if (cost === undefined || cost === 0) return undefined;
   return `$${cost.toFixed(4)}`;
 }
 
-/** Format token count with commas. Returns undefined for zero/missing counts. */
 export function formatTokens(tokens: number | undefined): string | undefined {
   if (tokens === undefined || tokens === 0) return undefined;
   return tokens.toLocaleString();
@@ -350,8 +343,6 @@ function ActionToolbar({
           size="sm"
           title="Rename session"
           onClick={onRenameClick}
-          // Disabled while editing: re-clicking would blur-commit the draft
-          // and then reopen the editor seeded from the stale title prop.
           disabled={!canRename || !isConnected || isRenaming}
         >
           <RenameIcon className="h-4 w-4" />
@@ -492,16 +483,10 @@ export function SessionInfoPanelButton({
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  // Fixed-panel coordinates (px from the viewport top-right). Computed from the
-  // trigger rect and clamped so the panel's left edge can never be clipped by a
-  // narrowed chat pane or header padding (pr-14) — see useLayoutEffect below.
   const [panelPos, setPanelPos] = useState<{ top: number; right: number }>({
     top: 0,
     right: 0,
   });
-  // Inline rename lives entirely inside the panel (optimistic store update +
-  // rollback handled by the hook), so no callback needs threading through
-  // ChatHeader/ChatContainer.
   const {
     isEditing: isRenaming,
     startEditing,
@@ -515,8 +500,6 @@ export function SessionInfoPanelButton({
   );
   const sources = useMemo(() => extractSources(messages), [messages]);
 
-  // Latest commit callback without resubscribing the listeners on every draft
-  // keystroke (its identity changes with the draft).
   const commitRenameRef = useRef(commitRename);
   commitRenameRef.current = commitRename;
 
@@ -524,11 +507,6 @@ export function SessionInfoPanelButton({
     if (!open) return;
 
     const closePanel = () => {
-      // Settle an in-flight rename synchronously: a click on a control that
-      // also navigates (another sidebar session, the overlay Back button)
-      // replaces the keyed ChatContainer on the subsequent click event —
-      // unmounting this component before a passive effect could run and
-      // silently dropping the edit.
       commitRenameRef.current();
       setOpen(false);
     };
@@ -549,19 +527,10 @@ export function SessionInfoPanelButton({
     };
   }, [open]);
 
-  // Backstop for any other close path: closing the panel unmounts the rename
-  // input before it can emit blur, so settle the edit explicitly — otherwise
-  // the draft is neither saved nor cancelled and a stale editor reappears on
-  // reopen.
   useEffect(() => {
     if (!open && isRenaming) commitRename();
   }, [open, isRenaming, commitRename]);
 
-  // Position the panel below the trigger, right-aligned to it, but clamp the
-  // right offset so the panel never spills off the left of the viewport. This
-  // matters when the trigger is inset (header pr-14) or the chat pane is
-  // narrower than the window (desktop right panel open). useLayoutEffect avoids
-  // a first-paint flash at the stale (0,0) position.
   useLayoutEffect(() => {
     if (!open) return;
     const trigger = rootRef.current;
@@ -595,9 +564,6 @@ export function SessionInfoPanelButton({
       <IconButton
         title="Session info"
         onClick={() => {
-          // Toggle-closing must also settle an in-flight rename synchronously
-          // (the close-effect backstop is passive and can be skipped by an
-          // unmount). No-op when no edit is in flight.
           commitRename();
           setOpen((value) => !value);
         }}

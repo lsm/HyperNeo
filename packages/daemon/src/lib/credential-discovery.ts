@@ -10,20 +10,15 @@ import { customProviderIdFor } from './providers/custom-endpoint-provider.js';
 
 export interface DiscoveryResult {
   credentialSource: 'env' | 'credentials-file' | 'keychain' | 'settings-json' | 'none';
-  settingsEnvApplied: number; // count of env vars injected from settings.json
-  errors: string[]; // non-fatal issues encountered
+  settingsEnvApplied: number;
+  errors: string[];
 }
 
 export interface DiscoveryOptions {
-  keychainReader?: () => string; // Returns raw JSON string from keychain, throws on failure
-  platformName?: string; // Override platform detection (for testing)
+  keychainReader?: () => string;
+  platformName?: string;
 }
 
-/**
- * Discover Claude Code credentials and inject them into process.env.
- * Runs once at daemon startup to enrich the environment before any other code reads it.
- * Never overwrites existing env vars - explicit config always wins.
- */
 export function discoverCredentials(
   claudeDir?: string,
   options?: DiscoveryOptions
@@ -35,16 +30,13 @@ export function discoverCredentials(
   const claudeBase = claudeDir || join(homedir(), '.claude');
 
   try {
-    // Step 1: Check if credentials already exist in process.env
     const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
     const hasOAuthToken = !!process.env.CLAUDE_CODE_OAUTH_TOKEN;
     const hasAuthToken = !!process.env.ANTHROPIC_AUTH_TOKEN;
 
     if (hasApiKey && hasOAuthToken && hasAuthToken) {
-      // All credentials already present, skip discovery
       credentialSource = 'env';
     } else {
-      // Step 2: Try reading ~/.claude/.credentials.json
       if (!hasOAuthToken) {
         try {
           const credentialsPath = join(claudeBase, '.credentials.json');
@@ -64,7 +56,6 @@ export function discoverCredentials(
         }
       }
 
-      // Step 3: If still no OAuth token AND on macOS, try keychain
       if (
         !process.env.CLAUDE_CODE_OAUTH_TOKEN &&
         (options?.platformName ?? platform()) === 'darwin'
@@ -75,7 +66,7 @@ export function discoverCredentials(
             : execSync('security find-generic-password -s "Claude Code-credentials" -w', {
                 timeout: 5000,
                 encoding: 'utf8',
-                stdio: ['ignore', 'pipe', 'ignore'], // suppress stderr
+                stdio: ['ignore', 'pipe', 'ignore'],
               });
 
           const keychainData = JSON.parse(
@@ -92,7 +83,6 @@ export function discoverCredentials(
       }
     }
 
-    // Step 4: ALWAYS read ~/.claude/settings.json and apply env vars
     try {
       const settingsPath = join(claudeBase, 'settings.json');
       if (existsSync(settingsPath)) {
@@ -101,14 +91,12 @@ export function discoverCredentials(
 
         if (settings?.env && typeof settings.env === 'object') {
           for (const [key, value] of Object.entries(settings.env)) {
-            // Only set if not already present
             if (!process.env[key]) {
               process.env[key] = String(value);
               settingsEnvApplied++;
             }
           }
 
-          // If we discovered credentials from settings.json and no other source was found
           if (settingsEnvApplied > 0 && credentialSource === 'none') {
             credentialSource = 'settings-json';
           }
@@ -120,7 +108,6 @@ export function discoverCredentials(
       );
     }
   } catch (err) {
-    // Catch-all for unexpected errors
     errors.push(
       `Unexpected error during credential discovery: ${err instanceof Error ? err.message : String(err)}`
     );
@@ -132,10 +119,6 @@ export function discoverCredentials(
     errors,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Provider migration — one-time import from env vars / auth files / settings
-// ---------------------------------------------------------------------------
 
 interface BuiltInProviderEnvMapping {
   providerId: string;
@@ -204,30 +187,22 @@ function readHyperNeoAuthJson(): Record<string, unknown> {
   }
 }
 
-/**
- * One-time migration of provider configuration into the providers table.
- * Idempotent: skips if the table already has rows.
- */
 export async function migrateProvidersIfNeeded(
   db: Database,
   credentialManager: ProviderCredentialManager
 ): Promise<void> {
   if (db.providers.countProviders() > 0) {
-    return; // Already migrated.
+    return;
   }
 
   let sortOrder = 0;
 
-  // 1. Env var providers.
   for (const mapping of BUILT_IN_PROVIDER_ENV_MAP) {
     const apiKey =
       process.env[mapping.envVar] ||
       (mapping.altEnvVar ? process.env[mapping.altEnvVar] : undefined);
     if (!apiKey) continue;
 
-    // Kimi supports two regions (china / global). Existing credentials without
-    // an explicit region default to 'china' so legacy users keep hitting the
-    // api.kimi.com endpoint they always have.
     const configJson =
       mapping.providerId === 'kimi' ? JSON.stringify({ region: 'china' }) : undefined;
 
@@ -249,7 +224,6 @@ export async function migrateProvidersIfNeeded(
     }
   }
 
-  // 2. OAuth tokens from ~/.hyperneo/auth.json
   const hyperneoAuth = readHyperNeoAuthJson();
   if (hyperneoAuth['openai']) {
     const openaiCreds = hyperneoAuth['openai'] as {
@@ -307,7 +281,6 @@ export async function migrateProvidersIfNeeded(
     }
   }
 
-  // 3. Custom endpoints from global_settings.
   const globalSettings: GlobalSettings = db.getGlobalSettings();
   if (globalSettings.customEndpoints) {
     for (const endpoint of globalSettings.customEndpoints) {
@@ -326,11 +299,6 @@ export async function migrateProvidersIfNeeded(
   }
 }
 
-/**
- * Seed DeepSeek on upgraded databases that predate the built-in provider.
- * The general migration intentionally runs only for an empty providers table,
- * so new built-ins need an idempotent startup backfill of their own.
- */
 export async function backfillDeepSeekProvider(
   db: Database,
   credentialManager: Pick<ProviderCredentialManager, 'getCredentials' | 'storeApiKey'>
@@ -360,29 +328,8 @@ export async function backfillDeepSeekProvider(
   }
 }
 
-/**
- * Prior default display names persisted for the `glm` provider before it was
- * relabelled to "Z.ai". Used by {@link refreshGlmDisplayName} to recognise rows
- * that still carry a stale built-in label (and only those — any user custom
- * rename is left untouched).
- */
 const STALE_GLM_DISPLAY_NAMES = new Set(['GLM', 'GLM (智谱AI)']);
 
-/**
- * Refresh the persisted GLM provider display name to the current "Z.ai" label.
- *
- * `migrateProvidersIfNeeded` seeds `display_name` only on an empty table, so an
- * existing install that already has a `glm` row keeps whatever label it was
- * first seeded with (historically "GLM (智谱AI)"). The Providers settings panel
- * renders that persisted value, so without this refresh those users would keep
- * seeing "GLM" in Settings while the model picker shows "Z.ai".
- *
- * Runs every startup — independent of the seeding early-return — so it also
- * heals rows created by older builds. Idempotent and display-name-only: it
- * rewrites only rows whose `display_name` is a known prior default, preserving
- * any user custom rename, and touches nothing but `display_name` (not
- * provider_id, model ids, routing, credentials, or settings.json).
- */
 export function refreshGlmDisplayName(db: Database): void {
   const rec = db.providers.getProviderByProviderId('glm');
   if (rec && STALE_GLM_DISPLAY_NAMES.has(rec.displayName)) {

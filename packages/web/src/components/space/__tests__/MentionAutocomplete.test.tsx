@@ -49,7 +49,6 @@ describe('MentionAutocomplete', () => {
       <MentionAutocomplete agents={agents} selectedIndex={1} onSelect={vi.fn()} onClose={vi.fn()} />
     );
     const items = getAllByTestId('mention-item');
-    // The selected item should have the blue highlight class
     expect(items[1].className).toContain('bg-blue-500/20');
     expect(items[0].className).not.toContain('bg-blue-500/20');
     expect(items[2].className).not.toContain('bg-blue-500/20');

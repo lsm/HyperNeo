@@ -13,7 +13,6 @@ import type {
   ToolBundle,
   CommitInfo,
   WorktreeCommitStatus,
-  // SDK Config types
   SDKConfig,
   SystemPromptConfig,
   ToolsSettings,
@@ -60,22 +59,21 @@ import type {
   UpdateSpaceGoalParams,
 } from './types/space.ts';
 
-// Request types
 export interface CreateSessionRequest {
   workspacePath?: string | null;
   initialTools?: string[];
   config?: Partial<SessionConfig>;
-  worktreeBaseBranch?: string; // Base branch for worktree (default: HEAD)
-  worktreeMode?: 'worktree' | 'direct'; // Explicit worktree decision — skips the in-chat choice prompt
-  title?: string; // Optional title - if provided, skips auto-title generation
-  roomId?: string; // Optional room ID to assign session to
-  spaceId?: string; // Optional space ID to assign session to
-  createdBy?: 'human'; // Creator type (defaults to 'human')
+  worktreeBaseBranch?: string;
+  worktreeMode?: 'worktree' | 'direct';
+  title?: string;
+  roomId?: string;
+  spaceId?: string;
+  createdBy?: 'human';
 }
 
 export interface CreateSessionResponse {
   sessionId: string;
-  session?: Session; // Optionally include the full session for optimistic updates
+  session?: Session;
 }
 
 export interface SetWorktreeModeRequest {
@@ -121,7 +119,7 @@ export interface UpdateSessionRequest {
 
 export interface WorkspaceHistoryEntry {
   path: string;
-  lastUsedAt: number; // unix timestamp ms
+  lastUsedAt: number;
   useCount: number;
 }
 
@@ -145,19 +143,12 @@ export interface WorkspaceRemoveResponse {
   success: boolean;
 }
 
-/** Response for `git.branches` — git context for a folder path. */
 export interface GitBranchesResponse {
-  /** Whether the path is inside a git repository. */
   isGitRepo: boolean;
-  /** Absolute path to the repository root, or null when not a git repo. */
   gitRoot: string | null;
-  /** Branch HEAD currently points to, or null when detached / unborn. */
   currentBranch: string | null;
-  /** Best-guess default branch (origin/HEAD, else main/master), or null. */
   defaultBranch: string | null;
-  /** Local branch names. */
   branches: string[];
-  /** Whether the working tree has uncommitted changes. */
   isDirty: boolean;
 }
 
@@ -177,9 +168,6 @@ export interface GitChangedFile {
   oldPath?: string;
   status: GitFileStatusKind;
   staged: boolean;
-  /** True when the working-tree (unstaged) column shows a change. A file can
-   * have both `staged` and `unstaged` true (porcelain `MM`), so it is not the
-   * inverse of `staged`. */
   unstaged: boolean;
 }
 
@@ -226,7 +214,6 @@ export interface GitReviewSummary {
   githubError?: string;
 }
 
-/** Response for `git.sessionStatus` — Git context for a specific chat session. */
 export interface GitSessionStatusResponse {
   sessionId: string;
   mode: GitSessionMode;
@@ -234,11 +221,6 @@ export interface GitSessionStatusResponse {
   workspacePath: string | null;
   worktreePath: string | null;
   mainRepoPath: string | null;
-  /** Effective git working-tree root (where the session's files live). For a
-   * worktree session this is the worktree root; for a direct session it is the
-   * repo root — which may differ from `mainRepoPath` when the workspace is
-   * inside an externally-created linked worktree (mainRepoPath resolves back to
-   * the main checkout). Use this for editor links / repo-relative paths. */
   gitRoot: string | null;
   branch: string | null;
   baseBranch: string | null;
@@ -252,23 +234,15 @@ export interface GitSessionStatusResponse {
   error?: string;
 }
 
-/** Request for `git.fileDiff` — the full (untruncated) diff for one file. */
 export interface GitFileDiffRequest {
   sessionId: string;
   path: string;
 }
 
-/**
- * Response for `git.fileDiff` — the full combined patch (branch + working tree)
- * for a single file in a session's workspace. Read-only; used to expand a diff
- * that was truncated in the `git.sessionStatus` review payload.
- */
 export interface GitFileDiffResponse {
   sessionId: string;
   path: string;
-  /** Full combined patch, or null when the file has no diff. */
   patch: string | null;
-  /** True only when the full patch still exceeded the safety cap. */
   truncated: boolean;
   additions: number;
   deletions: number;
@@ -360,12 +334,10 @@ export interface UpdateConfigRequest {
   maxSessions?: number;
 }
 
-// Authentication API types
 export interface GetAuthStatusResponse {
   authStatus: AuthStatus;
 }
 
-// Model API types
 export interface GetCurrentModelRequest {
   sessionId: string;
 }
@@ -384,21 +356,15 @@ export interface GetCurrentModelResponse {
 
 export interface SwitchModelRequest {
   sessionId: string;
-  model: string; // Can be alias (e.g., "opus") or full ID
-  provider: string; // Required — identifies which provider owns this model
+  model: string;
+  provider: string;
 }
 
 export interface SwitchModelResponse {
   success: boolean;
-  model: string; // The resolved model ID
+  model: string;
   error?: string;
 }
-
-// ============================================================================
-// SDK Config API Types
-// ============================================================================
-
-// --- Model Settings ---
 
 export interface GetModelSettingsRequest {
   sessionId: string;
@@ -416,8 +382,6 @@ export interface UpdateModelSettingsRequest {
 export interface UpdateModelSettingsResponse extends ConfigUpdateResult {
   // Inherits: applied, pending, errors
 }
-
-// --- System Prompt ---
 
 export interface GetSystemPromptRequest {
   sessionId: string;
@@ -440,8 +404,6 @@ export interface UpdateSystemPromptResponse {
   message?: string;
 }
 
-// --- Tools Configuration ---
-
 export interface GetToolsConfigRequest {
   sessionId: string;
 }
@@ -462,8 +424,6 @@ export interface UpdateToolsConfigResponse {
   error?: string;
   message?: string;
 }
-
-// --- Agents/Subagents ---
 
 export interface GetAgentsConfigRequest {
   sessionId: string;
@@ -486,8 +446,6 @@ export interface UpdateAgentsConfigResponse {
   message?: string;
 }
 
-// --- Sandbox ---
-
 export interface GetSandboxConfigRequest {
   sessionId: string;
 }
@@ -508,8 +466,6 @@ export interface UpdateSandboxConfigResponse {
   error?: string;
   message?: string;
 }
-
-// --- MCP Servers ---
 
 export interface McpServerStatus {
   name: string;
@@ -568,15 +524,7 @@ export interface RemoveMcpServerResponse {
   message?: string;
 }
 
-/**
- * Entry describing a runtime-attached (in-process, SDK-type) MCP server.
- * These are injected by SpaceRuntimeService, TaskAgentManager, and similar
- * subsystems via `mergeRuntimeMcpServers`, and never appear in the skills
- * registry or in file-based MCP settings — so the Tool Modal needs a separate
- * path to surface them.
- */
 export interface RuntimeMcpServerEntry {
-  /** Key used in session.config.mcpServers (e.g. 'space-agent-tools'). */
   name: string;
 }
 
@@ -588,30 +536,15 @@ export interface ListRuntimeMcpServersResponse {
   servers: RuntimeMcpServerEntry[];
 }
 
-// --- Per-Space MCP Enablement (M4) ---
-
-/**
- * One entry in the resolved per-space MCP list. Combines the registry row
- * with the resolved enabled-for-this-space state so the UI can render the
- * toggle without making a second call.
- */
 export interface SpaceMcpEntry {
   serverId: string;
   name: string;
   description?: string;
   sourceType: 'stdio' | 'sse' | 'http';
-  /** Provenance of the registry row (builtin / user / imported). */
   source: 'builtin' | 'user' | 'imported';
-  /** Populated only when `source === 'imported'`. */
   sourcePath?: string;
-  /** Whether this server is enabled globally in the registry. */
   globallyEnabled: boolean;
-  /**
-   * True when there is an explicit `mcp_enablement` row for this
-   * (server, space) pair. When false, `enabled` equals `globallyEnabled`.
-   */
   overridden: boolean;
-  /** Effective enabled state for this space (override if present, else global). */
   enabled: boolean;
 }
 
@@ -641,8 +574,6 @@ export interface SpaceMcpClearOverrideRequest {
 export interface SpaceMcpClearOverrideResponse {
   ok: boolean;
 }
-
-// --- Forge evolution storage (Forge MVP 1) ---
 
 export interface EvolutionScopeCreateRequest {
   params: CreateEvolutionScopeParams;
@@ -686,9 +617,7 @@ export interface EvolutionEvidenceCreateResponse {
 export interface EvolutionEvidenceListRequest {
   scopeId: string;
   includePreflightContext?: boolean;
-  /** Page size. Omit to load all evidence for the scope. */
   limit?: number;
-  /** Page offset (requires limit). */
   offset?: number;
 }
 
@@ -764,9 +693,7 @@ export interface EvolutionEpisodeUpdateResponse {
 
 export interface EvolutionEpisodeListRequest {
   scopeId: string;
-  /** Page size for episodes. Omit to load all episodes for the scope. */
   limit?: number;
-  /** Page offset (requires limit). */
   offset?: number;
 }
 
@@ -794,9 +721,7 @@ export interface EvolutionLessonUpdateResponse {
 export interface EvolutionLessonListRequest {
   scopeId: string;
   status?: EvolutionLesson['status'];
-  /** Page size. Omit to load all lessons for the scope. */
   limit?: number;
-  /** Page offset (requires limit). */
   offset?: number;
 }
 
@@ -833,9 +758,7 @@ export interface EvolutionTaskProposalUpdateResponse {
 export interface EvolutionTaskProposalListRequest {
   scopeId: string;
   status?: TaskProposal['status'];
-  /** Page size. Omit to load all proposals for the scope. */
   limit?: number;
-  /** Page offset (requires limit). */
   offset?: number;
 }
 
@@ -875,9 +798,7 @@ export interface EvolutionMetricSnapshotCreateResponse {
 
 export interface EvolutionMetricSnapshotListRequest {
   scopeId: string;
-  /** Page size. Omit to load all snapshots for the scope. */
   limit?: number;
-  /** Page offset (requires limit). */
   offset?: number;
 }
 
@@ -885,27 +806,16 @@ export interface EvolutionMetricSnapshotListResponse {
   snapshots: MetricSnapshot[];
 }
 
-// --- MCP Imports (explicit refresh trigger for .mcp.json discovery) ---
-
 export interface McpImportsRefreshRequest {
-  /**
-   * Optional: limit the refresh scan to a single workspace path. When
-   * omitted, scans every registered workspace + `~/.claude/.mcp.json`.
-   */
   workspacePath?: string;
 }
 
 export interface McpImportsRefreshResponse {
   ok: boolean;
-  /** Number of imported rows inserted or updated by this refresh. */
   imported: number;
-  /** Number of imported rows removed because their source file no longer lists them. */
   removed: number;
-  /** Human-readable notes (e.g. files not found, parse errors). */
   notes: string[];
 }
-
-// --- Output Format ---
 
 export interface GetOutputFormatRequest {
   sessionId: string;
@@ -928,8 +838,6 @@ export interface UpdateOutputFormatResponse {
   message?: string;
 }
 
-// --- Beta Features ---
-
 export interface GetBetasConfigRequest {
   sessionId: string;
 }
@@ -950,8 +858,6 @@ export interface UpdateBetasConfigResponse {
   error?: string;
   message?: string;
 }
-
-// --- Environment Settings ---
 
 export interface GetEnvConfigRequest {
   sessionId: string;
@@ -974,8 +880,6 @@ export interface UpdateEnvConfigResponse {
   message?: string;
 }
 
-// --- Permissions ---
-
 export interface GetPermissionsConfigRequest {
   sessionId: string;
 }
@@ -996,8 +900,6 @@ export interface UpdatePermissionsConfigResponse {
   error?: string;
 }
 
-// --- Bulk Configuration ---
-
 export interface GetAllConfigRequest {
   sessionId: string;
 }
@@ -1016,9 +918,7 @@ export interface UpdateBulkConfigResponse extends ConfigUpdateResult {
   // Inherits: applied, pending, errors
 }
 
-// API client interface
 export interface APIClient {
-  // Sessions
   createSession(req: CreateSessionRequest): Promise<CreateSessionResponse>;
   listSessions(): Promise<ListSessionsResponse>;
   getSession(sessionId: string): Promise<GetSessionResponse>;
@@ -1026,34 +926,27 @@ export interface APIClient {
   deleteSession(sessionId: string): Promise<void>;
   setWorktreeMode(req: SetWorktreeModeRequest): Promise<SetWorktreeModeResponse>;
 
-  // Messages
   sendMessage(sessionId: string, req: SendMessageRequest): Promise<SendMessageResponse>;
   clearMessages(sessionId: string): Promise<void>;
 
-  // Files
   readFile(sessionId: string, req: ReadFileRequest): Promise<ReadFileResponse>;
   listFiles(sessionId: string, req: ListFilesRequest): Promise<ListFilesResponse>;
   getFileTree(sessionId: string, req: GetFileTreeRequest): Promise<GetFileTreeResponse>;
 
-  // Tools
   listTools(): Promise<ListToolsResponse>;
   loadTools(sessionId: string, req: LoadToolsRequest): Promise<void>;
   unloadTools(sessionId: string, req: UnloadToolsRequest): Promise<void>;
   getActiveTools(sessionId: string): Promise<GetActiveToolsResponse>;
 
-  // System
   health(): Promise<HealthStatus>;
   getConfig(): Promise<DaemonConfig>;
   updateConfig(req: UpdateConfigRequest): Promise<void>;
 
-  // Authentication
   getAuthStatus(): Promise<GetAuthStatusResponse>;
 
-  // Models
   getCurrentModel(sessionId: string): Promise<GetCurrentModelResponse>;
   switchModel(sessionId: string, model: string, provider: string): Promise<SwitchModelResponse>;
 
-  // Providers
   listProviders(): Promise<ListProvidersResponse>;
   getSessionProvider(sessionId: string): Promise<GetSessionProviderResponse>;
   switchProvider(
@@ -1062,10 +955,6 @@ export interface APIClient {
     apiKey?: string
   ): Promise<SwitchProviderResponse>;
 }
-
-// ============================================================================
-// Provider API Types
-// ============================================================================
 
 export interface ListProvidersResponse {
   providers: ProviderInfo[];
@@ -1083,7 +972,6 @@ export interface GetSessionProviderResponse {
 export interface SwitchProviderRequest {
   sessionId: string;
   provider: Provider;
-  /** Optional per-session API key (uses global env var if not provided) */
   apiKey?: string;
 }
 
@@ -1091,42 +979,25 @@ export interface SwitchProviderResponse {
   success: boolean;
   provider: Provider;
   error?: string;
-  /** Warning about query restart requirement */
   warning?: string;
 }
 
-// ============================================================================
-// SDK Session File Management API Types
-// ============================================================================
-
-/**
- * Information about an SDK session file in ~/.claude/projects/
- */
 export interface SDKSessionFileInfo {
   path: string;
   sdkSessionId: string;
   kaiSessionIds: string[];
   size: number;
-  modifiedAt: string; // ISO timestamp
+  modifiedAt: string;
 }
 
-/**
- * Information about an orphaned SDK session file
- */
 export interface OrphanedSDKFileInfo extends SDKSessionFileInfo {
   reason: 'no-matching-session' | 'unknown-session';
 }
 
-/**
- * Request to scan SDK session files
- */
 export interface SDKScanRequest {
   workspacePath: string;
 }
 
-/**
- * Response from sdk.scan RPC
- */
 export interface SDKScanResponse {
   success: boolean;
   workspacePath: string;
@@ -1140,19 +1011,12 @@ export interface SDKScanResponse {
   orphaned: OrphanedSDKFileInfo[];
 }
 
-/**
- * Request to cleanup SDK session files
- */
 export interface SDKCleanupRequest {
   workspacePath: string;
   mode: 'archive' | 'delete';
-  /** Optional: specific SDK session IDs to clean (cleans all if not provided) */
   sdkSessionIds?: string[];
 }
 
-/**
- * Response from sdk.cleanup RPC
- */
 export interface SDKCleanupResponse {
   success: boolean;
   mode: 'archive' | 'delete';
@@ -1161,137 +1025,97 @@ export interface SDKCleanupResponse {
   errors: string[];
 }
 
-// ---------------------------------------------------------------------------
-// MCP Registry RPC types (mcp.registry.*)
-//
-// The *Response types below are intended for frontend (web) consumption — they
-// are not imported by the daemon handlers (which use inline `satisfies`
-// expressions).  They serve as a single source of truth for the shape callers
-// can expect from each RPC endpoint.
-// ---------------------------------------------------------------------------
-
 export type { AppMcpServer, CreateAppMcpServerRequest, UpdateAppMcpServerRequest };
 
-/** Response from mcp.registry.list */
 export interface McpRegistryListResponse {
   servers: AppMcpServer[];
 }
 
-/** Response from mcp.registry.get */
 export interface McpRegistryGetResponse {
   server: AppMcpServer;
 }
 
-/** Response from mcp.registry.create */
 export interface McpRegistryCreateResponse {
   server: AppMcpServer;
 }
 
-/** Response from mcp.registry.update */
 export interface McpRegistryUpdateResponse {
   server: AppMcpServer;
 }
 
-/** Request for mcp.registry.delete */
 export interface McpRegistryDeleteRequest {
   id: string;
 }
 
-/** Response from mcp.registry.delete */
 export interface McpRegistryDeleteResponse {
   success: boolean;
 }
 
-/** Request for mcp.registry.setEnabled */
 export interface McpRegistrySetEnabledRequest {
   id: string;
   enabled: boolean;
 }
 
-/** Response from mcp.registry.setEnabled */
 export interface McpRegistrySetEnabledResponse {
   server: AppMcpServer;
 }
 
-/**
- * A single startup/validation error for an MCP registry entry.
- * `serverId` matches the `id` field of AppMcpServer (mirrors McpStartupError in the daemon).
- */
 export interface McpRegistryError {
   serverId: string;
   name: string;
   error: string;
 }
 
-/** Response from mcp.registry.listErrors */
 export interface McpRegistryListErrorsResponse {
   errors: McpRegistryError[];
 }
 
-// ---------------------------------------------------------------------------
-// Skills RPC types (skill.*)
-//
-// Request/Response types for the application-level Skills registry RPC methods.
-// ---------------------------------------------------------------------------
-
 export type { AppSkill, CreateSkillParams, UpdateSkillParams };
 
-/** Request for skill.list */
 export interface SkillListRequest {}
 
-/** Response from skill.list */
 export interface SkillListResponse {
   skills: AppSkill[];
 }
 
-/** Request for skill.get */
 export interface SkillGetRequest {
   id: string;
 }
 
-/** Response from skill.get */
 export interface SkillGetResponse {
   skill: AppSkill | null;
 }
 
-/** Request for skill.create */
 export interface SkillCreateRequest {
   params: CreateSkillParams;
 }
 
-/** Response from skill.create */
 export interface SkillCreateResponse {
   skill: AppSkill;
 }
 
-/** Request for skill.update */
 export interface SkillUpdateRequest {
   id: string;
   params: UpdateSkillParams;
 }
 
-/** Response from skill.update */
 export interface SkillUpdateResponse {
   skill: AppSkill;
 }
 
-/** Request for skill.delete */
 export interface SkillDeleteRequest {
   id: string;
 }
 
-/** Response from skill.delete */
 export interface SkillDeleteResponse {
   success: boolean;
 }
 
-/** Request for skill.setEnabled */
 export interface SkillSetEnabledRequest {
   id: string;
   enabled: boolean;
 }
 
-/** Response from skill.setEnabled */
 export interface SkillSetEnabledResponse {
   skill: AppSkill;
 }

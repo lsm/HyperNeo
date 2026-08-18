@@ -1,15 +1,5 @@
-/**
- * SDK Message Helpers
- *
- * Shared helpers for observing SDK messages (system:init, etc.) in online tests.
- */
-
 import type { DaemonServerContext } from './daemon-server';
 
-/**
- * Wait for the next system:init SDK message on a session channel.
- * Must be called BEFORE the action that triggers a new query turn.
- */
 export function waitForSystemInit(
   daemon: DaemonServerContext,
   sessionId: string,
@@ -32,7 +22,6 @@ export function waitForSystemInit(
       reject(new Error(`Timeout waiting for system:init message after ${timeout}ms`));
     }, timeout);
 
-    // Subscribe FIRST so no events are missed once the channel is joined
     unsubscribe = daemon.messageHub.onEvent('state.sdkMessages.delta', (data: unknown) => {
       if (resolved) return;
       const delta = data as { added?: Array<Record<string, unknown>> };
@@ -45,7 +34,6 @@ export function waitForSystemInit(
       }
     });
 
-    // Join the session channel (idempotent — safe to call multiple times)
     daemon.messageHub.joinChannel('session:' + sessionId).catch(() => {});
   });
 }

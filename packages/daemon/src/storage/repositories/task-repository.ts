@@ -1,9 +1,3 @@
-/**
- * Task Repository
- *
- * Repository for legacy Room task CRUD operations.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type {
@@ -24,9 +18,6 @@ export class TaskRepository {
     private shortIdAllocator?: ShortIdAllocator
   ) {}
 
-  /**
-   * Create a new task
-   */
   createTask(params: CreateTaskParams): NeoTask {
     const id = generateUUID();
     const now = Date.now();
@@ -57,10 +48,6 @@ export class TaskRepository {
     return this.getTaskDirect(id)!;
   }
 
-  /**
-   * Promote draft tasks created by a planning task to pending.
-   * Called atomically when a planning task's Lead calls complete_task().
-   */
   promoteDraftTasksByCreator(createdByTaskId: string): number {
     const result = this.db
       .prepare(
@@ -73,9 +60,6 @@ export class TaskRepository {
     return result.changes;
   }
 
-  /**
-   * Get a task by ID (raw, no backfill — used internally to avoid recursion)
-   */
   private getTaskDirect(id: string): NeoTask | null {
     const stmt = this.db.prepare(`SELECT * FROM tasks WHERE id = ?`);
     const row = stmt.get(id) as Record<string, unknown> | undefined;
@@ -83,9 +67,6 @@ export class TaskRepository {
     return this.rowToTask(row);
   }
 
-  /**
-   * Get a task by ID, with lazy short ID backfill for legacy rows.
-   */
   getTask(id: string): NeoTask | null {
     const task = this.getTaskDirect(id);
     if (!task) return null;
@@ -97,9 +78,6 @@ export class TaskRepository {
     return task;
   }
 
-  /**
-   * Get a task by its short ID within a room.
-   */
   getTaskByShortId(roomId: string, shortId: string): NeoTask | null {
     const stmt = this.db.prepare(`SELECT * FROM tasks WHERE room_id = ? AND short_id = ?`);
     const row = stmt.get(roomId, shortId) as Record<string, unknown> | undefined;
@@ -107,12 +85,6 @@ export class TaskRepository {
     return this.rowToTask(row);
   }
 
-  /**
-   * List tasks for a room, optionally filtered.
-   * By default, archived tasks (status = 'archived') are excluded.
-   * Use filter.includeArchived = true to include archived tasks.
-   * Lazy backfill: any row missing short_id gets one assigned inline.
-   */
   listTasks(roomId?: string | null, filter?: TaskFilter): NeoTask[] {
     let query = `SELECT * FROM tasks`;
     const params: SQLiteValue[] = [];
@@ -124,7 +96,6 @@ export class TaskRepository {
       hasWhere = true;
     }
 
-    // Exclude archived tasks by default (status is the source of truth for archival)
     if (!filter?.includeArchived) {
       query += hasWhere ? ` AND status != 'archived'` : ` WHERE status != 'archived'`;
       hasWhere = true;
@@ -144,13 +115,6 @@ export class TaskRepository {
 
     const stmt = this.db.prepare(query);
     const rows = stmt.all(...params) as Record<string, unknown>[];
-    // Backfill: allocate a short ID for any row that was created before migration 47
-    // or via a code path that lacked an allocator. Each allocation is a separate
-    // atomic counter increment, so under SQLite's single-writer model concurrent
-    // callers cannot observe the same counter value — a second concurrent listTasks
-    // for the same room would block on the write lock and read already-written
-    // short_id values when it proceeds. Counter values are never reused; a skipped
-    // value is cosmetic and does not affect correctness.
     return rows.map((row) => {
       const task = this.rowToTask(row);
       if (!task.shortId && this.shortIdAllocator) {
@@ -162,9 +126,6 @@ export class TaskRepository {
     });
   }
 
-  /**
-   * Update a task with partial updates
-   */
   updateTask(id: string, params: UpdateTaskParams): NeoTask | null {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
@@ -181,7 +142,6 @@ export class TaskRepository {
       fields.push('status = ?');
       values.push(params.status);
 
-      // Update timestamps based on status
       if (params.status === 'in_progress') {
         fields.push('started_at = ?');
         values.push(Date.now());
@@ -225,7 +185,6 @@ export class TaskRepository {
       fields.push('active_session = ?');
       values.push(params.activeSession ?? null);
     }
-    // Auto-clear active_session when task reaches a terminal status (unless already set explicitly)
     if (
       params.activeSession === undefined &&
       (params.status === 'completed' ||
@@ -272,9 +231,6 @@ export class TaskRepository {
     return this.getTask(id);
   }
 
-  /**
-   * Delete a task by ID
-   */
   deleteTask(id: string): void {
     const stmt = this.db.prepare(`DELETE FROM tasks WHERE id = ?`);
     const result = stmt.run(id);
@@ -283,12 +239,6 @@ export class TaskRepository {
     }
   }
 
-  /**
-   * Archive a task by setting status to 'archived' and archived_at timestamp.
-   * status = 'archived' is the canonical source of truth; archived_at is a derived timestamp.
-   * Archived tasks are hidden from UI by default.
-   * Returns the updated task or null if not found.
-   */
   archiveTask(id: string): NeoTask | null {
     const now = Date.now();
     const stmt = this.db.prepare(
@@ -301,9 +251,6 @@ export class TaskRepository {
     return this.getTask(id);
   }
 
-  /**
-   * Delete all tasks for a room
-   */
   deleteTasksForRoom(roomId: string): void {
     const stmt = this.db.prepare(`DELETE FROM tasks WHERE room_id = ?`);
     const result = stmt.run(roomId);
@@ -312,9 +259,6 @@ export class TaskRepository {
     }
   }
 
-  /**
-   * Count tasks for a room by status
-   */
   countTasksByStatus(roomId: string, status: string): number {
     const stmt = this.db.prepare(
       `SELECT COUNT(*) as count FROM tasks WHERE room_id = ? AND status = ?`
@@ -323,9 +267,6 @@ export class TaskRepository {
     return result.count;
   }
 
-  /**
-   * Count all active (non-completed, non-needs_attention, non-cancelled, non-archived) tasks for a room
-   */
   countActiveTasks(roomId: string): number {
     const stmt = this.db.prepare(
       `SELECT COUNT(*) as count FROM tasks WHERE room_id = ? AND status NOT IN ('completed', 'needs_attention', 'cancelled', 'archived')`
@@ -334,14 +275,6 @@ export class TaskRepository {
     return result.count;
   }
 
-  /**
-   * Convert a database row to a NeoTask object
-   */
-  /**
-   * Get draft tasks created by a specific planning task.
-   * Applies the same lazy short ID backfill as listTasks so callers always
-   * receive tasks with shortId populated.
-   */
   getDraftTasksByCreator(createdByTaskId: string): NeoTask[] {
     const rows = this.db
       .prepare(

@@ -1,16 +1,3 @@
-/**
- * Tools Config Manager Tests
- *
- * Tests for global tools configuration management.
- *
- * NOTE: `ToolsConfigManager.getDefaultForNewSession()` was removed in M5 of
- * `unify-mcp-config-model`. Per-session MCP enablement is no longer derived
- * here — new sessions inherit MCP server selection directly from the unified
- * `app_mcp_servers` registry + `mcp_enablement` overrides at query-build
- * time. The tests for that helper (and for the legacy
- * `mcpServerSettings`-driven `disabledMcpServers` derivation) are gone too.
- */
-
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ToolsConfigManager } from '../../../../src/lib/session/tools-config';
 import type { Database } from '../../../../src/storage/database';
@@ -27,7 +14,6 @@ describe('ToolsConfigManager', () => {
   };
 
   beforeEach(() => {
-    // Mock Database
     mockDb = {
       getGlobalToolsConfig: mock(() => defaultGlobalToolsConfig),
       saveGlobalToolsConfig: mock(() => {}),

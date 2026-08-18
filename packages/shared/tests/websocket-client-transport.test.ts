@@ -1,20 +1,8 @@
-/**
- * WebSocket Client Transport Unit Tests
- *
- * Comprehensive test suite covering:
- * - Basic interface and state management
- * - Message validation and callback registration
- * - Network failure scenarios (connection, disconnection, reconnection)
- * - PING/PONG health checks
- * - Error recovery and edge cases
- */
-
 import { describe, it, expect, beforeEach, afterEach, vi } from 'bun:test';
 import { WebSocketClientTransport } from '../src/message-hub/websocket-client-transport.ts';
 import { MessageType } from '../src/message-hub/protocol.ts';
 import type { HubMessage, ConnectionState } from '../src/message-hub/types.ts';
 
-// Mock WebSocket for network failure tests
 class MockWebSocket {
   static CONNECTING = 0;
   static OPEN = 1;
@@ -37,7 +25,6 @@ class MockWebSocket {
     this.url = url;
     this.autoConnect = autoConnect;
 
-    // Simulate async connection only if autoConnect is true
     if (this.autoConnect) {
       setTimeout(() => {
         if (this.readyState === MockWebSocket.CONNECTING) {
@@ -63,7 +50,6 @@ class MockWebSocket {
     }, 10);
   }
 
-  // Test helpers
   simulateMessage(data: string): void {
     if (this.readyState !== MockWebSocket.OPEN) {
       return;
@@ -151,7 +137,6 @@ describe('WebSocketClientTransport - Basic Interface', () => {
         messages.push(msg);
       });
 
-      // Should not throw
       unsubscribe();
     });
 
@@ -169,7 +154,6 @@ describe('WebSocketClientTransport - Basic Interface', () => {
       expect(typeof unsub1).toBe('function');
       expect(typeof unsub2).toBe('function');
 
-      // Cleanup
       unsub1();
       unsub2();
     });
@@ -199,7 +183,6 @@ describe('WebSocketClientTransport - Basic Interface', () => {
         states.push(state);
       });
 
-      // Should not throw
       unsubscribe();
     });
 
@@ -217,7 +200,6 @@ describe('WebSocketClientTransport - Basic Interface', () => {
       expect(typeof unsub1).toBe('function');
       expect(typeof unsub2).toBe('function');
 
-      // Cleanup
       unsub1();
       unsub2();
     });
@@ -249,7 +231,6 @@ describe('WebSocketClientTransport - Basic Interface', () => {
         url: 'ws://localhost:8080',
       });
 
-      // Should not throw
       await transport.close();
 
       expect(transport.getState()).toBe('disconnected');
@@ -366,10 +347,8 @@ describe('WebSocketClientTransport - Basic Interface', () => {
       const unsub1 = transport.onMessage(handler1);
       const unsub2 = transport.onMessage(handler2);
 
-      // Unsubscribe first handler
       unsub1();
 
-      // Second handler should still be registered (no way to verify directly, but shouldn't throw)
       unsub2();
     });
 
@@ -384,10 +363,8 @@ describe('WebSocketClientTransport - Basic Interface', () => {
       const unsub1 = transport.onConnectionChange(handler1);
       const unsub2 = transport.onConnectionChange(handler2);
 
-      // Unsubscribe first handler
       unsub1();
 
-      // Second handler should still be registered (no way to verify directly, but shouldn't throw)
       unsub2();
     });
 
@@ -398,7 +375,6 @@ describe('WebSocketClientTransport - Basic Interface', () => {
 
       const unsub = transport.onMessage(() => {});
 
-      // Multiple unsubscribe calls should not throw
       unsub();
       unsub();
       unsub();
@@ -413,7 +389,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
   beforeEach(() => {
     mockWebSocketInstance = null;
 
-    // Mock global WebSocket
     global.WebSocket = vi.fn(function (url: string) {
       mockWebSocketInstance = new MockWebSocket(url);
       return mockWebSocketInstance as unknown as WebSocket;
@@ -462,10 +437,8 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
 
   describe('Connection Failures', () => {
     it('should handle initial connection failure', async () => {
-      // Mock WebSocket that fails immediately
       global.WebSocket = vi.fn(function () {
         const ws = new MockWebSocket('ws://localhost:9999', false);
-        // Fail connection attempt quickly
         setTimeout(() => {
           ws.readyState = MockWebSocket.CLOSED;
           ws.onerror?.(new Event('error'));
@@ -484,24 +457,18 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         stateChanges.push(state);
       });
 
-      // Try to connect - will either reject or timeout
       const _initPromise = transport.initialize();
 
-      // Wait for connection attempt
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // Connection should have transitioned through connecting state
       expect(stateChanges).toContain('connecting');
-      // Should be in error or disconnected state now
       expect(['error', 'disconnected']).toContain(transport.getState());
     });
 
     it('should handle connection timeout', async () => {
-      // Mock WebSocket that stays in connecting state
       global.WebSocket = vi.fn(function () {
-        const ws = new MockWebSocket('ws://localhost:9999', false); // Don't auto-connect
+        const ws = new MockWebSocket('ws://localhost:9999', false);
         ws.readyState = MockWebSocket.CONNECTING;
-        // Never call onopen to simulate timeout
         return ws as unknown as WebSocket;
       }) as unknown as typeof WebSocket;
 
@@ -510,15 +477,12 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         autoReconnect: false,
       });
 
-      // Start connection (won't resolve since onopen never fires)
       transport.initialize().catch(() => {
         // Ignore errors since we expect it to timeout
       });
 
-      // Wait a short time
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // Connection should still be in connecting state
       expect(transport.getState()).toBe('connecting');
       expect(transport.isReady()).toBe(false);
     });
@@ -541,7 +505,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         stateChanges.push(state);
       });
 
-      // Simulate network disconnection
       if (mockWebSocketInstance) {
         mockWebSocketInstance.simulateDisconnect();
       }
@@ -561,14 +524,12 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       await transport.initialize();
       await new Promise((resolve) => setTimeout(resolve, 20));
 
-      // Disconnect
       if (mockWebSocketInstance) {
         mockWebSocketInstance.simulateDisconnect();
       }
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Try to send message
       const message: HubMessage = {
         id: 'test-1',
         type: MessageType.REQUEST,
@@ -598,12 +559,10 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         stateChanges.push(state);
       });
 
-      // Simulate disconnection
       if (mockWebSocketInstance) {
         mockWebSocketInstance.simulateDisconnect();
       }
 
-      // Wait for reconnection attempt
       await new Promise((resolve) => setTimeout(resolve, 250));
 
       expect(stateChanges).toContain('disconnected');
@@ -614,11 +573,9 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       const maxAttempts = 2;
       let connectionAttempts = 0;
 
-      // Mock WebSocket to always fail connection
       global.WebSocket = vi.fn(function () {
         connectionAttempts++;
-        const ws = new MockWebSocket('ws://localhost:9999', false); // Don't auto-connect
-        // Fail immediately
+        const ws = new MockWebSocket('ws://localhost:9999', false);
         setTimeout(() => {
           ws.readyState = MockWebSocket.CLOSED;
           ws.onerror?.(new Event('error'));
@@ -634,27 +591,20 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         reconnectDelay: 50,
       });
 
-      // Initial connection attempt - start but don't wait
       transport.initialize();
 
-      // Wait for all reconnection attempts
       await new Promise((resolve) => setTimeout(resolve, 400));
 
-      // Should have tried at least initial + some reconnections, but capped at maxAttempts + 1
-      // Note: The reconnection logic may create slightly more attempts due to timing
       expect(connectionAttempts).toBeGreaterThanOrEqual(1);
-      // Allow some flexibility for edge cases in reconnection timing
       expect(connectionAttempts).toBeLessThanOrEqual(maxAttempts + 3);
     });
 
     it('should use exponential backoff for reconnection', async () => {
       const reconnectTimes: number[] = [];
 
-      // Mock WebSocket to always fail connection
       global.WebSocket = vi.fn(function () {
         reconnectTimes.push(Date.now());
-        const ws = new MockWebSocket('ws://localhost:9999', false); // Don't auto-connect
-        // Fail after brief delay
+        const ws = new MockWebSocket('ws://localhost:9999', false);
         setTimeout(() => {
           ws.readyState = MockWebSocket.CLOSED;
           ws.onerror?.(new Event('error'));
@@ -670,24 +620,18 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         reconnectDelay: 100,
       });
 
-      // Initial connection attempt - start but don't wait
       transport.initialize();
 
-      // Wait for reconnection attempts
       await new Promise((resolve) => setTimeout(resolve, 1500));
 
-      // Should have at least 3 connection attempts
       expect(reconnectTimes.length).toBeGreaterThanOrEqual(3);
 
-      // Check that delays exist and generally increase
-      // (with tolerance for jitter ±30% which can affect timing significantly)
       if (reconnectTimes.length >= 3) {
         const delay1 = reconnectTimes[1] - reconnectTimes[0];
         const delay2 = reconnectTimes[2] - reconnectTimes[1];
 
-        // Just verify that delays are happening and in reasonable range
-        expect(delay1).toBeGreaterThan(50); // At least 50ms (base: 100ms - 30% jitter)
-        expect(delay2).toBeGreaterThan(50); // At least 50ms
+        expect(delay1).toBeGreaterThan(50);
+        expect(delay2).toBeGreaterThan(50);
       }
     });
   });
@@ -706,14 +650,12 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       const firstInstance = mockWebSocketInstance;
       expect(firstInstance).not.toBeNull();
 
-      // Disconnect
       if (firstInstance) {
         firstInstance.simulateDisconnect();
       }
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Message should fail while disconnected
       const message: HubMessage = {
         id: 'test-1',
         type: MessageType.REQUEST,
@@ -725,7 +667,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       await expect(transport.send(message)).rejects.toThrow('WebSocket not connected');
     });
 
-    // 30s timeout needed for creating 41MB payload
     it(
       'should handle oversized messages',
       async () => {
@@ -737,7 +678,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         await transport.initialize();
         await new Promise((resolve) => setTimeout(resolve, 20));
 
-        // Create an oversized request (>32MB)
         const largeData = 'x'.repeat(33 * 1024 * 1024);
         const message: HubMessage = {
           id: 'test-1',
@@ -753,7 +693,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       { timeout: 30000 }
     );
 
-    // 30s timeout needed for creating 51MB payload
     it(
       'should reject oversized incoming messages',
       async () => {
@@ -770,7 +709,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         await transport.initialize();
         await new Promise((resolve) => setTimeout(resolve, 20));
 
-        // Send oversized message
         const largeData = 'x'.repeat(51 * 1024 * 1024);
         const oversizedMessage = JSON.stringify({
           id: 'test-1',
@@ -787,7 +725,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
 
         await new Promise((resolve) => setTimeout(resolve, 50));
 
-        // Oversized message should be rejected
         expect(messages).toHaveLength(0);
       },
       { timeout: 30000 }
@@ -805,16 +742,13 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       await transport.initialize();
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Get initial mock instance
       const wsInstance = mockWebSocketInstance;
       expect(wsInstance).not.toBeNull();
 
-      // Clear any initial messages
       if (wsInstance) {
         wsInstance.sentMessages = [];
       }
 
-      // Wait for multiple ping intervals
       await new Promise((resolve) => setTimeout(resolve, 400));
 
       const sentMessages = wsInstance?.sentMessages || [];
@@ -827,8 +761,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         }
       });
 
-      // Should have sent at least 1-2 PING messages
-      // (timing can vary, so just check at least 1)
       expect(pingMessages.length).toBeGreaterThanOrEqual(1);
     });
 
@@ -848,12 +780,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         stateChanges.push(state);
       });
 
-      // Mock to not respond to PONG (simulate stale connection)
-      // The transport will detect timeout after 60s in real implementation
-      // For testing, we'll simulate a shorter timeout by advancing time
-
-      // Note: This test would need timer mocking to work properly
-      // For now, we just verify that PING messages are sent
       await new Promise((resolve) => setTimeout(resolve, 350));
 
       const sentMessages = mockWebSocketInstance?.sentMessages || [];
@@ -879,7 +805,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       await transport.initialize();
       await new Promise((resolve) => setTimeout(resolve, 20));
 
-      // Send PONG message
       const pongMessage: HubMessage = {
         id: 'pong-1',
         type: MessageType.PONG,
@@ -892,7 +817,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         mockWebSocketInstance.simulateMessage(JSON.stringify(pongMessage));
       }
 
-      // Connection should remain healthy
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(transport.isReady()).toBe(true);
     });
@@ -903,7 +827,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       transport = new WebSocketClientTransport({
         url: 'ws://localhost:9999',
         autoReconnect: false,
-        pingInterval: 0, // Disable ping to avoid interference
+        pingInterval: 0,
       });
 
       await transport.initialize();
@@ -913,7 +837,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       expect(wsInstance).not.toBeNull();
       expect(transport.isReady()).toBe(true);
 
-      // Simulate connection closing
       if (wsInstance) {
         wsInstance.simulateDisconnect();
       }
@@ -928,10 +851,8 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         timestamp: new Date().toISOString(),
       };
 
-      // Send should fail because connection is closed
       await expect(transport.send(message)).rejects.toThrow('WebSocket not connected');
 
-      // Transport should report not ready
       expect(transport.isReady()).toBe(false);
     });
 
@@ -949,17 +870,14 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       await transport.initialize();
       await new Promise((resolve) => setTimeout(resolve, 20));
 
-      // Send invalid JSON
       if (mockWebSocketInstance) {
         mockWebSocketInstance.simulateMessage('invalid json{');
       }
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Should not have added any messages
       expect(messages).toHaveLength(0);
 
-      // Connection should still be healthy
       expect(transport.isReady()).toBe(true);
     });
   });
@@ -1040,7 +958,6 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Should not have received disconnected event
       expect(stateChanges.length).toBe(countBeforeUnsubscribe);
     });
   });

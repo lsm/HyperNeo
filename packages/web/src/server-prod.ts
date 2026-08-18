@@ -8,7 +8,6 @@ serve({
   async fetch(req) {
     const url = new URL(req.url);
 
-    // API proxy to daemon
     if (url.pathname.startsWith('/api/')) {
       const daemonUrl = `${DAEMON_URL}${url.pathname}${url.search}`;
 
@@ -21,7 +20,6 @@ serve({
 
         return response;
       } catch {
-        // Proxy error - return error response to client
         return new Response(JSON.stringify({ error: 'Failed to connect to daemon' }), {
           status: 502,
           headers: { 'Content-Type': 'application/json' },
@@ -29,7 +27,6 @@ serve({
       }
     }
 
-    // Serve static files from dist/
     const path = url.pathname === '/' ? '/index.html' : url.pathname;
     const file = Bun.file(`./dist${path}`);
 
@@ -37,7 +34,6 @@ serve({
       return new Response(file);
     }
 
-    // SPA fallback - serve index.html for unmatched routes
     return new Response(Bun.file('./dist/index.html'));
   },
 });

@@ -2,8 +2,6 @@ import { describe, test, expect } from 'bun:test';
 import type { SpaceWorkflow, WorkflowNode } from '../src/types/space.ts';
 import { isWorkflowAutoClosingAtLevel } from '../src/space/workflow-autonomy.ts';
 
-// ── Fixtures ──────────────────────────────────────────────────────────────
-
 function makeNode(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
   return {
     id: 'node-1',
@@ -27,8 +25,6 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
     ...overrides,
   };
 }
-
-// ── isWorkflowAutoClosingAtLevel ──────────────────────────────────────────
 
 describe('isWorkflowAutoClosingAtLevel', () => {
   test('auto-closes when space level >= workflow.completionAutonomyLevel', () => {

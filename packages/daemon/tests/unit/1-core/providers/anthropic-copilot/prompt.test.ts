@@ -1,7 +1,3 @@
-/**
- * Tests for anthropic-copilot/prompt.ts
- */
-
 import { describe, expect, it } from 'bun:test';
 import {
   formatAnthropicPrompt,
@@ -10,10 +6,6 @@ import {
   extractToolResultContent,
   extractToolResultIsError,
 } from '../../../../../src/lib/providers/anthropic-copilot/prompt';
-
-// ---------------------------------------------------------------------------
-// formatAnthropicPrompt
-// ---------------------------------------------------------------------------
 
 describe('formatAnthropicPrompt', () => {
   it('formats a single user string message', () => {
@@ -146,10 +138,6 @@ describe('formatAnthropicPrompt', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// extractSystemText
-// ---------------------------------------------------------------------------
-
 describe('extractSystemText', () => {
   it('returns undefined for undefined input', () => {
     expect(extractSystemText(undefined)).toBeUndefined();
@@ -176,10 +164,6 @@ describe('extractSystemText', () => {
     expect(extractSystemText([{ type: 'text', text: '' }])).toBeUndefined();
   });
 });
-
-// ---------------------------------------------------------------------------
-// extractToolResultIds
-// ---------------------------------------------------------------------------
 
 describe('extractToolResultIds', () => {
   it('returns empty array when no tool_result blocks', () => {
@@ -219,10 +203,6 @@ describe('extractToolResultIds', () => {
     expect(ids).toEqual(['tu_1', 'tu_2']);
   });
 });
-
-// ---------------------------------------------------------------------------
-// extractToolResultContent
-// ---------------------------------------------------------------------------
 
 describe('extractToolResultContent', () => {
   it('returns undefined when id not found', () => {
@@ -268,10 +248,6 @@ describe('extractToolResultContent', () => {
     ).toBe('result');
   });
 });
-
-// ---------------------------------------------------------------------------
-// extractToolResultIsError
-// ---------------------------------------------------------------------------
 
 describe('extractToolResultIsError', () => {
   it('returns false when id not found', () => {

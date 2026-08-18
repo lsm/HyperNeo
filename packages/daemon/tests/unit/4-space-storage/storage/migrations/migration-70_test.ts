@@ -1,20 +1,9 @@
-/**
- * Migration 70 Tests
- *
- * Migration 70: Backfill default_path for existing rooms where it is NULL.
- * - Sets default_path from allowed_paths[0].path when available
- * - Sets sentinel '__NEEDS_WORKSPACE_PATH__' when allowed_paths is empty/null
- * - Idempotent: running twice does not error and does not overwrite already-set values
- * - No-op when rooms table does not exist
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigration70 } from '../../../../../src/storage/schema/migrations.ts';
 
-/** Minimal rooms table without default_path to simulate a pre-migration DB */
 function createLegacyRoomsTable(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE IF NOT EXISTS rooms (
@@ -27,7 +16,6 @@ function createLegacyRoomsTable(db: BunDatabase): void {
 	`);
 }
 
-/** Rooms table that already has default_path (e.g. after createTables) */
 function createFullRoomsTable(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE IF NOT EXISTS rooms (
@@ -53,7 +41,6 @@ function insertRoom(
       `INSERT INTO rooms (id, name, allowed_paths, default_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
     ).run(id, `Room ${id}`, allowedPaths, defaultPath ?? null, now, now);
   } else {
-    // Insert without default_path column (legacy table)
     db.prepare(
       `INSERT INTO rooms (id, name, allowed_paths, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
     ).run(id, `Room ${id}`, allowedPaths, now, now);
@@ -145,16 +132,13 @@ describe('Migration 70: Backfill default_path for existing rooms', () => {
 
   test('handles multiple rooms with mixed states correctly', () => {
     createFullRoomsTable(db);
-    // room-a: has allowed_paths → should be backfilled with first path
     insertRoom(
       db,
       'room-a',
       JSON.stringify([{ path: '/workspace/a' }, { path: '/workspace/b' }]),
       null
     );
-    // room-b: empty allowed_paths → sentinel
     insertRoom(db, 'room-b', JSON.stringify([]), null);
-    // room-c: already has default_path → unchanged
     insertRoom(db, 'room-c', JSON.stringify([{ path: '/workspace/c' }]), '/workspace/existing-c');
 
     runMigration70(db);
@@ -200,7 +184,6 @@ describe('Migration 70: Backfill default_path for existing rooms', () => {
     insertRoom(db, 'room-idem', JSON.stringify([{ path: '/workspace/idem' }]), null);
 
     runMigration70(db);
-    // Run again — should be a no-op
     expect(() => runMigration70(db)).not.toThrow();
 
     const row = db.prepare(`SELECT default_path FROM rooms WHERE id = 'room-idem'`).get() as {
@@ -219,12 +202,10 @@ describe('Migration 70: Backfill default_path for existing rooms', () => {
     const row = db.prepare(`SELECT default_path FROM rooms WHERE id = 'room-sentinel'`).get() as {
       default_path: string;
     };
-    // After first run, default_path = '__NEEDS_WORKSPACE_PATH__' (not NULL) → idempotency guard skips
     expect(row.default_path).toBe('__NEEDS_WORKSPACE_PATH__');
   });
 
   test('is no-op when rooms table does not exist', () => {
-    // No rooms table at all
     expect(() => runMigration70(db)).not.toThrow();
   });
 

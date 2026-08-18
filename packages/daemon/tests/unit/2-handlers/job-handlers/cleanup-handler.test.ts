@@ -32,7 +32,6 @@ function createTestDb(): Database {
   return db;
 }
 
-/** Fake job fixture used as the argument to the handler */
 const fakeJob: Job = {
   id: 'fake-job-id',
   queue: JOB_QUEUE_CLEANUP,
@@ -65,14 +64,12 @@ describe('createCleanupHandler', () => {
   it('deletes completed jobs older than 7 days and returns count', async () => {
     const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
 
-    // Insert an old completed job directly via SQL
     db.exec(`
 			INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)
 			VALUES ('old-completed', 'some.queue', 'completed', '{}', 0, 3, 0, ${eightDaysAgo}, ${eightDaysAgo}, ${eightDaysAgo})
 		`);
 
-    // Insert a recent completed job (should NOT be deleted)
-    const recentTime = Date.now() - 60_000; // 1 minute ago
+    const recentTime = Date.now() - 60_000;
     db.exec(`
 			INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)
 			VALUES ('recent-completed', 'some.queue', 'completed', '{}', 0, 3, 0, ${recentTime}, ${recentTime}, ${recentTime})
@@ -83,7 +80,6 @@ describe('createCleanupHandler', () => {
 
     expect(result.deletedJobs).toBe(1);
 
-    // Verify only the old job is gone
     const remaining = jobQueue.listJobs({ limit: 100 });
     expect(remaining.some((j) => j.id === 'old-completed')).toBe(false);
     expect(remaining.some((j) => j.id === 'recent-completed')).toBe(true);
@@ -101,7 +97,6 @@ describe('createCleanupHandler', () => {
     const result = await handler(fakeJob);
 
     expect(result.deletedJobs).toBe(1);
-    // Only the next-scheduled pending cleanup job should remain
     const remaining = jobQueue.listJobs({ limit: 100 });
     expect(remaining.every((j) => j.status === 'pending' && j.queue === JOB_QUEUE_CLEANUP)).toBe(
       true
@@ -126,21 +121,18 @@ describe('createCleanupHandler', () => {
   });
 
   it('does not create duplicate pending cleanup jobs (dedup)', async () => {
-    // Pre-enqueue a pending cleanup job
     jobQueue.enqueue({ queue: JOB_QUEUE_CLEANUP, payload: {}, runAt: Date.now() + 1000 });
 
     const handler = createCleanupHandler(jobQueue);
     await handler(fakeJob);
 
     const pending = jobQueue.listJobs({ queue: JOB_QUEUE_CLEANUP, status: 'pending', limit: 10 });
-    expect(pending.length).toBe(1); // Still only one — dedup worked
+    expect(pending.length).toBe(1);
   });
 
   it('deletes failed jobs older than 7 days', async () => {
     const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
 
-    // 'failed' is a legal status in the type contract; cleanup must prune it
-    // to prevent indefinite accumulation if any code path ever writes it.
     db.exec(`
 			INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)
 			VALUES ('old-failed', 'some.queue', 'failed', '{}', 0, 3, 1, ${eightDaysAgo}, ${eightDaysAgo}, ${eightDaysAgo})
@@ -154,7 +146,6 @@ describe('createCleanupHandler', () => {
   });
 
   it('returns 0 deletedJobs when nothing is old enough', async () => {
-    // Only a recent completed job
     const recentTime = Date.now() - 60_000;
     db.exec(`
 			INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)

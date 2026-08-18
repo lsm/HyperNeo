@@ -1,16 +1,3 @@
-/**
- * ArtifactCard — shape-driven renderer for workflow run artifacts.
- *
- * Rendering is keyed on `artifact.artifactType`, which (after the generic-shapes
- * migration) holds a value from the closed `ArtifactShape` vocabulary
- * (`link`, `commit_set`, `check`, `metric`, `decision`, `note`). The optional
- * `data.kind` semantic hint supplies the icon/label — most importantly for the
- * `link` shape, where `kind: 'pr'` renders a PR row, `kind: 'issue'` an issue
- * row, etc. There is no freeform data-shape sniffing and no hardcoded URL
- * detection; the default renderer handles any shape (including ones not yet
- * known to this component).
- */
-
 import type {
   ArtifactShape,
   CommitSetArtifactData,
@@ -26,8 +13,6 @@ import { isArtifactShape, normalizeLinkData, resolveLegacyShape } from '@hyperne
 const cardBase =
   'flex items-start gap-2 px-3 py-2 rounded bg-dark-700/50 border border-dark-600 w-full';
 
-// ── Small helpers ────────────────────────────────────────────────────────────
-
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
@@ -36,7 +21,6 @@ function capitalize(s: string): string {
   return s.length === 0 ? s : s[0].toUpperCase() + s.slice(1);
 }
 
-/** "40 passed · 1 failed · 3 skipped" from a {label: count} map. */
 function formatCounts(counts: unknown): string {
   if (!counts || typeof counts !== 'object') return '';
   const entries = Object.entries(counts as Record<string, unknown>).filter(
@@ -46,12 +30,6 @@ function formatCounts(counts: unknown): string {
   return entries.map(([k, v]) => `${v} ${k}`).join(' · ');
 }
 
-/**
- * Returns the URL only when it is an http(s) link. Artifact URLs are
- * agent-controlled, so anything that would bind one to an `href` (link / check
- * / decision renderers) must go through this — a `javascript:` or other
- * custom-scheme value is rendered as plain text instead of an actionable link.
- */
 function safeHref(url: string): string | null {
   if (!url) return null;
   try {
@@ -62,12 +40,9 @@ function safeHref(url: string): string | null {
   }
 }
 
-// ── link: icon/label by kind ─────────────────────────────────────────────────
-
 interface LinkKindMeta {
   label: string;
   color: string;
-  /** Render the git fork/branch icon (PRs/issues) vs the external-link icon. */
   fork: boolean;
 }
 
@@ -137,8 +112,6 @@ function LinkIcon({ fork, color }: { fork: boolean; color: string }) {
 }
 
 function LinkCard({ artifact }: { artifact: WorkflowRunArtifact }) {
-  // The shape dispatch guarantees this structure (save_artifact validates it),
-  // but `data` arrives as a plain record on the wire — cast through `unknown`.
   const data = artifact.data as unknown as LinkArtifactData;
   const url = str(data.url);
   const kind = str(data.kind);
@@ -147,9 +120,6 @@ function LinkCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   const title = str(data.title);
   const state = str(data.state);
 
-  // Label: "Pull Request #42 — Fix bug" for numbered pr/issue, else title, else
-  // the URL (so a minimal `{ url, kind: 'pr' }` is still distinguishable), else
-  // the kind label.
   let label: string;
   if (number != null && (kind === 'pr' || kind === 'issue')) {
     label = `${meta.label} #${number}`;
@@ -168,11 +138,7 @@ function LinkCard({ artifact }: { artifact: WorkflowRunArtifact }) {
       hostname = url;
     }
   }
-  // Show the origin as a secondary line only when the label is not already the
-  // URL and there is no identifying number (numbered pr/issue rows are specific
-  // enough on their own).
   const showHost = !!hostname && label !== url && number == null;
-  // Only http(s) URLs become actionable links; everything else renders as text.
   const href = safeHref(url);
 
   return (
@@ -200,14 +166,8 @@ function LinkCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   );
 }
 
-// ── commit_set: commit list + +/- ────────────────────────────────────────────
-
 function CommitSetCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   const data = artifact.data as CommitSetArtifactData;
-  // `commit_set` has no required fields and the payload is untyped on the wire,
-  // so an agent could emit `{ commits: [null] }`. Filter to plain objects before
-  // dereferencing each entry so a malformed row can't throw and take down the
-  // artifacts panel.
   const commits = Array.isArray(data.commits)
     ? (data.commits as unknown[]).filter(
         (c): c is Record<string, unknown> => c !== null && typeof c === 'object'
@@ -271,8 +231,6 @@ function CommitSetCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   );
 }
 
-// ── check: status chip + counts ──────────────────────────────────────────────
-
 interface CheckStatusMeta {
   bg: string;
   color: string;
@@ -326,16 +284,12 @@ function CheckCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   );
 }
 
-// ── metric: name value unit → target ─────────────────────────────────────────
-
 function MetricCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   const data = artifact.data as unknown as MetricArtifactData;
   const name = str(data.name);
   const value = data.value;
   const unit = str(data.unit);
   const target = data.target;
-  // Only render scalar values; a stray object value must not stringify to
-  // "[object Object]".
   const hasValue = typeof value === 'number' || typeof value === 'string';
   const hasTarget = typeof target === 'number' || typeof target === 'string';
 
@@ -373,8 +327,6 @@ function MetricCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   );
 }
 
-// ── decision: recommendation badge ───────────────────────────────────────────
-
 interface DecisionMeta {
   bg: string;
   color: string;
@@ -400,11 +352,6 @@ function DecisionCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   const recommendation = str(data.recommendation);
   const summary = str(data.summary);
   const counts = formatCounts(data.counts);
-  // Legacy rows mapped to `decision` (review-history carries review_url; a mixed
-  // QA `result` carries pr_url) don't have a recommendation, so surface their
-  // evidence link. Validate each URL candidate independently so a non-http
-  // `data.url` can't shadow a valid `review_url`/`pr_url`, and label the link by
-  // the candidate actually selected. Producer migration is a follow-up.
   const urlHref = safeHref(str(artifact.data.url));
   const reviewHref = safeHref(str(artifact.data.review_url));
   const prHref = safeHref(str(artifact.data.pr_url));
@@ -442,8 +389,6 @@ function DecisionCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   );
 }
 
-// ── note: status text line ───────────────────────────────────────────────────
-
 function NoteCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   const data = artifact.data as NoteArtifactData;
   const text = str(data.text) || str(data.summary);
@@ -471,8 +416,6 @@ function NoteCard({ artifact }: { artifact: WorkflowRunArtifact }) {
     </div>
   );
 }
-
-// ── default: works for any shape ─────────────────────────────────────────────
 
 function GenericCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   const keyCount = Object.keys(artifact.data).length;
@@ -503,21 +446,10 @@ function GenericCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   );
 }
 
-// ── Public component ─────────────────────────────────────────────────────────
-
 interface ArtifactCardProps {
   artifact: WorkflowRunArtifact;
 }
 
-/**
- * Resolve the generic shape for an artifact. Post-migration rows already carry
- * a value from the closed `ArtifactShape` vocabulary; pre-migration / in-flight
- * legacy rows (`progress` / `result` / `pr` / `review`) are mapped to a shape
- * here at the UI boundary so they keep rendering correctly until the backend
- * producer + DB migration land. Anything truly unknown falls through to the
- * default renderer. This is idempotent: once the backend stores shapes, the
- * legacy branch is never taken.
- */
 function resolveArtifactShape(artifact: WorkflowRunArtifact): ArtifactShape | null {
   const declared = artifact.artifactType;
   if (isArtifactShape(declared)) return declared;
@@ -526,8 +458,6 @@ function resolveArtifactShape(artifact: WorkflowRunArtifact): ArtifactShape | nu
 
 export function ArtifactCard({ artifact }: ArtifactCardProps) {
   const shape = resolveArtifactShape(artifact);
-  // Legacy link rows may carry the URL under pr_url/review_url; normalize it onto
-  // data.url so the link renderer finds it (no-op for already-shaped rows).
   const linkArtifact =
     shape === 'link' ? { ...artifact, data: normalizeLinkData(artifact.data) } : artifact;
 

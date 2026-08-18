@@ -1,25 +1,3 @@
-/**
- * LLM-based workflow selector.
- *
- * Picks the best workflow for a standalone task by asking a small, cheap LLM
- * (haiku tier) to rank a compact description of each available workflow
- * against the task title/description.
- *
- * Design notes:
- * - Returns a workflow ID string from the provided list, or `null` if the LLM
- *   declines/fails. Callers are responsible for the final fallback (e.g. a
- *   `default`-tagged workflow) so this helper can be mocked cleanly in tests.
- * - The helper sets `maxTurns: 1`, disables thinking, and hands the SDK an
- *   empty tool list: we only need a single short text response.
- * - The input prompt is capped at ~1000 chars per task description so a long
- *   task body can't drive up token cost or slow the tick.
- *
- * Intended wire-up: pass `selectWorkflowWithLlm` into `SpaceRuntimeConfig`.
- * The runtime calls the callback from `attachStandaloneTasksToWorkflows()`
- * when more than one workflow is available; callers can swap in a mock in
- * tests without reaching into the SDK.
- */
-
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { getProviderService } from '../../provider-service';
 import { resolveSDKCliPath, isRunningUnderBun } from '../../agent/sdk-cli-resolver';
@@ -30,30 +8,14 @@ import { withSdkTranscriptRetention } from '../../agent/sdk-transcript-retention
 
 const log = new Logger('llm-workflow-selector');
 
-/** Maximum characters per field (title + description) sent to the LLM. */
 const MAX_TASK_INPUT_CHARS = 1000;
-/** Maximum characters per workflow field shown in the candidate list. */
 const MAX_WORKFLOW_DESC_CHARS = 240;
 
-/**
- * Callback signature accepted by `SpaceRuntimeConfig.selectWorkflowWithLlm`.
- *
- * Implementations receive the task plus the candidate workflow list and must
- * return either one of the provided workflow IDs or `null` to defer to the
- * deterministic fallback.
- */
 export type SelectWorkflowWithLlm = (
   task: SpaceTask,
   workflows: SpaceWorkflow[]
 ) => Promise<string | null>;
 
-/**
- * Default LLM-driven workflow selector that talks to the Claude Agent SDK.
- *
- * Safe to use as the production implementation when no other callback is
- * provided. Returns `null` on any failure so callers can fall back to a
- * deterministic choice without surfacing errors.
- */
 export async function selectWorkflowWithLlmDefault(
   task: SpaceTask,
   workflows: SpaceWorkflow[]
@@ -109,11 +71,6 @@ export async function selectWorkflowWithLlmDefault(
         executable: isRunningUnderBun() ? 'bun' : undefined,
         settings: withSdkTranscriptRetention(),
         env: mergedEnv,
-        // We only need a short text response; adaptive-thinking models can
-        // otherwise return only thinking blocks with no text payload.
-        // Kimi K3 rejects `thinking.type` entirely, so omit the field for K3.
-        // Kimi K2.7 requires enabled thinking. For all other providers keep the
-        // safe disabled-thinking default.
         thinking:
           provider === 'kimi'
             ? KimiProvider.resolveKimiTitleThinkingConfig(modelId)
@@ -141,8 +98,6 @@ export async function selectWorkflowWithLlmDefault(
     const cleaned = cleanIdResponse(raw);
     if (!cleaned) return null;
 
-    // Match exact ID first; if the LLM echoed `none` or anything outside the
-    // candidate set, return null so the caller can pick a deterministic fallback.
     const hit = workflows.find((w) => w.id === cleaned);
     return hit ? hit.id : null;
   } catch (err) {
@@ -156,10 +111,6 @@ export async function selectWorkflowWithLlmDefault(
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function truncate(value: string, max: number): string {
   if (value.length <= max) return value;
@@ -196,9 +147,7 @@ Instructions:
 
 function cleanIdResponse(raw: string): string | null {
   let value = raw.trim();
-  // Strip wrapping quotes / backticks if the model ignored the instructions.
   value = value.replace(/^[`"']+|[`"']+$/g, '').trim();
-  // If the model prefixed with "id:" or "Workflow:" take the final token.
   if (/[\s:]/.test(value)) {
     const tokens = value.split(/[\s:]+/).filter(Boolean);
     if (tokens.length > 0) value = tokens[tokens.length - 1];

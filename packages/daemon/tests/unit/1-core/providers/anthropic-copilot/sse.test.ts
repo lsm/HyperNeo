@@ -1,14 +1,6 @@
-/**
- * Tests for anthropic-copilot/sse.ts
- */
-
 import { describe, expect, it } from 'bun:test';
 import type { ServerResponse } from 'node:http';
 import { AnthropicStreamWriter } from '../../../../../src/lib/providers/anthropic-copilot/sse';
-
-// ---------------------------------------------------------------------------
-// Mock ServerResponse
-// ---------------------------------------------------------------------------
 
 function makeRes(): { written: string[]; state: { ended: boolean }; res: ServerResponse } {
   const written: string[] = [];
@@ -41,10 +33,6 @@ function parseEvents(written: string[]): Array<{ type: string; data: unknown }> 
   }
   return events;
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('AnthropicStreamWriter', () => {
   describe('start()', () => {
@@ -128,10 +116,8 @@ describe('AnthropicStreamWriter', () => {
       writer.sendCompleted(res);
       const events = parseEvents(written);
       const types = events.map((e) => e.type);
-      // No content_block_start/stop — response has zero content blocks (tool-only or silent turn)
       expect(types).not.toContain('content_block_start');
       expect(types).not.toContain('content_block_stop');
-      // Epilogue must still be present
       expect(types).toContain('message_delta');
       expect(types).toContain('message_stop');
     });
@@ -174,7 +160,6 @@ describe('AnthropicStreamWriter', () => {
       writer.sendFailed(res, 'api_error', 'Session error');
       const events = parseEvents(written);
       const types = events.map((e) => e.type);
-      // content_block_stop must appear before error
       const stopIdx = types.lastIndexOf('content_block_stop');
       const errorIdx = types.indexOf('error');
       expect(stopIdx).toBeGreaterThanOrEqual(0);
@@ -224,7 +209,6 @@ describe('AnthropicStreamWriter', () => {
       >;
       expect(cb['id']).toBe('tc_1');
       expect(cb['name']).toBe('bash');
-      // Ended by sendToolUse
       expect(state.ended).toBe(true);
     });
 
@@ -252,7 +236,6 @@ describe('AnthropicStreamWriter', () => {
       const stopIndices = events
         .map((e, i) => (e.type === 'content_block_stop' ? i : -1))
         .filter((i) => i >= 0);
-      // First content_block_stop closes the text block, second closes the tool_use block
       expect(stopIndices.length).toBe(2);
     });
 

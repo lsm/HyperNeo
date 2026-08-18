@@ -166,7 +166,6 @@ describe('Migration 166: artifact_type → generic shapes', () => {
   });
 
   test('collapses per-(run,node) note rows to the single most-recent one with key "current"', () => {
-    // Three legacy "progress" rows on the same run/node (the append-log bloat).
     insert(db, {
       id: 'p-1',
       type: 'progress',
@@ -196,15 +195,12 @@ describe('Migration 166: artifact_type → generic shapes', () => {
 
     const notes = allArtifacts(db).filter((r) => r.artifact_type === 'note');
     expect(notes).toHaveLength(1);
-    expect(notes[0]!.id).toBe('p-3'); // most recent survived
+    expect(notes[0]!.id).toBe('p-3');
     expect(notes[0]!.artifact_key).toBe('current');
     expect(JSON.parse(notes[0]!.data).summary).toBe('third');
   });
 
   test('dedupes legacy rows that collide on (run,node,shape,key) without throwing', () => {
-    // A `review` and a URL-less `result` that share the same non-empty key both
-    // map to `decision`/`final` on the same run/node — the migration must dedupe
-    // (keep latest) rather than hit the UNIQUE constraint and abort startup.
     insert(db, {
       id: 'rev-1',
       type: 'review',
@@ -228,7 +224,7 @@ describe('Migration 166: artifact_type → generic shapes', () => {
       (r) => r.artifact_type === 'decision' && r.artifact_key === 'final'
     );
     expect(decisions).toHaveLength(1);
-    expect(decisions[0]!.id).toBe('res-1'); // newer survived
+    expect(decisions[0]!.id).toBe('res-1');
   });
 
   test('distinct unknown legacy types are preserved (only progress collapses)', () => {
@@ -250,7 +246,7 @@ describe('Migration 166: artifact_type → generic shapes', () => {
     runMigration166(db);
 
     const notes = allArtifacts(db).filter((r) => r.artifact_type === 'note');
-    expect(notes).toHaveLength(2); // both preserved, NOT collapsed
+    expect(notes).toHaveLength(2);
     const types = notes.map((n) => JSON.parse(n.data)._legacyType).sort();
     expect(types).toEqual(['merge_blocked', 'merge_conflict_loop']);
   });
@@ -299,7 +295,6 @@ describe('Migration 166: artifact_type → generic shapes', () => {
     const afterSecond = allArtifacts(db);
 
     expect(afterSecond).toEqual(afterFirst);
-    // Still all shapes.
     expect(afterSecond.every((r) => SHAPES.has(r.artifact_type))).toBe(true);
   });
 

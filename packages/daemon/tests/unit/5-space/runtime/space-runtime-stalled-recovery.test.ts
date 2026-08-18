@@ -1,36 +1,3 @@
-/**
- * SpaceRuntime — Stalled Workflow Run Recovery Tests (Task #120)
- *
- * Tests `recoverStalledRuns()` — the daemon-restart safety net that scans
- * `status='in_progress'` workflow runs and forces a sane terminal state for
- * runs that no agent will ever drive forward.
- *
- * Behaviour under test:
- *
- *   1. Run with all node executions `idle`/`cancelled` AND no completion
- *      signal → run + canonical task transitioned to `blocked` with
- *      block_reason `execution_failed` and a restart-aware result message;
- *      `task_blocked` and `workflow_run_blocked` notifications fire.
- *
- *   2. Run with all node executions terminal AND a completion signal
- *      (canonical task `reportedStatus='done'`, or task already `done`) →
- *      left untouched (still `in_progress`); the existing tick path will
- *      pick it up via CompletionDetector and finalize.
- *
- *   3. Run with at least one `pending`/`in_progress`/`blocked` execution →
- *      left untouched (the tick loop owns the next move).
- *
- *   4. Recovery is idempotent — calling `recoverStalledRuns()` twice (or
- *      via both `executeTick()` and the public method) only acts once.
- *
- *   5. Recovery is run as part of the first `executeTick()` (so daemon
- *      bootstrapping doesn't have to wire it up separately).
- *
- *   6. Orphan in_progress executions (dead session) are NOT touched by
- *      recovery — the existing crash-retry path in `processRunTick` owns
- *      them, including crash counting.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -60,16 +27,10 @@ import type { SpaceWorkflow, NodeExecutionStatus } from '@hyperneo/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 
-// ---------------------------------------------------------------------------
-// DB / seed helpers (mirror the rehydration test fixtures)
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
-  // runMigrations() applies migrations only; these unit fixtures need the base
-  // sdk_messages table because runtime recovery inspects persisted SDK output.
   db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
 		id TEXT PRIMARY KEY,
 		session_id TEXT NOT NULL,
@@ -149,10 +110,6 @@ function buildLinearWorkflow(
     completionAutonomyLevel: 3,
   });
 }
-
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
 
 describe('SpaceRuntime — recoverStalledRuns()', () => {
   let db: BunDatabase;
@@ -293,10 +250,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       },
     } as any);
   }
-
-  // -------------------------------------------------------------------------
-  // 1. Stalled with no completion signal → blocked
-  // -------------------------------------------------------------------------
 
   function saveSystemMessage(sessionId: string, timestamp: string) {
     db.prepare(
@@ -575,7 +528,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       );
 
       const rt = makeRuntime();
-      // Even a previously-noticed idle execution should be preserved rather than blocked.
       (rt as any).nonTerminalIdleStates.set(`${run.id}:${execution.id}`, {
         lastSessionId: 'non-terminal-blocked-session',
         lastObservedMessageId: 'message-id',
@@ -587,7 +539,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         lastNudgeAt: Date.now() - 60_000,
         lastAttentionLogAt: null,
       });
-      // Simulate the handler being called directly (as it would be from processRunTick)
       const outcome = await (rt as any).handleNonTerminalIdleExecutions(
         run.id,
         SPACE_ID,
@@ -967,8 +918,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         agentSessionId: 'dead-review-session',
         result: 'previous review finished',
       });
-      // Seed a terminal SDK message so the non-terminal idle handler skips
-      // this execution — downstream recovery should reset it instead.
       saveAssistantMessage(
         'dead-review-session',
         [{ type: 'text', text: 'Review complete' }],
@@ -1285,7 +1234,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         agentSessionId: 'dead-reviewer-a-session',
         result: 'reviewer A already exited',
       });
-      // Terminal SDK message so non-terminal idle handler skips this execution.
       saveAssistantMessage(
         'dead-reviewer-a-session',
         [{ type: 'text', text: 'Reviewer A done' }],
@@ -1343,8 +1291,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         agentSessionId: 'dead-docs-session',
         result: 'docs branch already finished',
       });
-      // Terminal SDK message so non-terminal idle handler skips Docs — it is
-      // a sibling branch that already finished and should stay idle.
       saveAssistantMessage(
         'dead-docs-session',
         [{ type: 'text', text: 'Docs complete' }],
@@ -1399,8 +1345,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         agentSessionId: 'dead-review-session',
         result: 'review branch already finished',
       });
-      // Terminal SDK messages for both sessions so the non-terminal idle
-      // handler skips them — downstream recovery should leave them idle.
       saveAssistantMessage(
         'dead-docs-session',
         [{ type: 'text', text: 'Docs complete' }],
@@ -1457,10 +1401,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         status: 'in_progress',
       });
       seedExec(run.id, STEP_B, 'Review', 'idle');
-      // Seed a dead-loop state on the cyclic Review→Coding channel: 15 rapid
-      // traversals within the rate window. Recovery must refuse to re-activate
-      // it. (A single lifetime increment no longer blocks — only a true
-      // runaway rate does.)
       const cycleRepo = new ChannelCycleRepository(db);
       const now = Date.now();
       for (let i = 0; i < 15; i++) cycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
@@ -1474,7 +1414,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
       expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
 
-      // The dead loop is surfaced to the UI (not just logged as a generic stall).
       const deadLoopNotes = notifications.filter((n) => n.kind === 'workflow_run_dead_loop');
       expect(deadLoopNotes).toHaveLength(1);
       expect(deadLoopNotes[0].payload.runId).toBe(run.id);
@@ -1482,10 +1421,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
     });
 
     test('cyclic channel one short of the dead-loop threshold → recovery activates and records exactly one traversal', async () => {
-      // Pins the recovery off-by-one: at 14 in-window traversals the channel is
-      // still open, so recovery activates the downstream node and records
-      // exactly one more traversal (14 → 15). At 15 it is closed — recorded 0,
-      // run blocked — covered by the test above.
       const workflow = buildLinearWorkflow(
         SPACE_ID,
         workflowManager,
@@ -1524,22 +1459,13 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         pendingMessageRepo: new PendingAgentMessageRepository(db),
       }).recoverStalledRuns();
 
-      // Channel was open → recovery activated Coding and recorded exactly one
-      // traversal (14 → 15). The run is recovered, not blocked.
       expect(findExec(run.id, STEP_A)).toBeDefined();
       expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(15);
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-      // Not a dead loop → no dead-loop notification.
       expect(notifications.filter((n) => n.kind === 'workflow_run_dead_loop')).toHaveLength(0);
     });
 
     test('done/cancelled are reopenable → rate window retained; archiving the task clears it', async () => {
-      // Regression guard for the reopen/rate-window interaction: a run that
-      // reaches done/cancelled can be reopened by a peer send within the
-      // 5-minute window (ChannelRouter flips it back to `in_progress`), so its
-      // dead-loop history must survive the terminal transition — otherwise a
-      // reopened runaway gets a fresh 15 traversals in the same window. Only the
-      // true tombstone, task archive, may clear it.
       const workflow = buildLinearWorkflow(
         SPACE_ID,
         workflowManager,
@@ -1578,26 +1504,16 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         pendingMessageRepo: new PendingAgentMessageRepository(db),
       });
 
-      // Cancel the run. done/cancelled are reopenable, so the rolling-window
-      // history must be retained across the terminal transition.
       await runtime.cancelWorkflowRun(SPACE_ID, run.id);
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
       expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(5);
 
-      // Archive the (now cancelled) task — the true tombstone, and the only
-      // status from which ChannelRouter hard-blocks further sends. setTaskStatus
-      // is the chokepoint for tool- and RPC-driven archives; the cleanup lives
-      // there, so archiving clears the retained window.
       const taskManager = new SpaceTaskManager(db, SPACE_ID);
       await taskManager.setTaskStatus(task.id, 'archived');
       expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(0);
     });
 
     test('clearing run dead-loop history waits until ALL its tasks are archived', async () => {
-      // A legacy/inconsistent run can carry more than one task. ChannelRouter
-      // keeps the run reopenable until every task is archived, so the dead-loop
-      // cleanup must wait for the last task too — otherwise a still-live sibling
-      // could resume a runaway with a fresh budget.
       const workflow = buildLinearWorkflow(
         SPACE_ID,
         workflowManager,
@@ -1641,19 +1557,13 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(3);
 
       const taskManager = new SpaceTaskManager(db, SPACE_ID);
-      // Archive one of two tasks → a live sibling remains → history retained.
       await taskManager.setTaskStatus(taskA.id, 'archived');
       expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(3);
-      // Archive the remaining task → all archived (true tombstone) → cleared.
       await taskManager.setTaskStatus(taskB.id, 'archived');
       expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(0);
     });
 
     test('pruneExpiredCycleEvents drops window-aged retained history (throttled)', async () => {
-      // Reopenable done/cancelled runs are never traversed again, so their
-      // retained rows are never lazy-pruned. The periodic tick sweep must
-      // physically delete window-aged rows so the table cannot grow unbounded
-      // between restarts — without touching in-window rows.
       const workflow = buildLinearWorkflow(
         SPACE_ID,
         workflowManager,
@@ -1685,22 +1595,17 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       });
       const cycleRepo = new ChannelCycleRepository(db);
       const now = Date.now();
-      cycleRepo.recordCycleEvent(run.id, 1, now - 1000); // in-window (fresh)
-      cycleRepo.recordCycleEvent(run.id, 1, now - DEAD_LOOP_WINDOW_MS - 60_000); // stale
+      cycleRepo.recordCycleEvent(run.id, 1, now - 1000);
+      cycleRepo.recordCycleEvent(run.id, 1, now - DEAD_LOOP_WINDOW_MS - 60_000);
 
       const runtime = makeRuntime({
         pendingMessageRepo: new PendingAgentMessageRepository(db),
       });
-      // Cancel the run (reopenable) → both rows retained.
       await runtime.cancelWorkflowRun(SPACE_ID, run.id);
 
-      // First sweep drops only the stale row; the fresh row stays.
       runtime.pruneExpiredCycleEvents(now);
       expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(1);
 
-      // Throttle: a second sweep inside the window is a no-op, so a newly
-      // seeded stale row survives until the next window. resetAllForRun returns
-      // the total deleted (fresh + the new stale row = 2), proving no prune.
       cycleRepo.recordCycleEvent(run.id, 1, now - DEAD_LOOP_WINDOW_MS - 60_000);
       runtime.pruneExpiredCycleEvents(now + 1000);
       expect(cycleRepo.resetAllForRun(run.id)).toBe(2);
@@ -1732,17 +1637,14 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const rt = makeRuntime();
       await rt.recoverStalledRuns();
 
-      // Run should be blocked
       const updatedRun = workflowRunRepo.getRun(run.id)!;
       expect(updatedRun.status).toBe('blocked');
 
-      // Canonical task should be blocked with execution_failed reason
       const updatedTask = taskRepo.getTask(task.id)!;
       expect(updatedTask.status).toBe('blocked');
       expect(updatedTask.blockReason).toBe('execution_failed');
       expect(updatedTask.result).toContain('stalled across daemon restart');
 
-      // Notifications fired
       const taskBlockedEvents = notifications.filter((n) => n.kind === 'task_blocked');
       const runBlockedEvents = notifications.filter((n) => n.kind === 'workflow_run_blocked');
       expect(taskBlockedEvents.length).toBe(1);
@@ -1806,22 +1708,16 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-      // No task created — degenerate but possible state
       seedExec(run.id, STEP_A, 'Step A', 'idle');
 
       const rt = makeRuntime();
       await rt.recoverStalledRuns();
 
       expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
-      // workflow_run_blocked still fires; no task_blocked because no canonical task
       expect(notifications.filter((n) => n.kind === 'workflow_run_blocked').length).toBe(1);
       expect(notifications.filter((n) => n.kind === 'task_blocked').length).toBe(0);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // 2. Completion signal recorded → leave for tick to finalize
-  // -------------------------------------------------------------------------
 
   describe('runs with completion signal are left to the tick loop', () => {
     test('all idle executions + canonical task with reportedStatus="done" → not blocked', async () => {
@@ -1851,9 +1747,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const rt = makeRuntime();
       await rt.recoverStalledRuns();
 
-      // Run still in_progress — tick loop will finalize
       expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
-      // No blocked notifications
       expect(notifications.filter((n) => n.kind === 'workflow_run_blocked').length).toBe(0);
       expect(notifications.filter((n) => n.kind === 'task_blocked').length).toBe(0);
     });
@@ -1887,16 +1781,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
     });
 
-    // -----------------------------------------------------------------------
-    // Regression — task #127
-    //
-    // A task in `review` is paused waiting for human approval (the end-node
-    // agent finished, all sibling executions correctly went `idle`). It is
-    // NOT a stalled run. A daemon restart must leave the task and its run
-    // untouched. Same applies to `approved` (post-approval executor may be
-    // in flight, leaving prior node executions idle).
-    // -----------------------------------------------------------------------
-
     test('canonical task in `review` → run + task untouched, no blocked notifications (task #127)', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
@@ -1918,18 +1802,15 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         status: 'review',
       });
 
-      // All node executions correctly idle while we wait for the human.
       seedExec(run.id, STEP_A, 'Step A', 'idle');
 
       const rt = makeRuntime();
       await rt.recoverStalledRuns();
 
-      // Run + task must be unchanged — `review` is "at rest", not stalled.
       expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
       const after = taskRepo.getTask(task.id)!;
       expect(after.status).toBe('review');
       expect(after.blockReason).toBeNull();
-      // And no spurious blocked notifications.
       expect(notifications.filter((n) => n.kind === 'workflow_run_blocked').length).toBe(0);
       expect(notifications.filter((n) => n.kind === 'task_blocked').length).toBe(0);
     });
@@ -1954,7 +1835,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         workflowNodeId: STEP_A,
         status: 'review',
       });
-      // Mirror the real-world `submit_for_approval` checkpoint shape.
       taskRepo.updateTask(task.id, { pendingCheckpointType: 'task_completion' });
 
       seedExec(run.id, STEP_A, 'Step A', 'idle');
@@ -2002,10 +1882,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 3. Driveable executions left untouched
-  // -------------------------------------------------------------------------
-
   describe('runs with driveable executions are skipped', () => {
     test('pending execution → run untouched (tick will spawn)', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -2051,10 +1927,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const execution = seedExec(run.id, STEP_A, 'Step A', 'in_progress', {
         agentSessionId: 'session:missing-workflow',
       });
-      // Simulate a workflow deleted out from under an active run — a legacy
-      // orphan that the deletion guard (RFC §4 #3) now prevents in normal
-      // operation, but which recoverStalledRuns must still tolerate. Bypass the
-      // manager guard by deleting at the repo level (no active-run check).
       new SpaceWorkflowRepository(db).deleteWorkflow(workflow.id);
       const cancelledSessions: string[] = [];
       const tam = {
@@ -2147,15 +2019,11 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const rt = makeRuntime();
       await rt.recoverStalledRuns();
 
-      // Recovery should NOT block the run — the tick path's
-      // attemptBlockedRunRecovery will retry/escalate on its own schedule
       expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
       expect(notifications.filter((n) => n.kind === 'workflow_run_blocked').length).toBe(0);
     });
 
     test('orphan in_progress execution with dead session → recovery does NOT touch it', async () => {
-      // Recovery deliberately leaves orphan in_progress executions for the
-      // tick path's crash-retry logic (which counts crashes per execution).
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
@@ -2173,7 +2041,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 
       const tam = {
         isExecutionSpawning: () => false,
-        isSessionAlive: () => false, // dead session
+        isSessionAlive: () => false,
         spawnWorkflowNodeAgentForExecution: async () => 'session:new',
         cancelBySessionId: () => {},
         interruptBySessionId: async () => {},
@@ -2183,19 +2051,13 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const rt = makeRuntime({ taskAgentManager: tam as never });
       await rt.recoverStalledRuns();
 
-      // Execution untouched by recovery — still in_progress, session preserved
       const after = nodeExecutionRepo.getById(exec.id)!;
       expect(after.status).toBe('in_progress');
       expect(after.agentSessionId).toBe('session:dead');
-      // Run untouched — no premature blocked transition
       expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
       expect(notifications.length).toBe(0);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // 4. Idempotency
-  // -------------------------------------------------------------------------
 
   describe('idempotency', () => {
     test('calling recoverStalledRuns twice acts only once', async () => {
@@ -2225,7 +2087,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       await rt.recoverStalledRuns();
       await rt.recoverStalledRuns();
 
-      // Notifications emitted exactly once
       expect(notifications.filter((n) => n.kind === 'task_blocked').length).toBe(1);
       expect(notifications.filter((n) => n.kind === 'workflow_run_blocked').length).toBe(1);
     });
@@ -2259,10 +2120,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 
       await rt.executeTick();
 
-      // executeTick's first-tick recovery path should be a no-op
-      // (recoveryDone flag set). The tick may emit other events for the
-      // already-blocked run, but it must not re-fire the recovery
-      // blocked notifications.
       const taskBlockedAfter = notifications.filter((n) => n.kind === 'task_blocked').length;
       const runBlockedAfter = notifications.filter((n) => n.kind === 'workflow_run_blocked').length;
 
@@ -2271,10 +2128,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(notifications.length).toBeGreaterThanOrEqual(beforeTick);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // 5. executeTick triggers recovery on first call
-  // -------------------------------------------------------------------------
 
   describe('first executeTick triggers recovery', () => {
     test('stalled run is blocked on first tick even without explicit recoverStalledRuns call', async () => {
@@ -2301,16 +2154,11 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       seedExec(run.id, STEP_A, 'Step A', 'idle');
 
       const rt = makeRuntime();
-      // No explicit recoverStalledRuns — only executeTick
       await rt.executeTick();
 
       expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
     });
   });
-
-  // -------------------------------------------------------------------------
-  // 6. Multiple stalled runs across spaces
-  // -------------------------------------------------------------------------
 
   describe('multiple stalled runs', () => {
     test('multiple stalled runs in the same space all get blocked', async () => {
@@ -2362,16 +2210,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Stale / missing custom-agent reference on a downstream node
-  // -------------------------------------------------------------------------
-  //
-  // node_executions.agent_id is `FOREIGN KEY … REFERENCES space_agents(id) ON
-  // DELETE SET NULL`. Deleting an agent nulls EXISTING execution rows, but a
-  // pinned workflow definition still references the old agent id, so activating
-  // the downstream node would INSERT a row whose agent_id violates the FK — and
-  // INSERT OR IGNORE does NOT suppress that. Recovery must block the run with an
-  // actionable diagnostic instead of leaking the raw SQLite exception.
   describe('stale custom-agent reference on a downstream node', () => {
     const STALE_AGENT = 'agent-stale-downstream';
 
@@ -2400,7 +2238,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Coding', agentId: AGENT },
         { id: STEP_B, name: 'Review', agentId: STALE_AGENT },
       ]);
-      // Delete the agent the downstream node pins AFTER the workflow is created.
       db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(STALE_AGENT);
       const { run, task } = seedStaleRun(STEP_A, STEP_B, workflow.id);
 
@@ -2408,7 +2245,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         pendingMessageRepo: new PendingAgentMessageRepository(db),
       }).recoverStalledRuns();
 
-      // Run + canonical task blocked with the actionable diagnostic.
       const blockedRun = workflowRunRepo.getRun(run.id)!;
       const blockedTask = taskRepo.getTask(task.id)!;
       expect(blockedRun.status).toBe('blocked');
@@ -2417,9 +2253,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(blockedTask.result).toContain(run.id);
       expect(blockedTask.result).toContain('Review');
       expect(blockedTask.result).toContain(STALE_AGENT);
-      // A clean diagnostic, never the raw SQLite foreign-key error.
       expect(blockedTask.result).not.toMatch(/FOREIGN KEY/i);
-      // No downstream execution was created for the stale slot.
       expect(findExec(run.id, STEP_B)).toBeUndefined();
       expect(notifications).toContainEqual(
         expect.objectContaining({ kind: 'workflow_run_blocked' })
@@ -2432,7 +2266,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       seedAgentRow(db, STALE_AGENT, SPACE_ID);
       seedAgentRow(db, GOOD_AGENT, SPACE_ID);
 
-      // Stale run: downstream references a deleted agent → must block.
       const staleWf = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: 'stale-a', name: 'Coding', agentId: GOOD_AGENT },
         { id: 'stale-b', name: 'Review', agentId: STALE_AGENT },
@@ -2440,7 +2273,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(STALE_AGENT);
       const staleCtx = seedStaleRun('stale-a', 'stale-b', staleWf.id);
 
-      // Valid run: downstream references an existing agent → must recover.
       const goodWf = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: 'good-a', name: 'Plan', agentId: GOOD_AGENT },
         { id: 'good-b', name: 'Verify', agentId: GOOD_AGENT },
@@ -2465,7 +2297,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         pendingMessageRepo: new PendingAgentMessageRepository(db),
       }).recoverStalledRuns();
 
-      // The malformed run is blocked; the valid sibling run still recovered.
       expect(workflowRunRepo.getRun(staleCtx.run.id)?.status).toBe('blocked');
       expect(findExec(staleCtx.run.id, 'stale-b')).toBeUndefined();
       expect(workflowRunRepo.getRun(goodRun.id)?.status).toBe('in_progress');
@@ -2485,9 +2316,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       await rt.recoverStalledRuns();
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
 
-      // Simulate a fresh daemon restart (the in-process idempotency guard resets
-      // each boot) and re-run recovery. The now-blocked run is no longer
-      // "active" (getActiveRuns is in_progress only), so it is never retried.
       (rt as unknown as { recoveryDone: boolean }).recoveryDone = false;
       await rt.recoverStalledRuns();
 
@@ -2496,15 +2324,12 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
     });
 
     test('worker slot with a present custom agent alongside is still recovered when the agent exists', async () => {
-      // Regression guard: the new validation must not over-block valid runs.
-      // A normal two-node run whose downstream agent exists recovers as before.
       seedAgentRow(db, STALE_AGENT, SPACE_ID);
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Coding', agentId: AGENT },
         { id: STEP_B, name: 'Review', agentId: STALE_AGENT },
       ]);
       const { run } = seedStaleRun(STEP_A, STEP_B, workflow.id);
-      // Agent NOT deleted — recovery should activate the downstream node.
 
       await makeRuntime({
         pendingMessageRepo: new PendingAgentMessageRepository(db),

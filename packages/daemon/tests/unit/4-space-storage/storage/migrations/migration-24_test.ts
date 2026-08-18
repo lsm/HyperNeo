@@ -1,9 +1,3 @@
-/**
- * Migration 24 Tests
- *
- * Tests for Migration 24: Rename 'failed' task status to 'needs_attention'.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -22,7 +16,6 @@ describe('Migration 24: rename failed → needs_attention', () => {
     db = new BunDatabase(dbPath);
     db.exec('PRAGMA foreign_keys = ON');
 
-    // Create legacy rooms table (required by tasks foreign key)
     db.exec(`
 			CREATE TABLE IF NOT EXISTS rooms (
 				id TEXT PRIMARY KEY,
@@ -46,7 +39,6 @@ describe('Migration 24: rename failed → needs_attention', () => {
 			VALUES ('room-1', 'Test Room', ${Date.now()}, ${Date.now()})
 		`);
 
-    // Create legacy tasks table with the OLD 'failed' CHECK constraint
     db.exec(`PRAGMA foreign_keys = OFF`);
     db.exec(`
 			CREATE TABLE IF NOT EXISTS tasks (
@@ -113,7 +105,6 @@ describe('Migration 24: rename failed → needs_attention', () => {
 
     const now = Date.now();
 
-    // Should accept needs_attention
     expect(() => {
       db.exec(`
 				INSERT INTO tasks (id, room_id, title, description, status, created_at)
@@ -121,7 +112,6 @@ describe('Migration 24: rename failed → needs_attention', () => {
 			`);
     }).not.toThrow();
 
-    // Should reject the old 'failed' status
     expect(() => {
       db.exec(`
 				INSERT INTO tasks (id, room_id, title, description, status, created_at)
@@ -131,7 +121,6 @@ describe('Migration 24: rename failed → needs_attention', () => {
   });
 
   test('is idempotent when run on already-migrated database', () => {
-    // Run migrations twice — should not throw
     runMigrations(db, () => {});
     expect(() => runMigrations(db, () => {})).not.toThrow();
   });

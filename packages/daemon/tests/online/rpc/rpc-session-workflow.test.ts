@@ -1,13 +1,3 @@
-/**
- * End-to-End Session Workflow Tests
- *
- * Tests complete workflows through the real WebSocket protocol:
- * - Create session -> Verify -> Update -> Delete
- * - Multi-session scenarios
- * - Concurrent operations
- * - Error recovery
- */
-
 import { describe, test, expect, beforeEach, afterEach, setDefaultTimeout } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 
@@ -54,15 +44,12 @@ describe('End-to-End Session Workflow', () => {
 
   describe('Complete Session Lifecycle', () => {
     test('should handle full session lifecycle via RPC', async () => {
-      // 1. Create session
       const sessionId = await createSession('/test/lifecycle');
       expect(sessionId).toBeString();
 
-      // 2. Verify session exists
       const session = await getSession(sessionId);
       expect(session.id).toBe(sessionId);
 
-      // 3. Update session
       await daemon.messageHub.request('session.update', {
         sessionId,
         title: 'Test Lifecycle',
@@ -71,10 +58,8 @@ describe('End-to-End Session Workflow', () => {
       const updatedSession = await getSession(sessionId);
       expect(updatedSession.title).toBe('Test Lifecycle');
 
-      // 4. Delete session
       await deleteSession(sessionId);
 
-      // 5. Verify session is gone
       await expect(daemon.messageHub.request('session.get', { sessionId })).rejects.toThrow(
         'Session not found'
       );
@@ -85,10 +70,8 @@ describe('End-to-End Session Workflow', () => {
       const sessionId2 = await createSession('/test/multi-2');
       const sessionId3 = await createSession('/test/multi-3');
 
-      // Delete one session
       await deleteSession(sessionId2);
 
-      // Verify others still exist
       const sessions = await listSessions();
       const ids = sessions.map((s) => s.id);
       expect(ids).toContain(sessionId1);
@@ -120,7 +103,6 @@ describe('End-to-End Session Workflow', () => {
         createSession('/test/concurrent-ops-3'),
       ]);
 
-      // Concurrent updates
       await Promise.all(
         sessionIds.map((id, i) =>
           daemon.messageHub.request('session.update', {
@@ -130,7 +112,6 @@ describe('End-to-End Session Workflow', () => {
         )
       );
 
-      // Verify all updates
       const sessions = await listSessions();
       const titles = sessions
         .filter((s) => sessionIds.includes(s.id as string))
@@ -138,10 +119,8 @@ describe('End-to-End Session Workflow', () => {
         .sort();
       expect(titles).toEqual(['Updated 0', 'Updated 1', 'Updated 2']);
 
-      // Concurrent deletes
       await Promise.all(sessionIds.map((id) => deleteSession(id)));
 
-      // Verify all deleted
       const finalSessions = await listSessions();
       for (const id of sessionIds) {
         expect(finalSessions.map((s) => s.id)).not.toContain(id);
@@ -159,7 +138,6 @@ describe('End-to-End Session Workflow', () => {
         system: { health: { sessions: { total: number; active: number } } };
       };
 
-      // At least 2 sessions (may have more from other tests in same beforeAll)
       expect(snapshot.sessions.sessions.length).toBeGreaterThanOrEqual(2);
     });
 
@@ -178,12 +156,10 @@ describe('End-to-End Session Workflow', () => {
 
   describe('Error Recovery', () => {
     test('should recover from failed operations', async () => {
-      // Attempt invalid operation
       await expect(
         daemon.messageHub.request('session.get', { sessionId: 'non-existent' })
       ).rejects.toThrow();
 
-      // Server should still work
       const sessionId = await createSession('/test/error-recovery');
       expect(sessionId).toBeString();
     });
@@ -194,7 +170,6 @@ describe('End-to-End Session Workflow', () => {
         await deleteSession(sessionId);
       }
 
-      // Verify cycles didn't leave orphans
       const sessions = await listSessions();
       const cycleIds = sessions.filter(
         (s) => typeof s.workspacePath === 'string' && s.workspacePath.includes('/test/cycle-')

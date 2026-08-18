@@ -1,10 +1,3 @@
-/**
- * Tests for Custom Endpoint RPC handlers.
- *
- * Verifies validation, persistence, and provider registry sync for the
- * customEndpoints.list / add / update / remove handlers.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { CustomEndpointConfig, GlobalSettings } from '@hyperneo/shared';
@@ -18,8 +11,6 @@ import type {
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
 
-// Capture sync calls so each test can assert that the provider registry was
-// re-synced with the latest list of endpoints.
 const syncCalls: Array<CustomEndpointConfig[] | undefined> = [];
 mock.module('../../../../src/lib/providers/factory', () => ({
   syncCustomEndpointProviders: mock(async (configs: CustomEndpointConfig[] | undefined) => {
@@ -27,7 +18,6 @@ mock.module('../../../../src/lib/providers/factory', () => ({
   }),
 }));
 
-// Track model-cache invalidations so we can assert mutations clear stale data.
 const clearModelsCacheCalls: Array<string | undefined> = [];
 mock.module('../../../../src/lib/model-service', () => ({
   clearModelsCache: mock((cacheKey?: string) => {
@@ -181,9 +171,6 @@ describe('Custom Endpoint RPC handlers', () => {
           {
             endpoint: {
               ...validEndpoint,
-              // `bedrock` isn't one of the three supported upstream surfaces;
-              // must be rejected before persistence or registry sync so we
-              // don't store a config the factory can't dispatch on.
               type: 'bedrock' as unknown as 'openai-chat',
             },
           },
@@ -281,9 +268,6 @@ describe('Custom Endpoint RPC handlers', () => {
       const add = hubData.handlers.get('customEndpoints.add')!;
       const a = { ...validEndpoint, id: 'a', name: 'A' };
       const b = { ...validEndpoint, id: 'b', name: 'B' };
-      // Fire both adds without awaiting between them. Without locking the
-      // second add would read the same pre-update array as the first and
-      // overwrite it on persist.
       await Promise.all([add({ endpoint: a }, {}), add({ endpoint: b }, {})]);
       const ids = (settings.state.settings.customEndpoints ?? []).map((e) => e.id).sort();
       expect(ids).toEqual(['a', 'b']);

@@ -1,17 +1,6 @@
-/**
- * AcpQueryAdapter Tests
- *
- * Unit tests for the Query-contract adapter that bridges ACP notifications
- * to SDKMessage iteration.
- */
-
 import { describe, expect, test, mock } from 'bun:test';
 import type { AcpSessionUpdateNotification, AcpContentBlock } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-
-// ---------------------------------------------------------------------------
-// Mock AcpClient
-// ---------------------------------------------------------------------------
 
 class MockAcpClient {
   private sessionId: string;
@@ -87,10 +76,6 @@ class MockAcpClient {
 const { AcpQueryAdapter } = await import('../../../../src/lib/acp/acp-query-adapter');
 
 describe('AcpQueryAdapter', () => {
-  // -------------------------------------------------------------------------
-  // Construction
-  // -------------------------------------------------------------------------
-
   test('throws when client has no session', () => {
     class EmptyClient {
       getSessionId() {
@@ -107,10 +92,6 @@ describe('AcpQueryAdapter', () => {
         )(new EmptyClient(), [])
     ).toThrow('AcpClient has no active session');
   });
-
-  // -------------------------------------------------------------------------
-  // Iteration
-  // -------------------------------------------------------------------------
 
   test('forwards ACP delivery lifecycle callbacks at prompt iteration', async () => {
     const client = new MockAcpClient('sess-1');
@@ -153,7 +134,6 @@ describe('AcpQueryAdapter', () => {
     const messages: SDKMessage[] = [];
     const iterator = adapter[Symbol.asyncIterator]();
 
-    // First message should be the accumulated text
     const msg1 = await iterator.next();
     expect(msg1.done).toBe(false);
     expect(msg1.value.type).toBe('assistant');
@@ -161,12 +141,10 @@ describe('AcpQueryAdapter', () => {
       (msg1.value as { message: { content: { text: string }[] } }).message.content[0].text
     ).toBe('Hi there!');
 
-    // Result message
     const msg2 = await iterator.next();
     expect(msg2.done).toBe(false);
     expect(msg2.value.type).toBe('result');
 
-    // Done
     const msg3 = await iterator.next();
     expect(msg3.done).toBe(true);
   });
@@ -264,7 +242,6 @@ describe('AcpQueryAdapter', () => {
 
     await adapter.interrupt();
 
-    // After interrupt, subsequent next() should yield result and complete
     const msg2 = await iterator.next();
     expect(msg2.value.type).toBe('result');
     expect(msg2.done).toBe(false);
@@ -290,10 +267,6 @@ describe('AcpQueryAdapter', () => {
     }
     expect(messages.length).toBe(0);
   });
-
-  // -------------------------------------------------------------------------
-  // Interrupt / close
-  // -------------------------------------------------------------------------
 
   test('interrupt calls client.cancel', async () => {
     const client = new MockAcpClient('sess-6');
@@ -348,10 +321,6 @@ describe('AcpQueryAdapter', () => {
     adapter.close();
     expect(client.close).toHaveBeenCalledTimes(1);
   });
-
-  // -------------------------------------------------------------------------
-  // Properties
-  // -------------------------------------------------------------------------
 
   test('sessionId getter returns client sessionId', () => {
     const client = new MockAcpClient('sess-10');

@@ -1,11 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ArchiveConfirmDialog Component
- *
- * Tests the archive confirmation modal with uncommitted changes display,
- * confirm/cancel buttons, and archiving state.
-import { describe, it, expect, vi } from 'vitest';
- */
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { ArchiveSessionResponse } from '@hyperneo/shared';

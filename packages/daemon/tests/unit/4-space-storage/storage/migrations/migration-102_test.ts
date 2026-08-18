@@ -1,31 +1,3 @@
-/**
- * Migration 102 Tests — M5 of `unify-mcp-config-model`.
- *
- * Migration 102 strips legacy MCP keys from the `global_settings` JSON blob:
- *   - `disabledMcpServers`
- *   - `mcpServerSettings`
- *   - `enabledMcpServers`
- *   - `enableAllProjectMcpServers`
- *
- * The TypeScript fields were dropped in M5 (`packages/shared/src/types/settings.ts`).
- * On the next read after this migration the JSON blob won't carry these keys
- * back in.
- *
- * Order matters: M102 runs *after* M101 — which seeds the new `mcp_enablement`
- * table from the same legacy keys — so that the data is preserved before being
- * stripped from the JSON blob.
- *
- * Covers:
- *   - The four legacy keys are stripped from a pre-existing JSON blob.
- *   - Other keys in the blob are preserved verbatim.
- *   - When none of the legacy keys are present, the blob is left untouched
- *     (no UPDATE is fired).
- *   - When the `global_settings` table doesn't exist, the migration is a no-op.
- *   - When the `global_settings` table is empty (no row), the migration is a no-op.
- *   - Malformed JSON is swallowed (does not throw).
- *   - Idempotent — running the migration twice is a no-op.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -133,7 +105,6 @@ describe('Migration 102: strip legacy MCP keys from global_settings JSON blob', 
     insertSettingsBlob(db, {
       model: 'opus',
       disabledMcpServers: ['x'],
-      // only one of the four legacy keys present
     });
 
     runMigration102(db);
@@ -156,12 +127,10 @@ describe('Migration 102: strip legacy MCP keys from global_settings JSON blob', 
   });
 
   test('is a no-op when the global_settings table does not exist', () => {
-    // No table created — migration must not throw and must not create one.
     expect(() => runMigration102(db)).not.toThrow();
     const tableRow = db
       .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='global_settings'`)
       .get();
-    // Bun's bun:sqlite returns `null` (not `undefined`) for an empty .get().
     expect(tableRow).toBeNull();
   });
 
@@ -180,7 +149,6 @@ describe('Migration 102: strip legacy MCP keys from global_settings JSON blob', 
 
     expect(() => runMigration102(db)).not.toThrow();
 
-    // Row is still present and untouched (the migration's catch swallows the parse error).
     const row = db.prepare(`SELECT settings FROM global_settings WHERE id = 1`).get() as {
       settings: string;
     };

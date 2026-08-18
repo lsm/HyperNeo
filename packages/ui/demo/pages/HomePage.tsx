@@ -65,11 +65,9 @@ interface HomePageProps {
 }
 
 function HomePageInner({ setActiveSection }: HomePageProps) {
-  // Scroll to top on mount, then check if there's an anchor to scroll to
   useEffect(() => {
     const hash = window.location.hash;
     if (hash && !hash.startsWith('#/')) {
-      // Anchor link to a specific section — scroll to it after a brief tick
       const el = document.getElementById(hash.slice(1));
       if (el) {
         el.scrollIntoView({ behavior: 'smooth' });
@@ -79,7 +77,6 @@ function HomePageInner({ setActiveSection }: HomePageProps) {
     }
   }, []);
 
-  // Scroll-spy: track which section is most visible
   useEffect(() => {
     const visibleSections = new Map<string, number>();
 
@@ -110,7 +107,6 @@ function HomePageInner({ setActiveSection }: HomePageProps) {
     for (const el of sectionEls) observer.observe(el);
 
     return () => observer.disconnect();
-    // setActiveSection is a stable useState setter — intentionally omitted from deps
   }, []);
 
   return (

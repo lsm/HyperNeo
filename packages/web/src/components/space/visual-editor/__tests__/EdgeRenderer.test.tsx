@@ -1,29 +1,3 @@
-/**
- * Unit tests for EdgeRenderer
- *
- * Tests:
- * - Correct number of paths rendered per transition
- * - Missing node position skips that edge
- * - computeEdgePoints bezier control point math
- * - buildPathD produces correct SVG path string
- * - Edge color matches condition type (always/human/condition) via data-stroke-color
- * - Selected edge gets thicker stroke (data-stroke-width) and white color
- * - Clicking an edge calls onEdgeSelect with transitionId
- * - Delete key on selected edge calls onEdgeDelete
- * - Backspace key on selected edge calls onEdgeDelete
- * - Delete key without selection does not call onEdgeDelete
- * - Delete inside input/textarea/contenteditable does not trigger onEdgeDelete
- * - Arrowhead markers are rendered in defs
- * - Multiple instances have non-colliding marker IDs
- * - Channel edge constants (CHANNEL_EDGE_COLOR, CHANNEL_EDGE_DASH_ARRAY)
- * - computeChannelEdgePoints for regular node-to-node channels
- * - Bidirectional channel renders two arrowheads (markerStart + markerEnd)
- * - One-way channel renders one arrowhead (markerEnd only)
- * - Channel edges use dashed style (strokeDasharray)
- * - Channel edges are teal colored (distinct from transition edge colors)
- * - Channel edges have correct data-testid attribute
- */
-
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { VisualTransition } from '../types';
@@ -48,10 +22,6 @@ import type { ResolvedWorkflowChannel } from '../EdgeRenderer';
 
 afterEach(() => cleanup());
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 const NODE_POSITIONS: NodePosition = {
   'step-1': { x: 50, y: 50, width: 160, height: 80 },
   'step-2': { x: 300, y: 250, width: 160, height: 80 },
@@ -72,7 +42,7 @@ function makeTransition(
   };
 }
 
-const T1 = makeTransition('t1', 'step-1', 'step-2'); // always (no condition)
+const T1 = makeTransition('t1', 'step-1', 'step-2');
 const T2 = makeTransition('t2', 'step-2', 'step-3', 'human');
 const T3 = makeTransition('t3', 'step-1', 'step-3', 'condition');
 
@@ -93,14 +63,9 @@ function renderEdges(props: Partial<EdgeRendererProps> = {}) {
   return { ...result, onEdgeSelect, onEdgeDelete };
 }
 
-// Helper to get the visible path (second <path> in the group)
 function getVisiblePath(group: Element): Element {
   return group.querySelectorAll('path')[1];
 }
-
-// ---------------------------------------------------------------------------
-// computeEdgePoints
-// ---------------------------------------------------------------------------
 
 describe('computeEdgePoints', () => {
   it('returns null when from-node is missing', () => {
@@ -116,25 +81,21 @@ describe('computeEdgePoints', () => {
   it('source x is horizontal center of from-node', () => {
     const pts = computeEdgePoints(T1, NODE_POSITIONS);
     expect(pts).not.toBeNull();
-    // step-1: x=50, width=160 → center x = 50 + 80 = 130
     expect(pts!.sx).toBe(50 + 160 / 2);
   });
 
   it('source y is bottom edge of from-node', () => {
     const pts = computeEdgePoints(T1, NODE_POSITIONS);
-    // step-1: y=50, height=80 → bottom = 130
     expect(pts!.sy).toBe(50 + 80);
   });
 
   it('target x is horizontal center of to-node', () => {
     const pts = computeEdgePoints(T1, NODE_POSITIONS);
-    // step-2: x=300, width=160 → center x = 380
     expect(pts!.tx).toBe(300 + 160 / 2);
   });
 
   it('target y is top edge of to-node', () => {
     const pts = computeEdgePoints(T1, NODE_POSITIONS);
-    // step-2: y=250
     expect(pts!.ty).toBe(250);
   });
 
@@ -151,24 +112,15 @@ describe('computeEdgePoints', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// buildPathD
-// ---------------------------------------------------------------------------
-
 describe('buildPathD', () => {
   it('produces a valid SVG cubic bezier path string', () => {
     const pts = computeEdgePoints(T1, NODE_POSITIONS)!;
     const d = buildPathD(pts);
-    // Format: M sx sy C cp1x cp1y, cp2x cp2y, tx ty
     expect(d).toBe(
       `M ${pts.sx} ${pts.sy} C ${pts.cp1x} ${pts.cp1y}, ${pts.cp2x} ${pts.cp2y}, ${pts.tx} ${pts.ty}`
     );
   });
 });
-
-// ---------------------------------------------------------------------------
-// Rendering
-// ---------------------------------------------------------------------------
 
 describe('EdgeRenderer — rendering', () => {
   it('renders a <g> element for each transition', () => {
@@ -179,7 +131,6 @@ describe('EdgeRenderer — rendering', () => {
 
   it('renders two paths per edge (hitbox + visible)', () => {
     const { container } = renderEdges();
-    // Each <g> should have 2 paths
     const groups = container.querySelectorAll('g[data-edge-id]');
     for (const g of groups) {
       expect(g.querySelectorAll('path')).toHaveLength(2);
@@ -189,7 +140,6 @@ describe('EdgeRenderer — rendering', () => {
   it('skips edges where node positions are missing', () => {
     const missingEdge = makeTransition('tmissing', 'step-1', 'missing-node');
     const { container } = renderEdges({ transitions: [T1, missingEdge] });
-    // Only t1 should render (missingEdge skipped)
     const groups = container.querySelectorAll('g[data-edge-id]');
     expect(groups).toHaveLength(1);
     expect(groups[0].getAttribute('data-edge-id')).toBe('t1');
@@ -199,8 +149,6 @@ describe('EdgeRenderer — rendering', () => {
     const { container } = renderEdges();
     const defs = container.querySelector('defs');
     expect(defs).not.toBeNull();
-    // Should have 5 markers: always, human, condition, task_result, selected
-    // (channel-end and channel-start are only rendered when channels prop is provided)
     expect(defs!.querySelectorAll('marker')).toHaveLength(5);
   });
 
@@ -212,7 +160,6 @@ describe('EdgeRenderer — rendering', () => {
   });
 
   it('multiple instances have non-colliding marker IDs', () => {
-    // Render two EdgeRenderer instances and check their marker IDs differ
     const { container: c1 } = render(
       <svg>
         <EdgeRenderer transitions={[T1]} nodePositions={NODE_POSITIONS} />
@@ -225,16 +172,11 @@ describe('EdgeRenderer — rendering', () => {
     );
     const markers1 = Array.from(c1.querySelectorAll('marker')).map((m) => m.id);
     const markers2 = Array.from(c2.querySelectorAll('marker')).map((m) => m.id);
-    // No overlap between the two instances' marker IDs
     const overlap = markers1.filter((id) => markers2.includes(id));
     expect(overlap).toHaveLength(0);
     cleanup();
   });
 });
-
-// ---------------------------------------------------------------------------
-// Edge colors
-// ---------------------------------------------------------------------------
 
 describe('EdgeRenderer — edge colors', () => {
   it('EDGE_COLORS has correct hex values for all condition types', () => {
@@ -277,10 +219,6 @@ describe('EdgeRenderer — edge colors', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Selected edge
-// ---------------------------------------------------------------------------
-
 describe('EdgeRenderer — selected state', () => {
   it('selected edge has data-selected="true"', () => {
     const { getByTestId } = renderEdges({ selectedEdgeId: 't1' });
@@ -318,10 +256,6 @@ describe('EdgeRenderer — selected state', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Click selection
-// ---------------------------------------------------------------------------
-
 describe('EdgeRenderer — click selection', () => {
   it('clicking an edge calls onEdgeSelect with the transitionId', () => {
     const { getByTestId, onEdgeSelect } = renderEdges();
@@ -346,10 +280,6 @@ describe('EdgeRenderer — click selection', () => {
     expect(hitboxPath.getAttribute('stroke')).toBe('transparent');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Keyboard delete
-// ---------------------------------------------------------------------------
 
 describe('EdgeRenderer — keyboard delete', () => {
   it('Delete key calls onEdgeDelete with selected edgeId', () => {
@@ -399,10 +329,6 @@ describe('EdgeRenderer — keyboard delete', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Channel edge constants
-// ---------------------------------------------------------------------------
-
 describe('Channel edge constants', () => {
   it('CHANNEL_EDGE_COLOR is teal', () => {
     expect(CHANNEL_EDGE_COLOR).toBe('#14b8a6');
@@ -412,10 +338,6 @@ describe('Channel edge constants', () => {
     expect(CHANNEL_EDGE_DASH_ARRAY).toBe('6 4');
   });
 });
-
-// ---------------------------------------------------------------------------
-// computeChannelEdgePoints
-// ---------------------------------------------------------------------------
 
 describe('computeChannelEdgePoints', () => {
   it('returns null when from-node is missing', () => {
@@ -444,7 +366,6 @@ describe('computeChannelEdgePoints', () => {
     };
     const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
     expect(pts).not.toBeNull();
-    // step-1: x=50, width=160 → center x = 130
     expect(pts!.sx).toBe(50 + 160 / 2);
   });
 
@@ -456,7 +377,6 @@ describe('computeChannelEdgePoints', () => {
     };
     const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
     expect(pts).not.toBeNull();
-    // step-1: y=50, height=80 → bottom = 130
     expect(pts!.sy).toBe(50 + 80);
   });
 
@@ -468,7 +388,6 @@ describe('computeChannelEdgePoints', () => {
     };
     const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
     expect(pts).not.toBeNull();
-    // step-2: x=300, width=160 → center x = 380
     expect(pts!.tx).toBe(300 + 160 / 2);
   });
 
@@ -480,7 +399,6 @@ describe('computeChannelEdgePoints', () => {
     };
     const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
     expect(pts).not.toBeNull();
-    // step-2: y=250
     expect(pts!.ty).toBe(250);
   });
 
@@ -516,10 +434,6 @@ describe('computeChannelEdgePoints', () => {
     expect(d.endsWith(`${pts!.tx} ${pts!.ty}`)).toBe(false);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Channel edge rendering
-// ---------------------------------------------------------------------------
 
 function renderEdgesWithChannels(props: Partial<EdgeRendererProps> = {}) {
   const onEdgeSelect = vi.fn();
@@ -672,7 +586,6 @@ describe('EdgeRenderer — channel edge rendering', () => {
     );
     expect(visiblePath).not.toBeNull();
     expect(visiblePath!.getAttribute('stroke')).toBe(CHANNEL_EDGE_COLOR);
-    // Verify it's different from transition edge colors
     expect(CHANNEL_EDGE_COLOR).not.toBe(EDGE_COLORS.always);
     expect(CHANNEL_EDGE_COLOR).not.toBe(EDGE_COLORS.human);
     expect(CHANNEL_EDGE_COLOR).not.toBe(EDGE_COLORS.condition);
@@ -700,10 +613,6 @@ describe('EdgeRenderer — channel edge rendering', () => {
     expect(channelEndMarker?.getAttribute('orient')).toBe('auto-start-reverse');
   });
 });
-
-// ---------------------------------------------------------------------------
-// getOrthogonalPathMidpointWithAngle
-// ---------------------------------------------------------------------------
 
 describe('getOrthogonalPathMidpointWithAngle', () => {
   it('returns angle=0 for a single horizontal rightward segment', () => {
@@ -751,11 +660,6 @@ describe('getOrthogonalPathMidpointWithAngle', () => {
   });
 
   it('returns the angle of the segment the midpoint falls on in a multi-segment L-path', () => {
-    // Path: right 60px then down 60px  (total=120, midpoint=60px along)
-    // Midpoint is exactly at the end of the first segment (the corner).
-    // The loop condition is `traversed + segmentLength < midpointDistance` (strict <),
-    // so when traversed=0 and segmentLength=60 == midpointDistance=60, the strict <
-    // is false and the midpoint falls ON the first (rightward) segment.
     const pts = [
       { x: 0, y: 0 },
       { x: 60, y: 0 },
@@ -764,12 +668,10 @@ describe('getOrthogonalPathMidpointWithAngle', () => {
     const result = getOrthogonalPathMidpointWithAngle(pts);
     expect(result.x).toBe(60);
     expect(result.y).toBe(0);
-    expect(result.angle).toBe(0); // horizontal rightward segment
+    expect(result.angle).toBe(0);
   });
 
   it('midpoint angle follows the segment with more path length', () => {
-    // Path: right 20px then down 100px (total=120, midpoint=60px)
-    // First segment ends at 20px, so midpoint (60px) is 40px into second segment.
     const pts = [
       { x: 0, y: 0 },
       { x: 20, y: 0 },
@@ -787,7 +689,6 @@ describe('getOrthogonalPathMidpointWithAngle', () => {
       { x: 5, y: 5 },
     ];
     const result = getOrthogonalPathMidpointWithAngle(pts);
-    // Normalizes to a single point — position should be that point
     expect(result.x).toBe(5);
     expect(result.y).toBe(5);
     expect(result.angle).toBe(0);

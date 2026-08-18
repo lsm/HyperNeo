@@ -1,10 +1,3 @@
-/**
- * Legacy Room task draft RPC retirement tests.
- *
- * All Room-scoped task RPC handlers were removed as part of the legacy Room
- * feature retirement.
- */
-
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 

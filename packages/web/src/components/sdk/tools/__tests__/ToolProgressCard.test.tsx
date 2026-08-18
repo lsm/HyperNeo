@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ToolProgressCard Component
- *
- * ToolProgressCard displays real-time tool execution progress.
- */
 import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
@@ -101,7 +96,6 @@ describe('ToolProgressCard', () => {
   describe('Compact Variant', () => {
     it('should render in compact style', () => {
       const { container } = render(<ToolProgressCard {...defaultProps} variant="compact" />);
-      // Compact variant uses py-1 px-2
       const card = container.querySelector('.py-1');
       expect(card).toBeTruthy();
     });

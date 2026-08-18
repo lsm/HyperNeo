@@ -9,10 +9,6 @@ describe('getDaemonWsUrl', () => {
   });
 
   it('uses the protocol default port when no explicit port — regression: HTTPS on 443', () => {
-    // Browsers omit default ports, so window.location.port is '' on https:443.
-    // Previously this fell back to a hardcoded :8283, which nothing proxies under
-    // a TLS-terminating reverse proxy (e.g. `tailscale serve --https 443`): the
-    // page loads but the WebSocket dies → "connection lost".
     expect(
       getDaemonWsUrl({ protocol: 'https:', hostname: 'tts.tailcd822a.ts.net', port: '' })
     ).toBe('wss://tts.tailcd822a.ts.net');

@@ -1,21 +1,3 @@
-/**
- * VisualCanvas
- *
- * A pannable, zoomable viewport container for the visual workflow editor.
- *
- * Pan methods:
- *  - Two-finger trackpad scroll (wheel event without ctrlKey)
- *  - Spacebar + left-click drag
- *  - Left-click drag on empty canvas or a pan-enabled element
- *  - One-finger touch drag on empty canvas or a pan-enabled element (mobile)
- *
- * Zoom methods:
- *  - Trackpad pinch (wheel event with ctrlKey=true)
- *  - Ctrl/Cmd + scroll wheel
- *  - Two-finger touch pinch (mobile)
- *  - Scale is clamped to [0.25, 2.0] and zooms toward cursor position.
- */
-
 import { useEffect, useRef, useCallback, useState, useMemo } from 'preact/hooks';
 import type { ComponentChildren, RefObject } from 'preact';
 import type { NodePosition, ViewportState } from './types';
@@ -47,16 +29,6 @@ function getTouchMidpoint(touches: TouchList, rect: DOMRect): { x: number; y: nu
   };
 }
 
-/**
- * Pure function: compute the next ViewportState for a wheel event.
- *
- * @param vp        Current viewport state
- * @param deltaX    Horizontal scroll delta
- * @param deltaY    Vertical scroll delta (negative = zoom in)
- * @param isZoom    True when the wheel event should zoom (ctrlKey pressed / pinch)
- * @param cursorX   Cursor X relative to the canvas container (for zoom-toward-cursor)
- * @param cursorY   Cursor Y relative to the canvas container
- */
 export function applyWheelEvent(
   vp: ViewportState,
   deltaX: number,
@@ -68,12 +40,10 @@ export function applyWheelEvent(
   if (isZoom) {
     const zoomFactor = 1 - deltaY * 0.005;
     const newScale = clampScale(vp.scale * zoomFactor);
-    // Adjust offset so the point under the cursor stays fixed
     const newOffsetX = cursorX - (cursorX - vp.offsetX) * (newScale / vp.scale);
     const newOffsetY = cursorY - (cursorY - vp.offsetY) * (newScale / vp.scale);
     return { offsetX: newOffsetX, offsetY: newOffsetY, scale: newScale };
   }
-  // Two-finger scroll — pan
   return { ...vp, offsetX: vp.offsetX - deltaX, offsetY: vp.offsetY - deltaY };
 }
 
@@ -81,20 +51,10 @@ interface VisualCanvasProps {
   children?: ComponentChildren;
   viewportState: ViewportState;
   onViewportChange: (state: ViewportState) => void;
-  /** Called when the canvas background is clicked (not on a child node). */
   onBackgroundClick?: () => void;
-  /** Render prop for injecting SVG edge content. Receives current viewport state. */
   edgeLayer?: (viewport: ViewportState) => ComponentChildren;
-  /** Node positions used by the fit-to-view toolbar button. */
   nodes?: NodePosition;
-  /** Whether to show the zoom/fit toolbar overlay. Defaults to true. */
   showToolbar?: boolean;
-  /**
-   * Optional external ref to the canvas container element.
-   * When provided, coordinate calculations (e.g. for ghost edges) use the same
-   * element that VisualCanvas uses internally, avoiding any bounding-rect drift
-   * if an outer wrapper gains padding/borders in future.
-   */
   containerRef?: RefObject<HTMLDivElement>;
 }
 
@@ -109,8 +69,6 @@ export function VisualCanvas({
   containerRef: externalContainerRef,
 }: VisualCanvasProps) {
   const internalContainerRef = useRef<HTMLDivElement>(null);
-  // Use externally-provided ref when available so callers can do their own
-  // coordinate math against the exact same element VisualCanvas uses.
   const containerRef = externalContainerRef ?? internalContainerRef;
   const transformRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
@@ -138,19 +96,15 @@ export function VisualCanvas({
     };
   }, [nodes, containerSize.height, containerSize.width]);
 
-  // Track spacebar state for pan-drag mode
   const spacebarDown = useRef(false);
-  // Track drag state
   const dragState = useRef<{
     startX: number;
     startY: number;
     originOffsetX: number;
     originOffsetY: number;
   } | null>(null);
-  // Track whether a spacebar-drag actually moved the canvas (suppress background click)
   const didDrag = useRef(false);
 
-  // Track one-finger touch pan gesture
   const touchPanState = useRef<{
     touchId: number;
     startX: number;
@@ -159,7 +113,6 @@ export function VisualCanvas({
     originOffsetY: number;
   } | null>(null);
 
-  // Track active pinch-zoom gesture (two-finger touch)
   const pinchState = useRef<{
     initialDistance: number;
     initialScale: number;
@@ -167,11 +120,9 @@ export function VisualCanvas({
     initialCanvasY: number;
   } | null>(null);
 
-  // Keep a ref to the latest viewport so event handlers don't stale-close over it
   const viewportRef = useRef(viewportState);
   viewportRef.current = viewportState;
 
-  // ---- Track container size for toolbar fit-to-view ----
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -185,15 +136,10 @@ export function VisualCanvas({
       }
     });
     obs.observe(el);
-    // Set initial size
     setContainerSize({ width: el.clientWidth, height: el.clientHeight });
     return () => obs.disconnect();
   }, []);
 
-  // ---- Wheel handler (pan + zoom) ----
-  // Registered via onWheel JSX prop so Preact attaches it as a non-passive
-  // listener, which lets us call e.preventDefault() to suppress browser
-  // scroll/pinch-zoom behaviour.
   const handleWheel = useCallback(
     (e: WheelEvent) => {
       e.preventDefault();
@@ -206,14 +152,12 @@ export function VisualCanvas({
     [onViewportChange]
   );
 
-  // ---- Spacebar listeners ----
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat) {
-        // Don't capture space when focused on an input/textarea
         const tag = (e.target as HTMLElement)?.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-        e.preventDefault(); // prevent browser "scroll down" default
+        e.preventDefault();
         spacebarDown.current = true;
         if (containerRef.current) {
           containerRef.current.style.cursor = 'grab';
@@ -237,7 +181,6 @@ export function VisualCanvas({
     };
   }, []);
 
-  // ---- Mouse drag for spacebar+click pan ----
   const handleMouseDown = useCallback((e: MouseEvent) => {
     if (e.button !== 0) return;
 
@@ -292,7 +235,6 @@ export function VisualCanvas({
     };
   }, [handleMouseMove, handleMouseUp]);
 
-  // ---- Touch gestures (mobile Safari / iPhone) ----
   const handleTouchStart = useCallback((e: TouchEvent) => {
     if (e.touches.length >= 2) {
       touchPanState.current = null;
@@ -374,17 +316,12 @@ export function VisualCanvas({
     }
   }, []);
 
-  // ---- Background click: fires when clicking the canvas outside of child nodes ----
-  // Child nodes should call e.stopPropagation() to prevent this from firing.
   const handleContainerClick = useCallback(
     (e: MouseEvent) => {
-      // Suppress if a spacebar-drag just finished
       if (didDrag.current) {
         didDrag.current = false;
         return;
       }
-      // Use refs instead of data-testid so this works correctly in production
-      // (where data-testid attributes may be stripped by build tooling).
       const target = e.target as HTMLElement;
       const isBackground = target === containerRef.current || target === transformRef.current;
       if (isBackground) {

@@ -1,21 +1,3 @@
-/**
- * WebSocket Protocol Tests
- *
- * Tests the raw WebSocket protocol layer:
- * - Connection lifecycle (establish, disconnect, concurrent)
- * - Ping/pong heartbeat
- * - RPC call/response correlation
- * - Error handling (invalid JSON, non-existent method, session validation)
- * - Large message handling
- *
- * MODES:
- * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Dev Proxy: Set HYPERNEO_USE_DEV_PROXY=1 for offline testing with mocked responses
- *
- * Run with Dev Proxy:
- *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/websocket/websocket-protocol.test.ts
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import {
@@ -26,7 +8,6 @@ import {
   sendRPCCall,
 } from '../../helpers/websocket-helpers';
 
-// Detect mock mode for faster timeouts (Dev Proxy)
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const SETUP_TIMEOUT = IS_MOCK ? 15000 : 30000;
 const TEST_TIMEOUT = IS_MOCK ? 15000 : 30000;
@@ -89,8 +70,7 @@ describe('WebSocket Protocol', () => {
         expect(ws2.readyState).toBe(WebSocket.OPEN);
         expect(ws3.readyState).toBe(WebSocket.OPEN);
 
-        // All connections should be able to make RPC calls
-        await new Promise((resolve) => setTimeout(resolve, 100)); // Let connection.established events drain
+        await new Promise((resolve) => setTimeout(resolve, 100));
 
         sendRPCCall(ws1, 'session.list');
         sendRPCCall(ws2, 'session.list');
@@ -125,11 +105,9 @@ describe('WebSocket Protocol', () => {
         waitForWebSocketState(ws2, WebSocket.OPEN),
       ]);
 
-      // Disconnect ws1
       ws1.close();
       await waitForWebSocketState(ws1, WebSocket.CLOSED);
 
-      // ws2 should still work
       await new Promise((resolve) => setTimeout(resolve, 100));
       sendRPCCall(ws2, 'session.list');
 
@@ -320,10 +298,8 @@ describe('WebSocket Protocol', () => {
       const ws = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws, WebSocket.OPEN);
 
-      // Send invalid JSON
       ws.send('invalid json {{{');
 
-      // Server should still be functional after invalid JSON
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       const ws2 = createWebSocket(daemon.baseUrl);
@@ -399,7 +375,6 @@ describe('WebSocket Protocol', () => {
         workspacePath: '/test/ws-protocol',
       });
 
-      // Wait for RSP (skip any EVENTs)
       let response: Record<string, unknown>;
       let attempts = 0;
       while (attempts < 10) {
@@ -411,7 +386,6 @@ describe('WebSocket Protocol', () => {
       expect(response!.type).toBe('RSP');
       expect((response!.data as Record<string, unknown>).sessionId).toBeString();
 
-      // Verify via RPC (not direct DB access)
       const sessionId = (response!.data as Record<string, unknown>).sessionId as string;
       const getResult = (await daemon.messageHub.request('session.get', {
         sessionId,
@@ -420,7 +394,6 @@ describe('WebSocket Protocol', () => {
       expect(getResult.session).toBeDefined();
       expect(getResult.session.workspacePath).toBe('/test/ws-protocol');
 
-      // Cleanup
       daemon.trackSession(sessionId);
 
       ws.close();

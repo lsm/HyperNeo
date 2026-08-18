@@ -1,20 +1,11 @@
-/**
- * Tests for Command RPC Handlers
- *
- * Tests the RPC handlers for command operations:
- * - commands.list - List available slash commands for a session
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import { setupCommandHandlers } from '../../../../src/lib/rpc-handlers/command-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 
-// Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
-// Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -45,7 +36,6 @@ function createMockMessageHub(): {
   return { hub, handlers };
 }
 
-// Helper to create a mock AgentSession with slash commands
 function createMockAgentSession(): {
   agentSession: AgentSession;
   mocks: {
@@ -68,7 +58,6 @@ function createMockAgentSession(): {
   return { agentSession, mocks };
 }
 
-// Helper to create mock SessionManager
 function createMockSessionManager(): {
   sessionManager: SessionManager;
   getSessionAsyncMock: ReturnType<typeof mock>;
@@ -92,7 +81,6 @@ describe('Command RPC Handlers', () => {
     messageHubData = createMockMessageHub();
     sessionManagerData = createMockSessionManager();
 
-    // Setup handlers with mocked dependencies
     setupCommandHandlers(messageHubData.hub, sessionManagerData.sessionManager);
   });
 
@@ -145,7 +133,6 @@ describe('Command RPC Handlers', () => {
       const { mocks } = createMockAgentSession();
       const customSessionManagerData = createMockSessionManager();
 
-      // Create a new agent session with specific mock
       const { agentSession } = createMockAgentSession();
       customSessionManagerData.getSessionAsyncMock.mockResolvedValue(agentSession);
 

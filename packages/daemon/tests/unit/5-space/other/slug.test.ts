@@ -39,11 +39,9 @@ describe('slugify', () => {
   });
 
   test('truncates at hyphen boundary when possible', () => {
-    // Create a name that exceeds 60 chars and has hyphens before the cutoff
     const name = 'abcdefghij-klmnopqrst-uvwxyzabcd-efghijklmn-opqrstuvwx-yzab-cdef';
     const slug = slugify(name);
     expect(slug.length).toBeLessThanOrEqual(60);
-    // Should truncate at a hyphen boundary
     expect(slug).not.toEndWith('-');
   });
 

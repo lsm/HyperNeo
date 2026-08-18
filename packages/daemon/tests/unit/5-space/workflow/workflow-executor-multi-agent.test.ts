@@ -1,15 +1,3 @@
-/**
- * WorkflowExecutor — Multi-Agent Unit Tests
- *
- * Comprehensive tests for multi-agent workflow execution. Covers:
- *
- * 1.  startWorkflowRun() with multi-agent start step — multiple initial tasks
- * 2.  resolveNodeAgents() — utility function
- * 3.  resolveNodeChannels() — all topology patterns
- * 4.  Channel validation in persistence (SpaceWorkflowManager with agentLookup)
- * 5.  Mixed workflows — some single-agent, some multi-agent, some with channels
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -31,13 +19,7 @@ import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space
 import { resolveNodeAgents } from '@hyperneo/shared';
 import type { SpaceWorkerAgent, WorkflowNode } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// DB helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
@@ -59,10 +41,6 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
   ).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
-// ---------------------------------------------------------------------------
-// Shared agent fixtures for resolveNodeChannels tests
-// ---------------------------------------------------------------------------
-
 function makeSpaceAgent(id: string, name: string): SpaceWorkerAgent {
   return {
     id,
@@ -74,12 +52,6 @@ function makeSpaceAgent(id: string, name: string): SpaceWorkerAgent {
   };
 }
 
-/**
- * End nodes must have exactly 1 agent (validator-enforced — they own the
- * `task.reportedStatus` completion signal). When the last user-provided node
- * is multi-agent, append a synthetic single-agent terminal end node so the
- * multi-agent node remains the start (or middle) and validation passes.
- */
 const SYNTHETIC_END_NODE_ID = '__test_end__';
 
 function appendSyntheticEnd<T extends { id: string; agents?: unknown[] }>(
@@ -96,10 +68,6 @@ function appendSyntheticEnd<T extends { id: string; agents?: unknown[] }>(
     endNodeId: SYNTHETIC_END_NODE_ID,
   };
 }
-
-// ===========================================================================
-// SpaceRuntime — startWorkflowRun() with multi-agent start step
-// ===========================================================================
 
 describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
   let db: BunDatabase;
@@ -154,10 +122,6 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
       /* ignore */
     }
   });
-
-  // -------------------------------------------------------------------------
-  // Subtask 3: startWorkflowRun() with multi-agent start step
-  // -------------------------------------------------------------------------
 
   test('creates one workflow task and one node_execution per start agent', async () => {
     const startNode = {
@@ -290,10 +254,6 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
     expect(nodeExecutionRepo.listByNode(run.id, STEP_A)).toHaveLength(2);
   });
 
-  // -------------------------------------------------------------------------
-  // Subtask 4: Step does NOT advance when only some tasks are complete
-  // -------------------------------------------------------------------------
-
   test('executeTick() does NOT advance to next step when only some parallel tasks are completed', async () => {
     const workflow = workflowManager.createWorkflow({
       spaceId: SPACE_ID,
@@ -322,20 +282,14 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
     const stepAExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
     expect(stepAExecutions).toHaveLength(2);
 
-    // Complete only one parallel execution; keep sibling active.
     nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'idle' });
     nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'in_progress' });
 
     await runtime.executeTick();
 
-    // Next node should not be activated until the current node is fully terminal.
     const stepBExecutions = nodeExecutionRepo.listByNode(run.id, STEP_B);
     expect(stepBExecutions).toHaveLength(0);
   });
-
-  // -------------------------------------------------------------------------
-  // Subtask 6: Parallel failure — one task fails, others still active → waits
-  // -------------------------------------------------------------------------
 
   test('marks run blocked when any parallel node execution blocks', async () => {
     const startNode = {
@@ -364,20 +318,14 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
     const stepAExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
     expect(stepAExecutions).toHaveLength(2);
 
-    // One execution fails, but sibling is still active.
     nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'blocked', result: 'Build failed' });
     nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'in_progress' });
 
     await runtime.executeTick();
 
-    // Runtime now blocks the run as soon as any branch reports blocked.
     const updatedRun = workflowRunRepo.getRun(run.id)!;
     expect(updatedRun.status).toBe('blocked');
   });
-
-  // -------------------------------------------------------------------------
-  // Subtask 7: Partial failure — all terminal with one failed → needs_attention
-  // -------------------------------------------------------------------------
 
   test('marks run needs_attention when all parallel tasks are terminal and one failed', async () => {
     const startNode = {
@@ -407,7 +355,6 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
     const stepAExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
     expect(stepAExecutions).toHaveLength(2);
 
-    // One completes, one fails — both are terminal.
     nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'idle' });
     nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'blocked', result: 'Agent crashed' });
 
@@ -459,10 +406,6 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
     expect(updatedRun.status).toBe('blocked');
   });
 
-  // -------------------------------------------------------------------------
-  // Subtask 8: Single agentId backward compat in SpaceRuntime
-  // -------------------------------------------------------------------------
-
   test('startWorkflowRun() with single agentId creates exactly one task', async () => {
     const workflow = workflowManager.createWorkflow({
       spaceId: SPACE_ID,
@@ -477,14 +420,9 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 
     const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
     expect(tasks).toHaveLength(1);
-    // workflowNodeId was removed in M71 — verify task was created
     expect(tasks[0].status).toBe('open');
   });
 });
-
-// ===========================================================================
-// Subtask 9: resolveNodeAgents() utility
-// ===========================================================================
 
 describe('resolveNodeAgents()', () => {
   function makeStep(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
@@ -492,7 +430,6 @@ describe('resolveNodeAgents()', () => {
   }
 
   test('returns single-element array when only agentId is set', () => {
-    // agentId is a legacy field handled via type cast; resolveNodeAgents uses node.name as slot name
     const step = makeStep({ agentId: 'agent-a' } as unknown as Partial<WorkflowNode>);
     const result = resolveNodeAgents(step);
     expect(result).toHaveLength(1);
@@ -512,8 +449,8 @@ describe('resolveNodeAgents()', () => {
 
   test('agents takes precedence over agentId when both are set', () => {
     const step = makeStep({
-      agentId: 'agent-a', // ignored
-      agents: [{ agentId: 'agent-b' }], // wins
+      agentId: 'agent-a',
+      agents: [{ agentId: 'agent-b' }],
     });
     const result = resolveNodeAgents(step);
     expect(result).toHaveLength(1);
@@ -547,14 +484,6 @@ describe('resolveNodeAgents()', () => {
     expect(result[0].instructions).toBeUndefined();
   });
 });
-
-// ===========================================================================
-// Subtask 11: Channel validation in persistence (SpaceWorkflowManager)
-// ===========================================================================
-
-// ===========================================================================
-// Subtask 12: Mixed workflows (single-agent + multi-agent + channels)
-// ===========================================================================
 
 describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
   let db: BunDatabase;
@@ -657,7 +586,6 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
   });
 
   test('channels for start step are stored in run config after startWorkflowRun()', async () => {
-    // Channels are now at workflow level, not node level
     const startNode = {
       id: STEP_A,
       name: 'Parallel With Channels',
@@ -681,12 +609,9 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 
     const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-    // One workflow task for the multi-agent start step.
     expect(tasks).toHaveLength(1);
 
-    // Workflow channels are now stored in-memory via storeWorkflowChannels()
     const channels = runtime.getRunWorkflowChannels(run.id);
-    // No channels declared on this workflow → empty
     expect(channels).toHaveLength(0);
   });
 });

@@ -1,9 +1,3 @@
-/**
- * Task Repository Tests
- *
- * Tests for Neo task CRUD operations and status management.
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { TaskRepository } from '../../../../src/storage/repositories/task-repository';
@@ -180,13 +174,11 @@ describe('TaskRepository', () => {
       expect(tasks[1].title).toBe('Middle');
       expect(tasks[2].title).toBe('Oldest');
 
-      // After updating the oldest task, it should appear first
       await new Promise((r) => setTimeout(r, 5));
       repository.updateTask(oldest.id, { title: 'Oldest (updated)' });
       const tasksAfterUpdate = repository.listTasks('room-1');
       expect(tasksAfterUpdate[0].title).toBe('Oldest (updated)');
 
-      // After updating the middle task, it should now appear first
       await new Promise((r) => setTimeout(r, 5));
       repository.updateTask(middle.id, { title: 'Middle (updated)' });
       const tasksAfterMiddleUpdate = repository.listTasks('room-1');
@@ -511,11 +503,10 @@ describe('TaskRepository', () => {
       repository.updateTask(task1.id, { status: 'in_progress' });
       repository.updateTask(task2.id, { status: 'completed' });
       repository.updateTask(task3.id, { status: 'needs_attention' });
-      // task4 stays pending
 
       const activeCount = repository.countActiveTasks('room-1');
 
-      expect(activeCount).toBe(2); // pending + in_progress
+      expect(activeCount).toBe(2);
     });
 
     it('should return 0 when all tasks are completed or needs_attention', () => {
@@ -547,7 +538,6 @@ describe('TaskRepository', () => {
 
   describe('task lifecycle', () => {
     it('should support full task lifecycle', async () => {
-      // Create task
       const task = repository.createTask({
         roomId: 'room-1',
         title: 'Feature Implementation',
@@ -557,7 +547,6 @@ describe('TaskRepository', () => {
       });
       expect(task.status).toBe('pending');
 
-      // Start task
       await new Promise((r) => setTimeout(r, 5));
       repository.updateTask(task.id, {
         status: 'in_progress',
@@ -567,7 +556,6 @@ describe('TaskRepository', () => {
       expect(current?.status).toBe('in_progress');
       expect(current?.startedAt).toBeDefined();
 
-      // Update progress
       repository.updateTask(task.id, {
         progress: 50,
         currentStep: 'Writing tests',
@@ -576,7 +564,6 @@ describe('TaskRepository', () => {
       expect(current?.progress).toBe(50);
       expect(current?.currentStep).toBe('Writing tests');
 
-      // Complete task
       repository.updateTask(task.id, {
         status: 'completed',
         progress: 100,
@@ -597,7 +584,6 @@ describe('TaskRepository', () => {
 
       repository.updateTask(task.id, { status: 'in_progress' });
 
-      // Fail task
       repository.updateTask(task.id, {
         status: 'needs_attention',
         error: 'Connection timeout',

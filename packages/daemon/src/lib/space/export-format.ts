@@ -1,24 +1,3 @@
-/**
- * Space Export/Import Format
- *
- * Functions for serializing SpaceWorkerAgent and SpaceWorkflow instances to a
- * portable JSON format and validating imported data with Zod schemas.
- *
- * Key remappings performed during export:
- * - Node `id` fields are stripped (regenerated on import)
- * - Node `agentId` UUID → agent name (`agentRef`) — portable across Spaces
- * - Channel `id` stripped; `from`/`to` node/agent UUIDs → names
- * - `startNodeId` UUID → node name (`startNode`)
- * - Rule `appliesTo` node UUIDs → node names (stable across re-import)
- *
- * Version policy:
- * - Accept: version 1, 2, or 3 (v2 adds optional `topicFrom` on eventInterests;
- *   v3 adds node handoff transitions and workflow gates). Older clients reject
- *   newer bundles via the version path rather than as schema-malformed.
- * - Reject with "requires newer version": version > CURRENT_EXPORT_VERSION
- * - Reject as invalid: version missing, null, < 1, or non-integer
- */
-
 import { z } from 'zod';
 import { validateGlobPattern } from '../external-events/topic-validator';
 import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
@@ -34,10 +13,6 @@ import type {
   SpaceExportBundle,
 } from '@hyperneo/shared';
 import { validateSlug } from './slug';
-
-// ============================================================================
-// Zod schemas
-// ============================================================================
 
 const _workflowConditionSchema = z
   .object({
@@ -68,12 +43,6 @@ const workflowNodeAgentOverrideSchema = z.object({
   value: z.string(),
 });
 
-/**
- * Union schema accepting both legacy plain-string overrides and new `{ value }` objects.
- * Legacy exports stored systemPrompt/instructions as plain strings; the new format uses
- * `WorkflowNodeAgentOverride { value }`. Both are accepted on import for backward
- * compatibility — plain strings are normalized to `{ value }` during import.
- */
 const overrideOrStringSchema = z.union([workflowNodeAgentOverrideSchema, z.string().min(1)]);
 
 const declarativeToolGuardSchema = z.object({
@@ -87,9 +56,6 @@ export const MAX_AGENT_SLOT_EVENT_INTERESTS = 10;
 
 const eventInterestTopicFromSchema = z.object({
   source: z.literal('primaryLink'),
-  // `.trim().min(1)` mirrors the manager validator (whitespace-only is not a
-  // usable pattern); a bare `.min(1)` would let whitespace slip through import
-  // only to fail later at createWorkflow.
   pattern: z.string().trim().min(1),
 });
 
@@ -102,12 +68,6 @@ const eventInterestSchema = z
         message: 'topic must be a valid external-event glob pattern',
       })
       .optional(),
-    /**
-     * Dynamic topic template. Exactly one of `topic` / `topicFrom` is required —
-     * enforced by the refine below. The `pattern` carries placeholders resolved
-     * at subscription time (see `resolveTopicFromInterest`), so it is NOT
-     * validated as a glob here.
-     */
     topicFrom: eventInterestTopicFromSchema.optional(),
     label: z.string().optional(),
   })
@@ -128,28 +88,14 @@ const exportedWorkflowNodeAgentSchema = z.object({
   systemPrompt: overrideOrStringSchema.optional(),
   replaceAgentPrompt: z.boolean().optional(),
   instructions: overrideOrStringSchema.optional(),
-  /** IDs of globally-enabled skills disabled for this slot. */
   disabledSkillIds: z.array(z.string()).optional(),
-  /**
-   * Extra MCP servers for this slot.
-   * Validated as a loose record to stay forward-compatible with SDK McpServerConfig shape changes.
-   */
   extraMcpServers: z.record(z.string(), z.unknown()).optional(),
-  /** Optional per-slot agent timeout in milliseconds. Positive integer. */
   timeoutMs: z.number().int().positive().optional(),
-  /** Declarative tool guards (e.g. deny `gh pr merge` for coder agents). */
   toolGuards: z.array(declarativeToolGuardSchema).optional(),
-  /** Static external-event subscription interests for this slot. */
   eventInterests: z.array(eventInterestSchema).max(MAX_AGENT_SLOT_EVENT_INTERESTS).optional(),
-  /** Per-slot fresh-context flag (clear model context each handoff). */
   resetContextPerTurn: z.boolean().optional(),
 });
 
-/**
- * Zod schema for an exported workflow channel.
- * Differs from the runtime WorkflowChannel schema: `id` is intentionally absent
- * since channel IDs are space-specific and stripped during export.
- */
 const exportedWorkflowChannelSchema = z.object({
   from: z.string().min(1),
   to: z.union([z.string().min(1), z.array(z.string().min(1))]),
@@ -221,17 +167,6 @@ const workflowHookSchema = z.object({
   humanOnly: z.boolean().optional(),
 });
 
-/**
- * Zod schema for an exported workflow handoff transition.
- * Mirrors the runtime `HandoffTransition` shape.
- *
- * `target`/`hookId` are REFERENCES to other entities (node/slot names, hook
- * ids). They are validated non-mutating (reject whitespace-only via refine, but
- * preserve the exact value) so they match the referenced entity's id verbatim —
- * a `.trim()` here would desynchronize a reference from a whitespace-carrying
- * hook id that the manager persisted and accepted. String length caps bound
- * unbounded import input.
- */
 const nonEmptyRef = (maxLen: number) =>
   z
     .string()
@@ -256,40 +191,20 @@ const exportedWorkflowNodeSchema = z.object({
       requirePrMerge: z.boolean().optional(),
     })
     .optional(),
-  /** Declared outbound handoff transitions (first-class handoff contract). */
   transitions: z
     .array(exportedHandoffTransitionSchema)
     .max(MAX_NODE_HANDOFF_TRANSITIONS)
     .optional(),
 });
 
-/**
- * Export format versions this client can read and write.
- *
- * - v1: original format.
- * - v2: adds optional `topicFrom` on `eventInterests` (a dynamic alternative to
- *   a static `topic`). v2 is the first version that may emit topicFrom-only
- *   interests; v1-only clients reject v2 bundles with "requires newer version"
- *   instead of a confusing schema-malformed error.
- * - v3: adds node handoff `transitions` and workflow `gates` to the portable
- *   schema. v3 is the first version that may emit them; a v2-only client's Zod
- *   node schema would silently strip the unknown `transitions` field (and the
- *   `gates` workflow field), so a v1/v2 bundle carrying either is rejected via
- *   the version path rather than imported lossily.
- */
 export const CURRENT_EXPORT_VERSION = 3 as const;
 const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2, 3]);
 export type ExportVersion = 1 | 2 | 3;
 
-/**
- * Coerce an already-`checkVersion`-validated value to the supported version
- * union. Precondition: `checkVersion(version)` returned null.
- */
 function asSupportedVersion(version: unknown): ExportVersion {
   return version as ExportVersion;
 }
 
-/** Validates the version field; returns an error string or null. */
 function checkVersion(version: unknown): string | null {
   if (version === null || version === undefined) return 'invalid: version is required';
   if (typeof version !== 'number') return 'invalid: version must be a number';
@@ -330,15 +245,8 @@ const exportedWorkflowBaseSchema = z.object({
   tags: z.array(z.string()),
   channels: z.array(exportedWorkflowChannelSchema).optional(),
   hooks: z.array(workflowHookSchema).optional(),
-  // Optional in schema for backward compatibility with v1 exports that predate
-  // the completionAutonomyLevel field. Import code falls back to a sensible
-  // default when the field is absent.
   completionAutonomyLevel: z.number().int().min(1).max(5).optional(),
-  // Optional for backward compatibility with v1 exports that predate the
-  // disabled field. When absent the workflow is treated as enabled.
   disabled: z.boolean().optional(),
-  // Optional for backward compatibility with v1 exports that predate the
-  // handle field. When absent, import regenerates the handle from the name.
   handle: z
     .string()
     .optional()
@@ -358,25 +266,8 @@ const exportBundleBaseSchema = z.object({
   exportedFrom: z.string().optional(),
 });
 
-// ============================================================================
-// Validation result type
-// ============================================================================
-
 export type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
-// ============================================================================
-// Normalization helpers
-// ============================================================================
-
-/**
- * Normalize a legacy override value from the exported format.
- *
- * The Zod schema accepts both plain strings (legacy) and `{ value }` objects (new).
- * This helper converts the union to the canonical `WorkflowNodeAgentOverride` format:
- * - Plain string → `{ value: <string> }`
- * - `{ value }` object → passed through as-is
- * - `undefined` → `undefined`
- */
 export function normalizeOverride(
   value: import('@hyperneo/shared').WorkflowNodeAgentOverride | string | undefined
 ): import('@hyperneo/shared').WorkflowNodeAgentOverride | undefined {
@@ -385,14 +276,6 @@ export function normalizeOverride(
   return value;
 }
 
-// ============================================================================
-// Export functions
-// ============================================================================
-
-/**
- * Convert a SpaceWorkerAgent to the portable export format.
- * Strips `id`, `spaceId`, `createdAt`, `updatedAt`.
- */
 export function exportAgent(agent: SpaceWorkerAgent): ExportedSpaceWorkerAgent {
   const exported: ExportedSpaceWorkerAgent = {
     version: CURRENT_EXPORT_VERSION,
@@ -411,41 +294,22 @@ export function exportAgent(agent: SpaceWorkerAgent): ExportedSpaceWorkerAgent {
   return exported;
 }
 
-/**
- * Convert a SpaceWorkflow to the portable export format.
- *
- * Remappings:
- * 1. Node `id` fields are stripped; node `agentId` UUID → agent name (`agentRef`).
- *    Falls back to the UUID string when no matching agent is found in `agents`.
- * 2. Channel `id` stripped; `from`/`to` node/agent UUIDs → names.
- *    Falls back to the UUID string when no matching node is found.
- * 3. `startNodeId` UUID → node name (`startNode`).
- * 4. Rule `appliesTo` node UUIDs → node names (stable cross-references on re-import).
- *    If a UUID has no matching node (stale data), it is silently dropped from
- *    `appliesTo`. If all UUIDs are stale the field is omitted, treating the rule
- *    as global (applies to all nodes) rather than discarding it entirely.
- */
 export function exportWorkflow(
   workflow: SpaceWorkflow,
   agents: SpaceWorkerAgent[]
 ): ExportedSpaceWorkflow {
-  // Support both `nodes` (new) and `steps` (legacy, during migration) for backward compat
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const nodes = workflow.nodes ?? (workflow as any).steps ?? [];
-  // Build a map from node UUID → node name
   const nodeIdToName = new Map<string, string>();
   for (const node of nodes) {
     nodeIdToName.set(node.id, node.name);
   }
 
-  // Build a map from agent UUID → agent name
   const agentIdToName = new Map<string, string>();
   for (const agent of agents) {
     agentIdToName.set(agent.id, agent.name);
   }
 
-  // Export nodes — strip `id`, remap agentId UUIDs → agent names.
-  // Channels are exported at the workflow level (not per-node).
   const exportedNodes: ExportedWorkflowNode[] = nodes.map((node) => {
     const exportedAgents: ExportedWorkflowNodeAgent[] = node.agents.map((a) => {
       const entry: ExportedWorkflowNodeAgent = {
@@ -483,7 +347,6 @@ export function exportWorkflow(
     return exported;
   });
 
-  // Export startNodeId UUID → node name
   const startId = workflow.startNodeId;
   const startNode = nodeIdToName.get(startId) ?? startId;
   const endNode = workflow.endNodeId
@@ -503,7 +366,6 @@ export function exportWorkflow(
   if (workflow.description !== undefined) result.description = workflow.description;
   if (workflow.disabled) result.disabled = true;
   if (workflow.handle) result.handle = workflow.handle;
-  // Export channels — strip `id` (space-specific) and convert to portable ExportedWorkflowChannel format
   if (workflow.channels && workflow.channels.length > 0) {
     const exportedChannels: ExportedWorkflowChannel[] = workflow.channels.map((ch) => {
       const exported: ExportedWorkflowChannel = {
@@ -522,9 +384,6 @@ export function exportWorkflow(
   return result;
 }
 
-/**
- * Create a SpaceExportBundle from a set of agents and workflows.
- */
 export function exportBundle(
   agents: SpaceWorkerAgent[],
   workflows: SpaceWorkflow[],
@@ -546,18 +405,6 @@ export function exportBundle(
   return bundle;
 }
 
-// ============================================================================
-// Validation functions
-// ============================================================================
-
-/**
- * Validate an unknown value as an ExportedSpaceWorkerAgent.
- *
- * Version handling:
- * - version 1, 2, or 3 → accepted
- * - version > CURRENT_EXPORT_VERSION → error: "requires newer version: ..."
- * - version < 1 or missing/non-integer → error: "invalid: ..."
- */
 export function validateExportedAgent(data: unknown): ValidationResult<ExportedSpaceWorkerAgent> {
   if (typeof data !== 'object' || data === null) {
     return { ok: false, error: 'invalid: expected an object' };
@@ -573,11 +420,6 @@ export function validateExportedAgent(data: unknown): ValidationResult<ExportedS
   return { ok: true, value: { version, ...result.data } };
 }
 
-/**
- * Validate an unknown value as an ExportedSpaceWorkflow.
- *
- * Version handling: same as validateExportedAgent.
- */
 export function validateExportedWorkflow(data: unknown): ValidationResult<ExportedSpaceWorkflow> {
   if (typeof data !== 'object' || data === null) {
     return { ok: false, error: 'invalid: expected an object' };
@@ -591,8 +433,6 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
     return { ok: false, error: `invalid: ${result.error.issues.map((i) => i.message).join('; ')}` };
   }
 
-  // Referential integrity checks — enforce the cross-reference invariants that
-  // the rest of the format depends on (node names as stable cross-reference keys).
   const nodeNameSet = new Set<string>();
   for (const node of result.data.nodes) {
     if (nodeNameSet.has(node.name)) {
@@ -600,14 +440,12 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
     }
     nodeNameSet.add(node.name);
   }
-  // startNode must reference a known node name (skip check when nodes is empty)
   if (result.data.nodes.length > 0 && !nodeNameSet.has(result.data.startNode)) {
     return {
       ok: false,
       error: `invalid: startNode "${result.data.startNode}" does not reference a known node name`,
     };
   }
-  // endNode must reference a known node name when present (skip check when nodes is empty)
   if (
     result.data.endNode !== undefined &&
     result.data.nodes.length > 0 &&
@@ -619,9 +457,6 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
     };
   }
 
-  // Channel from/to must reference known node names, agent slot names, or '*' wildcard.
-  // Build valid name set: '*' + all node names + all agent slot names (agents[].name).
-  // Single-agent nodes (agentRef shorthand) use the node name for fan-out targeting.
   if (result.data.channels && result.data.channels.length > 0) {
     const validChannelNames = new Set<string>(['*']);
     for (const node of result.data.nodes) {
@@ -653,17 +488,10 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
     }
   }
 
-  // Handoff transitions: each declared transition's `target` must reference a
-  // known node/agent name or the '*' wildcard; transition ids and targets must
-  // be unique within a node (so handoff({ target }) resolves unambiguously);
-  // and `hookId` must reference a known exported hook.
   const transitionHookIds = new Set<string>();
   for (const hook of result.data.hooks ?? []) {
     if (hook?.id) transitionHookIds.add(hook.id);
   }
-  // Build the destination map ONCE (not per source node) so validation stays
-  // linear in the node count instead of quadratic — a crafted bundle with many
-  // nodes must not make import validation O(N²).
   const targetDestinations = new Map<string, Set<string>>();
   const countDest = (name: string | undefined, key: string) => {
     if (!name) return;
@@ -721,10 +549,6 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
     }
   }
 
-  // Handoff transitions are a version-3 feature. A v1/v2 workflow must
-  // not carry them, or the version compatibility gate is meaningless: a v2-only
-  // client's Zod node schema would silently strip the unknown `transitions`
-  // field, importing lossily. Reject via the version path instead.
   if (version < 3) {
     for (let n = 0; n < result.data.nodes.length; n++) {
       const transitions = result.data.nodes[n].transitions;
@@ -739,9 +563,6 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
     }
   }
 
-  // topicFrom is a version-2 feature. A version-1 workflow must not carry it,
-  // or the version compatibility gate is meaningless: a v1-only client would
-  // reject the bundle as malformed rather than via the version path.
   if (version === 1) {
     for (let n = 0; n < result.data.nodes.length; n++) {
       const agents = result.data.nodes[n].agents;
@@ -761,22 +582,12 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
     }
   }
 
-  // Zod's `z.number().min(1).max(5)` widens to `number`; at runtime the schema
-  // guarantees 1-5, so we assert to the nominal SpaceAutonomyLevel union.
   return {
     ok: true,
     value: { version, ...result.data } as ExportedSpaceWorkflow,
   };
 }
 
-/**
- * Validate an unknown value as a SpaceExportBundle.
- *
- * Version handling: same as validateExportedAgent.
- * Each embedded agent and workflow is validated individually via
- * `validateExportedAgent` / `validateExportedWorkflow` so that nested version
- * checks (e.g. a v2 agent inside a v1 bundle) are caught and reported.
- */
 export function validateExportBundle(data: unknown): ValidationResult<SpaceExportBundle> {
   if (typeof data !== 'object' || data === null) {
     return { ok: false, error: 'invalid: expected an object' };
@@ -790,8 +601,6 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
     return { ok: false, error: `invalid: ${result.error.issues.map((i) => i.message).join('; ')}` };
   }
 
-  // Validate each nested agent and workflow using the full per-item validators
-  // so that their individual version fields are also checked.
   const raw = data as Record<string, unknown>;
   const rawAgents = Array.isArray(raw.agents) ? raw.agents : [];
   for (let i = 0; i < rawAgents.length; i++) {
@@ -799,10 +608,6 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
     if (!agentResult.ok) {
       return { ok: false, error: `agents[${i}]: ${agentResult.error}` };
     }
-    // Nested items are re-stamped to the bundle's root version on output, so a
-    // nested item claiming a newer (but still supported) version than the root
-    // would silently downgrade — and smuggle a newer-only feature like topicFrom
-    // into a v1 bundle. (Unsupported versions are already rejected above.)
     const nestedAgentVersion = (rawAgents[i] as Record<string, unknown>).version;
     if (typeof nestedAgentVersion === 'number' && nestedAgentVersion > version) {
       return {
@@ -825,8 +630,6 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
         error: `workflows[${i}]: version ${nestedWfVersion} exceeds bundle version ${version}`,
       };
     }
-    // Reject duplicate handles within the same bundle — silently rewriting the second
-    // handle would make round-trip identity order-dependent.
     const wf = rawWorkflows[i] as Record<string, unknown>;
     if (typeof wf.handle === 'string' && wf.handle.trim()) {
       const h = wf.handle.trim();
@@ -848,8 +651,6 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
       name: result.data.name,
       ...(result.data.description !== undefined ? { description: result.data.description } : {}),
       agents: result.data.agents.map((a) => ({ version, ...a })),
-      // Zod widens `completionAutonomyLevel` to `number`; the schema enforces 1-5
-      // at runtime, so casting to ExportedSpaceWorkflow is safe here.
       workflows: result.data.workflows.map((w) => ({ version, ...w }) as ExportedSpaceWorkflow),
       exportedAt: result.data.exportedAt,
       ...(result.data.exportedFrom !== undefined ? { exportedFrom: result.data.exportedFrom } : {}),

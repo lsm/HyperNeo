@@ -1,19 +1,3 @@
-/**
- * SpaceAgentPresetSyncDiffModal
- *
- * Preview-then-apply modal for applying a template update to a seeded worker
- * agent. Fetches a per-field before/after diff from
- * `spaceAgent.previewTemplateSync` on open, renders the deltas (customPrompt,
- * description, tools), and offers a one-click "Apply update" that runs the
- * existing `spaceAgent.syncFromTemplate`.
- *
- * The diff covers exactly the fields sync overwrites, so what the user reviews
- * here is precisely what applying the update will change. Never automatic — the
- * apply only fires on an explicit click. This is the REQUIRED review path when
- * the agent is both customized and has an update available (local edits would
- * otherwise be lost).
- */
-
 import { useEffect, useState } from 'preact/hooks';
 import type { SpaceWorkerAgent, SpaceWorkerAgentSyncPreview } from '@hyperneo/shared';
 import { Modal } from '../ui/Modal';
@@ -24,7 +8,6 @@ import { toast } from '../../lib/toast';
 interface Props {
   agent: SpaceWorkerAgent;
   onClose: () => void;
-  /** Called with the freshly updated agent after a successful apply. */
   onSynced: (agent: SpaceWorkerAgent) => void;
 }
 
@@ -59,8 +42,6 @@ export function SpaceAgentPresetSyncDiffModal({ agent, onClose, onSynced }: Prop
   const handleApply = async () => {
     setApplying(true);
     try {
-      // Pass the row hash observed at review time so the daemon rejects the
-      // apply if the agent changed since (optimistic-concurrency guard).
       const updated = await spaceStore.syncAgentFromTemplate(agent.id, preview?.rowHash);
       toast.success(`"${agent.name}" updated from template`);
       onSynced(updated);

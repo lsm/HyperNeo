@@ -2,11 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration169 } from '../../../../../src/storage/schema/migrations';
 
-/**
- * The pre-169 `sdk_messages` shape: `message_subtype` exists but the
- * `message_subtype_norm` generated column and its composite index do not. This
- * mirrors an existing database being upgraded in place.
- */
 function createPre169SdkMessages(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE sdk_messages (
@@ -69,8 +64,6 @@ describe('Migration 169: message_subtype_norm generated column + index', () => {
 
     runMigration169(db);
 
-    // The generated column must agree with the raw COALESCE expression for every
-    // row — this is what makes the swap in live-query-handlers.ts semantics-preserving.
     const drift = db
       .prepare(
         `SELECT COUNT(*) AS n FROM sdk_messages

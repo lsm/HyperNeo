@@ -1,7 +1,3 @@
-/**
- * RepeatedToolErrorGuardrail tests
- */
-
 import { describe, expect, it, mock } from 'bun:test';
 import { RepeatedToolErrorGuardrail } from '../../../../src/lib/agent/repeated-tool-error-guardrail';
 import type { SpaceTask } from '@hyperneo/shared';
@@ -205,7 +201,6 @@ describe('RepeatedToolErrorGuardrail', () => {
     guardrail.recordToolUse('t3', 'Write');
     guardrail.recordToolUse('t4', 'Edit');
 
-    // t1 should have been evicted when t4 was inserted.
     const triggered = await guardrail.observeToolResultErrors(
       makeErrorResult('t1', 'file not found')
     );
@@ -237,7 +232,6 @@ describe('RepeatedToolErrorGuardrail', () => {
 
     guardrail.recordToolUse('tool-1', 'Read');
     guardrail.recordToolUse('tool-2', 'Glob');
-    // First message: one error, one success — success should break the streak.
     await guardrail.observeToolResultErrors({
       type: 'user',
       message: {
@@ -249,8 +243,6 @@ describe('RepeatedToolErrorGuardrail', () => {
       },
     } as unknown as ReturnType<typeof makeErrorResult>);
 
-    // Second message: same error as before. Without the success reset this would
-    // trigger at threshold=2; with it, the streak was reset so this is count=1.
     const triggered = await guardrail.observeToolResultErrors(
       makeErrorResult('tool-1', 'file not found')
     );

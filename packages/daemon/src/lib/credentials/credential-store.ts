@@ -8,15 +8,8 @@ import * as path from 'node:path';
 import type { CredentialStoreStatus } from '@hyperneo/shared/state-types';
 import { Logger } from '../logger';
 
-// Intentionally retained as 'neokai.provider': this is the OS-keychain service
-// namespace (and DB credential key) under which existing installs already store
-// encrypted provider credentials. Renaming it would orphan every stored credential
-// unless paired with a keychain + DB migration, so it is held back for the
-// external-rebrand PR alongside the GitHub repo URL and OAuth client identity.
 const DEFAULT_SERVICE_PREFIX = 'neokai.provider';
 const ENCRYPTION_KEY_ENV = 'HYPERNEO_PROVIDER_CREDENTIAL_KEY';
-// Legacy env var name retained as a decryption fallback so installs that pinned a
-// custom key via NEOKAI_PROVIDER_CREDENTIAL_KEY keep decrypting existing rows.
 const LEGACY_ENCRYPTION_KEY_ENV = 'NEOKAI_PROVIDER_CREDENTIAL_KEY';
 const KEY_FILE_NAME = '.provider-credential-key';
 export const KEYCHAIN_UNAVAILABLE_MESSAGE =
@@ -29,22 +22,9 @@ export interface CredentialStore {
   set(service: string, account: string, data: string): Promise<void>;
   delete(service: string, account: string): Promise<void>;
   listServices(prefix: string): Promise<string[]>;
-  /**
-   * Optional health snapshot. Implementations that don't track health
-   * (e.g. raw `DatabaseCredentialStore`) can omit this.
-   */
   getStatus?(): CredentialStoreStatus;
 }
 
-/**
- * Promise wrapper around `execFile`. Defined as a function (not via `promisify`)
- * so tests using `mock.module('node:child_process')` can replace `execFile`
- * through the live ESM binding before this is first invoked.
- *
- * A bounded timeout + SIGKILL is applied so a stalled `security` subprocess
- * (e.g. a Keychain auth dialog that never resolves) is terminated rather than
- * orphaned — Promise.race alone abandons the JS promise while the process lives.
- */
 const CHILD_PROCESS_TIMEOUT_MS = 15_000;
 function execFileAsync(
   cmd: string,
@@ -54,10 +34,6 @@ function execFileAsync(
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    // Call execFile with the (cmd, args, callback) signature so tests that mock
-    // it remain compatible, then kill the child ourselves on timeout — a plain
-    // Promise.race would abandon the JS promise while the `security` process
-    // keeps running and accumulates orphans across requests.
     let child: ReturnType<typeof execFile> | undefined;
     child = execFile(cmd, args, (err, stdout, stderr) => {
       if (settled) return;
@@ -86,12 +62,6 @@ function execFileAsync(
   });
 }
 
-/**
- * Tagged error thrown by `KeychainCredentialStore` operations when the macOS
- * Keychain is locked or has no GUI session (`errSecInteractionNotAllowed`,
- * exit code 36). `KeychainStatusCredentialStore` catches this to surface
- * system status and preserve env/settings fallback behavior for reads.
- */
 export class KeychainUnavailableError extends Error {
   constructor(message: string) {
     super(message);
@@ -121,8 +91,6 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 
   async set(service: string, account: string, data: string): Promise<void> {
-    // Pass the secret via -p to avoid the interactive retype prompt that
-    // security opens on /dev/tty when using -w with no existing item.
     return new Promise((resolve, reject) => {
       let settled = false;
       const child = spawn('security', [
@@ -141,8 +109,6 @@ export class KeychainCredentialStore implements CredentialStore {
         stderr += chunk.toString('utf8');
       });
 
-      // Bound the write so a stalled Keychain prompt cannot hold the shared
-      // settings/custom-endpoints mutation lock indefinitely.
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
@@ -171,8 +137,6 @@ export class KeychainCredentialStore implements CredentialStore {
         if (code === 0) {
           resolve();
         } else if (code === 36 || stderr.includes('User interaction is not allowed')) {
-          // Keychain locked / no GUI session. Reject so callers fail with
-          // actionable guidance rather than silently dropping credentials.
           reject(
             new KeychainUnavailableError(
               `security add-generic-password failed (exit ${code}): ${stderr.trim()}`
@@ -219,33 +183,6 @@ const KEYCHAIN_FALLBACK_MESSAGE =
   'Run `security unlock-keychain` (prompts for your login password) or restart ' +
   'HyperNeo from a GUI session to restore Keychain persistence.';
 
-/**
- * macOS production credential store wrapper. Prefers Keychain for secure
- * persistence. When the Keychain is locked or unavailable (daemon running
- * in screen / SSH / launchd without a GUI security session), the wrapper
- * tries to recover via the macOS GUI unlock dialog and then falls back to
- * the encrypted `DatabaseCredentialStore` so credential writes still
- * succeed. Reads tolerate a locked Keychain silently so env/settings
- * discovery can keep providers usable.
- *
- * `fallback` and `unlockers` are optional so unit tests can pin behaviour
- * without spawning real `security` invocations. The TTY gate that
- * determines whether the default unlocker fires is owned by
- * `buildDefaultUnlockers(ttyCheck)` — tests exercise that factory
- * directly rather than going through this constructor.
- *
- * Note on weaker isolation: the encrypted fallback lives in a
- * `provider_credentials` table inside the daemon's main SQLite database
- * (path configurable via `DB_PATH`, defaults to
- * `~/.hyperneo/data/daemon.db`), with its AES key at
- * `~/.hyperneo/.provider-credential-key` (0600). Any same-user process can
- * read both — this is weaker than the Keychain, which mitigates local
- * attackers via Secure Enclave / ACLs. The fallback exists because the
- * Keychain is unreachable from non-GUI security sessions and bricking
- * credential writes in screen / SSH / launchd is worse than the
- * weaker-isolation tradeoff. See `ProvidersSettings.tsx` banner for the
- * user-facing disclosure.
- */
 export class KeychainStatusCredentialStore implements CredentialStore {
   private keychainWarned = false;
   private keychainAvailable = true;
@@ -253,13 +190,7 @@ export class KeychainStatusCredentialStore implements CredentialStore {
   private unlockAttempted = false;
   private statusChangeCallback: (() => void) | null = null;
   private readonly logger = new Logger('KeychainStatusCredentialStore');
-  // Values written to the fallback while the Keychain was unavailable; they
-  // supersede the stale Keychain entry until reconciled, so reads prefer them
-  // and promote them to the Keychain once reachable again.
   private readonly pendingSupersede = new Map<string, string>();
-  // Per-key lock to serialize supersede promotion (in get) with mutations
-  // (set/delete) so a concurrent rotation cannot be overwritten by a stale
-  // promotion or recreate a deleted entry.
   private readonly keyLocks = new Map<string, Promise<unknown>>();
   constructor(
     private readonly keychain: CredentialStore,
@@ -289,9 +220,6 @@ export class KeychainStatusCredentialStore implements CredentialStore {
   }
 
   private async getInternal(service: string, account: string): Promise<string | null> {
-    // If a write superseded the Keychain entry while it was unavailable, prefer
-    // that value and reconcile it to the Keychain so reads become authoritative
-    // again (otherwise a stale Keychain entry would win once unlocked).
     const supersedeKey = `${service}:${account}`;
     const pending = this.pendingSupersede.get(supersedeKey);
     if (pending !== undefined) {
@@ -305,19 +233,12 @@ export class KeychainStatusCredentialStore implements CredentialStore {
       }
       return pending;
     }
-    // Always try the Keychain first when it's reachable. This lets the
-    // daemon pick up an external `security unlock-keychain` without a
-    // restart, and means the Keychain stays authoritative whenever it's
-    // available — even if we previously wrote a fallback copy.
     try {
       const result = await this.keychain.get(service, account);
       this.markKeychainAvailable();
       if (result !== null) return result;
-      // Keychain reachable but miss — fall through to fallback in case the
-      // value was written while the Keychain was previously unavailable.
     } catch (error) {
       if (!(error instanceof KeychainUnavailableError)) throw error;
-      // Reads stay silent on 36 so env-var/settings discovery keeps working.
       this.markKeychainUnavailable();
     }
     if (this.fallback) return await this.fallback.get(service, account);
@@ -339,8 +260,6 @@ export class KeychainStatusCredentialStore implements CredentialStore {
       await this.refreshFallbackIfPresent(service, account, data);
       return;
     }
-    // Keychain unavailable — write the fallback and remember this value
-    // supersedes the stale Keychain entry until reconciled on a later read.
     await this.runWithFallback(
       () => this.fallback?.set(service, account, data),
       `set(${service}:${account})`
@@ -357,35 +276,15 @@ export class KeychainStatusCredentialStore implements CredentialStore {
     if (outcome === 'ok') {
       this.markKeychainAvailable();
       this.pendingSupersede.delete(`${service}:${account}`);
-      // Primary delete succeeded — clear any fallback copy too so a
-      // subsequent Keychain lock doesn't surface a stale credential.
       await this.fallback?.delete(service, account).catch(() => {});
       return;
     }
-    // Keychain delete did not succeed (locked / no GUI session / unlock
-    // attempt failed). Deleting only from the fallback would leave the
-    // authoritative Keychain copy behind, and the next time the Keychain
-    // becomes reachable `get()` would prefer it — provider appears
-    // re-authenticated after the user explicitly logged out. Delete is
-    // an irreversible operation against the authoritative store, so we
-    // surface the failure rather than claim partial success. Callers
-    // (providers.delete, auth.logout) propagate the error to the UI so
-    // the user knows to unlock the Keychain and retry.
     this.markKeychainUnavailable();
     throw new KeychainUnavailableError(
       `${KEYCHAIN_UNAVAILABLE_MESSAGE} (blocked: delete(${service}:${account}))`
     );
   }
 
-  /**
-   * If the fallback store already has a value for `(service, account)`,
-   * overwrite it with `data`. Used by `set()` on successful Keychain
-   * writes to keep a previously-fallback-only entry from going stale
-   * after a credential rotation. No-op when the fallback has no entry
-   * (so we don't broaden the weaker-isolation surface for entries that
-   * never needed the fallback). Best-effort: errors are swallowed
-   * because the Keychain write already succeeded and is authoritative.
-   */
   private async refreshFallbackIfPresent(
     service: string,
     account: string,
@@ -436,13 +335,6 @@ export class KeychainStatusCredentialStore implements CredentialStore {
     };
   }
 
-  /**
-   * Runs an operation against the primary Keychain store. On
-   * `KeychainUnavailableError` triggers the configured unlockers once per
-   * daemon session, then retries the operation a single time. Returns
-   * `'ok'` on success or `'fallback'` when the operation could not
-   * complete against the Keychain.
-   */
   private async runWithUnlockRetry(op: () => Promise<void>): Promise<'ok' | 'fallback'> {
     try {
       await op();
@@ -475,27 +367,10 @@ export class KeychainStatusCredentialStore implements CredentialStore {
       this.markKeychainUnavailable();
       throw new KeychainUnavailableError(`${KEYCHAIN_UNAVAILABLE_MESSAGE} (blocked: ${label})`);
     }
-    // Run the fallback op FIRST, then mark state + fire the status
-    // callback. Firing the callback before the write completes lets an
-    // app-level subscriber (e.g. app.ts applyStoredProviderCredentials)
-    // re-enter the store mid-flight and race with the in-progress write.
-    // Ordering op-before-mark guarantees the write is durable by the
-    // time any subscriber observes the `keychain-fallback` transition.
     await op();
     this.markUsingFallback();
   }
 
-  /**
-   * Compute the current backend label so mark* helpers can detect actual
-   * transitions. The previous logic only fired the statusChangeCallback
-   * when transitioning out of the fully-available state, which meant the
-   * `keychain-unavailable` → `keychain-fallback` transition (a locked
-   * Keychain read followed by a successful fallback write) was silent —
-   * connected clients kept showing the yellow unavailable banner even
-   * though writes were now succeeding via the fallback. Comparing the
-   * backend label before and after fires the callback on every real
-   * transition, including the unavailable→fallback recovery.
-   */
   private currentBackend(): CredentialStoreStatus['backend'] {
     if (this.usingFallback) return 'keychain-fallback';
     if (this.keychainAvailable) return 'keychain';
@@ -525,27 +400,11 @@ export class KeychainStatusCredentialStore implements CredentialStore {
     const previousBackend = this.currentBackend();
     this.keychainAvailable = true;
     this.usingFallback = false;
-    // Reset the one-shot unlock latch: if the Keychain later re-locks
-    // (sleep, `security lock-keychain`, keychain timeout), the next write
-    // should attempt interactive unlock again rather than routing blindly
-    // to the fallback. Without this, the daemon is stuck on the weaker
-    // fallback store until process restart.
     this.unlockAttempted = false;
     if (previousBackend !== this.currentBackend()) this.statusChangeCallback?.();
   }
 }
 
-/**
- * Builds the default unlocker list with the given TTY gate. Extracted so
- * `createCredentialStore` can hand in the production `process.stdout.isTTY`
- * check while tests can import this factory and exercise the real gate
- * against a mocked `spawnImpl` (rather than re-implementing the unlocker
- * inline, which wouldn't catch a future refactor dropping the gate here).
- *
- * `timeoutMs` is also injectable so tests can drive the kill-on-timeout
- * path without waiting the full 30s — pass `10` to exercise the
- * setTimeout + child.kill branch with a hung fake child.
- */
 export function buildDefaultUnlockers(
   ttyCheck: () => boolean,
   timeoutMs: number = 30_000
@@ -558,37 +417,7 @@ export function buildDefaultUnlockers(
   ];
 }
 
-/**
- * Default interactive unlock strategy: trigger the macOS GUI password
- * dialog. We deliberately do NOT prompt on stdin/TTY because that path
- * risks hanging non-interactive daemons (launchd, test runners, CI) when
- * no one is around to type. We also gate on the injected `ttyCheck`
- * (production: `process.stdout.isTTY === true`) so background processes
- * (launchd, containerised daemons, bun test runners) skip the unlock
- * attempt entirely and fall straight through to the encrypted file
- * fallback instead of blocking on a dialog the user may never see.
- *
- * The GUI dialog either pops on the user's desktop (they type, keychain
- * unlocks, retry succeeds) or fails fast with `errSecInteractionNotAllowed`
- * when there's no Aqua session attached, in which case we fall through to
- * the encrypted file store.
- */
-
 async function tryUnlockKeychainViaGUI(timeoutMs: number = 30_000): Promise<boolean> {
-  // Cap the wait so a detached screen / SSH / tmux session where the GUI
-  // dialog can't be seen (or where the user stepped away) does not block
-  // a credential write indefinitely. The spike proved `security
-  // unlock-keychain` fails fast with code 36 when there is genuinely no
-  // Aqua session, so this timeout only fires in the rarer "Aqua session
-  // exists but the user cannot interact with it" case.
-  //
-  // Uses spawn+kill rather than Promise.race+execFile so the timeout
-  // actually cancels the child process. With Promise.race alone the
-  // `security unlock-keychain` subprocess keeps running behind the hung
-  // dialog and accumulates one stray process per credential write until
-  // the user finally dismisses the dialog (or never). Kill on timeout
-  // guarantees no stray processes; the dialog itself may linger on the
-  // desktop but the daemon does not.
   return new Promise<boolean>((resolve) => {
     const child = spawn('security', ['unlock-keychain'], { stdio: 'ignore' });
     let settled = false;
@@ -687,14 +516,6 @@ export class DatabaseCredentialStore implements CredentialStore {
 
 export function createCredentialStore(db: Database): CredentialStore {
   if (process.env.NODE_ENV !== 'test' && platform() === 'darwin') {
-    // macOS Keychain is preferred for secure storage. When it's locked or
-    // running in a headless security session (screen, SSH, launchd), writes
-    // fail with `errSecInteractionNotAllowed` (exit 36). The wrapper catches
-    // that, tries to recover via the macOS GUI unlock dialog (no TTY prompt
-    // — that would hang non-interactive daemons like launchd or test
-    // runners waiting on stdin), and finally falls back to the encrypted
-    // SQLite store so the daemon still works in screen/SSH without forcing
-    // the user to restart from a GUI session.
     const ttyCheck = () => process.stdout.isTTY === true;
     return new KeychainStatusCredentialStore(
       new KeychainCredentialStore(),
@@ -761,12 +582,6 @@ function isSecurityItemNotFound(error: unknown): boolean {
   return err.code === 44 || err.stderr?.includes('could not be found') === true;
 }
 
-/**
- * Detects `errSecInteractionNotAllowed` (exit code 36): the keychain exists but
- * the process can't prompt for unlock — happens under SSH, CI, or background
- * launches with no GUI session. Treat as "unavailable" so reads can fall back
- * to env/settings discovery and writes can fail with actionable guidance.
- */
 function isKeychainUnavailable(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const err = error as Error & { code?: number; stderr?: string };

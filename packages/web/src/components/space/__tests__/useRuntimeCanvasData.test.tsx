@@ -1,20 +1,9 @@
 // @ts-nocheck
-/**
- * Unit tests for useRuntimeCanvasData hook
- *
- * Tests:
- * 1. Returns empty nodeData/channelEdges when workflowId is null
- * 2. Correctly maps SpaceWorkflow nodes to WorkflowNodeData (step.id, stepIndex, isStartNode, isEndNode)
- * 3. Derives nodeTaskStates from nodeExecutionsByNodeId filtered by runId
- * 4. Builds channelEdges from workflow channels (fromStepId/toStepId/direction/isCyclic)
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, cleanup, waitFor } from '@testing-library/preact';
 import { signal, computed } from '@preact/signals';
 import type { SpaceWorkerAgent, SpaceWorkflow, NodeExecution } from '@hyperneo/shared';
-
-// ---- Signals for mocking ----
 
 let mockWorkflows = signal<SpaceWorkflow[]>([]);
 let mockAgents = signal<SpaceWorkerAgent[]>([]);
@@ -67,7 +56,6 @@ vi.mock('../../../lib/connection-manager', () => ({
   },
 }));
 
-// Initialize signals before import
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockAgents = signal<SpaceWorkerAgent[]>([]);
 mockNodeExecutions = signal<NodeExecution[]>([]);
@@ -85,8 +73,6 @@ mockNodeExecutionsByNodeId = computed(() => {
 });
 
 import { useRuntimeCanvasData } from '../useRuntimeCanvasData';
-
-// ---- Helpers ----
 
 function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
   return {
@@ -125,8 +111,6 @@ function makeNodeExecution(overrides: Partial<NodeExecution> = {}): NodeExecutio
     ...overrides,
   };
 }
-
-// ---- Tests ----
 
 describe('useRuntimeCanvasData', () => {
   beforeEach(() => {

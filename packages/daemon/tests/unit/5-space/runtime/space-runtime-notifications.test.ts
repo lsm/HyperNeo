@@ -1,18 +1,3 @@
-/**
- * SpaceRuntime Notification Tests
- *
- * Verifies that SpaceRuntime publishes structured events to InternalEventBus
- * for all event types:
- *   - space.workflowRun.blocked  (gate blocked)
- *   - space.task.blocked         (task entered blocked)
- *   - space.workflowRun.completed        (run reached terminal step)
- *   - space.task.timeout                 (in_progress task exceeded threshold)
- *
- * Also verifies:
- *   - Deduplication: same task in blocked across two ticks → one notification
- *   - Normal advancement emits NO notifications
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -30,10 +15,6 @@ import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-ag
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
-
-// ---------------------------------------------------------------------------
-// BusEventCollector — captures InternalEventBus events for test assertions
-// ---------------------------------------------------------------------------
 
 type BusEventKind =
   | 'task_blocked'
@@ -63,11 +44,6 @@ const EVENT_MAP: Record<string, BusEventKind> = {
   'space.task.awaitingApproval': 'task_awaiting_approval',
 };
 
-/**
- * Minimal mock TaskAgentManager — stubs the liveness/spawn interface so
- * processRunTick() enters the TAM block and reaches the completion check.
- * Never actually spawns agents; tasks must be pre-set to terminal states.
- */
 class MockTaskAgentManager {
   isTaskAgentAlive(_taskId: string): boolean {
     return false;
@@ -144,19 +120,11 @@ class BusEventCollector {
   }
 }
 
-// ---------------------------------------------------------------------------
-// DB helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
 
-  // runMigrations() applies migrations only; these unit fixtures need the base
-  // sdk_messages table because runtime recovery inspects persisted SDK output.
   db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
 		id TEXT PRIMARY KEY,
 		session_id TEXT NOT NULL,
@@ -253,7 +221,6 @@ function buildLinearWorkflow(
   nodes: Array<{ id: string; name: string; agentId: string }>,
   _conditions: Array<{ type: 'always' | 'human' }> = []
 ): SpaceWorkflow {
-  // Convert agentId shorthand to agents[] format (M71 schema)
   const workflowNodes = nodes.map((n) => ({
     id: n.id,
     name: n.name,
@@ -271,10 +238,6 @@ function buildLinearWorkflow(
   });
 }
 
-// End nodes must have exactly 1 agent (validator rule). For tests that exercise
-// a multi-agent step, append a downstream single-agent end node so the
-// multi-agent step remains an intermediate node. Returns the synthesized end
-// node id so tests can reference it.
 const SYNTHETIC_END_NODE_ID = '__test_end__';
 function withSyntheticEnd(endAgentId: string): {
   id: string;
@@ -287,10 +250,6 @@ function withSyntheticEnd(endAgentId: string): {
     agents: [{ agentId: endAgentId, name: 'end' }],
   };
 }
-
-// ---------------------------------------------------------------------------
-// Test suite setup
-// ---------------------------------------------------------------------------
 
 describe('SpaceRuntime — notification events', () => {
   let db: BunDatabase;
@@ -360,14 +319,6 @@ describe('SpaceRuntime — notification events', () => {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // workflow_run_blocked
-  // -------------------------------------------------------------------------
-
-  // -------------------------------------------------------------------------
-  // task_blocked
-  // -------------------------------------------------------------------------
-
   describe('task_blocked', () => {
     test('emits event when a step task enters needs_attention', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -421,15 +372,10 @@ describe('SpaceRuntime — notification events', () => {
 
       await runtime.executeTick();
 
-      // No step B task should be created
       const allTasks = taskRepo.listByWorkflowRun(run.id);
       expect(allTasks).toHaveLength(1);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Deduplication — task_blocked
-  // -------------------------------------------------------------------------
 
   describe('deduplication', () => {
     test('same task in needs_attention across two ticks emits only ONE notification', async () => {
@@ -441,15 +387,12 @@ describe('SpaceRuntime — notification events', () => {
       taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
       seedNodeExec(db, run.id, STEP_A, 'plan', 'blocked');
 
-      // First tick — should emit
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // Second tick — same task still in needs_attention — should NOT emit again
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // Third tick — still deduped
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
     });
@@ -463,32 +406,22 @@ describe('SpaceRuntime — notification events', () => {
       taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
       seedNodeExec(db, run.id, STEP_A, 'plan', 'blocked');
 
-      // First tick — emits
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // Task gets retried: back to in_progress
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
       taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
       seedNodeExec(db, run.id, STEP_A, 'plan', 'in_progress');
       await runtime.executeTick();
-      // No new event for in_progress
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // Task fails again
       seedNodeExec(db, run.id, STEP_A, 'plan', 'blocked');
       await runtime.executeTick();
-      // Should emit a second time since the dedup key was cleared
       const blockedEvents = collector.events.filter((e) => e.kind === 'task_blocked');
       expect(blockedEvents).toHaveLength(2);
     });
 
     test('multiple tasks in needs_attention each emit their own notification', async () => {
-      // Two-step workflow where both tasks (for different steps) end up needing attention
-      // In practice, each step has one task; we test with a single-step workflow and
-      // verify only one event per step.
-      // For multiple tasks we'd need a parallel step model; instead verify per-task dedup
-      // with two separate single-step workflows.
       const wf1 = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: 'step-multi-a', name: 'Step A', agentId: AGENT_CODER },
       ]);
@@ -504,26 +437,20 @@ describe('SpaceRuntime — notification events', () => {
 
       await runtime.executeTick();
 
-      // Both should emit
       const naEvents = collector.events.filter((e) => e.kind === 'task_blocked');
       expect(naEvents).toHaveLength(2);
       const taskIds = naEvents.map((e) => e.payload['taskId'] as string);
       expect(taskIds).toContain(tasks1[0].id);
       expect(taskIds).toContain(tasks2[0].id);
 
-      // Second tick — still deduped (no new events)
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(2);
     });
   });
 
-  // -------------------------------------------------------------------------
-  // task_timeout
-  // -------------------------------------------------------------------------
-
   describe('task_timeout', () => {
     test('emits event when in_progress task exceeds taskTimeoutMs', async () => {
-      setSpaceTaskTimeoutMs(db, SPACE_ID, 1000); // 1 second timeout
+      setSpaceTaskTimeoutMs(db, SPACE_ID, 1000);
 
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
@@ -544,7 +471,7 @@ describe('SpaceRuntime — notification events', () => {
     });
 
     test('does NOT emit timeout when task has not exceeded the threshold', async () => {
-      setSpaceTaskTimeoutMs(db, SPACE_ID, 60_000); // 1 minute — won't fire in a unit test
+      setSpaceTaskTimeoutMs(db, SPACE_ID, 60_000);
 
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
@@ -559,7 +486,6 @@ describe('SpaceRuntime — notification events', () => {
     });
 
     test('does NOT emit timeout when taskTimeoutMs is undefined (disabled)', async () => {
-      // No config set on space → timeout disabled
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
       ]);
@@ -583,11 +509,9 @@ describe('SpaceRuntime — notification events', () => {
       taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
       seedNodeExec(db, run.id, STEP_A, 'plan', 'in_progress', { startedAt: Date.now() - 2000 });
 
-      // First tick — emits timeout
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
 
-      // Second tick — same task still in_progress and over threshold — deduped
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
     });
@@ -603,28 +527,20 @@ describe('SpaceRuntime — notification events', () => {
       taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
       seedNodeExec(db, run.id, STEP_A, 'plan', 'in_progress', { startedAt: Date.now() - 2000 });
 
-      // First tick — emits
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
 
-      // Task leaves in_progress (e.g. paused to needs_attention)
       taskRepo.updateTask(tasks[0].id, { status: 'done' });
       seedNodeExec(db, run.id, STEP_A, 'plan', 'idle');
       await runtime.executeTick();
 
-      // Task re-enters in_progress, back-dated again
       taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
       seedNodeExec(db, run.id, STEP_A, 'plan', 'in_progress', { startedAt: Date.now() - 2000 });
       await runtime.executeTick();
 
-      // Should emit again since the dedup key was cleared when task left in_progress
       expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(2);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // No notifications for normal advancement
-  // -------------------------------------------------------------------------
 
   describe('no notifications for mechanical advancement', () => {
     test('normal step completion and advancement emits no notifications', async () => {
@@ -652,7 +568,6 @@ describe('SpaceRuntime — notification events', () => {
       ]);
 
       await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-      // Task stays pending (no update)
 
       await runtime.executeTick();
 
@@ -673,13 +588,8 @@ describe('SpaceRuntime — notification events', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Standalone task notifications
-  // -------------------------------------------------------------------------
-
   describe('standalone task notifications', () => {
     test('emits task_blocked for standalone task in needs_attention state', async () => {
-      // Create a standalone task (no workflowRunId) directly via repo
       const created = taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Standalone Task',
@@ -722,15 +632,12 @@ describe('SpaceRuntime — notification events', () => {
         status: 'blocked',
       });
 
-      // First tick — emits
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // Second tick — still needs_attention — deduped
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // Third tick — still deduped
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
     });
@@ -743,19 +650,15 @@ describe('SpaceRuntime — notification events', () => {
         status: 'blocked',
       });
 
-      // First tick — emits
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // Task gets retried: back to in_progress
       taskRepo.updateTask(task.id, { status: 'in_progress' });
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // Task fails again
       taskRepo.updateTask(task.id, { status: 'blocked' });
       await runtime.executeTick();
-      // Should emit a second time since dedup key was cleared when task left needs_attention
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(2);
     });
 
@@ -773,7 +676,7 @@ describe('SpaceRuntime — notification events', () => {
     });
 
     test('in_progress standalone tasks without timeout emit no notifications', async () => {
-      setSpaceTaskTimeoutMs(db, SPACE_ID, 60_000); // 1 minute — won't fire in unit test
+      setSpaceTaskTimeoutMs(db, SPACE_ID, 60_000);
 
       const task = taskRepo.createTask({
         spaceId: SPACE_ID,
@@ -781,7 +684,6 @@ describe('SpaceRuntime — notification events', () => {
         description: '',
         status: 'in_progress',
       });
-      // Stamp started_at (normally done by repo on status transition, but we set in creation)
       db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(Date.now(), task.id);
 
       await runtime.executeTick();
@@ -790,7 +692,7 @@ describe('SpaceRuntime — notification events', () => {
     });
 
     test('emits task_timeout for standalone in_progress task that exceeds threshold', async () => {
-      setSpaceTaskTimeoutMs(db, SPACE_ID, 1000); // 1 second
+      setSpaceTaskTimeoutMs(db, SPACE_ID, 1000);
 
       const task = taskRepo.createTask({
         spaceId: SPACE_ID,
@@ -798,7 +700,6 @@ describe('SpaceRuntime — notification events', () => {
         description: '',
         status: 'in_progress',
       });
-      // Back-date started_at to 2 seconds ago to simulate timeout
       db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
         Date.now() - 2000,
         task.id
@@ -816,7 +717,6 @@ describe('SpaceRuntime — notification events', () => {
     });
 
     test('does NOT emit timeout for standalone task when taskTimeoutMs is undefined', async () => {
-      // No config set — timeout disabled
       const task = taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Slow Standalone No Config',
@@ -847,11 +747,9 @@ describe('SpaceRuntime — notification events', () => {
         task.id
       );
 
-      // First tick — emits
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
 
-      // Second tick — still in_progress and over threshold — deduped
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
     });
@@ -870,15 +768,12 @@ describe('SpaceRuntime — notification events', () => {
         task.id
       );
 
-      // First tick — emits timeout
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
 
-      // Task moves to needs_attention (leaves in_progress)
       taskRepo.updateTask(task.id, { status: 'blocked' });
       await runtime.executeTick();
 
-      // Task re-enters in_progress and times out again
       taskRepo.updateTask(task.id, { status: 'in_progress' });
       db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
         Date.now() - 2000,
@@ -886,7 +781,6 @@ describe('SpaceRuntime — notification events', () => {
       );
       await runtime.executeTick();
 
-      // Should emit a second timeout since dedup key was cleared when task left in_progress
       expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(2);
     });
 
@@ -924,19 +818,14 @@ describe('SpaceRuntime — notification events', () => {
         status: 'blocked',
       });
 
-      // First tick — emits notification, dedup key added
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // Archive the task while it is still in needs_attention
       taskRepo.archiveTask(task.id);
 
-      // Second tick — task is now archived; dedup key should be cleared
       await runtime.executeTick();
-      // No new notification (archived tasks never re-enter needs_attention)
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // Create a NEW task in needs_attention and confirm dedup still works.
       const task2 = taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Another Task',
@@ -951,8 +840,6 @@ describe('SpaceRuntime — notification events', () => {
     });
 
     test('workflow tasks are NOT processed by checkStandaloneTasks', async () => {
-      // Create a workflow task (has workflowRunId) with needs_attention status
-      // It should NOT generate a duplicate notification via the standalone path
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT_CODER },
       ]);
@@ -961,16 +848,11 @@ describe('SpaceRuntime — notification events', () => {
 
       await runtime.executeTick();
 
-      // Should get exactly one notification (from processRunTick, not checkStandaloneTasks)
       const naEvents = collector.events.filter((e) => e.kind === 'task_blocked');
       expect(naEvents).toHaveLength(1);
       expect(naEvents[0].payload['taskId']).toBe(tasks[0].id);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Restart re-notification behavior (Task 2.3 restart contract)
-  // -------------------------------------------------------------------------
 
   describe('restart re-notification (empty dedup set on restart)', () => {
     test('standalone needs_attention task is re-notified after simulated restart', async () => {
@@ -982,23 +864,19 @@ describe('SpaceRuntime — notification events', () => {
       });
       const task = created;
 
-      // First runtime instance — first tick emits notification
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // Simulate restart: create a fresh runtime with empty dedup set
       const freshBus = new InternalEventBus<DaemonInternalEventMap>();
       const freshCollector = new BusEventCollector(freshBus);
       const freshRuntime = makeRuntime({ internalEventBus: freshBus });
 
-      // First tick on fresh runtime — dedup set is empty → re-notifies once
       await freshRuntime.executeTick();
       const reNotified = freshCollector.events.filter((e) => e.kind === 'task_blocked');
       expect(reNotified).toHaveLength(1);
       expect(reNotified[0].payload['taskId']).toBe(task.id);
       expect(reNotified[0].payload['reason']).toBe('Task requires attention');
 
-      // Second tick on fresh runtime — deduped, no new notification
       await freshRuntime.executeTick();
       expect(freshCollector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
       freshCollector.destroy();
@@ -1018,39 +896,27 @@ describe('SpaceRuntime — notification events', () => {
         task.id
       );
 
-      // First runtime instance — first tick emits timeout
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
 
-      // Simulate restart: fresh runtime with empty dedup set
       const freshBus = new InternalEventBus<DaemonInternalEventMap>();
       const freshCollector = new BusEventCollector(freshBus);
       const freshRuntime = makeRuntime({ internalEventBus: freshBus });
 
-      // First tick on fresh runtime — re-notifies once (dedup set was empty)
       await freshRuntime.executeTick();
       expect(freshCollector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
 
-      // Second tick — deduped
       await freshRuntime.executeTick();
       expect(freshCollector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
       freshCollector.destroy();
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Full pipeline — concurrent events in a single tick
-  // Verifies that multiple distinct event kinds are ALL delivered when they
-  // occur in the same SpaceRuntime tick.
-  // -------------------------------------------------------------------------
-
   describe('full pipeline — concurrent events in a single tick', () => {
     test('two workflow runs both enter needs_attention in the same tick — both events delivered', async () => {
-      // Run A: task enters needs_attention
       const wfA = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: 'step-conc-a', name: 'Step A', agentId: AGENT_CODER },
       ]);
-      // Run B: task enters needs_attention (different error)
       const wfB = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: 'step-conc-b', name: 'Step B', agentId: AGENT_CODER },
       ]);
@@ -1069,7 +935,6 @@ describe('SpaceRuntime — notification events', () => {
       seedNodeExec(db, runA.id, 'step-conc-a', 'step-a', 'blocked');
       seedNodeExec(db, runB.id, 'step-conc-b', 'step-b', 'blocked');
 
-      // Single tick — both tasks are in needs_attention simultaneously
       await runtime.executeTick();
 
       const naEvents = collector.events.filter((e) => e.kind === 'task_blocked');
@@ -1084,14 +949,12 @@ describe('SpaceRuntime — notification events', () => {
     });
 
     test('workflow task needs_attention AND standalone task needs_attention in the same tick', async () => {
-      // Workflow task
       const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: 'step-mixed-wf', name: 'Workflow Step', agentId: AGENT_CODER },
       ]);
       const { run, tasks: wfTasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
       seedNodeExec(db, run.id, 'step-mixed-wf', 'workflow-step', 'blocked');
 
-      // Standalone task (no workflowRunId)
       const standaloneCreated = taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Standalone Failing Task',
@@ -1099,7 +962,6 @@ describe('SpaceRuntime — notification events', () => {
         status: 'blocked',
       });
 
-      // Single tick — workflow path (processRunTick) + standalone path (checkStandaloneTasks)
       await runtime.executeTick();
 
       const naEvents = collector.events.filter((e) => e.kind === 'task_blocked');
@@ -1111,9 +973,8 @@ describe('SpaceRuntime — notification events', () => {
     });
 
     test('workflow timeout AND standalone timeout in the same tick', async () => {
-      setSpaceTaskTimeoutMs(db, SPACE_ID, 1000); // 1 second
+      setSpaceTaskTimeoutMs(db, SPACE_ID, 1000);
 
-      // Workflow task that times out
       const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: 'step-timeout-wf', name: 'Slow Workflow Step', agentId: AGENT_CODER },
       ]);
@@ -1122,7 +983,6 @@ describe('SpaceRuntime — notification events', () => {
         startedAt: Date.now() - 3000,
       });
 
-      // Standalone task that times out
       const standalone = taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Slow Standalone',
@@ -1134,7 +994,6 @@ describe('SpaceRuntime — notification events', () => {
         standalone.id
       );
 
-      // Single tick — both timeout events emitted
       await runtime.executeTick();
 
       const timeoutEvents = collector.events.filter((e) => e.kind === 'task_timeout');
@@ -1150,10 +1009,6 @@ describe('SpaceRuntime — notification events', () => {
       }
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Multi-agent partial failure notifications
-  // -------------------------------------------------------------------------
 
   describe('multi-agent partial failure', () => {
     const AGENT_PLANNER = 'agent-planner-notif';
@@ -1277,20 +1132,14 @@ describe('SpaceRuntime — notification events', () => {
       seedNodeExec(db, run.id, STEP_A, 'coder', 'blocked');
       seedNodeExec(db, run.id, STEP_A, 'planner', 'blocked');
 
-      // First tick — emits
       await runtime.executeTick();
       const firstTickRunEvents = collector.events.filter((e) => e.kind === 'workflow_run_blocked');
       expect(firstTickRunEvents).toHaveLength(1);
 
-      // Second tick — still deduped
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'workflow_run_blocked')).toHaveLength(1);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // workflow_run_completed
-  // -------------------------------------------------------------------------
 
   describe('workflow_run_completed', () => {
     test('emits event when run completes successfully (done)', async () => {
@@ -1298,8 +1147,6 @@ describe('SpaceRuntime — notification events', () => {
         { id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
       ]);
 
-      // Use a local runtime with MockTaskAgentManager so processRunTick
-      // enters the TAM block and reaches the completion check.
       const localNodeExecRepo = new NodeExecutionRepository(db);
       const localRt = new SpaceRuntime({
         db,
@@ -1339,8 +1186,6 @@ describe('SpaceRuntime — notification events', () => {
       await runtime.executeTick();
 
       const completedEvents = collector.events.filter((e) => e.kind === 'workflow_run_completed');
-      // The run may or may not emit completed depending on whether it was already
-      // processed before. Verify at least the event structure when present.
       if (completedEvents.length > 0) {
         const evt = completedEvents[0].payload;
         expect(evt['runId']).toBe(run.id);
@@ -1361,10 +1206,6 @@ describe('SpaceRuntime — notification events', () => {
       expect(completedEvents).toHaveLength(0);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // InternalEventBus publishing
-  // -------------------------------------------------------------------------
 
   describe('InternalEventBus publishing', () => {
     test('publishes space.task.blocked to InternalEventBus', async () => {
@@ -1421,7 +1262,6 @@ describe('SpaceRuntime — notification events', () => {
     });
 
     test('works without InternalEventBus (no crash)', async () => {
-      // No internalEventBus configured — should not crash
       const rt = new SpaceRuntime({
         db,
         spaceManager,
@@ -1439,8 +1279,6 @@ describe('SpaceRuntime — notification events', () => {
       seedNodeExec(db, run.id, STEP_A, 'plan', 'blocked');
 
       await rt.executeTick();
-
-      // No crash, no error — works without bus
     });
   });
 });

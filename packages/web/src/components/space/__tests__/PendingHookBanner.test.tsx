@@ -1,24 +1,9 @@
-/**
- * Unit tests for PendingHookBanner.
- *
- * Covers:
- * - hidden when no pending hooks
- * - rendered when a hook is blocked_by_hook
- * - rendered when a hook is waiting_on_hook_retry
- * - approve click fires spaceWorkflowRun.approveHook
- * - reject click fires spaceWorkflowRun.approveHook with approved=false
- * - retry click fires spaceWorkflowRun.retryHook
- * - fetch error surfaces with a Retry button
- * - per-hook busy and error states
- */
-
 // @ts-nocheck
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { SpaceWorkflow, WorkflowHookStateSnapshot } from '@hyperneo/shared';
 
-// ---- Mock hub ----
 const mockRequest: Mock = vi.fn();
 const mockOnEvent: Mock = vi.fn(() => () => {});
 const mockHub = { request: mockRequest, onEvent: mockOnEvent };
@@ -30,7 +15,6 @@ vi.mock('../../../lib/connection-manager', () => ({
   },
 }));
 
-// ---- Mock space-store.workflows signal ----
 const workflowsSignal = signal<SpaceWorkflow[]>([]);
 vi.mock('../../../lib/space-store', () => ({
   spaceStore: {

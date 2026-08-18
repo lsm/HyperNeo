@@ -1,15 +1,3 @@
-/**
- * useRuntimeCanvasData
- *
- * Derives WorkflowNodeData[] and ResolvedWorkflowChannel[] from spaceStore for
- * use in the read-only runtime canvas view.
- *
- * Data sources:
- * - spaceStore.workflows — workflow definition
- * - spaceStore.agents — agent metadata for node cards
- * - spaceStore.nodeExecutionsByNodeId — per-node execution status
- */
-
 import { useMemo, useState, useEffect } from 'preact/hooks';
 import { isChannelCyclic } from '@hyperneo/shared';
 import type { SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
@@ -25,8 +13,6 @@ import {
   routeSemanticWorkflowEdges,
   buildNodeAnchorUsage,
 } from './visual-editor/semanticWorkflowGraph';
-
-// ---- Hook ----
 
 export interface RuntimeCanvasData {
   nodeData: WorkflowNodeData[];
@@ -45,8 +31,6 @@ export function useRuntimeCanvasData(
   const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
 
   const [workflow, setWorkflow] = useState<SpaceWorkflow | null>(null);
-  // Read the workflow version so the effect re-runs when the same workflow
-  // is edited in place (spaceStore bumps the version on spaceWorkflow.updated).
   const workflowVersion = spaceStore.workflowVersions.value.get(workflowId ?? '') ?? 0;
 
   useEffect(() => {
@@ -55,8 +39,6 @@ export function useRuntimeCanvasData(
       return;
     }
     let cancelled = false;
-    // Clear stale workflow immediately so the canvas never renders with
-    // nodes/channels from a previous ID while the new fetch is in flight.
     setWorkflow(null);
     spaceStore.fetchWorkflowDetail(workflowId).then((wf) => {
       if (!cancelled) setWorkflow(wf);
@@ -72,17 +54,14 @@ export function useRuntimeCanvasData(
     scale: 1,
   });
 
-  // ---- Build visual state from workflow ----
   const visualState = useMemo(
     () => (workflow ? workflowToVisualState(workflow) : null),
     [workflow]
   );
 
-  // ---- Endpoint lookup for channel resolution ----
   const nodes = visualState?.nodes ?? [];
   const channels: WorkflowChannel[] = visualState?.channels ?? [];
 
-  // Compute cyclic channel indexes (same as VisualWorkflowEditor)
   const endpointNodeIdLookup = useMemo(() => {
     const map = new Map<string, string>();
     for (const node of nodes) {
@@ -126,7 +105,6 @@ export function useRuntimeCanvasData(
     [routedSemanticEdges]
   );
 
-  // ---- Build channel edges ----
   const channelEdges = useMemo<ResolvedWorkflowChannel[]>(
     () =>
       routedSemanticEdges.map((edge) => ({
@@ -141,7 +119,6 @@ export function useRuntimeCanvasData(
     [routedSemanticEdges]
   );
 
-  // ---- Build WorkflowNodeData[] ----
   const nodeData = useMemo<WorkflowNodeData[]>(() => {
     const startKey =
       workflow?.nodes.find((s) => s.id === workflow.startNodeId)?.id ??
@@ -180,7 +157,6 @@ export function useRuntimeCanvasData(
     });
   }, [nodes, agents, channels, workflow, nodeExecutionsByNodeId, runId, anchorUsageByNodeId]);
 
-  // ---- Build canvas node positions ----
   const canvasNodePositions = useMemo<NodePosition>(() => buildVisualNodePositions(nodes), [nodes]);
 
   return {

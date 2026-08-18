@@ -1,25 +1,3 @@
-/**
- * Tests for useConnectionDrag hook.
- *
- * Tests:
- * - Ghost edge renders during drag (dragState.active = true, fromPos/currentPos set)
- * - dragState starts idle
- * - startDrag activates drag and sets fromStepId
- * - mousemove during drag updates currentPos
- * - mouseup without hover target cancels drag (no transition created)
- * - mouseup with valid hover target creates transition
- * - self-connection is blocked (fromStepId === hoverTargetStepId)
- * - duplicate transition is blocked
- * - setHoverTarget ignored when drag is inactive
- * - drag resets to idle after mouseup
- *
- * WorkflowCanvas integration tests:
- * - ghost edge element renders during drag
- * - ghost edge disappears after mouseup
- * - isDropTarget applied to non-source nodes during drag
- * - port mousedown starts drag (input or output)
- */
-
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import { useRef, useState } from 'preact/hooks';
@@ -37,10 +15,6 @@ vi.mock('../../../../lib/utils', () => ({
 }));
 
 afterEach(() => cleanup());
-
-// ============================================================================
-// Helpers
-// ============================================================================
 
 const VP: ViewportState = { offsetX: 0, offsetY: 0, scale: 1 };
 
@@ -78,7 +52,6 @@ function makeNode(
   };
 }
 
-/** Fake port element with a specific getBoundingClientRect */
 function makePortEl(x = 100, y = 200, w = 14, h = 14): Element {
   const el = document.createElement('div');
   el.getBoundingClientRect = () => ({
@@ -95,7 +68,6 @@ function makePortEl(x = 100, y = 200, w = 14, h = 14): Element {
   return el;
 }
 
-/** Fake container element */
 function makeContainerEl(left = 0, top = 0): HTMLElement {
   const el = document.createElement('div');
   el.getBoundingClientRect = () => ({
@@ -111,10 +83,6 @@ function makeContainerEl(left = 0, top = 0): HTMLElement {
   });
   return el;
 }
-
-// ============================================================================
-// Hook test harness
-// ============================================================================
 
 interface HarnessProps {
   viewportState: ViewportState;
@@ -155,10 +123,6 @@ function HookHarness({
   );
 }
 
-// ============================================================================
-// useConnectionDrag unit tests
-// ============================================================================
-
 describe('useConnectionDrag — idle state', () => {
   it('starts idle', () => {
     const { getByTestId } = render(<HookHarness viewportState={VP} />);
@@ -176,12 +140,8 @@ describe('useConnectionDrag — startDrag', () => {
   });
 
   it('sets fromPos to port center in canvas coords (scale 1, no offset)', () => {
-    // Port at screen (100, 200) with size 14x14 → center at (107, 207)
-    // Container at (0, 0)
-    // Viewport offset (0,0), scale 1 → canvas same as screen
     const { getByTestId } = render(<HookHarness viewportState={VP} />);
     fireEvent.click(getByTestId('start-drag'));
-    // Port center relative to container: (107 - 0) / 1 = 107, (207 - 0) / 1 = 207
     expect(Number(getByTestId('from-x').textContent)).toBeCloseTo(107, 0);
     expect(Number(getByTestId('from-y').textContent)).toBeCloseTo(207, 0);
   });
@@ -233,7 +193,7 @@ describe('useConnectionDrag — setHoverTarget', () => {
 
   it('is ignored when drag is not active', () => {
     const { getByTestId } = render(<HookHarness viewportState={VP} />);
-    fireEvent.click(getByTestId('set-hover')); // no drag active
+    fireEvent.click(getByTestId('set-hover'));
     expect(getByTestId('hover-target').textContent).toBe('');
   });
 });
@@ -274,8 +234,8 @@ describe('useConnectionDrag — mouseup (connect)', () => {
       <HookHarness viewportState={VP} onCreateTransition={onCreateTransition} />
     );
 
-    fireEvent.click(getByTestId('start-drag')); // fromStepId = 'step-a'
-    fireEvent.click(getByTestId('set-hover')); // hoverTarget = 'step-b'
+    fireEvent.click(getByTestId('start-drag'));
+    fireEvent.click(getByTestId('set-hover'));
 
     act(() => {
       window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
@@ -286,8 +246,6 @@ describe('useConnectionDrag — mouseup (connect)', () => {
   });
 
   it('blocks self-connections', () => {
-    // We need to make fromStepId === hoverTargetStepId
-    // Override setHoverTarget: use a different harness that sets hover to 'step-a'
     const onCreateTransition = vi.fn();
 
     function SelfConnectionHarness() {
@@ -341,10 +299,6 @@ describe('useConnectionDrag — mouseup (connect)', () => {
     expect(onCreateTransition).not.toHaveBeenCalled();
   });
 });
-
-// ============================================================================
-// WorkflowCanvas integration tests
-// ============================================================================
 
 function renderCanvas(extra: Partial<WorkflowCanvasProps> = {}) {
   const nodes: WorkflowNodeData[] = [
@@ -445,15 +399,13 @@ describe('WorkflowCanvas — drop target highlighting', () => {
       );
     });
 
-    // step-2 and step-3 input ports should be green (drop target)
     const inputPort2 = getByTestId('workflow-node-step-2').querySelector(
       '[data-testid="port-input"]'
     ) as HTMLElement;
     const inputPort3 = getByTestId('workflow-node-step-3').querySelector(
       '[data-testid="port-input"]'
     ) as HTMLElement;
-    // JSDOM retains hex value as-is rather than normalizing to rgb()
-    expect(inputPort2?.style.background).toBe('#22c55e'); // green-500
+    expect(inputPort2?.style.background).toBe('#22c55e');
     expect(inputPort3?.style.background).toBe('#22c55e');
   });
 
@@ -470,7 +422,6 @@ describe('WorkflowCanvas — drop target highlighting', () => {
       );
     });
 
-    // step-2 is source — its input port should not be green
     const inputPort2 = getByTestId('workflow-node-step-2').querySelector(
       '[data-testid="port-input"]'
     ) as HTMLElement;
@@ -497,7 +448,6 @@ describe('WorkflowCanvas — drop target highlighting', () => {
     const inputPort2 = getByTestId('workflow-node-step-2').querySelector(
       '[data-testid="port-input"]'
     ) as HTMLElement;
-    // After drag ends, should revert to default gray
     expect(inputPort2?.style.background).not.toBe('#22c55e');
   });
 });
@@ -505,7 +455,6 @@ describe('WorkflowCanvas — drop target highlighting', () => {
 describe('WorkflowCanvas — start node not a drop target', () => {
   it('start node input port is hidden, so it cannot be a drop target', () => {
     const { getByTestId } = renderCanvas();
-    // step-1 is isStartNode=true → no port-input element
     const startNode = getByTestId('workflow-node-step-1');
     expect(startNode.querySelector('[data-testid="port-input"]')).toBeNull();
   });
@@ -515,19 +464,16 @@ describe('WorkflowCanvas — end-to-end connection creation', () => {
   it('calls onCreateTransition when dropping on a valid input port', () => {
     const { getByTestId, onCreateTransition } = renderCanvas();
 
-    // 1. Start drag from step-1 output port
     const outputPort = getByTestId('workflow-node-step-1').querySelector(
       '[data-testid="port-output"]'
     )!;
     fireEvent.mouseDown(outputPort, { button: 0, clientX: 50, clientY: 50 });
 
-    // 2. Simulate hovering over step-2 input port
     const inputPort2 = getByTestId('workflow-node-step-2').querySelector(
       '[data-testid="port-input"]'
     )!;
     fireEvent.mouseEnter(inputPort2);
 
-    // 3. Release mouse — should create transition
     act(() => {
       window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
@@ -538,19 +484,16 @@ describe('WorkflowCanvas — end-to-end connection creation', () => {
   it('calls onCreateTransition when drag starts from an input port', () => {
     const { getByTestId, onCreateTransition } = renderCanvas();
 
-    // 1. Start drag from step-2 input port
     const inputPort2 = getByTestId('workflow-node-step-2').querySelector(
       '[data-testid="port-input"]'
     )!;
     fireEvent.mouseDown(inputPort2, { button: 0, clientX: 50, clientY: 50 });
 
-    // 2. Simulate hovering over step-3 input port
     const inputPort3 = getByTestId('workflow-node-step-3').querySelector(
       '[data-testid="port-input"]'
     )!;
     fireEvent.mouseEnter(inputPort3);
 
-    // 3. Release mouse — should create transition from source step to hovered step
     act(() => {
       window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
@@ -566,7 +509,6 @@ describe('WorkflowCanvas — end-to-end connection creation', () => {
     )!;
     fireEvent.mouseDown(outputPort, { button: 0, clientX: 50, clientY: 50 });
 
-    // No mouseEnter on any input port
     act(() => {
       window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
@@ -586,10 +528,8 @@ describe('WorkflowCanvas — end-to-end connection creation', () => {
         new MouseEvent('mousemove', { bubbles: true, clientX: 150, clientY: 200 })
       );
     });
-    // Ghost edge should be visible
     expect(queryByTestId('ghost-edge')).toBeTruthy();
 
-    // Press Escape — should cancel the drag
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     });

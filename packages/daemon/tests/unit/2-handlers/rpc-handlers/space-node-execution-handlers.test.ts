@@ -1,11 +1,3 @@
-/**
- * Tests for Space Node Execution RPC Handlers
- *
- * Covers:
- * - nodeExecution.list: throws if workflowRunId/spaceId missing; returns executions list;
- *   ownership check (spaceId enforcement)
- */
-
 import { describe, expect, it, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { NodeExecution } from '@hyperneo/shared';
@@ -14,8 +6,6 @@ import type { NodeExecutionRepository } from '../../../../src/storage/repositori
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
-
-// ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const NOW = Date.now();
 
@@ -51,8 +41,6 @@ const mockExecutions: NodeExecution[] = [
     lastActivityAt: NOW + 7000,
   },
 ];
-
-// ─── Mock helpers ─────────────────────────────────────────────────────────────
 
 function createMockMessageHub(): {
   hub: MessageHub;
@@ -100,8 +88,6 @@ function createMockWorkflowRunRepo(
     }),
   } as unknown as SpaceWorkflowRunRepository;
 }
-
-// ─── Test Suite ───────────────────────────────────────────────────────────────
 
 describe('space-node-execution-handlers', () => {
   let handlers: Map<string, RequestHandler>;
@@ -160,8 +146,6 @@ describe('space-node-execution-handlers', () => {
       expect(result.executions).toHaveLength(2);
       expect(result.executions[0].id).toBe('exec-1');
       expect(result.executions[1].id).toBe('exec-2');
-      // lastActivityAt is surfaced so UI liveness displays / external watchdogs
-      // can key off the real activity signal instead of updatedAt.
       expect(result.executions[0].lastActivityAt).toBe(NOW + 4000);
       expect(result.executions[1].lastActivityAt).toBe(NOW + 7000);
     });

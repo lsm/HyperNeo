@@ -135,7 +135,6 @@ describe('Popover', () => {
 
   it('should unmount panel when closed by default', () => {
     render(<BasicPopover unmount={true} />);
-    // Panel not in DOM when closed
     expect(screen.queryByText('Panel content')).toBeNull();
     fireEvent.click(screen.getByText('Toggle'));
     expect(screen.getByText('Panel content')).not.toBeNull();
@@ -145,7 +144,6 @@ describe('Popover', () => {
 
   it('should hide panel when unmount=false', () => {
     render(<BasicPopover unmount={false} />);
-    // Panel should be in DOM but hidden
     const panel = screen.getByText('Panel content').closest('div');
     expect(panel).not.toBeNull();
     expect(panel?.getAttribute('hidden')).toBe('');
@@ -238,11 +236,9 @@ describe('Popover', () => {
         fireEvent.click(screen.getByText('Toggle'));
       });
       expect(screen.queryByText('Panel content')).not.toBeNull();
-      // Advance past the setTimeout(0) in useOutsideClick
       await act(async () => {
         vi.advanceTimersByTime(10);
       });
-      // Dispatch pointerdown on body (outside the panel)
       fireEvent.pointerDown(document.body);
       expect(screen.queryByText('Panel content')).toBeNull();
     } finally {
@@ -328,7 +324,6 @@ describe('Popover', () => {
       </Popover>
     );
 
-    // Open first
     await act(async () => {
       fireEvent.click(screen.getByText('Toggle'));
     });
@@ -336,7 +331,6 @@ describe('Popover', () => {
       raf.flush();
     });
 
-    // Now close
     await act(async () => {
       fireEvent.click(screen.getByText('Toggle'));
     });
@@ -344,7 +338,6 @@ describe('Popover', () => {
       raf.flush();
     });
 
-    // unmount=false keeps it in DOM
     expect(screen.queryByText('Panel content')).not.toBeNull();
   });
 

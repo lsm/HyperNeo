@@ -1,25 +1,3 @@
-/**
- * Shared test helpers for Space online integration tests.
- *
- * These helpers drive workflow runs directly via RPC without spinning up real
- * LLM agent sessions, so node-activation and run-status logic can be exercised
- * deterministically and quickly with the dev proxy.
- *
- * ## Key helpers
- *
- * - createTestSpace        — create a Space with a deterministic full-cycle test workflow
- * - startWorkflowRun       — start a run and return its ID + initial tasks
- * - markRunFailed          — mark run as blocked with a specific failureReason
- * - waitForNodeStatus      — poll until a node execution reaches a target status
- * - waitForRunStatus       — poll until the workflow run reaches a target status
- * - mockAgentDone          — mark a canonical task or node execution as done
- * - restartDaemon          — kill the daemon and restart it with the same workspace/database
- *
- * ## Usage
- *
- *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/space/...
- */
-
 import { createDaemonServer, type DaemonServerContext } from '../../../helpers/daemon-server';
 import type {
   NodeExecution,
@@ -32,15 +10,9 @@ import type {
   WorkflowRunFailureReason,
 } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 export interface TestSpaceFixture {
   space: Space;
-  /** All agents seeded into the space */
   agents: SpaceWorkerAgent[];
-  /** Deterministic full-cycle workflow fixture used by online space tests */
   workflow: SpaceWorkflow;
 }
 
@@ -61,14 +33,6 @@ type NodeExecutionIndexEntry = {
   agentName: string;
 };
 
-/**
- * In-memory index for projected node-execution “task-like” records.
- *
- * Tests often pass only a task ID into helpers like mockAgentDone().
- * Under the one-task-per-run architecture, node state lives in node_executions,
- * so we keep a lightweight index to resolve execution IDs back to
- * (runId, nodeId, agentName) triples.
- */
 const nodeExecutionIndex = new Map<string, NodeExecutionIndexEntry>();
 
 function mapNodeExecutionStatusToTaskStatus(status: NodeExecutionStatus): SpaceTask['status'] {
@@ -241,15 +205,6 @@ async function findNodeExecutionById(
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// Space + workflow setup
-// ---------------------------------------------------------------------------
-
-/**
- * Create a Space whose name embeds a unique suffix so tests never collide.
- * space.create auto-seeds preset agents, then this helper creates a deterministic
- * full-cycle workflow fixture tailored for online gate/channel tests.
- */
 export async function createTestSpace(daemon: DaemonServerContext): Promise<TestSpaceFixture> {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
@@ -412,7 +367,7 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
       },
       {
         from: 'Coding',
-        to: 'Code Review', // fan-out to all agents in the Code Review node
+        to: 'Code Review',
         gateId: 'code-pr-gate',
         label: 'Coding → Code Review',
       },
@@ -443,8 +398,6 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
         label: 'QA → Coding (fix loop)',
       },
     ],
-    // Test fixture: supervised tier (level 3) — matches the production CODING_WORKFLOW
-    // default so tests exercise the autonomy-gated end-node tool path realistically.
     completionAutonomyLevel: 3,
     tags: ['v2', 'test'],
   })) as { workflow: SpaceWorkflow };
@@ -452,13 +405,6 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
   return { space, agents, workflow };
 }
 
-// ---------------------------------------------------------------------------
-// Workflow run lifecycle
-// ---------------------------------------------------------------------------
-
-/**
- * Start a workflow run and return its ID plus projected node-execution tasks.
- */
 export async function startWorkflowRun(
   daemon: DaemonServerContext,
   spaceId: string,
@@ -471,8 +417,6 @@ export async function startWorkflowRun(
     title,
   })) as { run: SpaceWorkflowRun };
 
-  // Runtime now tracks per-node progress via node_executions (one-task-per-run model).
-  // Give the start-node activation a brief window to materialize in very fast CI runs.
   let runTasks = await listNodeTasksForRun(daemon, spaceId, run.id);
   const deadline = Date.now() + 3_000;
   while (runTasks.length === 0 && Date.now() < deadline) {
@@ -483,22 +427,10 @@ export async function startWorkflowRun(
   return { runId: run.id, tasks: runTasks };
 }
 
-// ---------------------------------------------------------------------------
-// Status polling helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Poll nodeExecution.list until at least one execution for the given node/slot
- * reaches one of the expected task-like statuses.
- *
- * The helper returns projected "task-like" objects for backward-compatible test
- * ergonomics, but the source of truth is node_executions.
- */
 export async function waitForNodeStatus(
   daemon: DaemonServerContext,
   spaceId: string,
   runId: string,
-  /** Node name (e.g. 'Planning', 'Plan Review', 'Coding'), agent slot name, or node UUID */
   nodeNameOrId: string,
   expectedStatuses: string[],
   timeout: number
@@ -528,11 +460,6 @@ export async function waitForNodeStatus(
   );
 }
 
-/**
- * Poll projected node executions until any task-like record exists for the node
- * (i.e. the node has been activated). Useful before calling waitForNodeStatus
- * when you just want to confirm activation happened.
- */
 export async function waitForNodeActivated(
   daemon: DaemonServerContext,
   spaceId: string,
@@ -550,10 +477,6 @@ export async function waitForNodeActivated(
   );
 }
 
-/**
- * Poll spaceWorkflowRun.get until the run reaches one of the expected statuses.
- * Returns the final run object.
- */
 export async function waitForRunStatus(
   daemon: DaemonServerContext,
   runId: string,
@@ -562,7 +485,6 @@ export async function waitForRunStatus(
 ): Promise<SpaceWorkflowRun> {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    // spaceWorkflowRun.get uses 'id' not 'runId'
     const { run } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
       id: runId,
     })) as { run: SpaceWorkflowRun };
@@ -575,24 +497,12 @@ export async function waitForRunStatus(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Task simulation helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Mark an execution as done for integration tests.
- *
- * Supports both:
- * - canonical run tasks (spaceTask.update path)
- * - node execution IDs (nodeExecution.update path)
- */
 export async function mockAgentDone(
   daemon: DaemonServerContext,
   spaceId: string,
   taskId: string,
   result?: string
 ): Promise<SpaceTask> {
-  // 1) Canonical task path (one-task-per-run envelope)
   try {
     const current = (await daemon.messageHub.request('spaceTask.get', {
       spaceId,
@@ -619,7 +529,6 @@ export async function mockAgentDone(
     // Not a canonical task ID — fall through to node execution path.
   }
 
-  // 2) Node execution path (workflow-internal state)
   const execution = await findNodeExecutionById(daemon, spaceId, taskId);
   if (!execution) {
     throw new Error(`mockAgentDone: task/execution not found: ${taskId}`);
@@ -635,13 +544,6 @@ export async function mockAgentDone(
   return projectNodeExecutionAsTask(spaceId, updatedExecution);
 }
 
-/**
- * Mark the end-node execution as idle AND set the canonical task to done.
- *
- * The completion detector requires `task.status` to be terminal — idle node
- * executions alone no longer signal workflow completion. This helper wraps
- * `mockAgentDone` for end-node call sites that expect the run to finish.
- */
 export async function mockWorkflowComplete(
   daemon: DaemonServerContext,
   spaceId: string,
@@ -651,7 +553,6 @@ export async function mockWorkflowComplete(
 ): Promise<void> {
   await mockAgentDone(daemon, spaceId, endNodeExecutionId, result);
 
-  // Find and transition the canonical task to done.
   const allTasks = (await daemon.messageHub.request('spaceTask.list', {
     spaceId,
   })) as SpaceTask[];
@@ -675,14 +576,6 @@ export async function mockWorkflowComplete(
   }
 }
 
-/**
- * Find projected task-like node executions for a node/slot in a run.
- *
- * Matching order:
- * 1) Exact node UUID (workflowNodeId)
- * 2) Workflow node name
- * 3) Agent slot name (execution.agentName)
- */
 export async function getTasksForNode(
   daemon: DaemonServerContext,
   spaceId: string,
@@ -700,15 +593,6 @@ export async function getTasksForNode(
   return tasks.filter((task) => matchesNodeTarget(task, nodeNameOrId, resolvedNodeId));
 }
 
-/**
- * Poll nodeExecution state until a NEW active execution appears for a node.
- *
- * In the one-task-per-run architecture, cyclic re-activation may reuse the same
- * node_execution row (same ID) and flip its status back to active. This helper
- * treats both cases as "new":
- * - a brand-new execution ID not in excludeTaskIds
- * - a previously terminal excluded execution reactivated to open/in_progress
- */
 export async function waitForNewNodeTask(
   daemon: DaemonServerContext,
   spaceId: string,
@@ -739,8 +623,6 @@ export async function waitForNewNodeTask(
         return true;
       }
 
-      // Activation may have happened between the caller's trigger and our first poll.
-      // In that case the reused execution is already active in the baseline snapshot.
       return baseline.status === 'open' || baseline.status === 'in_progress';
     });
     if (match) return match;
@@ -752,9 +634,6 @@ export async function waitForNewNodeTask(
   );
 }
 
-/**
- * Find projected task-like node executions for an exact workflow node UUID.
- */
 export async function getTasksForNodeId(
   daemon: DaemonServerContext,
   spaceId: string,
@@ -765,18 +644,6 @@ export async function getTasksForNodeId(
   return tasks.filter((task) => task.workflowNodeId === nodeId);
 }
 
-// ---------------------------------------------------------------------------
-// Failure simulation helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Mark a workflow run as blocked with a specific failure reason.
- * Simulates what the Space Agent does when it detects an unrecoverable failure
- * (e.g. agentCrash, maxIterationsReached).
- *
- * Uses the spaceWorkflowRun.markFailed RPC which transitions the run to
- * blocked and sets the failureReason field atomically.
- */
 export async function markRunFailed(
   daemon: DaemonServerContext,
   runId: string,
@@ -790,27 +657,6 @@ export async function markRunFailed(
   })) as { run: SpaceWorkflowRun };
 }
 
-// ---------------------------------------------------------------------------
-// Daemon restart helper
-// ---------------------------------------------------------------------------
-
-/**
- * Restart the daemon with the same workspace directory (and therefore the
- * same SQLite database).  Used by restart-persistence tests to verify that
- * gate data, run state, and task state survive a full daemon restart.
- *
- * **In-process mode only** (default): reads the dbPath from the hidden
- * `daemonContext` property that createInProcessDaemonServer attaches to the
- * returned context.  Does NOT work when DAEMON_TEST_SPAWN=true is set.
- *
- * Steps:
- *  1. Extract the workspace path from the running daemon context.
- *  2. Kill the daemon and wait for clean shutdown.
- *  3. Spin up a new daemon targeting the same workspace / DB file.
- *
- * The caller is responsible for updating any variable holding the old
- * DaemonServerContext reference (e.g. `daemon = await restartDaemon(daemon)`).
- */
 export async function restartDaemon(daemon: DaemonServerContext): Promise<DaemonServerContext> {
   const { workspacePath } = daemon;
 
@@ -821,13 +667,10 @@ export async function restartDaemon(daemon: DaemonServerContext): Promise<Daemon
     );
   }
 
-  // Clear helper-side node execution cache to avoid leaking stale IDs across restarts.
   nodeExecutionIndex.clear();
 
-  // Gracefully shut down the current daemon
   daemon.kill('SIGTERM');
   await daemon.waitForExit();
 
-  // Start a new daemon with the same workspace so it picks up the existing DB
   return createDaemonServer({ workspacePath });
 }

@@ -338,9 +338,6 @@ function findActiveCompletedTaskReviewTask(
         'review',
         'approved',
         'blocked',
-        // A review task paused on a rate/usage cap is still the active review —
-        // it auto-resumes when the cap lifts. Excluding it would let a later
-        // threshold job create a duplicate review task + episode.
         'rate_limited',
         'usage_limited',
       ].includes(task.status);
@@ -356,10 +353,6 @@ function findExistingAutomationReviewTask(
   const scope = deps.evolutionRepo.getScope(scopeId);
   if (!scope) return null;
   const token = automationTriggerToken(payload);
-  // For self-nag, the token is stable across ticks (same scheduleId).
-  // Only reuse a task if it was created in the current automation run
-  // (after the cursor's lastFiredAt). This prevents cross-tick dedup
-  // while still protecting against retry duplication within a tick.
   const cursor =
     payload.triggerKind === 'completed_task_threshold'
       ? newestCursor(
@@ -375,9 +368,6 @@ function findExistingAutomationReviewTask(
   const task = deps.taskRepo.listBySpace(scope.spaceId, true).find((item) => {
     if (item.evolutionScopeId !== scopeId) return false;
     if (!item.labels.includes('automation') || !item.labels.includes(token)) return false;
-    // For self-nag and completed_task_threshold, only match tasks created
-    // after the last cursor fire. This prevents reusing terminal review
-    // tasks when the same trigger fires again for newer evidence.
     if (
       (payload.triggerKind === 'self_nag' || payload.triggerKind === 'completed_task_threshold') &&
       item.createdAt <= afterTimestamp

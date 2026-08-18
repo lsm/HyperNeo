@@ -1,10 +1,3 @@
-/**
- * MessageQueue Tests
- *
- * Tests message queuing, AsyncGenerator functionality,
- * and queue lifecycle management.
- */
-
 import { describe, expect, it, beforeEach } from 'bun:test';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import { generateUUID } from '@hyperneo/shared';
@@ -19,22 +12,20 @@ describe('MessageQueue', () => {
 
   describe('enqueue', () => {
     it('should enqueue a message and return message ID', async () => {
-      queue.start(); // Start queue so generator can process messages
+      queue.start();
 
       const messageId = queue.enqueue('Test message');
       expect(messageId).toBeInstanceOf(Promise);
 
-      // Start generator to process the message
       const generator = queue.messageGenerator(testSessionId);
       const result = await generator.next();
-      result.value.onSent(); // Mark as sent
+      result.value.onSent();
 
       const id = await messageId;
 
-      // Message ID should be a UUID
       expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 
-      queue.stop(); // Clean up
+      queue.stop();
     });
 
     it('should enqueue multiple messages', async () => {
@@ -47,7 +38,6 @@ describe('MessageQueue', () => {
       expect(promise2).toBeInstanceOf(Promise);
       expect(promise3).toBeInstanceOf(Promise);
 
-      // Clean up - clear queue and handle rejections
       queue.clear();
       await promise1.catch(() => {});
       await promise2.catch(() => {});
@@ -58,7 +48,6 @@ describe('MessageQueue', () => {
       const promise = queue.enqueue('Internal message', true);
       expect(queue.size()).toBe(1);
 
-      // Clean up
       queue.clear();
       await promise.catch(() => {});
     });
@@ -104,7 +93,6 @@ describe('MessageQueue', () => {
 
       expect(queue.size()).toBe(0);
 
-      // Catch rejected promises to avoid unhandled rejections
       await promise1.catch(() => {});
       await promise2.catch(() => {});
       await promise3.catch(() => {});
@@ -114,13 +102,11 @@ describe('MessageQueue', () => {
       const promise1 = queue.enqueue('Message 1');
       const promise2 = queue.enqueue('Message 2');
 
-      // Store promise rejection handlers immediately to avoid unhandled rejection
       const rejection1 = promise1.catch((err) => err);
       const rejection2 = promise2.catch((err) => err);
 
       queue.clear();
 
-      // Check that promises were rejected with correct error
       const error1 = await rejection1;
       const error2 = await rejection2;
 
@@ -151,16 +137,12 @@ describe('MessageQueue', () => {
       const acknowledgment = queue.enqueueWithId('claimed-to-remove', 'Message 1');
       const generator = queue.messageGenerator(testSessionId);
 
-      // next() runs synchronously up to its first await: the message is already
-      // shifted out of `queue` and claimed by the generator, but not yet yielded.
       const nextPromise = generator.next();
 
-      // Revocation still wins in the claimed (pre-yield) state.
       expect(queue.remove('claimed-to-remove')).toBe(true);
       expect(queue.size()).toBe(0);
       await acknowledgment;
 
-      // The generator skips the revoked claim and waits for the next message.
       queue.stop();
       const result = await nextPromise;
       expect(result.done).toBe(true);
@@ -174,7 +156,6 @@ describe('MessageQueue', () => {
       const result = await generator.next();
       expect(result.done).toBe(false);
 
-      // Provider ownership has won — removal must not report success.
       expect(queue.remove('yielded-kept')).toBe(false);
       expect(queue.size()).toBe(1);
 
@@ -188,18 +169,15 @@ describe('MessageQueue', () => {
     it('reports false for an unknown id and true while queued/claimed/yielded', async () => {
       expect(queue.hasPendingOrInFlight('nope')).toBe(false);
 
-      // In the queue (admitted, not yet yielded).
       const acknowledgment = queue.enqueueWithId('in-flight-id', 'Message 1');
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(true);
 
-      // Claimed then yielded by a generator (still in flight pre-onSent).
       queue.start();
       const generator = queue.messageGenerator(testSessionId);
       const result = await generator.next();
       expect(result.done).toBe(false);
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(true);
 
-      // Acknowledged (onSent) — no longer pending/in-flight.
       result.value.onSent();
       await acknowledgment;
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(false);
@@ -230,13 +208,10 @@ describe('MessageQueue', () => {
     it('should yield messages from queue', async () => {
       queue.start();
 
-      // Enqueue message before starting generator
       const messagePromise = queue.enqueue('Test message');
 
-      // Start generator
       const generator = queue.messageGenerator(testSessionId);
 
-      // Get first message
       const result = await generator.next();
 
       expect(result.done).toBe(false);
@@ -247,10 +222,8 @@ describe('MessageQueue', () => {
         { type: 'text', text: 'Test message' },
       ]);
 
-      // Call onSent callback
       result.value.onSent();
 
-      // Wait for message promise to resolve
       const messageId = await messagePromise;
       expect(messageId).toBeDefined();
     });
@@ -258,15 +231,12 @@ describe('MessageQueue', () => {
     it('should yield multiple messages in order', async () => {
       queue.start();
 
-      // Enqueue messages
       const promise1 = queue.enqueue('Message 1');
       const promise2 = queue.enqueue('Message 2');
       const promise3 = queue.enqueue('Message 3');
 
-      // Start generator
       const generator = queue.messageGenerator(testSessionId);
 
-      // Get messages in order
       const result1 = await generator.next();
       expect(result1.value.message.message.content[0].text).toBe('Message 1');
       result1.value.onSent();
@@ -288,10 +258,8 @@ describe('MessageQueue', () => {
 
       const generator = queue.messageGenerator(testSessionId);
 
-      // Stop queue before getting next message
       queue.stop();
 
-      // Generator should complete
       const result = await generator.next();
       expect(result.done).toBe(true);
     });
@@ -327,7 +295,7 @@ describe('MessageQueue', () => {
       queue.start();
       queue.enqueueWithId('msg-inflight-size', 'Hello');
       const generator = queue.messageGenerator(testSessionId);
-      await generator.next(); // shift + yield (do NOT call onSent)
+      await generator.next();
       expect(queue.size()).toBe(1);
     });
 
@@ -371,7 +339,6 @@ describe('MessageQueue', () => {
       queue.clear();
       expect(queue.size()).toBe(0);
 
-      // Catch rejected promises
       await promise1.catch(() => {});
       await promise2.catch(() => {});
     });
@@ -379,18 +346,12 @@ describe('MessageQueue', () => {
 
   describe('timeout detection', () => {
     it('should reject message after timeout if not consumed', async () => {
-      // Don't start the queue - messages won't be consumed
       const messageId = 'test-timeout-message';
 
-      // The default timeout is 30s, which is too long for tests
-      // We can test that the timeout mechanism is in place by checking
-      // that the message gets the timeout tracking fields
       const promise = queue.enqueueWithId(messageId, 'Test message');
 
-      // Immediately clear queue which should clear timeout and reject
       queue.clear();
 
-      // Promise should be rejected with interrupt error (clear was called)
       await expect(promise).rejects.toThrow('Interrupted by user');
     });
 
@@ -400,25 +361,20 @@ describe('MessageQueue', () => {
       const messageId = 'test-consumed-message';
       const promise = queue.enqueueWithId(messageId, 'Test message');
 
-      // Start generator to consume the message
       const generator = queue.messageGenerator('test-session');
       const result = await generator.next();
 
       expect(result.done).toBe(false);
       expect(result.value).toBeDefined();
 
-      // Call onSent which should clear the timeout
       result.value.onSent();
 
-      // Promise should resolve successfully
       await expect(promise).resolves.toBeUndefined();
 
       queue.stop();
     });
 
     it('should include error name MessageQueueTimeoutError on timeout', async () => {
-      // This test validates the error structure without waiting for real timeout
-      // We create a mock scenario by modifying the queue behavior
       const error = new Error('Message queue timeout: SDK did not consume message test within 30s');
       error.name = 'MessageQueueTimeoutError';
 
@@ -427,24 +383,20 @@ describe('MessageQueue', () => {
     });
 
     it('should clear all pending timeouts when queue is cleared', async () => {
-      // Enqueue multiple messages (don't start queue - no generator consuming)
       const promise1 = queue.enqueue('Message 1');
       const promise2 = queue.enqueue('Message 2');
       const promise3 = queue.enqueue('Message 3');
 
       expect(queue.size()).toBe(3);
 
-      // Store rejection handlers
       const rejection1 = promise1.catch((err) => err);
       const rejection2 = promise2.catch((err) => err);
       const rejection3 = promise3.catch((err) => err);
 
-      // Clear queue - should clear all timeouts and reject all
       queue.clear();
 
       expect(queue.size()).toBe(0);
 
-      // All should be rejected with interrupt error
       const error1 = await rejection1;
       const error2 = await rejection2;
       const error3 = await rejection3;
@@ -455,17 +407,14 @@ describe('MessageQueue', () => {
     });
 
     it('should handle rapid enqueue/clear cycles without memory leaks', async () => {
-      // Rapidly enqueue and clear to test cleanup
       for (let i = 0; i < 10; i++) {
         const promises: Promise<string>[] = [];
         for (let j = 0; j < 5; j++) {
           promises.push(queue.enqueue(`Message ${i}-${j}`));
         }
 
-        // Clear queue
         queue.clear();
 
-        // Wait for all rejections
         await Promise.allSettled(promises);
 
         expect(queue.size()).toBe(0);
@@ -473,7 +422,6 @@ describe('MessageQueue', () => {
     });
 
     it('should reject with timeout error containing message ID', async () => {
-      // Validate error message format contains the message ID
       const error = new Error(
         'Message queue timeout: SDK did not consume message abc-123 within 30s. ' +
           'This usually indicates an SDK internal error. Please try again or create a new session.'
@@ -602,14 +550,10 @@ describe('MessageQueue', () => {
 
         const generator = queue.messageGenerator(testSessionId);
 
-        // Schedule generation change while generator is waiting
-        // The generator waits for up to 1000ms at a time, then rechecks
         setTimeout(() => {
           queue.stop();
         }, 100);
 
-        // The generator waits in waitForNextMessage
-        // When stopped, running becomes false, so waitForNextMessage returns null
         const result = await generator.next();
         expect(result.done).toBe(true);
       },
@@ -619,13 +563,10 @@ describe('MessageQueue', () => {
     it('should check generation before yielding message', async () => {
       queue.start();
 
-      // Enqueue message first
       const promise1 = queue.enqueue('Message 1');
 
-      // Create generator that will capture current generation
       const generator = queue.messageGenerator(testSessionId);
 
-      // Consume the message
       const result = await generator.next();
       expect(result.done).toBe(false);
       expect(result.value.message.message.content[0].text).toBe('Message 1');
@@ -638,22 +579,16 @@ describe('MessageQueue', () => {
     it('should allow new generator after restart to consume messages', async () => {
       queue.start();
 
-      // Create generator
       const generator1 = queue.messageGenerator(testSessionId);
 
-      // Stop queue
       queue.stop();
 
-      // Start again (increments generation)
       queue.start();
 
-      // Enqueue a message
       const promise1 = queue.enqueue('Message for new gen');
 
-      // Create new generator with new generation
       const generator2 = queue.messageGenerator(testSessionId);
 
-      // New generator should be able to consume it
       const result = await generator2.next();
       expect(result.done).toBe(false);
       expect(result.value.message.message.content[0].text).toBe('Message for new gen');
@@ -716,7 +651,6 @@ describe('MessageQueue', () => {
 
         const generator = queue.messageGenerator(testSessionId);
 
-        // Wait a bit then enqueue
         setTimeout(() => {
           queue.enqueue('Delayed message');
         }, 50);
@@ -737,7 +671,6 @@ describe('MessageQueue', () => {
 
         const generator = queue.messageGenerator(testSessionId);
 
-        // Stop queue while generator is waiting
         setTimeout(() => {
           queue.stop();
         }, 50);
@@ -755,7 +688,6 @@ describe('MessageQueue', () => {
       async () => {
         queue.start();
 
-        // Enqueue multiple messages - don't await, they will be consumed by generator
         const promise1 = queue.enqueue('Message 1');
         const promise2 = queue.enqueue('Message 2');
         const promise3 = queue.enqueue('Message 3');
@@ -764,7 +696,6 @@ describe('MessageQueue', () => {
 
         const generator = queue.messageGenerator(testSessionId);
 
-        // Consume all messages
         const result1 = await generator.next();
         expect(result1.done).toBe(false);
         expect(result1.value.message.message.content[0].text).toBe('Message 1');
@@ -780,7 +711,6 @@ describe('MessageQueue', () => {
         expect(result3.value.message.message.content[0].text).toBe('Message 3');
         result3.value.onSent();
 
-        // Now all promises should resolve
         await Promise.all([promise1, promise2, promise3]);
 
         queue.stop();
@@ -795,17 +725,14 @@ describe('MessageQueue', () => {
 
       const generator = queue.messageGenerator(testSessionId);
 
-      // Get first message
       const result1 = await generator.next();
       expect(result1.value.message.message.content[0].text).toBe('First message');
 
-      // Enqueue another while processing
       const promise2 = queue.enqueue('Second message');
 
       result1.value.onSent();
       await promise1;
 
-      // Get second message
       const result2 = await generator.next();
       expect(result2.value.message.message.content[0].text).toBe('Second message');
       result2.value.onSent();
@@ -834,20 +761,20 @@ describe('MessageQueue', () => {
 
     it('should handle clear on empty queue', () => {
       expect(queue.size()).toBe(0);
-      queue.clear(); // Should not throw
+      queue.clear();
       expect(queue.size()).toBe(0);
     });
 
     it('should handle multiple stops', () => {
       queue.start();
       queue.stop();
-      queue.stop(); // Should not throw
+      queue.stop();
       expect(queue.isRunning()).toBe(false);
     });
 
     it('should handle multiple starts', () => {
       queue.start();
-      queue.start(); // Should increment generation
+      queue.start();
       expect(queue.getGeneration()).toBe(2);
     });
   });
@@ -856,20 +783,16 @@ describe('MessageQueue', () => {
     it('should propagate internal flag from queued message to SDK message', async () => {
       queue.start();
 
-      // Enqueue an internal message
       const messagePromise = queue.enqueue('Internal test message', true);
 
-      // Start generator
       const generator = queue.messageGenerator(testSessionId);
 
-      // Get first message
       const result = await generator.next();
 
       expect(result.done).toBe(false);
       expect(result.value).toBeDefined();
       expect(result.value.message.internal).toBe(true);
 
-      // Call onSent callback
       result.value.onSent();
       await messagePromise;
 
@@ -879,20 +802,16 @@ describe('MessageQueue', () => {
     it('should have false internal flag when not set', async () => {
       queue.start();
 
-      // Enqueue a regular message (no internal flag)
       const messagePromise = queue.enqueue('Regular message');
 
-      // Start generator
       const generator = queue.messageGenerator(testSessionId);
 
-      // Get first message
       const result = await generator.next();
 
       expect(result.done).toBe(false);
       expect(result.value).toBeDefined();
       expect(result.value.message.internal).toBe(false);
 
-      // Call onSent callback
       result.value.onSent();
       await messagePromise;
 
@@ -902,16 +821,13 @@ describe('MessageQueue', () => {
     it('should handle internal flag for multiple messages', async () => {
       queue.start();
 
-      // Enqueue mix of internal and regular messages
       const promise1 = queue.enqueue('Regular 1', false);
       const promise2 = queue.enqueue('Internal 1', true);
       const promise3 = queue.enqueue('Regular 2');
       const promise4 = queue.enqueue('Internal 2', true);
 
-      // Start generator
       const generator = queue.messageGenerator(testSessionId);
 
-      // Get messages and verify internal flags
       const result1 = await generator.next();
       expect(result1.value.message.internal).toBe(false);
       result1.value.onSent();
@@ -942,14 +858,9 @@ describe('MessageQueue', () => {
       q.overrideTimeoutMsForTest(40);
       q.start();
       const promise = q.enqueueWithId('msg-durable', 'hello', false, { durable: true });
-      // Drive the generator one step: the message is shifted out and yielded to
-      // the SDK (now in `inFlight`) but onSent never fires within the timeout.
       const generator = q.messageGenerator('test-session');
       const result = await generator.next();
       expect(result.done).toBe(false);
-      // After the (short) timeout, a durable feed RESOLVES — the live SDK already
-      // holds the UUID, so a reject → handler fail → job retry → re-feed would
-      // execute the user's request twice.
       await expect(promise).resolves.toBeUndefined();
       q.stop();
     });
@@ -960,7 +871,7 @@ describe('MessageQueue', () => {
       q.start();
       const promise = q.enqueueWithId('msg-legacy', 'hello');
       const generator = q.messageGenerator('test-session');
-      await generator.next(); // yield to inFlight, no onSent
+      await generator.next();
       await expect(promise).rejects.toThrow('Message queue timeout');
       q.stop();
     });
@@ -968,8 +879,6 @@ describe('MessageQueue', () => {
     it('a DURABLE feed that was never yielded still rejects (genuine stall → safe retry)', async () => {
       const q = new MessageQueue();
       q.overrideTimeoutMsForTest(40);
-      // Do NOT start / drive the generator: the message stays in `queue` (never
-      // reached the SDK). A retry cannot duplicate it, so rejecting is correct.
       const promise = q.enqueueWithId('msg-stalled', 'hello', false, { durable: true });
       await expect(promise).rejects.toThrow('Message queue timeout');
     });

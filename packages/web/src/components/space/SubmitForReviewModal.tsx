@@ -1,17 +1,3 @@
-/**
- * SubmitForReviewModal — UI counterpart to the agent `submit_for_approval` tool.
- *
- * Opens when a user clicks the "Submit for Review" button on an
- * `in_progress` task. Captures an optional reason (mirrors the agent tool's
- * `reason` parameter) and calls `spaceStore.submitForReview` on confirm,
- * which routes through the unified `spaceTask.submitForReview` RPC.
- *
- * After unification, this is the only path by which a UI user can land a
- * task in `review`. The bare `updateTask({status:'review'})` path is
- * rejected by the daemon so callers can't accidentally bypass the
- * pending-completion metadata that drives `PendingTaskCompletionBanner`.
- */
-
 import { useEffect, useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal.tsx';
 
@@ -20,18 +6,6 @@ interface SubmitForReviewModalProps {
   busy: boolean;
   onCancel: () => void;
   onConfirm: (reason: string | null) => void | Promise<void>;
-  /**
-   * Inline error message rendered inside the modal when the submit RPC
-   * fails. Owned by the parent so it can re-trigger by clearing/setting the
-   * value across submit attempts.
-   *
-   * Why this lives in the modal rather than relying on `threadSendError`:
-   * `threadSendError` is only painted inside `TaskSessionChatComposer`, which
-   * is mounted only when the inline composer is visible. If a user submits
-   * for review while the composer is hidden, an RPC failure leaves the modal
-   * frozen with no feedback. Rendering the error here makes the failure
-   * visible regardless of composer visibility.
-   */
   error?: string | null;
 }
 
@@ -44,8 +18,6 @@ export function SubmitForReviewModal({
 }: SubmitForReviewModalProps) {
   const [reason, setReason] = useState('');
 
-  // Reset the reason field whenever the modal closes so a follow-up open
-  // doesn't surface stale text from a prior submission attempt.
   useEffect(() => {
     if (!isOpen) setReason('');
   }, [isOpen]);

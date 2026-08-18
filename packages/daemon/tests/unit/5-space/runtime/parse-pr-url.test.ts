@@ -71,8 +71,6 @@ describe('buildPrEventTopicPattern', () => {
   });
 
   test('preserves Enterprise host-relative topic namespace', () => {
-    // Topic patterns strip the host: subscriptions are namespaced under the
-    // `github/` source prefix regardless of github.com vs. GHE.
     const parsed = parsePrUrl('https://github.example.com/team/repo/pull/99')!;
     expect(buildPrEventTopicPattern(parsed)).toBe('github/team/repo/pull_request/99.*');
   });
@@ -92,15 +90,10 @@ describe('resolveTopicFromInterest', () => {
       'https://github.com/lsm/neokai/pull/42'
     );
     expect(resolved).toBe('github/lsm/neokai/pull_request/42.*');
-    // A resolved topic must be a valid glob the trie can register.
     expect(validateGlobPattern(resolved!).valid).toBe(true);
   });
 
   test('resolves an Enterprise PR URL into the host-agnostic github/ taxonomy', () => {
-    // GitHub events are published under the literal `github/` source prefix
-    // regardless of github.com vs. GHE, so an Enterprise PR resolves the same
-    // way as github.com (host is not part of the topic). The Enterprise host
-    // must be admitted via allowedHosts (the runtime derives it from GH_HOST).
     const interest: Pick<EventInterest, 'topicFrom'> = {
       topicFrom: {
         source: 'primaryLink',
@@ -128,20 +121,14 @@ describe('resolveTopicFromInterest', () => {
       'https://github.example.com/team/repo/pull/99',
       new Set(['github.com', 'github.example.com'])
     );
-    // `{host}` is left as a literal token rather than expanded — the GitHub
-    // topic taxonomy has no host segment, so expanding it could never match.
     expect(resolved).toBe('{host}/team/repo/pull_request/99.*');
     expect(validateGlobPattern(resolved!).valid).toBe(false);
   });
 
   test('returns null for a primary link on an untrusted host', () => {
-    // parsePrUrl accepts a GitHub-shaped path on any host, so a link like this
-    // must not resolve to a topic for the real acme/widgets repo. Only an
-    // allowed host (github.com by default, plus a configured GH_HOST) resolves.
     expect(
       resolveTopicFromInterest(primaryLinkInterest, 'https://evil.example/acme/widgets/pull/7')
     ).toBeNull();
-    // ...and the same link IS resolved once its host is admitted.
     expect(
       resolveTopicFromInterest(
         primaryLinkInterest,
@@ -152,9 +139,6 @@ describe('resolveTopicFromInterest', () => {
   });
 
   test('normalizes host case and port before the allowedHosts check (mirrors new URL().hostname)', () => {
-    // parsePrUrl captures host case-preserving and port-including; the connector
-    // compares via new URL(...).hostname (lowercased, port-stripped). A mixed-case
-    // host and a port-bearing GHE link must resolve, not be silently rejected.
     expect(
       resolveTopicFromInterest(primaryLinkInterest, 'https://GitHub.com/lsm/neokai/pull/42')
     ).toBe('github/lsm/neokai/pull_request/42.*');
@@ -165,8 +149,6 @@ describe('resolveTopicFromInterest', () => {
         new Set(['github.com', 'ghe.example'])
       )
     ).toBe('github/team/repo/pull_request/9.*');
-    // Allowlist entries may also carry mixed case or a port (e.g. a raw GH_HOST);
-    // both sides are normalized, so this still resolves.
     expect(
       resolveTopicFromInterest(
         primaryLinkInterest,
@@ -185,13 +167,10 @@ describe('resolveTopicFromInterest', () => {
     };
     const resolved = resolveTopicFromInterest(interest, 'https://github.com/lsm/neokai/pull/42');
     expect(resolved).toBe('github/lsm/neokai/pull_request/42/{action}.x');
-    // An unresolved placeholder leaves `{`/`}` in the topic, which the trie
-    // rejects — surfacing the caller's malformed template at registration.
     expect(validateGlobPattern(resolved!).valid).toBe(false);
   });
 
   test('returns null when the interest has no topicFrom (static topic)', () => {
-    // A static-topic interest carries no topicFrom — there is nothing to resolve.
     expect(resolveTopicFromInterest({}, 'https://github.com/lsm/neokai/pull/42')).toBeNull();
   });
 
@@ -216,14 +195,9 @@ describe('resolveTopicFromInterest', () => {
   });
 
   test('returns null when a substituted identity component is not a literal segment', () => {
-    // A wildcard owner/repo must not expand into a wildcard subscription (the
-    // trie treats `*` as match-all), and template syntax in a component must
-    // not be re-interpreted by the sequential placeholder substitution.
     expect(
       resolveTopicFromInterest(primaryLinkInterest, 'https://github.com/*/*/pull/42')
     ).toBeNull();
-    // owner `{repo}` would otherwise be substituted in, then re-scanned by the
-    // `{repo}` pass — collapsing owner and repo to the same value (wrong repo).
     expect(
       resolveTopicFromInterest(primaryLinkInterest, 'https://github.com/{repo}/victim/pull/42')
     ).toBeNull();

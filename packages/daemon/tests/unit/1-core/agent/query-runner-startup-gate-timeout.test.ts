@@ -1,20 +1,3 @@
-/**
- * QueryRunner startup gate — startup-timeout release path
- *
- * Exercises the genuine timer-driven path: STARTUP_TIMEOUT_MS is read once at
- * query-runner module load, so this file sets a short timeout (and K=1) in
- * env BEFORE dynamically importing the module under test. Vitest isolates
- * each file's module registry, so the short timeout is guaranteed; when
- * running with `bun test`, run this file on its own (a same-process earlier
- * import of query-runner would have captured the default 15s — same
- * constraint as tests/online/convo/startup-timeout-no-retry.test.ts).
- *
- * Verifies that a startup-timeout abort releases the admission slot, that the
- * single auto-retry re-queues through the gate instead of inheriting the
- * slot, and that a herd of timeout sessions keeps at most K subprocesses in
- * the pre-first-message phase at any moment (rolling admissions).
- */
-
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 const FORCED_STARTUP_TIMEOUT_MS = '60';
@@ -54,7 +37,6 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => {
   };
 });
 
-// Import AFTER the env assignments and mock registration above (see header).
 const { QueryRunner } = await import('../../../../src/lib/agent/query-runner');
 const { getSdkStartupGate, resetSdkStartupGateForTests } = await import(
   '../../../../src/lib/agent/sdk-startup-gate'
@@ -110,7 +92,6 @@ function defer<T>(): Deferred<T> {
   return guarded;
 }
 
-/** A spawned "subprocess" that never emits a first message (startup hang). */
 interface SilentQuery {
   queryObject: QueryLike;
   closeCount: number;
@@ -227,13 +208,6 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     return { runner: new QueryRunner(ctx), ctx };
   }
 
-  /**
-   * Fail fast when query-runner was already loaded by an earlier file in the
-   * same bun test process (shared module registry → the default 15s timeout
-   * was captured, so the short timer never fires). Vitest isolates module
-   * registries per file; CI shards are unaffected. Under bun test, run this
-   * file on its own.
-   */
   async function assertShortTimeoutActive(): Promise<void> {
     const start = Date.now();
     while (Date.now() - start < 1500) {
@@ -259,7 +233,6 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
   }
 
   let spawnCounter: number;
-  /** Pending iterator.next() deferreds per spawn, in pull order. */
   let spawnNexts: Array<Array<Deferred<IteratorResult<SDKMessage>>>>;
 
   beforeEach(() => {
@@ -269,10 +242,6 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     spawnNexts = [];
     handleErrorSpy = mock(async () => {});
     resetSdkStartupGateForTests();
-    // Wrap the fresh singleton so every admission/release is observable with
-    // session identity — the honest occupancy signal (queryObject.close()
-    // fires later, in the finally, so spawn/close interleaving alone cannot
-    // prove bounded cold-start concurrency).
     const gate = getSdkStartupGate();
     const originalAcquire = gate.acquire.bind(gate);
     gate.acquire = async (options: { sessionId: string; signal?: AbortSignal }) => {
@@ -297,7 +266,6 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
           events.push(`close${index}`);
         },
         [Symbol.asyncIterator]: () => ({
-          // Never resolves unless a test settles it — a silent subprocess.
           next: () => {
             const d = defer<IteratorResult<SDKMessage>>();
             spawnNexts[index].push(d);
@@ -317,7 +285,6 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
   });
 
   afterAll(() => {
-    // Restore the process-wide env for files that run after this one.
     if (SAVED_TIMEOUT_ENV === undefined) {
       delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
     } else {
@@ -334,19 +301,14 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     const { runner, ctx } = createRunner('s1');
     runner.start();
 
-    // Attempt 1 spawns, times out at ~60ms, aborts and releases the slot.
     await waitFor(() => events.includes('spawn0'));
     await assertShortTimeoutActive();
     await waitFor(() => events.includes('close0'));
-    // The auto-retry (attempt 2) re-queues and spawns a fresh subprocess.
     await waitFor(() => events.includes('spawn1'));
 
-    // Attempt 2 also times out — retry-once is exhausted, error goes terminal.
     await ctx.queryPromise;
     await waitFor(() => handleErrorSpy.mock.calls.length > 0);
 
-    // The timeout abort freed the first slot BEFORE the retry was admitted
-    // (rolling, never inherited), and the terminal attempt freed its own slot.
     const admitIndexes = events
       .map((event, index) => (event === 'admit:s1' ? index : -1))
       .filter((index) => index >= 0);
@@ -372,21 +334,10 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     await waitFor(() => events.includes('spawn0'));
     await assertShortTimeoutActive();
 
-    // Every session eventually reaches its terminal timeout state.
     await first.ctx.queryPromise;
     await second.ctx.queryPromise;
     await waitFor(() => handleErrorSpy.mock.calls.length >= 2);
 
-    // Rolling admissions through both retries. Which of the two concurrently
-    // starting sessions reaches the gate first is not deterministic (dynamic
-    // imports precede the acquire), so the order-sensitive assertions are the
-    // invariants that actually matter:
-    //   - each session is admitted exactly twice (initial + auto-retry);
-    //   - per session, admits strictly alternate with frees — the retry is
-    //     admitted only AFTER its own earlier attempt released (re-queued,
-    //     never slot-inherited);
-    //   - occupancy never exceeds K=1 (below) — at most one subprocess is in
-    //     the pre-first-message phase at any moment.
     const admissionOrder = events
       .filter((event) => event.startsWith('admit:'))
       .map((event) => event.slice('admit:'.length));
@@ -419,31 +370,20 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
   });
 
   it('does not leak the permit when a transient-connection retry replaces a mid-stream query (retry startup timer stays effective)', async () => {
-    // Regression (review P1): the transient-connection retry fires mid-stream,
-    // after firstMessageReceived was set true. The recursive runQuery bypasses
-    // start(), so without an explicit reset the retry's startup timer is
-    // disabled — a silent replacement spawn never exits the for-await, no
-    // release site runs, and the permit is held forever (three such leaks
-    // would stall every daemon cold-start).
     const { runner, ctx } = createRunner('s1');
     runner.start();
 
-    // Attempt 1: first message arrives (permit #1 released at first_message),
-    // then the stream dies with a transient connection error mid-turn.
     await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 1);
     spawnNexts[0][0].resolve({ value: sdkMessage(), done: false });
     await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 2);
     spawnNexts[0][1].reject(new Error('TypeError: fetch failed'));
 
-    // The retry spawns a replacement that stays silent. Its startup timer
-    // must abort it (stale firstMessageReceived would disable the timer),
-    // the terminal error surfaces, and the retry's permit is released.
     await waitFor(() => spawnNexts.length >= 2);
     await assertShortTimeoutActive();
     await ctx.queryPromise;
     await waitFor(() => handleErrorSpy.mock.calls.length > 0);
 
-    expect(spawnNexts.length).toBe(2); // initial + transient retry
+    expect(spawnNexts.length).toBe(2);
     expect(getSdkStartupGate().getStats()).toEqual({
       active: 0,
       queued: 0,

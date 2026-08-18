@@ -1,14 +1,3 @@
-/**
- * useRunHookStates — subscribes to hook-state updates for a workflow run
- * and returns one evaluated HookBannerSummary per defined hook.
- *
- * Shared between SpaceTaskPane (deciding which single banner to render
- * via resolveActiveTaskBanner) and PendingHookBanner (rendering the
- * list of pending hooks). Extracted so both paths see the same hook-status
- * evaluation without racing each other with independent subscriptions
- * against the same run.
- */
-
 import { useEffect, useState } from 'preact/hooks';
 import type { WorkflowHook, WorkflowHookStateSnapshot } from '@hyperneo/shared';
 import { connectionManager } from '../../lib/connection-manager';
@@ -28,15 +17,10 @@ export interface HookBannerSummary {
   retryAfterMs?: number;
   retryCount?: number;
   nextRetryAt?: number;
-  /** True when the hook result explicitly allows human approval override. */
   allowHumanApproval?: boolean;
-  /** Raw hook state — callers rendering details use this. */
   state: WorkflowHookStateSnapshot;
 }
 
-/**
- * Evaluate the banner-relevant status for a single hook state.
- */
 export function evaluateHookStatus(
   state: WorkflowHookStateSnapshot,
   hookDef?: WorkflowHook
@@ -72,11 +56,6 @@ export function evaluateHookStatus(
   };
 }
 
-/**
- * Returns evaluated hook summaries for the given run, or undefined while
- * loading. Pass null/undefined for either arg to disable the hook —
- * it will always return undefined in that case.
- */
 export function useRunHookStates(
   runId: string | null | undefined,
   workflowId: string | null | undefined
@@ -84,7 +63,6 @@ export function useRunHookStates(
   summaries: HookBannerSummary[] | undefined;
   fetchError: string | null;
   retry: () => void;
-  /** True once the workflow definition contains hook configs, even if none are pending. */
   hasHooks: boolean;
 } {
   const [hooks, setHooks] = useState<WorkflowHook[]>([]);
@@ -176,8 +154,6 @@ export function useRunHookStates(
           const state = hookStateMap.get(hook.id);
           if (!state) return [];
           const summary = evaluateHookStatus(state, hook);
-          // Only emit hooks that have a non-allow result (data row exists and
-          // the hook has actually been evaluated to something meaningful).
           if (summary.status === 'allowed') return [];
           return [summary];
         });

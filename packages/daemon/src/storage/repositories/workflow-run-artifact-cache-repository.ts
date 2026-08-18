@@ -1,17 +1,3 @@
-/**
- * Workflow Run Artifact Cache Repository
- *
- * Stores JSON-serialised results of the expensive git subprocess calls that
- * back the TaskArtifactsPanel — gate artifacts (uncommitted numstat), commit
- * log (between diff-base and HEAD), and per-file diffs. Rows are keyed by
- * `(run_id, task_id, cache_key)` and upserted by background job handlers in
- * `packages/daemon/src/lib/job-handlers/space-workflow-run-artifact.handler.ts`.
- *
- * The frontend learns about new rows via the `space.artifactCache.updated`
- * InternalEventBus<DaemonInternalEventMap> event emitted from the job handlers — there is no LiveQuery on
- * this table, so the repo does not notify the `ReactiveDatabase`.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import { Logger } from '../../lib/logger';
@@ -23,7 +9,6 @@ export type ArtifactCacheStatus = 'ok' | 'syncing' | 'error';
 export interface WorkflowRunArtifactCacheRecord {
   id: string;
   runId: string;
-  /** Empty string means "no specific task" (run-level cache entry). */
   taskId: string;
   cacheKey: string;
   status: ArtifactCacheStatus;
@@ -41,17 +26,12 @@ export interface CacheUpsertParams {
   status: ArtifactCacheStatus;
   data: Record<string, unknown>;
   error?: string | null;
-  /** Wall-clock time the underlying git command finished; defaults to now. */
   syncedAt?: number;
 }
 
 export class WorkflowRunArtifactCacheRepository {
   constructor(private db: BunDatabase) {}
 
-  /**
-   * Upsert a cache entry. On conflict (same run + task + cache_key) the data,
-   * status, error, synced_at, and updated_at fields are overwritten.
-   */
   upsert(params: CacheUpsertParams): WorkflowRunArtifactCacheRecord {
     const now = Date.now();
     const taskId = params.taskId ?? '';
@@ -85,7 +65,6 @@ export class WorkflowRunArtifactCacheRepository {
     return this.rowToRecord(row)!;
   }
 
-  /** Get a single cache entry by composite key, or null. */
   get(runId: string, cacheKey: string, taskId?: string): WorkflowRunArtifactCacheRecord | null {
     const row = this.db
       .prepare(
@@ -97,7 +76,6 @@ export class WorkflowRunArtifactCacheRepository {
     return row ? this.rowToRecord(row) : null;
   }
 
-  /** List all cache entries for a workflow run (all tasks, all keys). */
   listByRun(runId: string): WorkflowRunArtifactCacheRecord[] {
     const rows = this.db
       .prepare(
@@ -110,7 +88,6 @@ export class WorkflowRunArtifactCacheRepository {
       .filter((r): r is WorkflowRunArtifactCacheRecord => r !== null);
   }
 
-  /** Delete all cache entries for a workflow run. Returns the number deleted. */
   deleteByRun(runId: string): number {
     const result = this.db
       .prepare('DELETE FROM workflow_run_artifact_cache WHERE run_id = ?')
@@ -118,10 +95,6 @@ export class WorkflowRunArtifactCacheRepository {
     return result.changes;
   }
 
-  /**
-   * Delete cache entries for a (run, task) pair. Used when a worktree is
-   * known to have changed and the cache should be invalidated.
-   */
   deleteByRunTask(runId: string, taskId: string): number {
     const result = this.db
       .prepare('DELETE FROM workflow_run_artifact_cache WHERE run_id = ? AND task_id = ?')

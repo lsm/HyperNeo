@@ -3,7 +3,6 @@ import { Folder, Plus, Users } from 'lucide-preact';
 export function EmptyStatesDemo() {
   return (
     <div class="space-y-12">
-      {/* Basic */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">Basic</h3>
         <div class="text-center">
@@ -38,7 +37,6 @@ export function EmptyStatesDemo() {
         </div>
       </div>
 
-      {/* With description */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With description</h3>
         <div class="text-center">
@@ -59,7 +57,6 @@ export function EmptyStatesDemo() {
         </div>
       </div>
 
-      {/* With icon */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With icon</h3>
         <div class="text-center">
@@ -96,7 +93,6 @@ export function EmptyStatesDemo() {
         </div>
       </div>
 
-      {/* With action */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With action</h3>
         <div class="text-center">
@@ -133,7 +129,6 @@ export function EmptyStatesDemo() {
         </div>
       </div>
 
-      {/* With icon and description */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With icon and description</h3>
         <div class="rounded-lg border-2 border-dashed border-gray-200 p-8 text-center dark:border-white/10">

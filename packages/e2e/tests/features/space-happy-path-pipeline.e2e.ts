@@ -1,16 +1,3 @@
-/**
- * Space Happy Path Pipeline (Task-First) E2E Tests
- *
- * Validates the current task-centric Space flow:
- * - Built-in agents + workflows are seeded on space creation
- * - Starting a workflow run creates runnable tasks
- * - Task route shows the live unified thread
- * - Task completion is reflected in the task view UI
- *
- * Infrastructure setup/cleanup uses RPC only in beforeEach/afterEach.
- * All assertions are made through visible UI state.
- */
-
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
 import { createUniqueSpaceDir, deleteSpaceViaRpc } from '../helpers/space-helpers';
@@ -24,8 +11,6 @@ async function createSpaceWithRun(
 ): Promise<{ spaceId: string; runId: string }> {
   await waitForWebSocketConnected(page);
   const workspaceRoot = await getWorkspaceRoot(page);
-  // Use a unique subdirectory to avoid conflicts with other parallel tests
-  // (workspace_path has a UNIQUE constraint in the DB).
   const wsPath = createUniqueSpaceDir(workspaceRoot, 'happy-path');
 
   return page.evaluate(
@@ -102,13 +87,6 @@ async function getRunTaskId(
   return taskId;
 }
 
-/**
- * Navigate to a route and wait for WebSocket to reconnect.
- *
- * page.goto() triggers a full page load which drops the existing WebSocket.
- * Without waiting for reconnection, subsequent page.evaluate() calls that use
- * hub.request() will throw "Not connected to transport".
- */
 async function gotoAndWaitForConnection(
   page: Parameters<typeof waitForWebSocketConnected>[0],
   url: string
@@ -131,9 +109,6 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
   });
 
   test.afterEach(async ({ page }) => {
-    // Navigate back to root and wait for connection before cleanup RPC calls.
-    // The page may be on a space sub-route where the WebSocket is disconnected
-    // (e.g. due to navigation or test failure), so we need a connected hub.
     try {
       await page.goto('/');
       await waitForWebSocketConnected(page, 5000);
@@ -152,11 +127,9 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
   });
 
   test('seeded agents and workflows are present', async ({ page }) => {
-    // Navigate to the space configure view where Agents/Workflows tabs are available.
     await gotoAndWaitForConnection(page, `/space/${spaceId}/configure`);
     await page.waitForURL(`/space/${spaceId}/configure`, { timeout: 10000 });
 
-    // Agents tab is the default active tab in SpaceConfigurePage.
     await expect(page.getByTestId('space-configure-tab-agents')).toBeVisible({ timeout: 5000 });
     await expect(page.getByText('Planner', { exact: true }).first()).toBeVisible({ timeout: 5000 });
     await expect(page.getByText('Coder', { exact: true }).first()).toBeVisible({ timeout: 5000 });
@@ -182,7 +155,6 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
     await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
     await expect(page.getByTestId('task-thread-panel')).toBeVisible({ timeout: 5000 });
 
-    // Ensure session exists, then inject one human message so the thread has deterministic activity.
     await page.evaluate(
       async ({ sid, tid }) => {
         const hub = window.__messageHub || window.appState?.messageHub;

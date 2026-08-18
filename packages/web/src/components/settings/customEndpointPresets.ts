@@ -1,12 +1,3 @@
-/**
- * Stock preset templates for the "Add Provider" menu.
- *
- * Each preset pre-fills a `CustomEndpointConfig` skeleton the user confirms
- * and customises before saving. Presets do not auto-discover models — the
- * user adds models manually (or refreshes after saving so model-service picks
- * them up via getModels()).
- */
-
 import type {
   CustomEndpointConfig,
   CustomEndpointType,
@@ -14,21 +5,14 @@ import type {
 } from '@hyperneo/shared';
 
 export interface CustomEndpointPreset {
-  /** Slug used in the "Add" menu and as preset identity. */
   key: string;
-  /** Display label in the menu. */
   label: string;
-  /** Short tagline shown under the label. */
   description: string;
-  /** Whether the upstream typically requires an API key. */
   apiKeyRequired: boolean;
-  /** Optional URL with docs for this provider. */
   docsUrl?: string;
-  /** Pre-filled endpoint shape. `id` is suggested — user can override. */
   template: Omit<CustomEndpointConfig, 'models'> & {
     models?: CustomEndpointConfig['models'];
   };
-  /** Optional capability defaults applied to user-added models. */
   defaultModelCapabilities?: Partial<CustomEndpointModelCapabilities>;
 }
 

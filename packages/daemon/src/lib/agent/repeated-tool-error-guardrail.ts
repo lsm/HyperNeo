@@ -1,32 +1,17 @@
-/**
- * RepeatedToolErrorGuardrail
- *
- * Detects repeated identical tool-use errors during Forge-scoped task execution
- * and breaks the retry loop by emitting a recovery message. Each intervention is
- * logged as `conversation_friction` evidence on the linked task's evolution scope.
- */
-
 import type { SpaceTask } from '@hyperneo/shared';
 import { Logger } from '../logger';
 
 export interface RepeatedToolErrorGuardrailDeps {
-  /** Resolve the Forge task owning the current session, if any. */
   getTaskForSession: () => SpaceTask | null | undefined;
-  /** Persist a `conversation_friction` evidence row. Returns the created evidence or undefined on failure. */
   emitEvidence: (params: {
     scopeId: string;
     summary: string;
     metadata: Record<string, unknown>;
   }) => { id: string } | undefined | void;
-  /** Deliver a recovery message to the running agent (e.g. via the message queue). */
   routeRecoveryMessage: (text: string) => Promise<void> | void;
-  /** Threshold for consecutive identical errors before intervening. */
   threshold?: number;
-  /** Length of the normalized error substring used for identity. */
   errorFingerprintLength?: number;
-  /** Maximum tool_use_id -> tool_name mappings to retain. */
   maxTrackedToolUseIds?: number;
-  /** Cooldown (ms) before the same tool+error can trigger another intervention. */
   interventionCooldownMs?: number;
 }
 
@@ -69,14 +54,9 @@ export class RepeatedToolErrorGuardrail {
     };
   }
 
-  /**
-   * Record a tool use so that subsequent error tool_results can be attributed to
-   * a tool name.
-   */
   recordToolUse(toolUseId: string, toolName: string): void {
     if (!toolUseId) return;
 
-    // Cap the lookup map so long-lived sessions cannot grow it without bound.
     if (this.state.toolUseIdToName.size >= this.maxTrackedToolUseIds) {
       const oldestKey = this.state.toolUseIdToName.keys().next().value;
       if (oldestKey !== undefined) {
@@ -87,30 +67,18 @@ export class RepeatedToolErrorGuardrail {
     this.state.toolUseIdToName.set(toolUseId, toolName || 'unknown');
   }
 
-  /**
-   * Inspect a user message's content blocks for error tool_results. Called from
-   * the session execution loop for every user message.
-   *
-   * Returns true if an intervention was triggered on this message.
-   */
   async observeToolResultErrors(message: unknown): Promise<boolean> {
-    // Scoped to Forge task execution: nothing to do if this session is not
-    // attached to an evolution scope.
     const task = this.deps.getTaskForSession();
     if (!task?.evolutionScopeId) return false;
 
     const content = (message as { message?: { content?: unknown } }).message?.content;
 
-    // Plain-text or non-array user messages do not contain error tool results,
-    // so any in-progress error streak is stale and should be cleared.
     if (typeof content === 'string') {
       this.reset();
       return false;
     }
     if (!Array.isArray(content)) return false;
 
-    // First pass: collect error blocks and detect any successful tool_result.
-    // A batched success breaks the streak regardless of error block order.
     const errors: Array<{ toolName: string; errorText: string }> = [];
     let hasSuccessToolResult = false;
     for (const block of content) {
@@ -133,9 +101,6 @@ export class RepeatedToolErrorGuardrail {
     const seenInThisMessage = new Set<string>();
     for (const error of errors) {
       const keyString = `${error.toolName}:${normalizeError(error.errorText, this.errorFingerprintLength)}`;
-      // A single user message may carry multiple tool_result blocks from one
-      // parallel assistant turn. Count each distinct tool+error at most once
-      // per message so a batched failure is not mistaken for a retry loop.
       if (seenInThisMessage.has(keyString)) {
         continue;
       }
@@ -156,8 +121,6 @@ export class RepeatedToolErrorGuardrail {
     const key: ErrorKey = { toolName, error: fingerprint };
     const keyString = `${toolName}:${fingerprint}`;
 
-    // If we recently intervened for this exact tool+error, swallow repeats
-    // until the cooldown elapses to avoid evidence/message spam.
     const lastIntervention = this.state.lastInterventionByKey.get(keyString);
     if (
       lastIntervention !== undefined &&

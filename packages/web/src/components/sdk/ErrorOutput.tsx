@@ -1,46 +1,23 @@
-/**
- * ErrorOutput Component - Renders error output from <local-command-stderr> tags
- *
- * Handles:
- * - Parsing <local-command-stderr> content
- * - Formatting API error JSON for readability
- * - Rendering errors in a distinct red/error style
- */
-
 import { cn } from '../../lib/utils.ts';
 
 interface ErrorOutputProps {
-  /** Raw content that may contain <local-command-stderr> tags */
   content: string;
-  /** Optional CSS classes */
   className?: string;
 }
 
-/**
- * Parse <local-command-stderr> content from raw message
- */
 export function parseErrorOutput(content: string): string | null {
   const match = content.match(/<local-command-stderr>([\s\S]*?)<\/local-command-stderr>/);
   return match ? match[1].trim() : null;
 }
 
-/**
- * Check if content contains <local-command-stderr> tags
- */
 export function hasErrorOutput(content: string): boolean {
   return /<local-command-stderr>[\s\S]*?<\/local-command-stderr>/.test(content);
 }
 
-/**
- * Format API error for display
- * Attempts to parse JSON and extract meaningful error message
- */
 function formatApiError(errorContent: string): {
   statusCode: string | null;
   message: string;
 } {
-  // Try to extract status code and JSON body
-  // Format: "Error: 400 {...}" or just "{...}"
   const statusMatch = errorContent.match(/Error:\s*(\d{3})\s*(\{[\s\S]*\})/);
 
   if (statusMatch) {
@@ -55,12 +32,10 @@ function formatApiError(errorContent: string): {
         message: `**${errorType}**\n\n${errorMessage}`,
       };
     } catch {
-      // JSON parse failed, return as-is
       return { statusCode, message: jsonBody };
     }
   }
 
-  // No status code format, try plain JSON
   if (errorContent.startsWith('{')) {
     try {
       const parsed = JSON.parse(errorContent);
@@ -76,13 +51,9 @@ function formatApiError(errorContent: string): {
     }
   }
 
-  // Return raw content
   return { statusCode: null, message: errorContent };
 }
 
-/**
- * Error icon
- */
 function ErrorIcon({ className }: { className?: string }) {
   return (
     <svg class={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -99,7 +70,6 @@ function ErrorIcon({ className }: { className?: string }) {
 export function ErrorOutput({ content, className }: ErrorOutputProps) {
   const errorContent = parseErrorOutput(content);
 
-  // No error output found
   if (!errorContent) {
     return null;
   }
@@ -108,7 +78,6 @@ export function ErrorOutput({ content, className }: ErrorOutputProps) {
 
   return (
     <div class={cn('py-2', className)}>
-      {/* Header */}
       <div class="flex items-center gap-2 mb-2">
         <ErrorIcon className="w-4 h-4 text-red-400" />
         <span class="text-xs font-medium text-red-400">
@@ -116,7 +85,6 @@ export function ErrorOutput({ content, className }: ErrorOutputProps) {
         </span>
       </div>
 
-      {/* Error content */}
       <div
         class={cn(
           'bg-red-950/40 border border-red-700/50 rounded-lg p-4',

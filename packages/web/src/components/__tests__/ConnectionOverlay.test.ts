@@ -1,17 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ConnectionOverlay component
- *
- * Tests the exported getBannerLevel logic directly from the component.
- * The component renders a non-blocking inline banner, not a full-page modal.
- *
- * Progression:
- * - connected / connecting (initial load, attempts=0) → hidden
- * - connecting (reconnect, attempts>0) → shows banner (prevents flicker)
- * - reconnecting (attempts ≤ 2) → "Reconnecting…"
- * - disconnected/error / reconnecting (attempts > 2) → "Connection lost. Retrying…"
- * - failed → "Unable to reconnect." + Retry button
- */
 
 import type { ConnectionState } from '@hyperneo/shared';
 import { getBannerLevel } from '../ConnectionOverlay';
@@ -76,22 +63,16 @@ describe('ConnectionOverlay - getBannerLevel logic', () => {
 
   describe('Full state progression', () => {
     it('should follow: hidden → reconnecting → lost → failed', () => {
-      // 1. Connected
       expect(getBannerLevel('connected', 0)).toBe('hidden');
 
-      // 2. First reconnect attempt
       expect(getBannerLevel('reconnecting', 1)).toBe('reconnecting');
 
-      // 3. Multiple failures
       expect(getBannerLevel('reconnecting', 4)).toBe('lost');
 
-      // 4. Connection temporarily drops to disconnected
       expect(getBannerLevel('disconnected', 5)).toBe('lost');
 
-      // 5. All retries exhausted
       expect(getBannerLevel('failed', 10)).toBe('failed');
 
-      // 6. Reconnected!
       expect(getBannerLevel('connected', 0)).toBe('hidden');
     });
   });

@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * SubagentBlock Component Tests
- *
- * Tests subagent (Task tool) block rendering with nested messages
- */
 import { describe, it, expect } from 'vitest';
 
 import { render, fireEvent, waitFor } from '@testing-library/preact';
@@ -12,10 +7,8 @@ import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { AgentInput } from '@hyperneo/shared/sdk/sdk-tools.d.ts';
 import type { UUID } from 'crypto';
 
-// Helper to create a valid UUID
 const createUUID = (): UUID => crypto.randomUUID() as UUID;
 
-// Factory functions for test data
 function createAgentInput(subagentType: string, description: string, prompt: string): AgentInput {
   return {
     subagent_type: subagentType,
@@ -82,7 +75,6 @@ function createNestedToolUseMessage(): SDKMessage {
   } as unknown as SDKMessage;
 }
 
-// Additional factory functions for comprehensive testing
 function createNestedThinkingMessage(): SDKMessage {
   return {
     type: 'assistant',
@@ -229,7 +221,6 @@ describe('SubagentBlock', () => {
       const input = createAgentInput('custom-type', 'Custom task', 'Custom prompt');
       const { container } = render(<SubagentBlock input={input} toolId="toolu_task123" />);
 
-      // Default is indigo
       expect(container.querySelector('.bg-indigo-50, .dark\\:bg-indigo-900\\/20')).toBeTruthy();
     });
 
@@ -237,9 +228,7 @@ describe('SubagentBlock', () => {
       const input: AgentInput = { description: 'Unnamed task', prompt: 'Do something' };
       const { container } = render(<SubagentBlock input={input} toolId="toolu_task123" />);
 
-      // Falls back to general-purpose color scheme (indigo)
       expect(container.querySelector('.bg-indigo-50, .dark\\:bg-indigo-900\\/20')).toBeTruthy();
-      // Badge should display the fallback label
       expect(container.textContent).toContain('general-purpose');
     });
   });
@@ -288,13 +277,10 @@ describe('SubagentBlock', () => {
 
       const button = container.querySelector('button')!;
 
-      // Expand
       fireEvent.click(button);
       expect(container.textContent).toContain('Input');
 
-      // Collapse
       fireEvent.click(button);
-      // Input section should no longer be visible
       expect(container.querySelector('.border-t')).toBeFalsy();
     });
   });
@@ -482,7 +468,6 @@ describe('SubagentBlock', () => {
         />
       );
 
-      // Expand the subagent, then the nested ToolResultCard.
       fireEvent.click(container.querySelector('button')!);
       await waitFor(() => expect(container.textContent).toContain('Read'));
       const cardButtons = container.querySelectorAll('button');
@@ -491,7 +476,6 @@ describe('SubagentBlock', () => {
       )!;
       fireEvent.click(nestedCardButton);
 
-      // Folded notification surfaces in the expanded card body + green check glyph.
       await waitFor(() => {
         expect(container.textContent).toContain('read ok');
         expect(container.querySelector('[aria-label="task completed"]')).toBeTruthy();
@@ -500,7 +484,6 @@ describe('SubagentBlock', () => {
 
     it('suppresses the standalone nested task_notification row when it is folded', async () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
-      // Nested timeline holds both the tool_use AND its task_notification row.
       const nestedMessages = [
         createNestedToolUseMessage(),
         createNestedSystemMessage('task_notification', {
@@ -540,11 +523,8 @@ describe('SubagentBlock', () => {
       fireEvent.click(container.querySelector('button')!);
       await waitFor(() => expect(container.textContent).toContain('Read'));
 
-      // The folded card shows the status exactly once (green check)…
       const checks = container.querySelectorAll('[aria-label="task completed"]');
       expect(checks).toHaveLength(1);
-      // …and the standalone TaskNotificationMessage row is suppressed (no
-      // duplicate "Task completed" heading from SDKSystemMessage).
       const headings = container.querySelectorAll('div.font-semibold');
       const dupTaskCompleted = Array.from(headings).filter((h) =>
         h.textContent?.includes('Task completed')
@@ -651,7 +631,6 @@ describe('SubagentBlock', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      // MarkdownRenderer should process the content
       await waitFor(() => {
         expect(container.textContent).toContain('Heading');
         expect(container.textContent).toContain('bold');
@@ -667,7 +646,6 @@ describe('SubagentBlock', () => {
         <SubagentBlock input={input} isError={true} toolId="toolu_task123" />
       );
 
-      // Error icon (X mark) should be visible
       const svg = container.querySelector('svg.text-red-600, svg.text-red-400');
       expect(svg).toBeTruthy();
     });
@@ -683,7 +661,6 @@ describe('SubagentBlock', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      // Output should have error styling
       expect(container.querySelector('.text-red-600, .text-red-400')).toBeTruthy();
     });
   });
@@ -722,16 +699,13 @@ describe('SubagentBlock', () => {
 
       const button = container.querySelector('button')!;
 
-      // Get chevron SVG (the last one in the header)
       const chevrons = button.querySelectorAll('svg');
       const chevron = chevrons[chevrons.length - 1];
 
-      // Initially not rotated
       expect(chevron?.className.baseVal || chevron?.getAttribute('class')).not.toContain(
         'rotate-180'
       );
 
-      // After click, should be rotated
       fireEvent.click(button);
       const rotatedChevrons = button.querySelectorAll('svg');
       const rotatedChevron = rotatedChevrons[rotatedChevrons.length - 1];
@@ -892,7 +866,6 @@ describe('SubagentBlock', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      // Should have error styling (red colors)
       expect(
         container.querySelector('.border-red-200, .dark\\:border-red-800, .text-red-600')
       ).toBeTruthy();
@@ -909,7 +882,6 @@ describe('SubagentBlock', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      // Should not show 'init' in the output
       expect(container.textContent).not.toContain('System: init');
     });
 
@@ -1000,7 +972,6 @@ describe('SubagentBlock', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      // Hidden subtypes must not surface anywhere in the nested timeline.
       expect(container.textContent).not.toContain('task_started');
       expect(container.textContent).not.toContain('task_progress');
     });
@@ -1090,7 +1061,6 @@ describe('SubagentBlock', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      // Should not display the tool result content separately
       expect(container.textContent).not.toContain('Tool result only');
     });
 
@@ -1163,7 +1133,6 @@ describe('SubagentBlock', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      // Should not crash when result is undefined
       expect(container.textContent).toContain('Messages (1)');
     });
 

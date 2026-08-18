@@ -10,12 +10,6 @@ import type { SettingsManager } from '../../../../src/lib/settings-manager';
 
 type RequestHandler = (data: unknown, context?: CallContext) => Promise<unknown>;
 
-// Stub node:dns/promises so endpoint resolution never hits the real network.
-// NOTE: `vi.mock` (from 'vitest', not the shim's `mock.module`) is required —
-// Vitest's mock-hoisting transform only recognizes `vi.*` calls, so
-// `mock.module` would register too late and the handler import above would
-// bind the real DNS lookup. The factory only reads `dnsLookupResults` at call
-// time, so the module-level `let` below is safe.
 vi.mock('node:dns/promises', () => ({
   lookup: mock(async () => dnsLookupResults),
   Resolver: class {},
@@ -435,8 +429,6 @@ describe('voice RPC handlers', () => {
         mimeType: 'audio/wav',
       })
     ).rejects.toThrow('ECONNREFUSED');
-    // Only the first validated address is tried — the non-idempotent POST is
-    // not retried to a second address to avoid duplicate processing/charges.
     expect(fetchedUrls).toEqual(['http://104.16.1.1/v1/audio/transcriptions']);
   });
 
@@ -465,7 +457,6 @@ describe('voice RPC handlers', () => {
     });
 
     expect(result).toEqual({ text: 'hello' });
-    // Fetched by hostname (not the resolved IP) so the cert is valid.
     expect(fetchedUrl).toBe('https://asr.example.com/v1/audio/transcriptions');
   });
 
@@ -490,8 +481,6 @@ describe('voice RPC handlers', () => {
 
     await expect(
       handlers.get('voice.transcribe')?.({
-        // Valid alphabet but contains '!' and wrong padding — Buffer.from would
-        // silently drop the invalid char and forward arbitrary bytes.
         audioBase64: 'AAAA!===',
         mimeType: 'audio/wav',
       })
@@ -592,10 +581,6 @@ describe('voice RPC handlers', () => {
       )
     ).rejects.toThrow('Too many voice transcription requests are already in progress');
 
-    // Requests serialize on the voice-credential lock before calling fetch, so
-    // they reach the mocked fetch at different microtask depths depending on
-    // the runtime. Resolve fetches as they arrive until all four settle
-    // instead of iterating a one-time snapshot of pendingFetches.
     const allRequests = Promise.all(requests);
     let allSettled = false;
     allRequests.then(
@@ -616,8 +601,6 @@ describe('voice RPC handlers', () => {
   });
 
   it('does not charge the daemon quota for per-client rejections', async () => {
-    // Hold one in-flight request for client-A so its further calls are rejected
-    // by the per-client concurrency limit before any fetch.
     let firstResolve: ((response: Response) => void) | undefined;
     let fetchCount = 0;
     globalThis.fetch = mock(async () => {
@@ -630,8 +613,6 @@ describe('voice RPC handlers', () => {
       return new Response(JSON.stringify({ text: 'done' }), { status: 200 });
     }) as typeof fetch;
 
-    // Hold one in-flight request for client-A so its further calls are rejected
-    // by the per-client concurrency limit before any fetch.
     const inflight = handlers.get('voice.transcribe')?.(
       { audioBase64: wavBase64(), mimeType: 'audio/wav' },
       {
@@ -643,8 +624,6 @@ describe('voice RPC handlers', () => {
       }
     );
 
-    // Many client-A calls are rejected by per-client concurrency; none may
-    // consume the daemon-wide rate allowance.
     for (let i = 0; i < 20; i += 1) {
       await expect(
         handlers.get('voice.transcribe')?.(
@@ -663,8 +642,6 @@ describe('voice RPC handlers', () => {
     firstResolve?.(new Response(JSON.stringify({ text: 'done' }), { status: 200 }));
     await expect(inflight).resolves.toEqual({ text: 'done' });
 
-    // A different client is still admitted — client-A's rejections did not
-    // burn the daemon-wide quota.
     const otherResult = await handlers.get('voice.transcribe')?.(
       { audioBase64: wavBase64(), mimeType: 'audio/wav' },
       {
@@ -1005,7 +982,6 @@ describe('voice RPC handlers', () => {
       new Promise((_resolve, reject) => {
         const signal = _init?.signal;
         const abort = () => reject(new DOMException('aborted', 'AbortError'));
-        // Mirror real fetch: reject immediately if the signal is already aborted.
         if (signal?.aborted) {
           abort();
           return;

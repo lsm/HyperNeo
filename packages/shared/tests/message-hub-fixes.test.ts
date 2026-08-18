@@ -1,12 +1,3 @@
-/**
- * Tests for MessageHub Critical Fixes
- *
- * Tests for features in the new simplified API:
- * - Runtime message validation
- * - PING/PONG handlers
- * - Method name validation
- */
-
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { MessageHub } from '../src/message-hub/message-hub';
 import type { IMessageTransport, ConnectionState, HubMessage } from '../src/message-hub/types';
@@ -55,7 +46,6 @@ class MockTransport implements IMessageTransport {
     return this.state === 'connected';
   }
 
-  // Test helpers
   simulateMessage(message: HubMessage): void {
     for (const handler of this.messageHandlers) {
       handler(message);
@@ -113,7 +103,6 @@ describe('MessageHub Critical Fixes', () => {
       const invalidMessage = {
         id: 'test-id',
         type: MessageType.EVENT,
-        // Missing sessionId and method
         timestamp: new Date().toISOString(),
       };
 
@@ -139,7 +128,6 @@ describe('MessageHub Critical Fixes', () => {
         sessionId: 'test-session',
         method: 'test.method',
         timestamp: new Date().toISOString(),
-        // Missing requestId
       };
 
       expect(isValidMessage(invalidMessage)).toBe(false);
@@ -150,7 +138,7 @@ describe('MessageHub Critical Fixes', () => {
         id: 'test-id',
         type: MessageType.EVENT,
         sessionId: 'test-session',
-        method: 'invalid-no-dot', // No dot separator
+        method: 'invalid-no-dot',
         timestamp: new Date().toISOString(),
       };
 
@@ -162,7 +150,7 @@ describe('MessageHub Critical Fixes', () => {
         id: 'test-id',
         type: MessageType.EVENT,
         sessionId: 'test-session',
-        method: 'test:with.colon', // Colons are reserved
+        method: 'test:with.colon',
         timestamp: new Date().toISOString(),
       };
 
@@ -174,7 +162,6 @@ describe('MessageHub Critical Fixes', () => {
     test('should respond to PING with PONG', async () => {
       transport.clearSentMessages();
 
-      // Simulate incoming PING
       transport.simulateMessage({
         id: 'ping-id',
         type: MessageType.PING,
@@ -185,7 +172,6 @@ describe('MessageHub Critical Fixes', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Should send PONG response
       const pongMessages = transport.sentMessages.filter((m) => m.type === MessageType.PONG);
 
       expect(pongMessages.length).toBe(1);
@@ -194,7 +180,6 @@ describe('MessageHub Critical Fixes', () => {
     });
 
     test('should handle PONG messages without error', async () => {
-      // Should not throw when receiving PONG
       expect(() => {
         transport.simulateMessage({
           id: 'pong-id',
@@ -265,10 +250,8 @@ describe('MessageHub Critical Fixes', () => {
         callCount++;
       };
 
-      // Register event handler
       messageHub.onEvent('user.created', handler);
 
-      // Simulate event before disconnect
       transport.simulateMessage(
         createEventMessage({
           method: 'user.created',
@@ -280,13 +263,11 @@ describe('MessageHub Critical Fixes', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
       expect(callCount).toBe(1);
 
-      // Simulate disconnect and reconnect
       transport.simulateStateChange('disconnected');
       await new Promise((resolve) => setTimeout(resolve, 10));
       transport.simulateStateChange('connected');
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Handler should still work after reconnection
       transport.simulateMessage(
         createEventMessage({
           method: 'user.created',
@@ -305,11 +286,9 @@ describe('MessageHub Critical Fixes', () => {
         callCount++;
       };
 
-      // Register and then unregister
       const unsubscribe = messageHub.onEvent('user.created', handler);
       unsubscribe();
 
-      // Simulate event
       transport.simulateMessage(
         createEventMessage({
           method: 'user.created',
@@ -345,18 +324,13 @@ describe('MessageHub Critical Fixes', () => {
   describe('Error Resilience', () => {
     test('should handle malformed incoming messages gracefully', async () => {
       const malformedMessage = {
-        // Missing required fields
         id: 'test',
       } as unknown as HubMessage;
 
-      // Message validation throws in handleIncomingMessage, but it's caught in the try-catch
-      // The error is logged but not propagated to the caller
-      // We can verify that the message is invalid using the validation function
       expect(isValidMessage(malformedMessage)).toBe(false);
     });
 
     test('should continue processing after handler errors', async () => {
-      // Mock console.error to suppress error logging during test
       const consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {});
 
       let handler1Called = false;
@@ -379,12 +353,10 @@ describe('MessageHub Critical Fixes', () => {
         sessionId: 'test-session',
       });
 
-      // Should not throw despite handler error - errors are caught internally
       transport.simulateMessage(eventMsg);
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Verify both handlers were called
       expect(handler1Called).toBe(true);
       expect(handler2Called).toBe(true);
 

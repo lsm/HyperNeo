@@ -1,14 +1,3 @@
-/**
- * Tests for Rewind RPC Handlers
- *
- * Tests the RPC handlers for rewind operations:
- * - rewind.checkpoints - Get all rewind points for a session
- * - rewind.preview - Preview a rewind operation (dry run)
- * - rewind.execute - Execute a rewind operation
- * - rewind.previewSelective - Preview a selective rewind operation
- * - rewind.executeSelective - Execute a selective rewind operation
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import { setupRewindHandlers } from '../../../../src/lib/rpc-handlers/rewind-handlers';
@@ -16,10 +5,8 @@ import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
-// Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
-// Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -50,7 +37,6 @@ function createMockMessageHub(): {
   return { hub, handlers };
 }
 
-// Helper to create mock DaemonHub
 function createMockDaemonHub(): DaemonHub {
   return {
     emit: mock(async () => {}),
@@ -60,7 +46,6 @@ function createMockDaemonHub(): DaemonHub {
   } as unknown as DaemonHub;
 }
 
-// Helper to create a mock AgentSession with rewind methods
 function createMockAgentSession(): {
   agentSession: AgentSession;
   mocks: {
@@ -115,7 +100,6 @@ function createMockAgentSession(): {
   return { agentSession, mocks };
 }
 
-// Helper to create mock SessionManager
 function createMockSessionManager(): {
   sessionManager: SessionManager;
   getSessionAsyncMock: ReturnType<typeof mock>;
@@ -141,7 +125,6 @@ describe('Rewind RPC Handlers', () => {
     daemonHub = createMockDaemonHub();
     sessionManagerData = createMockSessionManager();
 
-    // Setup handlers with mocked dependencies
     setupRewindHandlers(messageHubData.hub, sessionManagerData.sessionManager, daemonHub);
   });
 

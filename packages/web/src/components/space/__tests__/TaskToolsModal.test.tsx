@@ -52,7 +52,6 @@ describe('TaskToolsModal', () => {
     });
 
     expect(getByText('Space coordination')).toBeTruthy();
-    // custom-tool appears as both title (no label) and description — verify at least one instance
     expect(container.textContent).toContain('custom-tool');
     expect(mockListRuntimeMcpServers).toHaveBeenCalledWith('sess-123');
   });
@@ -98,12 +97,10 @@ describe('TaskToolsModal', () => {
       <TaskToolsModal isOpen={true} onClose={() => {}} sessionId="sess-a" agentLabel="Coder" />
     );
 
-    // Immediately change sessionId before the first fetch resolves
     rerender(
       <TaskToolsModal isOpen={true} onClose={() => {}} sessionId="sess-b" agentLabel="Coder" />
     );
 
-    // Should not crash; just verify it re-fetches for the new session
     await waitFor(() => {
       expect(mockListRuntimeMcpServers).toHaveBeenCalledWith('sess-b');
     });

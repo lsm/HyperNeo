@@ -1,11 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for AttachmentPreview Component
- *
- * Tests the attachment preview with image thumbnails, file info overlay,
- * and remove button functionality.
-import { describe, it, expect, vi } from 'vitest';
- */
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { MessageImage } from '@hyperneo/shared/types';
@@ -16,7 +9,6 @@ type AttachmentWithMeta = MessageImage & { name: string; size: number };
 describe('AttachmentPreview', () => {
   const mockOnRemove = vi.fn(() => {});
 
-  // Create a minimal base64 PNG (1x1 transparent pixel)
   const minimalPngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
@@ -43,7 +35,7 @@ describe('AttachmentPreview', () => {
       media_type: 'image/jpeg',
       data: minimalPngBase64,
       name: 'photo.jpg',
-      size: 2048000, // ~2MB
+      size: 2048000,
     },
   ];
 
@@ -77,7 +69,6 @@ describe('AttachmentPreview', () => {
         <AttachmentPreview attachments={mockAttachments} onRemove={mockOnRemove} />
       );
 
-      // Each attachment has a container div
       const attachmentItems = container.querySelectorAll('.group');
       expect(attachmentItems.length).toBe(2);
     });
@@ -126,7 +117,6 @@ describe('AttachmentPreview', () => {
         <AttachmentPreview attachments={[mockAttachments[0]]} onRemove={mockOnRemove} />
       );
 
-      // 1024 bytes should be formatted as "1 KB" or similar
       expect(container.textContent).toContain('1');
     });
 
@@ -135,7 +125,6 @@ describe('AttachmentPreview', () => {
         <AttachmentPreview attachments={[mockAttachments[1]]} onRemove={mockOnRemove} />
       );
 
-      // ~2MB should be formatted appropriately (1.95 MB)
       expect(container.textContent).toContain('MB');
     });
 
@@ -166,11 +155,9 @@ describe('AttachmentPreview', () => {
 
       const removeButtons = container.querySelectorAll('[aria-label="Remove attachment"]');
 
-      // Click first remove button
       fireEvent.click(removeButtons[0]);
       expect(mockOnRemove).toHaveBeenCalledWith(0);
 
-      // Click second remove button
       fireEvent.click(removeButtons[1]);
       expect(mockOnRemove).toHaveBeenCalledWith(1);
     });
@@ -307,11 +294,9 @@ describe('AttachmentPreview', () => {
 
       const removeButtons = container.querySelectorAll('[aria-label="Remove attachment"]');
 
-      // Click second button (index 1)
       fireEvent.click(removeButtons[1]);
       expect(mockOnRemove).toHaveBeenLastCalledWith(1);
 
-      // Click first button (index 0)
       fireEvent.click(removeButtons[0]);
       expect(mockOnRemove).toHaveBeenLastCalledWith(0);
     });

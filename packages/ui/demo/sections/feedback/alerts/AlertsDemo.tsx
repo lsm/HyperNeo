@@ -3,7 +3,6 @@ import { CheckCircle, Info, X, XCircle, AlertTriangle } from 'lucide-preact';
 export function AlertsDemo() {
   return (
     <div class="space-y-12">
-      {/* Alert with list */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With list</h3>
         <div class="rounded-md bg-red-50 p-4 dark:bg-red-500/15 dark:outline dark:outline-red-500/25">
@@ -26,7 +25,6 @@ export function AlertsDemo() {
         </div>
       </div>
 
-      {/* Alert with dismiss button */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With dismiss button</h3>
         <div class="rounded-md bg-green-50 p-4 dark:bg-green-500/10 dark:outline dark:outline-green-500/20">
@@ -54,7 +52,6 @@ export function AlertsDemo() {
         </div>
       </div>
 
-      {/* Alert with actions */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With actions</h3>
         <div class="rounded-md bg-green-50 p-4 dark:bg-green-500/10 dark:outline dark:outline-green-500/20">
@@ -93,7 +90,6 @@ export function AlertsDemo() {
         </div>
       </div>
 
-      {/* Alert with description */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With description</h3>
         <div class="rounded-md bg-yellow-50 p-4 dark:bg-yellow-500/10 dark:outline dark:outline-yellow-500/15">
@@ -116,7 +112,6 @@ export function AlertsDemo() {
         </div>
       </div>
 
-      {/* Alert with accent border */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With accent border</h3>
         <div class="border-l-4 border-yellow-400 bg-yellow-50 p-4 dark:border-yellow-500 dark:bg-yellow-500/10">
@@ -139,7 +134,6 @@ export function AlertsDemo() {
         </div>
       </div>
 
-      {/* Alert with link on right */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With link on right</h3>
         <div class="rounded-md bg-blue-50 p-4 dark:bg-blue-500/10 dark:outline dark:outline-blue-500/20">

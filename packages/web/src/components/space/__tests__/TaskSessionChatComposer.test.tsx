@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/preact';
 import type { ChatComposerProps } from '../../ChatComposer';
 
-// Mock useTargetSessionContext — avoids real WebSocket/RPC calls in unit tests
 vi.mock('../../../hooks', () => ({
   useTargetSessionContext: () => ({
     targetSessionId: 'target-session-id',
@@ -27,9 +26,6 @@ vi.mock('../../../hooks', () => ({
   }),
 }));
 
-// Mock ChatComposer — it depends on MessageInput, SessionStatusBar, and other
-// components that require WebSocket connections and complex browser APIs.
-// Capture the props passed to it so tests can inspect them.
 let lastChatComposerProps: ChatComposerProps | null = null;
 vi.mock('../../ChatComposer', () => ({
   ChatComposer: (props: ChatComposerProps) => {
@@ -219,7 +215,6 @@ describe('image passthrough', () => {
     const { onSend } = renderComposer();
     const sampleImage = { media_type: 'image/png' as const, data: 'AAAAB' };
 
-    // Simulate ChatComposer firing onSend with a multi-modal payload
     await lastChatComposerProps?.onSend?.('look at this', [sampleImage], 'immediate');
 
     expect(onSend).toHaveBeenCalledTimes(1);
@@ -236,9 +231,6 @@ describe('image passthrough', () => {
   });
 
   it("forwards deliveryMode:'defer' (Queue) through to the parent onSend alongside the selected target", async () => {
-    // Closes the web-level gap for the Queue button: a 'defer' send threads
-    // handleSend → SpaceTaskPane.sendThreadMessage → sendTaskMessage(defer),
-    // so the composer must carry deliveryMode as the 4th positional arg.
     const { onSend } = renderComposer();
 
     await lastChatComposerProps?.onSend?.('for next turn', undefined, 'defer');

@@ -1,31 +1,9 @@
 // @ts-nocheck
-/**
- * Unit tests for SpaceAgentEditor
- *
- * Tests:
- * - Renders in create mode (no agent prop)
- * - Renders in edit mode (with agent prop, fields pre-filled)
- * - Form validation: name required
- * - Form validation: name uniqueness
- * - Model override is optional
- * - Empty tool profile is valid; SDK defaults are inherited
- * - Tool presets: "Read Only" selects correct tools
- * - Tool presets: "Read Only" selects correct tools
- * - Tool presets: toggling a tool manually switches to "Custom"
- * - System prompt field accepts direct edits
- * - KNOWN_TOOLS: all tools are rendered as checkboxes
- * - Create mode: calls spaceStore.createAgent with correct params
- * - Edit mode: calls spaceStore.updateAgent with correct params
- * - Error from server is shown
- * - Cancel calls onCancel
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
 import { KNOWN_TOOLS } from '@hyperneo/shared';
 import type { SpaceWorkerAgent } from '@hyperneo/shared';
-
-// ── Mocks ────────────────────────────────────────────────────────────────────
 
 const mockCreateAgent = vi.fn();
 const mockUpdateAgent = vi.fn();
@@ -128,8 +106,6 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
 
 import { SpaceAgentEditor } from '../SpaceAgentEditor';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 const DEFAULT_PROPS = {
   agent: null,
   existingAgentNames: [],
@@ -152,19 +128,15 @@ function makeAgent(overrides: Partial<SpaceWorkerAgent> = {}): SpaceWorkerAgent 
   };
 }
 
-/** Fill the name input with a value */
 function fillName(getByPlaceholderText: (text: string) => HTMLElement, value: string) {
   const input = getByPlaceholderText('e.g., Senior Coder') as HTMLInputElement;
   fireEvent.input(input, { target: { value } });
 }
 
-/** Select a model value from the dropdown */
 function fillModel(getByTestId: (id: string) => HTMLElement, value: string) {
   const select = getByTestId('space-agent-model-select') as HTMLSelectElement;
   fireEvent.change(select, { target: { value } });
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('SpaceAgentEditor', () => {
   beforeEach(() => {
@@ -179,8 +151,6 @@ describe('SpaceAgentEditor', () => {
   afterEach(() => {
     cleanup();
   });
-
-  // ── Render modes ──────────────────────────────────────────────────────────
 
   it('renders with "Create Agent" title in create mode', () => {
     const { getByRole } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
@@ -223,11 +193,8 @@ describe('SpaceAgentEditor', () => {
     expect(textarea.value).toBe('Always be brief.');
   });
 
-  // ── Validation ────────────────────────────────────────────────────────────
-
   it('shows name required error when submitting with empty name', async () => {
     const { getByRole, findByText } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
-    // Submit with empty name — validation should fail before even checking model
     const form = getByRole('dialog').querySelector('form');
     fireEvent.submit(form!);
     expect(await findByText('Name is required')).toBeTruthy();
@@ -275,16 +242,12 @@ describe('SpaceAgentEditor', () => {
     expect(mockCreateAgent.mock.calls[0][0]).toHaveProperty('tools', []);
   });
 
-  // ── KNOWN_TOOLS ────────────────────────────────────────────────────────────
-
   it('renders all KNOWN_TOOLS as checkboxes', () => {
     const { getByText } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
     for (const tool of KNOWN_TOOLS) {
       expect(getByText(tool)).toBeTruthy();
     }
   });
-
-  // ── Tool presets ──────────────────────────────────────────────────────────
 
   it('renders built-in template options from spaceStore', () => {
     mockAgentTemplates = [
@@ -380,7 +343,6 @@ describe('SpaceAgentEditor', () => {
     fireEvent.click(getByText('Read Only'));
     fireEvent.click(getByText('Inherit defaults'));
 
-    // Inherited mode: every tool box is checked (inherited) and disabled.
     const checkboxes = Array.from(
       container.querySelectorAll('.grid.grid-cols-3 input[type="checkbox"]')
     ) as HTMLInputElement[];
@@ -395,7 +357,6 @@ describe('SpaceAgentEditor', () => {
   it('enters override mode from inherited when "Custom" is clicked', () => {
     const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
 
-    // Default create mode is inherited: every box is checked + disabled.
     fireEvent.click(getByText('Custom'));
 
     const checkboxes = Array.from(
@@ -404,7 +365,6 @@ describe('SpaceAgentEditor', () => {
     expect(checkboxes.length).toBeGreaterThan(0);
     for (const cb of checkboxes) {
       expect(cb.disabled).toBe(false);
-      // Custom is seeded with every known tool so the user unchecks to deny.
       expect(cb.checked).toBe(true);
     }
   });
@@ -434,7 +394,6 @@ describe('SpaceAgentEditor', () => {
   it('switches active preset indicator to "Custom" when a tool is toggled manually', () => {
     const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
 
-    // Start with Read Only preset, then toggle an extra tool on
     fireEvent.click(getByText('Read Only'));
     const writeCb = Array.from(
       container.querySelectorAll('.grid.grid-cols-3 input[type="checkbox"]')
@@ -444,7 +403,6 @@ describe('SpaceAgentEditor', () => {
     });
     if (writeCb) fireEvent.click(writeCb.closest('label')!);
 
-    // "Custom" preset button should now be active
     const customButton = getByText('Custom');
     expect(customButton.className).toContain('blue');
   });
@@ -452,7 +410,6 @@ describe('SpaceAgentEditor', () => {
   it('switches active preset indicator to "Inherited" when the last tool is unchecked', () => {
     const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
 
-    // Start with Read Only preset, then uncheck all of its tools
     fireEvent.click(getByText('Read Only'));
     for (const toolName of ['Read', 'Grep', 'Glob']) {
       const cb = Array.from(
@@ -464,7 +421,6 @@ describe('SpaceAgentEditor', () => {
       if (cb) fireEvent.click(cb.closest('label')!);
     }
 
-    // "Inherit defaults" preset button should now be active
     const inheritButton = getByText('Inherit defaults');
     expect(inheritButton.className).toContain('blue');
   });
@@ -472,8 +428,6 @@ describe('SpaceAgentEditor', () => {
   it('shows all tools as checked and disabled in inherited mode', () => {
     const { container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
 
-    // Default create-mode preset is inherited, so all boxes should
-    // be checked and disabled to reflect inherited SDK defaults.
     const checkboxes = Array.from(
       container.querySelectorAll('.grid.grid-cols-3 input[type="checkbox"]')
     ) as HTMLInputElement[];
@@ -495,8 +449,6 @@ describe('SpaceAgentEditor', () => {
     expect(queryByText('Research')).toBeNull();
   });
 
-  // ── Create / Update submission ────────────────────────────────────────────
-
   it('calls spaceStore.createAgent with correct params in create mode', async () => {
     mockCreateAgent.mockResolvedValue({ id: 'new-agent', name: 'Fresh Agent' });
 
@@ -506,7 +458,6 @@ describe('SpaceAgentEditor', () => {
 
     fillName(getByPlaceholderText, 'Fresh Agent');
     fillModel(getByTestId, 'claude-sonnet-4-6');
-    // Inherited preset is active by default
 
     const form = getByRole('dialog').querySelector('form');
     fireEvent.submit(form!);
@@ -530,7 +481,6 @@ describe('SpaceAgentEditor', () => {
       <SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />
     );
 
-    // Change name
     const nameInput = getByPlaceholderText('e.g., Senior Coder') as HTMLInputElement;
     fireEvent.input(nameInput, { target: { value: 'Updated Coder' } });
 
@@ -755,8 +705,6 @@ describe('SpaceAgentEditor', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  // ── Reset to preset default (edit mode) ───────────────────────────────────
-
   describe('Reset to preset default button', () => {
     beforeEach(() => {
       mockAgentTemplates = [
@@ -832,8 +780,6 @@ describe('SpaceAgentEditor', () => {
       });
     });
   });
-
-  // ── Cancel ────────────────────────────────────────────────────────────────
 
   it('calls onCancel when Cancel button is clicked', () => {
     const onCancel = vi.fn();

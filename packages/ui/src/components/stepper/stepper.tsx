@@ -3,8 +3,6 @@ import { useContext } from 'preact/hooks';
 import { render } from '../../internal/render.ts';
 import type { ElementType } from '../../internal/types.ts';
 
-// --- Stepper Context ---
-
 interface StepperContextValue {
   currentStep: number;
   orientation: 'horizontal' | 'vertical';
@@ -20,8 +18,6 @@ function useStepperContext(componentName: string): StepperContextValue {
   }
   return ctx;
 }
-
-// --- Stepper (container) ---
 
 interface StepperProps {
   currentStep: number;
@@ -63,8 +59,6 @@ function StepperFn({
 StepperFn.displayName = 'Stepper';
 export const Stepper = StepperFn;
 
-// --- StepperStep ---
-
 type StepStatus = 'complete' | 'current' | 'upcoming';
 
 interface StepperStepProps {
@@ -98,8 +92,6 @@ function StepperStepFn({ status, as: Tag = 'div', children, ...rest }: StepperSt
 StepperStepFn.displayName = 'StepperStep';
 export const StepperStep = StepperStepFn;
 
-// --- StepperIcon ---
-
 interface StepperIconProps {
   stepIndex: number;
   status?: StepStatus;
@@ -117,7 +109,6 @@ function StepperIconFn({
 }: StepperIconProps) {
   const slot = { status, stepIndex };
 
-  // For complete status, show checkmark
   const checkmarkSvg = createElement('svg', {
     'aria-hidden': 'true',
     viewBox: '0 0 20 20',
@@ -129,7 +120,6 @@ function StepperIconFn({
     }),
   });
 
-  // Show step number (1-indexed)
   const numberContent = String(stepIndex + 1);
 
   const iconContent =
@@ -154,8 +144,6 @@ function StepperIconFn({
 StepperIconFn.displayName = 'StepperIcon';
 export const StepperIcon = StepperIconFn;
 
-// --- StepperLabel ---
-
 interface StepperLabelProps {
   as?: ElementType;
   children?: unknown;
@@ -179,8 +167,6 @@ function StepperLabelFn({ as: Tag = 'span', children, ...rest }: StepperLabelPro
 StepperLabelFn.displayName = 'StepperLabel';
 export const StepperLabel = StepperLabelFn;
 
-// --- StepperDescription ---
-
 interface StepperDescriptionProps {
   as?: ElementType;
   children?: unknown;
@@ -203,8 +189,6 @@ function StepperDescriptionFn({ as: Tag = 'span', children, ...rest }: StepperDe
 
 StepperDescriptionFn.displayName = 'StepperDescription';
 export const StepperDescription = StepperDescriptionFn;
-
-// --- StepperSeparator ---
 
 interface StepperSeparatorProps {
   as?: ElementType;

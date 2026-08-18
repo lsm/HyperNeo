@@ -1,33 +1,17 @@
-/**
- * ThinkingBlock Component - Displays Claude's extended thinking process
- *
- * Unlike other tool cards that collapse by default, thinking blocks are:
- * - Always visible (preview mode)
- * - Truncated after ~6 lines with gradient fade
- * - Expandable via "Show more" button at bottom edge
- */
-
 import { useState, useRef, useLayoutEffect } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 
 interface ThinkingBlockProps {
   content: string;
   className?: string;
-  /** Compact mode: shows only first line with no expand/collapse button */
   compact?: boolean;
-  /** When true, show a faint white shimmer sweep (the `.running-shimmer`
-   * overlay) across this card's surface. */
   isRunning?: boolean;
-  /** Optional estimated token count for this thinking block (persisted from SDK) */
   estimatedTokens?: number;
 }
 
-// Number of lines to show in preview mode
 const PREVIEW_LINE_COUNT = 6;
-// Approximate line height in pixels (for line-clamp calculation)
 const LINE_HEIGHT_PX = 20;
 
-// Amber color scheme for thinking blocks (matching tool-registry)
 const colors = {
   bg: 'bg-amber-50 dark:bg-amber-900/20',
   text: 'text-amber-900 dark:text-amber-100',
@@ -49,17 +33,10 @@ export function ThinkingBlock({
 
   const previewMaxHeight = PREVIEW_LINE_COUNT * LINE_HEIGHT_PX;
 
-  // Defense in depth: render nothing when there's no thinking content to
-  // show. Opus 4.7 and other models running with `thinking.display = 'omitted'`
-  // emit thinking blocks with an empty string + a signature for multi-turn
-  // continuity — we should not render a stub "Thinking · 0 characters" card.
-  // Upstream callers (SDKAssistantMessage) also filter, but a component that
-  // guards itself is easier to compose safely.
   if (typeof content !== 'string' || content.trim().length === 0) {
     return null;
   }
 
-  // Check if content exceeds preview height
   useLayoutEffect(() => {
     if (contentRef.current) {
       const scrollHeight = contentRef.current.scrollHeight;
@@ -69,7 +46,6 @@ export function ThinkingBlock({
 
   const charCount = content.length;
 
-  // Build the stats text: show token estimate if available, otherwise just character count
   const statsText =
     estimatedTokens !== undefined
       ? `• ~${estimatedTokens.toLocaleString()} token${estimatedTokens !== 1 ? 's' : ''}${charCount > 0 ? ` • ${charCount.toLocaleString()} character${charCount !== 1 ? 's' : ''}` : ''}`
@@ -86,9 +62,7 @@ export function ThinkingBlock({
       )}
       data-testid="thinking-block"
     >
-      {/* Header */}
       <div class={cn('flex items-center gap-2 px-3 py-2', colors.bg)}>
-        {/* Lightbulb icon */}
         <svg
           class={cn('w-4 h-4 flex-shrink-0', colors.iconColor)}
           fill="none"
@@ -106,7 +80,6 @@ export function ThinkingBlock({
         <span class={cn('text-xs', colors.lightText)}>{statsText}</span>
       </div>
 
-      {/* Content area */}
       <div class={cn('relative border-t', colors.border)}>
         <div
           class={cn(
@@ -131,7 +104,6 @@ export function ThinkingBlock({
           </pre>
         </div>
 
-        {/* Gradient fade overlay when truncated and not expanded (hidden in compact mode) */}
         {!compact && needsTruncation && !isExpanded && (
           <div
             class="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-white dark:from-gray-900 to-transparent pointer-events-none"
@@ -139,7 +111,6 @@ export function ThinkingBlock({
           />
         )}
 
-        {/* Expand/Collapse button at bottom edge (hidden in compact mode) */}
         {!compact && needsTruncation && (
           <div
             class={cn('flex justify-center py-2 border-t bg-white dark:bg-gray-900', colors.border)}

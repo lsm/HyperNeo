@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Tool Components Index (barrel export)
- *
- * Verifies that all exports from the index file are accessible.
- */
 
 import { ToolProgressCard, ToolResultCard, AuthStatusCard } from '../index.ts';
 

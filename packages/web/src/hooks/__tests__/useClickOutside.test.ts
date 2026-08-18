@@ -1,16 +1,9 @@
 // @ts-nocheck
-/**
- * Tests for useClickOutside Hook
- *
- * Tests click outside detection, escape key handling,
- * and excluded refs functionality.
- */
 
 import { renderHook } from '@testing-library/preact';
 import type { RefObject } from 'preact';
 import { useClickOutside } from '../useClickOutside.ts';
 
-// Helper to create mock refs
 function createMockRef(element: Partial<HTMLElement> | null = {}): RefObject<HTMLElement> {
   if (element === null) {
     return { current: null };
@@ -24,7 +17,6 @@ function createMockRef(element: Partial<HTMLElement> | null = {}): RefObject<HTM
   return { current: mockElement };
 }
 
-// Helper to simulate mousedown events (useClickOutside listens on mousedown)
 function simulateClick(target: Node) {
   const event = new MouseEvent('mousedown', {
     bubbles: true,
@@ -34,7 +26,6 @@ function simulateClick(target: Node) {
   document.dispatchEvent(event);
 }
 
-// Helper to simulate keydown events
 function simulateKeydown(key: string) {
   const event = new KeyboardEvent('keydown', {
     key,
@@ -50,7 +41,6 @@ describe('useClickOutside', () => {
 
   beforeEach(() => {
     timeoutCallbacks = [];
-    // Mock setTimeout to execute immediately for testing
     originalSetTimeout = globalThis.setTimeout;
     globalThis.setTimeout = ((callback: () => void, _delay?: number) => {
       timeoutCallbacks.push(callback);
@@ -62,7 +52,6 @@ describe('useClickOutside', () => {
     globalThis.setTimeout = originalSetTimeout;
   });
 
-  // Helper to flush pending timeouts
   function flushTimeouts() {
     timeoutCallbacks.forEach((cb) => cb());
     timeoutCallbacks = [];
@@ -77,10 +66,8 @@ describe('useClickOutside', () => {
 
       renderHook(() => useClickOutside(ref, handler, true));
 
-      // Flush the setTimeout delay
       flushTimeouts();
 
-      // Simulate click outside
       const outsideElement = document.createElement('div');
       simulateClick(outsideElement);
 
@@ -97,10 +84,8 @@ describe('useClickOutside', () => {
 
       renderHook(() => useClickOutside(ref, handler, true));
 
-      // Flush the setTimeout delay
       flushTimeouts();
 
-      // Simulate click inside
       simulateClick(insideElement);
 
       expect(handler).not.toHaveBeenCalled();
@@ -114,10 +99,8 @@ describe('useClickOutside', () => {
 
       renderHook(() => useClickOutside(ref, handler, false));
 
-      // Even if we flush timeouts, listener shouldn't be added when disabled
       flushTimeouts();
 
-      // Simulate click outside
       const outsideElement = document.createElement('div');
       simulateClick(outsideElement);
 
@@ -132,10 +115,8 @@ describe('useClickOutside', () => {
 
       renderHook(() => useClickOutside(ref, handler, true));
 
-      // Flush the setTimeout delay
       flushTimeouts();
 
-      // Simulate Escape key
       simulateKeydown('Escape');
 
       expect(handler).toHaveBeenCalled();
@@ -147,10 +128,8 @@ describe('useClickOutside', () => {
 
       renderHook(() => useClickOutside(ref, handler, true));
 
-      // Flush the setTimeout delay
       flushTimeouts();
 
-      // Simulate other keys
       simulateKeydown('Enter');
       simulateKeydown('Tab');
       simulateKeydown('Space');
@@ -174,10 +153,8 @@ describe('useClickOutside', () => {
 
       renderHook(() => useClickOutside(mainRef, handler, true, [excludedRef]));
 
-      // Flush the setTimeout delay
       flushTimeouts();
 
-      // Simulate click inside excluded element
       simulateClick(excludedElement);
 
       expect(handler).not.toHaveBeenCalled();
@@ -202,18 +179,14 @@ describe('useClickOutside', () => {
 
       renderHook(() => useClickOutside(mainRef, handler, true, [excludedRef1, excludedRef2]));
 
-      // Flush the setTimeout delay
       flushTimeouts();
 
-      // Click on first excluded element
       simulateClick(excluded1);
       expect(handler).not.toHaveBeenCalled();
 
-      // Click on second excluded element
       simulateClick(excluded2);
       expect(handler).not.toHaveBeenCalled();
 
-      // Click outside all
       const outsideElement = document.createElement('div');
       simulateClick(outsideElement);
       expect(handler).toHaveBeenCalled();
@@ -228,7 +201,6 @@ describe('useClickOutside', () => {
 
       const nullExcludedRef = { current: null } as RefObject<HTMLElement>;
 
-      // Should not throw
       renderHook(() => useClickOutside(mainRef, handler, true, [nullExcludedRef]));
 
       flushTimeouts();
@@ -245,7 +217,6 @@ describe('useClickOutside', () => {
       const handler = vi.fn(() => {});
       const nullRef = { current: null } as RefObject<HTMLElement>;
 
-      // Should not throw
       renderHook(() => useClickOutside(nullRef, handler, true));
 
       flushTimeouts();
@@ -253,7 +224,6 @@ describe('useClickOutside', () => {
       const outsideElement = document.createElement('div');
       simulateClick(outsideElement);
 
-      // Should still call handler since ref is null (nothing to be "inside" of)
       expect(handler).toHaveBeenCalled();
     });
   });
@@ -290,7 +260,6 @@ describe('useClickOutside', () => {
 
       flushTimeouts();
 
-      // Disable the hook
       rerender({ enabled: false });
 
       expect(removeEventListenerSpy).toHaveBeenCalled();
@@ -308,12 +277,10 @@ describe('useClickOutside', () => {
 
       renderHook(() => useClickOutside(ref, handler, true));
 
-      // Before timeout, click should not trigger handler
       const outsideElement = document.createElement('div');
       simulateClick(outsideElement);
       expect(handler).not.toHaveBeenCalled();
 
-      // After timeout, click should trigger
       flushTimeouts();
       simulateClick(outsideElement);
       expect(handler).toHaveBeenCalled();
@@ -331,17 +298,14 @@ describe('useClickOutside', () => {
         initialProps: { enabled: false },
       });
 
-      // Click while disabled
       flushTimeouts();
       const outsideElement = document.createElement('div');
       simulateClick(outsideElement);
       expect(handler).not.toHaveBeenCalled();
 
-      // Enable
       rerender({ enabled: true });
       flushTimeouts();
 
-      // Now click should work
       simulateClick(outsideElement);
       expect(handler).toHaveBeenCalled();
     });

@@ -1,13 +1,3 @@
-/**
- * SDKAssistantMessage Renderer
- *
- * Renders assistant messages with proper content array parsing:
- * - Text blocks (markdown)
- * - Tool use blocks (expandable with input/output)
- * - Thinking blocks (visible by default, expandable for long content)
- * - AskUserQuestion tool blocks with inline QuestionPrompt
- */
-
 import type {
   PendingUserQuestion,
   QuestionDraftResponse,
@@ -45,12 +35,9 @@ interface Props {
   message: AssistantMessage;
   toolResultsMap?: Map<string, unknown>;
   subagentMessagesMap?: Map<string, SDKMessage[]>;
-  /** tool_use_id → terminal task_notification (folded onto the tool card). */
   taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
-  /** tool_use_id → latest live task_progress (folded onto running tool cards). */
   taskProgressMap?: Map<string, SDKTaskProgressMessage>;
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
-  // Question handling props for inline QuestionPrompt rendering
   sessionId?: string;
   resolvedQuestions?: Map<string, ResolvedQuestion>;
   pendingQuestion?: PendingUserQuestion | null;
@@ -58,19 +45,8 @@ interface Props {
     state: 'submitted' | 'cancelled',
     responses: QuestionDraftResponse[]
   ) => void;
-  /**
-   * When true, child tool / thinking / subagent blocks in this message each
-   * show a faint white shimmer sweep (the `.running-shimmer` overlay) across
-   * their surface. Set by the compact task thread renderer for the last
-   * non-terminal message.
-   */
   isRunning?: boolean;
-  /** Tool use IDs within this message whose cards are currently running. */
   runningToolUseIds?: Set<string>;
-  /**
-   * When true, Task/Agent tool_use blocks are rendered as normal tool cards
-   * instead of SubagentBlock.
-   */
   flattenSubagentTools?: boolean;
 }
 
@@ -93,7 +69,6 @@ export function SDKAssistantMessage({
   const contentBlocks = apiMessage.content as ContentBlock[];
   const hasError = 'error' in message && message.error !== undefined;
 
-  // Extract text content for copy functionality
   const getTextContent = (): string => {
     return contentBlocks
       .map((block: ContentBlock) => {
@@ -124,9 +99,7 @@ export function SDKAssistantMessage({
     }
   };
 
-  // Get timestamp from message
   const getTimestamp = (): string => {
-    // Use the timestamp injected by the database (milliseconds since epoch)
     const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
     const date = messageWithTimestamp.timestamp
       ? new Date(messageWithTimestamp.timestamp)
@@ -137,7 +110,6 @@ export function SDKAssistantMessage({
     });
   };
 
-  // Get full timestamp for tooltip
   const getFullTimestamp = (): string => {
     const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
     const date = messageWithTimestamp.timestamp
@@ -146,24 +118,16 @@ export function SDKAssistantMessage({
     return date.toLocaleString();
   };
 
-  // Separate blocks by type - tool use and thinking blocks get full width, text blocks are constrained.
-  //
-  // Thinking blocks with empty/whitespace payloads (emitted by Opus 4.7 and
-  // other models running with `thinking.display = 'omitted'`) are filtered
-  // out here so the UI doesn't show an empty "Thinking · 0 characters" card.
   const textBlocks = contentBlocks.filter(isTextBlock);
   const toolBlocks = contentBlocks.filter(isToolUseBlock);
   const thinkingBlocks = contentBlocks.filter(isThinkingBlock).filter(hasRenderableThinking);
 
-  // Extract the estimated thinking tokens if present (stashed by daemon during thinking phase)
   const estimatedThinkingTokens = (message as Record<string, unknown>).estimated_thinking_tokens as
     | number
     | undefined;
 
-  // Get message metadata for E2E tests
   const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 
-  // Text block bubble component - extracted for proper checkbox alignment
   const textBlockBubble =
     textBlocks.length > 0 ? (
       <div
@@ -201,7 +165,6 @@ export function SDKAssistantMessage({
           </div>
         ))}
 
-        {/* Parent tool use indicator (for sub-agent messages) */}
         {message.parent_tool_use_id && (
           <div class="text-xs text-gray-500 dark:text-gray-400 italic">
             Sub-agent response (parent: {message.parent_tool_use_id.slice(0, 8)}...)
@@ -210,7 +173,6 @@ export function SDKAssistantMessage({
       </div>
     ) : null;
 
-  // Actions/toolbar component for text blocks
   const textBlockActions =
     textBlocks.length > 0 ? (
       <div
@@ -254,14 +216,6 @@ export function SDKAssistantMessage({
       </div>
     ) : null;
 
-  // Check if this assistant message has sub-agent children.
-  // If so, we should not show a checkbox for this message (the sub-agent messages will have their own).
-  // Normal mode - original layout
-  //
-  // When isRunning, ALL blocks in this message show the running shimmer so
-  // every block type is visible for debugging/verification. Each component
-  // renders the `.running-shimmer` overlay inside its own card, contained by
-  // the card's overflow-hidden rounded surface.
   const messageContent = (
     <div
       class="py-2 space-y-3"
@@ -270,7 +224,6 @@ export function SDKAssistantMessage({
       data-message-uuid={message.uuid}
       data-message-timestamp={messageWithTimestamp.timestamp || 0}
     >
-      {/* Tool use blocks - full width like result messages */}
       {toolBlocks.map((block: Extract<ContentBlock, { type: 'tool_use' }>, idx: number) => {
         const toolResult = toolResultsMap?.get(block.id);
         const nestedMessages = subagentMessagesMap?.get(block.id) || [];
@@ -298,7 +251,6 @@ export function SDKAssistantMessage({
         );
       })}
 
-      {/* Thinking blocks - visible by default with expand/collapse for long content */}
       {thinkingBlocks.map((block: Extract<ContentBlock, { type: 'thinking' }>, idx: number) => (
         <ThinkingBlock
           key={`thinking-${idx}`}
@@ -308,7 +260,6 @@ export function SDKAssistantMessage({
         />
       ))}
 
-      {/* Text blocks - bubble + actions */}
       {textBlockBubble && (
         <div class="w-full space-y-3">
           {textBlockBubble}
@@ -321,11 +272,6 @@ export function SDKAssistantMessage({
   return messageContent;
 }
 
-/**
- * Tool Use Block Component
- * Uses SubagentBlock for Task tool, ToolResultCard for others
- * Renders QuestionPrompt inline for AskUserQuestion tool
- */
 function ToolUseBlock({
   block,
   toolResult,
@@ -359,14 +305,9 @@ function ToolUseBlock({
     state: 'submitted' | 'cancelled',
     responses: QuestionDraftResponse[]
   ) => void;
-  /** When true, show a faint white shimmer sweep (the `.running-shimmer`
-   * overlay) across this block's surface. Used by the compact task thread
-   * renderer to indicate the last still-executing event message. */
   isRunning?: boolean;
-  /** Render Task/Agent tool_use blocks as generic tool cards when true. */
   flattenSubagentTools?: boolean;
 }) {
-  // Extract content and metadata from enhanced toolResult structure
   const resultData = toolResult as
     | {
         content: unknown;
@@ -380,8 +321,6 @@ function ToolUseBlock({
   const sessionId = resultData?.sessionId || propSessionId;
   const isOutputRemoved = resultData?.isOutputRemoved || false;
 
-  // Use SubagentBlock for Task tool (no delete button) unless flatten mode is enabled.
-  // SDK 0.2.76+ renamed the tool from 'Task' to 'Agent', support both for compatibility
   if (!flattenSubagentTools && (block.name === 'Task' || block.name === 'Agent')) {
     return (
       <SubagentBlock
@@ -401,19 +340,15 @@ function ToolUseBlock({
     );
   }
 
-  // Handle AskUserQuestion tool - render tool card AND QuestionPrompt inline
   if (block.name === 'AskUserQuestion' && sessionId) {
     const toolUseId = block.id;
     const resolved = resolvedQuestions?.get(toolUseId);
     const isPending = pendingQuestion?.toolUseId === toolUseId;
 
-    // Extract question data from tool input if not available from resolved/pending
-    // This ensures the form is ALWAYS visible, even for old questions
     const getQuestionData = (): PendingUserQuestion | null => {
       if (resolved) return resolved.question;
       if (isPending && pendingQuestion) return pendingQuestion;
 
-      // Extract from tool input as fallback
       const input = block.input as Record<string, unknown>;
       if (input && typeof input === 'object' && 'questions' in input) {
         const questions = input.questions as Array<{
@@ -440,7 +375,6 @@ function ToolUseBlock({
 
     const questionData = getQuestionData();
     if (!questionData) {
-      // Should never happen, but fail gracefully
       return (
         <div>
           <ToolResultCard
@@ -477,7 +411,6 @@ function ToolUseBlock({
           taskProgress={taskProgress}
           isRunning={isRunning}
         />
-        {/* Render QuestionPrompt inline - ALWAYS show the form */}
         {resolved ? (
           <QuestionPrompt
             sessionId={sessionId}
@@ -521,7 +454,3 @@ function ToolUseBlock({
     />
   );
 }
-
-// ============================================================================
-// LEGACY CODE BELOW - KEPT FOR REFERENCE, CAN BE REMOVED AFTER TESTING
-// ============================================================================

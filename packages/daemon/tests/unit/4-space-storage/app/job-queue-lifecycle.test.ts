@@ -1,12 +1,3 @@
-/**
- * Job Queue Lifecycle Tests
- *
- * Verifies:
- * - DaemonAppContext includes jobProcessor and jobQueue
- * - Cleanup stops the processor before messageHub (ordering guaranteed by stop() resolving)
- * - maxConcurrent is configurable via HYPERNEO_JOB_QUEUE_MAX_CONCURRENT env var
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
@@ -37,7 +28,6 @@ const DB_SCHEMA = `
 
 describe('DaemonAppContext — jobQueue and jobProcessor fields', () => {
   it('DaemonAppContext interface includes jobQueue and jobProcessor', () => {
-    // Compile-time guard: if the interface lacks these fields, tsc fails.
     const requiredFields: Array<keyof DaemonAppContext> = ['jobQueue', 'jobProcessor'];
     expect(requiredFields).toContain('jobQueue');
     expect(requiredFields).toContain('jobProcessor');
@@ -59,8 +49,6 @@ describe('JobQueueProcessor lifecycle', () => {
   });
 
   it('stop() resolves only after all in-flight jobs finish (cleanup ordering guarantee)', async () => {
-    // Verifies that `await jobProcessor.stop()` always settles before code that follows it —
-    // this is what guarantees stop() happens before messageHub.cleanup() in app.ts.
     let jobFinished = false;
     let resolveJob!: () => void;
 
@@ -74,14 +62,13 @@ describe('JobQueueProcessor lifecycle', () => {
 
     repo.enqueue({ queue: 'lifecycle-queue', payload: {} });
     await processor.tick();
-    // Job is now in-flight
 
     const stopPromise = processor.stop();
-    expect(jobFinished).toBe(false); // still running
+    expect(jobFinished).toBe(false);
 
     resolveJob();
     await stopPromise;
-    expect(jobFinished).toBe(true); // stop() settled only after job completed
+    expect(jobFinished).toBe(true);
   });
 
   it('stopPolling prevents a requeued in-flight job from being claimed twice during shutdown', async () => {
@@ -103,10 +90,9 @@ describe('JobQueueProcessor lifecycle', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(handlerRuns).toBe(1);
 
-    // Real shutdown ordering: stop polling first, then requeue processing rows.
     processor.stopPolling();
     repo.requeueAllProcessing('message_delivery', Date.now());
-    await new Promise((resolve) => setTimeout(resolve, 30)); // > two former poll intervals
+    await new Promise((resolve) => setTimeout(resolve, 30));
 
     expect(handlerRuns).toBe(1);
     expect(repo.listJobs({ queue: 'message_delivery' })[0]?.status).toBe('pending');
@@ -132,13 +118,12 @@ describe('JobQueueProcessor lifecycle', () => {
       await new Promise<void>((resolve) => resolvers.push(resolve));
     });
 
-    // Enqueue more jobs than the default limit
     for (let i = 0; i < 8; i++) {
       repo.enqueue({ queue: 'default-limit-queue', payload: { i } });
     }
 
     const claimed = await processor.tick();
-    expect(claimed).toBe(5); // processor enforces the computed maxConcurrent
+    expect(claimed).toBe(5);
 
     for (const r of resolvers) r();
     await processor.stop();
@@ -165,7 +150,7 @@ describe('JobQueueProcessor lifecycle', () => {
     }
 
     const claimed = await processor.tick();
-    expect(claimed).toBe(3); // processor enforces the env-configured limit
+    expect(claimed).toBe(3);
 
     for (const r of resolvers) r();
     await processor.stop();

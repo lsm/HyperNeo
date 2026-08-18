@@ -1,15 +1,3 @@
-/**
- * SpaceMemoryEditor Component
- *
- * Modal form for creating or editing a single agent memory within the active
- * space. Create mode (memory === null) lets the user set the key; edit mode
- * locks the key (the daemon upserts on (spaceId, key), so changing the key
- * would create a new memory rather than rename — we avoid that footgun).
- *
- * Validation mirrors the daemon's normalize* rules so the user gets inline
- * feedback before the round-trip.
- */
-
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { AgentMemoryEntry } from '@hyperneo/shared';
 import { Button } from '../ui/Button';
@@ -24,9 +12,7 @@ const TAG_MAX_COUNT = 50;
 const KEY_CHECK_DEBOUNCE_MS = 250;
 
 export interface SpaceMemoryEditorProps {
-  /** Existing memory to edit, or null to create a new one. */
   memory: AgentMemoryEntry | null;
-  /** Keys already present in the space, to warn on create-mode collisions. */
   existingKeys: string[];
   onClose: () => void;
 }
@@ -43,23 +29,15 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
   const [key, setKey] = useState(memory?.key ?? '');
   const [content, setContent] = useState(memory?.content ?? '');
   const [tagsInput, setTagsInput] = useState(memory?.tags.join(', ') ?? '');
-  // Snapshot of the tags field at open, to detect whether the user changed it
-  // (unchanged tags are not resent — see handleSave).
   const initialTagsInput = memory?.tags.join(', ') ?? '';
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Authoritative duplicate flag resolved against the backend, since the
-  // loaded `existingKeys` may be filtered (search active) or paginated.
   const [remoteDuplicate, setRemoteDuplicate] = useState(false);
 
   const trimmedKey = key.trim();
-  // Create-mode collision: the daemon upserts on (spaceId, key), so saving would
-  // silently overwrite the existing memory's content/tags. Surface it explicitly.
-  // Combine instant local knowledge with the authoritative remote check.
   const duplicateKey =
     !isEditing && trimmedKey !== '' && (existingKeys.includes(trimmedKey) || remoteDuplicate);
 
-  // Debounced authoritative existence check for keys not in the loaded set.
   useEffect(() => {
     if (isEditing || trimmedKey === '' || existingKeys.includes(trimmedKey)) {
       setRemoteDuplicate(false);
@@ -76,13 +54,8 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
     };
   }, [trimmedKey, isEditing, existingKeys]);
 
-  // Block dismissal (backdrop / Escape / header close) while a save is in flight
-  // so the pending RPC can't race a newly-opened editor through the shared
-  // onClose callback.
   const guardedClose = saving ? () => undefined : onClose;
 
-  // Track mount state so a save that resolves after the editor unmounts (e.g.
-  // a space switch) doesn't call onClose and close a subsequently-opened editor.
   const mountedRef = useRef(true);
   useEffect(
     () => () => {
@@ -110,10 +83,6 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
       setError('Content is required.');
       return;
     }
-    // Only resend tags when they changed. Existing tags may contain commas
-    // (allowed by the daemon) which can't round-trip through the comma-split
-    // input; resending them unchanged would silently mangle them. When
-    // omitted, the daemon preserves the stored tags.
     const tagsChanged = tagsInput !== initialTagsInput;
     const tags = tagsChanged ? parseTagsInput(tagsInput) : undefined;
     if (tags) {
@@ -130,14 +99,9 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
 
     setSaving(true);
     try {
-      // Create mode uses the atomic insert-only RPC (fails on key conflict);
-      // edit mode upserts via write().
       const entry = isEditing
         ? await memoryStore.write({ key: trimmedKey, content: trimmedContent, tags })
         : await memoryStore.create({ key: trimmedKey, content: trimmedContent, tags });
-      // If the editor unmounted while the RPC was in flight (e.g. a space
-      // switch), bail before touching state/onClose — a stale onClose would
-      // close a newly-opened editor and discard its input.
       if (!mountedRef.current) return;
       toast.success(`Memory "${entry.key}" saved`);
       onClose();

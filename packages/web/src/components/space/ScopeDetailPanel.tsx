@@ -10,11 +10,6 @@ interface ScopeDetailPanelProps {
   scopeId: string;
 }
 
-/**
- * Right-panel host for a single Forge scope. Forge scopes are not in the global
- * store, so this fetches the scope by id and keeps its own copy in sync with
- * detail edits (e.g. judge-model overrides).
- */
 export function ScopeDetailPanel({ spaceId, scopeId }: ScopeDetailPanelProps) {
   const { request } = useMessageHub();
   const goals = spaceStore.spaceId.value === spaceId ? spaceStore.goals.value : [];

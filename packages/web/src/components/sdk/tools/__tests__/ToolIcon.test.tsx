@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ToolIcon Component
- *
- * ToolIcon displays icons for different tool types.
- */
 import { describe, it, expect, vi } from 'vitest';
 
 import { render } from '@testing-library/preact';
@@ -26,8 +21,6 @@ describe('ToolIcon', () => {
 
     it('should apply custom className', () => {
       const { container } = render(<ToolIcon toolName="Read" className="custom-icon-class" />);
-      // className is applied to the wrapper div when custom icon is used
-      // For default icons, it's part of the iconClass
       const element =
         container.querySelector('svg') || container.querySelector('.custom-icon-class');
       expect(element).toBeTruthy();
@@ -282,7 +275,6 @@ describe('ToolIcon', () => {
 
   describe('Custom Icon', () => {
     it('should render custom icon when tool config has icon property', () => {
-      // Mock getToolConfig to return a config with custom icon
       const CustomIcon = () => <svg data-testid="custom-icon" />;
       vi.spyOn(toolRegistry, 'getToolConfig').mockReturnValueOnce({
         label: 'Custom Tool',
@@ -298,7 +290,6 @@ describe('ToolIcon', () => {
     });
 
     it('should apply size and color classes to custom icon wrapper', () => {
-      // Mock getToolConfig to return a config with custom icon
       const CustomIcon = () => <svg data-testid="custom-icon" />;
       vi.spyOn(toolRegistry, 'getToolConfig').mockReturnValueOnce({
         label: 'Custom Tool',

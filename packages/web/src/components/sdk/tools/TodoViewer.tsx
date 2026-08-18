@@ -1,26 +1,14 @@
-/**
- * TodoViewer - Component for displaying todo lists
- *
- * Displays todos with status indicators and progress tracking,
- * particularly useful for TodoWrite tool output.
- */
-
 import { cn } from '../../../lib/utils.ts';
 
 export interface TodoViewerProps {
-  /** Array of todos */
   todos: Array<{
     content: string;
     status: 'pending' | 'in_progress' | 'completed';
     activeForm: string;
   }>;
-  /** Custom class names */
   className?: string;
 }
 
-/**
- * Status icon component
- */
 function StatusIcon({ status }: { status: 'pending' | 'in_progress' | 'completed' }) {
   if (status === 'completed') {
     return (
@@ -94,7 +82,6 @@ export function TodoViewer({ todos, className }: TodoViewerProps) {
         className
       )}
     >
-      {/* Header */}
       <div class="bg-gray-100 dark:bg-gray-800 px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <div class="text-xs font-semibold text-gray-700 dark:text-gray-300">Task List</div>
         <div class="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
@@ -102,7 +89,6 @@ export function TodoViewer({ todos, className }: TodoViewerProps) {
         </div>
       </div>
 
-      {/* Todo items */}
       <div class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
         {todos.map((todo, idx) => {
           const bgClass =
@@ -124,12 +110,10 @@ export function TodoViewer({ todos, className }: TodoViewerProps) {
               key={idx}
               class={cn('px-3 py-3 flex gap-3 items-start transition-colors', bgClass)}
             >
-              {/* Status icon */}
               <div class="flex-shrink-0 mt-0.5">
                 <StatusIcon status={todo.status} />
               </div>
 
-              {/* Content */}
               <div class="flex-1 min-w-0">
                 <div class={cn('text-sm', textClass)}>{todo.content}</div>
                 {todo.status === 'in_progress' && todo.activeForm && (
@@ -137,7 +121,6 @@ export function TodoViewer({ todos, className }: TodoViewerProps) {
                 )}
               </div>
 
-              {/* Status badge */}
               <div class="flex-shrink-0">
                 {todo.status === 'completed' && (
                   <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300">
@@ -160,7 +143,6 @@ export function TodoViewer({ todos, className }: TodoViewerProps) {
         })}
       </div>
 
-      {/* Footer with stats */}
       <div class="bg-gray-100 dark:bg-gray-800 px-3 py-1.5 border-t border-gray-200 dark:border-gray-700 flex gap-4 text-xs">
         {completedCount > 0 && (
           <div class="flex items-center gap-1">

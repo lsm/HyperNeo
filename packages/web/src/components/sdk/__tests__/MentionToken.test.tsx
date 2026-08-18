@@ -1,16 +1,8 @@
 // @ts-nocheck
-/**
- * MentionToken Component Tests
- *
- * Tests for the MentionToken inline pill component and the parseTextWithReferences
- * utility function.
- */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { MentionToken, parseTextWithReferences } from '../MentionToken';
 import type { ReferenceMetadata } from '@hyperneo/shared';
-
-// ─── Mock useMessageHub ──────────────────────────────────────────────────────
 
 const mockCallIfConnected = vi.fn();
 
@@ -39,8 +31,6 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
 });
-
-// ─── parseTextWithReferences ─────────────────────────────────────────────────
 
 describe('parseTextWithReferences', () => {
   describe('plain text', () => {
@@ -119,7 +109,7 @@ describe('parseTextWithReferences', () => {
         kind: 'mention',
         refType: 'task',
         id: 't-99',
-        displayText: 't-99', // raw id fallback
+        displayText: 't-99',
       });
     });
 
@@ -192,8 +182,6 @@ describe('parseTextWithReferences', () => {
     });
   });
 });
-
-// ─── MentionToken rendering ──────────────────────────────────────────────────
 
 describe('MentionToken', () => {
   describe('rendering', () => {
@@ -294,7 +282,6 @@ describe('MentionToken', () => {
       const token = container.querySelector('[data-testid="mention-token"]');
       fireEvent.mouseEnter(token!);
 
-      // Give time for any async calls
       await new Promise((r) => setTimeout(r, 20));
       expect(mockCallIfConnected).not.toHaveBeenCalled();
     });
@@ -313,17 +300,15 @@ describe('MentionToken', () => {
       );
       const token = container.querySelector('[data-testid="mention-token"]');
 
-      // First hover
       fireEvent.mouseEnter(token!);
       await waitFor(() => {
         expect(mockCallIfConnected).toHaveBeenCalledTimes(1);
       });
       fireEvent.mouseLeave(token!);
 
-      // Second hover
       fireEvent.mouseEnter(token!);
       await new Promise((r) => setTimeout(r, 20));
-      expect(mockCallIfConnected).toHaveBeenCalledTimes(1); // not called again
+      expect(mockCallIfConnected).toHaveBeenCalledTimes(1);
     });
 
     it('shows resolved task data in popover', async () => {
@@ -477,7 +462,6 @@ describe('MentionToken', () => {
 
       await waitFor(() => {
         const popover = container.querySelector('[data-testid="mention-token-popover"]');
-        // idle state shows refType/id
         expect(popover?.textContent).toContain('task/t-1');
       });
     });
@@ -503,8 +487,6 @@ describe('MentionToken', () => {
       });
     });
   });
-
-  // ─── Deleted / not-found visual state ──────────────────────────────────────
 
   describe('deleted entity visual state', () => {
     it('applies faded strikethrough styling when status is not_found', () => {
@@ -549,7 +531,6 @@ describe('MentionToken', () => {
       );
       const token = container.querySelector('[data-testid="mention-token"]');
 
-      // Before hover: no deleted styling
       expect(token?.className).not.toContain('opacity-50');
 
       fireEvent.mouseEnter(token!);

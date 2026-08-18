@@ -1,27 +1,5 @@
-/**
- * External event essence formatting.
- *
- * The injected "essence" is the lean, actionable projection of an
- * `ExternalEvent` that a workflow agent actually sees. It is the lean counterpart
- * to `get_external_event`, which returns the complete record (including
- * `rawPayload`) on demand. The contract this module enforces:
- *
- * - Comment / review-comment / thread events carry the FULL body text (never the
- *   truncated `summary`) plus reply/resolve handles when present.
- * - The raw source payload (`rawPayload`) is intentionally NOT projected into the
- *   essence — it stays reachable only through `get_external_event(eventId)`.
- *
- * Extracted as a pure function so the essence boundary is directly testable;
- * `SpaceRuntime` delegates here when injecting published events into sessions.
- */
-
 import type { ExternalEventPublishedPayload } from './external-event-service';
 
-/**
- * Render the lean essence for an injected external-event message.
- *
- * @returns a pretty-printed JSON string (the injected message body).
- */
 export function formatExternalEventEssence(event: ExternalEventPublishedPayload): string {
   const payload = event.payload;
   const eventType = externalEventString(payload, 'eventType');
@@ -36,9 +14,6 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
     action,
     actor: externalEventString(payload, 'actor'),
     repo: repoOwner && repoName ? `${repoOwner}/${repoName}` : undefined,
-    // PR-scoped events carry a real prNumber/prUrl; repo-scoped events (e.g.
-    // branch_protection_rule) leave prNumber at the 0 sentinel, so omit it rather
-    // than project a misleading prNumber: 0.
     prNumber: externalEventNumber(payload, 'prNumber') || undefined,
     prUrl: externalEventString(payload, 'prUrl') || undefined,
     externalUrl: event.externalUrl,

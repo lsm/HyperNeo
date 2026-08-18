@@ -1,25 +1,3 @@
-/**
- * Post-Approval-Only Built-in Validator.
- *
- * Gates a `send_message` channel so it may carry ONLY a post-approval
- * merge-blocker / fix-push report: the send is allowed only while the owning
- * task is `approved` AND the message carries a post-approval merge signal in
- * `data.reason`.
- *
- * Deployed on the stable `Coding with QA` workflow's `Coding → QA` channel.
- * That route exists so the coder — reused as the merger on the Coding node —
- * can report a merge blocker to QA (the approval authority) after QA approval.
- * Without this gate the channel is also reachable during the implementation
- * phase, letting a coder activate QA (the end node) and `approve_task` without
- * Review ever running. This mirrors the `pr_ready` post-approval exemption,
- * inverted: `pr_ready` lets the merge-reason send through its PR-readiness gate
- * only while approved; this validator lets the send through AT ALL only while
- * approved.
- *
- * Fails closed: a missing task-status provider (`taskStatus` undefined) blocks,
- * so the route is never spoofable from an in-progress task.
- */
-
 import type { WorkflowHookResult } from '@hyperneo/shared';
 import type { HookExecutorContext } from '../hook-executor';
 
@@ -54,20 +32,7 @@ export function createPostApprovalOnlyValidator(): (
       context.taskStatus === 'approved' &&
       POST_APPROVAL_MERGE_REASONS.has(readSendReason(context) ?? '')
     ) {
-      // Bind the blocker / fix-push handoff to the run's frozen reviewed PR.
-      // Without this, a prompt-injected post-approval coder could send a
-      // `merge_blocked`/`merge_fix_pushed` report naming a DIFFERENT same-host
-      // PR, and the approval authority's re-approval procedure would then
-      // review and approve that other PR. The frozen identity is stamped only
-      // by the `pr_ready` validator's hook (the engine gates pr_url stamping on
-      // that validator), so it is the authoritative run-level PR. Fail closed
-      // when a pr_url is supplied but no frozen identity exists to compare it
-      // against.
       const suppliedPrUrl = readSuppliedPrUrl(context);
-      // Require data.pr_url (omission is not safe): an approved coder could
-      // otherwise send `reason: "merge_blocked"` with no structured pr_url while
-      // naming a different PR in the free-form message, leaving the re-approval
-      // authority with no trusted identity to bind.
       if (typeof suppliedPrUrl !== 'string') {
         return {
           type: 'block',

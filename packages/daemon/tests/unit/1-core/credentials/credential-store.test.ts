@@ -19,8 +19,6 @@ import {
   type CredentialStore,
 } from '../../../../src/lib/credentials/credential-store';
 
-// node:os namespace exports are not configurable in ESM, so `spyOn(os, ...)`
-// cannot work under Vitest. Mock the module with mutable overrides instead.
 const osOverrides = vi.hoisted(() => ({
   homedir: null as string | null,
   platform: null as NodeJS.Platform | null,
@@ -123,9 +121,8 @@ describe('DatabaseCredentialStore', () => {
       const keyPath = path.join(tmpHome, '.hyperneo', '.provider-credential-key');
       expect(fs.existsSync(keyPath)).toBe(true);
       const key = fs.readFileSync(keyPath, 'utf-8').trim();
-      expect(key.length).toBe(64); // 32 bytes hex-encoded
+      expect(key.length).toBe(64);
 
-      // A second store using the same key file should decrypt the same data
       const store2 = new DatabaseCredentialStore(db);
       expect(await store2.get('neokai.provider.test', 'default')).toBe('secret-data');
     } finally {
@@ -193,11 +190,6 @@ describe('createCredentialStore', () => {
     }
   });
 });
-
-// ---------------------------------------------------------------------------
-// KeychainStatusCredentialStore — Keychain-only macOS behavior + warn-once.
-// Uses in-memory stubs; no child_process mocking required.
-// ---------------------------------------------------------------------------
 
 class StubCredentialStore implements CredentialStore {
   public gets: Array<[string, string]> = [];

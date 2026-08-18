@@ -1,21 +1,3 @@
-/**
- * NodeConfigPanel
- *
- * A right-anchored slide-in panel that appears when a workflow node is selected
- * in the visual editor. Provides inline editing of all node properties using
- * the same field layout as the WorkflowNodeCard expanded view.
- *
- * Features:
- * - Node Name input
- * - "Set as Start" button (disabled when the node is already the start node)
- * - "Set as End" button (toggle to designate/end node designation)
- * - Agent dropdown
- * - Model dropdown for single-agent and multi-agent nodes
- * - System prompt inline editor (node-level override)
- * - Instructions inline textarea
- * - Delete Node button with confirmation (disabled for start node)
- */
-
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import { useComputed } from '@preact/signals';
 import type {
@@ -47,25 +29,20 @@ const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }
   { value: 'think32k', label: 'Think 32k' },
 ];
 
-/** Normalize a node thinking level, returning undefined for empty/undefined values. */
 function safeNodeThinkingLevel(level: string | undefined): ThinkingLevel | undefined {
   if (!level) return undefined;
   return normalizeThinkingLevel(level);
 }
 
-/** Normalize legacy 'auto' thinking levels in a NodeDraft. Returns same ref if unchanged. */
 function normalizeNodeDraftThinkingLevel(draft: NodeDraft): NodeDraft {
   let changed = false;
 
-  // Normalize step-level thinkingLevel (widened to string because legacy
-  // runtime data may contain 'auto' even though ThinkingLevel excludes it)
   let stepThinkingLevel: string | undefined = draft.thinkingLevel;
   if (stepThinkingLevel === 'auto') {
     stepThinkingLevel = 'off';
     changed = true;
   }
 
-  // Normalize agent slot thinkingLevels
   let normalizedAgents: WorkflowNodeAgent[] | undefined = draft.agents;
   if (draft.agents) {
     normalizedAgents = draft.agents.map((agent) => {
@@ -87,10 +64,6 @@ function normalizeNodeDraftThinkingLevel(draft: NodeDraft): NodeDraft {
   };
 }
 
-// ============================================================================
-// Props
-// ============================================================================
-
 export interface NodeChannelLink {
   id: string;
   label: string;
@@ -103,9 +76,7 @@ export interface NodeConfigPanelProps {
   isStartNode: boolean;
   isEndNode: boolean;
   onUpdate: (step: NodeDraft) => void;
-  /** Designates this step as the workflow start node */
   onSetAsStart: (stepId: string) => void;
-  /** Designates this step as the workflow end node */
   onSetAsEnd: (stepId: string) => void;
   channelLinks?: NodeChannelLink[];
   onOpenChannelLink?: (channelLinkId: string) => void;
@@ -121,19 +92,11 @@ export interface NodeConfigPanelProps {
   onConvertChannelRelationToBidirectional?: () => void;
   onCloseChannelLink?: () => void;
   onClose: () => void;
-  /** Called when the user confirms deletion of this step */
   onDelete: (stepId: string) => void;
-  /** Workflow-level hooks for this node (filtered by sourceNode match). */
   nodeHooks?: WorkflowHook[];
-  /** All node names in the workflow for hook source/target selectors. */
   workflowNodeNames?: string[];
-  /** Update the workflow-level hooks list. */
   onUpdateNodeHooks?: (hooks: WorkflowHook[]) => void;
 }
-
-// ============================================================================
-// SlotSkillsToggle — per-slot skill enable/disable toggles
-// ============================================================================
 
 interface SlotSkillsToggleProps {
   disabledSkillIds?: string[];
@@ -141,7 +104,6 @@ interface SlotSkillsToggleProps {
 }
 
 function SlotSkillsToggle({ disabledSkillIds, onChange }: SlotSkillsToggleProps) {
-  // Use useComputed so the list stays reactive to global skill changes
   const allSkills = useComputed(() => skillsStore.skills.value.filter((s) => s.enabled));
   if (allSkills.value.length === 0) return null;
 
@@ -182,10 +144,6 @@ function SlotSkillsToggle({ disabledSkillIds, onChange }: SlotSkillsToggleProps)
   );
 }
 
-// ============================================================================
-// SlotResetContextToggle — per-slot "fresh context each turn" flag
-// ============================================================================
-
 interface SlotResetContextToggleProps {
   checked: boolean;
   onChange: (enabled: boolean) => void;
@@ -213,10 +171,6 @@ function SlotResetContextToggle({ checked, onChange }: SlotResetContextTogglePro
     </label>
   );
 }
-
-// ============================================================================
-// AgentsSection — manages agents list in the config panel
-// ============================================================================
 
 interface AgentsSectionProps {
   step: NodeDraft;
@@ -668,10 +622,6 @@ function AgentsSection({
   );
 }
 
-// ============================================================================
-// CustomPromptEditor — single custom prompt textarea
-// ============================================================================
-
 interface CustomPromptEditorProps {
   customPrompt?: NodeDraft['customPrompt'];
   onChange: (value: string) => void;
@@ -752,10 +702,6 @@ function CustomPromptEditor({
   );
 }
 
-// ============================================================================
-// Component
-// ============================================================================
-
 type PanelView =
   | { kind: 'main' }
   | { kind: 'channel-links' }
@@ -787,9 +733,6 @@ export function NodeConfigPanel({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [panelView, setPanelView] = useState<PanelView>({ kind: 'main' });
 
-  // Reset confirmation dialog when the selected step changes so a previously
-  // open confirmation on one node doesn't bleed through to the next node.
-  // Also normalize any legacy 'auto' thinking levels in the loaded step data.
   useEffect(() => {
     setConfirmingDelete(false);
     setPanelView({ kind: 'main' });
@@ -808,7 +751,7 @@ export function NodeConfigPanel({
   }, [selectedChannelRelation]);
 
   const handleDeleteClick = () => {
-    if (isStartNode) return; // defence-in-depth: button is also disabled
+    if (isStartNode) return;
     setConfirmingDelete(true);
   };
 
@@ -834,9 +777,6 @@ export function NodeConfigPanel({
       postApproval: {
         targetAgent: step.postApproval?.targetAgent ?? '',
         instructions: step.postApproval?.instructions ?? '',
-        // Restore the hidden PR-merged flag from the sticky step-level field —
-        // the disable branch deleted `postApproval`, so reading it there would
-        // see undefined. `step.requirePrMerge` survives the toggle.
         ...(step.requirePrMerge ? { requirePrMerge: true } : {}),
       },
     });
@@ -1279,7 +1219,6 @@ export function NodeConfigPanel({
           ) : null}
         </div>
 
-        {/* Hooks section */}
         {onUpdateNodeHooks && (
           <div class="space-y-1.5">
             <div class="flex items-center justify-between">
@@ -1374,7 +1313,6 @@ export function NodeConfigPanel({
       {renderHeader()}
       {renderPanelBody()}
 
-      {/* Footer — Delete button */}
       <div class="flex-shrink-0 border-t border-white/10 bg-dark-850/60 px-4 py-3">
         {confirmingDelete ? (
           <div class="space-y-2">

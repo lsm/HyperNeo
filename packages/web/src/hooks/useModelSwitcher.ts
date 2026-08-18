@@ -1,22 +1,3 @@
-/**
- * useModelSwitcher Hook
- *
- * Manages model information loading and switching for a session.
- * Handles fetching current model, available models list, and switching logic.
- *
- * @example
- * ```typescript
- * const {
- *   currentModel,
- *   currentModelInfo,
- *   availableModels,
- *   switching,
- *   loading,
- *   switchModel,
- * } = useModelSwitcher(sessionId);
- * ```
- */
-
 import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
@@ -25,23 +6,15 @@ import { connectionState } from '../lib/state';
 import { toast } from '../lib/toast';
 
 export interface UseModelSwitcherResult {
-  /** Current model ID */
   currentModel: string;
-  /** Current model info (null if not loaded) */
   currentModelInfo: ModelInfo | null;
-  /** List of available models */
   availableModels: ModelInfo[];
-  /** Whether a model switch is in progress */
   switching: boolean;
-  /** Whether models are being loaded */
   loading: boolean;
-  /** Switch to a different model */
   switchModel: (model: ModelInfo) => Promise<void>;
-  /** Reload model info */
   reload: () => Promise<void>;
 }
 
-/** Model family icons for visual hierarchy */
 export const MODEL_FAMILY_ICONS: Record<string, string> = {
   opus: '🧠',
   sonnet: '💎',
@@ -51,18 +24,13 @@ export const MODEL_FAMILY_ICONS: Record<string, string> = {
   minimax: '🔥',
   openrouter: '🧭',
   gpt: '🔮',
-  // Default icon for unknown families
   __default__: '💎',
 };
 
-/**
- * Get the icon for a model family with fallback to default
- */
 export function getModelFamilyIcon(family: string): string {
   return MODEL_FAMILY_ICONS[family] || MODEL_FAMILY_ICONS.__default__;
 }
 
-/** Provider sort order for model picker grouping */
 export const PROVIDER_ORDER: Record<string, number> = {
   anthropic: 0,
   'anthropic-copilot': 1,
@@ -74,7 +42,6 @@ export const PROVIDER_ORDER: Record<string, number> = {
   deepseek: 7,
 };
 
-/** Model family sort order (exported for shared use) */
 export const FAMILY_ORDER: Record<string, number> = {
   opus: 0,
   sonnet: 1,
@@ -87,7 +54,6 @@ export const FAMILY_ORDER: Record<string, number> = {
   gpt: 7,
 };
 
-/** Raw model shape returned by the `models.list` RPC */
 export interface RawModelEntry {
   id: string;
   display_name: string;
@@ -99,13 +65,6 @@ export interface RawModelEntry {
   thinkingModes?: 'off' | 'on' | 'granular';
 }
 
-/**
- * Map raw `models.list` RPC entries to `ModelInfo` objects and sort them
- * by provider (PROVIDER_ORDER) then family (FAMILY_ORDER).
- *
- * This is the canonical mapping used by model selection surfaces so that
- * family detection and sort order stay in sync.
- */
 export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
   const modelInfos = models.map((m) => {
     let family = 'sonnet';
@@ -130,12 +89,6 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
       family = 'openrouter';
     }
     const contextWindow = m.contextWindow ?? m.context_window;
-    // Provider precedence: backend-supplied provider wins. If missing, prefer
-    // ID-based inference (mirrors backend `inferProviderForModel` rules so
-    // edge cases like `openai/gpt-*`, `gpt-oss:*`, `kimi-*:latest`, and
-    // `claude-*/preview` route correctly) before falling back to the
-    // family map and finally anthropic. Without this, dropping the
-    // provider field would lump GLM/Kimi/etc. models under Anthropic.
     const inferredProvider =
       m.provider || inferProviderFromModelId(mid) || PROVIDER_FROM_FAMILY[family] || 'anthropic';
     return {
@@ -148,8 +101,6 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
       description: m.description || '',
       releaseDate: '',
       available: true,
-      // Preserve per-model thinking mode (e.g. Kimi K3 granular) so the picker
-      // reflects it immediately after a switch, not only after a reload.
       thinkingModes: m.thinkingModes,
     };
   });
@@ -166,7 +117,6 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
   return modelInfos;
 }
 
-/** Map model family → owning provider for FE fallback inference. */
 const PROVIDER_FROM_FAMILY: Record<string, string> = {
   glm: 'glm',
   kimi: 'kimi',
@@ -175,49 +125,20 @@ const PROVIDER_FROM_FAMILY: Record<string, string> = {
   openrouter: 'openrouter',
 };
 
-/**
- * Infer the owning provider purely from a model ID string.
- *
- * Used only as a defensive fallback when the backend payload omits a provider
- * tag. The backend is the source of truth — this exists so a missing or
- * stale provider field never makes a non-Anthropic model appear under the
- * Anthropic group in the picker.
- *
- * Rules mirror the daemon's `inferProviderForModel` (registry.ts) so the
- * frontend fallback never disagrees with backend routing:
- *   - canonical `claude-*` always stays anthropic, including slash-suffixed
- *     variants like `claude-sonnet-4.6/preview`
- *   - Ollama Cloud claims any `:cloud` suffix (catches `openrouter`-style
- *     refs too, e.g. `foo:cloud`) — mirrors daemon precedence
- *   - `qwen*:NNNb` (large size) → ollama-cloud, other `qwen*:` → ollama
- *   - `gpt-oss:NNNb` → ollama-cloud, other `gpt-oss:` → ollama or ollama-cloud
- *     depending on `-cloud` suffix
- *   - slash refs (`openai/gpt-5.4`, `google/gemma-4-31b:free`) → openrouter
- *   - colon-tagged variants of `kimi-*`/`moonshot-*` (e.g. `kimi-k2:latest`)
- *     fall through to ollama; bare prefixes (`kimi-k2`) → kimi
- */
 export function inferProviderFromModelId(modelId: string): string | undefined {
   const id = modelId.toLowerCase();
 
-  // Anthropic claims canonical claude-* IDs — including slash-suffixed variants
   if (id.startsWith('claude-')) return 'anthropic';
 
-  // Ollama-Cloud explicit suffix wins even on slash refs (mirrors backend order)
   if (id === 'ollama-cloud' || id.endsWith(':cloud')) return 'ollama-cloud';
 
-  // Specific Ollama families with colon-size routing
   if (/^qwen[\w.-]*:[1-9]\d{2,}b$/i.test(id)) return 'ollama-cloud';
   if (/^qwen[\w.-]*:/i.test(id)) return 'ollama';
   if (/^gpt-oss:[1-9]\d{2,}b$/i.test(id)) return 'ollama-cloud';
   if (id.startsWith('gpt-oss:')) return id.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
 
-  // Slash refs (e.g. `openai/gpt-5.4`, `google/gemma-4-31b:free`) go to OpenRouter.
-  // Must precede the generic colon→ollama fallback so OpenRouter IDs that
-  // happen to carry tier suffixes like `:free` are not misrouted to Ollama.
   if (id === 'openrouter/auto' || id.includes('/')) return 'openrouter';
 
-  // Remaining colon-tagged IDs are local Ollama tags (e.g. `kimi-k2:latest`,
-  // `moonshot-v1:latest`). The colon-exclusion mirrors daemon kimi routing.
   if (id.includes(':')) return 'ollama';
 
   if (id.startsWith('glm-') || id === 'glm') return 'glm';
@@ -236,12 +157,6 @@ export function inferProviderFromModelId(modelId: string): string | undefined {
   return undefined;
 }
 
-/**
- * Group models by their provider, preserving insertion order of the input array.
- * Provider group ordering depends on the caller supplying a pre-sorted array —
- * `loadModelInfo` sorts by PROVIDER_ORDER before calling this function.
- * Models within each group retain their input order (family-sorted by the caller).
- */
 export function groupModelsByProvider(models: ModelInfo[]): Map<string, ModelInfo[]> {
   const groups = new Map<string, ModelInfo[]>();
   for (const model of models) {
@@ -256,7 +171,6 @@ export function groupModelsByProvider(models: ModelInfo[]): Map<string, ModelInf
   return groups;
 }
 
-/** Provider display labels for UI */
 export const PROVIDER_LABELS: Record<string, string> = {
   anthropic: 'Anthropic',
   glm: 'Z.ai',
@@ -266,13 +180,8 @@ export const PROVIDER_LABELS: Record<string, string> = {
   openrouter: 'OpenRouter',
   'anthropic-copilot': 'Copilot',
   'anthropic-codex': 'Codex',
-  // Note: keep in sync with PROVIDER_ORDER above
 };
 
-/**
- * Get the display label for a provider, with friendly fallback for
- * `custom:<id>` providers (renders as "Custom — <id>").
- */
 export function getProviderLabel(provider: string): string {
   if (PROVIDER_LABELS[provider]) return PROVIDER_LABELS[provider];
   if (provider.startsWith('custom:')) {
@@ -282,17 +191,6 @@ export function getProviderLabel(provider: string): string {
   return provider;
 }
 
-/**
- * Filter a model list for display in the model picker, respecting auth status.
- *
- * Rules:
- * - Models from authenticated providers are always shown.
- * - Models from unauthenticated providers are hidden, UNLESS the model is the
- *   currently active one (to avoid confusing the user about their session).
- * - Models from providers with `needsRefresh: true` are shown (callers should
- *   add a visual warning badge).
- * - Models from providers absent from the auth map are shown (optimistic).
- */
 export function filterModelsForPicker(
   models: ModelInfo[],
   providerAuthMap: Map<string, ProviderAuthStatus>,
@@ -300,9 +198,9 @@ export function filterModelsForPicker(
 ): ModelInfo[] {
   return models.filter((m) => {
     const auth = providerAuthMap.get(m.provider);
-    if (!auth) return true; // provider unknown → optimistic show
-    if (m.provider === currentProvider) return true; // always keep active provider
-    return auth.isAuthenticated; // hide unauthenticated (needsRefresh stays visible)
+    if (!auth) return true;
+    if (m.provider === currentProvider) return true;
+    return auth.isAuthenticated;
   });
 }
 
@@ -333,11 +231,6 @@ export function useFilteredModelsForPicker(
   }, [models, providerAuthMap, currentProvider, searchQuery]);
 }
 
-/**
- * Hook for managing model switching
- *
- * @param sessionId - Current session ID
- */
 export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResult {
   const [currentModel, setCurrentModel] = useState<string>('');
   const [currentModelInfo, setCurrentModelInfo] = useState<ModelInfo | null>(null);
@@ -351,7 +244,6 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
 
-      // Fetch current model (skip when no sessionId; best effort otherwise)
       if (sessionId) {
         try {
           const { currentModel: modelId, modelInfo } = (await hub.request('session.model.get', {
@@ -367,7 +259,6 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
         }
       }
 
-      // Fetch available models (independent of session state)
       const { models } = (await hub.request('models.list', {
         useCache: true,
       })) as { models: RawModelEntry[] };
@@ -380,10 +271,6 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
     }
   }, [sessionId]);
 
-  // Load when connected and on session change.
-  // connectionState.value triggers a retry when the WebSocket connects
-  // after mount (e.g. fresh page load where ChatContainer renders before
-  // the hub is ready).
   const isConnected = connectionState.value === 'connected';
   useEffect(() => {
     if (isConnected) {
@@ -391,9 +278,6 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
     }
   }, [loadModelInfo, isConnected]);
 
-  // Reload model list when providers change (added/removed/updated).
-  // Include connectionState so we re-subscribe after the WebSocket connects
-  // following a fresh page load where the hook rendered before the hub was ready.
   useEffect(() => {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return;
@@ -437,9 +321,6 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
 
         if (result.success) {
           setCurrentModel(result.model);
-          // Match by both id AND provider to avoid returning the wrong entry when
-          // two providers share the same canonical model ID (e.g. anthropic and
-          // anthropic-copilot both expose claude-sonnet-4.6).
           const newModelInfo =
             availableModels.find((m) => m.id === result.model && m.provider === model.provider) ??
             availableModels.find((m) => m.id === result.model);

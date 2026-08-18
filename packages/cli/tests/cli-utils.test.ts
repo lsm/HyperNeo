@@ -150,10 +150,6 @@ describe('getHelpText', () => {
   });
 });
 
-// ============================================================
-// Server Utilities Tests
-// ============================================================
-
 describe('CORS_HEADERS', () => {
   test('contains required CORS headers', () => {
     expect(CORS_HEADERS['Access-Control-Allow-Origin']).toBe('*');
@@ -305,8 +301,6 @@ describe('findAvailablePort', () => {
   test('returns different ports on consecutive calls', async () => {
     const port1 = await findAvailablePort();
     const port2 = await findAvailablePort();
-    // Ports should typically be different (though not guaranteed)
-    // At minimum, both should be valid
     expect(port1).toBeGreaterThan(0);
     expect(port2).toBeGreaterThan(0);
   });
@@ -314,7 +308,6 @@ describe('findAvailablePort', () => {
   test('returned port is actually available', async () => {
     const port = await findAvailablePort();
 
-    // Try to create a server on the returned port
     const net = await import('net');
     const server = net.createServer();
 

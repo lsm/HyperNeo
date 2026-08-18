@@ -1,11 +1,3 @@
-/**
- * Unit tests for `post-approval-template.ts`.
- *
- * PR 1/5 of the task-agent-as-post-approval-executor refactor. See
- * `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
- * §1.6, §4.6.
- */
-
 import { describe, expect, test } from 'bun:test';
 import {
   POST_APPROVAL_TEMPLATE_KEYS,
@@ -28,16 +20,12 @@ describe('interpolatePostApprovalTemplate — happy path', () => {
     };
     const result = interpolatePostApprovalTemplate(template, context);
     expect(result.missingKeys).toEqual([]);
-    // `workspace_path` renders VERBATIM (backward compatible).
     expect(result.text).toBe(
       'Task t-42 (Ship PR) in space s-7 at /tmp/ws\n' + 'Reviewer: reviewer via human (autonomy 3).'
     );
   });
 
   test('workspace_path stays verbatim even with a single quote (backward compat)', () => {
-    // User-defined instruction templates may use {{workspace_path}} as plain
-    // text or inside their own `SPACE_WS='…'` quoting — the interpolator must
-    // NOT inject its own quotes into the shared token.
     const result = interpolatePostApprovalTemplate(
       "plain: {{workspace_path}} and '{{workspace_path}}'",
       {
@@ -110,16 +98,11 @@ describe('interpolatePostApprovalTemplate — missing keys', () => {
 
 describe('interpolatePostApprovalTemplate — grammar guarantees', () => {
   test('single-pass: replacement text is not re-scanned for tokens', () => {
-    // If the substitution were recursive, `{{inner}}` would be expanded
-    // after replacing {{outer}}. Single-pass means the nested token stays
-    // literal.
     const result = interpolatePostApprovalTemplate('{{outer}}', {
       outer: 'prefix-{{inner}}-suffix',
       inner: 'SHOULD_NOT_EXPAND',
     });
     expect(result.text).toBe('prefix-{{inner}}-suffix');
-    // `{{inner}}` was produced by the substitution, not by the source —
-    // so it is NOT counted as a missing key.
     expect(result.missingKeys).toEqual([]);
   });
 
@@ -136,14 +119,11 @@ describe('interpolatePostApprovalTemplate — grammar guarantees', () => {
   });
 
   test('identifier-shaped tokens only (no dotted paths, no helpers)', () => {
-    // `{{a.b}}` is NOT a valid token — it stays literal.
     const result = interpolatePostApprovalTemplate('{{a.b}} {{a b}} {{1foo}}', {
       'a.b': 'should not substitute',
       'a b': 'should not substitute',
       '1foo': 'should not substitute',
     });
-    // Every one of those templates failed to match the identifier pattern,
-    // so they remain literal and nothing is reported missing.
     expect(result.text).toBe('{{a.b}} {{a b}} {{1foo}}');
     expect(result.missingKeys).toEqual([]);
   });

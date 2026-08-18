@@ -1,7 +1,3 @@
-/**
- * Unit tests for MiniMax Provider
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { MinimaxProvider } from '../../../../src/lib/providers/minimax-provider';
 
@@ -53,11 +49,6 @@ describe('MinimaxProvider', () => {
   });
 
   describe('getModels', () => {
-    /**
-     * Build a provider whose credential probe always succeeds, so existing
-     * tests that just want the static model list don't need to mock every
-     * fetch call individually.
-     */
     function makeProbeOkProvider(): MinimaxProvider {
       const fetchImpl = mock(
         async () => new Response('{}', { status: 200 })

@@ -1,15 +1,6 @@
-/**
- * App Tests
- *
- * Unit tests for the createDaemonApp factory function and DaemonAppContext.
- * These tests focus on interface and behavior verification without
- * using mock.module() to avoid global state pollution.
- */
-
 import { describe, expect, it } from 'bun:test';
 import type { Config } from '../../../src/config';
 
-// Test the config interface
 describe('Config interface', () => {
   it('should have required config fields', () => {
     const config: Config = {
@@ -34,7 +25,6 @@ describe('Config interface', () => {
 
 describe('DaemonAppContext interface', () => {
   it('should define required context fields', () => {
-    // This tests the interface structure
     const contextFields = [
       'server',
       'db',
@@ -74,8 +64,6 @@ describe('CreateDaemonAppOptions interface', () => {
   });
 
   it('should have default values for optional fields', () => {
-    // verbose defaults to true
-    // standalone defaults to false
     const minimalOptions = {
       config: {} as Config,
     };
@@ -91,7 +79,6 @@ describe('cleanup function behavior', () => {
       cleanupCount++;
     };
 
-    // Simulate cleanup guard
     let isCleanedUp = false;
     const guardedCleanup = async () => {
       if (isCleanedUp) return;
@@ -100,7 +87,7 @@ describe('cleanup function behavior', () => {
     };
 
     await guardedCleanup();
-    await guardedCleanup(); // Second call should be no-op
+    await guardedCleanup();
 
     expect(cleanupCount).toBe(1);
   });
@@ -110,7 +97,6 @@ describe('cleanup function behavior', () => {
     const getPendingCallCount = () => pendingCalls;
 
     const cleanupWithPending = async () => {
-      // Simulate waiting for pending calls
       while (getPendingCallCount() > 0) {
         pendingCalls--;
         await new Promise((r) => setTimeout(r, 10));
@@ -219,7 +205,6 @@ describe('verbose logging', () => {
     const logInfo = verbose ? console.log : () => {};
 
     expect(typeof logInfo).toBe('function');
-    // logInfo should be a no-op function
   });
 });
 

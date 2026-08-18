@@ -1,7 +1,6 @@
 import { SettingsSection } from './SettingsSection.tsx';
 import { cn } from '../../lib/utils.ts';
 
-// Version will be set at build time or default to 'dev'
 declare const __APP_VERSION__: string | undefined;
 
 export function AboutSection() {

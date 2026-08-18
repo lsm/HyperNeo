@@ -128,7 +128,6 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
   };
 }
 
-/** A task associated with a workflow run so @mention scoping is active. */
 function makeWorkflowTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
   return makeTask({ workflowRunId: 'run-1', ...overrides });
 }
@@ -155,7 +154,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
         updatedAt: 0,
       },
     ];
-    // Default workflow that includes both Coder and Reviewer
     mockWorkflows.value = [
       {
         id: 'wf-1',
@@ -232,7 +230,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
   }
 
   function typeIntoTextarea(textarea: HTMLTextAreaElement, value: string) {
-    // Set value and selectionStart to end, then fire input
     Object.defineProperty(textarea, 'selectionStart', {
       get: () => value.length,
       configurable: true,
@@ -241,8 +238,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
   }
 
   async function waitForWorkflowLoaded(container: ReturnType<typeof render>) {
-    // SpaceTaskPane fetches the full workflow asynchronously before
-    // composer targets (and therefore @mention candidates) are available.
     await waitFor(() => {
       expect(container.getByTestId('task-composer-target-trigger').getAttribute('title')).toBe(
         'Send to Coder'
@@ -345,17 +340,12 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
   });
 
   it('routes to the worker (no nodeExecutionId) when activity omits the worker member but postApproval is durable', async () => {
-    // P1: a resnapshot gap omits the worker activity member, but the durable
-    // postApprovalSourceNodeId + postApprovalSessionId identify the worker. The
-    // worker-owned composer target must drop the ordinary execution pin so the
-    // send routes to the worker (matchesPostApproval), not the ordinary row.
     mockTasks.value = [
       makeWorkflowTask({
         postApprovalSourceNodeId: 'node-1',
         postApprovalSessionId: 'session-worker',
       }),
     ];
-    // Workflow: node-1 declares Coder (ordinary) — the post-approval target.
     mockWorkflows.value = [
       {
         id: 'wf-1',
@@ -377,7 +367,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
         updatedAt: 0,
       },
     ];
-    // Ordinary Coder execution exists; NO activity member (snapshot gap).
     mockNodeExecutions.value = [
       {
         id: 'exec-coder',
@@ -412,9 +401,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
   });
 
   it('keeps the sibling slot execution pin when a separator-distinct worker slot is active', async () => {
-    // P2: node declares qa + qa_one. The worker is on 'qa' (isCurrentPostApproval).
-    // The qa_one target must keep its own ordinary execution pin — exact-match
-    // prevents the qa worker from hijacking the separator-distinct sibling.
     mockTasks.value = [makeWorkflowTask()];
     mockWorkflows.value = [
       {
@@ -474,10 +460,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
       ],
     ]);
     const container = render(<SpaceTaskPane taskId="task-1" />);
-    // waitForWorkflowLoaded hardcodes the default Coder/Reviewer workflow; this
-    // test uses a QA/qa_one workflow, so wait for the trigger directly.
     await waitFor(() => expect(container.getByTestId('task-composer-target-trigger')).toBeTruthy());
-    // Select the qa_one target (index 1; qa is the first declared slot).
     fireEvent.click(container.getByTestId('task-composer-target-trigger'));
     let options: HTMLElement[];
     await waitFor(() => {
@@ -505,14 +488,9 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
   });
 
   it('keeps the worker durable-owned on the DECLARING node (not the submitter node) during an activity gap', async () => {
-    // P2 (round 35): the submitter node (node-1, postApprovalSourceNodeId) differs
-    // from the node declaring the worker slot (node-2 declares 'qa' with
-    // postApproval.targetAgent='qa'). During an activity snapshot gap (no worker
-    // member), node-2's 'qa' slot must stay worker-owned (no nodeExecutionId) —
-    // sends route to the worker — while node-1's ordinary slot keeps its pin.
     mockTasks.value = [
       makeWorkflowTask({
-        postApprovalSourceNodeId: 'node-1', // submitter
+        postApprovalSourceNodeId: 'node-1',
         postApprovalSessionId: 'session-worker',
       }),
     ];
@@ -539,10 +517,8 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
         updatedAt: 0,
       },
     ];
-    // No worker activity member (snapshot gap).
     mockTaskActivity.value = new Map();
     mockNodeExecutions.value = [
-      // node-1's ordinary Coder execution (submitter must keep its pin).
       {
         id: 'exec-coder',
         workflowRunId: 'run-1',
@@ -554,7 +530,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
         createdAt: 0,
         updatedAt: 0,
       },
-      // node-2's stale ordinary qa execution (must NOT be used — worker-owned).
       {
         id: 'exec-qa',
         workflowRunId: 'run-1',
@@ -568,14 +543,11 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
       },
     ];
     const container = render(<SpaceTaskPane taskId="task-1" />);
-    // Wait for the full workflow (both nodes' targets) to populate.
     await waitFor(() => {
       fireEvent.click(container.getByTestId('task-composer-target-trigger'));
       const opts = container.getAllByTestId('task-composer-target-option');
       expect(opts.length).toBeGreaterThanOrEqual(2);
     });
-    // Select node-2's qa (the DECLARING node) — worker-owned during the gap,
-    // so the send carries NO nodeExecutionId (routes to the worker).
     const qaOption = container
       .getAllByTestId('task-composer-target-option')
       .find((o) => (o.textContent ?? '').toLowerCase().includes('qa'));
@@ -597,8 +569,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
         'immediate'
       )
     );
-    // Select node-1's Coder (the SUBMITTER node) — it must NOT be marked
-    // worker-owned, so the send keeps its ordinary execution pin.
     mockSendTaskMessage.mockClear();
     fireEvent.click(container.getByTestId('task-composer-target-trigger'));
     await waitFor(() => {
@@ -627,13 +597,9 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
   });
 
   it('keeps a live sibling slot pinned on the worker declaring node (merger + coder)', async () => {
-    // P1 (round 39): the worker's DECLARING node hosts merger (post-approval
-    // target) AND coder (ordinary live). The durable worker fallback must apply
-    // ONLY to the merger slot — the live coder must keep its own execution pin
-    // so sends route to coder, not the merger.
     mockTasks.value = [
       makeWorkflowTask({
-        postApprovalSourceNodeId: 'node-1', // submitter
+        postApprovalSourceNodeId: 'node-1',
         postApprovalSessionId: 'session-merger',
       }),
     ];
@@ -658,7 +624,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
         updatedAt: 0,
       },
     ];
-    // Both slots have live members + executions (steady state, no gap).
     mockTaskActivity.value = new Map([
       [
         'task-1',
@@ -725,7 +690,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
     const textarea = getTextarea(container);
     typeIntoTextarea(textarea, 'to coder');
     fireEvent.click(container.getByTestId('send-button'));
-    // Coder keeps its own execution pin — NOT routed to the merger.
     await waitFor(() =>
       expect(mockSendTaskMessage).toHaveBeenCalledWith(
         'task-1',
@@ -865,7 +829,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 
     typeIntoTextarea(textarea, '@zzz');
 
-    // No dropdown since no agents match
     expect(container.queryByTestId('mention-autocomplete')).toBeNull();
   });
 
@@ -905,7 +868,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
     await waitFor(() => {
       expect(container.queryByTestId('mention-autocomplete')).toBeNull();
     });
-    // Draft should now contain the mention
     expect(textarea.value).toContain('@Coder');
   });
 
@@ -973,7 +935,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
     });
 
     const itemsBefore = container.getAllByTestId('mention-item');
-    // Initially, first item should be highlighted
     expect(itemsBefore[0].className).toContain('bg-blue-500/20');
 
     fireEvent.keyDown(textarea, { key: 'ArrowDown' });
@@ -996,12 +957,9 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
       expect(container.getByTestId('mention-autocomplete')).toBeTruthy();
     });
 
-    // Shift+Enter should NOT select and should NOT close the dropdown
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
 
-    // Dropdown should still be visible
     expect(container.queryByTestId('mention-autocomplete')).toBeTruthy();
-    // Textarea value should not have been replaced with a mention
     expect(textarea.value).toBe('@Co');
   });
 
@@ -1017,7 +975,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
       expect(container.getByTestId('mention-autocomplete')).toBeTruthy();
     });
 
-    // Go down first
     fireEvent.keyDown(textarea, { key: 'ArrowDown' });
 
     await waitFor(() => {
@@ -1025,7 +982,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
       expect(items[1].className).toContain('bg-blue-500/20');
     });
 
-    // Go back up
     fireEvent.keyDown(textarea, { key: 'ArrowUp' });
 
     await waitFor(() => {
@@ -1035,19 +991,16 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
   });
 
   it.skip('shows no @mention agents for tasks without a workflowRunId', async () => {
-    // Non-workflow task: no workflowRunId
     mockTasks.value = [makeTask()];
     const container = render(<SpaceTaskPane taskId="task-1" />);
     const textarea = getTextarea(container);
 
     typeIntoTextarea(textarea, '@');
 
-    // No dropdown because there's no workflow to scope agents from
     expect(container.queryByTestId('mention-autocomplete')).toBeNull();
   });
 
   it('shows only workflow agents when task has a workflowRunId', async () => {
-    // Workflow only includes Coder (agent id '1'), not Reviewer (agent id '2')
     mockWorkflows.value = [
       {
         id: 'wf-1',
@@ -1085,20 +1038,17 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 
     await waitFor(() => {
       const items = container.getAllByTestId('mention-item');
-      // Only Coder should appear, not Reviewer
       expect(items.length).toBe(1);
       expect(items[0].textContent).toContain('@Coder');
     });
   });
 
   it('shows only matching workflow agents when @partial matches a workflow agent', async () => {
-    // Workflow includes both Coder and Reviewer
     mockTasks.value = [makeWorkflowTask()];
     const container = render(<SpaceTaskPane taskId="task-1" />);
     await waitForWorkflowLoaded(container);
     const textarea = getTextarea(container);
 
-    // Type '@Re' — only Reviewer should match
     typeIntoTextarea(textarea, '@Re');
 
     await waitFor(() => {
@@ -1107,7 +1057,6 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
       expect(items[0].textContent).toContain('@Reviewer');
     });
 
-    // Coder should not appear
     const allItems = container.getAllByTestId('mention-item');
     expect(allItems.some((item) => item.textContent?.includes('@Coder'))).toBe(false);
   });

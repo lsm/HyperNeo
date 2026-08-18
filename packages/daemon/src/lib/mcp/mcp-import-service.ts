@@ -1,38 +1,3 @@
-/**
- * McpImportService
- *
- * Scans `.mcp.json` files (project-level and user-level `~/.claude/.mcp.json`)
- * and imports their `mcpServers` entries into the `app_mcp_servers` registry
- * as rows with `source='imported'` and `sourcePath=<absolute path>`.
- *
- * Part of the MCP config unification work (docs/plans/unify-mcp-config-model).
- *
- * Design contract:
- *   - Dedupe key is `(sourcePath, name)`. Re-scanning the same file is a no-op
- *     for unchanged entries, an update for changed ones, and a remove+add for
- *     renames (old name disappears → pruned; new name appears → inserted).
- *   - Imported rows land with `enabled: false`. The user must explicitly flip
- *     them to `true` via the MCP Servers UI before they are injected into any
- *     session. This matches the M2 acceptance criteria in the plan doc.
- *   - Scanning is never triggered from `session.create` — the service is only
- *     invoked on daemon startup, on `workspace.add`, and on the explicit
- *     `settings.mcp.refreshImports` RPC. Keeping scans off the session hot path
- *     avoids a hidden fd/stat dependency and makes the registry the single
- *     source the session builder reads from.
- *   - Malformed JSON / I/O failures are logged and skipped; they never throw
- *     past the service boundary. A broken `.mcp.json` in one workspace must
- *     not block daemon startup or unrelated refreshes.
- *   - When a `.mcp.json` is deleted (file no longer exists) all `source='imported'`
- *     rows tied to that path are pruned. Used both on explicit per-file refresh
- *     (`refreshFromFile` with a missing file) and on the bulk `pruneMissingFiles`
- *     sweep that runs as part of `refreshAll`.
- *
- * Future (M3+): when an imported row is edited by the user via the registry UI
- * its `source` can be transitioned to `'user'` to "claim" it — subsequent
- * scans of that `.mcp.json` will no longer touch the row. The repository
- * supports this transition today via `update({ source: 'user' })`.
- */
-
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import { isAbsolute, join, resolve } from 'path';
@@ -40,45 +5,20 @@ import type { AppMcpServer, CreateAppMcpServerRequest } from '@hyperneo/shared';
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-/**
- * Per-file outcome summary. Returned from `refreshFromFile` and collected by
- * `refreshAll` so callers (RPC handlers, tests) can inspect what changed.
- */
 export interface ImportResult {
-  /** Absolute path of the `.mcp.json` that was scanned. */
   sourcePath: string;
-  /** `'ok'` if the file existed and parsed; `'missing'` if not present;
-   *  `'malformed'` if JSON parse or schema validation failed. */
   status: 'ok' | 'missing' | 'malformed';
-  /** Number of new rows inserted. */
   added: number;
-  /** Number of existing rows updated in place (config fields changed). */
   updated: number;
-  /** Number of rows removed because their name disappeared from the file. */
   removed: number;
-  /** Human-readable error string for `'malformed'` results. */
   error?: string;
 }
 
-/**
- * Return value of {@link McpImportService.refreshAll}. The per-file `results`
- * cover everything the first sweep did; `orphanPruned` is the separate count of
- * rows the second sweep deletes because their `sourcePath` file no longer
- * exists and the path wasn't scanned (e.g. a workspace removed from history).
- * Those deletions are intentionally NOT folded into any `ImportResult.removed`
- * — surfacing them here lets callers (startup log, `settings.mcp.refreshImports`)
- * report an accurate removal total without snapshotting the registry themselves.
- */
 export interface RefreshAllResult {
   results: ImportResult[];
   orphanPruned: number;
 }
 
-/** Parsed shape of an `.mcp.json` entry. Only the fields we care about. */
 interface McpJsonEntry {
   type?: 'stdio' | 'sse' | 'http';
   command?: string;
@@ -88,23 +28,12 @@ interface McpJsonEntry {
   headers?: Record<string, string>;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function inferSourceType(entry: McpJsonEntry): 'stdio' | 'sse' | 'http' {
   if (entry.type) return entry.type;
-  // Claude Code convention: absence of `type` implies stdio if command is set,
-  // or http/sse if only url is set (we default to http here; sse is rare enough
-  // that it must be declared explicitly).
   if (entry.url && !entry.command) return 'http';
   return 'stdio';
 }
 
-/**
- * Produce a stable, comparable representation of the DB row fields we care
- * about when deciding whether an existing imported row needs updating.
- */
 function fieldsEqual(row: AppMcpServer, req: CreateAppMcpServerRequest): boolean {
   const norm = (v: unknown): string => JSON.stringify(v ?? null);
   return (
@@ -118,21 +47,9 @@ function fieldsEqual(row: AppMcpServer, req: CreateAppMcpServerRequest): boolean
   );
 }
 
-// ---------------------------------------------------------------------------
-// Service
-// ---------------------------------------------------------------------------
-
 export class McpImportService {
   private readonly log: Logger;
 
-  /**
-   * @param db Database facade (only `appMcpServers` is touched).
-   * @param homeDirOverride Replaces `os.homedir()` when resolving the user-level
-   *   `.mcp.json`. Production callers omit it (defaults to the real home dir);
-   *   tests inject a temp dir so the production path branch can be exercised.
-   *   Bun's `os.homedir()` ignores `process.env.HOME`, so the env-var trick used
-   *   elsewhere is not enough to test the `~/.claude/.mcp.json` default.
-   */
   constructor(
     private readonly db: Database,
     private readonly homeDirOverride?: string
@@ -140,21 +57,6 @@ export class McpImportService {
     this.log = new Logger('mcp-import');
   }
 
-  /**
-   * Scan a single `.mcp.json` file and reconcile the `source='imported'` rows
-   * tied to it.
-   *
-   * Contract:
-   *   - `absolutePath` must be absolute. Relative paths throw synchronously —
-   *     this is a programmer error, not a runtime condition.
-   *   - Missing file → prune all imported rows for this path, return
-   *     `status: 'missing'`.
-   *   - Malformed JSON or schema → log + return `status: 'malformed'`.
-   *     Existing imported rows are left untouched (we don't know which to
-   *     remove without a valid file — a parse error shouldn't nuke data).
-   *   - Valid file → upsert each entry, prune any row whose name is no longer
-   *     present in the file.
-   */
   refreshFromFile(absolutePath: string): ImportResult {
     if (!isAbsolute(absolutePath)) {
       throw new Error(
@@ -215,9 +117,6 @@ export class McpImportService {
 
       const existing = this.db.appMcpServers.getImportedByPathAndName(absolutePath, name);
       if (!existing) {
-        // New imported row. Fail soft on name collision with a non-imported row
-        // (the repository enforces global name uniqueness); we log and skip so a
-        // user's `.mcp.json` can never clobber a `user`/`builtin` row silently.
         const collision = this.db.appMcpServers.getByName(name);
         if (collision) {
           this.log.warn(
@@ -236,7 +135,6 @@ export class McpImportService {
         continue;
       }
 
-      // Existing imported row — update in place if config fields drifted.
       if (!fieldsEqual(existing, req)) {
         try {
           this.db.appMcpServers.update(existing.id, {
@@ -257,7 +155,6 @@ export class McpImportService {
       }
     }
 
-    // Prune imported rows for this sourcePath whose name is no longer declared.
     for (const row of this.db.appMcpServers.listBySourcePath(absolutePath)) {
       if (!declaredNames.has(row.name)) {
         if (this.db.appMcpServers.delete(row.id)) {
@@ -269,19 +166,6 @@ export class McpImportService {
     return result;
   }
 
-  /**
-   * Scan every known `.mcp.json`:
-   *   - `${workspacePath}/.mcp.json` for each workspace in `workspacePaths`
-   *   - `${homedir()}/.claude/.mcp.json` (user-level, always)
-   *
-   * Also prunes any `source='imported'` rows whose `sourcePath` file no
-   * longer exists on disk — handles the case where a workspace was removed
-   * from history, or a `.mcp.json` was deleted between daemon runs. Those
-   * deletions are reported via `orphanPruned` (not any `results[].removed`),
-   * so callers can compute an accurate removal total.
-   *
-   * Never throws — per-file failures are captured in the result array.
-   */
   refreshAll(workspacePaths: readonly string[]): RefreshAllResult {
     const targets = this.collectScanTargets(workspacePaths);
 
@@ -290,8 +174,6 @@ export class McpImportService {
       try {
         results.push(this.refreshFromFile(target));
       } catch (err) {
-        // Defensive: refreshFromFile is designed not to throw, but guard anyway
-        // so one poisoned path can't stop the rest of the sweep.
         this.log.error(
           `[mcp-import] ${target}: unexpected error: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -306,15 +188,11 @@ export class McpImportService {
       }
     }
 
-    // Second sweep: prune imported rows whose sourcePath isn't in `targets`
-    // AND whose file no longer exists. This catches rows left behind when a
-    // workspace was removed from history entirely. Counted separately because
-    // these rows belong to no scanned file.
     const targetSet = new Set(targets);
     let orphanPruned = 0;
     for (const row of this.db.appMcpServers.listImported()) {
       if (!row.sourcePath) continue;
-      if (targetSet.has(row.sourcePath)) continue; // already handled above
+      if (targetSet.has(row.sourcePath)) continue;
       if (!existsSync(row.sourcePath)) {
         if (this.db.appMcpServers.delete(row.id)) {
           orphanPruned += 1;
@@ -325,11 +203,6 @@ export class McpImportService {
     return { results, orphanPruned };
   }
 
-  // -----------------------------------------------------------------------
-  // Private helpers
-  // -----------------------------------------------------------------------
-
-  /** Build the ordered list of absolute `.mcp.json` paths to scan. */
   private collectScanTargets(workspacePaths: readonly string[]): string[] {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -344,12 +217,6 @@ export class McpImportService {
       }
     }
 
-    // User-level `~/.claude/.mcp.json` — matches the `SettingsManager` read
-    // path and the `buildMcpJsonPaths` scanner. The base dir is the `.claude`
-    // settings directory: `TEST_USER_SETTINGS_DIR` (treated as the `.claude`
-    // equivalent in tests) or `~/.claude` in production. Previously this used
-    // `homedir()` directly, producing `~/.mcp.json` and silently missing the
-    // real user-level file on every startup sweep. See task #875.
     const userBaseDir =
       process.env.TEST_USER_SETTINGS_DIR || join(this.homeDirOverride ?? homedir(), '.claude');
     const userMcp = join(userBaseDir, '.mcp.json');
@@ -361,10 +228,6 @@ export class McpImportService {
     return out;
   }
 
-  /**
-   * Parse the top-level of a `.mcp.json` document and return its
-   * `mcpServers` object, or `null` if the shape is invalid.
-   */
   private extractEntries(parsed: unknown): Record<string, McpJsonEntry> | null {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return null;
@@ -377,11 +240,6 @@ export class McpImportService {
     return servers as Record<string, McpJsonEntry>;
   }
 
-  /**
-   * Convert one `.mcp.json` entry into a repo create request. Returns `null`
-   * if the entry is missing fields required for its source type — the caller
-   * logs + skips so one bad entry doesn't nuke the rest of the file.
-   */
   private buildCreateRequest(
     name: string,
     entry: McpJsonEntry,
@@ -403,7 +261,6 @@ export class McpImportService {
       };
     }
 
-    // sse / http
     if (!entry.url || typeof entry.url !== 'string') return null;
     return {
       name,
@@ -416,10 +273,6 @@ export class McpImportService {
     };
   }
 
-  /**
-   * Delete every `source='imported'` row tied to `sourcePath`. Returns the
-   * number of rows removed. Used when a `.mcp.json` is missing at refresh time.
-   */
   private pruneBySourcePath(sourcePath: string): number {
     let removed = 0;
     for (const row of this.db.appMcpServers.listBySourcePath(sourcePath)) {

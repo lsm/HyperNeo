@@ -84,10 +84,6 @@ export function setupEvolutionHandlers(
       const params = readRecord(payload.params) as unknown as EvolutionScopeCreateRequest['params'];
       hooks.beforeScopeCreate?.(params);
       hooks.beforeScopeSave?.(params);
-      // Create the scope and run the onScopeSaved reconciliation atomically:
-      // if reconciliation fails (e.g. enqueueing the self-nag fire job throws),
-      // the scope insertion rolls back so a retried creation can't leave a
-      // duplicate goal-linked scope.
       const run = () => {
         const scope = service.createScope(params);
         hooks.onScopeSaved?.(scope);

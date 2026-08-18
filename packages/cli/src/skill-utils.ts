@@ -1,29 +1,9 @@
-/**
- * Utility for syncing built-in skill files to ~/.hyperneo/skills/.
- *
- * Used by the dev server to copy skill files from the packages/skills/ source
- * directory to ~/.hyperneo/skills/ on startup. Existing files are never overwritten
- * so that user customizations are preserved.
- *
- * The prod (compiled binary) server uses a different path — it reads from Bun's
- * embedded VFS via embeddedBuiltinSkills — but the destination directory and the
- * no-overwrite policy are the same.
- */
-
 import { readdir, readFile, writeFile, access, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { createLogger } from '@hyperneo/shared';
 
 const log = createLogger('hyperneo:cli:skill-utils');
 
-/**
- * Recursively copy all files under `sourceDir` to `destDir`, preserving the
- * relative path structure. Files that already exist at the destination are
- * skipped to preserve any user edits.
- *
- * Silently returns if `sourceDir` does not exist (e.g. when running outside
- * the HyperNeo monorepo).
- */
 export async function syncBuiltinSkillsFromDir(
   sourceDir: string,
   destDir: string
@@ -46,7 +26,6 @@ async function syncDir(
   try {
     entries = await readdir(srcDir, { withFileTypes: true });
   } catch {
-    // Source directory does not exist — skip silently
     return;
   }
 
@@ -69,11 +48,6 @@ async function syncDir(
   }
 }
 
-/**
- * Ensure built-in skill files are present at `destDir` by copying from `sourceDir`.
- * Logs the result. Errors are caught and logged (never thrown) so that a missing
- * skills source directory never blocks server startup.
- */
 export async function ensureBuiltinSkills(sourceDir: string, destDir: string): Promise<void> {
   try {
     const count = await syncBuiltinSkillsFromDir(sourceDir, destDir);

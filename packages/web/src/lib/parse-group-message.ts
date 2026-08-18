@@ -10,12 +10,9 @@ export interface TaskMeta {
 export type ParsedGroupMessage = SDKMessage & { _taskMeta?: TaskMeta };
 
 export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
-  // messageType is used for DB records; type is used for WebSocket real-time events.
-  // Normalize to whichever field is set.
   const msgAny = msg as unknown as Record<string, unknown>;
   const msgType = msgAny.messageType ?? msgAny.type;
 
-  // Status messages are plain text, not JSON
   if (msgType === 'status') {
     return {
       type: 'status',
@@ -29,7 +26,6 @@ export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
     } as unknown as SDKMessage;
   }
 
-  // Leader summary messages: rendered as a distinct card
   if (msgType === 'leader_summary') {
     return {
       type: 'leader_summary',
@@ -43,8 +39,6 @@ export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
     } as unknown as SDKMessage;
   }
 
-  // Rate limited: stored as JSON with rich payload (resetsAt, sessionRole).
-  // Fall back to content as plain text if not valid JSON.
   if (msgType === 'rate_limited') {
     let parsed: Record<string, unknown> = {};
     try {
@@ -64,8 +58,6 @@ export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
     } as unknown as SDKMessage;
   }
 
-  // Model fallback: stored as JSON with rich payload (fromModel, toModel, sessionRole).
-  // Fall back to content as plain text if not valid JSON.
   if (msgType === 'model_fallback') {
     let parsed: Record<string, unknown> = {};
     try {
@@ -87,7 +79,6 @@ export function parseGroupMessage(msg: SessionGroupMessage): SDKMessage | null {
 
   try {
     const parsed = JSON.parse(msg.content) as SDKMessage;
-    // Inject timestamp from the database row so message components render the correct creation time
     return { ...parsed, timestamp: msg.createdAt } as unknown as SDKMessage;
   } catch {
     return null;

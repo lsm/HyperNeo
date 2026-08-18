@@ -1,12 +1,3 @@
-/**
- * AddProviderModal
- *
- * Three entry points for adding providers to the unified registry:
- * 1. Quick-add shortcuts for common built-in providers
- * 2. More providers (expandable) for remaining built-in types
- * 3. Custom endpoint (reuses CustomEndpointEditor)
- */
-
 import { useState } from 'preact/hooks';
 import { createProvider, loginProvider } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
@@ -103,12 +94,6 @@ interface AddProviderModalProps {
   onProviderAdded: () => void;
 }
 
-/**
- * Kimi region options. Region is persisted in the provider record's
- * `configJson` blob as `{ region: 'china' | 'global' }` and resolved by the
- * KimiProvider at SDK-config build time to pick the correct base URL
- * (api.kimi.com vs api.moonshot.ai).
- */
 const KIMI_REGION_OPTIONS = [
   { value: 'china', label: 'China (api.kimi.com)' },
   { value: 'global', label: 'Global (api.moonshot.ai)' },
@@ -152,9 +137,6 @@ export function AddProviderModal({
           kind: 'built_in',
           authType: preset.authType,
           isEnabled: true,
-          // Kimi needs an explicit region so the provider knows whether to hit
-          // api.kimi.com (China) or api.moonshot.ai (Global). Other built-ins
-          // don't carry config.
           configJson:
             preset.providerId === 'kimi' ? JSON.stringify({ region: kimiRegion }) : undefined,
         },
@@ -173,14 +155,12 @@ export function AddProviderModal({
   const handleOAuthLogin = async (preset: BuiltInProviderPreset) => {
     setAddingId(preset.providerId);
     try {
-      // Initiate OAuth first so we don't orphan a DB record on failure.
       const response: ProviderAuthResponse = await loginProvider(preset.providerId);
       if (!response.success) {
         toast.error(response.error || 'Failed to start OAuth flow');
         return;
       }
 
-      // Create the provider record only after login initiation succeeds.
       await createProvider(
         {
           providerId: preset.providerId,
@@ -412,7 +392,6 @@ export function AddProviderModal({
           </div>
 
           <div class="flex-1 overflow-y-auto p-4 space-y-4">
-            {/* Quick add */}
             <div>
               <h4 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
                 Quick Add
@@ -422,7 +401,6 @@ export function AddProviderModal({
               </div>
             </div>
 
-            {/* More providers */}
             <div>
               <button
                 type="button"
@@ -451,7 +429,6 @@ export function AddProviderModal({
               )}
             </div>
 
-            {/* Custom endpoint */}
             <div class="pt-2 border-t border-dark-700">
               <button
                 type="button"

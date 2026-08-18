@@ -1,11 +1,3 @@
-/**
- * Global Teardown - Runs after ALL tests complete
- *
- * Cleans up:
- * 1. Isolated temp directories from e2e test runs (database, workspace)
- * 2. Orphaned git worktrees in the project's .worktrees directory
- */
-
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { tmpdir } from 'os';
@@ -18,9 +10,6 @@ const __dirname = dirname(__filename);
 async function globalTeardown() {
   console.log('\n🧹 Running global teardown...');
 
-  // ========================================
-  // Layer 1: Clean up isolated temp directories
-  // ========================================
   console.log('🧹 Layer 1: Cleaning up isolated temp directories...');
 
   const e2eTempBase = join(tmpdir(), 'hyperneo-e2e');
@@ -30,13 +19,11 @@ async function globalTeardown() {
       const dirs = readdirSync(e2eTempBase);
       console.log(`📊 Found ${dirs.length} e2e temp directories`);
 
-      // Clean up directories older than 1 hour (safety measure for stale runs)
       const oneHourAgo = Date.now() - 60 * 60 * 1000;
       let cleaned = 0;
 
       for (const dir of dirs) {
         const dirPath = join(e2eTempBase, dir);
-        // Extract timestamp from directory name: e2e-{timestamp}-{uuid}
         const match = dir.match(/^e2e-(\d+)-/);
         if (match) {
           const timestamp = parseInt(match[1], 10);
@@ -55,12 +42,6 @@ async function globalTeardown() {
     console.log('✅ No e2e temp directories found');
   }
 
-  // ========================================
-  // Layer 2: Git-level worktree cleanup
-  // SAFETY: Only run in CI to avoid affecting production worktrees
-  // With isolated temp directories, this cleanup is only needed in CI
-  // where fresh checkouts might have stale worktree metadata.
-  // ========================================
   if (!process.env.CI) {
     console.log(
       '🔵 Local environment - skipping git worktree cleanup to protect production sessions\n'
@@ -71,7 +52,6 @@ async function globalTeardown() {
   console.log('🧹 Layer 2: Git-level worktree cleanup...');
 
   try {
-    // Get project root (2 levels up from packages/e2e)
     const projectRoot = join(__dirname, '..', '..');
     const worktreesDir = join(projectRoot, '.worktrees');
 
@@ -80,11 +60,9 @@ async function globalTeardown() {
       return;
     }
 
-    // Count worktrees before cleanup
     const worktreeDirs = readdirSync(worktreesDir);
     console.log(`📊 Found ${worktreeDirs.length} worktree directories`);
 
-    // Step 1: Prune git worktree metadata
     console.log('🔧 Pruning git worktree metadata...');
     try {
       const pruneOutput = execSync('git worktree prune -v', {
@@ -98,7 +76,6 @@ async function globalTeardown() {
       console.warn('   ⚠️  Prune failed (continuing):', error);
     }
 
-    // Step 2: Delete all session/* branches
     console.log('🗑️  Deleting session branches...');
     try {
       const branchesOutput = execSync('git branch --list "session/*"', {
@@ -133,7 +110,6 @@ async function globalTeardown() {
       console.warn('   ⚠️  Branch cleanup failed (continuing):', error);
     }
 
-    // Step 3: Force remove .worktrees directory
     console.log('📁 Removing .worktrees directory...');
     try {
       rmSync(worktreesDir, { recursive: true, force: true });

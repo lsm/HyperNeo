@@ -29,8 +29,6 @@ import { useResolveButtonType } from '../../internal/use-resolve-button-type.ts'
 import { useScrollLock } from '../../internal/use-scroll-lock.ts';
 import { optionalRef, useSyncRefs } from '../../internal/use-sync-refs.ts';
 
-// --- Types ---
-
 interface PopoverState {
   id: string;
   open: boolean;
@@ -48,8 +46,6 @@ interface PopoverRegisterBag {
   close: () => void;
 }
 
-// --- Context ---
-
 const PopoverContext = createContext<PopoverState | null>(null);
 PopoverContext.displayName = 'PopoverContext';
 
@@ -61,11 +57,9 @@ function usePopoverContext(component: string): PopoverState {
   return ctx;
 }
 
-// Context to track if a button is inside a panel
 const PopoverPanelContext = createContext<string | null>(null);
 PopoverPanelContext.displayName = 'PopoverPanelContext';
 
-// Context for grouping popovers
 const PopoverGroupContext = createContext<{
   registerPopover: (registerBag: PopoverRegisterBag) => void;
   unregisterPopover: (registerBag: PopoverRegisterBag) => void;
@@ -77,8 +71,6 @@ PopoverGroupContext.displayName = 'PopoverGroupContext';
 function usePopoverGroupContext() {
   return useContext(PopoverGroupContext);
 }
-
-// --- Transition attributes helper ---
 
 function useTransitionAttrs(open: boolean, transition: boolean) {
   const [transitionAttrs, setTransitionAttrs] = useState<Record<string, ''>>({});
@@ -121,8 +113,6 @@ function useTransitionAttrs(open: boolean, transition: boolean) {
   return transitionAttrs;
 }
 
-// --- Popover (root) ---
-
 interface PopoverProps {
   as?: ElementType;
   open?: boolean;
@@ -149,7 +139,6 @@ function PopoverFn({
   const panelRef = useRef<HTMLElement | null>(null);
   const internalRef = useRef<HTMLElement | null>(null);
 
-  // Stable onChange handler
   const handleChange = useEvent((newValue: boolean) => {
     if (!isControlled) {
       setInternalOpen(newValue);
@@ -188,7 +177,6 @@ function PopoverFn({
 
   const slot = useMemo(() => ({ open, close }), [open, close]);
 
-  // Ref forwarding for the root Popover element
   const popoverRef = useSyncRefs(
     'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null,
     optionalRef((ref) => {
@@ -196,7 +184,6 @@ function PopoverFn({
     }, Tag === Fragment)
   );
 
-  // Register with PopoverGroup if available
   const groupContext = usePopoverGroupContext();
   const buttonIdRef = useRef(buttonId);
   const panelIdRef = useRef(panelId);
@@ -249,8 +236,6 @@ function PopoverFn({
 PopoverFn.displayName = 'Popover';
 export const Popover = PopoverFn;
 
-// --- PopoverButton ---
-
 interface PopoverButtonProps {
   as?: ElementType;
   disabled?: boolean;
@@ -268,26 +253,20 @@ function PopoverButtonFn({
 }: PopoverButtonProps) {
   const { open, toggle, close, buttonRef, buttonId, panelId } = usePopoverContext('PopoverButton');
 
-  // Check if button is inside a panel
   const panelContext = useContext(PopoverPanelContext);
   const isWithinPanel = panelContext !== null;
 
-  // Group context for closing other popovers
   const groupContext = usePopoverGroupContext();
 
-  // Internal ref for element access
   const internalRef = useRef<HTMLElement | null>(null);
 
-  // Floating UI reference (only if not within panel)
   const setFloatingReference = useFloatingReference();
 
-  // Resolve button type
   const resolvedType = useResolveButtonType(
     { as: Tag, type: rest.type as string | undefined },
     internalRef.current
   );
 
-  // Combined ref
   const syncedRef = useSyncRefs(
     internalRef,
     isWithinPanel ? null : buttonRef,
@@ -309,12 +288,9 @@ function PopoverButtonFn({
       if (disabled) return;
       e.preventDefault();
       if (isWithinPanel) {
-        // When inside panel, clicking closes the popover
         close();
-        // Focus the button outside the panel
         buttonRef.current?.focus();
       } else {
-        // Close other popovers in the same group
         if (groupContext && !open) {
           groupContext.closeOthers(buttonId);
         }
@@ -343,14 +319,12 @@ function PopoverButtonFn({
     [disabled, toggle, close, isWithinPanel, buttonRef, groupContext, open, buttonId]
   );
 
-  // Firefox space key fix
   const handleKeyUp = useCallback((e: KeyboardEvent) => {
     if (e.key === ' ') {
       e.preventDefault();
     }
   }, []);
 
-  // When button is inside panel, it acts as a close button without aria attributes
   const ourProps: Record<string, unknown> = isWithinPanel
     ? {
         ref: syncedRef,
@@ -399,8 +373,6 @@ function PopoverButtonFn({
 PopoverButtonFn.displayName = 'PopoverButton';
 export const PopoverButton = PopoverButtonFn;
 
-// --- PopoverBackdrop ---
-
 interface PopoverBackdropProps {
   as?: ElementType;
   transition?: boolean;
@@ -420,10 +392,8 @@ function PopoverBackdropFn({
 }: PopoverBackdropProps) {
   const { open, close } = usePopoverContext('PopoverBackdrop');
 
-  // Internal ref for element access
   const internalRef = useRef<HTMLElement | null>(null);
 
-  // Combined ref
   const backdropRef = useSyncRefs(
     internalRef,
     'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null
@@ -463,8 +433,6 @@ PopoverBackdropFn.displayName = 'PopoverBackdrop';
 /** @public */
 export const PopoverBackdrop = PopoverBackdropFn;
 
-// --- PopoverPanel ---
-
 interface PopoverPanelProps {
   as?: ElementType;
   transition?: boolean;
@@ -493,17 +461,13 @@ function PopoverPanelFn({
   const { id, open, close, buttonRef, panelRef, panelId, buttonId } =
     usePopoverContext('PopoverPanel');
 
-  // Resolve anchor configuration
   const anchor = useResolvedAnchor(rawAnchor);
 
-  // Internal ref for element access
   const internalRef = useRef<HTMLElement | null>(null);
 
-  // Floating UI panel positioning
   const [floatingRef, floatingStyles] = useFloatingPanel(anchor);
   const getFloatingPanelProps = useFloatingPanelProps();
 
-  // Combined ref: context ref + floating ref (if anchor is set) + internal ref
   const syncedRef = useSyncRefs(
     panelRef,
     anchor ? floatingRef : null,
@@ -511,17 +475,13 @@ function PopoverPanelFn({
     'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null
   );
 
-  // Stack machine integration - register/unregister this popover
   const stackMachine = stackMachines.get(null);
 
-  // Check if this popover is the top layer using ref + effect pattern
   const isTopLayerRef = useRef(true);
 
-  // Register with stack machine and update isTopLayer when open changes
   useIsoMorphicEffect(() => {
     if (open) {
       stackMachine.actions.push(id);
-      // Update isTopLayer after registering
       isTopLayerRef.current = stackMachine.selectors.isTop(stackMachine.state, id);
       return () => {
         stackMachine.actions.pop(id);
@@ -529,16 +489,13 @@ function PopoverPanelFn({
     }
   }, [open, id, stackMachine]);
 
-  // Determine if we should handle events
   const shouldHandleEvents =
     open && (isTopLayerRef.current || !stackMachine.selectors.inStack(stackMachine.state, id));
 
   const trapFocus = modal || focusContainment;
 
-  // Focus trap when modal or focus containment is requested
   useFocusTrap(internalRef, open && trapFocus && shouldHandleEvents, { restoreFocus: false });
 
-  // Close on outside click (exclude both button and panel) - only if we should handle events
   useOutsideClick(
     shouldHandleEvents ? [buttonRef, internalRef] : [],
     useCallback(() => {
@@ -549,7 +506,6 @@ function PopoverPanelFn({
     open
   );
 
-  // Close on escape, restore focus to button - only if we should handle events
   useEscape(
     useCallback(
       (e: KeyboardEvent) => {
@@ -562,13 +518,10 @@ function PopoverPanelFn({
     open && shouldHandleEvents
   );
 
-  // Scroll lock when modal and open
   useScrollLock(modal && open && shouldHandleEvents);
 
-  // Mark other elements inert when modal
   useInert(internalRef, modal && open && shouldHandleEvents);
 
-  // Tab key handling when focus is NOT trapped: Tab closes the popover
   useEffect(() => {
     if (!open || trapFocus) return;
 
@@ -586,12 +539,10 @@ function PopoverPanelFn({
 
   const transitionAttrs = useTransitionAttrs(open, transition);
 
-  // Always enable portal when anchor is set
   if (anchor) {
     portal = true;
   }
 
-  // Get floating panel props if anchor is set
   const floatingPanelProps = anchor ? getFloatingPanelProps() : {};
 
   const ourProps: Record<string, unknown> = {
@@ -616,7 +567,6 @@ function PopoverPanelFn({
 
   const slot = { open, close };
 
-  // Provide panel context so buttons inside can detect they're in a panel
   const inner = createElement(
     PopoverPanelContext.Provider,
     { value: panelId },
@@ -645,8 +595,6 @@ function PopoverPanelFn({
 PopoverPanelFn.displayName = 'PopoverPanel';
 export const PopoverPanel = PopoverPanelFn;
 
-// --- PopoverGroup ---
-
 interface PopoverGroupProps {
   as?: ElementType;
   children?: unknown;
@@ -657,7 +605,6 @@ function PopoverGroupFn({ as: Tag = 'div', children, ...rest }: PopoverGroupProp
   const internalRef = useRef<HTMLElement | null>(null);
   const [popovers, setPopovers] = useState<PopoverRegisterBag[]>([]);
 
-  // Combined ref
   const groupRef = useSyncRefs(
     internalRef,
     'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null
@@ -684,10 +631,8 @@ function PopoverGroupFn({ as: Tag = 'div', children, ...rest }: PopoverGroupProp
     const activeElement = document.activeElement as HTMLElement | null;
     if (!activeElement) return false;
 
-    // Check if focus is within the group container
     if (internalRef.current?.contains(activeElement)) return true;
 
-    // Check if focus is within any of the popover buttons or panels
     return popovers.some((bag) => {
       const buttonEl = bag.buttonId.current ? document.getElementById(bag.buttonId.current) : null;
       const panelEl = bag.panelId.current ? document.getElementById(bag.panelId.current) : null;

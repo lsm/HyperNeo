@@ -1,7 +1,3 @@
-/**
- * Unit tests for Kimi Provider
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { findInModels } from '../../../../src/lib/model-service';
 import {
@@ -81,11 +77,6 @@ describe('KimiProvider', () => {
   });
 
   describe('getModels', () => {
-    /**
-     * Build a provider whose credential probe always succeeds, so existing
-     * tests that just want the static model list don't need to mock every
-     * fetch call individually.
-     */
     function makeProbeOkProvider(): KimiProvider {
       const fetchImpl = mock(
         async () => new Response('{}', { status: 200 })
@@ -417,7 +408,7 @@ describe('KimiProvider', () => {
     it('resolveKimiRegion is case-insensitive for hand-crafted payloads', () => {
       expect(resolveKimiRegion('CHINA')).toBe('china');
       expect(resolveKimiRegion('Global')).toBe('global');
-      expect(resolveKimiRegion('  Global  ')).toBe('china'); // whitespace not trimmed
+      expect(resolveKimiRegion('  Global  ')).toBe('china');
     });
 
     it('resolveKimiRegion defaults to china for missing/invalid region', () => {
@@ -431,7 +422,6 @@ describe('KimiProvider', () => {
     it('static getBaseUrlForRegion returns the correct Anthropic-compatible URL', () => {
       expect(KimiProvider.getBaseUrlForRegion('china')).toBe('https://api.kimi.com/coding');
       expect(KimiProvider.getBaseUrlForRegion('global')).toBe('https://api.moonshot.ai/anthropic');
-      // Default argument falls back to china.
       expect(KimiProvider.getBaseUrlForRegion()).toBe('https://api.kimi.com/coding');
     });
 
@@ -458,9 +448,6 @@ describe('KimiProvider', () => {
     });
 
     it('BASE_URL static stays on the China endpoint for backward compatibility', () => {
-      // Legacy callers that still reference KimiProvider.BASE_URL must keep
-      // resolving to api.kimi.com — existing credentials without a region
-      // continue to work unchanged.
       expect(KimiProvider.BASE_URL).toBe('https://api.kimi.com/coding');
       expect(KimiProvider.OPENAI_BASE_URL).toBe('https://api.kimi.com/coding/v1');
     });
@@ -499,13 +486,11 @@ describe('KimiProvider', () => {
       });
 
       expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.kimi.com/coding');
-      // The legacy China endpoint still advertises the K2.7 model as `kimi-for-coding`.
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
     });
 
     it('falls back to provider-level default region when sessionConfig omits region', () => {
       provider = new KimiProvider();
-      // Simulate region loaded from ProviderRecord configJson by provider-sync.
       provider.setDefaultRegion('global');
 
       const config = provider.buildSdkConfig('kimi-k2.7-code', { apiKey: 'key' });
@@ -533,9 +518,6 @@ describe('KimiProvider', () => {
       });
 
       expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://custom.example.com/anthropic');
-      // The provider default region is china. Because the custom host is not a
-      // known modern Moonshot Open Platform endpoint, the legacy China IDs are
-      // used to preserve compatibility with custom Kimi Code proxies.
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
     });
 
@@ -669,8 +651,6 @@ describe('KimiProvider', () => {
       const config = provider.buildSdkConfig('kimi-k2.7-code', { apiKey: 'key' });
 
       expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.cn/anthropic');
-      // The modern Moonshot Open Platform China endpoint uses the Open Platform
-      // model IDs, not the legacy api.kimi.com/coding IDs.
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k2.7-code');
     });
 
@@ -851,8 +831,6 @@ describe('KimiProvider', () => {
     });
 
     it('should return canonical model ID to avoid settings.json overrides', () => {
-      // Returns canonical model ID instead of 'default' so ~/.claude/settings.json
-      // ANTHROPIC_DEFAULT_SONNET_MODEL cannot redirect to other providers.
       expect(provider.translateModelIdForSdk('kimi-k2.7-code')).toBe('kimi-k2.7-code');
       expect(provider.translateModelIdForSdk('kimi-for-coding')).toBe('kimi-for-coding');
       expect(provider.translateModelIdForSdk('moonshot-v1-32k')).toBe('kimi-for-coding');
@@ -908,11 +886,6 @@ describe('KimiProvider', () => {
     });
 
     it('should expose moonshot-* provider aliases via providerAliasPrefixes', () => {
-      // KimiProvider.ownsModel accepts any moonshot-* ID but model-service
-      // lookups go through findInModels which checks id/alias/providerAliases/
-      // providerAliasPrefixes. Without the prefix, sessions stored with a
-      // moonshot-* ID have null modelInfo and HyperNeo fallback compaction can't
-      // compute a threshold.
       const codingModel = KimiProvider.MODELS.find((m) => m.id === 'kimi-for-coding')!;
       const providerAliases = codingModel.providerAliases ?? [];
       const providerAliasPrefixes = codingModel.providerAliasPrefixes ?? [];
@@ -928,22 +901,14 @@ describe('KimiProvider', () => {
     });
 
     it('registers the global k3-256k SDK id so the context bar matches it', () => {
-      // buildSdkConfig sends `kimi-k3-256k` on the global endpoint; the
-      // ContextFetcher matches SDK-reported names against id/alias/sdkModelIds
-      // (not providerAliases), so the global id must be in sdkModelIds.
       const k3_256k = KimiProvider.MODELS.find((m) => m.id === 'k3-256k')!;
       expect(k3_256k.sdkModelIds).toContain('kimi-k3-256k');
     });
 
     it('resolves moonshot alias prefixes by longest match so 256K aliases do not collapse to the 1M entry', () => {
-      // findInModels must pick the most specific matching prefix, otherwise the
-      // 1M entry's broad `moonshot-k3` prefix would win over `moonshot-k3-256k`
-      // and route a 256K alias to the wrong (1M) model.
       expect(findInModels(KimiProvider.MODELS, 'moonshot-k3-256k-preview')?.id).toBe('k3-256k');
       expect(findInModels(KimiProvider.MODELS, 'moonshot-k3-256k')?.id).toBe('k3-256k');
-      // 1M aliases still resolve to the 1M flagship.
       expect(findInModels(KimiProvider.MODELS, 'moonshot-k3-preview')?.id).toBe('kimi-k3[1m]');
-      // Generic moonshot-* still resolves to the K2.7 coding entry.
       expect(findInModels(KimiProvider.MODELS, 'moonshot-v1-32k')?.id).toBe('kimi-for-coding');
     });
   });
@@ -1018,8 +983,6 @@ describe('KimiProvider', () => {
       expect(KimiProvider.isKimiK3OneMModel('kimi-k3[1m]')).toBe(true);
       expect(KimiProvider.isKimiK3OneMModel('k3')).toBe(true);
       expect(KimiProvider.isKimiK3OneMModel('moonshot-k3-preview')).toBe(true);
-      // The 256K-capped variant is a K3 but is NOT the 1M flagship, so the [1m]
-      // suffix must never attach to it.
       expect(KimiProvider.isKimiK3OneMModel('k3-256k')).toBe(false);
       expect(KimiProvider.isKimiK3OneMModel('kimi-k3-256k')).toBe(false);
       expect(KimiProvider.isKimiK3OneMModel('moonshot-k3-256k-preview')).toBe(false);

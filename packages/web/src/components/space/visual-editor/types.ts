@@ -1,11 +1,3 @@
-/**
- * Shared types for the visual editor canvas and nodes.
- */
-
-/**
- * Legacy workflow condition types kept locally for the visual editor's
- * edge transition system (edges between nodes, not channels).
- */
 export type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
 
 export interface WorkflowCondition {
@@ -16,12 +8,6 @@ export interface WorkflowCondition {
   timeoutMs?: number;
 }
 
-/**
- * A directed edge used internally by the visual editor canvas — the UI-only
- * edge/transition concept used for drawing connections between nodes. This is
- * distinct from the backend `HandoffTransition` type (declared node handoffs):
- * edges are a canvas rendering concern, handoffs are a workflow contract.
- */
 export interface VisualTransition {
   id: string;
   from: string;
@@ -47,13 +33,8 @@ export interface ViewportState {
   scale: number;
 }
 
-/** Per-node position and size keyed by node ID. */
 export type NodePosition = Record<string, { x: number; y: number; width: number; height: number }>;
 
-/**
- * Convert a screen-space point to canvas-space using the current viewport.
- * Inverse of canvasToScreen.
- */
 export function screenToCanvas(point: Point, viewport: ViewportState): Point {
   const scale = viewport.scale || 1;
   return {
@@ -62,10 +43,6 @@ export function screenToCanvas(point: Point, viewport: ViewportState): Point {
   };
 }
 
-/**
- * Convert a canvas-space point to screen-space using the current viewport.
- * Inverse of screenToCanvas.
- */
 export function canvasToScreen(point: Point, viewport: ViewportState): Point {
   return {
     x: point.x * viewport.scale + viewport.offsetX,

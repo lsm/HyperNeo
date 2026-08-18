@@ -1,11 +1,3 @@
-/**
- * Unit test for TaskAgentManager's Runtime Execution Contract.
- *
- * The contract is private, but the escalation target line is load-bearing:
- * workflow slot prompts refer to it by name, so we verify it is rendered for
- * both workflow and fallback (no-workflow) sessions.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
@@ -14,8 +6,6 @@ import type { SpaceWorkflow, NodeExecution, Space } from '@hyperneo/shared';
 describe('TaskAgentManager Runtime Execution Contract', () => {
   function makeManager(): TaskAgentManager {
     const db = new BunDatabase(':memory:');
-    // The contract builder only reads from the provided workflow/execution/space
-    // in this test; all other config fields can be stubbed.
     return new TaskAgentManager({
       db: { getDatabase: () => db },
       internalEventBus: { subscribe: () => () => {} },

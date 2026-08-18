@@ -1,7 +1,3 @@
-/**
- * SpaceRepository Tests
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -147,7 +143,7 @@ describe('SpaceRepository', () => {
       });
       const updated = repo.updateSpace(space.id, { description: 'Updated description' });
       expect(updated!.description).toBe('Updated description');
-      expect(updated!.name).toBe('A'); // name unchanged
+      expect(updated!.name).toBe('A');
     });
 
     it('updates backgroundContext individually', () => {
@@ -158,7 +154,7 @@ describe('SpaceRepository', () => {
         backgroundContext: 'This project uses Bun runtime',
       });
       expect(updated!.backgroundContext).toBe('This project uses Bun runtime');
-      expect(updated!.name).toBe('A'); // other fields unchanged
+      expect(updated!.name).toBe('A');
     });
 
     it('updates instructions individually', () => {
@@ -169,12 +165,12 @@ describe('SpaceRepository', () => {
         instructions: 'Always write tests before code',
       });
       expect(updated!.instructions).toBe('Always write tests before code');
-      expect(updated!.name).toBe('A'); // other fields unchanged
+      expect(updated!.name).toBe('A');
     });
 
     it('updates allowedModels individually', () => {
       const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
-      expect(space.allowedModels).toBeUndefined(); // defaults to empty array → undefined
+      expect(space.allowedModels).toBeUndefined();
 
       const updated = repo.updateSpace(space.id, {
         allowedModels: ['claude-sonnet', 'claude-haiku'],
@@ -192,7 +188,7 @@ describe('SpaceRepository', () => {
       expect(space.allowedModels).toEqual(['claude-opus']);
 
       const updated = repo.updateSpace(space.id, { allowedModels: [] });
-      expect(updated!.allowedModels).toBeUndefined(); // empty array → undefined
+      expect(updated!.allowedModels).toBeUndefined();
     });
 
     it('clears defaultModel when set to null', () => {
@@ -261,7 +257,6 @@ describe('SpaceRepository', () => {
       });
       expect(space.config).toBeDefined();
 
-      // Replace config with a new value to verify it persists
       const updated = repo.updateSpace(space.id, {
         config: { maxConcurrentTasks: 1, taskTimeoutMs: 5000 },
       });
@@ -282,7 +277,6 @@ describe('SpaceRepository', () => {
         config: { maxConcurrentTasks: 3, taskTimeoutMs: 60000 },
       });
 
-      // Update only name
       const updated = repo.updateSpace(space.id, { name: 'New Name' });
 
       expect(updated!.name).toBe('New Name');
@@ -304,7 +298,6 @@ describe('SpaceRepository', () => {
       const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
       const originalUpdatedAt = space.updatedAt;
 
-      // Small delay to ensure timestamp difference
       const updated = repo.updateSpace(space.id, { name: 'B' });
       expect(updated!.updatedAt).toBeGreaterThanOrEqual(originalUpdatedAt);
     });
@@ -334,7 +327,6 @@ describe('SpaceRepository', () => {
         config: { maxConcurrentTasks: 10, taskTimeoutMs: 120000 },
       });
 
-      // Re-read from DB to verify persistence
       const readBack = repo.getSpace(created.id);
 
       expect(readBack).not.toBeNull();
@@ -368,7 +360,6 @@ describe('SpaceRepository', () => {
         autonomyLevel: 1,
       });
 
-      // Update all mutable fields
       repo.updateSpace(space.id, {
         name: 'After Update',
         description: 'After',
@@ -380,7 +371,6 @@ describe('SpaceRepository', () => {
         config: { maxConcurrentTasks: 5, taskTimeoutMs: 30000 },
       });
 
-      // Re-read from DB
       const readBack = repo.getSpace(space.id);
 
       expect(readBack!.name).toBe('After Update');
@@ -391,7 +381,6 @@ describe('SpaceRepository', () => {
       expect(readBack!.allowedModels).toEqual(['claude-sonnet', 'claude-haiku']);
       expect(readBack!.autonomyLevel).toBe(3);
       expect(readBack!.config).toEqual({ maxConcurrentTasks: 5, taskTimeoutMs: 30000 });
-      // Immutable fields should be unchanged
       expect(readBack!.workspacePath).toBe('/workspace/update-roundtrip');
       expect(readBack!.slug).toBe('update-roundtrip');
     });
@@ -416,7 +405,7 @@ describe('SpaceRepository', () => {
       expect(readBack!.description).toBe('');
       expect(readBack!.backgroundContext).toBe('');
       expect(readBack!.instructions).toBe('');
-      expect(readBack!.name).toBe('Empty Strings Test'); // unchanged
+      expect(readBack!.name).toBe('Empty Strings Test');
     });
   });
 
@@ -432,19 +421,15 @@ describe('SpaceRepository', () => {
     it('adds and removes sessions idempotently', () => {
       const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
 
-      // Add
       const withSession = repo.addSessionToSpace(space.id, 'session-1');
       expect(withSession!.sessionIds).toContain('session-1');
 
-      // Add again (idempotent)
       const again = repo.addSessionToSpace(space.id, 'session-1');
       expect(again!.sessionIds).toHaveLength(1);
 
-      // Remove
       const without = repo.removeSessionFromSpace(space.id, 'session-1');
       expect(without!.sessionIds).not.toContain('session-1');
 
-      // Remove again (idempotent)
       const noOp = repo.removeSessionFromSpace(space.id, 'session-1');
       expect(noOp!.sessionIds).toHaveLength(0);
     });

@@ -1,20 +1,3 @@
-/**
- * Migration 48 Tests
- *
- * Migration 48 fixes the short_id uniqueness constraint introduced by migration 47.
- *
- * Migration 47 accidentally created global single-column indexes:
- *   CREATE UNIQUE INDEX idx_tasks_short_id ON tasks(short_id)
- *   CREATE UNIQUE INDEX idx_goals_short_id ON goals(short_id)
- *
- * These caused UNIQUE constraint failures when two different rooms each created their
- * first task/goal — both received short_id='t-1'/'g-1'.
- *
- * Migration 48 drops the old global indexes and creates room-scoped composite indexes:
- *   CREATE UNIQUE INDEX idx_tasks_room_short_id ON tasks(room_id, short_id)
- *   CREATE UNIQUE INDEX idx_goals_room_short_id ON goals(room_id, short_id)
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import {
@@ -43,11 +26,9 @@ describe('Migration 48: replace global short_id indexes with room-scoped composi
   });
 
   test('drops old global idx_tasks_short_id and idx_goals_short_id indexes', () => {
-    // Simulate a DB that ran the old migration 47 (global index names)
     runMigrations(db, () => {});
     createTables(db);
 
-    // Manually create the old-style global indexes to simulate pre-fix state
     db.exec(
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_short_id ON tasks(short_id) WHERE short_id IS NOT NULL`
     );
@@ -58,10 +39,8 @@ describe('Migration 48: replace global short_id indexes with room-scoped composi
     expect(indexExists(db, 'idx_tasks_short_id')).toBe(true);
     expect(indexExists(db, 'idx_goals_short_id')).toBe(true);
 
-    // Run migration 48
     runMigration48(db);
 
-    // Old global indexes must be gone
     expect(indexExists(db, 'idx_tasks_short_id')).toBe(false);
     expect(indexExists(db, 'idx_goals_short_id')).toBe(false);
   });
@@ -89,7 +68,6 @@ describe('Migration 48: replace global short_id indexes with room-scoped composi
 			VALUES ('task-1', 'room-1', 'Task 1', '', 'pending', 'normal', 1000, 1000, 't-1')
 		`);
 
-    // Same short_id 't-1' in a different room — must not throw
     expect(() => {
       db.exec(`
 				INSERT INTO tasks (id, room_id, title, description, status, priority, created_at, updated_at, short_id)
@@ -113,7 +91,6 @@ describe('Migration 48: replace global short_id indexes with room-scoped composi
 			VALUES ('goal-1', 'room-1', 'Goal 1', '', 'active', 1000, 1000, 'g-1')
 		`);
 
-    // Same short_id 'g-1' in a different room — must not throw
     expect(() => {
       db.exec(`
 				INSERT INTO goals (id, room_id, title, description, status, created_at, updated_at, short_id)

@@ -1,15 +1,3 @@
-/**
- * Message Remove Output Tests
- *
- * Tests the `message.removeOutput` RPC handler via WebSocket.
- * This handler removes tool_result content from SDK session .jsonl files
- * to reduce session size and fix context overflow.
- *
- * Note: This test requires filesystem setup to create mock SDK session files.
- * The RPC calls go through real WebSocket transport, but the filesystem
- * verification reads files directly (the only way to verify file content).
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,7 +12,6 @@ describe('Message Remove Output', () => {
   let originalTestSdkSessionDir: string | undefined;
 
   beforeEach(async () => {
-    // Set up isolated SDK session directory for tests
     const testSdkDir = join(
       TMP_DIR,
       `sdk-sessions-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -38,13 +25,10 @@ describe('Message Remove Output', () => {
   }, 30_000);
 
   afterEach(async () => {
-    // Guard: daemon may be undefined if beforeEach timed out.
-    // Uses wrapped-if (not early return) because env cleanup below must always run.
     if (daemon) {
       await daemon.waitForExit();
     }
 
-    // Clean up test SDK session directory
     if (process.env.TEST_SDK_SESSION_DIR && existsSync(process.env.TEST_SDK_SESSION_DIR)) {
       try {
         rmSync(process.env.TEST_SDK_SESSION_DIR, { recursive: true, force: true });
@@ -53,7 +37,6 @@ describe('Message Remove Output', () => {
       }
     }
 
-    // Restore original environment
     if (originalTestSdkSessionDir !== undefined) {
       process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
     } else {
@@ -68,10 +51,6 @@ describe('Message Remove Output', () => {
     return sessionId;
   }
 
-  /**
-   * Set the SDK session ID on the in-memory agent session.
-   * Required because the handler uses agentSession.getSDKSessionId() to locate JSONL files.
-   */
   function setSDKSessionId(sessionId: string, sdkSessionId: string | null): void {
     const agentSession = daemon.daemonContext.sessionManager.getSession(sessionId);
     if (agentSession) {
@@ -175,10 +154,8 @@ describe('Message Remove Output', () => {
 
       expect(existsSync(sessionFile)).toBe(true);
 
-      // Set SDK session ID on the agent session
       setSDKSessionId(sessionId, sdkSessionId);
 
-      // Call RPC via WebSocket
       const result = (await daemon.messageHub.request('message.removeOutput', {
         sessionId,
         messageUuid,
@@ -186,7 +163,6 @@ describe('Message Remove Output', () => {
 
       expect(result.success).toBe(true);
 
-      // Verify file was modified
       const messagesAfter = readSDKSessionFile(sessionFile);
       expect(messagesAfter.length).toBe(4);
 
@@ -225,7 +201,6 @@ describe('Message Remove Output', () => {
       });
 
       const messagesAfter = readSDKSessionFile(sessionFile);
-      // First and last messages should be unchanged
       expect(JSON.stringify(messagesAfter[0])).toBe(JSON.stringify(messagesBefore[0]));
       expect(JSON.stringify(messagesAfter[3])).toBe(JSON.stringify(messagesBefore[3]));
     });
@@ -238,7 +213,6 @@ describe('Message Remove Output', () => {
       const sdkSessionId = 'test-sdk-session-789';
       createMockSDKSessionFile(process.cwd(), sdkSessionId, sessionId, messageUuid);
 
-      // No SDK session ID → handler uses fallback search
       setSDKSessionId(sessionId, null);
 
       const result = (await daemon.messageHub.request('message.removeOutput', {
@@ -345,7 +319,6 @@ describe('Message Remove Output', () => {
         messageUuid,
       });
 
-      // Verify each line is valid JSON
       const content = readFileSync(sessionFile, 'utf-8');
       expect(content.endsWith('\n')).toBe(true);
 
@@ -423,14 +396,12 @@ describe('Message Remove Output', () => {
         (msg: unknown) => (msg as Record<string, unknown>).uuid === otherMessageUuid
       ) as Record<string, unknown>;
 
-      // Target should have placeholder
       const targetContent = (targetMessage.message as Record<string, unknown>).content as unknown[];
       const targetToolResult = targetContent[0] as Record<string, unknown>;
       expect(
         ((targetToolResult.content as unknown[])[0] as Record<string, unknown>).text
       ).toContain('⚠️ Output removed by user');
 
-      // Other should be unchanged
       const otherContent = (otherMessage.message as Record<string, unknown>).content as unknown[];
       const otherToolResult = otherContent[0] as Record<string, unknown>;
       expect(((otherToolResult.content as unknown[])[0] as Record<string, unknown>).text).toBe(

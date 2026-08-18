@@ -1,13 +1,3 @@
-/**
- * Tests for the consolidated read-only GitPanel.
- *
- * Covers: load/error/empty states, ahead/behind in the summary, the checks
- * drill-down (individual checks + CI links), Staged/Unstaged grouping, file
- * search, copy-path, and expanding a truncated diff via git.fileDiff.
- *
- * The status fetch + polling live in useGitSessionStatus; here we mock that hook
- * so the component's rendering is tested in isolation (no real intervals).
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import type {
@@ -179,7 +169,6 @@ describe('GitPanel', () => {
 
       const link = list.querySelector<HTMLAnchorElement>('a[href="https://ci.example.com/build"]');
       expect(link).toBeTruthy();
-      // The check without a URL renders as a list item, not a link.
       expect(list.querySelectorAll('a')).toHaveLength(1);
     });
   });
@@ -209,8 +198,6 @@ describe('GitPanel', () => {
     });
 
     it('places a file with both staged and unstaged changes in both groups', () => {
-      // porcelain `MM` → staged:true, unstaged:true. The file must appear under
-      // Staged AND Unstaged rather than implying it is fully staged.
       setStatus(
         makeStatus({
           files: [{ path: 'src/c.ts', status: 'modified', staged: true, unstaged: true }],
@@ -228,7 +215,6 @@ describe('GitPanel', () => {
       const headers = Array.from(container.querySelectorAll('.sticky')).map((h) => h.textContent);
       expect(headers).toContain('Staged · 1');
       expect(headers).toContain('Unstaged · 1');
-      // Rendered once per group → two copy-path affordances.
       expect(container.querySelectorAll('[data-testid="git-copy-path"]')).toHaveLength(2);
     });
 
@@ -297,14 +283,10 @@ describe('GitPanel', () => {
         'a[title="Open in editor (VS Code)"]'
       );
       expect(link).toBeTruthy();
-      // `#` must be encoded so it isn't read as a URL fragment.
       expect(link!.getAttribute('href')).toBe('vscode://file/repo/src/a%23b.ts');
     });
 
     it('builds editor links from gitRoot, not mainRepoPath, for a linked worktree', () => {
-      // Direct session inside an external linked worktree: mainRepoPath follows
-      // `.git/worktrees/…` back to the main checkout, but the files live in the
-      // worktree root (gitRoot). The link must point there.
       setStatus(
         makeStatus({
           gitRoot: '/wt/feature',
@@ -329,8 +311,6 @@ describe('GitPanel', () => {
     });
 
     it('percent-encodes literal backslashes in POSIX filenames', () => {
-      // On POSIX a backslash is a legal filename char; it must be encoded
-      // (%5C), not turned into a path separator.
       setStatus(
         makeStatus({
           gitRoot: '/repo',
@@ -353,8 +333,6 @@ describe('GitPanel', () => {
     });
 
     it('treats UNC roots as Windows paths (normalizes backslashes)', () => {
-      // A Windows UNC root (\\server\share\…) must be recognized as Windows so
-      // its backslashes are normalized to separators, not %5C-encoded.
       setStatus(
         makeStatus({
           gitRoot: '\\\\server\\share\\repo',
@@ -375,13 +353,10 @@ describe('GitPanel', () => {
       );
       const href = link!.getAttribute('href')!;
       expect(href).not.toContain('%5C');
-      // The UNC double-slash prefix must be preserved (not stripped to a local
-      // rooted path).
       expect(href).toBe('vscode://file//server/share/repo/src/x.ts');
     });
 
     it('omits the editor link for deleted files', () => {
-      // A deleted file's path no longer exists in the working tree.
       setStatus(
         makeStatus({
           gitRoot: '/repo',
@@ -398,7 +373,6 @@ describe('GitPanel', () => {
       const { container } = renderPanel();
 
       expect(container.querySelector('a[title="Open in editor (VS Code)"]')).toBeNull();
-      // Copy-path still applies.
       expect(container.querySelector('[data-testid="git-copy-path"]')).toBeTruthy();
     });
   });
@@ -445,8 +419,6 @@ describe('GitPanel', () => {
     });
 
     it('surfaces a resolved file-diff error and keeps the truncated preview', async () => {
-      // git.fileDiff resolves (not rejects) with error + null patch if the
-      // workspace stopped being a repo mid-flight.
       mockedGetGitFileDiff.mockResolvedValue({
         sessionId: 'session-1',
         path: 'src/big.ts',
@@ -474,7 +446,6 @@ describe('GitPanel', () => {
       fireEvent.click(container.querySelector('[data-testid="git-expand-diff"]')!);
 
       await waitFor(() => expect(container.textContent).toContain('Not a git repository'));
-      // The usable truncated preview is retained (not replaced with "no diff").
       expect(container.textContent).toContain('+preview');
     });
 
@@ -503,8 +474,6 @@ describe('GitPanel', () => {
       fireEvent.click(container.querySelector('[data-testid="git-expand-diff"]')!);
       await waitFor(() => expect(mockedGetGitFileDiff).toHaveBeenCalled());
 
-      // A poll lands a fresh status whose file content changed (additions 1→9),
-      // moving the per-file key while the expand is pending.
       const refreshedStatus = makeStatus({
         files: [{ path: 'src/big.ts', status: 'modified', staged: false, unstaged: true }],
         review: {
@@ -525,11 +494,8 @@ describe('GitPanel', () => {
       });
       rerender(<GitPanel sessionId="session-1" />);
 
-      // Let the per-file-key reset effect flush (it bumps expandSeq, invalidating
-      // the pending expand) before the slow response resolves.
       await waitFor(() => expect(container.textContent).toContain('+preview'));
 
-      // The stale response resolves late — it must not re-expand.
       resolveDiff({
         sessionId: 'session-1',
         path: 'src/big.ts',
@@ -540,16 +506,12 @@ describe('GitPanel', () => {
       });
       await waitFor(() => expect(container.textContent).toContain('+preview'));
       expect(container.textContent).not.toContain('STALE FULL CONTENT');
-      // The superseded expand must not strand the button on "Loading…" — the
-      // reset effect drops loadingFull so it can be clicked again.
       const button = container.querySelector<HTMLButtonElement>('[data-testid="git-expand-diff"]');
       expect(button?.disabled).toBe(false);
       expect(button?.textContent).not.toContain('Loading');
     });
 
     it('invalidates the expand when content changes but numstat is unchanged', async () => {
-      // Modifying an existing line keeps additions/deletions the same; only the
-      // patch text changes. The hashed preview must still move the per-file key.
       mockedGetGitFileDiff.mockResolvedValue({
         sessionId: 'session-1',
         path: 'src/big.ts',
@@ -583,7 +545,6 @@ describe('GitPanel', () => {
       fireEvent.click(container.querySelector('[data-testid="git-expand-diff"]')!);
       await waitFor(() => expect(container.textContent).toContain('FIRST FULL'));
 
-      // Same numstat (1/0) but different patch text.
       const refreshedStatus = makeStatus({
         files: [{ path: 'src/big.ts', status: 'modified', staged: false, unstaged: true }],
         review: {
@@ -610,14 +571,11 @@ describe('GitPanel', () => {
       });
       rerender(<GitPanel sessionId="session-1" />);
 
-      // The expansion is invalidated → old full diff gone, new preview shown.
       await waitFor(() => expect(container.textContent).toContain('preview two'));
       expect(container.textContent).not.toContain('FIRST FULL');
     });
 
     it('preserves an expanded diff across a poll that does not change the file', async () => {
-      // The reset keys on a per-file content signature, not a per-poll revision,
-      // so a byte-for-byte unchanged poll must not collapse a completed expand.
       mockedGetGitFileDiff.mockResolvedValue({
         sessionId: 'session-1',
         path: 'src/big.ts',
@@ -643,7 +601,6 @@ describe('GitPanel', () => {
       fireEvent.click(container.querySelector('[data-testid="git-expand-diff"]')!);
       await waitFor(() => expect(container.textContent).toContain('FULL UNCHANGED CONTENT'));
 
-      // An unchanged poll re-renders with identical file content.
       mockedUseGitSessionStatus.mockReturnValue({
         status,
         loading: false,
@@ -652,21 +609,17 @@ describe('GitPanel', () => {
       });
       rerender(<GitPanel sessionId="session-1" />);
 
-      // The expansion persists (no collapse to the truncated preview).
       expect(container.textContent).toContain('FULL UNCHANGED CONTENT');
     });
   });
 
   describe('error handling', () => {
     it('keeps the last status visible and surfaces a refresh error non-destructively', () => {
-      // A status is loaded, then a (manual) refresh fails — the panel must keep
-      // rendering the status with a banner instead of blanking to an error state.
       setStatus(makeStatus({ branch: 'main' }), { error: 'network error' });
       const { container } = renderPanel();
 
       expect(container.textContent).toContain('Review');
       expect(container.querySelector('[data-testid="git-status-error-banner"]')).toBeTruthy();
-      // The blocking empty state must NOT be shown while a status is available.
       expect(container.textContent).not.toContain('Git status unavailable');
     });
   });

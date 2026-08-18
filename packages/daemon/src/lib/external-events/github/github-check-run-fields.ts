@@ -1,17 +1,3 @@
-/**
- * GitHub `check_run` row field decoders — pure helpers that read typed fields
- * off a raw GitHub check-run row (`unknown` / `Record<string, unknown>`) and
- * return primitive values with safe fallbacks.
- *
- * Canonical home. These helpers previously lived inline at the bottom of
- * {@link file://./github-event-extension.ts} (the check-run polling handler);
- * that file now imports them from here.
- *
- * Narrow capability surface: {@link checkRunIdFrom}, {@link checkRunConclusionFrom},
- * {@link checkRunAppKeyFrom}, {@link checkRunNameFrom}, {@link checkRunOccurredAt},
- * and {@link isNonFailureConclusion}. No module-private members.
- */
-
 import { parseGitHubTimestamp } from './github-normalizer';
 
 export function checkRunIdFrom(row: unknown): number | string {
@@ -42,11 +28,6 @@ export function checkRunNameFrom(row: unknown): string {
   return typeof name === 'string' ? name : '';
 }
 
-/**
- * Returns true for conclusions that represent a non-failure (CI is green or
- * skipped). Used to suppress earlier failed runs of the same check name when a
- * newer run superseded them.
- */
 export function isNonFailureConclusion(conclusion: string): boolean {
   return conclusion === 'success' || conclusion === 'skipped' || conclusion === 'neutral';
 }

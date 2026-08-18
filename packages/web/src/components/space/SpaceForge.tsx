@@ -61,14 +61,8 @@ const SCOPE_TABS: ScopeTab[] = ['overview', 'evidence', 'metrics', 'lessons', 'e
 const METRIC_DIRECTIONS: MetricDirection[] = ['increase', 'decrease', 'target', 'maintain'];
 const EPISODE_JUDGE_TIMEOUT_MS = 120000;
 const DEFAULT_COMPLETED_TASK_THRESHOLD = 10;
-/** Page size for the paginated Evidence/Episodes evidence lists. */
 const EVIDENCE_PAGE_SIZE = 50;
 
-/**
- * Merge two preflight contexts produced by separate `evolution.evidence.list`
- * pages. `tasks` carry unique evidenceIds so a plain concat is correct;
- * workflow-run contexts are deduped by run id, unioning their evidenceIds.
- */
 function mergePreflightContext(
   a: EvolutionEvidenceListResponse['preflightContext'],
   b: EvolutionEvidenceListResponse['preflightContext']
@@ -554,8 +548,6 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
 
   const loadMoreEvidence = async () => {
     if (loadingMore || exhausted) return;
-    // Claim a version so a concurrent reload (e.g. attach-note) can invalidate
-    // a stale page before it appends to a freshly-reset page-1.
     const version = ++requestVersion.current;
     setLoadingMore(true);
     try {
@@ -700,7 +692,6 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
       const [reviewResponse, evidenceResponse, metricResponse] = await Promise.all([
         request<EvolutionEpisodeReviewBundleResponse>('evolution.review.get', {
           scopeId: scope.id,
-          // Only the newest episodes feed the review; bound the query.
           limit: EVIDENCE_PAGE_SIZE,
         }),
         request<EvolutionEvidenceListResponse>('evolution.evidence.list', {
@@ -733,8 +724,6 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 
   const loadMoreEvidence = async () => {
     if (loadingMoreEvidence || evidenceExhausted) return;
-    // Claim a version so a concurrent reload (loadReview) can invalidate a
-    // stale page-2 before it appends to / merges into a freshly-reset page-1.
     const version = ++requestVersion.current;
     setLoadingMoreEvidence(true);
     try {
@@ -770,7 +759,6 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
     });
   }, [goal]);
 
-  // MVP review focuses on the newest draft; deeper episode history/selection can layer on later.
   const latestEpisode = episodes[0] ?? null;
   const groupedFindings = useMemo(
     () => groupFindingsByDomain(latestEpisode?.findings ?? []),
@@ -2035,7 +2023,6 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
     loadScopes().catch(() => undefined);
   }, [loadScopes]);
 
-  // Clear selection + any open scope panel when leaving this space's Forge view.
   useEffect(() => {
     return () => {
       currentSpaceScopeIdSignal.value = null;
@@ -2043,7 +2030,6 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
     };
   }, [spaceId]);
 
-  // Keep a valid default selection so the right-panel toggle always has a target.
   useEffect(() => {
     if (selectedScopeId && scopes.some((scope) => scope.id === selectedScopeId)) return;
     currentSpaceScopeIdSignal.value = scopes[0]?.id ?? null;

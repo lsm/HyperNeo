@@ -1,21 +1,3 @@
-/**
- * AgentMessageRouter — unified message delivery for node agents.
- *
- * Handles all message routing through a single code path — no separate within-node
- * vs cross-node logic. Target resolution:
- *   - Agent name: delivers as DM to all sessions with that agent name
- *   - Node name: fan-out to all agents in a named node (via nodeGroups)
- *   - '*': broadcast to all permitted targets
- *   - No match: returns clear error message
- *
- * Authorization is validated against the declared channel topology (via ChannelResolver)
- * before delivery.
- *
- * Note: This is distinct from ChannelRouter (channel-router.ts), which handles
- * workflow-level orchestration (lazy node activation, gate evaluation). This class
- * is used by node-agent-tools to deliver messages between live sessions at runtime.
- */
-
 import { parseAddress } from '../../../../../messaging/src/address';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
 import type { ActorResolver } from '../../../../../messaging/src/contracts';
@@ -28,96 +10,30 @@ import { formatAgentMessage } from '../agent-message-envelope';
 import { ActivationError, type ChannelRouter } from './channel-router';
 
 export interface AgentMessageRouterConfig {
-  /** Node execution repository for looking up agent sessions by workflow run. */
   nodeExecutionRepo: NodeExecutionRepository;
-  /** Workflow run ID for looking up peer tasks. */
   workflowRunId: string;
-  /** Workflow channel definitions for this run. */
   workflowChannels: WorkflowChannel[];
-  /** Injects a message into a target session as a user turn. */
   messageInjector: (sessionId: string, message: string) => Promise<void>;
-  /**
-   * Optional channel router for workflow-level delivery checks and lazy node activation.
-   * When provided, send_message activates target nodes (and enforces gate/cycle checks)
-   * even before target agent sessions are spawned.
-   */
   channelRouter?: ChannelRouter;
-  /**
-   * Optional map of node name → array of agent names in that node.
-   * When provided, enables fan-out delivery by node name.
-   */
   nodeGroups?: Record<string, string[]>;
-  /**
-   * Optional injector for routing messages to the Space Agent chat session.
-   * Used when a node agent explicitly targets `space-agent`.
-   */
   spaceAgentInjector?: (
     spaceId: string,
     message: string,
     replyToSessionId?: string | null
   ) => Promise<void>;
-  /** Space-scoped task number for message envelopes. */
   taskNumber?: number | null;
-  /**
-   * Optional persistent queue for messages whose target session is not yet active.
-   * When provided, a message whose target is declared in the workflow topology or
-   * node_executions (but has no live session yet) is queued instead of failing.
-   * The queue is drained when TaskAgentManager activates the target session.
-   */
   pendingMessageRepo?: PendingAgentMessageRepository;
-  /**
-   * Space ID — required when pendingMessageRepo is provided (used when enqueueing).
-   */
   spaceId?: string;
-  /**
-   * Task ID — stored on queued messages for diagnostics and filtering.
-   * Optional; defaults to null.
-   */
   taskId?: string;
-  /**
-   * Optional callback returning the live post-approval session ID for the current
-   * task. The merger sub-session has no node_execution row, so it's invisible to
-   * nodeExecutionRepo-based peer discovery. This bridges the gap so messages
-   * targeting the Post-Approval agent are delivered to the live session instead
-   * of lazy-activating a duplicate.
-   */
   findPostApprovalSessionId?: () => string | undefined;
-  /**
-   * Resolves the post-approval route's target agent NAME (e.g. 'merger') for the
-   * current run — the one agent the live merger session represents. Used to scope
-   * the {@link findPostApprovalSessionId} peer mapping to THAT agent only, so a
-   * message to an unrelated declared-but-unactivated node (e.g. an unused
-   * conditional branch) is not misrouted into the merger session.
-   */
   findPostApprovalTargetAgentName?: () => string | undefined;
-  /**
-   * Ensures a workflow-node target has a live session before message delivery.
-   * This is intentionally separate from gate evaluation: gates may hold message
-   * content, but they must never prevent the receiving agent from being activated.
-   */
   activateTargetSession?: (
     agentName: string
   ) => Promise<Array<{ agentName: string; sessionId: string }>>;
-  /** Optional workflow-node id → node-name map for generic @worker target isolation. */
   workflowNodeNameById?: Record<string, string>;
-  /**
-   * Optional callback fired after a message is persisted to `pendingMessageRepo`
-   * for a declared-but-inactive target. This is now only a diagnostic/backstop
-   * path; successful send_message results must reflect live delivery, not queueing.
-   *
-   * Fires only for non-deduped enqueues (deduped = message already in queue).
-   */
   onMessageQueued?: (agentName: string, workflowNodeId?: string) => void;
-  /**
-   * Optional lookup callback for reply-to-session routing.
-   * When a node agent sends to `space-agent`, this callback is invoked to
-   * determine whether the reply should go to a specific session (instead of
-   * the default `space:chat:${spaceId}`). Returns `null` for default routing.
-   */
   replyRoutingLookup?: (agentName?: string | null) => string | null;
-  /** Generic Space actor resolver for @handle/@role long-term agent DMs. */
   messageResolver?: ActorResolver;
-  /** Deliver to or activate long-term Space agents. */
   longTermAgentDelivery?: {
     deliverToSession?: (
       actor: ActorRef,
@@ -131,23 +47,10 @@ export interface AgentMessageRouterConfig {
 }
 
 export interface AgentMessageParams {
-  /** Agent name of the sending agent. */
   fromAgentName: string;
-  /** Session ID of the sending agent (excluded from delivery). */
   fromSessionId: string;
-  /**
-   * Delivery target: an agent name (DM), a node name (fan-out),
-   * an array of agent names (multicast), or '*' (broadcast to all permitted targets).
-   */
   target: string | string[];
-  /** Message content to deliver. */
   message: string;
-  /**
-   * Optional structured data payload attached to the message.
-   * Included in the delivered message as a JSON appendix when present,
-   * making it available to the receiving agent for programmatic use
-   * (e.g. gate writes, task results, structured feedback).
-   */
   data?: Record<string, unknown>;
 }
 
@@ -155,39 +58,12 @@ export interface AgentMessageResult {
   success: boolean | 'partial';
   delivered: Array<{ agentName: string; sessionId: string }>;
   failed: Array<{ agentName: string; sessionId: string; error: string }>;
-  /** Set when success is false — human-readable reason for the failure. */
   reason?: string;
-  /**
-   * Agent names that were requested but not permitted by channel topology.
-   * Populated on authorization failure.
-   */
   unauthorizedAgentNames?: string[];
-  /**
-   * Agent names that are permitted by topology for this sender.
-   * Populated on authorization failure.
-   */
   permittedTargets?: string[];
-  /**
-   * Target agent names that had no active sessions.
-   * Populated when delivery was attempted but no sessions were found.
-   */
   notFoundAgentNames?: string[];
-  /**
-   * Messages that were queued for later delivery because the target session
-   * was not yet active. Populated when pendingMessageRepo is configured and
-   * the target is a declared-but-inactive node agent.
-   */
   queued?: Array<{ agentName: string; messageId: string }>;
-  /**
-   * True when the failure was caused by an upstream rate-limit (e.g. a gate
-   * script saw GitHub HTTP 403). Callers should defer retry past
-   * `retryAfterMs` rather than re-dispatching on the next tick.
-   */
   rateLimited?: boolean;
-  /**
-   * Suggested backoff in milliseconds when `rateLimited` is true. Defaults to
-   * the shared minimum backoff when the gate script did not provide one.
-   */
   retryAfterMs?: number;
 }
 
@@ -245,24 +121,9 @@ export class AgentMessageRouter {
     }
     const hasNodeNameMap = workflowNodeNameById && Object.keys(workflowNodeNameById).length > 0;
     const scopedAgentName = (nodeName: string, agentName: string) => `${nodeName}/${agentName}`;
-    // Resolve a worker target's node ref — a node id (actor-registry worker
-    // handle) or a node name (messaging-adapter worker handle) — to the canonical
-    // workflow node id, paired with the agent slot. Persisting the id on the
-    // queued row lets the handoff resolver pin the exact node instead of parsing
-    // the concatenated "node/agent" string. The ref alone is ambiguous when a
-    // name collides with another node's id, so the agent slot is used to
-    // disambiguate (only the intended node declares that slot).
     const resolveWorkflowNodeId = (nodeRef: string, agentName: string): string | undefined => {
       if (!workflowNodeNameById) return undefined;
       const entries = Object.entries(workflowNodeNameById);
-      // Object.entries yields own enumerable properties only — never inherited
-      // ones, so a node named "constructor"/"toString"/etc. can't fool the id
-      // lookup the way the `in` operator would. A node ref is a name OR an id,
-      // and a name can collide with another node's id (or vice versa), so the
-      // string alone is ambiguous. Disambiguate by the agent slot: the intended
-      // node is the one matching the ref by name or id AND declaring that slot.
-      // nodeGroups (name -> slots) is wired in production whenever there is a
-      // workflow; when it's absent, fall back to id-authoritative then name.
       const hasSlot = (nodeName: string) =>
         nodeGroups ? nodeGroups[nodeName]?.includes(agentName) === true : false;
       const slotMatch = entries.find(
@@ -524,12 +385,6 @@ export class AgentMessageRouter {
           const queueWorkflowNodeId = hasNodeNameMap
             ? resolveWorkflowNodeId(nodeName, agentName)
             : undefined;
-          // queueTargetName (compound) is reported to the caller and the
-          // onMessageQueued activation callback — keep it stable. But persist the
-          // BARE agent name on the row when the node is pinned: the
-          // (workflowNodeId, agent) pair is unambiguous and spares the resolver
-          // from parsing the "node/agent" string, which cannot tell two slots
-          // apart within one node when the node's id extends its name with "/".
           const queueTargetName = hasNodeNameMap ? scopedAgentName(nodeName, agentName) : agentName;
           const storedTargetName = queueWorkflowNodeId != null ? agentName : queueTargetName;
           const { record, deduped } = pendingMessageRepo.enqueue({
@@ -546,11 +401,6 @@ export class AgentMessageRouter {
             maxAttempts: 3,
           });
           queued.push({ agentName: queueTargetName, messageId: record.id });
-          // The activation callback consumes bare slot names (and the resolved
-          // node id) — not the compound. Only fire it when the worker node
-          // resolved (or there's no node map to resolve against); an unknown
-          // node ref (@worker:WrongNode/...) must not activate an unrelated node
-          // that happens to declare the slot.
           const nodeResolved = !hasNodeNameMap || queueWorkflowNodeId != null;
           if (!deduped && nodeResolved) onMessageQueued?.(agentName, queueWorkflowNodeId);
         }
@@ -603,18 +453,6 @@ export class AgentMessageRouter {
     };
   }
 
-  /**
-   * Deliver a message to the specified target.
-   *
-   * Resolution order:
-   *   1. '*' → broadcast to all topology-permitted targets
-   *   2. Agent name match → DM/fan-out to all sessions with that agent name in the node
-   *   3. Node name match → fan-out to all agents mapped to that node (via nodeGroups)
-   *   4. No match → error with list of known reachable agents
-   *
-   * Authorization is checked against the declared channel topology before delivery.
-   * Returns a structured result — never throws.
-   */
   async deliverMessage(params: AgentMessageParams): Promise<AgentMessageResult> {
     const { fromAgentName, fromSessionId, target, message, data } = params;
     const {
@@ -634,10 +472,7 @@ export class AgentMessageRouter {
       replyRoutingLookup,
     } = this.config;
 
-    // --- Build channel resolver + slot-to-node translation map ---
     const resolver = new ChannelResolver(workflowChannels);
-    // Channels use node names as addresses. Build a reverse map from agent slot name
-    // → node name so the router can translate 'coder' → 'Code' before calling canSend.
     const slotToNode = new Map<string, string>();
     if (nodeGroups) {
       for (const [nodeName, slots] of Object.entries(nodeGroups)) {
@@ -662,7 +497,6 @@ export class AgentMessageRouter {
       });
     }
 
-    // Channel topology required except for built-in inter-level targets.
     if (resolver.isEmpty() && !(wantsSpaceAgent && spaceAgentInjector && spaceId)) {
       return {
         success: false,
@@ -674,13 +508,8 @@ export class AgentMessageRouter {
       };
     }
 
-    // --- Load ALL executions (for target resolution and declared-agent detection) ---
-    // We load ALL executions — not just those with agentSessionId — so we can detect
-    // agents that are declared but not yet active (pending activation by the tick loop).
-    // This prevents "Unknown target" errors for agents whose sessions haven't spawned yet.
     const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
 
-    // Peers with live sessions — used for direct message injection.
     const execWithSession = allExecutions.filter(
       (e) => e.agentSessionId && e.agentSessionId !== fromSessionId
     );
@@ -695,12 +524,6 @@ export class AgentMessageRouter {
       agentName: e.agentName,
     }));
 
-    // The post-approval merger sub-session has no node_execution row — add it
-    // manually if it's live, so messages route to the existing session instead
-    // of lazy-activating a duplicate. Scope the mapping to the post-approval
-    // route's target agent ONLY (e.g. 'merger'): mapping the session to every
-    // declared-but-unactivated agent would misroute a message to an unrelated
-    // unused node (e.g. an inactive conditional branch) into the merger session.
     const postApprovalSessionId = this.config.findPostApprovalSessionId?.();
     const postApprovalTargetAgent = this.config.findPostApprovalTargetAgentName?.();
     if (
@@ -709,13 +532,6 @@ export class AgentMessageRouter {
       postApprovalSessionId !== fromSessionId &&
       postApprovalTargetAgent !== fromAgentName
     ) {
-      // The live merger sub-session is the delivery target for its agent. A
-      // stale node_execution for the same agent (a terminal row with an old
-      // session id, or a pending row left by a prior duplicate-activation) must
-      // NOT shadow it: unless an execution already represents this exact live
-      // session, drop same-agent peers pointing at a different session and add
-      // the live one — otherwise the approval authority's continuation reaches
-      // the stale execution instead of the waiting merger and the loop stalls.
       if (!peers.some((p) => p.sessionId === postApprovalSessionId)) {
         peers = peers.filter(
           (p) => !(p.agentName === postApprovalTargetAgent && p.sessionId !== postApprovalSessionId)
@@ -724,14 +540,6 @@ export class AgentMessageRouter {
       }
     }
 
-    // All declared agent names (with or without a live session) for target resolution.
-    // Source 1: node_executions (lazily created on first activation).
-    // Source 2: workflow definition — every slot declared in any node group is a
-    //   legitimate peer name even before its node_execution row exists. nodeGroups
-    //   is derived from `workflow.nodes.map(n => resolveNodeAgents(n).map(a => a.name))`
-    //   in TaskAgentManager.buildNodeAgentMcpServerForSession, so it covers the full
-    //   static workflow surface. Without source 2, never-activated peers fall through
-    //   to "Unknown target" — the bug Task #133 closes.
     const allDeclaredAgentNames = new Set(
       allExecutions.filter((e) => e.agentSessionId !== fromSessionId).map((e) => e.agentName)
     );
@@ -744,11 +552,9 @@ export class AgentMessageRouter {
       }
     }
 
-    // --- Resolve target agent names ---
     let targetAgentNames: string[];
 
     if (target === '*') {
-      // Broadcast: expand to all topology-permitted targets
       const permittedNodes = resolver.getPermittedTargets(fromNodeName);
       if (permittedNodes.length === 0) {
         return {
@@ -760,44 +566,26 @@ export class AgentMessageRouter {
       }
       targetAgentNames = permittedNodes;
     } else if (Array.isArray(target)) {
-      // Multicast: explicit list of agent names. Built-in names are reserved and
-      // are handled unconditionally by the delivery branch below.
       targetAgentNames = target;
     } else if (target === 'space-agent' && spaceAgentInjector && spaceId) {
       targetAgentNames = ['space-agent'];
     } else {
-      // Single target: try to resolve by agent name or node name.
-      // Resolution order:
-      //   1. Agent name matches a live session peer
-      //   2. Node name maps to agents via nodeGroups
-      //   3. Agent name is declared in any node_execution for this run (pending activation)
-      //   4. Channel topology declares a channel to this node name (not yet activated)
-      // If none match → unknown target error.
       const agentMatches = peers.filter((m) => m.agentName === target).map((m) => m.agentName);
 
       if (agentMatches.length > 0) {
-        // Agent name → DM to its live session(s)
         targetAgentNames = [target];
       } else if (nodeGroups && nodeGroups[target]) {
-        // Node name match → fan-out to all agents in that node
         targetAgentNames = nodeGroups[target];
       } else if (allDeclaredAgentNames.has(target)) {
-        // Agent is declared in a node_execution but hasn't spawned a session yet.
-        // Route through activation/queue path below.
         targetAgentNames = [target];
       } else {
-        // Check if the target is a topology-declared node that hasn't been activated yet.
-        // This handles the case where the caller uses a node name that hasn't been seen yet.
         const permittedNodes = resolver.getPermittedTargets(fromNodeName);
         const isTopologyDeclared =
           permittedNodes.includes(target) ||
           permittedNodes.some((n) => resolveNodeName(n) === target);
         if (isTopologyDeclared) {
-          // Target is declared in channel topology but not yet activated.
-          // Route through activation/queue path below as a single target.
           targetAgentNames = [target];
         } else {
-          // No match — unknown target
           const knownAgentNames = [...new Set(peers.map((m) => m.agentName))].sort();
           const nodeNames = nodeGroups ? Object.keys(nodeGroups) : [];
           const allTargets = [
@@ -818,7 +606,6 @@ export class AgentMessageRouter {
       }
     }
 
-    // --- Authorization check (translate slot names → node names for canSend) ---
     const topologyTargets = targetAgentNames.filter((r) => r !== 'space-agent');
     const unauthorized = topologyTargets.filter(
       (r) => !resolver.canSend(fromNodeName, resolveNodeName(r))
@@ -837,9 +624,6 @@ export class AgentMessageRouter {
       };
     }
 
-    // --- Workflow-level delivery checks + lazy node activation ---
-    // This ensures cross-node messages can activate downstream nodes even when
-    // target sessions do not exist yet.
     const activatedTargets = new Set<string>();
     if (channelRouter) {
       for (const agentName of targetAgentNames) {
@@ -873,10 +657,6 @@ export class AgentMessageRouter {
       }
     }
 
-    // --- Ensure target sessions are live before content delivery ---
-    // ChannelRouter activation above may only create pending node_execution rows.
-    // The runtime callback is responsible for spawning/resuming the actual session;
-    // send_message must not report success until that session can receive content.
     if (activateTargetSession) {
       const refreshed = new Map(peers.map((peer) => [`${peer.agentName}:${peer.sessionId}`, peer]));
       for (const agentName of targetAgentNames) {
@@ -897,13 +677,11 @@ export class AgentMessageRouter {
       peers = [...refreshed.values()].filter((peer) => peer.sessionId !== fromSessionId);
     }
 
-    // --- Build the message content (with optional structured-data appendix) ---
     const dataAppendix =
       data && Object.keys(data).length > 0
         ? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
         : '';
 
-    // --- Deliver to all resolved sessions (best-effort) ---
     const delivered: Array<{ agentName: string; sessionId: string }> = [];
     const queued: Array<{ agentName: string; messageId: string }> = [];
     const notFound: string[] = [];
@@ -915,8 +693,6 @@ export class AgentMessageRouter {
           notFound.push(agentName);
           continue;
         }
-        // Check if this node agent should route its reply to a specific
-        // originating session (symmetric reply routing for ad-hoc members).
         const replyTo = replyRoutingLookup ? replyRoutingLookup(fromAgentName) : null;
         const envelopedMessage = formatAgentMessage({
           fromLevel: 'node-agent',
@@ -946,24 +722,9 @@ export class AgentMessageRouter {
 
       const agentSessions = peers.filter((m) => m.agentName === agentName);
       if (agentSessions.length === 0) {
-        // No live session for this target. This is not a successful delivery:
-        // `delivered: true` requires a live session that received the message.
-        // Keep the legacy queue as a recovery backstop only.
-        // Queue when:
-        //   (a) channelRouter just activated the target node (activatedTargets), OR
-        //   (b) the target is already declared in node_executions (pending spawn), OR
-        //   (c) the target was resolved from topology (may not have an execution yet)
-        // — and a pendingMessageRepo is available for persistent queuing.
         const isDeclaredOrActivated =
           activatedTargets.has(agentName) ||
-          // Target appears in a node_execution (pending activation by the tick loop).
           allDeclaredAgentNames.has(agentName) ||
-          // Target appears in the channel topology even without an execution record.
-          // Three sub-conditions cover the slot/node name mapping in both directions:
-          //   n === agentName             — channel target IS the slot name directly (slot-name addressed channel)
-          //   resolveNodeName(n) === agentName — channel target is a node name that maps to this agent via slotToNode
-          //   n === resolveNodeName(agentName) — agent's slot maps to a node name that is the channel target
-          //                                      (node-name addressed channels when nodeGroups is configured)
           resolver
             .getPermittedTargets(fromNodeName)
             .some(
@@ -974,11 +735,6 @@ export class AgentMessageRouter {
             );
 
         if (isDeclaredOrActivated && pendingMessageRepo && spaceId) {
-          // Audited (Task #139): onMessageQueued below covers all
-          // queuing paths. No independent activation gap exists —
-          // every branch that enqueues also fires the callback.
-          // Queue the already-enveloped message; flushPendingMessagesForTarget injects it
-          // as-is so queued delivery matches direct delivery.
           const rawMessage = formatAgentMessage({
             fromLevel: 'node-agent',
             fromAgentName,
@@ -1007,10 +763,6 @@ export class AgentMessageRouter {
               `[AgentMessageRouter] queued message ${record.id} for agent "${agentName}" ` +
                 `(run=${workflowRunId}, from=${fromAgentName})`
             );
-            // Best-effort auto-resume: if the target already has a known session
-            // (e.g. a previous execution that is now idle/completed), trigger an
-            // immediate resume so the queue is drained without waiting for the
-            // next activation cycle.
             if (!deduped) onMessageQueued?.(agentName);
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -1020,9 +772,6 @@ export class AgentMessageRouter {
             notFound.push(agentName);
           }
         } else if (activatedTargets.has(agentName)) {
-          // channelRouter activated the node but no pending queue is configured.
-          // The node will be spawned by the tick loop; message delivery is best-effort.
-          // Don't count as notFound since the activation handoff was accepted.
           log.warn(
             `[AgentMessageRouter] target "${agentName}" was activated but no pendingMessageRepo is configured — ` +
               `message may not be delivered to the new session. Configure pendingMessageRepo to enable reliable delivery.`
@@ -1053,9 +802,6 @@ export class AgentMessageRouter {
       }
     }
 
-    // All outcomes failed (nothing delivered to a live session). A queued row is
-    // a recovery artifact, not delivery, so success must stay false when the only
-    // outcome was queueing.
     if (notFound.length > 0 && delivered.length === 0 && failed.length === 0) {
       return {
         success: false,

@@ -90,12 +90,6 @@ export interface PrefetchOptions {
   logError?: (message: string, ...args: unknown[]) => void;
 }
 
-/**
- * Background-prefetch the agent-memory embedding model into the transformers
- * file cache. Resolves immediately when the model is already cached. Errors are
- * caught and logged; they never propagate to the caller so startup cannot be
- * blocked by a failed download.
- */
 export async function prefetchAgentMemoryEmbeddingModel(
   options: PrefetchOptions = {}
 ): Promise<InitializedEmbedder | null> {
@@ -116,8 +110,6 @@ export async function prefetchAgentMemoryEmbeddingModel(
   prefetchAbortController = abortController;
   prefetchResult = (async (): Promise<InitializedEmbedder | null> => {
     try {
-      // When a cache directory is supplied (tests), avoid loading the heavy
-      // transformers bundle if the model is already cached.
       if (cacheDir && (await isModelCached(cacheDir))) {
         logInfo('[AgentMemory] Embedding model already cached, prefetch skipped');
         return null;
@@ -150,16 +142,10 @@ export async function prefetchAgentMemoryEmbeddingModel(
         logInfo('[AgentMemory] Embedding model prefetch completed');
         return { model, tokenizer };
       } catch (err) {
-        // The transformers web bundle may fail to instantiate the ONNX session
-        // under Bun even though the model files were downloaded successfully.
-        // Treat the prefetch as successful if all expected assets are now cached.
         if (await isModelCached(resolvedCacheDir)) {
           logInfo('[AgentMemory] Embedding model prefetch completed (assets cached)');
           return null;
         }
-        // Promise.all does not cancel sibling work. If one load fails while the
-        // other is still downloading, abort the shared fetch signal so the large
-        // model transfer does not continue untracked.
         if (!abortController.signal.aborted) {
           abortController.abort();
         }
@@ -182,9 +168,6 @@ export async function prefetchAgentMemoryEmbeddingModel(
   return prefetchResult;
 }
 
-/**
- * Reset internal module state. Exported for unit tests only.
- */
 export function resetAgentMemoryEmbedderStateForTests(): void {
   modulePromise = null;
   fetchConfigured = false;
@@ -194,10 +177,6 @@ export function resetAgentMemoryEmbedderStateForTests(): void {
   abortedPrefetchGenerations = new Set<number>();
 }
 
-/**
- * Abort an in-flight background prefetch. Called during graceful shutdown so a
- * large model download does not outlive the daemon process.
- */
 export function abortAgentMemoryEmbeddingModelPrefetch(): void {
   const abortController = prefetchAbortController;
   if (!abortController) return;
@@ -207,8 +186,6 @@ export function abortAgentMemoryEmbeddingModelPrefetch(): void {
 }
 
 function loadTransformersWeb(): Promise<TransformersModule> {
-  // The package's node export imports onnxruntime-node at module load time.
-  // Load the web bundle explicitly so embeddings use WebGPU/WASM backends instead.
   if (!modulePromise) {
     modulePromise = import(pathToFileURL(transformersWebEntry()).href).then((module) => {
       const transformers = module as TransformersModule;
@@ -229,14 +206,8 @@ function configureTransformersEnv(env: TransformersModule['env'], cacheDir: stri
   if (fetchConfigured) return;
   fetchConfigured = true;
 
-  // Avoid repeated "Unable to load from local path /models/..." warnings under
-  // Bun/Node. The web bundle enables local model loading by default, but we only
-  // use the remote GitHub release redirect plus the file cache.
   env.allowLocalModels = false;
 
-  // The web bundle reports no filesystem support under Bun, so we provide a
-  // custom file-backed cache. This keeps runtime loads fast and lets the
-  // background prefetch actually persist downloaded assets.
   env.cacheDir = cacheDir;
   env.useBrowserCache = false;
   env.useFSCache = false;
@@ -284,25 +255,11 @@ function pathJoin(...parts: string[]): string {
   return normalized.join('/');
 }
 
-// The transformers.js web bundle picks the backend at runtime. Under Bun it
-// resolves to onnxruntime-node, which only supports 'cpu' (and 'webgpu' on
-// supported platforms). The legacy 'wasm' device is unsupported there, so we
-// fall back to 'cpu' when WebGPU is unavailable.
 function selectTransformersDevice(): 'webgpu' | 'cpu' {
   const maybeNavigator = globalThis.navigator as { gpu?: unknown } | undefined;
   return maybeNavigator?.gpu ? 'webgpu' : 'cpu';
 }
 
-/**
- * Minimal file-backed Cache API implementation for the transformers.js web
- * bundle. The web bundle does not detect Bun's filesystem APIs, so we plug in
- * our own cache to avoid re-downloading the embedding model on every process
- * start.
- *
- * Cache keys are full URLs. We map them to filesystem paths by stripping the
- * scheme so the layout is portable (no `:` characters, which are illegal in
- * Windows filenames) and deterministic.
- */
 class TransformersFileCache {
   constructor(private readonly cacheDir: string) {}
 
@@ -325,9 +282,6 @@ class TransformersFileCache {
       const filePath = this.filePath(request);
       await access(filePath, constants.F_OK);
 
-      // JSON/tokenizer files are loaded with return_path=false and must be
-      // returned as bytes. ONNX/model files can be returned as paths to avoid
-      // buffering the large weights into JS memory.
       const filename = new URL(request).pathname.split('/').pop() ?? '';
       if (filename.endsWith('.json')) {
         const buffer = await readFile(filePath);
@@ -386,8 +340,6 @@ class TransformersFileCache {
         },
       });
 
-      // pipeline attaches error listeners for the full write lifetime and
-      // rejects on any write/stream error (disk full, permissions, etc.).
       await pipeline(progressStream, stream);
 
       await rename(tmpPath, filePath);

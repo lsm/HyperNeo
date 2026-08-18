@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * SDKResultMessage Component Tests
- *
- * Tests result message rendering with statistics and expandable details
- */
 import { describe, it, expect } from 'vitest';
 
 import { render, fireEvent } from '@testing-library/preact';
@@ -11,10 +6,8 @@ import { SDKResultMessage } from '../SDKResultMessage';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 
-// Helper to create a valid UUID
 const createUUID = (): UUID => crypto.randomUUID() as UUID;
 
-// Factory functions for test messages
 function createSuccessResult(
   overrides: Partial<Extract<SDKMessage, { type: 'result'; subtype: 'success' }>> = {}
 ): Extract<SDKMessage, { type: 'result' }> {
@@ -147,7 +140,6 @@ describe('SDKResultMessage', () => {
       const message = createSuccessResult();
       const { container } = render(<SDKResultMessage message={message} />);
 
-      // Success icon (checkmark)
       const svg = container.querySelector('svg.text-green-600, svg.text-green-400');
       expect(svg).toBeTruthy();
     });
@@ -156,7 +148,6 @@ describe('SDKResultMessage', () => {
       const message = createErrorResult();
       const { container } = render(<SDKResultMessage message={message} />);
 
-      // Error icon (X mark)
       const svg = container.querySelector('svg.text-red-600, svg.text-red-400');
       expect(svg).toBeTruthy();
     });
@@ -178,7 +169,6 @@ describe('SDKResultMessage', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      // Should show "Input Tokens" label in expanded view
       expect(container.textContent).toContain('Input Tokens');
     });
 
@@ -189,7 +179,6 @@ describe('SDKResultMessage', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      // Should show all stat cards
       expect(container.textContent).toContain('Input Tokens');
       expect(container.textContent).toContain('Output Tokens');
       expect(container.textContent).toContain('Cost');
@@ -203,7 +192,6 @@ describe('SDKResultMessage', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      // Should show cache info
       expect(container.textContent).toContain('Cache Read');
       expect(container.textContent).toContain('200');
     });
@@ -226,13 +214,10 @@ describe('SDKResultMessage', () => {
 
       const button = container.querySelector('button')!;
 
-      // Expand
       fireEvent.click(button);
       expect(container.textContent).toContain('Input Tokens');
 
-      // Collapse
       fireEvent.click(button);
-      // Expanded content should no longer be visible
       expect(container.querySelector('.grid-cols-2')).toBeFalsy();
     });
   });
@@ -256,7 +241,6 @@ describe('SDKResultMessage', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      // Should show model-specific stats
       expect(container.textContent).toContain('Input: 1,500');
       expect(container.textContent).toContain('Output: 500');
       expect(container.textContent).toContain('Context: 200,000');
@@ -315,7 +299,6 @@ describe('SDKResultMessage', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      // Should contain JSON content
       expect(container.textContent).toContain('summary');
       expect(container.textContent).toContain('Analysis complete');
     });
@@ -338,7 +321,6 @@ describe('SDKResultMessage', () => {
       const message = createErrorResult();
       const { container } = render(<SDKResultMessage message={message} />);
 
-      // Should have red/error styling
       expect(container.querySelector('.bg-red-50, .dark\\:bg-red-900\\/10')).toBeTruthy();
     });
   });
@@ -402,7 +384,6 @@ describe('SDKResultMessage', () => {
       const message = createSuccessResult({ total_cost_usd: 0.00015 });
       const { container } = render(<SDKResultMessage message={message} />);
 
-      // 0.00015 rounds to 0.0001 or 0.0002 depending on rounding mode
       expect(container.textContent).toMatch(/\$0\.000[12]/);
     });
 
@@ -419,7 +400,6 @@ describe('SDKResultMessage', () => {
       const message = createErrorResult('error_max_turns');
       const { container } = render(<SDKResultMessage message={message} />);
 
-      // Should still render correctly
       expect(container.querySelector('button')).toBeTruthy();
     });
 

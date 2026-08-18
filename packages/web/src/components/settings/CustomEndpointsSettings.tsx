@@ -1,18 +1,3 @@
-/**
- * CustomEndpointsSettings
- *
- * CRUD over user-defined custom API endpoints (`settings.customEndpoints`).
- * Backed by the daemon `customEndpoints.list/add/update/remove` RPCs.
- *
- * The picker exposes stock presets (Ollama, OpenRouter, LM Studio, LiteLLM,
- * Anthropic proxy) which pre-fill the editor with sensible defaults. The user
- * confirms / customises before saving.
- *
- * NOTE: This component is no longer rendered in the main settings UI.
- * Custom endpoints are now managed through the unified Providers view.
- * This file is kept so existing tests continue to pass.
- */
-
 import { useEffect, useState } from 'preact/hooks';
 import type { CustomEndpointConfig } from '@hyperneo/shared';
 import {
@@ -69,7 +54,6 @@ export function CustomEndpointsSettings() {
 
   const handlePickPreset = (preset: import('./customEndpointPresets.ts').CustomEndpointPreset) => {
     setShowPresets(false);
-    // Avoid id collisions — append `-N` until unique.
     let candidateId = preset.template.id ?? 'custom';
     const taken = new Set(endpoints.map((e) => e.id));
     let suffix = 1;
@@ -301,7 +285,6 @@ export function CustomEndpointsSettings() {
   );
 }
 
-// Re-export helpers for testing.
 export {
   resolveCapabilities,
   parseHeaders,
@@ -313,7 +296,6 @@ export {
 } from './CustomEndpointEditor.tsx';
 export { findPreset } from './customEndpointPresets.ts';
 
-// Import locally for __test__ re-export (must match names imported at top of file)
 import {
   resolveCapabilities as _resolveCapabilities,
   parseHeaders as _parseHeaders,

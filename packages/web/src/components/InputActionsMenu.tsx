@@ -1,11 +1,3 @@
-/**
- * InputActionsMenu Component
- *
- * Plus button with dropdown menu for message input actions.
- * Includes auto-scroll toggle, tools, and file attachment.
- * Extracted from MessageInput.tsx for better separation of concerns.
- */
-
 import type { RefObject } from 'preact';
 import { useRef } from 'preact/hooks';
 import type { ModelInfo, SessionFeatures } from '@hyperneo/shared';
@@ -15,39 +7,27 @@ import { borderColors } from '../lib/design-tokens';
 import { useClickOutside } from '../hooks/useClickOutside';
 
 export interface InputActionsMenuProps {
-  /** Whether the menu is open */
   isOpen: boolean;
-  /** Toggle menu open/close */
   onToggle: () => void;
-  /** Close the menu */
   onClose: () => void;
-  /** Model switcher state (unused but kept for future model switching in menu) */
   currentModel?: string;
   currentModelInfo?: ModelInfo | null;
   availableModels?: ModelInfo[];
   modelSwitching?: boolean;
   modelLoading?: boolean;
   onModelSwitch?: (model: ModelInfo) => void;
-  /** Auto-scroll state */
   autoScroll: boolean;
   onAutoScrollChange: (enabled: boolean) => void;
-  /** Open tools modal */
   onOpenTools: () => void;
-  /** Trigger file input */
   onAttachFile: () => void;
-  /** Coordinator mode toggle (moved here from the status bar) */
   coordinatorMode?: boolean;
   coordinatorSwitching?: boolean;
   onCoordinatorModeChange?: (enabled: boolean) => void;
-  /** Sandbox mode toggle (moved here from the status bar) */
   sandboxEnabled?: boolean;
   sandboxSwitching?: boolean;
   onSandboxModeChange?: (enabled: boolean) => void;
-  /** Feature flags gating the toggles above */
   features?: SessionFeatures;
-  /** Whether actions are disabled */
   disabled?: boolean;
-  /** Ref to the plus button for click-outside detection */
   buttonRef?: RefObject<HTMLButtonElement>;
 }
 
@@ -79,7 +59,6 @@ export function InputActionsMenu({
   const internalButtonRef = useRef<HTMLButtonElement>(null);
   const buttonRef = externalButtonRef || internalButtonRef;
 
-  // Handle click outside
   useClickOutside(menuRef, onClose, isOpen, [buttonRef]);
 
   const handleAutoScrollToggle = () => {
@@ -111,7 +90,6 @@ export function InputActionsMenu({
 
   return (
     <div class="relative flex-shrink-0">
-      {/* Plus Button */}
       <button
         ref={buttonRef}
         type="button"
@@ -140,13 +118,11 @@ export function InputActionsMenu({
         </svg>
       </button>
 
-      {/* Menu Popover */}
       {isOpen && (
         <div
           ref={menuRef}
           class={`absolute bottom-full left-0 mb-2 bg-dark-800 border ${borderColors.ui.secondary} rounded-xl shadow-2xl overflow-hidden animate-slideIn min-w-[220px] z-50`}
         >
-          {/* Auto-scroll Toggle */}
           <button
             type="button"
             onClick={handleAutoScrollToggle}
@@ -185,7 +161,6 @@ export function InputActionsMenu({
             )}
           </button>
 
-          {/* Coordinator Mode */}
           {features.coordinator && (
             <button
               type="button"
@@ -227,7 +202,6 @@ export function InputActionsMenu({
             </button>
           )}
 
-          {/* Sandbox Mode */}
           {features.worktree && (
             <button
               type="button"
@@ -271,7 +245,6 @@ export function InputActionsMenu({
 
           <div class="h-px bg-dark-600" />
 
-          {/* Tools */}
           <button
             type="button"
             onClick={handleToolsClick}
@@ -301,7 +274,6 @@ export function InputActionsMenu({
 
           <div class="h-px bg-dark-600" />
 
-          {/* Attach File */}
           <button
             type="button"
             onClick={handleAttachClick}

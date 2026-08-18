@@ -1,15 +1,9 @@
 // @ts-nocheck
-/**
- * Tests for ToolResultCard Component
- *
- * Tests component rendering and interaction with proper mocking.
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/preact';
 import { ToolResultCard } from '../ToolResultCard.tsx';
 
-// Mock connection manager
 const mockRequest = vi.fn();
 const mockGetHub = vi.fn();
 
@@ -19,7 +13,6 @@ vi.mock('../../../../lib/connection-manager', () => ({
   },
 }));
 
-// Mock toast
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 
@@ -30,7 +23,6 @@ vi.mock('../../../../lib/toast', () => ({
   },
 }));
 
-// Mock child components to simplify testing
 vi.mock('../ToolIcon.tsx', () => ({
   ToolIcon: ({ toolName, size }: { toolName: string; size: string }) => (
     <span data-testid="tool-icon" data-tool={toolName} data-size={size}>
@@ -94,7 +86,6 @@ vi.mock('../../../ui/ConfirmModal.tsx', () => ({
     ) : null,
 }));
 
-// Mock tool-utils
 vi.mock('../tool-utils.ts', () => ({
   getToolDisplayName: (name: string) => name,
   getToolColors: () => ({
@@ -152,7 +143,6 @@ describe('ToolResultCard Component', () => {
         />
       );
 
-      // Check for X icon (error indicator)
       const svg = document.querySelector('svg');
       expect(svg).toBeTruthy();
     });
@@ -218,10 +208,8 @@ describe('ToolResultCard Component', () => {
         />
       );
 
-      // Initially collapsed - no expanded content
       expect(screen.queryByText('Input:')).toBeNull();
 
-      // Click to expand
       const header = document.querySelector('button');
       fireEvent.click(header!);
 
@@ -229,7 +217,6 @@ describe('ToolResultCard Component', () => {
         expect(screen.getByText('Input:')).toBeTruthy();
       });
 
-      // Click to collapse
       fireEvent.click(header!);
 
       await waitFor(() => {
@@ -271,9 +258,7 @@ describe('ToolResultCard Component', () => {
         />
       );
 
-      // Green success glyph (aria-label).
       expect(screen.getByLabelText('task completed')).toBeTruthy();
-      // Folded summary + usage in the expanded body.
       expect(screen.getByText('42 tests passed')).toBeTruthy();
       expect(screen.getByText('9,999 tokens')).toBeTruthy();
     });
@@ -295,7 +280,6 @@ describe('ToolResultCard Component', () => {
         />
       );
 
-      // Exactly one error X glyph (the notification-driven one; isError is gated).
       const errorIcons = screen.getAllByLabelText('task failed');
       expect(errorIcons).toHaveLength(1);
       expect(screen.getByText('Bash exited 1')).toBeTruthy();
@@ -373,7 +357,6 @@ describe('ToolResultCard Component', () => {
         />
       );
 
-      // The header error X still renders via the legacy isError path.
       const header = document.querySelector('button')!;
       const xSvg = header.querySelector('svg.text-red-600');
       expect(xSvg).toBeTruthy();
@@ -428,7 +411,6 @@ describe('ToolResultCard Component', () => {
       expect(screen.getByText('Error')).toBeTruthy();
       expect(screen.getByText('— /test.ts')).toBeTruthy();
       expect(screen.getByText('Error: old_string not found in file')).toBeTruthy();
-      // DiffViewer should not render on error
       expect(screen.queryByTestId('diff-viewer')).toBeNull();
     });
 
@@ -461,7 +443,6 @@ describe('ToolResultCard Component', () => {
       expect(screen.getByText('Error')).toBeTruthy();
       expect(screen.getByText('— /missing.ts')).toBeTruthy();
       expect(screen.getByText('Error: file not found')).toBeTruthy();
-      // CodeViewer should not render on error
       expect(screen.queryByTestId('code-viewer')).toBeNull();
     });
 
@@ -508,7 +489,6 @@ describe('ToolResultCard Component', () => {
       expect(screen.getByText('Error')).toBeTruthy();
       expect(screen.getByText('— /test.ts')).toBeTruthy();
       expect(screen.getByText('Error: permission denied')).toBeTruthy();
-      // CodeViewer should not render on error
       expect(screen.queryByTestId('code-viewer')).toBeNull();
     });
 
@@ -608,7 +588,6 @@ describe('ToolResultCard Component', () => {
       );
 
       expect(screen.getByTestId('diff-viewer')).toBeTruthy();
-      // structuredPatch hidden by default (shown only in detailed variant)
       expect(screen.queryByText('Structured patch')).toBeNull();
     });
 
@@ -708,7 +687,6 @@ describe('ToolResultCard Component', () => {
 
   describe('line count display', () => {
     it('should show line count for Read tool', () => {
-      // Use actual multi-line content (not escaped \n)
       const multilineContent = `line1
 line2
 line3`;
@@ -823,7 +801,6 @@ old2`;
         />
       );
 
-      // No delete button should be shown
       expect(screen.queryByText('Remove From Context')).toBeNull();
     });
 
@@ -865,17 +842,14 @@ old2`;
         />
       );
 
-      // Open modal
       fireEvent.click(screen.getByText('Remove From Context'));
 
       await waitFor(() => {
         expect(screen.getByTestId('confirm-modal')).toBeTruthy();
       });
 
-      // Confirm delete
       fireEvent.click(screen.getByTestId('modal-confirm'));
 
-      // Wait for API call to complete
       await vi.waitFor(() => {
         expect(mockRequest).toHaveBeenCalledWith('message.removeOutput', {
           sessionId: 'session-456',
@@ -885,7 +859,6 @@ old2`;
 
       expect(mockToastSuccess).toHaveBeenCalledWith('Tool output removed. Reloading session...');
 
-      // Advance timer to trigger the reload
       await vi.advanceTimersByTimeAsync(500);
 
       expect(window.location.reload).toHaveBeenCalled();
@@ -910,14 +883,12 @@ old2`;
         />
       );
 
-      // Open modal
       fireEvent.click(screen.getByText('Remove From Context'));
 
       await waitFor(() => {
         expect(screen.getByTestId('confirm-modal')).toBeTruthy();
       });
 
-      // Confirm delete
       fireEvent.click(screen.getByTestId('modal-confirm'));
 
       await waitFor(() => {
@@ -971,14 +942,12 @@ old2`;
         />
       );
 
-      // Open modal
       fireEvent.click(screen.getByText('Remove From Context'));
 
       await waitFor(() => {
         expect(screen.getByTestId('confirm-modal')).toBeTruthy();
       });
 
-      // Cancel
       fireEvent.click(screen.getByTestId('modal-cancel'));
 
       await waitFor(() => {
@@ -1012,7 +981,6 @@ old2`;
         />
       );
 
-      // Thinking content should be visible
       expect(screen.getByText('thinking content')).toBeTruthy();
     });
   });
@@ -1075,16 +1043,12 @@ old2`;
         />
       );
 
-      // CodeViewer should receive stripped content
       const codeViewer = screen.getByTestId('code-viewer');
       expect(codeViewer.textContent).toBe('const x = 1;');
     });
   });
 });
 
-// ===== Logic Tests (kept from original) =====
-
-// Tool color configuration matching the component
 const TOOL_COLORS = {
   file: { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-600' },
   search: {
@@ -1408,9 +1372,7 @@ describe('ToolResultCard Logic', () => {
   });
 
   describe('calculateDiffCounts comprehensive', () => {
-    // Test the diff calculation with common prefix and suffix
     it('should show accurate diff counts for changes with common prefix', () => {
-      // Use content with common prefix lines to test firstDiffIndex increment
       const oldContent = `common line 1
 common line 2
 old content
@@ -1432,12 +1394,10 @@ end`;
         />
       );
 
-      // Should show diff counts (checking the component renders)
       expect(screen.getByText('Edit')).toBeTruthy();
     });
 
     it('should show accurate diff counts for changes with common suffix', () => {
-      // Use content with common suffix lines to test lastDiffIndex decrement
       const oldContent = `start
 old middle
 common end 1
@@ -1459,12 +1419,10 @@ common end 2`;
         />
       );
 
-      // Should show diff counts
       expect(screen.getByText('Edit')).toBeTruthy();
     });
 
     it('should handle changes with both common prefix and suffix', () => {
-      // This tests both while loops (firstDiffIndex++ and lastDiffIndex--)
       const oldContent = `header line 1
 header line 2
 OLD CHANGE
@@ -1488,7 +1446,6 @@ footer line 2`;
         />
       );
 
-      // Should show +1 -1 for single line change
       expect(screen.getByText('+1')).toBeTruthy();
       expect(screen.getByText('-1')).toBeTruthy();
     });

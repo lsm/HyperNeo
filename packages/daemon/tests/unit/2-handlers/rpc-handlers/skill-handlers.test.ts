@@ -1,24 +1,8 @@
-/**
- * Tests for Skills RPC Handlers
- *
- * Tests the RPC handlers for Skills registry operations:
- * - skill.list       — list all skills
- * - skill.get        — get a single skill by id
- * - skill.create     — add a new skill
- * - skill.update     — update a skill
- * - skill.delete     — remove a skill
- * - skill.setEnabled — toggle enabled flag
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import { registerSkillHandlers } from '../../../../src/lib/rpc-handlers/skill-handlers';
 import type { SkillsManager } from '../../../../src/lib/skills-manager';
 import type { AppSkill, CreateSkillParams, UpdateSkillParams } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Test fixtures
-// ---------------------------------------------------------------------------
 
 const mockSkill: AppSkill = {
   id: 'skill-1',
@@ -47,10 +31,6 @@ const updateSkillParams: UpdateSkillParams = {
   displayName: 'Updated Skill',
   description: 'Updated description',
 };
-
-// ---------------------------------------------------------------------------
-// Mock helpers
-// ---------------------------------------------------------------------------
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -112,10 +92,6 @@ function createMockDaemonHub() {
     on: mock(() => () => {}),
   } as unknown as import('../../../../tests/helpers/daemon-hub').DaemonHub;
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('Skill RPC Handlers', () => {
   let hubData: ReturnType<typeof createMockMessageHub>;

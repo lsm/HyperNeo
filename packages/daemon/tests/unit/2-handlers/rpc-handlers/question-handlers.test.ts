@@ -1,13 +1,3 @@
-/**
- * Tests for question RPC handlers (question.respond, question.saveDraft, question.cancel)
- *
- * Covers:
- * - question.respond: routes to runtime session first, falls back to SessionManager
- * - question.respond: throws when session not found in either pool
- * - question.saveDraft: routes to runtime session first, falls back to SessionManager
- * - question.cancel: routes to runtime session first, falls back to SessionManager
- */
-
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import { setupQuestionHandlers } from '../../../../src/lib/rpc-handlers/question-handlers';
@@ -16,8 +6,6 @@ import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
 type RequestHandler = (data: unknown, context?: unknown) => Promise<unknown>;
-
-// ─── Mock helpers ───
 
 function createMockMessageHub(): {
   hub: MessageHub;
@@ -75,8 +63,6 @@ describe('question handlers — session routing', () => {
     daemonHub = createMockDaemonHub();
   });
 
-  // ─── question.respond ───
-
   describe('question.respond', () => {
     it('routes to runtime session when found in runtime pool', async () => {
       const runtimeSession = createMockAgentSession();
@@ -99,12 +85,7 @@ describe('question handlers — session routing', () => {
       const sessionManagerSession = createMockAgentSession();
       const sessionManager = createMockSessionManager(sessionManagerSession);
 
-      setupQuestionHandlers(
-        mockHub.hub,
-        sessionManager,
-        daemonHub,
-        (_id) => undefined // runtime pool has nothing
-      );
+      setupQuestionHandlers(mockHub.hub, sessionManager, daemonHub, (_id) => undefined);
 
       const handler = mockHub.handlers.get('question.respond')!;
       await handler({ sessionId: 'lobby-session-1', toolUseId: 'tool-2', responses: [] });
@@ -138,8 +119,6 @@ describe('question handlers — session routing', () => {
     });
   });
 
-  // ─── question.saveDraft ───
-
   describe('question.saveDraft', () => {
     it('routes to runtime session when found in runtime pool', async () => {
       const runtimeSession = createMockAgentSession();
@@ -171,8 +150,6 @@ describe('question handlers — session routing', () => {
       expect(sessionManagerSession.updateQuestionDraft).toHaveBeenCalledWith(draftResponses);
     });
   });
-
-  // ─── question.cancel ───
 
   describe('question.cancel', () => {
     it('routes to runtime session when found in runtime pool', async () => {

@@ -132,7 +132,6 @@ function CommandPaletteDemo() {
   }
 
   function handleSelect(_item: CommandItem) {
-    // Handle item selection - would navigate or execute action
     handleClose();
   }
 
@@ -161,7 +160,6 @@ function CommandPaletteDemo() {
         items, grouped results, keyboard shortcuts, and a footer with tips.
       </p>
 
-      {/* Command Palette Modal */}
       <Dialog open={open} onClose={handleClose} class="relative z-50">
         <DialogBackdrop class="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity data-[closed]:opacity-0 data-[enter]:duration-300 data-[enter]:ease-out data-[leave]:duration-200 data-[leave]:ease-in" />
 
@@ -173,7 +171,6 @@ function CommandPaletteDemo() {
                   autoFocus
                   class="col-start-1 row-start-1 h-14 w-full pr-4 pl-12 text-base text-text-primary bg-transparent outline-none placeholder:text-text-muted"
                   placeholder="Search projects, actions, or type a command..."
-                  // Command palette clears query on close, so no need to display selected item
                   displayValue={() => query}
                   onChange={(e) => setQuery((e.target as HTMLInputElement).value)}
                 />
@@ -184,7 +181,6 @@ function CommandPaletteDemo() {
 
               {showResults && (
                 <ComboboxOptions static class="max-h-80 scroll-py-2 overflow-y-auto">
-                  {/* Recent searches - only when no query */}
                   {query === '' && recentItems.length > 0 && (
                     <li class="p-2">
                       <h2 class="px-3 py-2 text-xs font-semibold text-text-tertiary uppercase tracking-wider">
@@ -210,7 +206,6 @@ function CommandPaletteDemo() {
                     </li>
                   )}
 
-                  {/* Quick actions */}
                   <li class="p-2">
                     <h2 class="px-3 py-2 text-xs font-semibold text-text-tertiary uppercase tracking-wider">
                       {query === '' ? 'Quick actions' : 'Actions'}
@@ -238,7 +233,6 @@ function CommandPaletteDemo() {
                     </ul>
                   </li>
 
-                  {/* Projects - only when searching */}
                   {query !== '' && filteredProjects.length > 0 && (
                     <li class="p-2">
                       <h2 class="px-3 py-2 text-xs font-semibold text-text-tertiary uppercase tracking-wider">
@@ -264,7 +258,6 @@ function CommandPaletteDemo() {
                     </li>
                   )}
 
-                  {/* Empty state */}
                   {query !== '' &&
                     filteredProjects.length === 0 &&
                     filteredActions.length === 0 && (
@@ -283,7 +276,6 @@ function CommandPaletteDemo() {
                 </ComboboxOptions>
               )}
 
-              {/* Footer */}
               <div class="flex items-center justify-between border-t border-surface-border px-4 py-3 text-xs text-text-muted">
                 <div class="flex items-center gap-4">
                   <span class="flex items-center gap-1">

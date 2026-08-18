@@ -224,9 +224,6 @@ function deploymentStatusPayload(overrides: Record<string, unknown> = {}): Recor
     action: 'created',
     repository: baseRepo,
     sender: { login: 'ci-bot', type: 'Bot' },
-    // GitHub places `deployment` as a top-level sibling of `deployment_status`
-    // (NOT nested under it). The deployment_status object carries only a
-    // `deployment_url` string reference, never the deployment object itself.
     deployment_status: {
       id: 654,
       state: 'success',
@@ -249,7 +246,6 @@ function deploymentStatusPayload(overrides: Record<string, unknown> = {}): Recor
   };
 }
 
-/** Mocks the GitHub API for deployment ref/sha → PR resolution. */
 function deploymentPrResolutionFetch(responses: {
   bySha?: unknown[] | (() => unknown[]);
   byRef?: unknown[] | (() => unknown[]);
@@ -275,8 +271,6 @@ function deploymentPrResolutionFetch(responses: {
   }) as typeof fetch;
 }
 
-/** A `/pulls` row on a given branch whose HEAD is `sha` — the SHA resolver
- * filters on `head.sha` (and the ref-lookup query constrains `head.ref`). */
 function prOnBranch(
   number: number,
   ref = DEPLOYMENT_REF,
@@ -287,10 +281,6 @@ function prOnBranch(
 }
 
 function mergeGroupPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  // Mirrors the real GitHub merge_group webhook payload shape (App-only event).
-  // Notably there is NO pull_request object — only a merge_group with the head
-  // SHA the merge queue wants CI to validate, and a head_ref whose `pr-<N>-<sha>`
-  // final component identifies the member PR.
   return {
     action: 'checks_requested',
     repository: baseRepo,
@@ -546,9 +536,6 @@ describe('GitHubEventExtension', () => {
     expect(received).toHaveLength(1);
     expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.deployment_status_success');
     expect(received[0].payload.state).toBe('success');
-    // The top-level `deployment` (sibling of deployment_status) must feed the
-    // normalizer so ref/sha/deploymentId survive — not blank as they were when
-    // the normalizer read the non-existent status.deployment.
     expect(received[0].payload.deploymentId).toBe(321);
     expect(received[0].payload.ref).toBe(DEPLOYMENT_REF);
     expect(received[0].payload.sha).toBe(DEPLOYMENT_SHA);
@@ -625,10 +612,6 @@ describe('GitHubEventExtension', () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
-      // PR #7 is open on feat/deploy, but its head has ADVANCED past the deployed
-      // SHA. The head.sha filter correctly rejects #7, and there is no branch
-      // fallback to re-admit it — so the deploy drops rather than clearing #7's
-      // gate for a revision that was never deployed.
       fetchImpl: deploymentPrResolutionFetch({
         bySha: [prOnBranch(7, DEPLOYMENT_REF, 'open', '000011112222000000000000000000000000aa')],
       }),
@@ -660,9 +643,6 @@ describe('GitHubEventExtension', () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
-      // /commits/{sha}/pulls returns a recently-merged PR whose HEAD is its own
-      // branch tip — NOT the deployed commit (main's HEAD) — so the head.sha
-      // filter excludes it and the deploy drops as unattributable.
       fetchImpl: deploymentPrResolutionFetch({
         bySha: [prOnBranch(9, 'feat/merged', 'closed', '99998877665500000000000000000000000000bb')],
       }),
@@ -696,9 +676,6 @@ describe('GitHubEventExtension', () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
-      // Both PRs contain the deployed commit, but only PR #7's HEAD is that
-      // commit; PR #8 (a downstream stack) has a newer HEAD. Without the
-      // head.sha filter the first open PR (#8) would be picked.
       fetchImpl: deploymentPrResolutionFetch({
         bySha: [
           prOnBranch(8, 'feat/other', 'open', '111122223333000000000000000000000000aa'),
@@ -734,8 +711,6 @@ describe('GitHubEventExtension', () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
-      // PR #7's head IS the deployed SHA, so resolution succeeds — the drop
-      // happens purely because state is `inactive`, not because no PR matches.
       fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7)] }),
     });
     const context = {
@@ -762,9 +737,6 @@ describe('GitHubEventExtension', () => {
     const res = await extension.routes[0].handle(
       webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
     );
-    // `inactive` is dropped early — before resolution — as a spec no-op (#2324),
-    // so the matched PR is never resolved and nothing publishes. An
-    // auto-inactivated deploy must not wake a subscribed workflow for a teardown.
     expect(res.status).toBe(202);
     expect(await res.json()).toMatchObject({ reason: 'inactive' });
     expect(received).toHaveLength(0);
@@ -793,9 +765,7 @@ describe('GitHubEventExtension', () => {
       repo: 'widgets',
       webhookSecret: 'secret',
     });
-    expect(row.lastWebhookAt).toBeNull(); // sanity: nothing received yet
-    // Cooldown active — inactive must still drop (202), not 503, since the
-    // spec no-op is rejected before the cooldown gate / SHA→PR resolution.
+    expect(row.lastWebhookAt).toBeNull();
     (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil = Date.now() + 60_000;
 
     const payload = deploymentStatusPayload({
@@ -810,9 +780,7 @@ describe('GitHubEventExtension', () => {
     );
     expect(res.status).toBe(202);
     expect(received).toHaveLength(0);
-    expect(resolutionCalls).toBe(0); // no SHA→PR resolution for a spec no-op
-    // A correctly signed delivery still refreshes webhook health: lastWebhookAt
-    // advances (and a prior transient error would clear) despite the drop.
+    expect(resolutionCalls).toBe(0);
     const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
     expect(after.lastWebhookAt).not.toBeNull();
     expect(after.lastWebhookAt).toBeGreaterThan(0);
@@ -823,10 +791,6 @@ describe('GitHubEventExtension', () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
-      // /commits/{sha}/pulls returns BOTH a closed PR (#9) and an open PR (#7)
-      // whose retained head.sha equals the deployed SHA. Only the open PR may be
-      // attributed — a closed/merged PR's deploy would publish under a finished
-      // PR's topic and wake a stale subscription.
       fetchImpl: deploymentPrResolutionFetch({
         bySha: [prOnBranch(9, DEPLOYMENT_REF, 'closed'), prOnBranch(7, DEPLOYMENT_REF, 'open')],
       }),
@@ -859,8 +823,6 @@ describe('GitHubEventExtension', () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
-      // ref is a 40-char SHA, not a branch — the head.sha filter still resolves
-      // the PR whose HEAD is the deployed commit (the ref-lookup leg is skipped).
       fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7)] }),
     });
     const context = {
@@ -909,8 +871,6 @@ describe('GitHubEventExtension', () => {
             capabilities: { webhooks: true, polling: true },
           };
         },
-        // The watched repo's webhook is active (signature matches), but its space
-        // is disabled — resolution would be wasted, so it must be skipped.
         async getSpaceConfig(spaceId: string, source: string) {
           return { spaceId, source, enabled: false, settings: {} };
         },
@@ -936,7 +896,7 @@ describe('GitHubEventExtension', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ spaces: 0 });
     expect(received).toHaveLength(0);
-    expect(resolutionCalls).toBe(0); // no ref/sha → PR resolution GitHub API call
+    expect(resolutionCalls).toBe(0);
     await extension.stop();
   });
 
@@ -944,7 +904,6 @@ describe('GitHubEventExtension', () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
-      // Both PRs have the deployed SHA as their HEAD — each gate must update.
       fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7), prOnBranch(8)] }),
     });
     const context = {
@@ -972,7 +931,6 @@ describe('GitHubEventExtension', () => {
       'github/acme/widgets/pull_request/7.deployment_status_success',
       'github/acme/widgets/pull_request/8.deployment_status_success',
     ]);
-    // Dedupe keys are scoped by PR so the two publishes don't collide.
     expect(received[0].dedupeKey).not.toBe(received[1].dedupeKey);
     await extension.stop();
   });
@@ -999,7 +957,6 @@ describe('GitHubEventExtension', () => {
       repo: 'widgets',
       webhookSecret: 'secret',
     });
-    // Simulate an active rate-limit cooldown on the shared token.
     (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil = Date.now() + 60_000;
 
     const payload = deploymentStatusPayload();
@@ -1009,7 +966,7 @@ describe('GitHubEventExtension', () => {
     );
     expect(res.status).toBe(503);
     expect(received).toHaveLength(0);
-    expect(resolutionCalls).toBe(0); // no resolution attempt during cooldown
+    expect(resolutionCalls).toBe(0);
     await extension.stop();
   });
 
@@ -1045,11 +1002,6 @@ describe('GitHubEventExtension', () => {
   test('transient PR-resolution failure returns 503 (marks the delivery failed, redeliverable)', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
-    // A transient failure — missing token, API error, or network/timeout — must
-    // NOT be swallowed as a permanent drop. Returning 503 marks the delivery
-    // FAILED in GitHub's log so it stays visible and eligible for manual or
-    // scripted redelivery; a 202 would mark it accepted and foreclose recovery.
-    // (GitHub does not auto-redeliver — the dedupe layer absorbs any replay.)
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async () => {
         throw new Error('network failure');
@@ -1094,7 +1046,6 @@ describe('GitHubEventExtension', () => {
     expect(event.payload.conclusion).toBe('failure');
     expect(event.payload.app).toBe('GitHub Actions');
     expect(event.payload.suiteId).toBe(123456);
-    // A suite has no browsable html_url, so the actionable link is the PR.
     expect(event.payload.prUrl).toBe('https://github.com/Acme/widgets/pull/7');
     expect(event.externalUrl).toBe('https://github.com/Acme/widgets/pull/7');
   });
@@ -1146,10 +1097,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('re-expresses draft and merge-queue transitions as distinct pull_request topics', () => {
-    // converted_to_draft is renamed draft_opened (the counterpart to
-    // ready_for_review); the queue actions keep their GitHub names. The raw
-    // action is preserved in the payload and dedupeKey — only the topic is
-    // re-expressed.
     const transitions: Array<[string, string]> = [
       ['converted_to_draft', 'draft_opened'],
       ['ready_for_review', 'ready_for_review'],
@@ -1167,7 +1114,6 @@ describe('GitHubEventExtension', () => {
       const event = toExternalEvent('space-1', normalized);
       expect(event.topic).toBe(`github/acme/widgets/pull_request/7.${topicAction}`);
       expect(event.payload.action).toBe(action);
-      // dedupeKey is keyed on the raw GitHub action, not the re-expressed topic.
       expect(event.dedupeKey).toBe(`acme/widgets:pull_request:77:${action}:delivery-1`);
     }
   });
@@ -1182,18 +1128,13 @@ describe('GitHubEventExtension', () => {
   });
 
   test('normalizes merge_group checks_requested to a PR-scoped topic', () => {
-    // merge_group is App-only (not deliverable via repo webhooks), but the
-    // normalizer resolves the PR from head_ref (gh-readonly-queue format) and
-    // emits the spec-mandated pull_request/<id>.merge_group_* topic (row 6).
     const normalized = normalizeGitHubWebhook('merge_group', 'delivery-1', mergeGroupPayload())!;
     expect(normalized.eventType).toBe('merge_group');
     expect(normalized.action).toBe('checks_requested');
-    // PR number parsed from head_ref `.../pr-123-...`.
     expect(normalized.prNumber).toBe(123);
     expect(normalized.entityId).toBe('123');
     expect(normalized.actor).toBe('github-merge-queue[bot]');
     expect(normalized.actorType).toBe('Bot');
-    // headSha is the version component (distinguishes re-enqueue cycles).
     expect(normalized.dedupeKey).toBe(
       'acme/widgets:merge_group:123:abc123def456789012345678901234567890abcd:checks_requested'
     );
@@ -1235,8 +1176,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('drops merge_group webhooks when head_ref has no parseable PR number', () => {
-    // head_sha present but head_ref is not a merge-queue ref → PR can't be
-    // resolved → drop and rely on the pull_request enqueued/dequeued fallback.
     const payload = mergeGroupPayload({
       merge_group: { ...mergeGroupPayload().merge_group, head_ref: 'refs/heads/main' },
     });
@@ -1244,8 +1183,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('merge_group PR resolution anchors to the final pr-<N> in head_ref', () => {
-    // A base branch whose name itself looks like `pr-42-maintenance` must not be
-    // mistaken for the queued PR — `pr-<N>-<sha>` is always the final component.
     const payload = mergeGroupPayload({
       merge_group: {
         ...mergeGroupPayload().merge_group,
@@ -1349,7 +1286,6 @@ describe('GitHubEventExtension', () => {
     expect(ok.status).toBe(200);
     expect(received).toHaveLength(1);
     expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.thread_resolved');
-    // The thread node id captured from the payload powers resolve actions downstream.
     expect(received[0].payload.resolveHandle).toEqual({
       kind: 'pull_request_review_thread',
       threadId: 'PRRT_kwAAA_thread',
@@ -1798,8 +1734,6 @@ describe('GitHubEventExtension', () => {
         events: string[];
         config: { content_type: string; secret: string; url: string };
       };
-      // The repo-hook API request uses REPO_HOOK_WEBHOOK_EVENTS: every event
-      // EXCEPT the app-only `merge_group` (GitHub rejects it on repo hooks).
       expect(body.events).toEqual([
         'push',
         'pull_request',
@@ -1834,10 +1768,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('concurrent re-registration of a shared hook serializes per remote hook', async () => {
-    // Two Spaces sharing one auto-managed hook (same owner/repo) re-register
-    // concurrently. Without per-hook serialization each call generates its own
-    // secret and PATCHes the same hook, and the remote mutation + DB write can
-    // complete out of order, leaving the DB secret out of sync with GitHub's.
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
@@ -1847,8 +1777,6 @@ describe('GitHubEventExtension', () => {
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
-        // Track overlap on the mutating webhook-config requests (POST /hooks,
-        // PATCH /hooks/{id}). A small delay forces overlap when not serialized.
         if (/\/hooks(\/\d+)?$/.test(u) && init?.method && init.method !== 'GET') {
           inFlight++;
           maxInFlight = Math.max(maxInFlight, inFlight);
@@ -1887,13 +1815,11 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.start(context);
       extension.registerRpcHandlers(hub, context);
-      // Establish the shared hook under space-1 (POST /hooks → id 123).
       await clientHub.request('space.github.autoConfigureWebhook', {
         spaceId: 'space-1',
         owner: 'acme',
         repo: 'widgets',
       });
-      // Re-register the SAME hook from two Spaces concurrently (both PATCH /hooks/123).
       maxInFlight = 0;
       await Promise.all([
         clientHub.request('space.github.autoConfigureWebhook', {
@@ -1907,9 +1833,7 @@ describe('GitHubEventExtension', () => {
           repo: 'widgets',
         }),
       ]);
-      // The two PATCHes of the same remote hook must not overlap.
       expect(maxInFlight).toBe(1);
-      // Both sharing Spaces end with the same secret, matching GitHub's last PATCH.
       const s1 = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
       const s2 = extension.repo.getWatchedRepo('space-2', 'acme', 'widgets');
       expect(s2).toBeTruthy();
@@ -1923,10 +1847,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('concurrent re-registration serializes across owner/repo casing differences', async () => {
-    // The shared hook identity is case-insensitive (queries use lower(owner)/
-    // lower(repo)), so `acme/widgets` and `ACME/Widgets` share one remote hook.
-    // The serialization key must be normalized to lowercase too, or the two
-    // re-registrations get separate queues and still race the same hook.
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
@@ -1965,13 +1885,11 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.start(context);
       extension.registerRpcHandlers(hub, context);
-      // Establish the shared hook under space-1 (lowercase).
       await clientHub.request('space.github.autoConfigureWebhook', {
         spaceId: 'space-1',
         owner: 'acme',
         repo: 'widgets',
       });
-      // Re-register concurrently with DIFFERENT casing — same remote hook.
       maxInFlight = 0;
       await Promise.all([
         clientHub.request('space.github.autoConfigureWebhook', {
@@ -1994,10 +1912,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('webhook deletion serializes with concurrent re-registration of the same hook', async () => {
-    // unwatchRepo's DELETE and autoConfigureWebhook's PATCH/POST of the same
-    // remote hook must serialize. Without the lock they can interleave — a
-    // DELETE racing a PATCH can leave a DB row pointing at a deleted hook, or the
-    // count check can read 1 before a concurrent upsert adds a second ref.
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
@@ -2023,7 +1937,6 @@ describe('GitHubEventExtension', () => {
         );
       }) as typeof fetch,
     });
-    // Space-1 owns the only reference to auto-hook 123 (count = 1 → unwatch deletes).
     extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
@@ -2049,7 +1962,6 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.start(context);
       extension.registerRpcHandlers(hub, context);
-      // Concurrent: unwatch (DELETE 123) and re-register (PATCH 123) the same hook.
       await Promise.allSettled([
         clientHub.request('space.github.unwatchRepo', {
           spaceId: 'space-1',
@@ -2071,12 +1983,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('unwatchRepo deletes the current hook after a queued re-registration replaces it', async () => {
-    // unwatchRepo must RE-READ the watched row inside the lock callback. It
-    // captures nothing before the lock waits, so when a prior queued
-    // re-registration has replaced hook H1 (remoteId 1) with H2 (remoteId 2),
-    // the DELETE targets the CURRENT H2 — not the stale H1, which would orphan
-    // H2. This holds the re-registration's PATCH behind a gate, queues unwatchRepo
-    // behind it, then asserts unwatch deletes H2.
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
@@ -2089,14 +1995,13 @@ describe('GitHubEventExtension', () => {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
         if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH') {
-          await patchGate; // hold the re-registration so unwatch queues behind it
+          await patchGate;
           return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
         }
         if (/\/hooks\/(\d+)$/.test(u) && init?.method === 'DELETE') {
           deletedRemoteId = Number(u.match(/\/hooks\/(\d+)$/)?.[1]);
           return new Response(null, { status: 204 });
         }
-        // POST (re-registration after the 404) creates a new hook H2 (id 2).
         return new Response(
           JSON.stringify({
             id: 2,
@@ -2132,24 +2037,20 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.start(context);
       extension.registerRpcHandlers(hub, context);
-      // Re-registration acquires the lock and blocks on the gated PATCH of H1.
       const reconfigP = clientHub.request('space.github.autoConfigureWebhook', {
         spaceId: 'space-1',
         owner: 'acme',
         repo: 'widgets',
       });
       await new Promise((r) => setTimeout(r, 10));
-      // Queue unwatchRepo behind the held lock.
       const unwatchP = clientHub.request('space.github.unwatchRepo', {
         spaceId: 'space-1',
         owner: 'acme',
         repo: 'widgets',
       });
       await new Promise((r) => setTimeout(r, 10));
-      // Release: PATCH 404 → POST H2 (id 2) → row now references H2 → lock frees.
       resolvePatch();
       await Promise.allSettled([reconfigP, unwatchP]);
-      // unwatch deleted the CURRENT hook (H2, id 2), not the stale H1 (id 1).
       expect(deletedRemoteId).toBe(2);
     } finally {
       await extension.stop();
@@ -2159,10 +2060,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('checkWebhook preserves a concurrent "update uncertain" error recorded during its GET', async () => {
-    // checkWebhook must re-read the row's CURRENT error after the GET. A slow GET
-    // can overlap a re-registration whose PATCH timed out and recorded "update
-    // uncertain"; using the error captured before the GET would clear it, even
-    // though a GET cannot verify which secret GitHub retained.
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
@@ -2173,7 +2070,6 @@ describe('GitHubEventExtension', () => {
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
-        // Gate the checkWebhook GET so the concurrent error lands mid-flight.
         if (/\/hooks\/1$/.test(u) && (!init?.method || init.method === 'GET')) {
           await getGate;
         }
@@ -2219,7 +2115,6 @@ describe('GitHubEventExtension', () => {
         repo: 'widgets',
       });
       await new Promise((r) => setTimeout(r, 10));
-      // Simulate a concurrent re-registration PATCH timeout recording the uncertainty.
       const repo = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
       extension.repo.updateWebhookStatus(repo.id, {
         lastError: 'webhook update uncertain: timeout',
@@ -2235,8 +2130,6 @@ describe('GitHubEventExtension', () => {
     }
   });
 
-  // The full event set the daemon expects, and the stale subset a hook registered
-  // before pull_request_review_thread (and status) existed would still carry.
   const FULL_WEBHOOK_EVENTS = [
     'push',
     'pull_request',
@@ -2272,9 +2165,6 @@ describe('GitHubEventExtension', () => {
   }
 
   test('checkWebhook self-heals an auto-registered hook that is missing required events', async () => {
-    // When WEBHOOK_EVENTS grows (e.g. pull_request_review_thread added), an
-    // already-registered hook lags behind. checkWebhook must PATCH it back into
-    // sync and re-validate instead of surfacing a stale "missing events" error.
     let patchCount = 0;
     let patchBody: { events?: string[] } | undefined;
     const db = setupDb();
@@ -2315,7 +2205,6 @@ describe('GitHubEventExtension', () => {
       onSourceConfigChanged() {},
     };
     try {
-      // autoReconcileWebhooks defaults off → start() must NOT sweep here.
       await extension.start(context);
       extension.registerRpcHandlers(hub, context);
       await clientHub.request('space.github.checkWebhook', {
@@ -2324,9 +2213,6 @@ describe('GitHubEventExtension', () => {
         repo: 'widgets',
       });
       expect(patchCount).toBe(1);
-      // The self-heal PATCH (updateRemoteWebhook) must also exclude the
-      // app-only merge_group from the repo-hook event list, mirroring
-      // createRemoteWebhook — a regression here would re-open the Codex P1.
       expect(patchBody?.events ?? []).not.toContain('merge_group');
       const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
       expect(after.webhookActive).toBe(true);
@@ -2337,7 +2223,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('checkWebhook does NOT self-heal a user-configured (non-auto-registered) hook', async () => {
-    // A user-managed hook is reported as unhealthy but never mutated.
     let patchCount = 0;
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
@@ -2392,17 +2277,14 @@ describe('GitHubEventExtension', () => {
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
-        // acme/widgets: stale → GET returns stale, PATCH returns full.
         if (/\/repos\/acme\/widgets\/hooks\/1$/.test(u) && init?.method === 'PATCH') {
           patches++;
           return hookResponse(1, FULL_WEBHOOK_EVENTS);
         }
         if (/\/repos\/acme\/widgets\/hooks\/1$/.test(u))
           return hookResponse(1, STALE_WEBHOOK_EVENTS);
-        // acme/gadgets: in sync → GET only, never PATCHed.
         if (/\/repos\/acme\/gadgets\/hooks\/2$/.test(u))
           return hookResponse(2, FULL_WEBHOOK_EVENTS);
-        // acme/legacy: user-configured → never reached (filtered out before fetch).
         throw new Error(`unexpected fetch ${init?.method ?? 'GET'} ${u}`);
       }) as typeof fetch,
     });
@@ -2429,8 +2311,6 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.start(context);
       await extension.reconcileManagedWebhooks();
-      // Only the stale auto-registered hook (widgets) was PATCHed; the in-sync
-      // hook (gadgets) and the user hook (legacy) were left alone.
       expect(patches).toBe(1);
     } finally {
       await extension.stop();
@@ -2438,9 +2318,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('start() without autoReconcileWebhooks does not fire the reconciliation sweep', async () => {
-    // The sweep is opt-in (app.ts) so unit tests with a token + watched repos do
-    // not make background API calls. A stale hook present at start() must NOT be
-    // touched unless the option is set.
     let patches = 0;
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
@@ -2468,7 +2345,6 @@ describe('GitHubEventExtension', () => {
     };
     try {
       await extension.start(context);
-      // Give the (absent) background sweep a chance to fire — it must not.
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(patches).toBe(0);
     } finally {
@@ -2477,9 +2353,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('reconcileManagedWebhooks updates shared hook health after a successful reconcile', async () => {
-    // A hook previously marked inactive with a missing-events error must flip
-    // back to active once the sweep repairs it — markWebhookReceived will not,
-    // since it preserves the error while webhook_active = 0.
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
@@ -2522,8 +2395,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('reconcileManagedWebhooks reconciles each shared hook once across spaces', async () => {
-    // Two Spaces watching the same repo share one remote hook; the sweep must GET
-    // it once (deduped by owner/repo + remoteId), not once per Space.
     let gets = 0;
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
@@ -2564,9 +2435,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('reconcileManagedWebhooks stops (and sets the cooldown) when a hook GET is rate-limited', async () => {
-    // githubFetch throws GitHubApiError on 429 without setting rateLimitedUntil;
-    // the sweep must detect it, set the shared cooldown, and stop — not keep
-    // firing requests at an active limit (which would extend it).
     const fetched: string[] = [];
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
@@ -2601,9 +2469,7 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.start(context);
       await extension.reconcileManagedWebhooks();
-      // The second hook was never reached: the sweep stopped on the widgets 429.
       expect(fetched.some((u) => /gadgets/.test(u))).toBe(false);
-      // The cooldown was set: a second sweep returns immediately (no new fetch).
       const widgetsFetchesAfterFirst = fetched.filter((u) => /widgets/.test(u)).length;
       await extension.reconcileManagedWebhooks();
       expect(fetched.filter((u) => /widgets/.test(u)).length).toBe(widgetsFetchesAfterFirst);
@@ -2613,19 +2479,12 @@ describe('GitHubEventExtension', () => {
   });
 
   test('checkWebhook self-heal PATCHes with the current secret, not the snapshot', async () => {
-    // A concurrent autoConfigureWebhook that rotates the secret DURING the
-    // check's GET must be reflected in the self-heal PATCH. The PATCH re-reads
-    // the row under the per-hook lock and uses the new secret; without the
-    // re-read it would PATCH the stale snapshot secret, desync the remote secret,
-    // and break HMAC verification on every later delivery.
     let patchedSecret = '';
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
         if (/\/hooks\/1$/.test(u) && (!init?.method || init.method === 'GET')) {
-          // Simulate a concurrent autoConfigure completing during the GET: it
-          // rotated the shared hook's secret from secret-0 to secret-rotated.
           extension.repo.updateSharedAutoHook({
             owner: 'acme',
             repo: 'widgets',
@@ -2677,7 +2536,6 @@ describe('GitHubEventExtension', () => {
         owner: 'acme',
         repo: 'widgets',
       });
-      // The self-heal re-read the rotated secret; the PATCH used it, not secret-0.
       expect(patchedSecret).toBe('secret-rotated');
       const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
       expect(after.webhookSecret).toBe('secret-rotated');
@@ -2689,10 +2547,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('reconcileManagedWebhooks treats a bare 403 as a permission failure, not a rate limit', async () => {
-    // A 403 is usually a permission failure (token can't manage webhooks for the
-    // repo), not a rate limit — parseRateLimitHeaders treats a bare 403 the same
-    // way. The sweep must log it and reconcile the NEXT hook instead of aborting
-    // the whole one-shot sweep.
     const fetched: string[] = [];
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
@@ -2735,7 +2589,6 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.start(context);
       await extension.reconcileManagedWebhooks();
-      // The widgets 403 did NOT abort the sweep — gadgets was still reconciled.
       expect(fetched.some((u) => /gadgets/.test(u))).toBe(true);
       const gadgets = extension.repo.getWatchedRepo('space-1', 'acme', 'gadgets')!;
       expect(gadgets.webhookActive).toBe(true);
@@ -2746,14 +2599,10 @@ describe('GitHubEventExtension', () => {
   });
 
   test('reconcileManagedWebhooks preserves "update uncertain" on a GET-only reconcile but clears it after a PATCH', async () => {
-    // A GET cannot verify which secret GitHub retained, so a pre-existing "update
-    // uncertain" error (from an autoConfigure PATCH that timed out) must survive
-    // a GET-only reconcile. A PATCH reaffirms the stored secret, resolving it.
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
-        // gadgets is in sync → GET-only. widgets is stale → PATCH.
         if (/\/hooks\/2$/.test(u)) return hookResponse(2, FULL_WEBHOOK_EVENTS);
         if (/\/hooks\/1$/.test(u) && init?.method === 'PATCH')
           return hookResponse(1, FULL_WEBHOOK_EVENTS);
@@ -2788,10 +2637,8 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.start(context);
       await extension.reconcileManagedWebhooks();
-      // widgets was PATCHed → secret reaffirmed → uncertainty resolved.
       const widgets = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
       expect(widgets.webhookLastError).toBeNull();
-      // gadgets was GET-only → uncertainty PRESERVED (a GET can't clear it).
       const gadgets = extension.repo.getWatchedRepo('space-1', 'acme', 'gadgets')!;
       expect(gadgets.webhookLastError).toContain('update uncertain');
     } finally {
@@ -2800,17 +2647,12 @@ describe('GitHubEventExtension', () => {
   });
 
   test('checkWebhook self-heal validates against the re-read row, not a stale URL', async () => {
-    // A concurrent autoConfigure that changes the hook's endpoint URL (same hook
-    // id) during the check's GET must not leave the correctly-reconfigured hook
-    // flagged inactive. The self-heal re-reads the row and validates + writes
-    // status against it (the new URL), not the snapshot.
     const changedUrl = 'https://changed.example.com/webhook/github/space';
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
         if (/\/hooks\/1$/.test(u) && (!init?.method || init.method === 'GET')) {
-          // Simulate autoConfigure changing the hook's URL during the GET.
           extension.repo.updateSharedAutoHook({
             owner: 'acme',
             repo: 'widgets',
@@ -2859,7 +2701,6 @@ describe('GitHubEventExtension', () => {
         owner: 'acme',
         repo: 'widgets',
       });
-      // Validated against the re-read (changed) URL → no mismatch → healthy.
       const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
       expect(after.webhookActive).toBe(true);
       expect(after.webhookLastError).toBeNull();
@@ -2869,10 +2710,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('stop() awaits an in-flight reconciliation sweep before returning', async () => {
-    // stop() must track and await the sweep promise: its `stopped` guard only
-    // fires between hooks, so an in-flight GET/PATCH can still be underway when
-    // the source is disabled. Returning early would let the sweep mutate hooks /
-    // write health after stop (and after the DB closes during shutdown).
     let resolveGet: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
       resolveGet = resolve;
@@ -2910,20 +2747,17 @@ describe('GitHubEventExtension', () => {
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
       onSourceConfigChanged() {},
     };
-    await extension.start(context); // fires the gated sweep
-    await new Promise((r) => setTimeout(r, 10)); // let it reach the gated GET
+    await extension.start(context);
+    await new Promise((r) => setTimeout(r, 10));
     const stopP = extension.stop();
-    await new Promise((r) => setTimeout(r, 10)); // stop is waiting on the in-flight sweep
-    expect(patched).toBe(false); // still gated — sweep has not PATCHed yet
-    resolveGet(); // ungate the GET → sweep proceeds to PATCH
-    await stopP; // stop resolves only after the sweep finishes
+    await new Promise((r) => setTimeout(r, 10));
+    expect(patched).toBe(false);
+    resolveGet();
+    await stopP;
     expect(patched).toBe(true);
   });
 
   test('reconcileManagedWebhooks stops on a header-backed 403 rate limit (X-RateLimit-Remaining: 0)', async () => {
-    // A 403 carrying rate-limit evidence is a rate limit, not a permission
-    // failure — parseRateLimitHeaders classifies it as limited. githubFetch
-    // applies the cooldown, so the sweep stops instead of continuing.
     const fetched: string[] = [];
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
@@ -2961,7 +2795,6 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.start(context);
       await extension.reconcileManagedWebhooks();
-      // The 403 rate limit stopped the sweep — gadgets was never reached.
       expect(fetched.some((u) => /gadgets/.test(u))).toBe(false);
     } finally {
       await extension.stop();
@@ -2969,9 +2802,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('checkWebhook self-heal clears a pre-existing "update uncertain" error after a successful PATCH', async () => {
-    // A successful self-heal PATCH reaffirms the stored secret, resolving a
-    // prior "update uncertain" error (left by an autoConfigure PATCH that timed
-    // out) — the status write must clear it, not preserve it.
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
@@ -3019,17 +2849,13 @@ describe('GitHubEventExtension', () => {
       });
       const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
       expect(after.webhookActive).toBe(true);
-      expect(after.webhookLastError).toBeNull(); // PATCH cleared the uncertainty
+      expect(after.webhookLastError).toBeNull();
     } finally {
       await extension.stop();
     }
   });
 
   test('reconcileManagedWebhooks marks a hook inactive when the GET proves missing events but the PATCH fails', async () => {
-    // If the GET shows the hook is missing required events but the PATCH then
-    // fails (422, permission, transport), the hook currently can't deliver the
-    // new events — record that so health doesn't report a known-broken hook as
-    // active with no error.
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
@@ -3070,17 +2896,11 @@ describe('GitHubEventExtension', () => {
   });
 
   test('githubFetch does not apply a rate-limit cooldown after the credential rotates mid-request', async () => {
-    // A rate-limit response from the rotated-away token must not re-install a
-    // cooldown that blocks the new credential (which has quota). Simulate a
-    // setToken/clearToken rotation — resetRateLimitObservation bumps
-    // credentialGeneration — landing during the in-flight GET, before the 429.
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' || url instanceof URL ? String(url) : url.url;
         if (/\/hooks\/1$/.test(u) && (!init?.method || init.method === 'GET')) {
-          // Token rotated while the GET was in flight (clears the cooldown +
-          // bumps credentialGeneration). The 429 belongs to the OLD token.
           (
             extension as unknown as { resetRateLimitObservation: () => void }
           ).resetRateLimitObservation();
@@ -3108,7 +2928,6 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.start(context);
       await extension.reconcileManagedWebhooks();
-      // The rotated-away token's 429 did NOT install a cooldown for the new token.
       expect((extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil).toBe(0);
     } finally {
       await extension.stop();
@@ -3116,10 +2935,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('reconcileManagedWebhooks detects a headerless secondary 403 rate limit via the body', async () => {
-    // A 403 with NO rate-limit headers but a secondary-rate-limit body must still
-    // pause the sweep — isRateLimitError inspects the body, matching the poll/
-    // validation paths. (A bare permission 403 with a non-rate-limit body does
-    // not, covered by the earlier skip-and-continue test.)
     const fetched: string[] = [];
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
@@ -3160,19 +2975,16 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.start(context);
       await extension.reconcileManagedWebhooks();
-      expect(fetched.some((u) => /gadgets/.test(u))).toBe(false); // sweep paused
+      expect(fetched.some((u) => /gadgets/.test(u))).toBe(false);
       expect(
         (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil
-      ).toBeGreaterThan(0); // cooldown installed
+      ).toBeGreaterThan(0);
     } finally {
       await extension.stop();
     }
   });
 
   test('reconcileManagedWebhooks marks a hook inactive when the GET returns 404', async () => {
-    // A 404 means the configured remote hook is gone. The shared rows must be
-    // marked inactive (mirrors checkWebhook) instead of staying active with no
-    // error after the sweep confirmed the hook can't be fetched.
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
@@ -3211,10 +3023,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('reconcileManagedWebhooks does not reactivate or repoint a deliberately changed hook', async () => {
-    // Reconciliation is event-only drift repair. A hook that is ALSO disabled
-    // or repointed on GitHub must NOT be force-reactivated/repointed just
-    // because it is missing an event — only reconcile when missing events is the
-    // sole problem.
     let patches = 0;
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
@@ -3225,7 +3033,6 @@ describe('GitHubEventExtension', () => {
           return hookResponse(u.includes('/1') ? 1 : 2, FULL_WEBHOOK_EVENTS);
         }
         if (/\/hooks\/1$/.test(u)) {
-          // Disabled on GitHub (but missing an event) — must NOT be reactivated.
           return new Response(
             JSON.stringify({
               id: 1,
@@ -3237,8 +3044,6 @@ describe('GitHubEventExtension', () => {
           );
         }
         if (/\/hooks\/2$/.test(u)) {
-          // Repointed on GitHub (URL differs) but missing an event — must NOT be
-          // forced back to the stored URL.
           return new Response(
             JSON.stringify({
               id: 2,
@@ -3267,8 +3072,8 @@ describe('GitHubEventExtension', () => {
         webhookSecret: `secret-${remoteId}`,
         webhookUrl: 'https://example.com/webhook/github/space',
       });
-    seed('widgets', 1); // disabled on GitHub
-    seed('gadgets', 2); // repointed on GitHub
+    seed('widgets', 1);
+    seed('gadgets', 2);
     const context = {
       publisher: { publish: async () => {} },
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
@@ -3277,20 +3082,15 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.start(context);
       await extension.reconcileManagedWebhooks();
-      // Neither hook was PATCHed (no reactivation, no repoint).
       expect(patches).toBe(0);
       const widgets = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
-      expect(widgets.webhookActive).toBe(false); // reported as disabled
+      expect(widgets.webhookActive).toBe(false);
     } finally {
       await extension.stop();
     }
   });
 
   test('reconcileManagedWebhooks treats a transport failure during the PATCH as update-uncertain, not inactive', async () => {
-    // A transport timeout/abort AFTER GitHub may have applied the PATCH must not
-    // flip active:false (markWebhookReceived won't repair it while active=0).
-    // Reserve inactive for definitive API rejections (GitHubApiError); leave the
-    // prior active state and record update-uncertain. Mirrors autoConfigureWebhook.
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
@@ -3323,7 +3123,6 @@ describe('GitHubEventExtension', () => {
       await extension.start(context);
       await extension.reconcileManagedWebhooks();
       const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
-      // active NOT flipped (the PATCH may have applied); uncertainty recorded.
       expect(after.webhookActive).toBe(true);
       expect(after.webhookLastError).toContain('update uncertain');
     } finally {
@@ -3332,10 +3131,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('checkWebhook self-heal treats a transport failure during the PATCH as update-uncertain', async () => {
-    // Symmetric to the sweep path: a transport timeout/abort after GitHub may
-    // have applied the self-heal PATCH must not mark the hook inactive
-    // (markWebhookReceived won't repair a false active=0). Reserve inactive for
-    // definitive API rejections; preserve prior active + record update-uncertain.
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
@@ -3379,7 +3174,7 @@ describe('GitHubEventExtension', () => {
         repo: 'widgets',
       });
       const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
-      expect(after.webhookActive).toBe(true); // preserved (PATCH may have applied)
+      expect(after.webhookActive).toBe(true);
       expect(after.webhookLastError).toContain('update uncertain');
     } finally {
       await extension.stop();
@@ -3387,10 +3182,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('autoConfigureWebhook preserves a concurrent pollingEnabled change made during its PATCH', async () => {
-    // The upsert after the slow PATCH must not pass the pollingEnabled captured
-    // before the request — a concurrent setPollingEnabled(false) would be silently
-    // reverted. Omitting pollingEnabled makes upsertWatchedRepo preserve the
-    // row's current value.
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
@@ -3448,7 +3239,6 @@ describe('GitHubEventExtension', () => {
         repo: 'widgets',
       });
       await new Promise((r) => setTimeout(r, 10));
-      // Operator turns polling off while re-registration's PATCH is in flight.
       extension.repo.upsertWatchedRepo({
         spaceId: 'space-1',
         owner: 'acme',
@@ -3592,8 +3382,6 @@ describe('GitHubEventExtension', () => {
     const previousPublicUrl = process.env.HYPERNEO_PUBLIC_URL;
     process.env.HYPERNEO_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
-    // The remote hook was deleted: PATCH returns 404, and the replacement POST
-    // also fails (e.g. 422 validation). Recovery cannot establish a hook.
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
         const path = new URL(String(url)).pathname;
@@ -3622,7 +3410,6 @@ describe('GitHubEventExtension', () => {
     };
     try {
       extension.registerRpcHandlers(hub, context);
-      // Existing auto-registered repo whose cached state claims an active hook.
       extension.repo.upsertWatchedRepo({
         spaceId: 'space-1',
         owner: 'acme',
@@ -3641,8 +3428,6 @@ describe('GitHubEventExtension', () => {
         })
       ).rejects.toThrow();
       const watched = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets');
-      // The failed recovery is persisted: the hook is inactive with an error,
-      // not left cached as active.
       expect(watched?.webhookActive).toBe(false);
       expect(watched?.webhookLastError).toBeTruthy();
     } finally {
@@ -3662,7 +3447,6 @@ describe('GitHubEventExtension', () => {
         if (path.endsWith('/user')) {
           return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
         }
-        // The reused shared hook is gone: PATCH 404, replacement POST fails.
         if (path.includes('/hooks') && init?.method === 'PATCH') {
           return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
         }
@@ -3685,8 +3469,6 @@ describe('GitHubEventExtension', () => {
     };
     try {
       extension.registerRpcHandlers(hub, context);
-      // Space-1 owns the auto-managed hook; Space-2 has no row yet, so its
-      // autoConfigureWebhook reuses Space-1's hook as `source` (existing is null).
       extension.repo.upsertWatchedRepo({
         spaceId: 'space-1',
         owner: 'acme',
@@ -3706,8 +3488,6 @@ describe('GitHubEventExtension', () => {
           repo: 'widgets',
         })
       ).rejects.toThrow();
-      // The reused shared hook (the source row in Space-1) is marked inactive —
-      // not just the local (null) existing row.
       const source = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets');
       expect(source?.webhookActive).toBe(false);
       expect(source?.webhookLastError).toBeTruthy();
@@ -3728,8 +3508,6 @@ describe('GitHubEventExtension', () => {
         if (path.endsWith('/user')) {
           return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
         }
-        // The PATCH (secret rotation) times out after the mutation was sent —
-        // GitHub may have applied the new secret even though no response returned.
         if (path.includes('/hooks') && init?.method === 'PATCH') {
           throw new Error('The operation was aborted due to timeout');
         }
@@ -3769,8 +3547,6 @@ describe('GitHubEventExtension', () => {
         })
       ).rejects.toThrow();
       const watched = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets');
-      // Active is unchanged (the request's outcome is unknown, not confirmed
-      // inactive), but an uncertain error is recorded so the panel degrades.
       expect(watched?.webhookActive).toBe(true);
       expect(watched?.webhookLastError).toContain('uncertain');
     } finally {
@@ -3790,8 +3566,6 @@ describe('GitHubEventExtension', () => {
         if (path.endsWith('/user')) {
           return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
         }
-        // The hook is gone (PATCH 404); the replacement POST times out after
-        // being sent — it may have committed a new hook.
         if (path.includes('/hooks') && init?.method === 'PATCH') {
           return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
         }
@@ -3834,8 +3608,6 @@ describe('GitHubEventExtension', () => {
         })
       ).rejects.toThrow();
       const watched = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets');
-      // The POST may have created a replacement hook, so the hook is NOT marked
-      // inactive — instead an uncertain error is recorded (Degraded).
       expect(watched?.webhookActive).toBe(true);
       expect(watched?.webhookLastError).toContain('uncertain');
     } finally {
@@ -6091,8 +5863,6 @@ describe('GitHubEventExtension', () => {
         const page = parsed.searchParams.get('page');
         pullsPages.push(page);
         if (page === '2') {
-          // Page 2 is entirely older than the watermark — the cutoff must stop
-          // pagination here and clear the backlog.
           return pollingResponse(
             Array.from({ length: 50 }, (_, index) =>
               createPullRequestRow(100 + index, {
@@ -6150,9 +5920,6 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/pulls')) {
         const page = parsed.searchParams.get('page');
         if (page === '2') {
-          // Page 2 is entirely older than the watermark — cutoff fires and
-          // clears the backlog, but check-run polling is deferred this cycle
-          // because page 1 was not re-fetched.
           return pollingResponse(
             Array.from({ length: 50 }, (_, index) =>
               createPullRequestRow(100 + index, {
@@ -6162,7 +5929,6 @@ describe('GitHubEventExtension', () => {
             )
           );
         }
-        // Page 1 on the next cycle: includes the newly opened PR #2200.
         return pollingResponse([
           createPullRequestRow(2200, {
             updated_at: '2026-06-20T00:00:00Z',
@@ -6185,15 +5951,11 @@ describe('GitHubEventExtension', () => {
       return pollingResponse([]);
     }) as typeof fetch;
     try {
-      // Cycle 1: cutoff clears the resumed page backlog. Check-run polling
-      // must NOT run because page 1 was not fetched.
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
       expect(checkRunCallCount).toBe(0);
       const cursor1AfterCutoff = extension.repo.listPollingRepos()[0].pollCursor;
       expect(cursor1AfterCutoff?.processedPages?.pulls).toBe(1);
 
-      // Cycle 2: page 1 is fetched, PR #2200 is discovered, check-run polling
-      // runs and emits check_failed.
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
       expect(checkRunCallCount).toBeGreaterThan(0);
       expect(
@@ -6238,7 +6000,6 @@ describe('GitHubEventExtension', () => {
         const page = parsed.searchParams.get('page');
         pullsPages.push(page);
         if (page === '2') {
-          // First 3 rows are newer than the watermark; the rest are older.
           return pollingResponse(
             Array.from({ length: 20 }, (_, index) =>
               createPullRequestRow(200 + index, {
@@ -6258,7 +6019,6 @@ describe('GitHubEventExtension', () => {
       expect(pullsPages).toEqual(['2']);
       const cursor = extension.repo.listPollingRepos()[0].pollCursor;
       expect(cursor?.processedPages?.pulls).toBe(1);
-      // Newer rows are head-tracked and published.
       expect(cursor?.recentPullRequestHeadShas?.[200]).toBe('mixed-sha-0');
       expect(cursor?.recentPullRequestHeadShas?.[201]).toBe('mixed-sha-1');
       expect(cursor?.recentPullRequestHeadShas?.[202]).toBe('mixed-sha-2');
@@ -6293,9 +6053,6 @@ describe('GitHubEventExtension', () => {
     const sharedWatermark = Date.parse('2026-06-20T00:00:00Z');
     extension.repo.updatePollCursor(repo.id, {
       lastSeenAt: sharedWatermark,
-      // Legacy cursor: tracked heads exist but no pulls-specific watermark.
-      // The shared watermark may be newer than a PR's updated_at, so the
-      // cutoff must not drop the row before head/open-state refresh runs.
       recentPullRequestNumbers: [7],
       recentPullRequestHeadShas: { 7: 'old-sha' },
     });
@@ -6306,7 +6063,6 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/pulls')) {
         return pollingResponse([
           createPullRequestRow(7, {
-            // Older than the shared watermark but newer than an unseeded pulls cursor.
             updated_at: '2026-06-15T00:00:00Z',
             head: { sha: 'new-sha' },
           }),
@@ -6366,8 +6122,6 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/issues/comments')) return pollingResponse([]);
       if (path.endsWith('/pulls/comments')) return pollingResponse([]);
       if (path.endsWith('/pulls')) {
-        // Page 2 returns 100 unrelated PRs — backlog stays active. PR #7 is on
-        // an unfetched page, so its cursor head must not be scanned.
         return pollingResponse(
           Array.from({ length: 100 }, (_, index) =>
             createPullRequestRow(200 + index, {
@@ -6385,7 +6139,6 @@ describe('GitHubEventExtension', () => {
     }) as typeof fetch;
     try {
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
-      // No check-run requests at all — polling is deferred until page 1.
       expect(checkRunCallCount).toBe(0);
       expect(received.some((item) => item.payload.eventType === 'check_run')).toBe(false);
     } finally {
@@ -6426,7 +6179,6 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/pulls')) {
         const page = parsed.searchParams.get('page');
         if (page === '2') {
-          // Full page of 100 tied rows — backlog continues to page 3.
           return pollingResponse(
             Array.from({ length: 100 }, (_, index) =>
               createPullRequestRow(100 + index, {
@@ -6437,8 +6189,6 @@ describe('GitHubEventExtension', () => {
           );
         }
         if (page === '3') {
-          // Partial page of tied rows — backlog clears. The 1ms bump fires
-          // because endpointPending === endpointWatermark.
           return pollingResponse([
             createPullRequestRow(7, {
               updated_at: '2026-06-15T00:00:00Z',
@@ -6446,8 +6196,6 @@ describe('GitHubEventExtension', () => {
             }),
           ]);
         }
-        // Page 1 on subsequent cycles: the 1ms bump makes tied rows strictly
-        // older, so the < cutoff fires and clears the backlog.
         return pollingResponse([
           createPullRequestRow(7, {
             updated_at: '2026-06-15T00:00:00Z',
@@ -6462,19 +6210,14 @@ describe('GitHubEventExtension', () => {
       return pollingResponse([]);
     }) as typeof fetch;
     try {
-      // Cycle 1: page 2 (100 tied rows). Backlog continues, check-runs deferred.
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
       expect(checkRunCallCount).toBe(0);
 
-      // Cycle 2: page 3 (1 tied row). Backlog clears. Bump fires because
-      // endpointPending === endpointWatermark.
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
       expect(checkRunCallCount).toBe(0);
       const cursor = extension.repo.listPollingRepos()[0].pollCursor;
       expect(cursor?.endpointLastSeenAt?.pulls).toBe(watermark + 1);
 
-      // Cycle 3: page 1. The 1ms-bumped watermark makes tied rows strictly
-      // older → cutoff fires → backlog clears → check-runs run.
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
       expect(checkRunCallCount).toBeGreaterThan(0);
     } finally {
@@ -6512,10 +6255,6 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/issues/comments')) return pollingResponse([]);
       if (path.endsWith('/pulls/comments')) return pollingResponse([]);
       if (path.endsWith('/pulls')) {
-        // Page 2 rows are older than the watermark — cutoff fires and clears
-        // the backlog, but page 1 was not fetched so check-run polling is
-        // deferred. The shared cursor must NOT advance to avoid shifting the
-        // check-run baseline for newly discovered heads.
         return pollingResponse([
           createPullRequestRow(100, {
             updated_at: '2026-06-14T00:00:00Z',
@@ -6528,7 +6267,6 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
       const cursor = extension.repo.listPollingRepos()[0].pollCursor;
-      // Shared lastSeenAt must not advance past the original watermark.
       expect(cursor?.lastSeenAt).toBe(watermark);
       expect(cursor?.pendingLastSeenAt).toBe(watermark);
     } finally {
@@ -6609,7 +6347,6 @@ describe('GitHubEventExtension', () => {
     }) as typeof fetch;
     try {
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
-      // Fork heads are queried on both the fork repo and the watched base repo.
       expect(checkRunPaths).toEqual([
         '/repos/contrib/widgets-fork/commits/fork-sha/check-runs',
         '/repos/acme/widgets/commits/fork-sha/check-runs',
@@ -6623,11 +6360,6 @@ describe('GitHubEventExtension', () => {
   });
 
   test('an inaccessible fork head records a partial poll error', async () => {
-    // A watched PR whose head lives in a fork the token cannot read returns 403
-    // for the fork's check-runs while the base-repo leg and primary endpoints
-    // succeed. The cycle must record a partial poll error so the health badge
-    // degrades — otherwise lastPollAt advances, the prior partial error clears,
-    // and the panel reports Healthy while fork check-run events are missed.
     const db = setupDb();
     const { service } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token');
@@ -6656,8 +6388,6 @@ describe('GitHubEventExtension', () => {
           }),
         ]);
       if (path.endsWith('/check-runs')) {
-        // Fork head is inaccessible (token lacks read on the contributor fork);
-        // the watched base repo's check-runs succeed.
         if (path.includes('contrib/widgets-fork')) {
           return new Response(JSON.stringify({ message: 'Resource not accessible' }), {
             status: 403,
@@ -6695,9 +6425,6 @@ describe('GitHubEventExtension', () => {
       pollingEnabled: true,
     });
     const repo = extension.repo.listPollingRepos()[0];
-    // Simulate a check run that completed after polling was enabled — it must
-    // not be filtered as historical. checkRunPollingEnabledAt is captured at
-    // upsert time; a run completing after it should be published.
     const enabledAt = repo.pollCursor?.checkRunPollingEnabledAt ?? Date.now();
     const afterEnabled = new Date(enabledAt + 1000).toISOString();
     const beforeEnabled = new Date(enabledAt - 1000).toISOString();
@@ -6709,7 +6436,6 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/check-runs'))
         return pollingResponse({
           check_runs: [
-            // filter=all returns newest-first.
             createCheckRunRow({ id: 7002, completed_at: afterEnabled }),
             createCheckRunRow({ id: 7001, completed_at: beforeEnabled }),
           ],
@@ -6799,8 +6525,6 @@ describe('GitHubEventExtension', () => {
         if (path.includes('contrib/widgets-fork')) {
           return new Response('Forbidden', { status: 403 });
         }
-        // Only the base-sha head has a failure; fork-sha has no runs on the
-        // base repo in this scenario.
         if (headSha === 'base-sha')
           return pollingResponse({
             check_runs: [createCheckRunRow({ id: 7001, head_sha: 'base-sha', pull_requests: [] })],
@@ -6854,7 +6578,6 @@ describe('GitHubEventExtension', () => {
         );
       }
       if (path.endsWith('/check-runs'))
-        // filter=all returns newest-first: a success at 10:05 then a failure at 10:00.
         return pollingResponse({
           check_runs: [
             createCheckRunRow({
@@ -6877,7 +6600,6 @@ describe('GitHubEventExtension', () => {
       const repo = extension.repo.listPollingRepos()[0];
       await extension.pollWatchedRepo(repo, fetchImpl);
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
-      // Neither PR should receive a check_failed since the latest run is green.
       const topics = db
         .prepare(
           `SELECT topic FROM space_external_events WHERE topic LIKE 'github/acme/widgets/pull_request/%.check_failed'`
@@ -6921,7 +6643,6 @@ describe('GitHubEventExtension', () => {
         ]);
       if (path.endsWith('/check-runs')) {
         checkRunPaths.push(path);
-        // Fork repo has no check runs; base repo has the failure.
         if (path.includes('contrib/widgets-fork')) return pollingResponse({ check_runs: [] });
         return pollingResponse({
           check_runs: [createCheckRunRow({ id: 7018, head_sha: 'fork-sha', pull_requests: [] })],
@@ -6956,8 +6677,6 @@ describe('GitHubEventExtension', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // Disable the repo (enabled false), then re-enable — the check-run
-    // baseline should refresh even though pollingEnabled stayed true.
     extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
@@ -7058,8 +6777,6 @@ describe('GitHubEventExtension', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // Webhook delivers the unscoped legacy key for PR #7 before any polling
-    // populates checkRunLegacyPrs.
     const webhookEvent = toExternalEvent(
       'space-1',
       normalizeGitHubWebhook(
@@ -7076,7 +6793,6 @@ describe('GitHubEventExtension', () => {
     );
     await service.publish(webhookEvent);
     received.length = 0;
-    // Now polling observes the same check run for PR #8 (same head SHA).
     const fetchImpl = (async (url: string | URL | Request) => {
       const path = new URL(String(url)).pathname;
       if (path.endsWith('/issues/comments')) return pollingResponse([]);
@@ -7134,8 +6850,6 @@ describe('GitHubEventExtension', () => {
       }
       if (path.endsWith('/check-runs')) {
         const headSha = decodeURIComponent(path.split('/commits/')[1].split('/check-runs')[0]);
-        // Cycle 1: head-a returns a 500 (transient), head-b returns a failure.
-        // Cycle 2: head-a returns the failure that completed during cycle 1.
         if (pollCount === 1) {
           if (headSha === 'head-a') return new Response('Server Error', { status: 500 });
           return pollingResponse({
@@ -7158,7 +6872,6 @@ describe('GitHubEventExtension', () => {
         .filter((item) => item.payload.eventType === 'check_run')
         .map((item) => item.payload.checkRunId)
         .sort();
-      // head-a's event is not lost even though head-b advanced its own cursor.
       expect(checkRunIds).toEqual([7001, 7002]);
     } finally {
       await extension.stop();
@@ -7213,8 +6926,6 @@ describe('GitHubEventExtension', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // Simulate a legacy cursor: no checkRunPollingEnabledAt, an old
-    // committed watermark, and an old createdAt.
     const repo = extension.repo.listPollingRepos()[0];
     const committedAt = Date.parse('2026-06-20T00:00:00Z');
     extension.repo.updatePollCursorJson(repo.id, {
@@ -7229,7 +6940,6 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
       if (path.endsWith('/check-runs'))
         return pollingResponse({
-          // A failure from before the committed watermark — must be dropped.
           check_runs: [createCheckRunRow({ id: 7001, completed_at: '2026-06-18T00:00:00Z' })],
         });
       return pollingResponse([]);
@@ -7281,9 +6991,7 @@ describe('GitHubEventExtension', () => {
     }) as typeof fetch;
     try {
       const repo = extension.repo.listPollingRepos()[0];
-      // Cycle 1: PR #7 gets the failure.
       await extension.pollWatchedRepo(repo, fetchImpl);
-      // Cycle 2: PR #8 joins the same head — the failure must be re-evaluated.
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
       const storedRows = db
         .prepare(
@@ -7338,7 +7046,6 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/check-runs')) {
         const headSha = decodeURIComponent(path.split('/commits/')[1].split('/check-runs')[0]);
         if (headSha === 'other-sha')
-          // A later successful check on another head that advances the global cursor.
           return pollingResponse({
             check_runs: [
               createCheckRunRow({
@@ -7349,7 +7056,6 @@ describe('GitHubEventExtension', () => {
               }),
             ],
           });
-        // shared-sha has the older failure that must not be dropped.
         return pollingResponse({
           check_runs: [createCheckRunRow({ id: 7001, head_sha: 'shared-sha', pull_requests: [] })],
         });
@@ -7359,9 +7065,6 @@ describe('GitHubEventExtension', () => {
     try {
       const repo = extension.repo.listPollingRepos()[0];
       await extension.pollWatchedRepo(repo, fetchImpl);
-      // Cycle 2: PR #8 joins shared-sha — the per-head watermark was cleared,
-      // but the global cursor advanced past the failure on cycle 1. The reset
-      // head must seed below the global cursor so the failure is re-evaluated.
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
       const topics = db
         .prepare(
@@ -7394,7 +7097,6 @@ describe('GitHubEventExtension', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // Disable polling, then re-enable — the check-run baseline should refresh.
     extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
@@ -7417,10 +7119,7 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
       if (path.endsWith('/check-runs'))
         return pollingResponse({
-          check_runs: [
-            // Failure from the disabled window — must be filtered.
-            createCheckRunRow({ id: 7001, completed_at: '2020-01-01T00:00:00Z' }),
-          ],
+          check_runs: [createCheckRunRow({ id: 7001, completed_at: '2020-01-01T00:00:00Z' })],
         });
       return pollingResponse([]);
     }) as typeof fetch;
@@ -7447,7 +7146,6 @@ describe('GitHubEventExtension', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // Webhook delivers the unscoped legacy key for PR #7.
     const webhookEvent = toExternalEvent(
       'space-1',
       normalizeGitHubWebhook(
@@ -7468,7 +7166,6 @@ describe('GitHubEventExtension', () => {
       const path = new URL(String(url)).pathname;
       if (path.endsWith('/issues/comments')) return pollingResponse([]);
       if (path.endsWith('/pulls/comments')) return pollingResponse([]);
-      // /pulls orders PRs [8, 7] — #8 is first but #7 owns the legacy key.
       if (path.endsWith('/pulls'))
         return pollingResponse([
           createPullRequestRow(8, { head: { sha: 'abc123' } }),
@@ -7487,8 +7184,6 @@ describe('GitHubEventExtension', () => {
           `SELECT dedupe_key FROM space_external_events WHERE topic LIKE 'github/acme/widgets/pull_request/%.check_failed'`
         )
         .all() as { dedupe_key: string }[];
-      // #7 keeps the unscoped key; #8 gets the scoped key even though it was
-      // first in the fan-out list.
       expect(dedupeKeys.map((row) => row.dedupe_key).sort()).toEqual([
         'acme/widgets:check_run:7001:failure',
         'acme/widgets:check_run:7001:failure:8',
@@ -7691,8 +7386,6 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/issues/comments')) return pollingResponse([]);
       if (path.endsWith('/pulls/comments')) return pollingResponse([]);
       if (path.endsWith('/pulls')) {
-        // Newest first (sort=updated&direction=desc). Return more than the
-        // REACTION_POLL_PR_LIMIT (10) so the selection order is observable.
         const numbers = Array.from({ length: 15 }, (_, i) => 100 - i);
         return pollingResponse(numbers.map((n) => createPullRequestRow(n)));
       }
@@ -7707,7 +7400,6 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
 
-      // Only the newest 10 PRs (100..91) should be polled for reactions.
       expect(calledReactions).toEqual([100, 99, 98, 97, 96, 95, 94, 93, 92, 91]);
       expect(received.filter((event) => event.payload.eventType === 'reaction')).toHaveLength(10);
     } finally {
@@ -7730,8 +7422,6 @@ describe('GitHubEventExtension', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // Seed a cursor with a committed watermark of 2026-06-01 so reactions
-    // older than that are treated as historical backfill.
     const seeded = extension.repo.listPollingRepos()[0];
     extension.repo.updatePollCursor(seeded.id, {
       lastSeenAt: Date.parse('2026-06-01T00:00:00Z'),
@@ -7784,7 +7474,6 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/issues/comments')) return pollingResponse([]);
       if (path.endsWith('/pulls/comments')) return pollingResponse([]);
       if (path.endsWith('/pulls')) {
-        // Newest-first; first 5 are closed, next 5 are open.
         const closed = Array.from({ length: 5 }, (_, i) => ({
           ...createPullRequestRow(100 - i),
           state: 'closed',
@@ -7802,7 +7491,6 @@ describe('GitHubEventExtension', () => {
 
     try {
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
-      // Closed PRs (100..96) must be filtered out; only open PRs (90..86) polled.
       expect(calledReactions).toEqual([90, 89, 88, 87, 86]);
     } finally {
       await extension.stop();
@@ -7844,14 +7532,11 @@ describe('GitHubEventExtension', () => {
 
     try {
       const repo = extension.repo.listPollingRepos()[0];
-      // Cycle 0: PRs 5, 4, 3 all open → all tracked.
       pullsPages.push([createPullRequestRow(5), createPullRequestRow(4), createPullRequestRow(3)]);
       await extension.pollWatchedRepo(repo, fetchImpl);
       expect(calledReactions.slice()).toEqual([5, 4, 3]);
       calledReactions.length = 0;
 
-      // Cycle 1: PR 4 closes. Delta reports it closed → must be dropped,
-      // leaving only 5 and 3 as reaction targets.
       pullsPages.push([
         createPullRequestRow(5),
         { ...createPullRequestRow(4), state: 'closed' },
@@ -7879,9 +7564,6 @@ describe('GitHubEventExtension', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // PR updated Jun 15; the +1 landed Jun 10 (before the PR metadata update).
-    // A naive cursor would commit Jun 15 after a failed reaction fetch and
-    // then treat the Jun 10 +1 as stale on the next cycle.
     const prRow = { ...createPullRequestRow(7), updated_at: '2026-06-15T00:00:00Z' };
     let reactionCalls = 0;
     const fetchImpl = (async (url: string | URL | Request) => {
@@ -7891,7 +7573,6 @@ describe('GitHubEventExtension', () => {
       if (path.endsWith('/pulls')) return pollingResponse([prRow]);
       if (path.endsWith('/issues/7/reactions')) {
         reactionCalls++;
-        // Cycle 0: transient 500. Cycle 1: return the +1.
         if (reactionCalls === 1)
           return new Response(JSON.stringify({ message: 'server error' }), { status: 500 });
         return pollingResponse([
@@ -7930,9 +7611,6 @@ describe('GitHubEventExtension', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // Prior fresh reaction timestamp; a complete cycle would advance it, but a
-    // partial (budget-starved) cycle that skips a later PR must leave it
-    // untouched so the repo can age into stale.
     const priorReactionAt = Date.now() - 3_600_000;
     extension.repo.updatePollCursor(repo.id, { lastReactionPollAt: priorReactionAt });
 
@@ -7945,9 +7623,6 @@ describe('GitHubEventExtension', () => {
           createPullRequestRow(1, { head: { sha: 's1' } }),
           createPullRequestRow(2, { head: { sha: 's2' } }),
         ]);
-      // PR #1 succeeds but drops remaining below the reaction floor (100) so PR
-      // #2 is skipped on the next iteration. Still above the low-remaining
-      // threshold (10), so no cooldown is applied.
       if (path.endsWith('/issues/1/reactions')) return pollingResponse([], 50);
       if (path.endsWith('/issues/2/reactions'))
         throw new Error('PR #2 must be skipped, not polled');
@@ -7957,7 +7632,6 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
       const watched = extension.repo.getWatchedRepoById(repo.id);
-      // Freshness was NOT advanced by PR #1's success while PR #2 was skipped.
       expect(watched?.pollCursor?.lastReactionPollAt).toBe(priorReactionAt);
     } finally {
       await extension.stop();
@@ -7991,10 +7665,7 @@ describe('GitHubEventExtension', () => {
           createPullRequestRow(1, { head: { sha: 's1' } }),
           createPullRequestRow(2, { head: { sha: 's2' } }),
         ]);
-      // PR #1 succeeds with a healthy budget (sets reactionPolledAt).
       if (path.endsWith('/issues/1/reactions')) return pollingResponse([]);
-      // PR #2: headerless 403 secondary-rate-limit body, NO X-RateLimit headers.
-      // This break path must also count as a skipped target.
       if (path.endsWith('/issues/2/reactions'))
         return new Response(
           JSON.stringify({ message: 'You have exceeded a secondary rate limit' }),
@@ -8008,8 +7679,6 @@ describe('GitHubEventExtension', () => {
     try {
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
       const watched = extension.repo.getWatchedRepoById(repo.id);
-      // The headerless secondary limit on PR #2 is a skip: PR #1's success must
-      // not advance freshness over the un-observed later PR.
       expect(watched?.pollCursor?.lastReactionPollAt).toBe(priorReactionAt);
     } finally {
       await extension.stop();
@@ -8042,7 +7711,6 @@ describe('GitHubEventExtension', () => {
       if (match) {
         const headers = init?.headers as Record<string, string> | undefined;
         reactionRequests.push({ url: String(url), ifNoneMatch: headers?.['If-None-Match'] });
-        // Second poll for PR 7 sends the ETag from cycle 0 → return 304.
         if (headers?.['If-None-Match'] === 'W/"abc-reaction-7"') {
           return new Response(null, { status: 304 });
         }
@@ -8056,12 +7724,9 @@ describe('GitHubEventExtension', () => {
 
     try {
       const repo = extension.repo.listPollingRepos()[0];
-      // Cycle 0: no ETag yet → full fetch, captures ETag, publishes the +1.
       await extension.pollWatchedRepo(repo, fetchImpl);
       expect(reactionRequests[0].ifNoneMatch).toBeUndefined();
 
-      // Cycle 1: cursor carries the ETag → If-None-Match sent → 304 short-circuits,
-      // no new reaction event published.
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
       expect(reactionRequests[1].ifNoneMatch).toBe('W/"abc-reaction-7"');
       expect(received.filter((event) => event.payload.eventType === 'reaction')).toHaveLength(1);
@@ -8085,10 +7750,7 @@ describe('GitHubEventExtension', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    const pullsPages = [
-      // Cycle 0 (first poll, full newest-first list): 15 PRs.
-      Array.from({ length: 15 }, (_, i) => 100 - i),
-    ];
+    const pullsPages = [Array.from({ length: 15 }, (_, i) => 100 - i)];
     const calledReactions: number[] = [];
     const fetchImpl = (async (url: string | URL | Request) => {
       const path = new URL(String(url)).pathname;
@@ -8108,13 +7770,10 @@ describe('GitHubEventExtension', () => {
 
     try {
       const repo = extension.repo.listPollingRepos()[0];
-      // Cycle 0: seed with newest 15 → targets capped to newest 10 ([100..91]).
       await extension.pollWatchedRepo(repo, fetchImpl);
       expect(calledReactions.slice()).toEqual([100, 99, 98, 97, 96, 95, 94, 93, 92, 91]);
       calledReactions.length = 0;
 
-      // Cycle 1: delta poll — only PR 50 updated. Merge must surface 50 to the
-      // front while retaining previously tracked active PRs (no replace-wipe).
       pullsPages.push([50]);
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
       expect(calledReactions.slice()).toEqual([50, 100, 99, 98, 97, 96, 95, 94, 93, 92]);
@@ -8821,9 +8480,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     try {
       await extension.start(context);
       extension.registerRpcHandlers(hub, context);
-      // Daemon-wide polling is already on from another space; enabling polling
-      // on a repo in this space must still record the per-space intent so the
-      // connection card checkbox and no-secret addRepo default work correctly.
       await clientHub.request('space.github.watchRepo', {
         spaceId: 'space-1',
         owner: 'acme',
@@ -9199,9 +8855,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     try {
       await extension.start(context);
       extension.registerRpcHandlers(hub, context);
-      // No watched repos at all — first-time setup. Enabling polling must
-      // still persist intent so the UI checkbox stays checked and the next
-      // no-secret addRepo defaults to polling.
       expect(extension.repo.getPollingIntent('space-1')).toBe(false);
 
       await clientHub.request('space.github.setPollingEnabled', {
@@ -9294,10 +8947,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     try {
       await extension.start(context);
       extension.registerRpcHandlers(hub, context);
-      // Add a polling-enabled repo, then disable the space. Disabling drops
-      // it from listPollingRepos (which filters enabled=1), so a naive
-      // capability check would flip polling off — but the polling-configured
-      // row still exists.
       extension.repo.upsertWatchedRepo({
         spaceId: 'space-1',
         owner: 'acme',
@@ -9305,9 +8954,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
         pollingEnabled: true,
       });
       await clientHub.request('space.github.disable', { spaceId: 'space-1' });
-      // Force capability off manually to simulate the daemon-wide clearing
-      // path that disablePollingCapabilityIfUnused would have triggered if
-      // listPollingRepos was the source of truth.
       const globalBefore = await configStore.getGlobalConfig('github');
       await configStore.setGlobalConfig('github', {
         ...globalBefore,
@@ -9342,7 +8988,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     try {
       await extension.start(context);
       extension.registerRpcHandlers(hub, context);
-      // Enable polling intent for the space (no rows yet).
       await clientHub.request('space.github.setPollingEnabled', {
         spaceId: 'space-1',
         enabled: true,
@@ -9353,8 +8998,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
         repo: 'widgets',
         pollingEnabled: true,
       });
-      // Remove the only polling row. Intent stays on, so capability must
-      // stay on even though listAllPollingConfiguredRepos is now empty.
       await clientHub.request('space.github.unwatchRepo', {
         spaceId: 'space-1',
         owner: 'acme',
@@ -9364,7 +9007,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       const global = await configStore.getGlobalConfig('github');
       expect(global.capabilities.polling).toBe(true);
 
-      // User explicitly disables polling intent — capability now drops.
       await clientHub.request('space.github.setPollingEnabled', {
         spaceId: 'space-1',
         enabled: false,
@@ -9521,10 +9163,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // status webhook (commit-status API — external/legacy CI: Jenkins/Travis/custom)
-  // -------------------------------------------------------------------------
-
   function statusWebhookPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
       id: 555,
@@ -9667,8 +9305,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
   test('status webhook filters out PRs whose head sha differs (merged-commit false positives)', async () => {
     const db = setupDb();
     const published: ExternalEvent[] = [];
-    // /commits/{sha}/pulls also returns PRs that merged the commit; those have a
-    // different head sha and must not be attributed to the commit-status.
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: statusFetchImpl([
         { number: 7, head: { sha: 'deadbeef' }, merged_at: '2026-01-01T00:00:00Z' },
@@ -9701,11 +9337,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
   test('status webhook excludes a closed PR whose head sha matches; only the open PR publishes', async () => {
     const db = setupDb();
     const published: ExternalEvent[] = [];
-    // /commits/{sha}/pulls returns BOTH a closed PR (#9) and an open PR (#7)
-    // whose head.sha equals the commit. Only the open PR may be attributed
-    // (spec row 1: commit.sha → open PR) — mirrors the deployment path's
-    // pickPrNumbersByHeadSha state=open guard, so a status on a commit that is
-    // still the retained head of a finished PR does not wake a stale topic.
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: statusFetchImpl([
         { number: 9, state: 'closed', head: { sha: 'abc123' } },
@@ -9756,7 +9387,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       webhookSecret: 'secret',
     });
 
-    // Signature matches (shared secret) but the payload repo is acme/other.
     const payload = {
       ...statusWebhookPayload(),
       repository: { id: 2, name: 'other', full_name: 'acme/other', owner: { login: 'acme' } },
@@ -9787,8 +9417,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       onSourceConfigChanged() {},
     };
     await extension.start(context);
-    // The signature still validates (webhook_secret present), but the watched
-    // row is disabled — so the quota-consuming resolution GET must not fire.
     extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',

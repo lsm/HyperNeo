@@ -1,13 +1,3 @@
-/**
- * Unit tests for rate-limit awareness in the GitHub event extension.
- *
- * Covers:
- *   - parseRateLimitHeaders parsing valid / missing / malformed headers
- *   - pollWatchedRepo deferring the cycle when remaining drops below threshold
- *   - pollWatchedRepo aborting on 403 with X-RateLimit-Reset
- *   - pollEnabledSpaces skipping entirely when rate-limited
- *   - next poll scheduled past resetAt when rate limited (via scheduleNextPollAfter)
- */
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { describe, expect, test } from 'bun:test';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
@@ -87,13 +77,10 @@ describe('parseRateLimitHeaders', () => {
   });
 
   test('marks 403 as limited only when X-RateLimit-Remaining is 0', () => {
-    // 403 + remaining=0 → rate-limited
     const resLimiter = makeResponse({ status: 403, remaining: '0', reset: '1700000000' });
     expect(parseRateLimitHeaders(resLimiter).limited).toBe(true);
-    // 403 + remaining>0 → permission error, NOT rate-limited
     const resPerms = makeResponse({ status: 403, remaining: '4999', reset: '1700000000' });
     expect(parseRateLimitHeaders(resPerms).limited).toBe(false);
-    // 403 + missing remaining → cannot prove rate-limit, treat as not limited
     const resMissing = new Response('[]', { status: 403 });
     expect(parseRateLimitHeaders(resMissing).limited).toBe(false);
   });
@@ -111,7 +98,6 @@ describe('parseRateLimitHeaders', () => {
       status: 429,
       headers: {
         'X-RateLimit-Remaining': '0',
-        // X-RateLimit-Reset far in the future; Retry-After should win.
         'X-RateLimit-Reset': String(Math.floor((now + 60 * 60_000) / 1000)),
         'Retry-After': '30',
       },
@@ -159,8 +145,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       pollingEnabled: true,
     });
 
-    // Remaining=5 — below threshold of 10. The current endpoint's rows should
-    // still be processed and the cursor saved; the remaining endpoints are skipped.
     let fetchCalled = 0;
     const row = {
       id: 101,
@@ -184,13 +168,9 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       const repo = extension.repo.listPollingRepos()[0];
       const count = await extension.pollWatchedRepo(repo, fetchImpl);
       expect(count).toBe(1);
-      expect(fetchCalled).toBe(1); // stopped after first endpoint
-      // Internal rate-limit window was set
+      expect(fetchCalled).toBe(1);
       const until = (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil;
       expect(until).toBeGreaterThan(Date.now());
-      // Cursor was saved so the processed event is not re-fetched. After a
-      // partial scan the shared watermark must not advance; the per-endpoint
-      // watermark records the processed event.
       const updated = extension.repo.getWatchedRepoById(repo.id);
       expect(updated?.pollCursor?.lastSeenAt).toBe(0);
       expect(updated?.pollCursor?.endpointLastSeenAt?.issue_comments).toBeGreaterThanOrEqual(
@@ -261,7 +241,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       pollingEnabled: true,
     });
 
-    // Simulate already-rate-limited state
     (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil = Date.now() + 300_000;
 
     let fetchCalled = 0;
@@ -271,7 +250,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
     }) as typeof fetch;
 
     try {
-      // Access private method via cast
       const count = await (
         extension as unknown as {
           pollEnabledSpaces: (f: typeof fetch) => Promise<number>;
@@ -299,7 +277,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       pollingEnabled: true,
     });
 
-    // Shared cooldown active — scoped poll must short-circuit.
     (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil = Date.now() + 300_000;
 
     let fetchCalled = 0;
@@ -346,7 +323,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       pollingEnabled: true,
     });
 
-    // Override scheduleNextPollAfter to capture the requested delay without arming a real timer.
     (extension as unknown as { scheduleNextPollAfter: (d: number) => void }).scheduleNextPollAfter =
       (delay: number) => {
         capturedDelay = delay;
@@ -355,8 +331,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
     try {
       await (extension as unknown as { runPollCycle: () => Promise<void> }).runPollCycle();
       expect(capturedDelay).not.toBeNull();
-      // Deferral should be at least the minimum backoff (60s) and reflect the
-      // 180s reset window (so somewhere between 60s and 180s).
       expect(capturedDelay!).toBeGreaterThanOrEqual(60_000);
       expect(capturedDelay!).toBeLessThanOrEqual(180_000);
     } finally {
@@ -382,7 +356,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
     let fetchCalled = 0;
     const fetchImpl = (async () => {
       fetchCalled++;
-      // 403 with remaining=100 BUT Retry-After=30s → should be rate-limited
       return new Response('[]', {
         status: 403,
         headers: {
@@ -401,7 +374,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       expect(fetchCalled).toBe(1);
       const until = (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil;
       expect(until).toBeGreaterThan(Date.now());
-      // Should honor Retry-After (~30s) not the default 60s
       const delayMs = until - Date.now();
       expect(delayMs).toBeLessThan(35_000);
       expect(delayMs).toBeGreaterThan(25_000);
@@ -428,7 +400,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
     let fetchCalled = 0;
     const fetchImpl = (async () => {
       fetchCalled++;
-      // 403 with positive remaining and no Retry-After, but body says secondary rate limit.
       return new Response(JSON.stringify({ message: 'You have exceeded a secondary rate limit' }), {
         status: 403,
         headers: { 'X-RateLimit-Remaining': '100' },
@@ -444,8 +415,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       expect(fetchCalled).toBe(1);
       const until = (extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil;
       expect(until).toBeGreaterThan(Date.now());
-      // Body-detected secondary limit with no Retry-After must use the minimum
-      // backoff, not an unrelated primary reset window.
       const delayMs = until - Date.now();
       expect(delayMs).toBeGreaterThan(55_000);
       expect(delayMs).toBeLessThan(65_000);
@@ -488,7 +457,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
           body: [row],
         });
       }
-      // Second endpoint returns a primary rate-limit.
       return rateLimitedResetResponse({
         status: 403,
         remaining: 0,
@@ -503,8 +471,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       expect(fetchCalled).toBe(2);
 
       const updated = extension.repo.getWatchedRepoById(repo.id);
-      // Partial scan: shared watermark must not advance so skipped endpoints
-      // are not permanently truncated.
       expect(updated?.pollCursor?.lastSeenAt).toBe(0);
       expect(updated?.pollCursor?.endpointLastSeenAt?.issue_comments).toBeGreaterThanOrEqual(
         Date.parse(row.updated_at)
@@ -519,7 +485,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
     let callCount = 0;
     const fetchImpl = (async () => {
       callCount++;
-      // First repo: rate-limited, should break loop before second repo
       if (callCount === 1) {
         return rateLimitedResetResponse({
           status: 429,
@@ -527,7 +492,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
           resetEpochSeconds: Math.floor((Date.now() + 300_000) / 1000),
         });
       }
-      // Second repo should never be called
       throw new Error('Second repo should not be called due to rate-limit break');
     }) as typeof fetch;
 
@@ -537,7 +501,6 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
       config: new EnabledConfigStore(),
       onSourceConfigChanged() {},
     });
-    // Add two repos for the same space
     extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
@@ -552,14 +515,12 @@ describe('GitHubEventExtension rate-limit-aware polling', () => {
     });
 
     try {
-      // Access private method via cast
       const count = await (
         extension as unknown as {
           pollSpace: (spaceId: string, f: typeof fetch) => Promise<number>;
         }
       ).pollSpace('space-1', fetchImpl);
       expect(count).toBe(0);
-      // Only first repo should have been called
       expect(callCount).toBe(1);
     } finally {
       await extension.stop();

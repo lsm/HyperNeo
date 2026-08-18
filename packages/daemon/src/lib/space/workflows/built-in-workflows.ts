@@ -1,25 +1,3 @@
-/**
- * Built-in Workflow Templates
- *
- * Defines the canonical workflow templates bundled with HyperNeo.
- * These serve as defaults and examples for Space users.
- *
- * Design notes:
- * - Leader is always implicit in SpaceRuntime — never a workflow node.
- * - Templates use placeholder `id` / `spaceId` (empty strings) and role names
- *   as `agentId` placeholders ('planner', 'coder', 'general'). These are
- *   replaced with real SpaceWorkerAgent UUIDs by `seedBuiltInWorkflows`.
- * - Workflows use gated channels for inter-agent communication (agent-centric
- *   model). Transitions are empty for agent-centric workflows; completion is
- *   detected when all agents report done.
- * - At Space creation time, preset SpaceWorkerAgent records are seeded for each
- *   BuiltinAgentRole. `seedBuiltInWorkflows` must be called after those agents
- *   exist so that the `agentId` values resolve correctly.
- * - Channels use node names (e.g. 'Plan', 'Coding') in `from`/`to` so they
- *   resolve correctly at runtime without UUID translation in the seeder.
- *   `resolveChannels()` matches node names via the `nodeNameToAgents` lookup.
- */
-
 import type {
   DeclarativeToolGuard,
   EventInterest,
@@ -37,20 +15,6 @@ import { computeWorkflowHash } from './template-hash.ts';
 
 const builtInSeederLog = new Logger('seed-built-in-workflows');
 
-// ---------------------------------------------------------------------------
-// Retired declarative tool guard: coder-role agents must not merge
-// ---------------------------------------------------------------------------
-
-/**
- * Retired coder no-merge guard. Kept verbatim (NOT applied to any built-in
- * slot) so the restamp logic can recognize legacy seeded coder slots that
- * carried it and clear their `toolGuards` during migration — the stable coder
- * now OWNS the post-approval merge (`gh pr merge`), so a coder no-merge guard
- * would break the coder's own merge. Matches `gh pr merge` and its wrapped
- * forms. (A separate reviewer run-scoping guard was explored and removed per
- * the product decision to govern Reviewer Bash by the System Contract prompt
- * rather than a regex — see the system contract, not this constant.)
- */
 const RETIRED_CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
   matcher: 'Bash',
   pattern:
@@ -60,43 +24,6 @@ const RETIRED_CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
     'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
 };
 
-// ---------------------------------------------------------------------------
-// Template node ID constants (used as stable IDs for workflow nodes and startNodeId)
-// ---------------------------------------------------------------------------
-
-/**
- * Review-posted gate.
- *
- * Verifies that the Reviewer has actually posted review evidence on the PR
- * since the workflow run started. This gate guards the Review → Coding feedback
- * channel: the runtime refuses to deliver a "changes requested" message until
- * a formal review or at least one PR comment is visible on GitHub.
- *
- * The check is a declarative reference to the `review_posted` built-in
- * validator — an `external_state` preset over the github connector's
- * `getReviewEvidence` op (see runtime/connectors/presets.ts). The preset
- * encodes: a formal review (APPROVED/CHANGES_REQUESTED) since workflow start as
- * primary evidence, with an own-PR fallback (COMMENTED review / PR comment)
- * since GitHub blocks self-APPROVE. No hand-rolled bash.
- */
-
-/**
- * Reviewer Terminal Action Pre-conditions block.
- *
- * Prepended to every review-style end-node prompt that exposes the terminal
- * task-completion tools (`approve_task`, `submit_for_approval`). Establishes a
- * hard pre-condition: terminal actions are valid ONLY when the review verdict
- * is APPROVE with zero P0–P3 findings. While findings are open, the cycle MUST
- * continue via `send_message(target="<upstream>", ...)` — the reviewer must not
- * close the loop or hand off to a human until the work is actually clean.
- *
- * The wording deliberately equates `submit_for_approval` with `approve_task`
- * (both close the review loop) so the model cannot interpret it as "let a
- * human decide while findings are still open".
- *
- * @param upstreamNodeName - The peer node the reviewer must send feedback to
- *   when posting REQUEST_CHANGES (e.g. "Coding", "Research", "Planning").
- */
 function reviewerFeedbackProcedure(upstreamNodeName: string): string {
   return (
     'Follow the Reviewer System Contract and terminal-action tool contract. ' +
@@ -154,20 +81,6 @@ const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
   'author to resolve them instead of approving. Never set a PR to auto-merge — ' +
   'auto-merge is not allowed.';
 
-/**
- * Shared zero-findings verdict gate appended to every stable reviewer slot.
- *
- * The Reviewer System Contract already states the verdict is a pure function
- * of the finding counts (approve only when P0+P1+P2+P3 are all zero), but the
- * agent-persona contract is NOT auto-restamped, so existing seeded spaces keep
- * the old leaky persona until a manual `syncFromTemplate`. Restating the gate
- * behaviorally here lets it travel with the auto-restamping slot prompt — the
- * lever that actually closes the P2/P3 approval leak in existing spaces.
- *
- * The leading `\n\n` is load-bearing: it is the exact separator dropped by the
- * `[GATE, '']` patch variant in BUILT_IN_PROMPT_PATCH_VARIANTS, so a stored
- * pre-gate prompt reconstructs byte-for-byte. Keep it stable.
- */
 export const REVIEWER_ZERO_FINDINGS_GATE =
   '\n\nVerdict gate (hard rule, no exceptions): approve, or forward an approved PR, ONLY ' +
   'when your P0, P1, P2, and P3 counts are all zero. If any finding count is greater than ' +
@@ -177,20 +90,6 @@ export const REVIEWER_ZERO_FINDINGS_GATE =
   'that blocks approval exactly like a P0. (If a nit is genuinely not worth a change, do ' +
   'not file it as a finding — note it as a passing observation or omit it.)';
 
-/**
- * Post-approval re-approval paragraph appended to the QA end-node prompt (Fullstack).
- *
- * Appended AFTER the QA slot procedure (the workflow-specific steps that end with
- * "call approve_task()"), so on a blocker resume it is the final applicable
- * behaviour — overriding "call approve_task as your final action" for the blocker
- * cycle (otherwise QA could re-approve the already-approved task and stop without
- * signalling the Merger). The leading space is deliberate: it is the exact
- * substring the retired-prompt patch variant below removes to reconstruct the
- * pre-redesign QA prompt, so existing template-linked workflows whose QA
- * `customPrompt` predates this change get the paragraph back on the next
- * structural re-stamp (`mergeNodeStructuralFieldsFromTemplate`). Keep
- * byte-for-byte stable.
- */
 export const FULLSTACK_QA_POST_APPROVAL_PARAGRAPH =
   ' Post-approval merge support: after you approve, the Merger may report merge blockers. ' +
   'When it does: re-check the PR; coordinate the implementation author to fix and push; once ' +
@@ -208,18 +107,6 @@ export const FULLSTACK_QA_POST_APPROVAL_PARAGRAPH =
   'mergeable, reply to the Merger with data reason: "unresolvable" so it escalates to ' +
   'space-agent instead of both sessions waiting indefinitely.';
 
-/**
- * Post-approval re-approval paragraph appended to the Reviewer end-node prompt
- * (Coding + Research). Same role as {@link FULLSTACK_QA_POST_APPROVAL_PARAGRAPH}
- * but addressed to the Reviewer (the authority there) and more detailed about
- * the GitHub re-review mechanics. The leading `\n\n` reconstructs the
- * pre-redesign reviewer prompt when removed by the retired-prompt patch variant
- * below. Keep byte-for-byte stable; it is shared verbatim by both workflows.
- *
- * Exported so the re-stamp backfill test can remove the exact paragraph the
- * production retired-prompt variant removes (the QA paragraph sits mid-prompt,
- * with QA steps appended after it, so a naive slice would also drop the steps).
- */
 export const REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH =
   '\n\nPost-approval merge support: after you approve, the Merger may report merge ' +
   'blockers (a "merge_blocked" message with a blockers list). When it does: ' +
@@ -239,9 +126,6 @@ export const REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH =
 
 const FULLSTACK_CODING_NOCHANGE_GUIDANCE =
   'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the escalation target listed in your Runtime Execution Contract, explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
-// Immediate predecessor of the Fullstack no-code guidance (hard-coded `space-agent`).
-// Existing seeded spaces from that revision must be restamped to the
-// runtime-contract reference above.
 const RETIRED_PREVIOUS_FULLSTACK_CODING_NOCHANGE_GUIDANCE =
   'If the task requires no code changes (validation-only, a diagnostic, or already complete): do NOT create an empty commit or PR. This workflow only completes via a reviewed PR, so a no-change task is misrouted — send a message to `space-agent` explaining that the task produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
 
@@ -250,73 +134,11 @@ const RESEARCH_REVIEW_NODE = 'tpl-research-review';
 
 const REVIEW_REVIEW_NODE = 'tpl-review-review';
 
-// ---------------------------------------------------------------------------
-// Built-in templates
-// ---------------------------------------------------------------------------
-
-/**
- * Stable Coding Workflow
- *
- * Two-node iterative graph: Coding ↔ Review (with cycle).
- * - Coding → Review: a `send_message` hook (`pr_ready`) checks the PR is open,
- *   mergeable, and has no unresolved review threads before Review activates.
- * - Review → Coding: a review-posted hook ensures the reviewer posted a visible
- *   GitHub review before changes-requested feedback is delivered.
- *
- * The coder owns the post-approval merge (see `postApproval` on the Coding node):
- * after approval, the coder receives the merge procedure and merges via
- * `gh pr merge` — there is no dedicated merger agent.
- *
- * For tasks that produce code changes (a PR). Validation-only tasks (no code
- * changes) belong in the Review-Only workflow, not here.
- */
-// Behavioral only (CLAUDE.md L170): it does NOT name the Review peer or the
-// pr_url handoff field — buildCustomAgentTaskMessage injects those centrally
-// via "Outbound gated handoffs" (buildHookValidatedHandoffLines), since the
-// stable workflows' Coding → Review channel carries the inherited code-pr-ready
-// pr_ready hook. Restating the target/field here would create a second source of
-// truth that drifts (same issue fixed for CODER_OWNED_QA_REVIEW_PROMPT).
-/**
- * Declarative PR-event subscription shared by the implementer slots of the
- * default coding flows (Coding, Research, Coding with QA).
- *
- * `topicFrom` is resolved against the run's primary link (its PR URL) at
- * subscription time: the `{owner}/{repo}/{number}` placeholders fill from the
- * PR so the slot subscribes to "this run's own PR" — review comments, CI
- * failures, reactions — without a PR number baked into the template. The coder
- * receiving its own PR events directly is the pub/sub design intent (no smart
- * routing, no emitter-binding); see `space-event-routing-subscribe-receive`.
- *
- * Structural template config: `mergeNodeStructuralFieldsFromTemplate` overwrites
- * each implementer slot's `eventInterests` from the template (and
- * `buildWorkflowFingerprint` includes it), so existing seeded spaces acquire
- * this on the next restamp rather than only fresh spaces. Inert at registration
- * until `topicFrom` resolution is wired in (PR 2); declaring it here is the
- * data change (task #907).
- */
 const IMPLEMENTER_PR_EVENT_INTEREST: EventInterest = {
   topicFrom: { source: 'primaryLink', pattern: 'github/{owner}/{repo}/pull_request/{number}.*' },
   label: 'My PR events',
 };
 
-/**
- * Imperative PR-event subscription backstop for the coder-owned prompts.
- *
- * The declarative `IMPLEMENTER_PR_EVENT_INTEREST` on the implementer slots is
- * the intended subscription path, but its `topicFrom` resolver is not yet wired
- * into run-interest registration (`registerRunInterests` skips `topicFrom`
- * interests as inert — see `space-runtime.ts`), so without this instruction a
- * coder on a Coding / Coding-with-QA flow never subscribes and receives no
- * review-comment / CI / reaction events for its own PR. The explicit `prUrl`
- * form dodges the #886 timing bug: the run's primary link is not recorded until
- * the gated handoff, so the no-arg `subscribe_pr_events({})` form fails to
- * resolve right after `gh pr create`.
- *
- * Worded to match the surviving Research/legacy step wording. Registered as a
- * retired→current patch (`[GUIDANCE, '']` in BUILT_IN_PROMPT_PATCH_VARIANTS) so
- * existing live spaces storing the pre-subscribe `CODER_OWNED_MERGE_PROMPT`
- * restamp to this wording on the next seed.
- */
 export const CODER_OWNED_PR_SUBSCRIBE_GUIDANCE =
   'After `gh pr create`, call `subscribe_pr_events({ prUrl: "<PR URL>" })`, passing the PR URL from the ' +
   '`gh pr create` output explicitly (it is not auto-resolved from the run until the PR is recorded). ' +
@@ -337,11 +159,6 @@ const CODER_OWNED_MERGE_PROMPT =
   'changed head; the approval and re-approval authority is named in your Runtime Execution Contract ' +
   'and the post-approval merge procedure (it differs by workflow), so never assume a specific one.';
 
-// Behavioral only (CLAUDE.md L170): does not name the Coding peer or the
-// pr_url/review_url gate fields — buildGatedHandoffLines injects the Review→Coding
-// feedback handoff centrally (the channel is gated by review-posted-gate, whose
-// pr_url/review_url fields are writable by Review). comment_urls is NOT a gate
-// field, so it is kept here as behavioral guidance (which threads to raise).
 const CODER_OWNED_REVIEW_PROMPT =
   'You are the Reviewer. Inspect the pull request and relevant code and post a visible GitHub review ' +
   'per the Reviewer system contract (which specifies the posting procedure). If changes are needed, send the implementer actionable feedback via the gated ' +
@@ -354,14 +171,6 @@ const CODER_OWNED_REVIEW_PROMPT =
   'coordinate any fix, post a fresh approval, and signal them to continue.' +
   REVIEWER_ZERO_FINDINGS_GATE;
 
-// Reviewer prompt for the stable `Coding with QA` workflow, where Review is an
-// INTERMEDIATE node (QA is the end node / approval authority). Behavioral only:
-// it does NOT re-state the QA target or the `review-approval-gate` field —
-// `buildCustomAgentTaskMessage` injects those centrally via "Outbound gated
-// handoffs" (see `buildGatedHandoffLines`), so restating them here would create
-// a second source of truth that drifts (CLAUDE.md L170). The prompt only tells
-// the Reviewer that it is intermediate (no approve_task) and to hand the
-// approved PR to the final approval authority through that injected handoff.
 const CODER_OWNED_QA_REVIEW_PROMPT =
   'You are the Reviewer in a workflow where a separate QA step owns final approval. Review is an ' +
   'intermediate step, not the end node, so you do NOT call approve_task or submit_for_approval. ' +
@@ -378,23 +187,6 @@ const CODER_OWNED_QA_REVIEW_PROMPT =
   'and signal them to continue.' +
   REVIEWER_ZERO_FINDINGS_GATE;
 
-/**
- * Legacy built-in slot prompts from the pre-split era, keyed by
- * `<nodeName>|<agentName>`.
- *
- * Existing spaces seeded before the pivot carry these prompts on their
- * `Coding Workflow` / `Coding with QA Workflow` rows. The identity migration
- * renames those rows to the stable templates, but restamp preserves
- * user-customisable prompts — so without an explicit reset the legacy coder
- * prompt ("Do NOT merge PRs … the reviewer handles the merge") would survive
- * onto a coder-owned workflow where the coder MUST merge, and the legacy
- * reviewer prompt would tell the reviewer to use the now-removed `post_review`
- * tool. Exact-match only: a prompt that no longer equals a known legacy seed
- * is a user customization and is left untouched.
- *
- * Values are the fully-interpolated prompt text of the legacy built-ins (the
- * same text `getBuiltInWorkflows()` produced before the pivot).
- */
 const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
   'Coding|coder': [
     'You are a software engineer in a Coding→Review iterative workflow. Your job is implementation only: ' +
@@ -542,15 +334,6 @@ const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
   ],
 };
 
-/**
- * Reset a legacy built-in slot prompt to the current stable template prompt,
- * exact-match only. The legacy coding slots ("Do NOT merge PRs…", "use
- * post_review…") are structurally incompatible with the coder-owned stable
- * templates; the identity migration renames those rows but restamp otherwise
- * preserves prompts, so a known legacy seed must be swapped to the template's
- * prompt. Returns the template prompt when the existing value exactly equals a
- * known legacy seed, else the existing prompt untouched.
- */
 function patchLegacyStableSlotPrompt(
   existingValue: string | undefined,
   templateValue: string | undefined,
@@ -563,7 +346,6 @@ function patchLegacyStableSlotPrompt(
   return templateValue;
 }
 
-/** Stable daily coding workflow. The original coder owns the audited post-approval merge. */
 export const CODING_WORKFLOW: SpaceWorkflow = {
   id: '',
   spaceId: '',
@@ -596,11 +378,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
         {
           agentId: 'Reviewer',
           name: 'reviewer',
-          // Fresh eyes: wipe the reviewer's model context at the start of each
-          // coder handoff so each PR is reviewed independently, without anchor
-          // bias from earlier review cycles. UI history is preserved; only the
-          // model's in-memory context is reset. Data-driven opt-in — see
-          // WorkflowNodeAgent.resetContextPerTurn.
           resetContextPerTurn: true,
           customPrompt: { value: CODER_OWNED_REVIEW_PROMPT },
         },
@@ -612,8 +389,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
   tags: ['coding', 'default'],
   createdAt: 0,
   updatedAt: 0,
-  // Default coding loop — reviewer may auto-close when space runs at the
-  // standard "trusted but supervised" tier (3).
   completionAutonomyLevel: 3,
   hooks: [
     {
@@ -656,17 +431,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
   ],
 };
 
-/**
- * Research Workflow
- *
- * Two-node iterative graph:
- *   Research → Review (validated by a send_message hook that checks PR is open/mergeable)
- *   Review → Research (ungated back-channel, max 5 cycles)
- *
- * Research agent researches thoroughly, commits findings, opens a PR.
- * Reviewer agent reviews the research PR; calls save_artifact() then approve_task() if satisfied,
- * or sends back for more research via the back-channel.
- */
 export const RESEARCH_WORKFLOW: SpaceWorkflow = {
   id: '',
   spaceId: '',
@@ -703,9 +467,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
           },
         },
       ],
-      // The research agent (implementer) owns the post-approval merge: after
-      // approval it receives the shared merge procedure and merges via
-      // `gh pr merge` — no dedicated merger agent.
       postApproval: {
         targetAgent: 'research',
         instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
@@ -752,8 +513,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
   tags: ['research'],
   createdAt: 0,
   updatedAt: 0,
-  // Research is low-risk (read-only investigation + PR of findings) — permit
-  // auto-close at a more conservative autonomy tier than coding loops.
   completionAutonomyLevel: 2,
   hooks: [
     {
@@ -783,16 +542,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
     },
   ],
 };
-/**
- * Review-Only Workflow
- *
- * Single-node graph: Reviewer only (terminal node).
- * No planning phase — used when the task is well-defined and only
- * review is needed. The run completes immediately when advance()
- * is called from the Review node.
- *
- * startNodeId and endNodeId point to the same node (single-node workflow).
- */
 export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
   id: '',
   spaceId: '',
@@ -826,30 +575,9 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
   tags: ['review'],
   createdAt: 0,
   updatedAt: 0,
-  // Review-only is low-risk (no code changes, only feedback posting) — permit
-  // auto-close at the same conservative tier as Research.
   completionAutonomyLevel: 2,
 };
 
-/**
- * Coding with QA Workflow
- *
- * Three-node workflow for backend+frontend tasks that need explicit code review
- * and deeper QA validation (including browser-based checks).
- *
- * Main progression:
- *   Coding → Review (send_message hook validates PR is open/mergeable)
- *   Review → QA (review-approval-gate: reviewer approves)
- *
- * Feedback cycles:
- *   Review → Coding (changes requested)
- *   QA → Coding (test failures/regressions)
- *
- * QA is the end node. QA calls save_artifact() then approve_task() on success.
- *
- * For tasks that produce code changes (a PR). Validation-only tasks (no code
- * changes) are misrouted here — the Coder should escalate to space-agent instead.
- */
 const CODER_OWNED_QA_PROMPT =
   'You are QA. Validate the reviewer-approved pull request using the project QA instructions and ' +
   'the relevant backend, frontend, browser, and CI checks. If validation fails, send the implementer ' +
@@ -873,18 +601,6 @@ const CODER_OWNED_QA_PROMPT =
   '`Recommendation: APPROVE` (the implementer accepts that marked comment as covering the head, matching ' +
   'the own-PR fallback in the Reviewer System Contract). Then signal them to continue.';
 
-/**
- * Coding with QA Workflow (stable)
- *
- * Three-node graph: Coding → Review (pr_ready hook) → QA (review-approval-gate).
- * Feedback cycles: Review → Coding, QA → Coding. QA is the end node / approval
- * authority. The coder owns the post-approval merge (see `postApproval` on the
- * Coding node): after QA approval the coder receives the merge procedure and
- * merges via `gh pr merge` — no dedicated merger agent.
- *
- * For tasks that produce code changes (a PR). Validation-only tasks (no code
- * changes) are misrouted here — the Coder should escalate to space-agent instead.
- */
 export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
   id: '',
   spaceId: '',
@@ -917,9 +633,6 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
         {
           agentId: 'Reviewer',
           name: 'reviewer',
-          // Review is intermediate here (QA is the end node), so it must hand
-          // the approved PR to QA instead of calling the end-node-only
-          // approve_task — see CODER_OWNED_QA_REVIEW_PROMPT.
           customPrompt: { value: CODER_OWNED_QA_REVIEW_PROMPT },
         },
       ],
@@ -941,9 +654,6 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
   tags: ['fullstack', 'qa', 'browser-testing'],
   createdAt: 0,
   updatedAt: 0,
-  // QA-approve is a plain "work is good" signal; post-approval (the coder's
-  // merge) runs only after that approval has already happened. Aligned with
-  // Coding's autonomy tier (3).
   completionAutonomyLevel: 3,
   layout: {
     'tpl-stable-qa-coding': { x: 80, y: 160 },
@@ -973,11 +683,6 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
       maxCycles: 50,
       label: 'QA → Coding (issues found)',
     },
-    // Post-approval merge-blocker path. With the coder reused as the merger on
-    // the Coding node, it needs a Coding → QA channel to report merge blockers
-    // to QA (the approval authority for this workflow); QA replies over the
-    // existing QA → Coding channel. Without this, the blocker send_message is
-    // rejected as unauthorized and the approved task stalls.
     {
       from: 'Coding',
       to: 'QA',
@@ -998,11 +703,6 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
       validator: { kind: 'built_in', id: 'pr_ready' },
       authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     },
-    // Gate the Coding → QA channel to post-approval only. Without this, an
-    // in-progress coder could message QA directly, lazily activating the end
-    // node and approving without Review ever running. The post_approval_only
-    // validator allows the send only while task.status === 'approved' AND the
-    // message carries a merge-blocker / fix-push reason.
     {
       id: 'stable-qa-coding-to-qa-post-approval',
       enabled: true,
@@ -1018,30 +718,6 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
   ],
 };
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Returns all built-in workflow templates.
- *
- * The returned objects have empty `id` and `spaceId` fields and use role names
- * (e.g., `'planner'`, `'coder'`, `'general'`) as `agentId` placeholders.
- * They are templates, not persisted entities. Call `seedBuiltInWorkflows`
- * to persist them with real worker agent IDs for a given space.
- */
-/**
- * Single source of truth for the pre-split coding-template identities that were
- * renamed when the stable coder-owned workflows replaced the merger-based ones.
- * Used both to resolve legacy `templateName` values to their canonical template
- * (`resolveBuiltInWorkflowTemplate`) and to migrate persisted legacy rows in
- * `seedBuiltInWorkflows`. Keep the two consumers in sync via THIS table.
- *
- * The legacy `Coding Workflow` / `Coding with QA Workflow` names (which carried
- * the dedicated merger node) now resolve to the STABLE coder-owned templates —
- * the merger variants were removed, so there is no separate merger template to
- * migrate into.
- */
 export const LEGACY_CODING_TEMPLATE_IDENTITIES = [
   {
     legacyName: 'Coding Workflow',
@@ -1066,12 +742,6 @@ export function resolveBuiltInWorkflowTemplate(templateName: string): SpaceWorkf
   return getBuiltInWorkflows().find((workflow) => workflow.name === canonicalName);
 }
 
-/**
- * Whether a built-in workflow's canonical route requires a merged PR before
- * `mark_complete`. Resolve this from template identity rather than persisted
- * instruction text: users may customize that prose without opting out of the
- * workflow's merge safety contract.
- */
 export function builtInWorkflowRequiresPrMerge(templateName: string | null | undefined): boolean {
   if (!templateName) return false;
   const template = resolveBuiltInWorkflowTemplate(templateName);
@@ -1083,17 +753,6 @@ export function builtInWorkflowRequiresPrMerge(templateName: string | null | und
 }
 
 export function getBuiltInWorkflows(): SpaceWorkflow[] {
-  // CODING_WORKFLOW is first so a freshly seeded space persists it earliest
-  // (lowest created_at) — and it is the only template tagged `default`. Default
-  // selection is tag-driven, not position-driven: both `spaceWorkflowRun.start`
-  // (auto-select) and `selectDeterministicWorkflowFallback` prefer a
-  // `default`-tagged workflow, so the stable Coding template is the default for
-  // newly created AND upgraded spaces.
-  //
-  // Note: this ordering only affects *newly created* spaces — seedBuiltInWorkflows
-  // adds missing templates to existing spaces rather than reordering them, so
-  // upgraded spaces keep their historical created_at order (and rely on the
-  // `default` tag, not position, to resolve the default).
   const workflows = [
     CODING_WORKFLOW,
     CODING_WITH_QA_WORKFLOW,
@@ -1104,39 +763,12 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
 }
 
 export interface SeedBuiltInWorkflowsResult {
-  /** Workflows that were successfully created */
   seeded: string[];
-  /**
-   * Workflows whose existing DB row was re-stamped on template drift.
-   * PR 3/5 uses this path to land `postApproval` routes, updated
-   * `completionAutonomyLevel`, and refreshed `templateHash` values onto
-   * existing spaces without rewriting user-customisable fields (node
-   * UUIDs, custom prompt text, channels), except for known retired
-   * built-in prompt text patched during restamp.
-   */
   restamped: string[];
-  /** Errors for workflows that failed to seed or re-stamp */
   errors: Array<{ name: string; error: string }>;
-  /**
-   * True when no new workflows were created AND no drift was detected —
-   * i.e. this call was a true no-op.
-   */
   skipped: boolean;
 }
 
-/**
- * Merge node-level structural fields from template nodes onto matching existing nodes.
- *
- * Unlike `customPrompt` (user-configurable), `toolGuards` are structural enforcement
- * metadata that must stay in sync with the template. `postApproval` is also structural
- * routing metadata for the terminal node. This function only touches `postApproval`
- * on the node and `toolGuards` on each agent slot, with a narrow exception for known
- * retired built-in prompt text that must be re-stamped. All other fields (customPrompt,
- * model, disabledSkillIds, etc.) are preserved from the existing row.
- *
- * Template matching is by node name + agent name. If a user renamed a node,
- * preserve its existing node-level route instead of clearing it.
- */
 export function mergeNodeStructuralFieldsFromTemplate(
   existingNodes: WorkflowNode[],
   templateNodes: Pick<WorkflowNode, 'id' | 'name' | 'agents' | 'postApproval' | 'transitions'>[],
@@ -1186,13 +818,6 @@ export function mergeNodeStructuralFieldsFromTemplate(
     return {
       ...node,
       postApproval: templateNode ? templateNode.postApproval : node.postApproval,
-      // Declared handoff transitions: overwrite from the template ONLY when it
-      // explicitly declares them, otherwise PRESERVE the node's existing value.
-      // When the template declares them, remap targets to the installed graph:
-      // NODE-name targets via remapTemplateChannelRef (a renamed node), SLOT-name
-      // targets via remapTransitionSlotTarget (a renamed slot, by position); only
-      // '*' is carried verbatim. hookId is an id, not a node ref, so it is
-      // carried verbatim.
       transitions:
         templateNode?.transitions && templateNode.transitions.length > 0
           ? templateNode.transitions.map((t) => {
@@ -1211,10 +836,6 @@ export function mergeNodeStructuralFieldsFromTemplate(
         const key = `${node.name}::${agent.name}`;
         const templateAgent = templateAgentsByKey.get(key);
         if (templateAgent === undefined) return agent;
-        // Merge: overwrite structural toolGuards and the resetContextPerTurn flag,
-        // preserve user custom prompts except for known retired built-in prompt
-        // text that would otherwise survive restamp, and reset legacy pre-split
-        // coding slot prompts to the stable coder-owned template prompts.
         const existingCustomPrompt = patchKnownBuiltInPromptDrift(
           agent.customPrompt,
           templateAgent.customPrompt
@@ -1229,11 +850,6 @@ export function mergeNodeStructuralFieldsFromTemplate(
           legacyPromptValue !== undefined && legacyPromptValue !== existingCustomPrompt?.value
             ? { value: legacyPromptValue }
             : existingCustomPrompt;
-        // Strip the retired coder no-merge guard when the stable coder template
-        // carries no guards; PRESERVE any sibling custom guards. The prior
-        // exact-singleton test left the retired guard in place when a user guard
-        // was also present (length !== 1), denying the coder's own
-        // `gh pr merge` and stalling post-approval work.
         let resolvedToolGuards: DeclarativeToolGuard[] | undefined;
         if (templateAgent.toolGuards !== undefined) {
           resolvedToolGuards = templateAgent.toolGuards;
@@ -1250,13 +866,6 @@ export function mergeNodeStructuralFieldsFromTemplate(
           (resolvedToolGuards !== undefined &&
             agent.toolGuards !== undefined &&
             JSON.stringify(resolvedToolGuards) === JSON.stringify(agent.toolGuards));
-        // Structural external-event interests: when the template defines a
-        // slot's eventInterests (e.g. the implementer's primaryLink PR-event
-        // interest), overwrite from the template so existing seeded spaces
-        // acquire it on restamp — the interest is template-owned behavior, not
-        // user config. When the template leaves the slot undefined, preserve
-        // whatever the slot carries (built-in templates manage only the
-        // implementer slots; an unmanaged slot is never cleared here).
         const templateEventInterests = templateAgent.eventInterests;
         const eventInterestsMatchesTemplate =
           templateEventInterests === undefined
@@ -1270,12 +879,6 @@ export function mergeNodeStructuralFieldsFromTemplate(
             ? {}
             : { resetContextPerTurn: templateAgent.resetContextPerTurn }),
           ...(eventInterestsMatchesTemplate ? {} : { eventInterests: templateEventInterests }),
-          // Spread customPrompt only when the merged prompt actually changed from
-          // the stored value. A reference check (=== existingCustomPrompt) misses
-          // convergence: patchKnownBuiltInPromptDrift returns a NEW object on
-          // convergence, so finalPrompt === existingCustomPrompt yet the value
-          // differs from the stored prompt. Compare values so retired-variant
-          // restamps (BUILT_IN_PROMPT_PATCH_VARIANTS) actually persist.
           ...(finalPrompt?.value === agent.customPrompt?.value
             ? {}
             : { customPrompt: finalPrompt }),
@@ -1298,10 +901,6 @@ const RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT =
 const CURRENT_RESEARCH_PR_STEP_PROMPT =
   '5. Commit findings and open a PR with `gh pr create`. After `gh pr create`, call `subscribe_pr_events({ prUrl: "<PR URL>" })`, passing the PR URL from the `gh pr create` output explicitly (it is not auto-resolved from the run until the PR is recorded). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n';
 const RETIRED_RESEARCH_PR_STEP_PROMPT = '5. Commit findings and open a PR with `gh pr create`\n';
-// Immediate predecessor (post-#682): the no-arg subscribe wording, which failed
-// to resolve the PR URL before the gated handoff recorded it (#886 P1). Registered
-// as a retired variant so stored live-space prompts restamp to the explicit-prUrl
-// wording above on the next daemon restart.
 const RETIRED_NOARG_CODING_WORKFLOW_PR_STEP_PROMPT =
   '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n';
 const RETIRED_NOARG_FULLSTACK_CODING_PR_STEP_PROMPT =
@@ -1359,20 +958,12 @@ const RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT =
   'then call `send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })` ' +
   'again to re-trigger the review cycle. Re-supplying `data.pr_url` is required; ' +
   '`save_artifact` alone will not open `code-ready-gate`.';
-// Coding Workflow step 7: the Validation Complete escape hatch was removed.
-// Existing seeded spaces still carry the old step that handed validation-only
-// tasks off to the now-removed "Validation Complete" node; restamp swaps it for
-// the current guidance (escalate the misroute via the runtime-provided target,
-// no empty PR).
 const CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
   'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
   'reviewed PR, so a no-change task is misrouted — escalate via `send_message` to the ' +
   'escalation target listed in your Runtime Execution Contract, explaining that the task ' +
   'produced no code changes and needs re-routing, then stop and wait for guidance.\n\n';
-// Immediate predecessor of the current step-7 wording (hard-coded `space-agent`).
-// Existing seeded spaces that carry this literal must be restamped to the
-// runtime-contract reference above.
 const RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT =
   '7. If the task requires no code changes (validation-only, a diagnostic, or already ' +
   'complete): do NOT create an empty commit or PR. This workflow only completes via a ' +
@@ -1416,13 +1007,6 @@ const RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT =
 const RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT =
   'terminal handoff is `send_message(target="QA", message="<approved>", data: { approved: true })` ' +
   'after an APPROVE verdict with zero P0-P3 findings. Wait for codex[bot] `+1` or timeout before proceeding. ';
-// Pre-fix send_message Fullstack Review handoff (the variant that shipped in
-// production immediately before this PR). Distinguished from
-// RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT (older gate-writing handoff) by
-// the send_message phrasing and the "10-minute Codex timeout" + `codex[bot]`
-// wording. Persisted prompts from seeded spaces that use this exact sentence
-// need a dedicated patch variant so restamp can swap them to the current
-// 2-hour / Codex-bot wording.
 const RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT =
   'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
   'APPROVE verdict with zero P0-P3 findings. Send the handoff to start the 10-minute ' +
@@ -1434,12 +1018,6 @@ const RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT =
   '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`; ' +
   '`save_artifact` alone will not open `code-pr-gate`\n';
 
-// Retired shared Codex approval guidance (pre codex-bot-rename + 2h timeout
-// fix). Used by patchKnownBuiltInPromptDrift to recognize persisted Fullstack
-// Review agent prompts that still cite `codex[bot]` and the old "10 minutes"
-// timeout, and swap them to the current guidance during restamp. Without this,
-// existing seeded spaces keep telling reviewers the window is 10 minutes while
-// the migrated gate/hook now blocks for 2 hours.
 const RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE =
   'After posting your approval review, verify codex[bot] reaction status before ' +
   'closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
@@ -1457,28 +1035,12 @@ const RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE =
   'only with a warning recorded in your result artifact. Do not close the task ' +
   'before codex[bot] has `+1` unless that timeout has elapsed.';
 
-// type→shape save_artifact API migration. `dev` shipped the seeded built-in
-// prompts on the legacy freeform-type API; the shape cutover rewrote each call
-// site (and expanded the QA all-green step from one result call into a link +
-// decision pair). Each pair is `[currentShapeText, retiredTypeResultText]`;
-// `buildRetiredBuiltInPromptValues` reverse-applies them (current→retired) to
-// recognize a persisted dev-era prompt and swap it to the current template. Only
-// an EXACT retired variant swaps, so operator customizations to surrounding
-// prose are preserved (a customized prompt that no longer matches a retired
-// variant is left untouched).
 const SHAPE_PR_LINK = 'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } })';
 const RETIRED_TYPE_RESULT_PR_LINK = 'save_artifact({ type: "result", data: { pr_url: "<url>" } })';
-// Coding + Research reviewer prompts also rewrote the sentence preceding the
-// PR-link call ("Nest pr_url inside artifact data…" → "record the PR as a
-// link…"). Reversing the call alone leaves the new sentence, so the generated
-// variant would not match the real dev prompt — pair the sentence with the call
-// so the whole region reconstructs the dev-era reviewer prompt.
 const SHAPE_PR_EVERY_CYCLE =
   'Use save_artifact every cycle to record the PR as a `link` so post-approval dispatch can resolve it.\n\n';
 const RETIRED_TYPE_RESULT_EVERY_CYCLE =
   'Use save_artifact every cycle. Nest pr_url inside artifact data for post-approval dispatch.\n\n';
-// Review-only reviewer prompt also changed the trailing prose ("to save a result
-// artifact" → "to record the PR"), so its pair carries that tail to stay exact.
 const SHAPE_PR_LINK_REVIEW_ONLY =
   'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR';
 const RETIRED_TYPE_RESULT_PR_LINK_REVIEW_ONLY =
@@ -1527,81 +1089,46 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
     ],
     [REVIEW_THREAD_RESOLUTION_GUIDANCE, RETIRED_REVIEW_THREAD_RESOLUTION_GUIDANCE],
   ],
-  // Pre-PR-dev Coding Workflow: PR step gained subscribe instruction, all other
-  // steps unchanged. Existing seeded spaces have the old step-5 text without
-  // subscribe — swap the step text only.
   [[CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT]],
-  // #886 P1: the post-#682 no-arg `subscribe_pr_events({})` wording failed to
-  // resolve the PR URL before the gated handoff recorded it. Swap it to the
-  // explicit-prUrl wording so stored live-space prompts restamp on restart.
   [[CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_NOARG_CODING_WORKFLOW_PR_STEP_PROMPT]],
   [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_NOARG_FULLSTACK_CODING_PR_STEP_PROMPT]],
   [[CURRENT_RESEARCH_PR_STEP_PROMPT, RETIRED_NOARG_RESEARCH_PR_STEP_PROMPT]],
-  // Restored the imperative subscribe instruction to the stable coder-owned
-  // prompts (CODER_OWNED_MERGE_PROMPT) as a backstop while the declarative
-  // IMPLEMENTER_PR_EVENT_INTEREST resolver stays inert. Dropping the guidance
-  // reconstructs the pre-subscribe prompt, so live spaces storing it restamp.
   [[CODER_OWNED_PR_SUBSCRIBE_GUIDANCE, '']],
-  // P2/P3 approval leak: the stable reviewer slots gained the hard zero-findings
-  // verdict gate (REVIEWER_ZERO_FINDINGS_GATE). The persona contract carries the
-  // same rule but is not auto-restamped, so restating it on the slot is what
-  // reaches existing seeded spaces. Dropping the gate reconstructs the pre-gate
-  // prompt byte-for-byte (the const owns its leading `\n\n` separator).
   [[REVIEWER_ZERO_FINDINGS_GATE, '']],
-  // Gate-era Coding Workflow: PR step + handoff + rehandoff all differ.
   [
     [CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT],
     [CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT, RETIRED_CODING_WORKFLOW_HANDOFF_PROMPT],
     [CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT, RETIRED_CODING_WORKFLOW_REHANDOFF_PROMPT],
   ],
-  // Hardcoded-era Coding Workflow: PR step + hardcoded handoff + rehandoff.
   [
     [CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT],
     [CURRENT_CODING_WORKFLOW_HANDOFF_PROMPT, RETIRED_HARDCODED_CODING_WORKFLOW_HANDOFF_PROMPT],
     [CURRENT_CODING_WORKFLOW_REHANDOFF_PROMPT, RETIRED_HARDCODED_CODING_WORKFLOW_REHANDOFF_PROMPT],
   ],
-  // Validation Complete removal: step 7 used to hand validation-only tasks to
-  // the now-removed "Validation Complete" node. Swapped independently — it
-  // composes with the PR/handoff/rehandoff groups above via candidate chaining.
   [[CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT, RETIRED_CODING_WORKFLOW_VALIDATION_STEP_PROMPT]],
-  // Immediate predecessor of the current step-7 wording: hard-coded `space-agent`.
-  // Seeded spaces from that revision restamp to the runtime-contract reference.
   [
     [
       CURRENT_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
       RETIRED_PREVIOUS_CODING_WORKFLOW_NOCHANGE_STEP_PROMPT,
     ],
   ],
-  // Pre-PR-dev Fullstack Coding: PR step gained subscribe, rest unchanged.
   [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT]],
-  // Gate-era Fullstack Coding: PR step + ready prompt + step-4 handoff.
   [
     [CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT],
     [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_FULLSTACK_CODING_READY_PROMPT],
     [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_FULLSTACK_CODING_STEP_PROMPT],
   ],
-  // Hardcoded-era Fullstack Coding: PR step + hardcoded ready + step-4 handoff.
   [
     [CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_FULLSTACK_CODING_PR_STEP_PROMPT],
     [CURRENT_FULLSTACK_CODING_READY_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_READY_PROMPT],
     [CURRENT_FULLSTACK_CODING_STEP_PROMPT, RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT],
   ],
-  // No-code guidance was added to the Fullstack Coder steps. Existing seeded
-  // spaces that lack it can be patched by dropping the guidance paragraph.
   [[FULLSTACK_CODING_NOCHANGE_GUIDANCE, '']],
-  // Immediate predecessor of the Fullstack no-code guidance hard-coded `space-agent`.
-  // Seeded spaces from that revision restamp to the runtime-contract reference.
   [[FULLSTACK_CODING_NOCHANGE_GUIDANCE, RETIRED_PREVIOUS_FULLSTACK_CODING_NOCHANGE_GUIDANCE]],
-  // Pre-PR-dev Research: PR step gained subscribe, handoff unchanged.
   [[CURRENT_RESEARCH_PR_STEP_PROMPT, RETIRED_RESEARCH_PR_STEP_PROMPT]],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
-  // Guidance-only swap: covers PD_PLAN_REVIEW_PROMPT and any other persisted
-  // prompt that embeds the retired shared Codex guidance but none of the
-  // fullstack handoff snippets.
   [[CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE]],
-  // Fullstack review handoff + guidance swap: covers FULLSTACK_REVIEW_PROMPT,
-  // which embeds both snippets.
   [
     [CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_FULLSTACK_REVIEW_HANDOFF_PROMPT],
     [CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE],
@@ -1610,34 +1137,14 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
     [CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_HARDCODED_FULLSTACK_REVIEW_HANDOFF_PROMPT],
     [CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE],
   ],
-  // Pre-fix production variant: persisted Fullstack Review prompts seeded
-  // immediately before this PR used the send_message handoff with the old
-  // "10-minute Codex timeout" + codex[bot] wording AND the old shared
-  // guidance. Cover that exact combination so restamp swaps both halves.
   [
     [CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT],
     [CODEX_REACTION_APPROVAL_GUIDANCE, RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE],
   ],
-  // Handoff-only swap for the pre-fix variant (covers the rare case where
-  // guidance was already patched but handoff was not).
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
-  // Post-approval redesign: the re-approval paragraph was APPENDED to the
-  // Reviewer end-node prompts (Coding + Research) and the Fullstack QA end-node
-  // prompt. Existing template-linked workflows retain the pre-redesign prompt
-  // (without the paragraph); map each back by removing the appended paragraph
-  // so `mergeNodeStructuralFieldsFromTemplate` swaps them to the current
-  // template on the next re-stamp. The leading whitespace in each constant is
-  // load-bearing — it is the exact gap between the pre-redesign suffix and the
-  // new paragraph, so removal reconstructs the prior prompt byte-for-byte.
   [[REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH, '']],
   [[FULLSTACK_QA_POST_APPROVAL_PARAGRAPH, '']],
-  // type→shape save_artifact API migration (dev→shape cutover). Each swaps a
-  // persisted legacy type:"result" call site to its shape equivalent; only an
-  // exact retired variant matches, so customizations are preserved.
   [[SHAPE_PR_LINK, RETIRED_TYPE_RESULT_PR_LINK]],
-  // Coding + Research reviewer prompts rewrote BOTH the preceding "every cycle"
-  // sentence and the PR-link call, so both must reverse together to reconstruct
-  // the dev-era prompt.
   [
     [SHAPE_PR_EVERY_CYCLE, RETIRED_TYPE_RESULT_EVERY_CYCLE],
     [SHAPE_PR_LINK, RETIRED_TYPE_RESULT_PR_LINK],
@@ -1738,14 +1245,6 @@ function remapTemplateChannel(
   };
 }
 
-/**
- * Remap a handoff transition's SLOT target from the template graph to the
- * installed graph, mirroring `remapTemplateHookAgentSlots`: find the template
- * node containing the slot, the corresponding installed node (handling node
- * renames via `remapTemplateChannelRef`), then keep the slot name if it still
- * exists, else map by position within the node. Falls back to the original
- * target when no mapping is possible (the manager then flags a true deletion).
- */
 function remapTransitionSlotTarget(
   target: string,
   templateNodes: WorkflowNode[],
@@ -1783,11 +1282,6 @@ export const RETIRED_MERGER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
     '(it blocks the common/direct raw-merge forms, including wrapped ones); it is not the enforcement — always ' +
     'merge through merge_pr.',
 };
-// The EXACT retired PR-Merger slot prompt (built-in-workflows.ts pre-pivot). The
-// strip guard compares the stored slot prompt to this EXACT value — a substring
-// match is insufficient because a user who appended instructions to the seeded
-// prompt would still contain any distinctive marker. Any difference means a
-// user customization and the node is preserved as drift.
 export const RETIRED_PR_MERGER_SLOT_PROMPT =
   'You are the PR Merger — the designated shell-capable agent for post-approval merges. ' +
   'You are spawned only after the task is approved; your first message is the exact merge ' +
@@ -1806,36 +1300,6 @@ export const RETIRED_PR_MERGER_SLOT_PROMPT =
   'authority. Do NOT call approve_task or submit_for_approval — the task is already approved. ' +
   'Call mark_complete once the merge and sync are done.';
 
-/**
- * Strips the retired Post-Approval merger node and everything that touched it
- * from a restamped row converging to a stable coder-owned template.
- *
- * The merge helpers (`mergeNodeStructuralFieldsFromTemplate`,
- * `mergeChannelsFromTemplate`, `mergeHooksFromTemplate`) only ever ADD missing
- * template pieces — they never remove nodes/channels/hooks that exist in the
- * stored row but not in the template. So when the dedicated merger node was
- * removed from the built-in templates, seeded spaces that still carry it (plus
- * the Post-Approval↔* channels and any Post-Approval hooks) would keep them
- * forever. This pass excises the retired pieces so restamp converges to the
- * stable 2-node Coding ↔ Review / 2-node Research ↔ Review / 3-node
- * Coding → Review → QA graphs.
- *
- * Runs for any built-in template that previously carried the merger node —
- * i.e. the stable `Coding`, `Coding with QA`, and `Research` templates, which
- * legacy rows with the legacy templateName migrate into via
- * `LEGACY_CODING_TEMPLATE_IDENTITIES`. User-created workflows never reach
- * restamp (no `templateName`).
- *
- * Precision guard: the node is matched by the relatively generic name
- * "Post-Approval", so the strip only fires when that node's FULL retired seed
- * identity is still intact — an agent slot named `merger` whose customPrompt
- * still carries the retired PR-Merger slot prompt marker, AND a node-level
- * `postApproval` route targeting `merger`. A user who repurposed the name
- * (no `merger` slot), or customized the node (changed the merger prompt /
- * model / assigned agent / added routes / removed the route) is left
- * untouched — the customization is preserved and the row drifts for explicit
- * user-driven sync instead of being silently edited.
- */
 function stripRetiredPostApproval({
   templateName,
   nodes,
@@ -1861,17 +1325,6 @@ function stripRetiredPostApproval({
     return { nodes, channels, hooks, channelsChanged: false };
   }
 
-  // Only strip when a node named "Post-Approval" still carries the COMPLETE
-  // retired seed identity:
-  //   - the node has EXACTLY one agent slot: the `merger` slot with the pristine
-  //     PR-Merger prompt, NO model override, and NO replaceAgentPrompt (any of
-  //     these — prompt text, model, mode — marks a customization; the agentId
-  //     is a per-space UUID for persisted rows, so it is not a distinguishing
-  //     signal);
-  //   - the node's postApproval route targets `merger` (the seeded route).
-  // A node that only matches by name, or whose slot/route was customized in any
-  // way, is the user's own and must not be touched — leave it as drift for
-  // explicit sync instead of silently destroying the customization.
   const isPristineMergerNode = (node: WorkflowNode): boolean => {
     if (node.name !== RETIRED_POST_APPROVAL_NODE) return false;
     if (node.postApproval?.targetAgent !== 'merger') return false;
@@ -1885,7 +1338,6 @@ function stripRetiredPostApproval({
     const mergerAgents = (node.agents ?? []).filter(
       (agent) => agent.name && RETIRED_MERGER_SLOT_NAMES.has(agent.name)
     );
-    // Exactly one merger slot, with the seeded identity.
     return (
       mergerAgents.length === 1 &&
       (node.agents?.length ?? 0) === 1 &&
@@ -1932,7 +1384,6 @@ function stripRetiredPostApproval({
   };
 }
 
-/** @internal Exported for testing. */
 export function mergeChannelsFromTemplate(
   existingChannels: SpaceWorkflow['channels'],
   templateChannels: SpaceWorkflow['channels'],
@@ -1945,11 +1396,6 @@ export function mergeChannelsFromTemplate(
   );
   if (!existingChannels) return remappedTemplateChannels;
 
-  // Match key mirrors buildWorkflowFingerprint's channel normalization: a
-  // single-target `to` array (e.g. ['Coding']) is runtime-equivalent to the
-  // scalar form ('Coding'), so normalize before keying. Otherwise an existing
-  // array-form back-channel wouldn't match the template's scalar form, leaving
-  // the old capped channel in place and appending a capped duplicate.
   const channelKey = (channel: NonNullable<SpaceWorkflow['channels']>[number]) => {
     const normalizedTo = Array.isArray(channel.to)
       ? channel.to.length === 1
@@ -1966,15 +1412,6 @@ export function mergeChannelsFromTemplate(
     remappedTemplateChannels.map((channel) => [channelKey(channel), channel])
   );
 
-  // In-place merge of structural channel fields (maxCycles, label) onto
-  // channels that already exist in the seeded workflow, mirroring the node-agent
-  // (toolGuards) merges. Channels are structural topology: {from, to} is the
-  // stable match key and the template owns maxCycles + label. Propagating them
-  // keeps structural changes
-  // (e.g. raising a cyclic cap 6 → 50) landing on pre-existing spaces; without
-  // this, the unconditional templateHash write would stamp the new hash while
-  // leaving the old field values in place, then block any future fix from
-  // reaching them (the matching hash skips the row on every later startup).
   const mergedExisting = existingChannels.map((channel) => {
     const templateChannel = templateChannelByKey.get(channelKey(channel));
     if (!templateChannel) return channel;
@@ -2098,37 +1535,6 @@ function mergeHooksFromTemplate(
   ];
 }
 
-/** @internal Exported for testing. */
-
-/**
- * Fields that the built-in seeder re-stamps when it detects template drift
- * on an already-seeded row.
- *
- * - Node-level `postApproval`, `completionAutonomyLevel`, and `templateHash`
- *   are updated. The legacy workflow-level `postApproval` is cleared. Persisted
- *   node agent `customPrompt.value` is preserved except for known retired built-in
- *   prompt text, so daemon restart / startup seed passes cannot replace user-configured
- *   runtime prompts.
- * - Agent `toolGuards` are merged onto matching agent slots (by node name +
- *   agent name) so structural enforcement metadata stays in sync with the
- *   template when node + agent names still match. Other node fields
- *   (customPrompt, model, disabledSkillIds, etc.) are preserved. Template nodes
- *   missing from an existing workflow are appended so new terminal branches can
- *   land without replacing existing node IDs.
- * - Structural channel fields (maxCycles, label) are merged in-place onto channels matched by
- *   {from, to}, and missing template channels are appended so newly-added built-in
- *   branches become reachable on pre-existing spaces. This is how a raised cyclic cap (e.g.
- *   maxCycles 6 → 50) lands on pre-existing spaces instead of only newly-created ones. Like the
- *   other template-owned structural fields (completionAutonomyLevel, node
- *   toolGuards, hooks), built-in channel maxCycles/label are template-managed: a user-customized
- *   value (editable via the visual editor) is reset to the template value when drift triggers a
- *   re-stamp — clone to a custom (non-re-stamped) workflow for a persistent custom cap. Template
- *   hooks are copied from the built-in template so hook-based runtime metadata lands during
- *   drift re-stamps. Existing channels, layout, and node rows are not regenerated. Workflow IDs, node IDs, and persisted node-agent slots
- *   are stable identifiers for in-flight runs, so template drift must never
- *   replace node rows. Agent `toolGuards` are updated in-place on existing node
- *   configs instead.
- */
 const RESTAMP_FIELDS = [
   'legacy postApproval(clear)',
   'completionAutonomyLevel',
@@ -2138,49 +1544,6 @@ const RESTAMP_FIELDS = [
   'hooks(template hooks)',
 ] as const;
 
-/**
- * Seeds all built-in workflow templates into the given space.
- *
- * Each template node agent's `agentId` placeholder (e.g., `'Planner'`, `'Coder'`,
- * `'General'`) is resolved to a real SpaceWorkerAgent UUID via `resolveAgentId`.
- * If any name cannot be resolved, this function throws — persisting a
- * placeholder string as an `agentId` would create broken workflow data.
- *
- * Idempotency & drift re-stamping:
- *   - If NO built-in workflow rows exist yet in this space, all seven templates
- *     are created from scratch.
- *   - If rows already exist that were seeded from a built-in template
- *     (matched via `templateName`), their stored `templateHash` is compared
- *     to the current template hash. On mismatch, the row is re-stamped
- *     with the narrow field set listed in {@link RESTAMP_FIELDS} — see the
- *     constant's doc-comment for details. Agent `toolGuards` are merged onto
- *     matching slots (preserving user-configured prompts). This is how new
- *     node-level `postApproval` routes and `toolGuards` land on pre-existing spaces.
- *   - Rows without a `templateName` (user-created workflows) are ignored.
- *
- * Individual workflow creation / re-stamp errors are captured per-workflow
- * and do not abort the remaining operations.
- *
- * `hasActiveRuns` (optional): a predicate returning whether a non-terminal
- * workflow run currently references the given workflow row. When it returns
- * true for a row, the re-stamp is DEFERRED for that row — the topology is left
- * byte-for-byte untouched so an in-flight run (reloaded by `run.workflowId`
- * on restart) does not resume against a graph whose retired nodes/tools were
- * just stripped. The stale hash re-triggers the re-stamp on a later pass once
- * the run is terminal. Omit it (or always return false) when no runs can
- * exist (e.g. seeding a fresh space).
- *
- * NOTE: This function must be called after preset SpaceWorkerAgent records have been
- * seeded (inside the `space.create` RPC handler).
- *
- * Example call site:
- * ```ts
- * const agents = spaceAgentManager.listBySpaceId(spaceId);
- * seedBuiltInWorkflows(spaceId, workflowManager, (name) =>
- *   agents.find(a => a.name.toLowerCase() === name.toLowerCase())?.id
- * );
- * ```
- */
 export function seedBuiltInWorkflows(
   spaceId: string,
   workflowManager: SpaceWorkflowManager,
@@ -2192,40 +1555,14 @@ export function seedBuiltInWorkflows(
   let existing = workflowManager.listWorkflows(spaceId);
   const identityErrors: Array<{ name: string; error: string }> = [];
 
-  // Rename pre-split legacy coding templates to their canonical merger identity.
-  // `LEGACY_CODING_TEMPLATE_IDENTITIES` is the single source of truth shared with
-  // `resolveBuiltInWorkflowTemplate`. Process EVERY row carrying a legacy
-  // templateName: a space can hold duplicate legacy seeds (the condition the
-  // duplicate-drift cleanup exists for), and renaming only the first (`find`)
-  // would strand the rest under a name no built-in recognises —
-  // `detectDuplicateDrift` filters out non-canonical templateNames, so they would
-  // never group for cleanup.
   for (const identity of LEGACY_CODING_TEMPLATE_IDENTITIES) {
     const legacyRows = existing.filter((workflow) => workflow.templateName === identity.legacyName);
     if (legacyRows.length === 0) continue;
     const canonicalTemplate = templatesByName.get(identity.name);
-    // The merger variants are no longer `default` (the stable Coding workflow
-    // is). Strip a stale `default` tag from migrated rows so the deterministic
-    // workflow fallback (selectDeterministicWorkflowFallback, which ranks
-    // `default`-tagged workflows by updatedAt) does not pick the legacy merger
-    // flow over the stable coder-owned flow.
     const canonicalIsDefault = (canonicalTemplate?.tags ?? []).includes('default');
-    // Newest first: the dedup machinery keeps the newest row, so it gets the
-    // full canonical identity. Older duplicates cannot take the (unique)
-    // name/handle, but we still point their templateName at the canonical
-    // template so they group under it for duplicate cleanup rather than being
-    // stranded under the legacy name.
     const sorted = [...legacyRows].sort((a, b) => b.createdAt - a.createdAt);
     for (const row of sorted) {
       let migrated: SpaceWorkflow | null = row;
-      // Apply the full canonical rename ONLY when the row still carries the
-      // seeded legacy display name AND the seeded legacy handle. A user who
-      // customized either (renamed the row, or kept the name but changed the
-      // handle) keeps their value — the templateName-only stamp below writes
-      // neither — so we repoint only templateName and the row still groups
-      // under the canonical template for duplicate cleanup, without clobbering
-      // the customization. (Same templateName-only fallback used below for
-      // name/handle collisions.)
       const rowIsUnmodifiedSeed =
         row.name === identity.legacyName && row.handle === identity.legacyHandle;
       try {
@@ -2239,9 +1576,6 @@ export function seedBuiltInWorkflows(
           migrated = workflowManager.stampBuiltInTemplateName(row.id, identity.name);
         }
       } catch {
-        // Name/handle clash (an older duplicate, or a user workflow already
-        // holding the canonical name) — stamp templateName only so the row
-        // still groups under the canonical template for dedup.
         try {
           migrated = workflowManager.stampBuiltInTemplateName(row.id, identity.name);
         } catch (innerErr) {
@@ -2252,7 +1586,6 @@ export function seedBuiltInWorkflows(
           });
         }
       }
-      // Drop a stale `default` tag (best-effort — non-fatal if it fails).
       if (migrated && !canonicalIsDefault && (migrated.tags ?? []).includes('default')) {
         try {
           workflowManager.stampBuiltInTags(
@@ -2270,7 +1603,6 @@ export function seedBuiltInWorkflows(
   const restamped: string[] = [];
   const errors: Array<{ name: string; error: string }> = [...identityErrors];
 
-  // Re-stamp template-seeded rows whose stored hash no longer matches.
   if (existing.length > 0) {
     for (const row of existing) {
       if (!row.templateName) continue;
@@ -2279,19 +1611,7 @@ export function seedBuiltInWorkflows(
       const expectedHash = computeWorkflowHash(template);
       if (row.templateHash === expectedHash) continue;
 
-      // Defer the whole re-stamp while an active (non-terminal) workflow run
-      // references this row: runtime recovery reloads the workflow by
-      // run.workflowId, so mutating the topology under an in-flight run (e.g.
-      // stripping the retired Post-Approval merger node) would leave it resuming
-      // against a graph that no longer contains its active worker and it could
-      // not finish. Leave the row byte-for-byte untouched; once the run
-      // reaches a terminal state, the stale hash re-triggers this re-stamp and
-      // the merge + strip run then.
       if (hasActiveRuns?.(row.id)) {
-        // Keep the legacy node/agent identities so a live post-approval session
-        // can resume, but migrate its exact retired merge contract away from the
-        // removed merge_pr tool. This is deliberately narrower than restamping:
-        // customized merger prompts/guards/routes remain byte-for-byte untouched.
         const templateNodesByName = new Map(template.nodes.map((node) => [node.name, node]));
         const nodes = row.nodes.map((node) => {
           const templateNode = templateNodesByName.get(node.name);
@@ -2362,8 +1682,6 @@ export function seedBuiltInWorkflows(
       }
 
       try {
-        // Targeted merge of structural template fields that must stay in sync while
-        // preserving user-configurable prompts and workflow topology.
         const mergedNodes = mergeNodeStructuralFieldsFromTemplate(
           row.nodes,
           template.nodes,
@@ -2381,50 +1699,19 @@ export function seedBuiltInWorkflows(
           mergedNodes,
           row.hooks
         );
-        // The merge helpers above only ADD missing template pieces — they never
-        // drop nodes/channels/hooks/gates the stored row still has but the
-        // template no longer does. Strip the retired Post-Approval merger node,
-        // its channels, and any Post-Approval hooks so restamp converges to the
-        // stable 2-node / 3-node coder-owned graph.
         const stripped = stripRetiredPostApproval({
           templateName: template.name,
           nodes: mergedNodes,
           channels: mergedChannels,
           hooks: mergedHooks,
         });
-        // mergeChannelsFromTemplate propagates structural fields (maxCycles,
-        // label) in-place on matched channels in addition to appending any
-        // missing template channels. Detect whether the merge changed anything
-        // — added channels OR updated structural fields — so the result is
-        // persisted even when the channel count is unchanged (e.g. raising a
-        // cyclic cap 6 → 50 on an already-seeded workflow).
         const writeChannels =
           JSON.stringify(mergedChannels) !== JSON.stringify(row.channels) ||
           stripped.channelsChanged;
 
-        // Stamp the hash of the ACTUALLY-merged row, then advance the stored
-        // hash ONLY when the merge fully converged the row to the current
-        // template (mergedHash === expectedHash). The merge above reconciles
-        // structural fields (nodes, channels, hooks, post-approval, autonomy)
-        // and patches prompts that match known retired template text, but it
-        // deliberately preserves genuine user prompts, description, and
-        // instructions. If those still differ from the template, stamping
-        // `expectedHash` would falsely claim the row is fully up-to-date,
-        // collapse `updateAvailable` to false, and permanently hide the
-        // remaining template update (the matching hash skips the row on every
-        // later restart). Preserving the prior (stale) hash keeps the row
-        // honestly flagged "not up to date" so drift detection still surfaces a
-        // sync action — and because the merged content now differs from that
-        // prior hash, the row also reads as customized, routing the apply
-        // through review so a preserved edit isn't silently lost. This
-        // generalizes the per-channel maxCycles merge philosophy above
-        // (reconcile the field, then let the stamped hash reflect reality).
         const mergedHash = computeWorkflowHash({
           ...row,
           nodes: stripped.nodes,
-          // computeWorkflowHash treats null/undefined identically (?? [], truthy
-          // check), so normalizing to undefined just satisfies the SpaceWorkflow
-          // shape — the hashed value matches the persisted row either way.
           hooks: stripped.hooks ?? undefined,
           channels: writeChannels ? stripped.channels : row.channels,
           completionAutonomyLevel: template.completionAutonomyLevel,
@@ -2434,8 +1721,6 @@ export function seedBuiltInWorkflows(
 
         workflowManager.updateWorkflow(row.id, {
           completionAutonomyLevel: template.completionAutonomyLevel,
-          // Built-ins now store routes on terminal nodes. Clear any legacy
-          // workflow-level value while the node updater writes node routes.
           postApproval: null,
           hooks: stripped.hooks ?? null,
           nodes: stripped.nodes,
@@ -2456,7 +1741,6 @@ export function seedBuiltInWorkflows(
     }
   }
 
-  // Create canonical templates missing from either a fresh or an existing space.
   const installedTemplateNames = new Set(
     workflowManager
       .listWorkflows(spaceId)
@@ -2475,10 +1759,6 @@ export function seedBuiltInWorkflows(
     };
   }
 
-  // Create missing templates.
-  //
-  // Pre-validate: resolve every agent name needed across ALL templates before
-  // persisting anything. This guarantees all-or-nothing behaviour.
   const neededNames = new Set<string>();
   for (const template of templatesToCreate) {
     for (const node of template.nodes) {
@@ -2499,13 +1779,11 @@ export function seedBuiltInWorkflows(
     resolvedIds.set(agentName, agentId);
   }
 
-  // All names resolved — safe to persist.
   const seeded: string[] = [];
 
   for (const template of templatesToCreate) {
     try {
-      // Assign real UUIDs to template node IDs
-      const nodeIdMap = new Map<string, string>(); // templateId -> realUUID
+      const nodeIdMap = new Map<string, string>();
       for (const node of template.nodes) {
         nodeIdMap.set(node.id, generateUUID());
       }
@@ -2518,9 +1796,6 @@ export function seedBuiltInWorkflows(
           agentId: resolvedIds.get(a.agentId)!,
         })),
         ...(s.postApproval ? { postApproval: { ...s.postApproval } } : {}),
-        // Carry declared handoff transitions so a fresh install matches a
-        // re-stamped space when a template declares them. Targets reference
-        // node/agent names, which are unchanged on fresh install.
         ...(s.transitions && s.transitions.length > 0
           ? { transitions: s.transitions.map((t) => ({ ...t })) }
           : {}),
@@ -2553,8 +1828,6 @@ export function seedBuiltInWorkflows(
         startNodeId,
         endNodeId,
         tags: [...template.tags],
-        // Assign UUIDs to channels that don't have IDs — WorkflowCanvas filters
-        // channels without an id (ch.id must be truthy) so they would be invisible.
         channels: template.channels
           ? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
           : undefined,
@@ -2568,7 +1841,6 @@ export function seedBuiltInWorkflows(
             )
           : undefined,
         completionAutonomyLevel: template.completionAutonomyLevel,
-        // Pin the canonical handle so it is stable even if the name is later reworded.
         ...(template.handle ? { handle: template.handle } : {}),
         templateName: template.name,
         templateHash: computeWorkflowHash(template),

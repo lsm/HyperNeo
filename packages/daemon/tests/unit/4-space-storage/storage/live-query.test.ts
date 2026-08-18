@@ -1,22 +1,8 @@
-/**
- * LiveQueryEngine Tests
- *
- * Unit tests for LiveQueryEngine: initial snapshots, insert/update/delete deltas,
- * multi-subscriber behaviour, handle disposal, engine disposal, and version tracking.
- *
- * These tests use a real BunDatabase in-memory and a lightweight mock ReactiveDatabase
- * built on EventEmitter so we have direct control over when change events fire.
- */
-
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { LiveQueryEngine, computeDiff, extractTables } from '../../../../src/storage/live-query';
 import type { QueryDiff } from '../../../../src/storage/live-query';
-
-// ---------------------------------------------------------------------------
-// Mock ReactiveDatabase
-// ---------------------------------------------------------------------------
 
 interface MockReactiveDatabase {
   on(
@@ -25,9 +11,7 @@ interface MockReactiveDatabase {
   ): void;
   off(event: string, listener: (...args: unknown[]) => void): void;
   getTableVersion(table: string): number;
-  /** Test helper — fire a synthetic change event for the given tables. */
   fireChange(tables: string[]): void;
-  /** Test helper — bump + fire change for a table. */
   bumpAndFire(table: string): void;
 }
 
@@ -62,10 +46,6 @@ function createMockReactiveDatabase(): MockReactiveDatabase {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Table setup helpers
-// ---------------------------------------------------------------------------
-
 function createTestDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec(`
@@ -94,10 +74,6 @@ function deleteItem(db: BunDatabase, id: string): void {
   db.exec(`DELETE FROM items WHERE id = '${id}'`);
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('LiveQueryEngine', () => {
   let db: BunDatabase;
   let mockReactive: MockReactiveDatabase;
@@ -122,10 +98,6 @@ describe('LiveQueryEngine', () => {
     engine.dispose();
     db.close();
   });
-
-  // -------------------------------------------------------------------------
-  // Initial snapshot
-  // -------------------------------------------------------------------------
 
   describe('subscribe — initial snapshot', () => {
     test('delivers snapshot immediately on subscribe with empty table', () => {
@@ -158,10 +130,6 @@ describe('LiveQueryEngine', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // INSERT delta
-  // -------------------------------------------------------------------------
-
   describe('INSERT triggers delta', () => {
     test('delta has type=delta after insert', async () => {
       const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
@@ -170,7 +138,7 @@ describe('LiveQueryEngine', () => {
       insertItem(db, 'c', 'Charlie', 3);
       mockReactive.bumpAndFire('items');
 
-      await Promise.resolve(); // flush microtask
+      await Promise.resolve();
 
       expect(diffs.length).toBe(2);
       expect(diffs[1].type).toBe('delta');
@@ -252,10 +220,6 @@ describe('LiveQueryEngine', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // UPDATE delta
-  // -------------------------------------------------------------------------
-
   describe('UPDATE triggers delta', () => {
     test('delta updated contains the modified row', async () => {
       insertItem(db, 'h', 'Hotel', 8);
@@ -290,10 +254,6 @@ describe('LiveQueryEngine', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // DELETE delta
-  // -------------------------------------------------------------------------
-
   describe('DELETE triggers delta', () => {
     test('delta removed contains the deleted row', async () => {
       insertItem(db, 'j', 'Juliet', 10);
@@ -325,23 +285,17 @@ describe('LiveQueryEngine', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // No callback when result unchanged
-  // -------------------------------------------------------------------------
-
   describe('no callback on unrelated table change', () => {
     test('writing to an unrelated table does NOT trigger a delta', async () => {
       insertItem(db, 'l', 'Lima', 12);
       const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
       engine.subscribe(SQL, [], (diff) => diffs.push(diff));
 
-      // Write to `other` table — query watches `items` only
       db.exec(`INSERT INTO other (id, note) VALUES ('x', 'unrelated')`);
       mockReactive.bumpAndFire('other');
 
       await Promise.resolve();
 
-      // Only the initial snapshot, no delta
       expect(diffs.length).toBe(1);
     });
 
@@ -350,19 +304,13 @@ describe('LiveQueryEngine', () => {
       const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
       engine.subscribe(SQL, [], (diff) => diffs.push(diff));
 
-      // Fire change event without actually modifying the data
       mockReactive.bumpAndFire('items');
 
       await Promise.resolve();
 
-      // Hash-based dedup: result is identical, so no delta
       expect(diffs.length).toBe(1);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Multiple subscribers
-  // -------------------------------------------------------------------------
 
   describe('multiple subscribers', () => {
     test('two subscribers to same query both receive initial snapshot', () => {
@@ -406,13 +354,12 @@ describe('LiveQueryEngine', () => {
       engine.subscribe(sqlAll, [], (diff) => allDiffs.push(diff));
       engine.subscribe(sqlFiltered, [], (diff) => filteredDiffs.push(diff));
 
-      // Insert low-val row — matches all but not filtered
       insertItem(db, 'o', 'Oscar', 5);
       mockReactive.bumpAndFire('items');
       await Promise.resolve();
 
-      expect(allDiffs.length).toBe(2); // snapshot + delta
-      expect(filteredDiffs.length).toBe(1); // only snapshot; no data change for that query
+      expect(allDiffs.length).toBe(2);
+      expect(filteredDiffs.length).toBe(1);
     });
 
     test('shared query metadata is computed once and delivered to all subscribers', async () => {
@@ -486,10 +433,6 @@ describe('LiveQueryEngine', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Handle disposal
-  // -------------------------------------------------------------------------
-
   describe('handle.dispose()', () => {
     test('disposed handle no longer receives deltas', async () => {
       const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
@@ -502,7 +445,6 @@ describe('LiveQueryEngine', () => {
 
       await Promise.resolve();
 
-      // Only initial snapshot; no delta after dispose
       expect(diffs.length).toBe(1);
     });
 
@@ -520,37 +462,29 @@ describe('LiveQueryEngine', () => {
 
       await Promise.resolve();
 
-      expect(diffs1.length).toBe(1); // only snapshot
-      expect(diffs2.length).toBe(2); // snapshot + delta
+      expect(diffs1.length).toBe(1);
+      expect(diffs2.length).toBe(2);
     });
 
     test('handle.get() still returns last known rows after dispose (stale read)', async () => {
       insertItem(db, 'stale1', 'Stale', 1);
       const handle = engine.subscribe(SQL, [], () => {});
 
-      // handle.get() returns current data before dispose
       expect(handle.get().length).toBe(1);
       expect(handle.get()[0].id).toBe('stale1');
 
       handle.dispose();
 
-      // After dispose, get() still returns the last cached snapshot
       expect(handle.get().length).toBe(1);
       expect(handle.get()[0].id).toBe('stale1');
 
-      // Data changes in the DB after dispose — handle.get() is stale
       insertItem(db, 'stale2', 'Stale2', 2);
       mockReactive.bumpAndFire('items');
       await Promise.resolve();
 
-      // Still returns old data (1 row, not 2) — stale read after dispose
       expect(handle.get().length).toBe(1);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Engine disposal
-  // -------------------------------------------------------------------------
 
   describe('LiveQueryEngine.dispose()', () => {
     test('disposed engine does not deliver further deltas', async () => {
@@ -564,7 +498,7 @@ describe('LiveQueryEngine', () => {
 
       await Promise.resolve();
 
-      expect(diffs.length).toBe(1); // only initial snapshot
+      expect(diffs.length).toBe(1);
     });
 
     test('engine.dispose() stops listening even if change events continue to fire', async () => {
@@ -573,7 +507,6 @@ describe('LiveQueryEngine', () => {
 
       engine.dispose();
 
-      // Fire multiple change events after dispose
       mockReactive.bumpAndFire('items');
       mockReactive.bumpAndFire('items');
       mockReactive.bumpAndFire('items');
@@ -584,17 +517,13 @@ describe('LiveQueryEngine', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Version in diffs
-  // -------------------------------------------------------------------------
-
   describe('version in diffs', () => {
     test('delta version reflects ReactiveDatabase table version at evaluation time', async () => {
       const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
       engine.subscribe(SQL, [], (diff) => diffs.push(diff));
 
       insertItem(db, 's', 'Sierra', 19);
-      mockReactive.bumpAndFire('items'); // bumps to 1
+      mockReactive.bumpAndFire('items');
 
       await Promise.resolve();
 
@@ -606,21 +535,17 @@ describe('LiveQueryEngine', () => {
       engine.subscribe(SQL, [], (diff) => diffs.push(diff));
 
       insertItem(db, 't', 'Tango', 20);
-      mockReactive.bumpAndFire('items'); // v=1
+      mockReactive.bumpAndFire('items');
       await Promise.resolve();
 
       insertItem(db, 'u', 'Uniform', 21);
-      mockReactive.bumpAndFire('items'); // v=2
+      mockReactive.bumpAndFire('items');
       await Promise.resolve();
 
       expect(diffs[1].version).toBe(1);
       expect(diffs[2].version).toBe(2);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Parameterised queries
-  // -------------------------------------------------------------------------
 
   describe('parameterised queries', () => {
     test('query with parameter only reacts to matching rows', async () => {
@@ -632,7 +557,6 @@ describe('LiveQueryEngine', () => {
       const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
       engine.subscribe(sqlParam, [10], (diff) => diffs.push(diff));
 
-      // Only 'w' with val=50 matches val > 10
       expect(diffs[0].rows.length).toBe(1);
       expect(diffs[0].rows[0].id).toBe('w');
     });
@@ -647,16 +571,10 @@ describe('LiveQueryEngine', () => {
       engine.subscribe(sqlParam, [10], (diff) => difsLow.push(diff));
       engine.subscribe(sqlParam, [200], (diff) => difsHigh.push(diff));
 
-      // Low threshold: x (100) matches
       expect(difsLow[0].rows.length).toBe(1);
-      // High threshold: x (100) does not match 200
       expect(difsHigh[0].rows.length).toBe(0);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // computeDiff (positional path) — unit tests
-  // -------------------------------------------------------------------------
 
   describe('computeDiff (positional path)', () => {
     test('empty arrays produce empty diff', () => {
@@ -700,13 +618,10 @@ describe('LiveQueryEngine', () => {
     });
 
     test('positional path: updated array is always empty', () => {
-      // Rows without id field — positional diff never produces updated entries
       const oldRows = [{ name: 'alpha', value: 1 }];
       const newRows = [{ name: 'alpha', value: 99 }];
       const result = computeDiff(oldRows, newRows);
-      // updated is always empty for positional path
       expect(result.updated).toEqual([]);
-      // The changed row appears as removed (old) and added (new)
       expect(result.removed).toEqual([{ name: 'alpha', value: 1 }]);
       expect(result.added).toEqual([{ name: 'alpha', value: 99 }]);
     });
@@ -747,10 +662,6 @@ describe('LiveQueryEngine', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Positional diff — integration tests with real DB table without id column
-  // -------------------------------------------------------------------------
-
   describe('positional diff path — integration via metrics table', () => {
     const METRICS_SQL = 'SELECT name, value FROM metrics ORDER BY name';
 
@@ -787,7 +698,6 @@ describe('LiveQueryEngine', () => {
       const diffs: QueryDiff<{ name: string; value: number }>[] = [];
       engine.subscribe(METRICS_SQL, [], (diff) => diffs.push(diff));
 
-      // Change the value — positional diff will see old row removed, new row added
       db.exec(`UPDATE metrics SET value = 99 WHERE name = 'cpu'`);
       mockReactive.bumpAndFire('metrics');
       await Promise.resolve();
@@ -819,17 +729,12 @@ describe('LiveQueryEngine', () => {
       const diffs: QueryDiff<{ name: string; value: number }>[] = [];
       engine.subscribe(METRICS_SQL, [], (diff) => diffs.push(diff));
 
-      // Fire change without modifying data
       mockReactive.bumpAndFire('metrics');
       await Promise.resolve();
 
       expect(diffs.length).toBe(1);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // JOIN-reaction integration — engine reacts to joined table changes
-  // -------------------------------------------------------------------------
 
   describe('JOIN query — engine reacts to joined table changes', () => {
     const JOIN_SQL = `
@@ -859,7 +764,6 @@ describe('LiveQueryEngine', () => {
       const diffs: QueryDiff<{ id: string; name: string; note: string }>[] = [];
       engine.subscribe(JOIN_SQL, [], (diff) => diffs.push(diff));
 
-      // Modify the `other` row — should trigger delta because query watches both tables
       db.exec(`UPDATE other SET note = 'new-note' WHERE id = 'z2'`);
       mockReactive.bumpAndFire('other');
       await Promise.resolve();
@@ -887,15 +791,7 @@ describe('LiveQueryEngine', () => {
   });
 });
 
-// =============================================================================
-// extractTables — direct unit tests
-// =============================================================================
-
 describe('extractTables', () => {
-  // -------------------------------------------------------------------------
-  // Simple FROM
-  // -------------------------------------------------------------------------
-
   test('simple FROM extracts single table', () => {
     expect(extractTables('SELECT * FROM items')).toEqual(['items']);
   });
@@ -907,10 +803,6 @@ describe('extractTables', () => {
   test('table name is normalised to lowercase', () => {
     expect(extractTables('SELECT * FROM ITEMS')).toEqual(['items']);
   });
-
-  // -------------------------------------------------------------------------
-  // JOINs
-  // -------------------------------------------------------------------------
 
   test('plain JOIN extracts table', () => {
     const tables = extractTables('SELECT * FROM items JOIN other ON items.id = other.id');
@@ -958,19 +850,11 @@ describe('extractTables', () => {
     expect(tables).toContain('other');
   });
 
-  // -------------------------------------------------------------------------
-  // Multiple tables — comma-separated FROM
-  // -------------------------------------------------------------------------
-
   test('comma-separated FROM clause extracts both tables', () => {
     const tables = extractTables('SELECT * FROM items, other WHERE items.id = other.id');
     expect(tables).toContain('items');
     expect(tables).toContain('other');
   });
-
-  // -------------------------------------------------------------------------
-  // Table aliases
-  // -------------------------------------------------------------------------
 
   test('FROM items AS i extracts items (not i)', () => {
     const tables = extractTables('SELECT i.id FROM items AS i WHERE i.val > 0');
@@ -984,27 +868,15 @@ describe('extractTables', () => {
     expect(tables).not.toContain('i');
   });
 
-  // -------------------------------------------------------------------------
-  // Deduplication
-  // -------------------------------------------------------------------------
-
   test('self-join produces single entry for the table', () => {
     const tables = extractTables('SELECT a.id FROM items a JOIN items b ON a.id = b.parent_id');
     expect(tables).toEqual(['items']);
   });
 
-  // -------------------------------------------------------------------------
-  // Multiple distinct tables
-  // -------------------------------------------------------------------------
-
   test('multiple tables via JOIN all extracted', () => {
     const tables = extractTables('SELECT * FROM items JOIN other ON items.id = other.item_id');
     expect(tables.sort()).toEqual(['items', 'other']);
   });
-
-  // -------------------------------------------------------------------------
-  // Subqueries
-  // -------------------------------------------------------------------------
 
   test('subquery in FROM — inner table is still extracted', () => {
     const sql = 'SELECT * FROM (SELECT * FROM items) AS sub';
@@ -1013,10 +885,8 @@ describe('extractTables', () => {
   });
 
   test('subquery in FROM — outer pseudo-table alias is not extracted', () => {
-    // `sub` is a derived-table alias, not a real table; the regex skips `FROM (`
     const sql = 'SELECT * FROM (SELECT * FROM items) AS sub';
     const tables = extractTables(sql);
-    // `sub` should NOT appear because FROM ( triggers the lookahead skip
     expect(tables).not.toContain('sub');
   });
 });

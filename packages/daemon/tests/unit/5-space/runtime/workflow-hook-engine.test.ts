@@ -1,11 +1,3 @@
-/**
- * Unit tests for WorkflowHookEngine and wrapHandlerWithHooks.
- *
- * Covers all hook result types, chaining precedence, follow-up dispatch,
- * param patching with re-validation, local state updates, script execution
- * edge cases, and normalized user-state mapping.
- */
-
 import { describe, test, expect, beforeEach } from 'bun:test';
 import {
   clearAllRetryableHookActionTimers,
@@ -26,19 +18,9 @@ import type {
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository';
 
-/**
- * HookExecutor script validators shell out via `Bun.spawn` in production
- * (script-utils.ts / hook-executor.ts), which is unavailable under the Vitest/Node
- * runner. The script-execution describe is gated until the production
- * module is de-Bun-ified.
- */
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
 import type { ToolResult } from '../../../../src/lib/space/tools/tool-result';
-
-// ---------------------------------------------------------------------------
-// Mocks
-// ---------------------------------------------------------------------------
 
 class MockHookExecutor extends HookExecutor {
   private results = new Map<string, WorkflowHookResult>();
@@ -256,10 +238,6 @@ const defaultMeta: HookActionMeta = {
   taskId: 'task-1',
 };
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('WorkflowHookEngine', () => {
   test('persistStateUpdate retries version conflicts', () => {
     let attempts = 0;
@@ -370,9 +348,6 @@ describe('WorkflowHookEngine', () => {
       defaultMeta
     );
 
-    // hook-2 runs first (order 0), returns retryable_block
-    // hook-1 runs next (order 1), returns block
-    // block takes precedence
     expect(outcome.decision).toBe('block');
     expect(outcome.userState.status).toBe('blocked_by_hook');
     expect(outcome.userState.reason).toBe('Hard block');
@@ -773,7 +748,6 @@ describe('WorkflowHookEngine', () => {
     const workflow = makeWorkflow([
       makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
     ]);
-    // Channel uses agent slot name 'reviewer' instead of node name 'Review'
     workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'reviewer' }];
 
     const mockExecutor = new MockHookExecutor();
@@ -802,7 +776,6 @@ describe('WorkflowHookEngine', () => {
     const workflow = makeWorkflow([
       makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
     ]);
-    // Channel uses agent slot name 'coder' as source instead of node name 'Coding'
     workflow.channels = [{ id: 'ch-1', from: 'coder', to: 'Review' }];
 
     const mockExecutor = new MockHookExecutor();
@@ -900,7 +873,6 @@ describe('WorkflowHookEngine', () => {
   });
 
   test('bare target prefers exact node name over slot alias', async () => {
-    // Node A is named 'Review'; Node B has an agent slot named 'Review'
     const workflow = makeWorkflow([
       makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
     ]);
@@ -1094,7 +1066,6 @@ describe('WorkflowHookEngine', () => {
       return { result: { type: 'allow' } };
     };
 
-    // 100 strings of 400 chars each → ~42 KB JSON, exceeding 32 KB budget
     const hugeArray = Array.from({ length: 100 }, () => 'x'.repeat(400));
     await engine.executeAction(
       'send_message',
@@ -1160,7 +1131,7 @@ describe('WorkflowHookEngine', () => {
     ) => {
       if (failCount < 2) {
         failCount++;
-        return null; // simulate version conflict
+        return null;
       }
       return originalUpdate(runId, hookId, patch);
     };
@@ -1355,7 +1326,6 @@ describe('WorkflowHookEngine', () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
 
-    // Create 10 artifacts each with ~8 KB of data → ~80 KB total, exceeding 64 KB budget
     const bigArtifacts = Array.from({ length: 10 }, (_, i) => ({
       id: `a${i}`,
       runId: 'run-1',
@@ -1390,7 +1360,6 @@ describe('WorkflowHookEngine', () => {
     await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
 
     const artifacts = (capturedContext as { currentArtifacts: unknown[] }).currentArtifacts;
-    // 8 of 10 should fit under 64 KB; 9 would exceed
     expect(artifacts.length).toBeLessThan(10);
     expect(artifacts.length).toBeGreaterThanOrEqual(1);
   });
@@ -1614,20 +1583,12 @@ describe('wrapHandlerWithHooks', () => {
     expect(hookStateRepo.get('run-1', 'hook-1')?.localState.pr_url).toBe(
       'https://github.com/acme/corp/pull/42'
     );
-    // The authoritative run-level identity is also stamped under the reserved
-    // hook id (engine-only-writable) so the resolver need not match user-defined
-    // hook ids by substring.
     expect(hookStateRepo.get('run-1', PR_READY_VALIDATED_IDENTITY_HOOK_ID)?.localState.pr_url).toBe(
       'https://github.com/acme/corp/pull/42'
     );
   });
 
   test('does NOT persist PR URL for a non-pr_ready hook (PR-identity spoofing guard)', async () => {
-    // Only the pr_ready validator's hook may stamp pr_url to local state.
-    // Otherwise a custom hook with a colliding id (e.g. post-pr-ready-notification)
-    // and a different validator could supply a spoofed pr_url that
-    // resolveInitialPrimaryLinkUrl — which matches hook ids by the 'pr-ready'
-    // substring — would then trust for merge dispatch + the mark_complete gate.
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
 
@@ -1658,11 +1619,6 @@ describe('wrapHandlerWithHooks', () => {
   });
 
   test('rejects hook stateForHook/record_state writes to the reserved pr_ready-identity key', async () => {
-    // The reserved key is engine-only (stamped on pr_ready allow). A hook's
-    // record_state.stateForHook can address arbitrary hook ids, so a custom
-    // script hook could otherwise stamp a spoofed pr_url there that the resolver
-    // trusts first. The engine must reject the reserved id in all hook-driven
-    // state writes.
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
     const engine = new WorkflowHookEngine({
@@ -1756,7 +1712,6 @@ describe('wrapHandlerWithHooks', () => {
     );
     const result = await wrapped({ target: 'Review' });
 
-    // Main handler should still succeed after follow-up dispatch
     const data = JSON.parse(result.content[0].text);
     expect(data.success).toBe(true);
   });
@@ -2026,7 +1981,6 @@ describe('wrapHandlerWithHooks', () => {
   });
 });
 
-// GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
 describe.skipIf(!isBun)('HookExecutor script execution', () => {
   test('malformed script output returns block', async () => {
     const executor = new HookExecutor({ workspacePath: '/tmp' });
@@ -2152,11 +2106,6 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
   });
 
   test('github connector auth keys inject only when github is permitted', async () => {
-    // Behavior-preservation canary for the connector-registry env path: the
-    // github connector's auth.envKeys (the old GITHUB_LOOKUP_ENV_KEYS) reach a
-    // script hook iff 'github' is in permittedExternalLookups. GH_TOKEN would
-    // otherwise be stripped by the TOKEN pattern, so observing it proves the
-    // connector-driven injection took the early branch.
     process.env.GH_TOKEN = 'gh-secret';
     const executor = new HookExecutor({ workspacePath: '/tmp' });
     const source = 'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${GH_TOKEN:-missing}\\" }"';
@@ -2197,9 +2146,6 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
   });
 
   test('non-TOKEN connector keys (GH_HOST/GH_CONFIG_DIR) are denied unless permitted', async () => {
-    // Regression canary: GH_HOST/GH_CONFIG_DIR are connector-managed keys that
-    // DON'T match the SECRET/TOKEN strip pattern, so without an explicit deny
-    // they would fall through and leak to a hook that omits externalLookups.
     process.env.GH_HOST = 'gh.enterprise.example';
     process.env.GH_CONFIG_DIR = '/nonexistent/custom-gh';
     const executor = new HookExecutor({ workspacePath: '/tmp' });
@@ -2236,10 +2182,7 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
     delete process.env.GH_HOST;
     delete process.env.GH_CONFIG_DIR;
 
-    // Denied: both connector-managed keys are stripped (not leaked).
     expect(denied.result.message).toBe('missing|missing');
-    // Permitted: GH_HOST passes through (GH_CONFIG_DIR is overridden by the
-    // connector's resolveExtraEnv, so only assert GH_HOST here).
     expect(permitted.result.message).toContain('gh.enterprise.example');
   });
 

@@ -1,37 +1,9 @@
-/**
- * Migration 29 Tests
- *
- * Tests for Migration 29: Space system tables (consolidated from former migrations 29–32).
- *
- * Covers:
- * - All Space tables created correctly on a fresh DB
- * - Migration is idempotent (runs twice without error)
- * - No existing tables are affected
- * - FK CASCADE deletes work: delete space → all child rows deleted
- * - space_tasks.workflow_run_id SET NULL on workflow run delete
- * - CHECK constraints are enforced (status, priority, etc.)
- * - Indexes are created
- *
- * NOTE: Several columns originally added by M29 were subsequently removed:
- * - space_tasks.custom_agent_id, workflow_node_id — removed by M73
- * - space_workflow_runs.config — removed by M73
- * - space_tasks status values changed by M73 ('pending'→'open', 'completed'→'done', etc.)
- * - space_agents.role, config, inject_workflow_context — removed by M74
- * - space_workflows.config, max_iterations — removed by M74
- * - space_workflow_nodes.order_index, agent_id — removed by M74
- * Tests have been updated to reflect the post-M74 schema.
- */
-
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { buildMigratedTemplate, openEmptyDb, openMigratedClone } from './test-db-template';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function tableExists(db: BunDatabase, name: string): boolean {
   return !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(name);
@@ -46,10 +18,6 @@ function indexExists(db: BunDatabase, name: string): boolean {
   return !!db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`).get(name);
 }
 
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
-
 describe('Migration 29: Space system tables', () => {
   let testDir: string;
   let db: BunDatabase;
@@ -57,9 +25,6 @@ describe('Migration 29: Space system tables', () => {
   let templatePath: string;
   let cloneCounter = 0;
 
-  // The full migration chain is replayed once here; every test below starts
-  // from a file-clone of this template, so each test's runMigrations() call
-  // is a fast marker-only no-op replay instead of a full chain rebuild.
   beforeAll(() => {
     templateDir = join(process.cwd(), 'tmp', 'test-migration-29', `template-${Date.now()}`);
     templatePath = buildMigratedTemplate(templateDir);
@@ -92,10 +57,6 @@ describe('Migration 29: Space system tables', () => {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // Table creation
-  // -------------------------------------------------------------------------
-
   test('all Space tables are created after migration', () => {
     runMigrations(db, () => {});
 
@@ -107,7 +68,6 @@ describe('Migration 29: Space system tables', () => {
       'space_workflow_runs',
       'space_tasks',
     ];
-    // Note: space_session_groups and space_session_group_members were dropped by migration 60.
 
     for (const table of expectedTables) {
       expect(tableExists(db, table)).toBe(true);
@@ -119,19 +79,12 @@ describe('Migration 29: Space system tables', () => {
     expect(() => runMigrations(db, () => {})).not.toThrow();
   }, 15_000);
 
-  // -------------------------------------------------------------------------
-  // space_tasks columns — post-M73 schema
-  // -------------------------------------------------------------------------
-
   test('space_tasks does NOT have custom_agent_id column after M73 removed it', () => {
     runMigrations(db, () => {});
     expect(columnExists(db, 'space_tasks', 'custom_agent_id')).toBe(false);
   });
 
   test('legacy space_tasks without custom_agent_id is upgraded safely', () => {
-    // Simulate an early preview schema missing custom_agent_id. This test
-    // builds pre-migration state, so reset the migrated clone to an empty DB
-    // first and replay the full chain against the legacy table below.
     try {
       db.close();
     } catch {
@@ -178,10 +131,7 @@ describe('Migration 29: Space system tables', () => {
 			)
 		`);
 
-    // M29 should add the missing column so intermediate migrations (M30–M72) work.
-    // After M73 runs, it removes the column — but M29 must not throw in the process.
     expect(() => runMigrations(db, () => {})).not.toThrow();
-    // M73 removes custom_agent_id, so it should NOT exist after all migrations.
     expect(columnExists(db, 'space_tasks', 'custom_agent_id')).toBe(false);
   });
 
@@ -200,10 +150,6 @@ describe('Migration 29: Space system tables', () => {
     expect(columnExists(db, 'space_tasks', 'labels')).toBe(true);
   });
 
-  // -------------------------------------------------------------------------
-  // space_workflow_runs state tracking — post-M73 schema
-  // -------------------------------------------------------------------------
-
   test('space_workflow_runs has all required workflow tracking columns', () => {
     runMigrations(db, () => {});
 
@@ -217,14 +163,13 @@ describe('Migration 29: Space system tables', () => {
       'created_at',
       'updated_at',
       'completed_at',
-      'started_at', // added by M73
+      'started_at',
     ];
 
     for (const col of requiredCols) {
       expect(columnExists(db, 'space_workflow_runs', col)).toBe(true);
     }
 
-    // M73 removed config, iteration_count, max_iterations, goal_id, current_step_index, current_node_id
     expect(columnExists(db, 'space_workflow_runs', 'config')).toBe(false);
     expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(false);
     expect(columnExists(db, 'space_workflow_runs', 'current_step_index')).toBe(false);
@@ -233,7 +178,6 @@ describe('Migration 29: Space system tables', () => {
   test('space_agents: role dropped by M74, provider retained', () => {
     runMigrations(db, () => {});
 
-    // M74 drops role, config, inject_workflow_context from space_agents
     expect(columnExists(db, 'space_agents', 'role')).toBe(false);
     expect(columnExists(db, 'space_agents', 'provider')).toBe(true);
   });
@@ -247,7 +191,6 @@ describe('Migration 29: Space system tables', () => {
     runMigrations(db, () => {});
 
     const now = Date.now();
-    // Insert a space first
     db.exec(
       `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
 			 VALUES ('s-1', 'space-a', '/workspace/a', 'Space A', ${now}, ${now})`
@@ -257,7 +200,6 @@ describe('Migration 29: Space system tables', () => {
 			 VALUES ('wf-1', 's-1', 'Workflow 1', ${now}, ${now})`
     );
 
-    // Valid status (new M73 values)
     expect(() => {
       db.exec(
         `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
@@ -265,7 +207,6 @@ describe('Migration 29: Space system tables', () => {
       );
     }).not.toThrow();
 
-    // 'done' is now a valid status (was 'completed' before M73)
     expect(() => {
       db.exec(
         `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
@@ -273,7 +214,6 @@ describe('Migration 29: Space system tables', () => {
       );
     }).not.toThrow();
 
-    // Invalid status
     expect(() => {
       db.exec(
         `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
@@ -281,10 +221,6 @@ describe('Migration 29: Space system tables', () => {
       );
     }).toThrow();
   });
-
-  // -------------------------------------------------------------------------
-  // Indexes — post-M73/M74 schema
-  // -------------------------------------------------------------------------
 
   test('expected indexes are created', () => {
     runMigrations(db, () => {});
@@ -294,7 +230,6 @@ describe('Migration 29: Space system tables', () => {
       'idx_space_agents_space_id',
       'idx_space_workflows_space_id',
       'idx_space_workflow_nodes_workflow_id',
-      // idx_space_workflow_nodes_order removed: M74 drops order_index column
       'idx_space_workflow_runs_space_id',
       'idx_space_workflow_runs_workflow_id',
       'idx_space_tasks_space_id',
@@ -305,61 +240,48 @@ describe('Migration 29: Space system tables', () => {
       expect(indexExists(db, idx)).toBe(true);
     }
 
-    // These indexes were removed (the columns they referenced were dropped by M73/M74)
     expect(indexExists(db, 'idx_space_tasks_workflow_node_id')).toBe(false);
     expect(indexExists(db, 'idx_space_tasks_custom_agent_id')).toBe(false);
     expect(indexExists(db, 'idx_space_workflow_nodes_order')).toBe(false);
   });
-
-  // -------------------------------------------------------------------------
-  // CASCADE deletes: delete space → all child rows deleted
-  // -------------------------------------------------------------------------
 
   test('deleting a space cascades to all child tables', () => {
     runMigrations(db, () => {});
 
     const now = Date.now();
 
-    // Insert a space
     db.exec(
       `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
 			 VALUES ('sp-1', 'cascade-space', '/workspace/cascade', 'Cascade Space', ${now}, ${now})`
     );
 
-    // Insert a space agent (role dropped by M74)
     db.exec(
       `INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
 			 VALUES ('agent-1', 'sp-1', 'Agent 1', ${now}, ${now})`
     );
 
-    // Insert a workflow
     db.exec(
       `INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)
 			 VALUES ('wf-1', 'sp-1', 'Workflow 1', ${now}, ${now})`
     );
 
-    // Insert a workflow node (order_index dropped by M74)
     db.exec(
       `INSERT INTO space_workflow_nodes (id, workflow_id, name, created_at, updated_at)
 			 VALUES ('step-1', 'wf-1', 'Step 1', ${now}, ${now})`
     );
 
-    // Insert a workflow run
     db.exec(
       `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, created_at, updated_at)
 			 VALUES ('wr-1', 'sp-1', 'wf-1', 'Run 1', ${now}, ${now})`
     );
 
-    // Insert a task (use new status 'open')
     db.exec(
       `INSERT INTO space_tasks (id, space_id, task_number, title, created_at, updated_at)
 			 VALUES ('task-1', 'sp-1', 1, 'Task 1', ${now}, ${now})`
     );
 
-    // Delete the space
     db.exec(`DELETE FROM spaces WHERE id = 'sp-1'`);
 
-    // All child rows should be gone
     expect(db.prepare(`SELECT * FROM space_agents WHERE space_id = 'sp-1'`).all()).toHaveLength(0);
     expect(db.prepare(`SELECT * FROM space_workflows WHERE space_id = 'sp-1'`).all()).toHaveLength(
       0
@@ -372,10 +294,6 @@ describe('Migration 29: Space system tables', () => {
     ).toHaveLength(0);
     expect(db.prepare(`SELECT * FROM space_tasks WHERE space_id = 'sp-1'`).all()).toHaveLength(0);
   });
-
-  // -------------------------------------------------------------------------
-  // SET NULL on space_workflow_runs delete
-  // -------------------------------------------------------------------------
 
   test('deleting a workflow run sets space_tasks.workflow_run_id to NULL', () => {
     runMigrations(db, () => {});
@@ -399,10 +317,8 @@ describe('Migration 29: Space system tables', () => {
 			 VALUES ('task-2', 'sp-2', 1, 'Task 2', 'wr-2', ${now}, ${now})`
     );
 
-    // Delete the workflow run
     db.exec(`DELETE FROM space_workflow_runs WHERE id = 'wr-2'`);
 
-    // Task should still exist, but workflow_run_id should be NULL
     const task = db.prepare(`SELECT * FROM space_tasks WHERE id = 'task-2'`).get() as Record<
       string,
       unknown
@@ -410,10 +326,6 @@ describe('Migration 29: Space system tables', () => {
     expect(task).toBeTruthy();
     expect(task['workflow_run_id']).toBeNull();
   });
-
-  // -------------------------------------------------------------------------
-  // CHECK constraints on space_tasks — post-M73 values
-  // -------------------------------------------------------------------------
 
   test('space_tasks status CHECK constraint is enforced', () => {
     runMigrations(db, () => {});
@@ -424,7 +336,6 @@ describe('Migration 29: Space system tables', () => {
 			 VALUES ('sp-3', 'check-space', '/workspace/checks', 'Check Space', ${now}, ${now})`
     );
 
-    // Valid status values (new M73 values)
     let taskNum = 0;
     for (const status of ['open', 'in_progress', 'done', 'blocked', 'cancelled', 'archived']) {
       taskNum++;
@@ -436,7 +347,6 @@ describe('Migration 29: Space system tables', () => {
       }).not.toThrow();
     }
 
-    // Old values like 'pending', 'draft', 'completed' are now invalid
     expect(() => {
       db.exec(
         `INSERT INTO space_tasks (id, space_id, task_number, title, status, created_at, updated_at)
@@ -469,10 +379,6 @@ describe('Migration 29: Space system tables', () => {
     }).toThrow();
   });
 
-  // -------------------------------------------------------------------------
-  // spaces workspace_path uniqueness
-  // -------------------------------------------------------------------------
-
   test('spaces.workspace_path is unique', () => {
     runMigrations(db, () => {});
 
@@ -490,14 +396,9 @@ describe('Migration 29: Space system tables', () => {
     }).toThrow();
   });
 
-  // -------------------------------------------------------------------------
-  // No existing tables affected
-  // -------------------------------------------------------------------------
-
   test('no existing core tables are dropped or modified by migration 29', () => {
     runMigrations(db, () => {});
 
-    // These tables are created by runMigrations / createTables and must still exist
     const tablesFromEarlierMigrations = ['mission_metric_history', 'mission_executions'];
 
     for (const table of tablesFromEarlierMigrations) {

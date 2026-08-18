@@ -1,12 +1,3 @@
-/**
- * WorkflowRunArtifactCacheRepository Tests
- *
- * Verifies CRUD semantics and JSON round-tripping. Frontend reactivity lives
- * in the DaemonHub `space.artifactCache.updated` event emitted by the job
- * handlers, not in this repo — so there is no LiveQuery/ReactiveDatabase
- * integration to assert here.
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { WorkflowRunArtifactCacheRepository } from '../../../../src/storage/repositories/workflow-run-artifact-cache-repository';
@@ -230,7 +221,6 @@ describe('WorkflowRunArtifactCacheRepository', () => {
 
   describe('rowToRecord error handling', () => {
     it('skips rows with corrupted JSON data (returns null, logs)', () => {
-      // Manually insert a row with invalid JSON to exercise the catch path.
       const now = Date.now();
       db.prepare(
         `INSERT INTO workflow_run_artifact_cache

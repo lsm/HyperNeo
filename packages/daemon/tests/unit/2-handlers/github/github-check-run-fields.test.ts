@@ -8,10 +8,6 @@ import {
   isNonFailureConclusion,
 } from '../../../../src/lib/external-events/github/github-check-run-fields';
 
-// Characterization tests for the GitHub `check_run` row field decoders. These
-// were previously inline in github-event-extension.ts with no direct unit
-// coverage; every branch is pinned here.
-
 describe('checkRunIdFrom', () => {
   it('returns "unknown" for non-object rows', () => {
     expect(checkRunIdFrom(null)).toBe('unknown');
@@ -148,7 +144,6 @@ describe('checkRunOccurredAt', () => {
     expect(checkRunOccurredAt({ updated_at: updatedAt, started_at: startedAt })).toBe(
       Date.parse(updatedAt)
     );
-    // A null completed_at is treated as absent via the ?? chain.
     expect(
       checkRunOccurredAt({ completed_at: null, updated_at: updatedAt, started_at: startedAt })
     ).toBe(Date.parse(updatedAt));

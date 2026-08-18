@@ -1,20 +1,3 @@
-/**
- * Tests for MCP/Tools RPC Handlers
- *
- * Tests the RPC handlers for MCP and tools operations:
- * - tools.save - Save tools configuration
- * - mcp.listServers - List available MCP servers
- * - globalTools.getConfig - Get global tools config
- * - globalTools.saveConfig - Save global tools config
- * - mcp.registry.listErrors - Surface registry validation errors
- *
- * NOTE: The legacy `mcp.updateDisabledServers`, `mcp.getDisabledServers`,
- * `settings.mcp.toggle`, and `settings.mcp.setDisabled` RPCs were removed in
- * M5 of `unify-mcp-config-model`; their tests are gone too. MCP enablement
- * now flows through the unified `app_mcp_servers` registry + `mcp_enablement`
- * override table.
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach, afterAll } from 'bun:test';
 import {
   MessageHub,
@@ -28,15 +11,12 @@ import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { AppMcpLifecycleManager } from '../../../../src/lib/mcp';
 import type { Session } from '@hyperneo/shared';
 
-// Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
-// Mock fs/promises
 mock.module('node:fs/promises', () => ({
   readFile: mock(async () => '{}'),
 }));
 
-// Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -67,7 +47,6 @@ function createMockMessageHub(): {
   return { hub, handlers };
 }
 
-// Helper to create a mock AgentSession
 function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
   agentSession: AgentSession;
   mocks: {
@@ -101,7 +80,6 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
   return { agentSession, mocks };
 }
 
-// Helper to create mock SessionManager
 function createMockSessionManager(): {
   sessionManager: SessionManager;
   mocks: {
@@ -126,7 +104,6 @@ function createMockSessionManager(): {
   return { sessionManager, mocks, agentSessionData };
 }
 
-// Minimal AppMcpLifecycleManager mock; only `getStartupErrors` is exercised here.
 function createMockAppMcpManager(): {
   manager: AppMcpLifecycleManager;
   mocks: { getStartupErrors: ReturnType<typeof mock> };
@@ -148,7 +125,6 @@ describe('MCP/Tools RPC Handlers', () => {
     sessionManagerData = createMockSessionManager();
     appMcpManagerData = createMockAppMcpManager();
 
-    // Setup handlers with mocked dependencies
     registerMcpHandlers(
       messageHubData.hub,
       sessionManagerData.sessionManager,
@@ -158,16 +134,11 @@ describe('MCP/Tools RPC Handlers', () => {
 
   afterEach(() => {
     mock.restore();
-    // Re-register the default node:fs/promises mock so that per-test overrides
-    // (e.g. 'not valid json' in mcp.listServers tests) don't leak into other
-    // tests within this file.
     mock.module('node:fs/promises', () => ({
       readFile: mock(async () => '{}'),
     }));
   });
 
-  // Restore the real node:fs/promises after all tests in this file complete
-  // so the mock doesn't leak into subsequent test files in the same process.
   afterAll(() => {
     mock.module('node:fs/promises', () => require('node:fs/promises'));
   });
@@ -245,7 +216,6 @@ describe('MCP/Tools RPC Handlers', () => {
       const handler = messageHubData.handlers.get('mcp.listServers');
       expect(handler).toBeDefined();
 
-      // Mock readFile to return MCP config
       const mockConfig = JSON.stringify({
         mcpServers: {
           filesystem: {
@@ -276,7 +246,6 @@ describe('MCP/Tools RPC Handlers', () => {
       const handler = messageHubData.handlers.get('mcp.listServers');
       expect(handler).toBeDefined();
 
-      // Mock readFile to throw error (file not found)
       mock.module('node:fs/promises', () => ({
         readFile: mock(async () => {
           throw new Error('ENOENT: no such file');
@@ -296,7 +265,6 @@ describe('MCP/Tools RPC Handlers', () => {
       const handler = messageHubData.handlers.get('mcp.listServers');
       expect(handler).toBeDefined();
 
-      // Mock readFile to return invalid JSON
       mock.module('node:fs/promises', () => ({
         readFile: mock(async () => 'not valid json'),
       }));
@@ -333,8 +301,6 @@ describe('MCP/Tools RPC Handlers', () => {
 
       expect(sessionManagerData.mocks.getGlobalToolsConfig).toHaveBeenCalled();
       expect(result.config).toBeDefined();
-      // Default config exposes the systemPrompt + settingSources + mcp shape; no
-      // per-server disabled list.
       expect(result.config.systemPrompt).toBeDefined();
       expect(result.config.settingSources).toBeDefined();
       expect(result.config.mcp).toBeDefined();

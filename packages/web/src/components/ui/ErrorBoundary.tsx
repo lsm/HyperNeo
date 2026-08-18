@@ -10,12 +10,6 @@ export interface ErrorBoundaryState {
   hasError: boolean;
 }
 
-/**
- * Catches rendering errors in child components and displays a fallback UI.
- *
- * Used to gracefully handle lazy chunk load failures (e.g., stale content hash
- * after a deploy) without crashing the entire component tree.
- */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { hasError: false };
 

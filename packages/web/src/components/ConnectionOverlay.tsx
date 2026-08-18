@@ -1,20 +1,3 @@
-/**
- * ConnectionOverlay Component
- *
- * Non-blocking inline banner that communicates connection state to the user.
- *
- * State progression:
- * - 'connected'   → hidden
- * - 'connecting'  → hidden (initial load)
- * - 'reconnecting' → amber banner: "Reconnecting…"
- * - 'disconnected' / 'error' → amber banner: "Connection lost. Retrying…"
- * - 'failed' → red banner: "Unable to reconnect." + Retry button
- *
- * The banner is positioned at the top of the viewport but does NOT block
- * interaction with the rest of the UI. Conversation content stays visible
- * and readable at all times.
- */
-
 import { useCallback, useState } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
@@ -23,9 +6,6 @@ export type BannerLevel = 'hidden' | 'reconnecting' | 'lost' | 'failed';
 
 export function getBannerLevel(state: typeof connectionState.value, attempts: number): BannerLevel {
   if (state === 'connected') return 'hidden';
-  // Only hide 'connecting' on initial load (attempts === 0).
-  // During reconnect cycles the transport transitions through 'connecting' with
-  // non-zero attempt counts — the banner should stay visible to avoid flicker.
   if (state === 'connecting' && attempts === 0) return 'hidden';
   if (state === 'reconnecting' || state === 'connecting')
     return attempts <= 2 ? 'reconnecting' : 'lost';
@@ -54,7 +34,6 @@ export function ConnectionOverlay() {
 
   if (level === 'hidden') return null;
 
-  // --- Reconnecting (first attempts, amber) ---
   if (level === 'reconnecting') {
     return (
       <div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-none">
@@ -80,7 +59,6 @@ export function ConnectionOverlay() {
     );
   }
 
-  // --- Connection lost (repeated failures, amber) ---
   if (level === 'lost') {
     return (
       <div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-none">
@@ -106,7 +84,6 @@ export function ConnectionOverlay() {
     );
   }
 
-  // --- Failed (all retries exhausted, red + retry button) ---
   return (
     <div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-auto">
       <div class="mt-2 px-4 py-2 rounded-lg bg-red-600/90 text-white text-sm font-medium flex items-center gap-3 shadow-lg">

@@ -1,19 +1,3 @@
-/**
- * Unit tests for AgentSession.clearConversationContext() — issues the SDK
- * `/clear` command in-stream so a `resetContextPerTurn` slot gets "fresh eyes"
- * at each handoff, WITHOUT stopping or restarting the query.
- *
- * Verifies the core invariants of the in-stream approach:
- *  - `/clear` is enqueued as an internal control message after the query is
- *    confirmed pulling (so the SDK serializes it before the caller's handoff).
- *  - The query is NOT stopped/restarted and the generation is NOT bumped (the
- *    SDK rotates the session in-stream; no teardown race to suppress).
- *  - sdkSessionId is NOT wiped here — the SDK rotates it and handleSystemInit
- *    captures the new id; the prior id is appended to a capped audit trace.
- *  - Prior-turn cost is rolled into costBaseline deterministically (the result
- *    handler's restart-detection is unreliable across a /clear).
- *  - NeoKai's own session id and message history are untouched.
- */
 import { describe, expect, it, mock, spyOn } from 'bun:test';
 import type { Database } from '../../../../src/storage/database.ts';
 import type { MessageHub, Session } from '@hyperneo/shared';
@@ -75,7 +59,6 @@ function createAgentSession(
   );
 }
 
-/** Stub the I/O the in-stream clear touches: query pull + /clear enqueue. */
 function stubClearExternals(session: AgentSession): void {
   spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
   spyOn(session.messageQueue, 'enqueue').mockResolvedValue('clear-msg-id');
@@ -95,17 +78,11 @@ describe('AgentSession.clearConversationContext', () => {
 
     await session.clearConversationContext();
 
-    // ensureQueryStarted runs first so the generator is pulling when /clear is
-    // enqueued; the SDK then serializes /clear before the caller's handoff.
     expect(order).toEqual(['ensureQueryStarted', 'enqueue']);
     expect(session.messageQueue.enqueue).toHaveBeenCalledWith('/clear', true);
   });
 
   it('arms idle suppression before /clear so its result cannot fire the completion callback early', async () => {
-    // /clear is internal → the generator skips setProcessing → its result would
-    // publish a spurious idle→idle and prematurely fire the one-shot node-agent
-    // completion callback before the cleared handoff is reviewed. clearConversationContext
-    // arms suppression for that result; the handoff's own processing→idle completes.
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
     stubClearExternals(session);
     const suppressSpy = spyOn(session.messageHandler, 'suppressIdleForNextResult');
@@ -117,8 +94,6 @@ describe('AgentSession.clearConversationContext', () => {
   });
 
   it('releases the idle suppression and rethrows if /clear enqueue fails', async () => {
-    // No /clear turn ran, so the next result is the handoff's — its setIdle must
-    // not be suppressed. clearConversationContext releases on enqueue failure.
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
     spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
     spyOn(session.messageQueue, 'enqueue').mockRejectedValue(new Error('queue closed'));
@@ -156,7 +131,6 @@ describe('AgentSession.clearConversationContext', () => {
 
     await session.clearConversationContext();
 
-    // Untouched here. The post-/clear init overwrites it via handleSystemInit.
     expect(session.session.sdkSessionId).toBe('sdk-1');
   });
 
@@ -196,8 +170,8 @@ describe('AgentSession.clearConversationContext', () => {
 
     const trace = session.session.metadata?.pastSdkSessionIds ?? [];
     expect(trace).toHaveLength(50);
-    expect(trace[0]).toBe('sdk-1'); // oldest dropped
-    expect(trace[49]).toBe('sdk-new'); // newest appended
+    expect(trace[0]).toBe('sdk-1');
+    expect(trace[49]).toBe('sdk-new');
   });
 
   it('rolls the prior turn cost into costBaseline and zeroes lastSdkCost', async () => {
@@ -240,7 +214,6 @@ describe('AgentSession.clearConversationContext', () => {
     await session.clearConversationContext();
 
     expect(db.updateSession).not.toHaveBeenCalled();
-    // /clear is still issued regardless.
     expect(session.messageQueue.enqueue).toHaveBeenCalledWith('/clear', true);
   });
 

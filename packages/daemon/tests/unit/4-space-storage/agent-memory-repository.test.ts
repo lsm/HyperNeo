@@ -178,13 +178,11 @@ describe('AgentMemoryRepository', () => {
   test('create atomically inserts and rejects on a duplicate key', () => {
     repo.write({ spaceId: 'space-a', key: 'dup', content: 'first' });
 
-    // Same (spaceId, key) must not silently overwrite.
     expect(() => repo.create({ spaceId: 'space-a', key: 'dup', content: 'second' })).toThrow(
       'already exists'
     );
     expect(repo.read('space-a', 'dup', { recordAccess: false })?.content).toBe('first');
 
-    // A genuinely new key creates normally.
     const created = repo.create({ spaceId: 'space-a', key: 'fresh', content: 'new' });
     expect(created.key).toBe('fresh');
     expect(repo.read('space-a', 'fresh', { recordAccess: false })?.content).toBe('new');
@@ -198,9 +196,6 @@ describe('AgentMemoryRepository', () => {
       tags: ['telemetry'],
     });
 
-    // Management read (recordAccess: false): the hybrid backend returns the
-    // row but must leave access_count / last_accessed_at untouched so browsing
-    // the panel never skews core-ranking or stale-pruning.
     const readonly = await repo.list('space-a', {
       query: 'access telemetry',
       recordAccess: false,
@@ -213,8 +208,6 @@ describe('AgentMemoryRepository', () => {
     expect(row.access_count).toBe(0);
     expect(row.last_accessed_at).toBeNull();
 
-    // Default filtered list (recordAccess defaults to true) still records
-    // access, matching the agent-facing search semantic.
     await repo.list('space-a', { query: 'access telemetry' });
     row = db
       .prepare(`SELECT access_count FROM space_agent_memory WHERE key = ?`)

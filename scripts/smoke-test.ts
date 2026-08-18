@@ -1,10 +1,3 @@
-/**
- * Smoke test for compiled HyperNeo binary.
- * Verifies the binary can start, serve web UI, and handle WebSocket RPC calls.
- *
- * Usage: bun run scripts/smoke-test.ts ./dist/bin/hyperneo-darwin-x64
- */
-
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -14,8 +7,6 @@ import { randomUUID } from 'node:crypto';
 const STARTUP_TIMEOUT = 30_000;
 const STARTUP_POLL_INTERVAL = 500;
 const RPC_TIMEOUT = 10_000;
-
-// --- Utilities ---
 
 class SmokeTestError extends Error {
   constructor(msg: string) {
@@ -100,8 +91,6 @@ function connectWebSocket(url: string): Promise<WebSocket> {
   });
 }
 
-// --- Main ---
-
 const rawPath = process.argv[2];
 if (!rawPath) {
   console.error('Usage: bun run scripts/smoke-test.ts <path-to-binary>');
@@ -109,7 +98,6 @@ if (!rawPath) {
 }
 const binaryPath = resolve(rawPath);
 
-// Find a free port
 const net = await import('node:net');
 const port = await new Promise<number>((resolve, reject) => {
   const srv = net.createServer();
@@ -124,13 +112,11 @@ const port = await new Promise<number>((resolve, reject) => {
   });
 });
 
-// Create temp workspace
 const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-smoke-'));
 log(`Binary: ${binaryPath}`);
 log(`Port: ${port}`);
 log(`Workspace: ${workspace}`);
 
-// Start the binary
 const proc = spawn(binaryPath, ['--port', String(port)], {
   stdio: ['ignore', 'pipe', 'pipe'],
   env: { ...process.env, NODE_ENV: 'production' },
@@ -144,7 +130,6 @@ proc.stderr?.on('data', (d: Buffer) => {
   serverOutput += d.toString();
 });
 
-// Ensure cleanup on exit
 const cleanup = () => {
   try {
     proc.kill('SIGTERM');
@@ -160,7 +145,6 @@ process.on('SIGINT', () => {
 });
 
 try {
-  // --- Test 1: HTTP serves web UI ---
   log('Test 1: Waiting for HTTP server...');
   const html = await waitForHttp(`http://localhost:${port}/`, STARTUP_TIMEOUT);
   if (!html.includes('<!doctype html>') && !html.includes('<!DOCTYPE html>')) {
@@ -168,7 +152,6 @@ try {
   }
   log('  PASS: Web UI served successfully');
 
-  // --- Test 2: WebSocket connects and system.health ---
   log('Test 2: Connecting WebSocket...');
   const ws = await connectWebSocket(`ws://localhost:${port}/ws`);
 
@@ -180,7 +163,6 @@ try {
   }
   log('  PASS: system.health returned status "ok"');
 
-  // --- Test 4: session.list (empty) ---
   log('Test 4: session.list RPC...');
   const listResult = await rpcCall(ws, 'session.list');
   const listData = listResult.data as { sessions: unknown[] };
@@ -189,7 +171,6 @@ try {
   }
   log(`  PASS: session.list returned ${listData.sessions.length} sessions`);
 
-  // --- Test 5: session.create ---
   log('Test 5: session.create RPC...');
   const createResult = await rpcCall(ws, 'session.create', {
     workspacePath: workspace,
@@ -201,7 +182,6 @@ try {
   const sessionId = createData.sessionId;
   log(`  PASS: Session created with ID ${sessionId}`);
 
-  // --- Test 6: session.list (should include new session) ---
   log('Test 6: session.list (verify new session)...');
   const listResult2 = await rpcCall(ws, 'session.list');
   const listData2 = listResult2.data as { sessions: Array<{ id: string }> };
@@ -213,7 +193,6 @@ try {
   }
   log(`  PASS: Session ${sessionId} appears in session list`);
 
-  // --- Test 7: session.delete (cleanup) ---
   log('Test 7: session.delete RPC...');
   const deleteResult = await rpcCall(ws, 'session.delete', { sessionId });
   if (deleteResult.error) {

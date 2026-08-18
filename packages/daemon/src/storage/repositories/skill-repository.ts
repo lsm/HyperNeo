@@ -1,11 +1,3 @@
-/**
- * SkillRepository
- *
- * CRUD operations for the application-level Skills registry.
- * Each write method calls reactiveDb.notifyChange('skills') so that
- * LiveQueryEngine can invalidate frontend subscriptions on every registry change.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import type {
   AppSkill,
@@ -15,10 +7,6 @@ import type {
   UpdateSkillParams,
 } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database';
-
-// ---------------------------------------------------------------------------
-// Internal row type (mirrors SQLite columns)
-// ---------------------------------------------------------------------------
 
 interface SkillRow {
   id: string;
@@ -32,10 +20,6 @@ interface SkillRow {
   validation_status: string;
   created_at: number;
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function rowToSkill(row: SkillRow): AppSkill {
   return {
@@ -52,19 +36,12 @@ function rowToSkill(row: SkillRow): AppSkill {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Repository
-// ---------------------------------------------------------------------------
-
 export class SkillRepository {
   constructor(
     private db: BunDatabase,
     private reactiveDb: ReactiveDatabase
   ) {}
 
-  /**
-   * List all skills, ordered by created_at ascending.
-   */
   findAll(): AppSkill[] {
     const rows = this.db
       .prepare(`SELECT * FROM skills ORDER BY created_at ASC`)
@@ -72,9 +49,6 @@ export class SkillRepository {
     return rows.map(rowToSkill);
   }
 
-  /**
-   * Get a skill by ID. Returns null if not found.
-   */
   get(id: string): AppSkill | null {
     const row = this.db.prepare(`SELECT * FROM skills WHERE id = ?`).get(id) as
       | SkillRow
@@ -82,9 +56,6 @@ export class SkillRepository {
     return row ? rowToSkill(row) : null;
   }
 
-  /**
-   * Get a skill by name. Returns null if not found.
-   */
   getByName(name: string): AppSkill | null {
     const row = this.db.prepare(`SELECT * FROM skills WHERE name = ?`).get(name) as
       | SkillRow
@@ -92,9 +63,6 @@ export class SkillRepository {
     return row ? rowToSkill(row) : null;
   }
 
-  /**
-   * List only enabled skills, ordered by created_at ascending.
-   */
   findEnabled(): AppSkill[] {
     const rows = this.db
       .prepare(`SELECT * FROM skills WHERE enabled = 1 ORDER BY created_at ASC`)
@@ -102,9 +70,6 @@ export class SkillRepository {
     return rows.map(rowToSkill);
   }
 
-  /**
-   * Insert a new skill record.
-   */
   insert(skill: AppSkill): void {
     this.db
       .prepare(
@@ -127,10 +92,6 @@ export class SkillRepository {
     this.reactiveDb.notifyChange('skills');
   }
 
-  /**
-   * Update user-editable fields on an existing skill (mirrors UpdateSkillParams).
-   * Immutable fields (name, sourceType, builtIn, createdAt) are not settable here.
-   */
   update(id: string, fields: UpdateSkillParams): void {
     const setClauses: string[] = [];
     const values: (string | number | null)[] = [];
@@ -159,18 +120,11 @@ export class SkillRepository {
     this.reactiveDb.notifyChange('skills');
   }
 
-  /**
-   * Toggle the enabled flag for a skill. Targeted single-column UPDATE.
-   */
   setEnabled(id: string, enabled: boolean): void {
     this.db.prepare(`UPDATE skills SET enabled = ? WHERE id = ?`).run(enabled ? 1 : 0, id);
     this.reactiveDb.notifyChange('skills');
   }
 
-  /**
-   * Set the validation_status for a skill. Used by the async validation job.
-   * Only fires notifyChange when a row was actually updated.
-   */
   setValidationStatus(id: string, status: SkillValidationStatus): boolean {
     const result = this.db
       .prepare(`UPDATE skills SET validation_status = ? WHERE id = ?`)
@@ -182,9 +136,6 @@ export class SkillRepository {
     return changed;
   }
 
-  /**
-   * Delete a skill by ID. Returns true if a row was deleted.
-   */
   delete(id: string): boolean {
     const result = this.db.prepare(`DELETE FROM skills WHERE id = ?`).run(id);
     const deleted = result.changes > 0;

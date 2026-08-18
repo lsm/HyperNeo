@@ -1,9 +1,3 @@
-/**
- * Tests for priority-tokens.ts
- *
- * Verifies task/goal priorities map to the expected unified indicator tones.
- */
-
 import { describe, expect, it } from 'vitest';
 import { getPriorityIndicatorTone } from './priority-tokens.js';
 

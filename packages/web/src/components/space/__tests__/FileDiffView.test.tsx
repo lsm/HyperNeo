@@ -1,30 +1,9 @@
 // @ts-nocheck
-/**
- * Unit tests for FileDiffView
- *
- * Tests:
- * - parseDiff: addition lines
- * - parseDiff: removal lines
- * - parseDiff: hunk header resets line counters
- * - parseDiff: context lines track both old/new numbers
- * - parseDiff: file-header (--- / +++) lines
- * - parseDiff: diff --git header
- * - parseDiff: index lines
- * - parseDiff: empty diff string returns empty array
- * - Component shows loading spinner while fetching
- * - Component shows error when not connected
- * - Component shows error on RPC failure
- * - Component shows diff table when RPC succeeds
- * - Component shows additions/deletions counts in header
- * - Back button calls onBack
- * - Empty diff shows "no changes" message
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { render, cleanup, waitFor, fireEvent } from '@testing-library/preact';
 import { parseDiff } from '../FileDiffView';
 
-// ---- Mock connection-manager ----
 const mockRequest: Mock = vi.fn();
 const mockHub = { request: mockRequest };
 
@@ -39,10 +18,6 @@ vi.mock('../../../lib/utils', () => ({
 }));
 
 import { FileDiffView } from '../FileDiffView';
-
-// ============================================================================
-// parseDiff unit tests
-// ============================================================================
 
 describe('parseDiff', () => {
   it('returns empty array for empty string', () => {
@@ -104,16 +79,13 @@ describe('parseDiff', () => {
   });
 
   it('trailing newline does not produce a phantom context line', () => {
-    // git diff output always ends with \n — the trailing empty string must be skipped
     const diff = '@@ -1,1 +1,1 @@\n-old\n+new\n';
     const lines = parseDiff(diff);
-    // Only 3 lines: hunk header, removed, added — no phantom context
     expect(lines.length).toBe(3);
     expect(lines.map((l) => l.type)).toEqual(['hunk', 'removed', 'added']);
   });
 
   it('does not increment counters for "no newline at end of file" line', () => {
-    // "\ No newline at end of file" must NOT increment old or new line counters
     const diff =
       '@@ -1,1 +1,1 @@\n-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file';
     const lines = parseDiff(diff);
@@ -123,7 +95,6 @@ describe('parseDiff', () => {
       expect(l.oldLineNum).toBeNull();
       expect(l.newLineNum).toBeNull();
     });
-    // Line numbers must still be correct for removed/added lines
     const removed = lines.find((l) => l.type === 'removed');
     const added = lines.find((l) => l.type === 'added');
     expect(removed!.oldLineNum).toBe(1);
@@ -139,7 +110,6 @@ describe('parseDiff', () => {
     );
     expect(renameLines.length).toBe(3);
     renameLines.forEach((l) => expect(l.type).toBe('index'));
-    // Line numbers should still be 1 for removed/added after rename header
     const removed = lines.find((l) => l.type === 'removed');
     const added = lines.find((l) => l.type === 'added');
     expect(removed!.oldLineNum).toBe(1);
@@ -159,10 +129,6 @@ describe('parseDiff', () => {
   });
 });
 
-// ============================================================================
-// FileDiffView component tests
-// ============================================================================
-
 describe('FileDiffView', () => {
   beforeEach(() => {
     mockRequest.mockReset();
@@ -173,7 +139,6 @@ describe('FileDiffView', () => {
   });
 
   it('shows loading spinner while fetching', async () => {
-    // Never resolves
     mockRequest.mockReturnValue(new Promise(() => {}));
     const { getByTestId } = render(
       <FileDiffView runId="run-1" filePath="src/foo.ts" onBack={vi.fn()} />

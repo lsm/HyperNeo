@@ -1,14 +1,3 @@
-/**
- * Unit tests for createSpaceAgentToolHandlers()
- *
- * Covers (per M7 spec tools):
- * - list_workflows: returns space workflows
- * - start_workflow_run: explicit workflowId required; creates run + tasks
- * - get_workflow_run: returns run status, current step, and node executions
- * - change_plan: description update; workflow switch (cancel + restart)
- * - list_tasks: filter by status, workflowRunId
- */
-
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import type { ModelInfo } from '@hyperneo/shared';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
@@ -49,13 +38,7 @@ import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-ag
 import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
 import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
 
-// ---------------------------------------------------------------------------
-// DB + space setup helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
@@ -85,8 +68,6 @@ function makeDb(): BunDatabase {
     session_context TEXT
   )`);
 
-  // runMigrations() applies migrations only; these unit fixtures need the base
-  // sdk_messages table because runtime recovery inspects persisted SDK output.
   db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
 		id TEXT PRIMARY KEY,
 		session_id TEXT NOT NULL,
@@ -113,9 +94,6 @@ function makeDb(): BunDatabase {
 		PRIMARY KEY (source_message_id, target_uuid, kind)
 	)`);
 
-  // runMigrations() does not create the job_queue table (it is bootstrapped
-  // from storage/schema, not a migration). Goal check-in schedules enqueue
-  // fire jobs, so the table must exist for schedule-editing tests.
   db.exec(`CREATE TABLE IF NOT EXISTS job_queue (
 		id TEXT PRIMARY KEY,
 		queue TEXT NOT NULL,
@@ -152,10 +130,6 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: s
   ).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
-// ---------------------------------------------------------------------------
-// Build a single-step workflow (terminal — no transitions)
-// ---------------------------------------------------------------------------
-
 function buildSingleStepWorkflow(
   spaceId: string,
   workflowManager: SpaceWorkflowManager,
@@ -180,10 +154,6 @@ function buildSingleStepWorkflow(
   });
   return wf;
 }
-
-// ---------------------------------------------------------------------------
-// Test context
-// ---------------------------------------------------------------------------
 
 interface TestCtx {
   db: BunDatabase;
@@ -527,10 +497,6 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// session management tools
-// ---------------------------------------------------------------------------
-
 describe('createSpaceAgentToolHandlers — archive_task active-run guard (task #849)', () => {
   let ctx: TestCtx;
   beforeEach(() => {
@@ -541,10 +507,6 @@ describe('createSpaceAgentToolHandlers — archive_task active-run guard (task #
   });
 
   test('rejects archiving the canonical task of an active (non-terminal) workflow run', async () => {
-    // G1 widened the archive strand to open→archived; the agent tool must not
-    // bypass the RPC handler's guard. `isWorkflowRunActive` is injected, so the
-    // run's actual status is irrelevant to the guard's decision — we only need
-    // a real run row to satisfy the workflow_run_id FK.
     const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
     const run = ctx.workflowRunRepo.createRun({
       spaceId: ctx.spaceId,
@@ -564,7 +526,6 @@ describe('createSpaceAgentToolHandlers — archive_task active-run guard (task #
 
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/active workflow run/);
-    // The task is left untouched.
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('open');
   });
 
@@ -1179,10 +1140,6 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// goal tools
-// ---------------------------------------------------------------------------
-
 describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
   let ctx: TestCtx;
   let modelsCacheSnapshot: Map<string, ModelInfo[]>;
@@ -1332,9 +1289,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(created.success).toBe(true);
 
-    // provider: null is an explicit clear (vs absent = don't touch). The
-    // session's persisted provider must be dropped or wake-time retention
-    // would restore the stale override and make the clear a no-op.
     const cleared = JSON.parse(
       (await handlers.update_agent({ agent_id: created.agent.id, provider: null })).content[0].text
     );
@@ -1852,7 +1806,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(agent.instructions).toBe(template?.instructions);
     expect(agent.toolPermissions).toEqual(template?.toolPermissions);
 
-    // The space subscription uses a registered source and is seeded live.
     expect(result.seeded_subscriptions.map((s: { topic: string }) => s.topic)).toEqual([
       'goal.done',
     ]);
@@ -1870,14 +1823,11 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       )
     ).toBe(true);
 
-    // The github/release.published suggestion is skipped (only pull_request is
-    // wired today) — not fatal; the create still succeeds and reports it.
     expect(result.skipped_subscriptions).toEqual([
       expect.objectContaining({ source: 'github', topic: 'release.published' }),
     ]);
     expect(result.skipped_subscriptions[0].reason).toContain('release');
 
-    // The marketing reminder default is seeded as an active cron reminder.
     expect(result.seeded_reminders).toEqual([{ title: 'Review marketing opportunities' }]);
     expect(result.skipped_reminders).toEqual([]);
     const reminders = JSON.parse(
@@ -1887,8 +1837,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(reminders.reminders).toHaveLength(1);
     expect(reminders.reminders[0].triggerType).toBe('cron');
     expect(reminders.reminders[0].cronExpression).toBe('0 15 * * 1');
-    // The first cron occurrence is seeded as nextRunAt (remind_at) so the
-    // reminder is due-eligible immediately, not inert until a daemon restart.
     expect(reminders.reminders[0].remind_at).toBeGreaterThan(Date.now());
   });
 
@@ -1896,8 +1844,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const handlers = makeHandlers(ctx);
     const repo = ctx.longHorizonAgentRepo;
     const originalCreateReminder = repo.createReminder;
-    // Force every reminder insert to throw — simulates a store failure on the
-    // first (and only) reminder of the template.
     repo.createReminder = () => {
       throw new Error('reminder store down');
     };
@@ -1906,13 +1852,11 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
         (await handlers.create_agent_from_template({ template_name: 'marketing.default' }))
           .content[0].text
       );
-      // The create still succeeds — the agent row and subscriptions are committed.
       expect(result.success).toBe(true);
       expect(result.agent.templateKey).toBe('marketing.default');
       expect(result.seeded_subscriptions.map((s: { topic: string }) => s.topic)).toEqual([
         'goal.done',
       ]);
-      // The failed reminder is reported, not raised.
       expect(result.seeded_reminders).toEqual([]);
       expect(result.skipped_reminders).toEqual([
         { title: 'Review marketing opportunities', reason: 'reminder store down' },
@@ -1926,8 +1870,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const handlers = makeHandlers(ctx);
     const repo = ctx.longHorizonAgentRepo;
     const originalUpsertSubscription = repo.upsertSubscription;
-    // Force every subscription insert to throw — both marketing suggestions
-    // (github/release.published, space/goal.done) hit this path.
     repo.upsertSubscription = () => {
       throw new Error('subscription store down');
     };
@@ -1936,7 +1878,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
         (await handlers.create_agent_from_template({ template_name: 'marketing.default' }))
           .content[0].text
       );
-      // The create still succeeds and the agent row + reminder are committed.
       expect(result.success).toBe(true);
       expect(result.agent.templateKey).toBe('marketing.default');
       expect(result.seeded_subscriptions).toEqual([]);
@@ -1945,7 +1886,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       for (const skipped of result.skipped_subscriptions) {
         expect(skipped.reason).toBe('subscription store down');
       }
-      // The reminder still seeds despite the subscription failures.
       expect(result.seeded_reminders).toEqual([{ title: 'Review marketing opportunities' }]);
       const reminders = JSON.parse(
         (await handlers.list_agent_reminders({ agent_id: result.agent.id, status: 'active' }))
@@ -1975,14 +1915,12 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       ok: false,
       reason: 'cron reminder is missing cronExpression',
     });
-    // 'at' triggers carry no cron and are not cron-validated here.
     expect(
       validateTemplateReminder({ ...base, triggerType: 'at' as const, cronExpression: null })
     ).toEqual({ ok: true });
   });
 
   test('caps LH template autonomy at the calling agent ceiling', async () => {
-    // A level-1 long-horizon caller must not mint a more-trusted child.
     const caller = ctx.longHorizonAgentRepo.create({
       spaceId: ctx.spaceId,
       handle: 'level-one-caller',
@@ -1990,7 +1928,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       autonomyLevel: 1,
     });
     const cappedHandlers = makeHandlers(ctx, { myAgentId: caller.id });
-    // marketing.default suggests level 2; caller ceiling 1 → child capped to 1.
     const capped = JSON.parse(
       (await cappedHandlers.create_agent_from_template({ template_name: 'marketing.default' }))
         .content[0].text
@@ -1999,8 +1936,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(capped.agent.templateKey).toBe('marketing.default');
     expect(capped.agent.autonomyLevel).toBe(1);
 
-    // An uncapped caller (no myAgentId — worker-agent session / direct call)
-    // keeps the template's full suggested level.
     const uncapped = JSON.parse(
       (await makeHandlers(ctx).create_agent_from_template({ template_name: 'marketing.default' }))
         .content[0].text
@@ -2018,7 +1953,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('reserved');
     expect(result.error).toContain('coordinator');
-    // No suffixed duplicate coordinator was created.
     const agents = JSON.parse((await handlers.list_agents({})).content[0].text);
     const handles = agents.agents.map((agent: { handle: string }) => agent.handle);
     expect(handles).not.toContain('coordinator-2');
@@ -2027,7 +1961,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
   test('skips unknown-source template subscriptions gracefully instead of failing', async () => {
     const handlers = makeHandlers(ctx);
-    // sales.default suggests crm + calendar sources that have no extension yet.
     const result = JSON.parse(
       (await handlers.create_agent_from_template({ template_name: 'sales.default' })).content[0]
         .text
@@ -2040,13 +1973,11 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       expect(typeof skipped.reason).toBe('string');
       expect(skipped.reason.length).toBeGreaterThan(0);
     }
-    // The agent is still active with the sales instructions/autonomy.
     expect(result.agent.status).toBe('active');
     expect(result.agent.templateKey).toBe('sales.default');
     expect(result.agent.handle).toBe('sales');
     expect(result.agent.autonomyLevel).toBe(2);
     expect(result.seeded_reminders).toEqual([{ title: 'Review sales follow-ups' }]);
-    // No inert subscription rows were left behind.
     const stored = JSON.parse(
       (await handlers.list_agent_event_subscriptions({ agent_id: result.agent.id })).content[0].text
     );
@@ -2065,8 +1996,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(lhKeys).toContain('marketing.default');
     expect(lhKeys).toContain('security-auditor.default');
-    // Reserved-handle templates (coordinator is a per-space singleton that the
-    // create path rejects) are excluded from the creatable catalog.
     expect(lhKeys).not.toContain('coordinator.default');
     const marketing = listed.long_horizon_templates.find(
       (t: { template_name: string }) => t.template_name === 'marketing.default'
@@ -2077,7 +2006,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
   test('create_agent_from_template still routes worker presets by name and LH templates by key', async () => {
     const handlers = makeHandlers(ctx);
-    // Preset name keeps the legacy path (no subscription/reminder seeding).
     const preset = JSON.parse(
       (await handlers.create_agent_from_template({ template_name: 'Reviewer' })).content[0].text
     );
@@ -2086,7 +2014,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(preset.seeded_subscriptions).toBeUndefined();
     expect(preset.seeded_reminders).toBeUndefined();
 
-    // LH key lookup is case-insensitive and distinct from preset names.
     const lh = JSON.parse(
       (await handlers.create_agent_from_template({ template_name: 'RESEARCH.DEFAULT' })).content[0]
         .text
@@ -2096,14 +2023,12 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(lh.agent.handle).toBe('research');
     expect(lh.seeded_reminders).toEqual([{ title: 'Weekly research digest' }]);
 
-    // Unknown template points the caller at the listing tool.
     const missing = JSON.parse(
       (await handlers.create_agent_from_template({ template_name: 'nope.default' })).content[0].text
     );
     expect(missing.success).toBe(false);
     expect(missing.error).toContain('list_agent_templates');
 
-    // Empty template_name is rejected up front.
     const blank = JSON.parse(
       (await handlers.create_agent_from_template({ template_name: '   ' })).content[0].text
     );
@@ -2254,14 +2179,12 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
       ).content[0].text
     ).goal;
 
-    // Identity + linkage preserved, cadence changed in place.
     expect(updated.id).toBe(created.id);
     expect(updated.taskScheduleId).toBe(scheduleId);
     const scheduleRow = ctx.db
       .prepare('SELECT cron_expression FROM task_schedules WHERE id = ?')
       .get(scheduleId) as { cron_expression: string };
     expect(scheduleRow.cron_expression).toBe('0 * * * *');
-    // Exactly one pending fire job registered for the schedule.
     const jobCount = (
       ctx.db
         .prepare(
@@ -2319,10 +2242,6 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
     expect(parsed.error).toContain('Goal not found');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Forge tools
-// ---------------------------------------------------------------------------
 
 describe('createSpaceAgentToolHandlers — Forge tools', () => {
   let ctx: TestCtx;
@@ -2455,8 +2374,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
       ).content[0].text
     ).scope;
 
-    // Deep-merge automation without clobbering the judge model/provider — the
-    // capability the UI has via policyPatch that MCP previously lacked.
     const patched = JSON.parse(
       (
         await handlers.update_forge_scope({
@@ -2471,7 +2388,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 
     expect(patched.policy.episodeJudgeModel).toBe('claude-sonnet-4-5');
     expect(patched.policy.episodeJudgeProvider).toBe('anthropic');
-    // automation is nested-merged: threshold updated, sibling preserved.
     expect(patched.policy.automation.completedTaskThreshold).toBe(5);
     expect(patched.policy.automation.completedTaskAutomationEnabled).toBe(false);
     expect(patched.policy.cadence).toBe('weekly');
@@ -2515,7 +2431,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
       ).content[0].text
     ).scope;
 
-    // Invalid threshold (must be a positive integer) — same gate as RPC/UI.
     const rejectedThreshold = JSON.parse(
       (
         await handlers.update_forge_scope({
@@ -2527,7 +2442,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     expect(rejectedThreshold.success).toBe(false);
     expect(rejectedThreshold.error).toContain('positive integer');
 
-    // Non-boolean enabled is also rejected.
     const rejectedEnabled = JSON.parse(
       (
         await handlers.update_forge_scope({
@@ -2539,7 +2453,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     expect(rejectedEnabled.success).toBe(false);
     expect(rejectedEnabled.error).toContain('boolean');
 
-    // Validation runs before persist, so the scope policy is unchanged.
     const refreshed = JSON.parse(
       (await handlers.get_forge_scope({ scope_id: scope.id })).content[0].text
     ).scope;
@@ -2559,8 +2472,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
       ).content[0].text
     ).scope;
 
-    // A non-string selfNagTimezone must be rejected before normalization,
-    // instead of being normalized away and silently falling back to UTC.
     const rejected = JSON.parse(
       (
         await handlers.update_forge_scope({
@@ -2595,9 +2506,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
       (await handlers.create_forge_scope({ kind: 'custom', name: 'Scope', objective: 'x' }))
         .content[0].text
     ).scope;
-    // Smuggle in an invalid automation policy out-of-band (e.g. an older code
-    // path). A metadata-only update must still reject it, mirroring the RPC
-    // beforeScopeUpdate hook that validates the existing effective policy.
     ctx.evolutionRepo.updateScope(scope.id, {
       policy: { automation: { completedTaskThreshold: 0 } },
     });
@@ -2625,9 +2533,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
       ).content[0].text
     ).scope;
 
-    // An explicitly supplied (even empty) policy_patch takes precedence over a
-    // full `policy` per the contract — the existing policy is retained and the
-    // full policy ignored, instead of falling through to a full replacement.
     const updated = JSON.parse(
       (
         await handlers.update_forge_scope({
@@ -2659,8 +2564,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
       ).content[0].text
     ).scope;
 
-    // A null nested value clears the key (documented contract) rather than
-    // being retained and rejected by validation.
     const updated = JSON.parse(
       (
         await handlers.update_forge_scope({
@@ -2672,7 +2575,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 
     expect(updated.success !== false).toBe(true);
     expect(updated.policy.automation.completedTaskThreshold).toBeUndefined();
-    // Sibling automation key and unrelated policy keys are preserved.
     expect(updated.policy.automation.completedTaskAutomationEnabled).toBe(true);
     expect(updated.policy.episodeJudgeModel).toBe('claude-sonnet-4-5');
   });
@@ -2693,8 +2595,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
       ).content[0].text
     ).scope;
 
-    // { automation: null } clears the automation key entirely (documented
-    // null-clear contract), rather than reinstating null and being rejected.
     const updated = JSON.parse(
       (
         await handlers.update_forge_scope({
@@ -2706,7 +2606,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 
     expect(updated.success !== false).toBe(true);
     expect(updated.policy.automation).toBeUndefined();
-    // Unrelated policy key preserved.
     expect(updated.policy.episodeJudgeModel).toBe('claude-sonnet-4-5');
   });
 
@@ -2729,8 +2628,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
       ).content[0].text
     ).scope;
 
-    // Simulate a prior reconciliation having created an active self-nag schedule
-    // for this scope + goal.
     const schedule = ctx.scheduleService.createGoalSchedule({
       spaceId: ctx.spaceId,
       goalId: goal.id,
@@ -2745,8 +2642,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     });
     expect(schedule.status).toBe('active');
 
-    // Clearing automation via MCP must reconcile (pause) the now-unconfigured
-    // self-nag schedule, mirroring the RPC onScopeSaved hook.
     const result = JSON.parse(
       (
         await handlers.update_forge_scope({
@@ -2766,9 +2661,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
       (await handlers.create_goal({ title: 'Self-nag create', type: 'recurring' })).content[0].text
     ).goal;
 
-    // Creating a scope linked to an active goal with a self-nag cadence must
-    // create the fire schedule immediately (mirroring the RPC onScopeSaved
-    // hook), not leave it dormant until a later update.
     const created = JSON.parse(
       (
         await handlers.create_forge_scope({
@@ -2807,8 +2699,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
       ).content[0].text
     ).scope;
 
-    // A reconciliation failure (e.g. the schedule enqueue throws) must
-    // propagate as a failed result — not be swallowed into success: true.
     const spy = spyOn(ctx.scheduleService, 'listSchedules').mockImplementation(() => {
       throw new Error('reconcile boom');
     });
@@ -2844,7 +2734,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
         })
       ).content[0].text
     ).scope;
-    // Active self-nag schedule for the scope+goal (created by prior reconcile).
     const schedule = ctx.scheduleService.createGoalSchedule({
       spaceId: ctx.spaceId,
       goalId: goal.id,
@@ -2858,14 +2747,10 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
       createdByAgent: 'goal-automation-service',
     });
 
-    // Simulate pauseSchedule losing its pending-job CAS (returns still-active).
     const spy = spyOn(ctx.scheduleService, 'pauseSchedule').mockImplementation(
       () => ({ ...schedule, status: 'active' }) as never
     );
     try {
-      // Unlinking the scope forces the no-goal reconciliation to pause the
-      // stale schedule; a lost CAS must surface as a failed result rather than
-      // leave the old schedule firing.
       const parsed = JSON.parse(
         (await handlers.update_forge_scope({ scope_id: scope.id, goal_id: null })).content[0].text
       );
@@ -3477,10 +3362,6 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// list_workflows
-// ---------------------------------------------------------------------------
-
 describe('createSpaceAgentToolHandlers — list_workflows', () => {
   let ctx: TestCtx;
   beforeEach(() => {
@@ -3508,10 +3389,6 @@ describe('createSpaceAgentToolHandlers — list_workflows', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// get_workflow_run
-// ---------------------------------------------------------------------------
-
 describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
   let ctx: TestCtx;
   beforeEach(() => {
@@ -3536,7 +3413,6 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
     expect(parsed.success).toBe(true);
     expect(parsed.run.id).toBe(runId);
     expect(parsed.run.status).toBe('in_progress');
-    // startWorkflowRun() now creates a node_execution record for the start node
     expect(parsed.executions).toHaveLength(1);
     expect(parsed.executions[0].status).toBe('pending');
   });
@@ -3583,10 +3459,6 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
     expect(parsed.executions).toHaveLength(0);
   });
 });
-
-// ---------------------------------------------------------------------------
-// change_plan
-// ---------------------------------------------------------------------------
 
 describe('createSpaceAgentToolHandlers — change_plan', () => {
   let ctx: TestCtx;
@@ -3635,7 +3507,6 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
     expect(parsed.run.workflowId).toBe(wf2.id);
     expect(parsed.run.title).toBe('switch test');
 
-    // Old run should be cancelled
     const oldRun = ctx.workflowRunRepo.getRun(runId);
     expect(oldRun?.status).toBe('cancelled');
   });
@@ -3678,7 +3549,6 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
     });
     const runId = JSON.parse(startResult.content[0].text).run.id;
 
-    // Mark as a succeeded execution attempt.
     ctx.workflowRunRepo.transitionStatus(runId, 'done');
 
     const result = await makeHandlers(ctx).change_plan({
@@ -3716,7 +3586,6 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
     });
     const runId = JSON.parse(startResult.content[0].text).run.id;
 
-    // Attempt to switch to a non-existent workflow
     const result = await makeHandlers(ctx).change_plan({
       run_id: runId,
       workflow_id: 'wf-does-not-exist',
@@ -3725,7 +3594,6 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
 
-    // Original run must still be in_progress — not cancelled
     const originalRun = ctx.workflowRunRepo.getRun(runId);
     expect(originalRun?.status).toBe('in_progress');
   });
@@ -3756,7 +3624,6 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('disabled');
 
-    // Original run must still be in_progress — not cancelled
     const originalRun = ctx.workflowRunRepo.getRun(runId);
     expect(originalRun?.status).toBe('in_progress');
   });
@@ -3781,7 +3648,6 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
     expect(parsed.previousRunId).toBe(runId);
     expect(parsed.run.workflowId).toBe(wf2.id);
 
-    // Old run should be cancelled
     const oldRun = ctx.workflowRunRepo.getRun(runId);
     expect(oldRun?.status).toBe('cancelled');
   });
@@ -3802,7 +3668,6 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('nonexistent-handle');
 
-    // Original run must still be in_progress
     const originalRun = ctx.workflowRunRepo.getRun(runId);
     expect(originalRun?.status).toBe('in_progress');
   });
@@ -3864,7 +3729,6 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
     });
     const runId = JSON.parse(startResult.content[0].text).run.id;
 
-    // Pass the disabled ID but also provide the target's handle
     const result = await makeHandlers(ctx).change_plan({
       run_id: runId,
       workflow_id: disabledWf.id,
@@ -3876,15 +3740,12 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
   });
 
   test('falls back to workflow_handle when workflow_id belongs to a different space', async () => {
-    // wf-source is used to start the run; wf-other is in a different space;
-    // wf-target is the intended switch target, referenced by handle.
     const wfSource = buildSingleStepWorkflow(
       ctx.spaceId,
       ctx.workflowManager,
       ctx.agentId,
       'Source WF'
     );
-    // Seed the other space so FK constraints pass, then create a workflow there.
     const otherSpaceId = 'other-space-for-change-plan';
     seedSpaceRow(ctx.db, otherSpaceId);
     const wfOther = buildSingleStepWorkflow(
@@ -3905,7 +3766,6 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
     });
     const runId = JSON.parse(startResult.content[0].text).run.id;
 
-    // Pass the cross-space ID but also provide the target's handle
     const result = await makeHandlers(ctx).change_plan({
       run_id: runId,
       workflow_id: wfOther.id,
@@ -3923,7 +3783,6 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
       ctx.agentId,
       'Source WF'
     );
-    // Create a workflow in another space
     const otherSpaceId = 'other-space-stale-handle';
     seedSpaceRow(ctx.db, otherSpaceId);
     const wfOther = buildSingleStepWorkflow(
@@ -3938,7 +3797,6 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
     });
     const runId = JSON.parse(startResult.content[0].text).run.id;
 
-    // Pass cross-space ID + a handle that doesn't resolve to anything
     const result = await makeHandlers(ctx).change_plan({
       run_id: runId,
       workflow_id: wfOther.id,
@@ -3949,10 +3807,6 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
     expect(parsed.error).toContain('Workflow not found');
   });
 });
-
-// ---------------------------------------------------------------------------
-// list_tasks
-// ---------------------------------------------------------------------------
 
 describe('createSpaceAgentToolHandlers — list_tasks', () => {
   let ctx: TestCtx;
@@ -4018,7 +3872,6 @@ describe('createSpaceAgentToolHandlers — list_tasks', () => {
 
     await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'run 2' });
 
-    // Mark first task as completed
     ctx.taskRepo.updateTask(taskId, { status: 'done', completedAt: Date.now() });
 
     const result = await makeHandlers(ctx).list_tasks({ status: 'open' });
@@ -4035,10 +3888,6 @@ describe('createSpaceAgentToolHandlers — list_tasks', () => {
     expect(parsed.tasks).toHaveLength(0);
   });
 });
-
-// ---------------------------------------------------------------------------
-// get_workflow_detail
-// ---------------------------------------------------------------------------
 
 describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
   let ctx: TestCtx;
@@ -4068,7 +3917,6 @@ describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
     expect(parsed.workflow.description).toBe('Detailed description');
     expect(parsed.workflow.nodes).toHaveLength(1);
     expect(parsed.workflow.nodes[0].agents[0].agentId).toBe(ctx.agentId);
-    // rules field removed from SpaceWorkflow — verify nodes exist instead
     expect(parsed.workflow.nodes[0].agents).toHaveLength(1);
   });
 
@@ -4104,7 +3952,6 @@ describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
       [],
       'Look me up by handle'
     );
-    // The workflow was auto-generated with a handle from its name
     expect(wf.handle).toBeDefined();
 
     const result = await makeHandlers(ctx).get_workflow_detail({
@@ -4152,8 +3999,6 @@ describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
   });
 
   test('falls back to workflow_handle when workflow_id belongs to a different space', async () => {
-    // wf-other exists in the DB but belongs to a different space.
-    // wf-target is the workflow we actually want, identified by handle.
     const otherSpaceId = 'other-space-for-detail';
     seedSpaceRow(ctx.db, otherSpaceId);
     const wfOther = buildSingleStepWorkflow(
@@ -4217,21 +4062,15 @@ describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
       true
     );
 
-    // Pass the disabled ID + a stale handle that doesn't resolve
     const result = await makeHandlers(ctx).get_workflow_detail({
       workflow_id: disabledWf.id,
       workflow_handle: 'nonexistent-stale-handle',
     });
     const parsed = JSON.parse(result.content[0].text);
-    // Should return the disabled workflow, NOT "not found"
     expect(parsed.success).toBe(true);
     expect(parsed.workflow.id).toBe(disabledWf.id);
   });
 });
-
-// ---------------------------------------------------------------------------
-// suggest_workflow
-// ---------------------------------------------------------------------------
 
 describe('createSpaceAgentToolHandlers — suggest_workflow', () => {
   let ctx: TestCtx;
@@ -4252,8 +4091,6 @@ describe('createSpaceAgentToolHandlers — suggest_workflow', () => {
   });
 
   test('returns every workflow unranked so the Space Agent LLM can pick', async () => {
-    // suggest_workflow no longer keyword-ranks: it just surfaces the
-    // catalogue so the caller's LLM can reason without bias.
     buildSingleStepWorkflow(
       ctx.spaceId,
       ctx.workflowManager,
@@ -4283,10 +4120,6 @@ describe('createSpaceAgentToolHandlers — suggest_workflow', () => {
   });
 
   test('does not keyword-rank — "review" tag no longer hijacks top spot', async () => {
-    // Regression guard for the P0 bug that prompted switching to LLM-driven
-    // selection: a task description containing "review feedback" used to
-    // push the keyword-matching workflow (Review Flow) in front of the
-    // workflow whose name/description actually fit the work (Coding Flow).
     const coding = buildSingleStepWorkflow(
       ctx.spaceId,
       ctx.workflowManager,
@@ -4311,7 +4144,6 @@ describe('createSpaceAgentToolHandlers — suggest_workflow', () => {
 
     expect(parsed.success).toBe(true);
     expect(parsed.workflows).toHaveLength(2);
-    // Order is creation order (insertion order) — never keyword rank.
     expect(parsed.workflows.map((w: { id: string }) => w.id)).toEqual([coding.id, review.id]);
   });
 
@@ -4325,10 +4157,6 @@ describe('createSpaceAgentToolHandlers — suggest_workflow', () => {
     expect(parsed.workflows).toHaveLength(1);
   });
 });
-
-// ---------------------------------------------------------------------------
-// create_standalone_task
-// ---------------------------------------------------------------------------
 
 describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
   let ctx: TestCtx;
@@ -4366,7 +4194,6 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
   });
 
   test('custom_agent_id field removed in M71 — task still creates without error', async () => {
-    // custom_agent_id is no longer validated in create_standalone_task post-M71
     const result = await makeHandlers(ctx).create_standalone_task({
       title: 'Task',
       description: 'Desc',
@@ -4481,7 +4308,6 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
   });
 
   test('depends_on with a task from a different space fails (cross-space rejected)', async () => {
-    // Seed a second space and create a task there via its own task manager.
     const otherSpaceId = 'space-other';
     seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-workspace');
     const otherTaskManager = new SpaceTaskManager(ctx.db, otherSpaceId);
@@ -4502,7 +4328,6 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
   });
 
   test('depends_on rejects a cycle when a dependency chain would loop back', async () => {
-    // Create three tasks: A, B, C, linked A → B → C (C depends on B, B depends on A).
     const aResult = await makeHandlers(ctx).create_standalone_task({
       title: 'A',
       description: 'root',
@@ -4524,8 +4349,6 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
     expect(JSON.parse(cResult.content[0].text).success).toBe(true);
     const cId = JSON.parse(cResult.content[0].text).task.id;
 
-    // Now attempt to update A to depend on C — this would form a cycle
-    // A → C → B → A. Cycle detection happens on updates via the manager.
     await expect(ctx.taskManager.updateTask(aId, { dependsOn: [cId] })).rejects.toThrow(
       /circular|cycle/i
     );
@@ -4614,7 +4437,6 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(true);
     const stored = ctx.taskRepo.getTask(parsed.task.id);
-    // Stale workflow_id was replaced with the id resolved from the handle.
     expect(stored?.preferredWorkflowId).toBe(wf.id);
   });
 
@@ -4625,8 +4447,6 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
       workflow_id: 'stale-uuid-no-handle',
     });
     const parsed = JSON.parse(result.content[0].text);
-    // Task is created successfully — the stale id is kept as preferredWorkflowId
-    // and the runtime will fall back to automatic workflow selection.
     expect(parsed.success).toBe(true);
     const stored = ctx.taskRepo.getTask(parsed.task.id);
     expect(stored?.preferredWorkflowId).toBe('stale-uuid-no-handle');
@@ -4645,7 +4465,6 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
       ctx.agentId,
       'Active WF'
     );
-    // Disable the first workflow via DB update.
     ctx.db.prepare(`UPDATE space_workflows SET disabled = 1 WHERE id = ?`).run(disabled.id);
 
     const result = await makeHandlers(ctx).create_standalone_task({
@@ -4694,10 +4513,6 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// get_task_detail
-// ---------------------------------------------------------------------------
-
 describe('createSpaceAgentToolHandlers — get_task_detail', () => {
   let ctx: TestCtx;
   beforeEach(() => {
@@ -4735,7 +4550,6 @@ describe('createSpaceAgentToolHandlers — get_task_detail', () => {
     });
     const taskId = JSON.parse(createResult.content[0].text).task.id;
 
-    // Start and then fail the task
     await ctx.taskManager.startTask(taskId);
     await ctx.taskManager.failTask(taskId, 'Something went wrong');
 
@@ -4743,13 +4557,8 @@ describe('createSpaceAgentToolHandlers — get_task_detail', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(true);
     expect(parsed.task.status).toBe('blocked');
-    // error field was removed in M71; check task is blocked
   });
 });
-
-// ---------------------------------------------------------------------------
-// retry_task
-// ---------------------------------------------------------------------------
 
 describe('createSpaceAgentToolHandlers — retry_task', () => {
   let ctx: TestCtx;
@@ -4843,7 +4652,6 @@ describe('createSpaceAgentToolHandlers — retry_task', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('does not belong to this space');
-    // The other space's task must not have been recovered.
     expect(ctx.taskRepo.getTask(otherTask.id)?.status).toBe('done');
   });
 
@@ -4853,23 +4661,16 @@ describe('createSpaceAgentToolHandlers — retry_task', () => {
     const taskId = JSON.parse(started.content[0].text).tasks[0].id;
     const before = ctx.taskRepo.getTask(taskId)!;
     expect(before.workflowRunId).toBeTruthy();
-    // Force an active status that is not retryable.
     ctx.taskRepo.updateTask(taskId, { status: 'in_progress' });
 
     const result = await makeHandlers(ctx).retry_task({ task_id: taskId });
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('in_progress');
-    // The task must not have been recovered (status unchanged, no destructive
-    // nulling of post-approval fields).
     const after = ctx.taskRepo.getTask(taskId)!;
     expect(after.status).toBe('in_progress');
   });
 });
-
-// ---------------------------------------------------------------------------
-// cancel_task
-// ---------------------------------------------------------------------------
 
 describe('createSpaceAgentToolHandlers — cancel_task', () => {
   let ctx: TestCtx;
@@ -4894,7 +4695,6 @@ describe('createSpaceAgentToolHandlers — cancel_task', () => {
   });
 
   test('cancels dependent tasks in cascade', async () => {
-    // Create two tasks where second depends on first
     const t1 = await ctx.taskManager.createTask({ title: 'T1', description: 'First' });
     const t2 = await ctx.taskManager.createTask({
       title: 'T2',
@@ -4908,7 +4708,6 @@ describe('createSpaceAgentToolHandlers — cancel_task', () => {
     expect(parsed.task.id).toBe(t1.id);
     expect(parsed.task.status).toBe('cancelled');
 
-    // Dependent task should also be cancelled
     const t2Updated = ctx.taskRepo.getTask(t2.id);
     expect(t2Updated?.status).toBe('cancelled');
   });
@@ -4977,10 +4776,6 @@ describe('createSpaceAgentToolHandlers — cancel_task', () => {
     expect(parsed.success).toBe(false);
   });
 });
-
-// ---------------------------------------------------------------------------
-// reassign_task
-// ---------------------------------------------------------------------------
 
 describe('createSpaceAgentToolHandlers — reassign_task', () => {
   let ctx: TestCtx;
@@ -5117,10 +4912,6 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// M5.3 — Task creation and workflow activation
-// ---------------------------------------------------------------------------
-
 describe('createSpaceAgentToolHandlers — task creation and planning node activation (M5.3)', () => {
   let ctx: TestCtx;
   beforeEach(() => {
@@ -5154,7 +4945,6 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
   });
 
   test('start_workflow_run with planning start node creates task with planning taskType', async () => {
-    // Seed a planner agent for the planning step
     seedAgentRow(ctx.db, 'agent-planner-1', ctx.spaceId, 'Planner');
 
     const stepId = 'planning-step-1';
@@ -5179,7 +4969,6 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 
     expect(parsed.success).toBe(true);
     expect(parsed.tasks).toHaveLength(1);
-    // taskType and workflowNodeId removed in M71 — verify task is created and has open status
     expect(parsed.tasks[0].status).toBe('open');
   });
 
@@ -5210,14 +4999,10 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 
     const tasks = ctx.taskRepo.listByWorkflowRun(runs[0].id);
     expect(tasks).toHaveLength(1);
-    // taskType removed in M71 — verify task is created
     expect(tasks[0].status).toBe('open');
   });
 
   test('suggest_workflow surfaces every workflow so the LLM can choose', async () => {
-    // Post-refactor behavior: suggest_workflow no longer keyword-ranks.
-    // The whole catalogue is returned in creation order so the caller's
-    // LLM is not biased by substring overlap with the task description.
     buildSingleStepWorkflow(
       ctx.spaceId,
       ctx.workflowManager,
@@ -5247,10 +5032,6 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
   });
 });
 
-// ---------------------------------------------------------------------------
-// list_tasks — search, pagination, compact mode, total
-// ---------------------------------------------------------------------------
-
 describe('createSpaceAgentToolHandlers — list_tasks search/pagination/compact', () => {
   let ctx: TestCtx;
   beforeEach(() => {
@@ -5279,7 +5060,6 @@ describe('createSpaceAgentToolHandlers — list_tasks search/pagination/compact'
     const task1Id = JSON.parse(r1.content[0].text).tasks[0].id;
     const task2Id = JSON.parse(r2.content[0].text).tasks[0].id;
 
-    // Rename one task to have a unique searchable title
     ctx.taskRepo.updateTask(task1Id, { title: 'Review PR #42' });
     ctx.taskRepo.updateTask(task2Id, { title: 'Deploy service' });
 
@@ -5319,13 +5099,11 @@ describe('createSpaceAgentToolHandlers — list_tasks search/pagination/compact'
     expect(parsed.success).toBe(true);
     expect(parsed.total).toBe(1);
     const task = parsed.tasks[0] as Record<string, unknown>;
-    // Compact fields present
     expect(task.id).toBeDefined();
     expect(task.title).toBeDefined();
     expect(task.status).toBeDefined();
     expect(task.priority).toBeDefined();
     expect(task.createdAt).toBeDefined();
-    // Large fields excluded
     expect(task.workflowRunId).toBeUndefined();
     expect(task.description).toBeUndefined();
   });
@@ -5347,20 +5125,10 @@ describe('createSpaceAgentToolHandlers — list_tasks search/pagination/compact'
 
     const result = await makeHandlers(ctx).list_tasks({ search: 'Match', limit: 1, offset: 0 });
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.total).toBe(2); // 2 match, even though only 1 returned
+    expect(parsed.total).toBe(2);
     expect(parsed.tasks).toHaveLength(1);
   });
 });
-
-// ---------------------------------------------------------------------------
-// approve_task — plain review→done / review→approved path
-// ---------------------------------------------------------------------------
-//
-// The completion-action approval MCP tool was deleted in PR 4/5 together with
-// the completion-action runtime pipeline. PR 5/5 (migration M104) further
-// rewrote any residual stuck rows into `task_completion` and tightened the
-// `pendingCheckpointType` CHECK constraint, so the legacy variant no longer
-// round-trips through the MCP surface.
 
 describe('createSpaceAgentToolHandlers — approve_task plain path', () => {
   let ctx: TestCtx;
@@ -5378,7 +5146,6 @@ describe('createSpaceAgentToolHandlers — approve_task plain path', () => {
       description: 'no pending action',
     });
     const taskId = JSON.parse(createResult.content[0].text).task.id;
-    // Plain review (pendingCheckpointType is null) — approve_task proceeds.
     ctx.taskRepo.updateTask(taskId, { status: 'review' });
 
     const result = await makeHandlers(ctx).approve_task({
@@ -5469,15 +5236,6 @@ describe('createSpaceAgentToolHandlers — approve_task plain path', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// approve_pending_completion — human-approval path (coordinator / task-agent)
-// ---------------------------------------------------------------------------
-//
-// MCP surface for the coordinator to trigger the human-approval path that the
-// UI "Approve" banner fires via the `spaceTask.approvePendingCompletion` RPC.
-// Restricted to coordinator / task-agent callers; worker node agents self-close
-// via approve_task. NOT autonomy-gated — it routes an explicit human decision.
-
 describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
   let ctx: TestCtx;
   beforeEach(() => {
@@ -5487,7 +5245,6 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     ctx.db.close();
   });
 
-  /** Create a task and submit it for review (status=review, checkpoint=task_completion). */
   async function createReviewTask(title = 'pending completion task'): Promise<string> {
     const task = await ctx.taskManager.createTask({
       title,
@@ -5507,8 +5264,6 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(
       async (id: string, source, extras) => {
         dispatchCalls.push({ taskId: id, source, extras });
-        // Simulate the runtime's review → approved transition (stamps the
-        // approval metadata the real dispatchPostApproval writes).
         ctx.taskRepo.updateTask(id, {
           status: 'approved',
           approvalSource: 'human',
@@ -5538,7 +5293,6 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
 
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(
       async (id: string) => {
-        // Status commits inside dispatch, THEN the post-approval step throws.
         ctx.taskRepo.updateTask(id, { status: 'approved' });
         throw new Error('user interrupted');
       }
@@ -5550,8 +5304,6 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     dispatchSpy.mockRestore();
 
     const parsed = JSON.parse(result.content[0].text);
-    // The approval is durable — success, status approved — and the raw
-    // "user interrupted" is mapped to a recovery-oriented blocked reason.
     expect(parsed.success).toBe(true);
     expect(parsed.task.status).toBe('approved');
     expect(parsed.task.postApprovalBlockedReason).toContain('Approval recorded');
@@ -5563,7 +5315,6 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const taskId = await createReviewTask();
 
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(async () => {
-      // Transition never happens — the raw error must surface.
       throw new Error('transition rejected');
     });
 
@@ -5595,7 +5346,6 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     expect(parsed.success).toBe(true);
     expect(parsed.task.status).toBe('in_progress');
     expect(parsed.task.approvalReason).toBe('needs rework');
-    // Rejecting clears the pending-completion checkpoint (exit-review cleanup).
     expect(parsed.task.pendingCheckpointType).toBeNull();
     expect(dispatchSpy).not.toHaveBeenCalled();
   });
@@ -5621,7 +5371,6 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
       title: 'plain review',
       description: 'no checkpoint',
     });
-    // review with no pending checkpoint (pendingCheckpointType is null).
     ctx.taskRepo.updateTask(task.id, { status: 'review' });
 
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
@@ -5642,7 +5391,6 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
       title: 'still in progress',
       description: 'checkpoint but not review',
     });
-    // Stamp the checkpoint without flipping to review — the status guard fires.
     ctx.taskRepo.updateTask(task.id, {
       status: 'in_progress',
       pendingCheckpointType: 'task_completion',
@@ -5680,8 +5428,6 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const taskId = await createReviewTask();
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
 
-    // No callerRole override → undefined → rejected. Only coordinator /
-    // legacy_task_agent may call; members and long-term agents may not.
     const result = await makeHandlers(ctx).approve_pending_completion({
       task_id: taskId,
       approved: true,
@@ -5727,10 +5473,6 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// send_message_to_task — node targeting, auto-spawn, task_number resolution
-// ---------------------------------------------------------------------------
-
 interface FakeTaskAgentManager {
   manager: TaskAgentManager;
   subSessionInjects: Array<{
@@ -5739,10 +5481,7 @@ interface FakeTaskAgentManager {
     isSyntheticMessage?: boolean;
     sdkMessageId: string;
   }>;
-  /** Session IDs that should throw `Sub-session not found` on inject. */
   deadSessionIds: Set<string>;
-  /** Hook invoked before ensureTaskAgentSession resolves. Allows simulating
-   *  side-effects such as assigning a taskAgentSessionId. */
   onEnsure?: (taskId: string) => Promise<void> | void;
 }
 
@@ -5886,7 +5625,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       taskManager: ctx.taskManager,
       spaceAgentManager: ctx.agentManager,
       nodeExecutionRepo: ctx.nodeExecutionRepo,
-      // intentionally omitting taskAgentManager
     });
     const task = await createTask();
     const result = await handlers.send_message_to_task({
@@ -5956,7 +5694,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(parsedWithNode.success).toBe(false);
     expect(parsedWithNode.error).toMatch(/archived/);
 
-    // Neither path should have touched the task agent.
     expect(tam.subSessionInjects).toHaveLength(0);
   });
 
@@ -5971,7 +5708,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       message: 'hi B',
     });
     const parsed = JSON.parse(result.content[0].text);
-    // Resolves task_number to task_id but returns error because no node_id
     expect(parsed.success).toBe(false);
     expect(parsed.error).toMatch(/target agent is required/i);
   });
@@ -6410,7 +6146,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       'Node target run'
     );
     const task = tasks[0];
-    // Seed two executions: a terminated Coder with a live session + a fresh Reviewer.
     const coderExec = ctx.nodeExecutionRepo.createOrIgnore({
       workflowRunId: run.id,
       workflowNodeId: wf.startNodeId,
@@ -6441,7 +6176,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(parsed.delivered_session_id).toBe('coder-session-live');
     expect(parsed.sdk_message_id).toBe('sdk-message-0');
     expect(parsed.activated).toBe(false);
-    // Direct-injection path must skip activateNode.
     expect(activateCalls).toHaveLength(0);
     expect(tam.subSessionInjects).toEqual([
       {
@@ -6451,14 +6185,12 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         sdkMessageId: 'sdk-message-0',
       },
     ]);
-    // The Task Agent path was not touched.
   });
 
   test('node_id by execution UUID targets that specific execution', async () => {
     const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF UUID');
     const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'UUID target');
     const task = tasks[0];
-    // Two executions for the same agent name — UUID targeting must disambiguate.
     const reviewerA = ctx.nodeExecutionRepo.createOrIgnore({
       workflowRunId: run.id,
       workflowNodeId: wf.startNodeId,
@@ -6494,7 +6226,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         sdkMessageId: 'sdk-message-0',
       },
     ]);
-    // Ensure the other reviewer was never touched.
     expect(tam.subSessionInjects.some((r) => r.sessionId === reviewerA.agentSessionId)).toBe(false);
   });
 
@@ -6502,7 +6233,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Lazy');
     const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Lazy activate');
     const task = tasks[0];
-    // Seed execution with NO agentSessionId — simulating a never-spawned node.
     const exec = ctx.nodeExecutionRepo.createOrIgnore({
       workflowRunId: run.id,
       workflowNodeId: wf.startNodeId,
@@ -6515,7 +6245,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     const handlers = makeHandlersWith(tam, {
       activateNode: async (runId, nodeId) => {
         activateCalls.push([runId, nodeId]);
-        // Simulate ChannelRouter.activateNode() restoring a reusable session id.
         ctx.nodeExecutionRepo.update(exec.id, {
           status: 'in_progress',
           agentSessionId: 'reviewer-session-newly-restored',
@@ -6925,8 +6654,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       agentSessionId: 'coder-old-session',
       status: 'in_progress',
     });
-    // Ensure deterministic ordering: listByWorkflowRun orders by created_at ASC
-    // then id ASC. A 2ms gap guarantees distinct timestamps across platforms.
     await new Promise((resolve) => setTimeout(resolve, 2));
     ctx.nodeExecutionRepo.createOrIgnore({
       workflowRunId: run.id,
@@ -7284,7 +7011,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     const result = await makeHandlersWith(tam, {
       messageResolver: {
         async resolveTargets(message) {
-          // Simulate a real resolver that only matches the canonical lowercase handle.
           if (message.targets[0] === '@coder') {
             return {
               message,
@@ -7413,8 +7139,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       agentSessionId: 'coder-old-session',
       status: 'in_progress',
     });
-    // Ensure deterministic ordering: listByWorkflowRun orders by created_at ASC
-    // then id ASC. A 2ms gap guarantees distinct timestamps across platforms.
     await new Promise((resolve) => setTimeout(resolve, 2));
     const latest = ctx.nodeExecutionRepo.createOrIgnore({
       workflowRunId: run.id,
@@ -7754,15 +7478,11 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       message: 'target A',
     });
     const parsed = JSON.parse(result.content[0].text);
-    // task_id takes precedence but returns error because no node_id
     expect(parsed.success).toBe(false);
     expect(parsed.error).toMatch(/target agent is required/i);
   });
 
   test('falls back to activateNode when a previously-live session rejects injection', async () => {
-    // Execution has an agentSessionId but the sub-session is dead (e.g. daemon
-    // restart cleaned it up). First injection throws; handler must fall through
-    // to activateNode, which revives the execution with a fresh session id.
     const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Dead');
     const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Dead session');
     const task = tasks[0];
@@ -7828,12 +7548,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(parsed.error).toContain('does not belong to this space');
   });
 
-  // -------------------------------------------------------------------------
-  // Delivery traceability contract: every successful delivery must echo the
-  // same delivered_session_id + sdk_message_id in BOTH the tool response and
-  // the audit log, and ambiguous @handle + task_id routing must be rejected
-  // with actionable, audited errors. See tasks #722/#723/#724 (PRs #2231–2233).
-  // -------------------------------------------------------------------------
   describe('delivery traceability contract', () => {
     async function makeTracedTask(label: string) {
       const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, label);
@@ -7868,7 +7582,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(parsed.sdk_message_id).toBe('sdk-message-0');
       expect(audit).toHaveLength(1);
       expect(audit[0]).toMatchObject({ outcome: 'delivered', target: 'node' });
-      // Traceability parity: the audit must point at the same session + SDK message.
       expect(audit[0].delivered_session_id).toBe(parsed.delivered_session_id);
       expect(audit[0].sdk_message_id).toBe(parsed.sdk_message_id);
     });
@@ -7912,9 +7625,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     });
 
     test('space-coordinator handle delivery echoes matching delivered_session_id in response and audit', async () => {
-      // @coordinator is the canonical handle→facade delivery path: it resolves
-      // to the Space coordinator (no workflow worker collides), so it is the
-      // one handle that is delivered rather than rejected as ambiguous.
       const { task } = await makeTracedTask('Trace coordinator');
       const auditLogRepo = new McpAuditLogRepository(ctx.db);
       const tam = makeFakeTaskAgentManager(ctx);
@@ -7958,8 +7668,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(parsed.success).toBe(true);
       expect(parsed.target).toBe('space-agent');
       expect(parsed.delivered_session_id).toBe('coordinator-trace-session');
-      // Handle delivery routes through the facade, not SDK sub-session inject,
-      // so it carries delivered_session_id but no sdk_message_id.
       expect(parsed.sdk_message_id).toBeUndefined();
       expect(audit).toHaveLength(1);
       expect(audit[0]).toMatchObject({ outcome: 'delivered', target: 'space-agent' });
@@ -8028,7 +7736,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(parsed.sdk_message_id).toBeNull();
       expect(parsed.queued).toBe(true);
       expect(audit).toHaveLength(1);
-      // Nothing was delivered, so the audit outcome must not claim a delivery.
       expect(audit[0].outcome).not.toBe('delivered');
       expect(audit[0]).toMatchObject({ outcome: 'queued' });
     });
@@ -8054,14 +7761,12 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const audit = parseAuditSummaries(auditLogRepo, task.id);
 
       expect(parsed.success).toBe(false);
-      // Actionable: tells the caller exactly how to disambiguate.
       expect(parsed.error).toContain('Ambiguous target');
       expect(parsed.error).toContain('node_id');
       expect(parsed.error).toContain('@worker:');
       expect(parsed.error).toContain('send_session_message');
       expect(countSdkMessages()).toBe(before);
       expect(tam.subSessionInjects).toHaveLength(0);
-      // Audited with a stable, machine-readable reason.
       expect(audit).toHaveLength(1);
       expect(audit[0]).toMatchObject({
         outcome: 'failed',
@@ -8097,7 +7802,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 
       expect(parsed.success).toBe(false);
       expect(parsed.error).toContain('Ambiguous target');
-      // Actionable: enumerates every matched recipient so the caller can pick one.
       expect(parsed.error).toContain('agent:trace-coder-lh');
       expect(parsed.error).toContain('workflow node "coder"');
       expect(countSdkMessages()).toBe(before);
@@ -8111,10 +7815,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     });
   });
 });
-
-// ---------------------------------------------------------------------------
-// update_task
-// ---------------------------------------------------------------------------
 
 describe('createSpaceAgentToolHandlers — update_task', () => {
   let ctx: TestCtx;
@@ -8356,10 +8056,6 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// publish_task
-// ---------------------------------------------------------------------------
-
 describe('createSpaceAgentToolHandlers — publish_task', () => {
   let ctx: TestCtx;
   beforeEach(() => {
@@ -8408,7 +8104,6 @@ describe('createSpaceAgentToolHandlers — publish_task', () => {
   });
 
   test('returns error when task belongs to different space', async () => {
-    // Create task in current space
     const createResult = await makeHandlers(ctx).create_standalone_task({
       title: 'Draft',
       description: 'Test',
@@ -8416,7 +8111,6 @@ describe('createSpaceAgentToolHandlers — publish_task', () => {
     });
     const taskId = JSON.parse(createResult.content[0].text).task.id;
 
-    // Create handlers for a different space
     const otherSpaceId = 'space-other';
     seedSpaceRow(ctx.db, otherSpaceId);
     const otherTaskManager = new SpaceTaskManager(ctx.db, otherSpaceId);
@@ -8437,10 +8131,6 @@ describe('createSpaceAgentToolHandlers — publish_task', () => {
     expect(parsed.error).toContain('does not belong');
   });
 });
-
-// ---------------------------------------------------------------------------
-// archive_task
-// ---------------------------------------------------------------------------
 
 describe('createSpaceAgentToolHandlers — archive_task', () => {
   let ctx: TestCtx;
@@ -8484,7 +8174,6 @@ describe('createSpaceAgentToolHandlers — archive_task', () => {
     });
     const taskId = JSON.parse(createResult.content[0].text).task.id;
 
-    // Cancel first
     await makeHandlers(ctx).cancel_task({ task_id: taskId });
 
     const result = await makeHandlers(ctx).archive_task({ task_id: taskId });
@@ -8535,7 +8224,6 @@ describe('createSpaceAgentToolHandlers — archive_task', () => {
     });
     const taskId = JSON.parse(createResult.content[0].text).task.id;
 
-    // Submit for review to set pendingCheckpointType
     await ctx.taskManager.submitTaskForReview(taskId, {
       submittedByNodeId: null,
       reason: 'Test submission',
@@ -8547,7 +8235,6 @@ describe('createSpaceAgentToolHandlers — archive_task', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(true);
     expect(parsed.task.status).toBe('archived');
-    // setTaskStatus cleanup should have cleared pending-completion fields
     expect(parsed.task.pendingCheckpointType).toBeNull();
     expect(parsed.task.pendingCompletionSubmittedByNodeId).toBeNull();
     expect(parsed.task.pendingCompletionReason).toBeNull();
@@ -8560,7 +8247,6 @@ describe('createSpaceAgentToolHandlers — archive_task', () => {
     });
     const taskId = JSON.parse(createResult.content[0].text).task.id;
 
-    // Transition to in_progress then approved (via setTaskStatus)
     await ctx.taskManager.startTask(taskId);
     await ctx.taskManager.setTaskStatus(taskId, 'approved', {
       approvalSource: 'human',
@@ -8573,10 +8259,6 @@ describe('createSpaceAgentToolHandlers — archive_task', () => {
     expect(parsed.task.status).toBe('archived');
   });
 });
-
-// ---------------------------------------------------------------------------
-// cancel_task on draft (verifies error message consistency)
-// ---------------------------------------------------------------------------
 
 describe('cancel_task on draft — error message consistency', () => {
   let ctx: TestCtx;
@@ -8600,15 +8282,10 @@ describe('cancel_task on draft — error message consistency', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain("'draft'");
     expect(parsed.error).toContain("'cancelled'");
-    // Should mention what transitions ARE allowed from draft
     expect(parsed.error).toContain('open');
     expect(parsed.error).toContain('archived');
   });
 });
-
-// ---------------------------------------------------------------------------
-// get_external_event (LH-agent / space-agent surface)
-// ---------------------------------------------------------------------------
 
 function makeGitHubExternalEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
   return {
@@ -8688,9 +8365,6 @@ describe('space-agent-tools: get_external_event', () => {
 
   test('treats an event in another space as not-found (no cross-space leak)', async () => {
     const store = new ExternalEventStore(ctx.db);
-    // Seed the foreign-space row so the event FK is satisfied; the lookup must
-    // still reject it because the caller's space differs. Use a distinct
-    // workspace_path — the column is UNIQUE.
     seedSpaceRow(ctx.db, 'space-other', '/tmp/space-other');
     const event = makeGitHubExternalEvent({ spaceId: 'space-other' });
     store.store(event);
@@ -8732,15 +8406,6 @@ describe('space-agent-tools: get_external_event', () => {
     expect(getRegisteredToolNames(withStore)).toContain('get_external_event');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Agent-level autonomy ceiling — min(space.autonomyLevel, agent.autonomyLevel)
-//
-// A long-term Space agent's `autonomyLevel` caps its effective autonomy for its
-// own space-agent-tools calls. The ceiling only binds for `long_term_agent`
-// role sessions (here: `myAgentId` resolves to a SpaceLongHorizonAgent in this
-// space with a non-null level). Coordinators and ad-hoc members are uncapped.
-// ---------------------------------------------------------------------------
 
 describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => {
   let ctx: TestCtx;
@@ -8949,14 +8614,8 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
     expect(summary.agentLevel).toBe(1);
   });
 
-  // -------------------------------------------------------------------------
-  // Cross-space guard: myAgentId pointing at an LH agent in another space is
-  // treated as "not this space's agent" → uncapped, space level governs.
-  // -------------------------------------------------------------------------
-
   test('myAgentId resolving to an agent in another space is uncapped', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 3 });
-    // Agent lives in a different space.
     const otherSpaceId = 'space-ceiling-other';
     seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other');
     const otherAgentId = ctx.longHorizonAgentRepo.create({
@@ -8980,17 +8639,11 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
       })
     );
 
-    // Space level 3 < 4 blocks the call, but via the SPACE constraint — the
-    // foreign agent contributes no ceiling.
     expect(parsed.success).toBe(false);
     const error = String(parsed.error);
     expect(error).toContain('space autonomy level 3');
     expect(error).not.toContain('agent autonomy ceiling');
   });
-
-  // -------------------------------------------------------------------------
-  // Boundary: exactly agentLevel 4 meets the session-write requirement (4).
-  // -------------------------------------------------------------------------
 
   test('session-write boundary: level-4 agent at space 5 is permitted (effective 4 >= 4)', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
@@ -9012,11 +8665,6 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
 
     expect(parsed.success).toBe(true);
   });
-
-  // -------------------------------------------------------------------------
-  // Audit: ceiling denial is recorded for an approve path, not just
-  // send_session_message.
-  // -------------------------------------------------------------------------
 
   test('ceiling-blocked approve_task denial is recorded in the audit log', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
@@ -9042,12 +8690,6 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
     expect(summary.agentLevel).toBe(1);
   });
 
-  // -------------------------------------------------------------------------
-  // Bypass hardening: the ceiling must not be evadable by renaming the agent
-  // to a coordinator-like name. The coordinator exemption only applies to the
-  // real space coordinator (no calling agent id).
-  // -------------------------------------------------------------------------
-
   test('send_session_message: a level-1 agent named "space-agent" is still ceiling-gated', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
     const agentId = seedLongHorizonAgent(1);
@@ -9071,15 +8713,9 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
     expect(String(parsed.error)).toContain('agent autonomy ceiling 1');
   });
 
-  // -------------------------------------------------------------------------
-  // Fail closed: a long-horizon agent whose record was deleted while its
-  // session is still live must not silently become uncapped.
-  // -------------------------------------------------------------------------
-
   test('a deleted long-horizon agent record fails closed at level 1', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
     const agentId = seedLongHorizonAgent(1);
-    // Simulate the agent being deleted while the session stays live.
     ctx.db.prepare('DELETE FROM space_long_horizon_agents WHERE id = ?').run(agentId);
     seedTargetSession('ceiling-target-deleted');
     const handlers = makeHandlers(ctx, {
@@ -9099,11 +8735,6 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
     expect(parsed.success).toBe(false);
     expect(String(parsed.error)).toContain('agent autonomy ceiling 1');
   });
-
-  // -------------------------------------------------------------------------
-  // Child ceiling inheritance: a restricted caller cannot spawn an uncapped
-  // child to bypass its own ceiling.
-  // -------------------------------------------------------------------------
 
   test('create_agent: child inherits the level-1 caller ceiling (cannot bypass)', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });

@@ -1,6 +1,3 @@
-/**
- * Tests for the shared SectionCard primitive.
- */
 // @ts-nocheck
 import { cleanup, render } from '@testing-library/preact';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -23,7 +20,6 @@ describe('SectionCard', () => {
 
   it('omits the body wrapper when there are no children', () => {
     const { container } = render(<SectionCard title="Empty" />);
-    // Only the label row is rendered; no mt-3 body wrapper.
     expect(container.querySelector('.mt-3')).toBeNull();
   });
 });

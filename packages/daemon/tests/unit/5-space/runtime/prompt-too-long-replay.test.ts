@@ -1,28 +1,3 @@
-/**
- * Prompt-too-long recovery — REPLAY suite (Task #751).
- *
- * The recurring stuck-session failure mode where a worker session overflows its
- * context window is reported by providers in several incompatible shapes.
- * Per-encoding unit tests already cover the detector branches and the state
- * machine; this suite consolidates the encodings into a single REPLAY and
- * asserts the two things the per-encoding tests do NOT:
- *
- *  1. NORMALIZATION — every observed encoding funnels through the ONE canonical
- *     detector (`isPromptTooLongErrorMessage`) and (for user-message forms) the
- *     circuit breaker, and the two agree on what counts as prompt-too-long.
- *     Includes the JSON-wrapped Anthropic/Kimi stderr forms that were only ever
- *     exercised through the circuit breaker, not the recovery detector.
- *
- *  2. FINAL VISIBLE STATUS — driving representative encodings through the
- *     compact-then-continue recovery to escalation asserts the normalized
- *     REASON written to the execution/run/task rows (`result` + `blockReason`),
- *     the session detach, and the surfaced notifications — for every escalation
- *     path (retry cap, /compact-turn timeout, resumed-turn timeout).
- *
- * Input sources replayed: provider result fields, stderr/user-message channel,
- * bare provider text, circuit-breaker trip, and the terminal-error sweep row.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -48,12 +23,6 @@ import {
   MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
 } from '../../../../src/lib/space/runtime/prompt-too-long-recovery';
 
-// ---------------------------------------------------------------------------
-// Encoding catalogue — every observed prompt-too-long shape, one place.
-// ---------------------------------------------------------------------------
-
-/** Provider RESULT-field encodings. Detector-only: the circuit breaker never
- *  inspects `result` messages (it only scans `type: 'user'` stderr). */
 const RESULT_ENCODINGS: Array<{ name: string; message: unknown; detected: boolean }> = [
   {
     name: 'terminal_reason=prompt_too_long (canonical SDK)',
@@ -120,9 +89,6 @@ const RESULT_ENCODINGS: Array<{ name: string; message: unknown; detected: boolea
   },
 ];
 
-/** User-message / stderr encodings. These are the ONLY forms the circuit
- *  breaker sees, so each is replayed through BOTH the detector and the breaker
- *  to prove they normalize identically. */
 const USER_ENCODINGS: Array<{
   name: string;
   content: string;
@@ -175,8 +141,6 @@ const USER_ENCODINGS: Array<{
   },
 ];
 
-/** Feed a user message into a fresh breaker 3× (the trip threshold) and return
- *  the normalized trip reason + user-facing message. */
 async function tripBreaker(content: string): Promise<{
   tripped: boolean;
   tripReason: string | null;
@@ -211,17 +175,12 @@ describe('prompt-too-long replay — normalization across detector and circuit b
           message: { role: 'user', content: enc.content },
           parent_tool_use_id: null,
         };
-        // Canonical recovery detector.
         expect(isPromptTooLongErrorMessage(message as never)).toBe(enc.detected);
-        // Circuit breaker normalization (feeds the trip threshold).
         const breaker = await tripBreaker(enc.content);
         expect(breaker.tripReason).toBe(enc.tripReason);
         if (enc.tripMessageContains) {
           expect(breaker.message).toContain(enc.tripMessageContains);
         }
-        // Cross-layer agreement: the breaker and the detector never disagree on
-        // whether a user message is prompt-too-long. (The breaker may trip for a
-        // different class — e.g. connection_error — but must not mislabel it.)
         const breakerClassifiesPromptTooLong =
           breaker.tripReason?.startsWith('prompt_too_long') ?? false;
         expect(breakerClassifiesPromptTooLong).toBe(enc.detected);
@@ -230,9 +189,6 @@ describe('prompt-too-long replay — normalization across detector and circuit b
   });
 
   test('result-field encodings never trip the circuit breaker (breaker scans only user messages)', async () => {
-    // A terminal_reason=prompt_too_long result is the clearest overflow, yet the
-    // breaker must not trip on it — it owns user-message loops only; result
-    // overflow is the recovery module's job.
     for (const enc of RESULT_ENCODINGS.filter((e) => e.detected)) {
       const breaker = new ApiErrorCircuitBreaker('replay-test');
       const msg = { ...enc.message, type: 'result' };
@@ -241,10 +197,6 @@ describe('prompt-too-long replay — normalization across detector and circuit b
     }
   });
 });
-
-// ---------------------------------------------------------------------------
-// DB helpers (mirror prompt-too-long-recovery.test.ts)
-// ---------------------------------------------------------------------------
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -319,10 +271,6 @@ function buildLinearWorkflow(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Tests: recovery escalation — normalized reason & final visible status
-// ---------------------------------------------------------------------------
-
 describe('prompt-too-long replay — recovery escalation: reason & final visible status', () => {
   let db: BunDatabase;
   let workflowRunRepo: SpaceWorkflowRunRepository;
@@ -393,9 +341,6 @@ describe('prompt-too-long replay — recovery escalation: reason & final visible
     };
   }
 
-  /** Persist the injected message with send_status='enqueued' so it is excluded
-   *  from getLastSDKMessage until the SDK consumes it — exactly like production
-   *  (sdk-message-repository excludes enqueued user messages). */
   function makeRecordingTam(injections: Array<{ sessionId: string; message: string }>): unknown {
     const inject = async (sessionId: string, message: string): Promise<string> => {
       injections.push({ sessionId, message });
@@ -457,7 +402,6 @@ describe('prompt-too-long replay — recovery escalation: reason & final visible
     db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE session_id = ?`).run(ts, sessionId);
   }
 
-  /** Seed an idle execution ending on a prompt-too-long result. */
   async function setupIdleOverflow(
     rt: SpaceRuntime,
     sessionId: string
@@ -479,27 +423,19 @@ describe('prompt-too-long replay — recovery escalation: reason & final visible
     return map.get(`${runId}:${executionId}`);
   }
 
-  /** Assert the full final visible status after an escalation, including the
-   *  normalized REASON written to every row + the surfaced notifications. */
   function expectEscalated(runId: string, executionId: string, reasonSubstring: string): void {
-    // Execution: blocked, reason recorded, overflowed session detached (so the
-    // bounded blocked-run retry spawns fresh instead of re-overflowing).
     const execution = nodeExecutionRepo.getById(executionId)!;
     expect(execution.status).toBe('blocked');
     expect(execution.result).toContain(reasonSubstring);
     expect(execution.agentSessionId).toBeNull();
 
-    // Run: blocked.
     expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
 
-    // Task: blocked with the canonical reason code + the human-readable reason.
     const task = taskRepo.listByWorkflowRun(runId)[0]!;
     expect(task.status).toBe('blocked');
     expect(task.blockReason).toBe('execution_failed');
     expect(task.result).toContain(reasonSubstring);
 
-    // Notifications surfaced to the UI/peers for BOTH the task and the run,
-    // carrying the normalized reason.
     expect(notifications.some((n) => n.kind === 'task_blocked')).toBe(true);
     expect(notifications.some((n) => n.kind === 'workflow_run_blocked')).toBe(true);
     const taskBlocked = notifications.find((n) => n.kind === 'task_blocked');
@@ -513,12 +449,11 @@ describe('prompt-too-long replay — recovery escalation: reason & final visible
     const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
     const { runId, executionId } = await setupIdleOverflow(rt, 'session:cap');
 
-    // Two unproductive compactions (fresh overflow each time) exhaust the cap.
-    await rt.executeTick(); // /compact 1
+    await rt.executeTick();
     saveResultMessage('session:cap', { promptTooLong: true });
-    await rt.executeTick(); // /compact 2
+    await rt.executeTick();
     saveResultMessage('session:cap', { promptTooLong: true });
-    await rt.executeTick(); // cap (2) → blocked
+    await rt.executeTick();
 
     expect(injections.filter((i) => i.message === '/compact')).toHaveLength(
       MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS
@@ -536,15 +471,14 @@ describe('prompt-too-long replay — recovery escalation: reason & final visible
     const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
     const { runId, executionId } = await setupIdleOverflow(rt, 'session:compact-hang');
 
-    await rt.executeTick(); // /compact injected, turn "hangs" (no result)
+    await rt.executeTick();
     expect(injections.map((i) => i.message)).toEqual(['/compact']);
 
-    // Simulate the /compact turn never producing a result.
     const state = recoveryState(rt, runId, executionId) as {
       awaitingContinueSince: number | null;
     };
     state!.awaitingContinueSince = Date.now() - (COMPACT_RESULT_TIMEOUT_MS + 1000);
-    await rt.executeTick(); // timeout → blocked
+    await rt.executeTick();
 
     expectEscalated(runId, executionId, 'the /compact turn did not produce a result within');
   });
@@ -554,43 +488,33 @@ describe('prompt-too-long replay — recovery escalation: reason & final visible
     const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
     const { runId, executionId } = await setupIdleOverflow(rt, 'session:resume-hang');
 
-    await rt.executeTick(); // /compact
-    saveResultMessage('session:resume-hang', { promptTooLong: false }); // compaction succeeded
-    await rt.executeTick(); // → continue nag (awaitingResume)
+    await rt.executeTick();
+    saveResultMessage('session:resume-hang', { promptTooLong: false });
+    await rt.executeTick();
 
-    // Simulate the resumed turn hanging after the nag.
     const state = recoveryState(rt, runId, executionId) as {
       awaitingResumeSince: number | null;
     };
     state!.awaitingResumeSince = Date.now() - (COMPACT_RESULT_TIMEOUT_MS + 1000);
-    await rt.executeTick(); // resume-wait timeout → blocked
+    await rt.executeTick();
 
     expectEscalated(runId, executionId, 'the resumed turn did not produce a result within');
   });
 
   test('auto-compact triggers BEFORE continuation (compact-then-continue order)', async () => {
-    // The recovery MUST compact FIRST; a bare continue on an over-long context is
-    // useless. Verify the order: the first injected message is always /compact,
-    // never the continue nag, and the nag only appears after a compacted result.
     const injections: Array<{ sessionId: string; message: string }> = [];
     const rt = new SpaceRuntime(buildConfig(makeRecordingTam(injections)));
     await setupIdleOverflow(rt, 'session:order');
 
     await rt.executeTick();
     expect(injections[0].message).toBe('/compact');
-    // Still awaiting the compacted result — no nag yet.
     expect(injections.some((i) => i.message === buildPromptTooLongContinueNag())).toBe(false);
 
-    saveResultMessage('session:order', { promptTooLong: false }); // compaction shrank context
+    saveResultMessage('session:order', { promptTooLong: false });
     await rt.executeTick();
-    // Now — and only now — the continuation nag is delivered.
     expect(injections.at(-1)!.message).toBe(buildPromptTooLongContinueNag());
   });
 });
-
-// ---------------------------------------------------------------------------
-// Tests: terminal-error sweep defers prompt-too-long to the compact recovery
-// ---------------------------------------------------------------------------
 
 describe('prompt-too-long replay — terminal-error row deferral', () => {
   let db: BunDatabase;
@@ -646,11 +570,6 @@ describe('prompt-too-long replay — terminal-error row deferral', () => {
   }
 
   test('a prompt-too-long terminal error row is owned by compact recovery, not double-continued', async () => {
-    // A prompt-too-long result is a TERMINAL error row. Two sweeps could touch
-    // it: the catch-all terminal-error sweep (which would inject a plain
-    // "[Runtime recovery — terminal error]" continue) and the compact-then-
-    // continue recovery. The terminal-error sweep MUST defer so the two never
-    // race — only the /compact fires.
     const injections: Array<{ sessionId: string; message: string }> = [];
     const inject = async (sessionId: string, message: string): Promise<string> => {
       injections.push({ sessionId, message });
@@ -689,7 +608,6 @@ describe('prompt-too-long replay — terminal-error row deferral', () => {
     const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
     const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
     nodeExecutionRepo.update(execution.id, { status: 'idle', agentSessionId: 'session:defer' });
-    // Persist the prompt-too-long result exactly as the SDK would (terminal row).
     sdkMessageRepo.saveSDKMessage('session:defer', {
       type: 'result',
       subtype: 'error_during_execution',
@@ -704,15 +622,10 @@ describe('prompt-too-long replay — terminal-error row deferral', () => {
 
     await rt.executeTick();
 
-    // The compact-then-continue recovery owns it: a /compact was injected.
     expect(injections.some((i) => i.message === '/compact')).toBe(true);
-    // The terminal-error sweep deferred: NO plain terminal-error continue was
-    // injected on top of it (would double-handle and race).
     expect(injections.some((i) => i.message.includes('[Runtime recovery — terminal error]'))).toBe(
       false
     );
-    // Execution is still idle (recovery in flight), NOT blocked and NOT
-    // bounced to in_progress by a terminal-error continue.
     expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('idle');
   });
 });

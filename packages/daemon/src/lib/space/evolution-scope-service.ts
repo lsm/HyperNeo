@@ -58,9 +58,6 @@ export function mergeEvolutionPolicy(
     patchAutomation !== null;
   if (isValidObject) {
     const automation = { ...policy.automation, ...patchAutomation };
-    // Mirror the top-level null-clear contract for nested automation keys so
-    // a patch like `{ automation: { completedTaskThreshold: null } }` clears
-    // the key (instead of persisting null, which validation would reject).
     for (const key of Object.keys(patchAutomation)) {
       const value = (patchAutomation as Record<string, unknown>)[key];
       if (value === undefined || value === null) {
@@ -69,10 +66,6 @@ export function mergeEvolutionPolicy(
     }
     merged.automation = automation;
   }
-  // patch.automation === null was already deleted from `merged` by the
-  // top-level null-clear loop above — leave it cleared (treat null as delete)
-  // rather than reinstating it via a final spread. An undefined patch.automation
-  // preserves policy.automation through the initial spread.
   return merged;
 }
 
@@ -87,7 +80,6 @@ function stringifyArtifactField(value: unknown): string {
   return typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
 }
 
-/** De-duplicate a string list, preserving first-appearance order. */
 function unique(values: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -100,7 +92,6 @@ function unique(values: string[]): string[] {
   return out;
 }
 
-/** Group items into arrays keyed by `keyOf`, preserving source order. */
 function bucketBy<T>(items: T[], keyOf: (item: T) => string): Map<string, T[]> {
   const buckets = new Map<string, T[]>();
   for (const item of items) {
@@ -500,10 +491,6 @@ export class EvolutionScopeService {
     scope: EvolutionScope,
     evidence: EvidenceRef[]
   ): NonNullable<EvolutionEvidenceListResponse['preflightContext']> {
-    // Batched: one round-trip per kind (tasks-by-id, runs-by-id, tasks-by-run,
-    // artifacts-by-run) instead of one query per evidence item. `evidence` is
-    // expected to already be a bounded page (see listEvidence pagination), so
-    // the IN-lists stay small and well under SQLite's variable limit.
     const taskEvidence = evidence.filter(
       (item) =>
         (item.kind === 'task' || item.kind === 'task_result' || item.kind === 'friction_digest') &&
@@ -514,14 +501,12 @@ export class EvolutionScopeService {
         .getTasksByIds(unique(taskEvidence.map((item) => item.sourceId as string)))
         .map((task) => [task.id, task])
     );
-    // Preserve evidence order; drop tasks missing or outside this scope.
     const tasks = taskEvidence.flatMap((item) => {
       const task = tasksById.get(item.sourceId as string);
       if (!task || task.spaceId !== scope.spaceId) return [];
       return [{ evidenceId: item.id, task: summarizeTaskForPreflight(task) }];
     });
 
-    // Group run-kind evidence by run id, preserving first-appearance order.
     const evidenceIdsByRunId = new Map<string, string[]>();
     for (const item of evidence) {
       if (item.kind !== 'workflow_run' && item.kind !== 'artifact' && item.kind !== 'error') {
@@ -540,7 +525,6 @@ export class EvolutionScopeService {
     );
     const validRunIds = unique([...evidenceIdsByRunId.keys()].filter((id) => runsById.has(id)));
 
-    // One round-trip each for all runs' tasks and artifacts, then bucket by run.
     const tasksByRunId = bucketBy(
       this.deps.taskRepo.listByWorkflowRunIdsIncludingArchived(validRunIds),
       (task) => task.workflowRunId ?? ''
@@ -550,8 +534,6 @@ export class EvolutionScopeService {
       (artifact) => artifact.runId
     );
 
-    // Iterate evidence-appearance order so workflowRuns ordering matches the
-    // previous per-item implementation.
     const workflowRuns = Array.from(evidenceIdsByRunId.entries()).flatMap(
       ([runId, evidenceIds]) => {
         const run = runsById.get(runId);
@@ -785,7 +767,6 @@ export class EvolutionScopeService {
   }
 }
 
-/** Common words to ignore when tokenizing for keyword overlap. */
 const STOP_WORDS = new Set([
   'the',
   'and',
@@ -892,15 +873,6 @@ function normalizeRecencyScore(lessons: EvolutionLesson[]): Map<string, number> 
   return scores;
 }
 
-/**
- * Rank active lessons by relevance to a specific task.
- *
- * Scoring:
- * - Tag overlap between `lesson.appliesTo` and `task.labels`: +10 per match
- * - Keyword overlap between task text and lesson text: +2 per match
- * - Lesson confidence: +0.5 * confidence (max 0.5, tiebreaker only)
- * - Recency: 0–0.49 tiebreaker based on relative updatedAt within the lesson set
- */
 export function rankLessonsByTaskRelevance(
   lessons: EvolutionLesson[],
   task: SpaceTask
@@ -971,9 +943,6 @@ function buildWorkflowRunEvidenceSummary(
   const detail =
     findArtifactDetail(artifacts) ?? activeFailureReason(run) ?? 'no artifacts captured';
   const statusLabel = getWorkflowRunExecutionStatusLabel(run.status);
-  // TODO(workflow-completion): a `done`/Succeeded run may mask a `blocked` or
-  // `cancelled` canonical task, so persisted Forge evidence can overstate the
-  // outcome until task-owned PR/CI lifecycle reconciles run status vs task result.
   return `Workflow run ${statusLabel}: ${run.title} — ${labels.join(', ') || 'no artifact types'} — ${truncateText(detail, 180)}`;
 }
 
@@ -1007,10 +976,6 @@ function findArtifactDetail(artifacts: WorkflowRunArtifactRecord[]): string | nu
 }
 
 export function extractArtifactDetail(data: Record<string, unknown>): string | null {
-  // Canonical shape fields first so fresh shape writes surface in evidence:
-  // link→url, note→text, decision→recommendation. Legacy fields follow so
-  // migrated rows (normalizeLinkData keeps pr_url alongside url, and a
-  // result→decision keeps its summary) still resolve.
   for (const key of [
     'url',
     'text',

@@ -1,15 +1,3 @@
-/**
- * Pure derivation of the URL the app expects for the current navigation state.
- *
- * Extracted from App.tsx's URL-sync effect so the per-view-mode branching is
- * unit-testable without mounting the whole app (the component tests mock the
- * store, which is how a missing view-mode branch previously slipped through).
- *
- * Keep this in sync with the navigation dispatch in App.tsx: every view mode
- * that produces an `expectedPath` here must also have a matching navigate
- * branch there, and vice versa.
- */
-
 import {
   createSessionPath,
   createSpacePath,

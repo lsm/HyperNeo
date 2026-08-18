@@ -1,10 +1,3 @@
-/**
- * Session Cache Tests
- *
- * Unit tests for in-memory session caching with lazy loading
- * and race condition prevention.
- */
-
 import { describe, expect, it, beforeEach, mock, vi } from 'bun:test';
 import {
   SessionCache,
@@ -85,30 +78,24 @@ describe('SessionCache', () => {
     });
 
     it('should cache session after first load', () => {
-      // First access loads from DB
       const result1 = cache.get('test-session-id');
       expect(mockLoadFromDB).toHaveBeenCalledTimes(1);
 
-      // Second access uses cache
       const result2 = cache.get('test-session-id');
-      expect(mockLoadFromDB).toHaveBeenCalledTimes(1); // Still 1, not called again
+      expect(mockLoadFromDB).toHaveBeenCalledTimes(1);
 
       expect(result1).toBe(result2);
     });
 
     it('should throw error if session is being loaded concurrently', async () => {
-      // Start async load
       const loadPromise = cache.getAsync('test-session-id');
 
-      // Try sync access while async is in progress
       expect(() => cache.get('test-session-id')).toThrow(
         'Session test-session-id is being loaded. Use getAsync() for concurrent access.'
       );
 
-      // Wait for async to complete
       await loadPromise;
 
-      // Now sync access should work
       const result = cache.get('test-session-id');
       expect(result).toBe(mockAgentSession);
     });
@@ -130,31 +117,26 @@ describe('SessionCache', () => {
     });
 
     it('should cache session after first load', async () => {
-      // First access loads from DB
       const result1 = await cache.getAsync('test-session-id');
       expect(mockLoadFromDB).toHaveBeenCalledTimes(1);
 
-      // Second access uses cache
       const result2 = await cache.getAsync('test-session-id');
-      expect(mockLoadFromDB).toHaveBeenCalledTimes(1); // Still 1
+      expect(mockLoadFromDB).toHaveBeenCalledTimes(1);
 
       expect(result1).toBe(result2);
     });
 
     it('should handle concurrent requests for same session', async () => {
-      // Make multiple concurrent requests
       const promises = await Promise.all([
         cache.getAsync('test-session-id'),
         cache.getAsync('test-session-id'),
         cache.getAsync('test-session-id'),
       ]);
 
-      // All should return the same session
       expect(promises[0]).toBe(mockAgentSession);
       expect(promises[1]).toBe(mockAgentSession);
       expect(promises[2]).toBe(mockAgentSession);
 
-      // DB should only be called once
       expect(mockLoadFromDB).toHaveBeenCalledTimes(1);
     });
 
@@ -206,31 +188,22 @@ describe('SessionCache', () => {
     });
 
     it('should allow fresh getAsync after remove (no stale lock)', async () => {
-      // Populate via set, then remove should clear any load locks too.
       cache.set('test-session-id', mockAgentSession);
       cache.remove('test-session-id');
-      // After remove, the session is gone and no load lock exists.
-      // A subsequent getAsync should fall through to loadFromDB.
       const result = await cache.getAsync('test-session-id');
       expect(mockLoadFromDB).toHaveBeenCalledWith('test-session-id');
       expect(result).toBe(mockAgentSession);
     });
 
     it('should clear in-flight load lock so getAsync after remove does a fresh load', async () => {
-      // Start an async load that is in-flight (lock is set)
       const firstLoadPromise = cache.getAsync('test-session-id');
 
-      // Remove the session while the load is in-flight — this clears the lock
       cache.remove('test-session-id');
 
-      // The first load may still complete (lock was cleared from locks map but promise runs)
       await firstLoadPromise;
 
-      // Now the cache may or may not have the session (depends on timing).
-      // The important thing is: a second getAsync after remove+first-completion should work.
-      // Reset the mock call count to verify a fresh load is attempted.
       (mockLoadFromDB as ReturnType<typeof mock>).mockClear();
-      cache.remove('test-session-id'); // ensure clean state
+      cache.remove('test-session-id');
 
       const result = await cache.getAsync('test-session-id');
       expect(result).toBe(mockAgentSession);
@@ -324,7 +297,6 @@ describe('SessionCache', () => {
       cache.set('id1', mockAgentSession);
       const result = cache.getAll();
 
-      // Mutations to the returned map should affect the cache
       result.set('id2', mockAgentSession);
       expect(cache.has('id2')).toBe(true);
     });

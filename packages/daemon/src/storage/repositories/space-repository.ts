@@ -1,9 +1,3 @@
-/**
- * Space Repository
- *
- * Repository for Space CRUD operations.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type {
@@ -27,9 +21,6 @@ export class SpaceRepository {
     }
   }
 
-  /**
-   * Create a new space
-   */
   createSpace(params: CreateSpaceParams & { slug: string }): Space {
     const id = generateUUID();
     const now = Date.now();
@@ -62,9 +53,6 @@ export class SpaceRepository {
     return this.getSpace(id)!;
   }
 
-  /**
-   * Get a space by ID
-   */
   getSpace(id: string): Space | null {
     const stmt = this.db.prepare(`SELECT * FROM spaces WHERE id = ?`);
     const row = stmt.get(id) as Record<string, unknown> | undefined;
@@ -73,14 +61,6 @@ export class SpaceRepository {
     return this.rowToSpace(row);
   }
 
-  /**
-   * Get a space by workspace path (any status, including archived).
-   *
-   * NOTE: This intentionally returns archived spaces. The `workspace_path` column
-   * has a UNIQUE constraint in the schema, so archived spaces permanently claim their
-   * path — no new space can be created for the same path after archiving. This is
-   * the chosen design: workspace paths are a permanent identifier, not a reusable slot.
-   */
   getSpaceByPath(workspacePath: string): Space | null {
     const stmt = this.db.prepare(`SELECT * FROM spaces WHERE workspace_path = ?`);
     const row = stmt.get(workspacePath) as Record<string, unknown> | undefined;
@@ -89,9 +69,6 @@ export class SpaceRepository {
     return this.rowToSpace(row);
   }
 
-  /**
-   * Get a space by slug
-   */
   getSpaceBySlug(slug: string): Space | null {
     const stmt = this.db.prepare(`SELECT * FROM spaces WHERE slug = ?`);
     const row = stmt.get(slug) as Record<string, unknown> | undefined;
@@ -100,18 +77,12 @@ export class SpaceRepository {
     return this.rowToSpace(row);
   }
 
-  /**
-   * Update a space's slug
-   */
   updateSlug(id: string, slug: string): Space | null {
     const stmt = this.db.prepare(`UPDATE spaces SET slug = ?, updated_at = ? WHERE id = ?`);
     stmt.run(slug, Date.now(), id);
     return this.getSpace(id);
   }
 
-  /**
-   * Get all slugs currently in use (for collision detection)
-   */
   getAllSlugs(): string[] {
     const rows = this.db.prepare(`SELECT slug FROM spaces WHERE slug IS NOT NULL`).all() as Array<{
       slug: string;
@@ -119,9 +90,6 @@ export class SpaceRepository {
     return rows.map((r) => r.slug);
   }
 
-  /**
-   * List all spaces, optionally including archived ones
-   */
   listSpaces(includeArchived = false): Space[] {
     let query = `SELECT * FROM spaces`;
     if (!includeArchived) {
@@ -134,9 +102,6 @@ export class SpaceRepository {
     return rows.map((r) => this.rowToSpace(r));
   }
 
-  /**
-   * Update a space with partial updates
-   */
   updateSpace(id: string, params: UpdateSpaceParams): Space | null {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
@@ -201,36 +166,24 @@ export class SpaceRepository {
     return this.getSpace(id);
   }
 
-  /**
-   * Pause a space (stops runtime task scheduling without archiving)
-   */
   pauseSpace(id: string): Space | null {
     const stmt = this.db.prepare(`UPDATE spaces SET paused = 1, updated_at = ? WHERE id = ?`);
     stmt.run(Date.now(), id);
     return this.getSpace(id);
   }
 
-  /**
-   * Resume a paused space
-   */
   resumeSpace(id: string): Space | null {
     const stmt = this.db.prepare(`UPDATE spaces SET paused = 0, updated_at = ? WHERE id = ?`);
     stmt.run(Date.now(), id);
     return this.getSpace(id);
   }
 
-  /**
-   * Stop a space (kills active work; no auto-start on daemon restart)
-   */
   stopSpace(id: string): Space | null {
     const stmt = this.db.prepare(`UPDATE spaces SET stopped = 1, updated_at = ? WHERE id = ?`);
     stmt.run(Date.now(), id);
     return this.getSpace(id);
   }
 
-  /**
-   * Start (or restart) a stopped space
-   */
   startSpace(id: string): Space | null {
     const stmt = this.db.prepare(
       `UPDATE spaces SET stopped = 0, paused = 0, updated_at = ? WHERE id = ?`
@@ -239,9 +192,6 @@ export class SpaceRepository {
     return this.getSpace(id);
   }
 
-  /**
-   * Archive a space
-   */
   archiveSpace(id: string): Space | null {
     const stmt = this.db.prepare(
       `UPDATE spaces SET status = 'archived', updated_at = ? WHERE id = ?`
@@ -250,9 +200,6 @@ export class SpaceRepository {
     return this.getSpace(id);
   }
 
-  /**
-   * Add a session to a space
-   */
   addSessionToSpace(spaceId: string, sessionId: string): Space | null {
     const tx = this.db.transaction(() => {
       const space = this.getSpace(spaceId);
@@ -273,9 +220,6 @@ export class SpaceRepository {
     return tx() as Space | null;
   }
 
-  /**
-   * Remove a session from a space
-   */
   removeSessionFromSpace(spaceId: string, sessionId: string): Space | null {
     const tx = this.db.transaction(() => {
       const space = this.getSpace(spaceId);
@@ -296,9 +240,6 @@ export class SpaceRepository {
     return tx() as Space | null;
   }
 
-  /**
-   * Delete a space by ID
-   */
   deleteSpace(id: string): boolean {
     const deleteSearchRows = this.tableExists('message_search_content')
       ? this.db.prepare(`DELETE FROM message_search_content WHERE space_id = ?`)
@@ -312,9 +253,6 @@ export class SpaceRepository {
     return result.changes > 0;
   }
 
-  /**
-   * Convert a database row to a Space object
-   */
   private rowToSpace(row: Record<string, unknown>): Space {
     const rawModels = JSON.parse((row.allowed_models as string) ?? '[]') as string[];
     const rawConfig = row.config as string | null;

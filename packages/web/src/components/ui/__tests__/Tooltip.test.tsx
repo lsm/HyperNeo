@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Tooltip Component
- */
 
 import { render, cleanup, fireEvent, waitFor, screen } from '@testing-library/preact';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -135,11 +132,9 @@ describe('Tooltip', () => {
       const wrapper = container.querySelector('.relative');
       fireEvent.mouseEnter(wrapper!);
 
-      // Tooltip should not appear immediately
       let tooltip = container.querySelector('[role="tooltip"]');
       expect(tooltip).toBeNull();
 
-      // Wait for default delay
       await new Promise((resolve) => setTimeout(resolve, 600));
 
       tooltip = container.querySelector('[role="tooltip"]');
@@ -156,11 +151,9 @@ describe('Tooltip', () => {
       const wrapper = container.querySelector('.relative');
       fireEvent.mouseEnter(wrapper!);
 
-      // Should not appear before delay
       let tooltip = container.querySelector('[role="tooltip"]');
       expect(tooltip).toBeNull();
 
-      // Wait for custom delay
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       tooltip = container.querySelector('[role="tooltip"]');
@@ -177,7 +170,6 @@ describe('Tooltip', () => {
       const wrapper = container.querySelector('.relative');
       fireEvent.mouseEnter(wrapper!);
 
-      // Small wait for state update
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const tooltip = container.querySelector('[role="tooltip"]');
@@ -235,11 +227,9 @@ describe('Tooltip', () => {
       const wrapper = container.querySelector('.relative');
       fireEvent.mouseEnter(wrapper!);
 
-      // Leave before delay
       await new Promise((resolve) => setTimeout(resolve, 50));
       fireEvent.mouseLeave(wrapper!);
 
-      // Wait past delay
       await new Promise((resolve) => setTimeout(resolve, 300));
 
       const tooltip = container.querySelector('[role="tooltip"]');

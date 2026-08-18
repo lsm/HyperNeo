@@ -18,7 +18,6 @@ type MarkdownModules = {
 type RehypeHighlight = typeof import('rehype-highlight').default;
 type RehypeKatex = typeof import('rehype-katex').default;
 
-// Lazy-loaded modules/styles — cached after first import
 let markdownModulesPromise: Promise<MarkdownModules> | null = null;
 let rehypeHighlightPromise: Promise<RehypeHighlight> | null = null;
 let rehypeKatexPromise: Promise<RehypeKatex> | null = null;
@@ -944,7 +943,6 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
   const containerRef = useRef<HTMLDivElement>(null);
   const [html, setHtml] = useState<string | null>(null);
 
-  // Parse markdown asynchronously
   useEffect(() => {
     let cancelled = false;
     const rafId = requestAnimationFrame(() => {
@@ -966,7 +964,6 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     };
   }, [content]);
 
-  // Apply post-processing after HTML is set
   useEffect(() => {
     if (html == null || !containerRef.current) return;
     containerRef.current.innerHTML = html;
@@ -974,7 +971,6 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     let mermaidCancelled = false;
     renderMermaidBlocks(containerRef.current, () => mermaidCancelled).catch(() => undefined);
 
-    // Wrap tables in scrollable container to prevent horizontal overflow
     const tables = containerRef.current.querySelectorAll('table');
     tables.forEach((table) => {
       if (!table.parentElement?.classList.contains('prose-table-wrapper')) {
@@ -985,7 +981,6 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
       }
     });
 
-    // Remove top margin from first paragraph and bottom margin from last paragraph
     const paragraphs = containerRef.current.querySelectorAll('p');
     if (paragraphs.length > 0) {
       const firstP = paragraphs[0] as HTMLElement;

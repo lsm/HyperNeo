@@ -1,33 +1,16 @@
-/**
- * SIGINT Shutdown Integration Tests
- *
- * These tests verify that Ctrl+C (SIGINT) properly shuts down the CLI server.
- * Tests spawn a real CLI server process and send signals to verify behavior.
- *
- * Requirements:
- * - ANTHROPIC_API_KEY or GLM_API_KEY must be set for server to start
- */
-
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { spawn, type ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as net from 'net';
 
-// Check if we have valid API credentials
 const hasCredentials = !!(
   process.env.ANTHROPIC_API_KEY ||
   process.env.GLM_API_KEY ||
   process.env.CLAUDE_CODE_OAUTH_TOKEN
 );
 
-// NOTE: these tests spawn the CLI via `bun run`, so they only run under the Bun
-// runtime. Under Vitest (Node) they are gated off — the SIGINT integration
-// coverage belongs to the later Bun→Deno runtime-migration phase.
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
-/**
- * Find an available port
- */
 async function findAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -44,9 +27,6 @@ async function findAvailablePort(): Promise<number> {
   });
 }
 
-/**
- * Wait for server to be ready by checking for the ready message
- */
 function waitForServerReady(
   process: ChildProcess,
   timeoutMs: number = 30000
@@ -63,8 +43,6 @@ function waitForServerReady(
     }, timeoutMs);
 
     const checkReady = () => {
-      // Check for either success or error conditions
-      // Production/test server logs "Production server running!" or "Bun server listening"
       const combined = stdout + stderr;
       if (
         combined.includes('Press Ctrl+C to stop') ||
@@ -111,7 +89,6 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
   });
 
   afterAll(() => {
-    // Clean up any remaining process
     if (serverProcess && !serverProcess.killed) {
       serverProcess.kill('SIGKILL');
     }
@@ -122,7 +99,6 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
     async () => {
       const mainPath = path.join(__dirname, '../main.ts');
 
-      // Spawn CLI server in test mode (uses prod server, no Vite needed)
       serverProcess = spawn(
         'bun',
         ['run', mainPath, '--port', testPort.toString(), '--workspace', testWorkspace],
@@ -135,20 +111,16 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
         }
       );
 
-      // Wait for server to be ready
       console.log(`[TEST] Waiting for server to start on port ${testPort}...`);
       const { stdout: startupStdout } = await waitForServerReady(serverProcess);
       console.log(`[TEST] Server is ready. Startup output:\n${startupStdout.slice(0, 500)}`);
 
-      // Record the start time for measuring shutdown duration
       const shutdownStart = Date.now();
 
-      // Send SIGINT (Ctrl+C)
       console.log(`[TEST] Sending SIGINT to server PID ${serverProcess.pid}...`);
       const killResult = serverProcess.kill('SIGINT');
       expect(killResult).toBe(true);
 
-      // Wait for process to exit
       const exitPromise = new Promise<{ code: number | null; shutdownOutput: string }>(
         (resolve, reject) => {
           let shutdownOutput = '';
@@ -178,15 +150,12 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
       console.log(`[TEST] Server exited with code ${code} after ${shutdownDuration}ms`);
       console.log(`[TEST] Shutdown output:\n${shutdownOutput.slice(-1000)}`);
 
-      // Verify graceful shutdown
       expect(code).toBe(0);
-      expect(shutdownDuration).toBeLessThan(10000); // Should complete within 10s
-      // Note: The "Received SIGINT" message goes to stderr which may not be fully captured
-      // Check for the cleanup steps which indicate successful shutdown
+      expect(shutdownDuration).toBeLessThan(10000);
       expect(shutdownOutput).toContain('Stopping server');
       expect(shutdownOutput).toContain('Graceful shutdown complete');
 
-      serverProcess = null; // Mark as cleaned up
+      serverProcess = null;
     },
     { timeout: 60000 }
   );
@@ -196,7 +165,6 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
     async () => {
       const mainPath = path.join(__dirname, '../main.ts');
 
-      // Spawn CLI server
       serverProcess = spawn(
         'bun',
         ['run', mainPath, '--port', (testPort + 1).toString(), '--workspace', testWorkspace + '-2'],
@@ -209,20 +177,16 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
         }
       );
 
-      // Wait for server to be ready
       console.log(`[TEST] Waiting for server to start...`);
       await waitForServerReady(serverProcess);
       console.log(`[TEST] Server is ready.`);
 
-      // Send first SIGINT
       console.log(`[TEST] Sending first SIGINT...`);
       serverProcess.kill('SIGINT');
 
-      // Immediately send second SIGINT (should trigger force exit or be ignored if first already completed)
       console.log(`[TEST] Sending second SIGINT immediately...`);
       serverProcess.kill('SIGINT');
 
-      // Wait for process to exit
       const exitPromise = new Promise<{ code: number | null; output: string }>(
         (resolve, reject) => {
           let output = '';
@@ -248,8 +212,6 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
       console.log(`[TEST] Server exited with code ${code}`);
       console.log(`[TEST] Output:\n${output.slice(-500)}`);
 
-      // Server should exit - either gracefully (0) or forced (1)
-      // The exact behavior depends on timing
       expect(code === 0 || code === 1).toBe(true);
 
       serverProcess = null;
@@ -258,8 +220,6 @@ describe.skipIf(!hasCredentials || !isBun)('SIGINT Shutdown Integration', () => 
   );
 });
 
-// If no credentials or not running under Bun, add a placeholder test to show why
-// tests were skipped
 describe.skipIf(hasCredentials && isBun)('SIGINT Shutdown Integration (skipped)', () => {
   test('requires Bun runtime + API credentials (ANTHROPIC_API_KEY, GLM_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN)', () => {
     console.log('Skipping SIGINT integration tests - no API credentials available');

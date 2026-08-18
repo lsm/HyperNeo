@@ -1,10 +1,3 @@
-/**
- * RateLimitCooldownBanner - Shows when the session is in rate limit cooldown
- *
- * Displays a countdown timer and actions to retry immediately or cancel.
- * Rendered inside ChatContainer when agentState.status === 'rate_limit_cooldown'.
- */
-
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { cancelRateLimitRetry, retryNowAfterRateLimit } from '../../lib/api-helpers.ts';
 
@@ -20,7 +13,6 @@ export function RateLimitCooldownBanner({ sessionId, retryCount, maxRetries, ret
   const [cancelling, setCancelling] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
-  // Countdown timer
   useEffect(() => {
     const interval = setInterval(() => {
       const ms = Math.max(0, retryAt - Date.now());

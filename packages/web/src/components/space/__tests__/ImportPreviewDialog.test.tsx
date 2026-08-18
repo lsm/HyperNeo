@@ -1,7 +1,3 @@
-/**
- * Unit tests for ImportPreviewDialog
- */
-
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/preact';
 import { ImportPreviewDialog } from '../ImportPreviewDialog.tsx';
@@ -214,7 +210,6 @@ describe('ImportPreviewDialog', () => {
       />
     );
     expect(screen.getByText(/Will import/)).toBeTruthy();
-    // "2" agents and "1" workflow
     const summaryText = screen.getByText(/Will import/).textContent;
     expect(summaryText).toContain('2');
     expect(summaryText).toContain('1');

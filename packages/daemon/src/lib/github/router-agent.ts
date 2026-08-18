@@ -1,15 +1,3 @@
-/**
- * Router Agent - Sandboxed AI for Event Routing Decisions
- *
- * This agent has NO tools, NO filesystem access, NO network access.
- * It is purely for analyzing GitHub events and determining which room
- * should handle them, or if they should go to the inbox.
- *
- * Uses a two-stage approach:
- * 1. Quick rule-based routing (no AI needed for simple cases)
- * 2. AI-based disambiguation for complex multi-room scenarios
- */
-
 import type { GitHubEvent, RoutingResult, SecurityCheckResult } from '@hyperneo/shared';
 import type { RoutingClassification } from './prompts/router-prompt';
 import { ROUTER_AGENT_SYSTEM_PROMPT } from './prompts/router-prompt';
@@ -19,42 +7,21 @@ import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
 
 const logger = new Logger('router-agent');
 
-/**
- * Options for configuring the router agent
- */
 export interface RouterAgentOptions {
-  /** API key for the AI model */
   apiKey: string;
-  /** Credential type so the correct SDK env var is set */
   apiKeyType?: 'api_key' | 'oauth';
-  /** Model to use (default: claude-3-5-haiku-latest for speed/cost) */
   model?: string;
-  /** Timeout for AI routing in milliseconds (default: 15000) */
   timeout?: number;
 }
 
-/**
- * A candidate room for routing
- */
 export interface RoomCandidate {
-  /** Room ID */
   roomId: string;
-  /** Room name for display */
   roomName: string;
-  /** Room description for context */
   roomDescription?: string;
-  /** Repositories this room is mapped to */
   repositories: string[];
-  /** Priority of this mapping (higher = more specific) */
   priority: number;
 }
 
-/**
- * Router Agent for determining which room handles incoming GitHub events
- *
- * This is a SANDBOXED agent with no tools, no file access, and no network access.
- * It only analyzes event content and room candidates to make routing decisions.
- */
 export class RouterAgent {
   private readonly model: string;
   private readonly timeout: number;
@@ -64,19 +31,11 @@ export class RouterAgent {
     this.timeout = options.timeout ?? 15000;
   }
 
-  /**
-   * Route an event to a room or inbox
-   *
-   * Uses a two-stage approach:
-   * 1. Quick rule-based routing for simple cases
-   * 2. AI-based disambiguation for complex scenarios
-   */
   async route(
     event: GitHubEvent,
     candidates: RoomCandidate[],
     securityResult: SecurityCheckResult
   ): Promise<RoutingResult> {
-    // If security check failed, reject immediately
     if (!securityResult.passed) {
       return {
         decision: 'reject',
@@ -86,7 +45,6 @@ export class RouterAgent {
       };
     }
 
-    // Stage 1: Quick rule-based routing
     const quickResult = this.quickRoute(event, candidates);
     if (quickResult) {
       logger.debug('Quick routing decision made', {
@@ -99,7 +57,6 @@ export class RouterAgent {
       };
     }
 
-    // Stage 2: AI-based disambiguation
     try {
       const aiResult = await this.aiRoute(event, candidates);
       return {
@@ -117,16 +74,10 @@ export class RouterAgent {
     }
   }
 
-  /**
-   * Quick rule-based routing (no AI needed)
-   *
-   * Returns null if AI routing is needed for disambiguation.
-   */
   private quickRoute(
     event: GitHubEvent,
     candidates: RoomCandidate[]
   ): Omit<RoutingResult, 'securityCheck'> | null {
-    // No candidates -> inbox
     if (candidates.length === 0) {
       return {
         decision: 'inbox',
@@ -137,12 +88,10 @@ export class RouterAgent {
 
     const eventRepo = event.repository.fullName;
 
-    // Find exact repository matches
     const exactMatches = candidates.filter((c) =>
       c.repositories.some((repo) => repo.toLowerCase() === eventRepo.toLowerCase())
     );
 
-    // Single exact match with highest priority -> route immediately
     if (exactMatches.length === 1) {
       return {
         decision: 'route',
@@ -152,7 +101,6 @@ export class RouterAgent {
       };
     }
 
-    // Multiple exact matches with same priority -> needs AI disambiguation
     if (exactMatches.length > 1) {
       const topPriority = Math.max(...exactMatches.map((c) => c.priority));
       const topMatches = exactMatches.filter((c) => c.priority === topPriority);
@@ -166,7 +114,6 @@ export class RouterAgent {
         };
       }
 
-      // Multiple rooms with same priority - need AI
       logger.debug('Multiple rooms with same priority, requires AI disambiguation', {
         rooms: topMatches.map((c) => c.roomName),
         priority: topPriority,
@@ -174,8 +121,6 @@ export class RouterAgent {
       return null;
     }
 
-    // No exact matches, but have candidates (wildcard or partial matches)
-    // Check if any room has wildcard matching
     const wildcardMatches = candidates.filter((c) =>
       c.repositories.some((repo) => repo.includes('*') || repo.includes('?'))
     );
@@ -190,11 +135,9 @@ export class RouterAgent {
     }
 
     if (wildcardMatches.length > 1) {
-      // Multiple wildcard matches - need AI
       return null;
     }
 
-    // No direct or wildcard matches but have candidates -> inbox
     return {
       decision: 'inbox',
       confidence: 'medium',
@@ -202,9 +145,6 @@ export class RouterAgent {
     };
   }
 
-  /**
-   * Build the routing prompt for AI analysis
-   */
   private buildRoutingPrompt(event: GitHubEvent, candidates: RoomCandidate[]): string {
     const eventInfo: string[] = [
       '## Event Details',
@@ -251,9 +191,6 @@ ${roomsInfo.join('\n')}
 Analyze the event and determine which room should handle it. Respond with valid JSON matching the RoutingClassification schema.`;
   }
 
-  /**
-   * AI-based routing for complex disambiguation
-   */
   private async aiRoute(
     event: GitHubEvent,
     candidates: RoomCandidate[]
@@ -262,8 +199,6 @@ Analyze the event and determine which room should handle it. Respond with valid 
 
     const userPrompt = this.buildRoutingPrompt(event, candidates);
 
-    // Inject the API key into process.env so the SDK subprocess can find it.
-    // Use apiKeyType to set only the matching env var.
     const originalApiKey = process.env.ANTHROPIC_API_KEY;
     const originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
     if (this.options.apiKeyType === 'oauth') {
@@ -272,17 +207,15 @@ Analyze the event and determine which room should handle it. Respond with valid 
       process.env.ANTHROPIC_API_KEY = this.options.apiKey;
     }
 
-    // Create sandboxed query with NO tools
     let queryObj: ReturnType<typeof query>;
     try {
       queryObj = query({
         prompt: userPrompt,
         options: {
           model: this.model,
-          cwd: '/tmp', // Isolated directory - no real workspace access
-          maxTurns: 1, // Single response only
+          cwd: '/tmp',
+          maxTurns: 1,
           systemPrompt: ROUTER_AGENT_SYSTEM_PROMPT,
-          // NO tools array - truly sandboxed
           pathToClaudeCodeExecutable: resolveSDKCliPath(),
           executable: isRunningUnderBun() ? 'bun' : undefined,
           settings: withSdkTranscriptRetention(),
@@ -302,7 +235,6 @@ Analyze the event and determine which room should handle it. Respond with valid 
     }
 
     try {
-      // Collect response with timeout
       let responseText = '';
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('AI routing timeout')), this.timeout)
@@ -334,31 +266,23 @@ Analyze the event and determine which room should handle it. Respond with valid 
 
       const result = await Promise.race([collectPromise, timeoutPromise]);
 
-      // Parse the JSON response
       return this.parseResponse(result, candidates);
     } finally {
-      // Always interrupt the query to clean up
       queryObj.interrupt().catch(() => {});
     }
   }
 
-  /**
-   * Parse AI response into routing result
-   */
   private parseResponse(
     responseText: string,
     candidates: RoomCandidate[]
   ): Omit<RoutingResult, 'securityCheck'> {
-    // Try to extract JSON from the response
     let jsonStr = responseText;
 
-    // Extract from code block if present
     const codeBlockMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (codeBlockMatch) {
       jsonStr = codeBlockMatch[1].trim();
     }
 
-    // Find JSON object in the text
     const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       jsonStr = jsonMatch[0];
@@ -367,7 +291,6 @@ Analyze the event and determine which room should handle it. Respond with valid 
     try {
       const parsed = JSON.parse(jsonStr) as RoutingClassification;
 
-      // Validate required fields
       if (!['route', 'inbox', 'reject'].includes(parsed.decision)) {
         throw new Error('Invalid decision value');
       }
@@ -378,7 +301,6 @@ Analyze the event and determine which room should handle it. Respond with valid 
         throw new Error('Missing or invalid reason');
       }
 
-      // If decision is route, validate roomId exists in candidates
       if (parsed.decision === 'route') {
         if (!parsed.roomId) {
           throw new Error('Route decision requires roomId');
@@ -409,7 +331,6 @@ Analyze the event and determine which room should handle it. Respond with valid 
         responseText: responseText.substring(0, 200),
       });
 
-      // Default to inbox on parse failure
       return {
         decision: 'inbox',
         confidence: 'low',
@@ -419,9 +340,6 @@ Analyze the event and determine which room should handle it. Respond with valid 
   }
 }
 
-/**
- * Create a router agent instance
- */
 export function createRouterAgent(options: RouterAgentOptions): RouterAgent {
   return new RouterAgent(options);
 }

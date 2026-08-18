@@ -1,22 +1,7 @@
-/**
- * Unit tests for the TaskGroupPagination footer used by paginated TaskGroup
- * cards in SpaceTasks.
- *
- * Covers:
- *   - "Showing X–Y of Z" text formatting (first page, middle page, last page,
- *     and zero-results edge case).
- *   - Prev button disabled at offset 0; enabled otherwise.
- *   - Next button disabled when offset + limit >= total; enabled otherwise.
- *   - Loading state disables both buttons.
- *   - onPrev / onNext invoke their handlers when clicked.
- */
-
 // @ts-nocheck
 import { cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-// Mock the space-store import chain (TaskGroupPagination itself does not use
-// it, but importing SpaceTasks pulls the store transitively).
 vi.mock('../../../lib/space-store', () => ({
   spaceStore: {
     fetchTaskGroup: vi.fn(),

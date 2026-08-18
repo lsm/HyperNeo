@@ -1,10 +1,3 @@
-/**
- * Goal Repository
- *
- * Repository for room goal CRUD operations.
- * Goals track structured objectives for rooms with progress aggregation from linked tasks.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID, parseJson, parseJsonOptional } from '@hyperneo/shared';
 import type {
@@ -83,9 +76,6 @@ export class GoalRepository {
     private shortIdAllocator?: ShortIdAllocator
   ) {}
 
-  /**
-   * Create a new goal
-   */
   createGoal(params: CreateGoalParams): RoomGoal {
     const id = generateUUID();
     const now = Date.now();
@@ -131,9 +121,6 @@ export class GoalRepository {
     return this.getGoalDirect(id)!;
   }
 
-  /**
-   * Get a goal by ID (raw, no backfill — used internally to avoid recursion)
-   */
   private getGoalDirect(id: string): RoomGoal | null {
     const stmt = this.db.prepare(`SELECT * FROM goals WHERE id = ?`);
     const row = stmt.get(id) as Record<string, unknown> | undefined;
@@ -141,9 +128,6 @@ export class GoalRepository {
     return this.rowToGoal(row);
   }
 
-  /**
-   * Get a goal by ID, with lazy short ID backfill for legacy rows.
-   */
   getGoal(id: string): RoomGoal | null {
     const goal = this.getGoalDirect(id);
     if (!goal) return null;
@@ -155,9 +139,6 @@ export class GoalRepository {
     return goal;
   }
 
-  /**
-   * Get a goal by its short ID within a room.
-   */
   getGoalByShortId(roomId: string, shortId: string): RoomGoal | null {
     const stmt = this.db.prepare(`SELECT * FROM goals WHERE room_id = ? AND short_id = ?`);
     const row = stmt.get(roomId, shortId) as Record<string, unknown> | undefined;
@@ -165,15 +146,6 @@ export class GoalRepository {
     return this.rowToGoal(row);
   }
 
-  /**
-   * List goals for a room.
-   * Lazy backfill: any row missing short_id gets one assigned inline.
-   * Each allocation is a separate atomic counter increment; under SQLite's
-   * single-writer model concurrent callers cannot observe the same counter
-   * value — a second concurrent listGoals for the same room would block on
-   * the write lock and read already-written short_id values when it proceeds.
-   * Counter values are never reused; a skipped value is cosmetic only.
-   */
   listGoals(roomId?: string | null, status?: GoalStatus): RoomGoal[] {
     let query = `SELECT * FROM goals`;
     const params: SQLiteValue[] = [];
@@ -206,9 +178,6 @@ export class GoalRepository {
     });
   }
 
-  /**
-   * Update a goal with partial updates
-   */
   updateGoal(id: string, params: UpdateGoalParams): RoomGoal | null {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
@@ -225,7 +194,6 @@ export class GoalRepository {
       fields.push('status = ?');
       values.push(params.status);
 
-      // Set completed_at when status changes to completed
       if (params.status === 'completed') {
         fields.push('completed_at = ?');
         values.push(Date.now());
@@ -298,7 +266,6 @@ export class GoalRepository {
       return this.getGoal(id);
     }
 
-    // Always update updated_at
     fields.push('updated_at = ?');
     values.push(Date.now());
 
@@ -311,9 +278,6 @@ export class GoalRepository {
     return this.getGoal(id);
   }
 
-  /**
-   * Delete a goal
-   */
   deleteGoal(id: string): boolean {
     const stmt = this.db.prepare(`DELETE FROM goals WHERE id = ?`);
     const result = stmt.run(id);
@@ -324,9 +288,6 @@ export class GoalRepository {
     return false;
   }
 
-  /**
-   * Link a task to a goal
-   */
   linkTaskToGoal(goalId: string, taskId: string): RoomGoal | null {
     const goal = this.getGoal(goalId);
     if (!goal) return null;
@@ -335,19 +296,8 @@ export class GoalRepository {
     return this.updateGoal(goalId, { linkedTaskIds });
   }
 
-  /**
-   * Atomically link a task to both a mission execution and the parent goal.
-   *
-   * This is the single write path for recurring-mission task linkage:
-   * - Appends taskId to mission_executions.task_ids (execution-scoped history)
-   * - Appends taskId to goals.linked_task_ids (current execution snapshot for progress)
-   *
-   * For non-recurring missions use linkTaskToGoal() instead.
-   * Returns null if the execution or goal does not exist.
-   */
   linkTaskToExecution(goalId: string, executionId: string, taskId: string): RoomGoal | null {
     return this.db.transaction(() => {
-      // 1. Update mission_executions.task_ids
       const execRow = this.db
         .prepare(`SELECT task_ids FROM mission_executions WHERE id = ? AND goal_id = ?`)
         .get(executionId, goalId) as { task_ids: string } | undefined;
@@ -361,7 +311,6 @@ export class GoalRepository {
         .prepare(`UPDATE mission_executions SET task_ids = ? WHERE id = ?`)
         .run(JSON.stringify(execTaskIds), executionId);
 
-      // 2. Update goals.linked_task_ids
       const goal = this.getGoal(goalId);
       if (!goal) return null;
       const goalTaskIds = [...new Set([...goal.linkedTaskIds, taskId])];
@@ -369,9 +318,6 @@ export class GoalRepository {
     })();
   }
 
-  /**
-   * Unlink a task from a goal
-   */
   unlinkTaskFromGoal(goalId: string, taskId: string): RoomGoal | null {
     const goal = this.getGoal(goalId);
     if (!goal) return null;
@@ -380,15 +326,6 @@ export class GoalRepository {
     return this.updateGoal(goalId, { linkedTaskIds });
   }
 
-  /**
-   * Get goals that have a specific task linked.
-   * Applies the same lazy short ID backfill as listGoals so callers always
-   * receive goals with shortId populated.
-   *
-   * Uses SQLite's json_each() to properly query the linked_task_ids JSON array
-   * instead of the fragile LIKE '%id%' pattern (which could match partial strings
-   * and cannot use indexes).
-   */
   getGoalsForTask(taskId: string): RoomGoal[] {
     const stmt = this.db.prepare(`
 			SELECT g.*
@@ -408,9 +345,6 @@ export class GoalRepository {
     });
   }
 
-  /**
-   * Get active goal count for a room
-   */
   getActiveGoalCount(roomId: string): number {
     const stmt = this.db.prepare(
       `SELECT COUNT(*) as count FROM goals WHERE room_id = ? AND status IN ('active', 'needs_human')`
@@ -419,16 +353,6 @@ export class GoalRepository {
     return row?.count ?? 0;
   }
 
-  // =========================================================================
-  // Mission Metric History
-  // =========================================================================
-
-  /**
-   * Insert a metric history data point for a goal
-   *
-   * TODO(LiveQuery): call notifyChange('mission_metric_history') here once a
-   * LiveQuery subscription on that table is wired up (deferred from Task 1.4).
-   */
   insertMetricHistory(
     goalId: string,
     metricName: string,
@@ -448,9 +372,6 @@ export class GoalRepository {
     return { metricName, value, recordedAt: ts };
   }
 
-  /**
-   * Query metric history for a goal, optionally filtered by metric name and time range
-   */
   queryMetricHistory(
     goalId: string,
     opts: {
@@ -496,13 +417,6 @@ export class GoalRepository {
     }));
   }
 
-  // =========================================================================
-  // Mission Executions
-  // =========================================================================
-
-  /**
-   * Return the next execution number for a goal (max existing + 1, or 1 if none).
-   */
   getNextExecutionNumber(goalId: string): number {
     const row = this.db
       .prepare(`SELECT MAX(execution_number) as max_num FROM mission_executions WHERE goal_id = ?`)
@@ -511,31 +425,14 @@ export class GoalRepository {
     return maxNum + 1;
   }
 
-  /**
-   * Clear linked_task_ids on a goal (used when a new recurring execution starts).
-   * Returns updated goal or null if not found.
-   */
   clearLinkedTaskIds(goalId: string): RoomGoal | null {
     return this.updateGoal(goalId, { linkedTaskIds: [] });
   }
 
-  /**
-   * Atomically start a new execution for a recurring mission.
-   *
-   * Wraps three mutations (plus one read) in a single SQLite transaction so a
-   * crash between any two steps cannot leave the goal in an inconsistent state:
-   *   1. Read: determine the next execution_number
-   *   2. Write: clear goals.linked_task_ids + reset planning_attempts (+ optional next_run_at)
-   *   3. Write: insert the mission_executions row (status = 'running')
-   *
-   * The DB partial unique index on mission_executions(goal_id) WHERE status='running'
-   * provides an additional guard against duplicate concurrent executions.
-   */
   atomicStartExecution(goalId: string, nextRunAt?: number): MissionExecution {
     return this.db.transaction(() => {
       const executionNumber = this.getNextExecutionNumber(goalId);
 
-      // Atomically clear task list, reset planning counter, and advance schedule
       const goalUpdates: UpdateGoalParams = {
         linkedTaskIds: [],
         planning_attempts: 0,
@@ -549,12 +446,6 @@ export class GoalRepository {
     })();
   }
 
-  /**
-   * Insert a new mission execution record
-   *
-   * TODO(LiveQuery): call notifyChange('mission_executions') here once a
-   * LiveQuery subscription on that table is wired up (deferred from Task 1.4).
-   */
   insertExecution(params: CreateExecutionParams): MissionExecution {
     const id = generateUUID();
     const now = Math.floor(Date.now() / 1000);
@@ -576,9 +467,6 @@ export class GoalRepository {
     return this.getExecution(id)!;
   }
 
-  /**
-   * Get a single execution by ID
-   */
   getExecution(id: string): MissionExecution | null {
     const row = this.db.prepare(`SELECT * FROM mission_executions WHERE id = ?`).get(id) as
       | Record<string, unknown>
@@ -587,9 +475,6 @@ export class GoalRepository {
     return this.rowToExecution(row);
   }
 
-  /**
-   * List executions for a goal (most recent first)
-   */
   listExecutions(goalId: string, limit?: number): MissionExecution[] {
     let query = `SELECT * FROM mission_executions WHERE goal_id = ? ORDER BY execution_number DESC`;
     const params: SQLiteValue[] = [goalId];
@@ -601,12 +486,6 @@ export class GoalRepository {
     return rows.map((r) => this.rowToExecution(r));
   }
 
-  /**
-   * Update a mission execution (status, completedAt, resultSummary, taskIds, planningAttempts)
-   *
-   * TODO(LiveQuery): call notifyChange('mission_executions') here once a
-   * LiveQuery subscription on that table is wired up (deferred from Task 1.4).
-   */
   updateExecution(id: string, params: UpdateExecutionParams): MissionExecution | null {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
@@ -641,9 +520,6 @@ export class GoalRepository {
     return this.getExecution(id);
   }
 
-  /**
-   * Get the currently running execution for a goal (at most one due to partial unique index)
-   */
   getActiveExecution(goalId: string): MissionExecution | null {
     const row = this.db
       .prepare(`SELECT * FROM mission_executions WHERE goal_id = ? AND status = 'running' LIMIT 1`)
@@ -652,13 +528,6 @@ export class GoalRepository {
     return this.rowToExecution(row);
   }
 
-  // =========================================================================
-  // Private helpers
-  // =========================================================================
-
-  /**
-   * Convert a database row to a RoomGoal object
-   */
   private rowToGoal(row: Record<string, unknown>): RoomGoal {
     return {
       id: row.id as string,
@@ -676,7 +545,6 @@ export class GoalRepository {
       createdAt: row.created_at as number,
       updatedAt: row.updated_at as number,
       completedAt: (row.completed_at as number | null) ?? undefined,
-      // Mission V2 fields
       missionType: (row.mission_type as MissionType | null) ?? 'one_shot',
       autonomyLevel: (row.autonomy_level as AutonomyLevel | null) ?? 'supervised',
       structuredMetrics: parseJsonOptional<MissionMetric[]>(
@@ -692,9 +560,6 @@ export class GoalRepository {
     };
   }
 
-  /**
-   * Convert a database row to a MissionExecution object
-   */
   private rowToExecution(row: Record<string, unknown>): MissionExecution {
     return {
       id: row.id as string,
@@ -710,19 +575,10 @@ export class GoalRepository {
   }
 }
 
-/**
- * Compute the effective max planning attempts for a goal.
- *
- * Priority order:
- * 1. goal.maxPlanningAttempts (per-goal override, stored in DB)
- * 2. roomConfig.maxPlanningRetries + 1 (room-level config, legacy key)
- * 3. Default: 2 (1 retry after first failure)
- */
 export function getEffectiveMaxPlanningAttempts(
   goal: RoomGoal,
   roomConfig?: Record<string, unknown>
 ): number {
-  // Per-goal override takes highest precedence
   if (
     goal.maxPlanningAttempts !== undefined &&
     Number.isInteger(goal.maxPlanningAttempts) &&
@@ -731,8 +587,6 @@ export function getEffectiveMaxPlanningAttempts(
     return goal.maxPlanningAttempts;
   }
 
-  // Room-level config: maxPlanningRetries is "retries after first failure"
-  // so 0 means 1 total attempt, N means N+1 total attempts
   if (roomConfig !== undefined) {
     const retries = roomConfig['maxPlanningRetries'];
     if (typeof retries === 'number' && Number.isInteger(retries) && retries >= 0) {
@@ -740,9 +594,5 @@ export function getEffectiveMaxPlanningAttempts(
     }
   }
 
-  // Global default: 2 total attempts (1 retry after first failure).
-  // Planning is the most failure-prone phase (large context, multiple API calls,
-  // sub-agent spawning) so a single transient error should not permanently escalate
-  // the goal to needs_human.
   return 2;
 }

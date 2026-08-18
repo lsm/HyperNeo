@@ -66,7 +66,6 @@ function DrawerDemo() {
         </p>
       </div>
 
-      {/* Right Drawer */}
       <Dialog open={rightOpen} onClose={setRightOpen} class="relative z-50">
         <Transition show={rightOpen}>
           <DialogBackdrop class="fixed inset-0 bg-black/50 transition-opacity duration-300 ease-out data-[closed]:opacity-0 data-[enter]:duration-300 data-[enter]:ease-out data-[leave]:duration-200 data-[leave]:ease-in" />
@@ -164,7 +163,6 @@ function DrawerDemo() {
         </Transition>
       </Dialog>
 
-      {/* Left Drawer */}
       <Dialog open={leftOpen} onClose={setLeftOpen} class="relative z-50">
         <Transition show={leftOpen}>
           <DialogBackdrop class="fixed inset-0 bg-black/50 transition-opacity duration-300 ease-out data-[closed]:opacity-0 data-[enter]:duration-300 data-[enter]:ease-out data-[leave]:duration-200 data-[leave]:ease-in" />
@@ -249,7 +247,6 @@ function DrawerDemo() {
         </Transition>
       </Dialog>
 
-      {/* Inline Drawer */}
       <div class="relative overflow-hidden border border-surface-border rounded-xl bg-surface-0">
         <Transition show={inlineOpen}>
           <TransitionChild

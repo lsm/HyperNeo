@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * SDKUserMessage Component Tests
- *
- * Tests user message rendering including text, images, and special cases
- */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
@@ -11,7 +6,6 @@ import { SDKUserMessage } from '../SDKUserMessage';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 
-// Mock useMessageHub — MentionToken uses it for hover preview RPC calls
 vi.mock('../../../hooks/useMessageHub', () => ({
   useMessageHub: () => ({
     isConnected: false,
@@ -29,7 +23,6 @@ vi.mock('../../../hooks/useMessageHub', () => ({
   }),
 }));
 
-// Mock the utils module for copyToClipboard
 vi.mock('../../../lib/utils.ts', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../../lib/utils.ts')>();
   return {
@@ -38,7 +31,6 @@ vi.mock('../../../lib/utils.ts', async (importOriginal) => {
   };
 });
 
-// Mock the toast module
 vi.mock('../../../lib/toast.ts', () => ({
   toast: {
     success: vi.fn(),
@@ -46,7 +38,6 @@ vi.mock('../../../lib/toast.ts', () => ({
   },
 }));
 
-// Mock the api-helpers retry call (backs the per-message Retry button).
 vi.mock('../../../lib/api-helpers.ts', () => ({
   retryMessageDelivery: vi.fn().mockResolvedValue({ retried: true }),
 }));
@@ -63,10 +54,8 @@ afterEach(() => {
   cleanup();
 });
 
-// Helper to create a valid UUID
 const createUUID = (): UUID => crypto.randomUUID() as UUID;
 
-// Factory functions for test messages
 function createTextMessage(text: string): Extract<SDKMessage, { type: 'user' }> {
   return {
     type: 'user',
@@ -196,9 +185,6 @@ describe('SDKUserMessage', () => {
       expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
     });
 
-    // Note: data-message-uuid is now set by parent SDKMessageRenderer wrapper
-    // This test is removed as the child component no longer sets this attribute
-
     it('should include message role in data attribute', () => {
       const message = createTextMessage('Hello world');
       const { container } = render(<SDKUserMessage message={message} />);
@@ -259,7 +245,6 @@ describe('SDKUserMessage', () => {
       const message = createToolResultMessage();
       const { container } = render(<SDKUserMessage message={message} />);
 
-      // Tool result messages should return null
       expect(container.innerHTML).toBe('');
     });
   });
@@ -269,7 +254,6 @@ describe('SDKUserMessage', () => {
       const message = createSyntheticMessage();
       const { container } = render(<SDKUserMessage message={message} />);
 
-      // Should use SyntheticMessageBlock component
       expect(container.querySelector('[data-testid="synthetic-card"]')).toBeTruthy();
     });
 
@@ -277,25 +261,15 @@ describe('SDKUserMessage', () => {
       const message = createSyntheticMessage();
       const { container } = render(<SDKUserMessage message={message} />);
 
-      // Capital "Synthetic" — the canonical header label on the card.
-      // The lowercase pill in the actions row was dropped when the synthetic
-      // rendering was unified across chat container + thread feed.
       expect(container.textContent).toContain('Synthetic');
     });
 
     it('should handle synthetic message with non-object content blocks', () => {
-      // Create synthetic message with array content containing non-object elements
-      // Note: Avoid null since isToolResultMessage() tries to access .type on all elements
       const message = {
         type: 'user',
         message: {
           role: 'user',
-          content: [
-            { type: 'text', text: 'Valid text block' },
-            'plain string element', // Non-object element to test line 108
-            123, // Non-object element (number)
-            true, // Boolean element
-          ],
+          content: [{ type: 'text', text: 'Valid text block' }, 'plain string element', 123, true],
         },
         parent_tool_use_id: null,
         isSynthetic: true,
@@ -305,17 +279,15 @@ describe('SDKUserMessage', () => {
 
       const { container } = render(<SDKUserMessage message={message} />);
 
-      // Should render without error
       expect(container.querySelector('[data-testid="synthetic-card"]')).toBeTruthy();
     });
 
     it('should return null for synthetic message with invalid content type', () => {
-      // Create synthetic message with content that is neither array nor string
       const message = {
         type: 'user',
         message: {
           role: 'user',
-          content: 12345, // Neither array nor string - should return null from getSyntheticContentBlocks
+          content: 12345,
         },
         parent_tool_use_id: null,
         isSynthetic: true,
@@ -325,8 +297,6 @@ describe('SDKUserMessage', () => {
 
       const { container } = render(<SDKUserMessage message={message} />);
 
-      // When getSyntheticContentBlocks returns null, the message should render as a normal user message
-      // (syntheticContentBlocks will be null, so it won't use SyntheticMessageBlock)
       expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
     });
   });
@@ -347,7 +317,6 @@ describe('SDKUserMessage', () => {
       const message = createReplayMessage('<local-command-stdout>Compacted</local-command-stdout>');
       const { container } = render(<SDKUserMessage message={message} isReplay={true} />);
 
-      // Should be hidden
       expect(container.innerHTML).toBe('');
     });
   });
@@ -359,7 +328,6 @@ describe('SDKUserMessage', () => {
       );
       const { container } = render(<SDKUserMessage message={message} />);
 
-      // Should show error styling
       expect(container.textContent).toContain('Error');
     });
   });
@@ -371,7 +339,6 @@ describe('SDKUserMessage', () => {
 
       const { container } = render(<SDKUserMessage message={message} sessionInfo={sessionInfo} />);
 
-      // Session info button should be present
       const infoButton = container.querySelector('button[title="Session info"]');
       expect(infoButton).toBeTruthy();
     });
@@ -408,7 +375,6 @@ describe('SDKUserMessage', () => {
 
       const { container } = render(<SDKUserMessage message={message} />);
 
-      // Should show time (format like "10:30")
       const timeRegex = /\d{1,2}:\d{2}/;
       expect(container.textContent).toMatch(timeRegex);
     });
@@ -432,10 +398,8 @@ describe('SDKUserMessage', () => {
       const copyButton = container.querySelector('button[title="Copy message"]');
       fireEvent.click(copyButton!);
 
-      // Wait for the async handler to complete
       await vi.waitFor(() => {
         expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
-        // Button should now show "Copied!" title and green color
         const copiedButton = container.querySelector('button[title="Copied!"]');
         expect(copiedButton).toBeTruthy();
         expect(copiedButton?.className).toContain('text-green-400');
@@ -451,12 +415,9 @@ describe('SDKUserMessage', () => {
       const copyButton = container.querySelector('button[title="Copy message"]');
       fireEvent.click(copyButton!);
 
-      // Wait for the async handler to complete
       await vi.waitFor(() => {
         expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
-        // Button should remain showing "Copy message" (not switched to Copied!)
         expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
-        // Error toast should be shown
         expect(toast.error).toHaveBeenCalledWith('Failed to copy message');
       });
     });
@@ -479,15 +440,12 @@ describe('SDKUserMessage', () => {
         const copyButton = container.querySelector('button[title="Copy message"]');
         fireEvent.click(copyButton!);
 
-        // Should show Copied! state
         await vi.waitFor(() => {
           expect(container.querySelector('button[title="Copied!"]')).toBeTruthy();
         });
 
-        // Advance timer past 1500ms
         vi.advanceTimersByTime(1500);
 
-        // Should revert to copy state
         await vi.waitFor(() => {
           expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
         });
@@ -541,8 +499,6 @@ describe('SDKUserMessage', () => {
       expect(badge).toBeTruthy();
       expect(badge?.textContent).toContain('retrying');
 
-      // The stalled-delivery hint lives in the badge's hover tooltip. mouseenter
-      // is non-bubbling, so fire it on the Tooltip wrapper (the badge's parent).
       fireEvent.mouseEnter(badge!.parentElement!);
       await waitFor(() => {
         expect(container.textContent).toContain('Delivery stalled — retrying');
@@ -593,7 +549,6 @@ describe('SDKUserMessage', () => {
       const message = {
         ...createTextMessage('Hello world'),
         deliveryStatus: 'retrying' as const,
-        // count = retry_count (completed failures); label is "retry N/Max".
         deliveryRetry: { count: 2, runAt: Date.now() + 5000, maxRetries: 8 },
       };
 
@@ -656,7 +611,6 @@ describe('SDKUserMessage', () => {
       const message = createTextMessage('Hello');
       const { container } = render(<SDKUserMessage message={message} />);
 
-      // Check for max-width classes
       const wrapper = container.querySelector('.max-w-\\[85\\%\\]');
       expect(wrapper).toBeTruthy();
     });
@@ -708,7 +662,6 @@ describe('SDKUserMessage', () => {
 
       const token = container.querySelector('[data-testid="mention-token"]');
       expect(token).toBeTruthy();
-      // displayText falls back to raw id
       expect(container.textContent).toContain('t-99');
     });
 
@@ -716,9 +669,7 @@ describe('SDKUserMessage', () => {
       const message = createTextMessage('See @ref{widget:w-1} here');
       const { container } = render(<SDKUserMessage message={message} />);
 
-      // Should not render as a mention-token
       expect(container.querySelector('[data-testid="mention-token"]')).toBeNull();
-      // Should render the raw text
       expect(container.textContent).toContain('@ref{widget:w-1}');
     });
 

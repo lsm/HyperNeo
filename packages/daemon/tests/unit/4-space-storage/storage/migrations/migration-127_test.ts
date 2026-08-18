@@ -1,16 +1,3 @@
-/**
- * Migration 127 Tests — add `handle` column to `space_workflows`.
- *
- * Covers:
- *   - Fresh, fully-migrated DB: column + partial unique index exist.
- *   - Pre-127 schema: backfills handles for all NULL rows.
- *   - Crash-resume: NULL rows backfilled even when column already exists.
- *   - Existing non-null handles are preserved across re-runs.
- *   - Collision resolution: duplicate names in the same space get suffix (-2 etc.).
- *   - Cross-space isolation: collision suffixing is per-space.
- *   - Missing table: no-op guard.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -29,7 +16,6 @@ function indexExists(db: BunDatabase, name: string): boolean {
   return !!row?.name;
 }
 
-/** Minimal pre-127 space_workflows table (no handle column). */
 function seedPreM127Schema(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = OFF');
   db.exec(`
@@ -165,7 +151,6 @@ describe('Migration 127: handle column on space_workflows', () => {
           handle: string;
         }
       ).handle;
-      // Same base name in different spaces — both should get the canonical slug
       expect(spaceAHandle).toBe('coding-workflow');
       expect(spaceBHandle).toBe('coding-workflow');
     });
@@ -185,12 +170,8 @@ describe('Migration 127: handle column on space_workflows', () => {
     });
 
     test('crash-resume: NULL rows backfilled even when column already exists', () => {
-      // Simulate a crash mid-backfill: column was added (ALTER TABLE ran) but only
-      // wf-1 was backfilled before the process died. Subsequent boots must complete
-      // the backfill — not skip it because columnJustAdded is false.
       db.exec(`ALTER TABLE space_workflows ADD COLUMN handle TEXT DEFAULT NULL`);
       db.prepare(`UPDATE space_workflows SET handle = 'coding-workflow' WHERE id = 'wf-1'`).run();
-      // wf-2 and wf-3 have NULL handles — left over from the interrupted backfill
 
       runMigration127(db);
 
@@ -200,23 +181,15 @@ describe('Migration 127: handle column on space_workflows', () => {
       }>;
       const map = new Map(rows.map((r) => [r.id, r.handle]));
 
-      // wf-1's existing handle is preserved
       expect(map.get('wf-1')).toBe('coding-workflow');
-      // wf-2 and wf-3 were backfilled on this boot
       expect(map.get('wf-2')).toBe('research-workflow');
       expect(map.get('wf-3')).toBe('coding-workflow');
     });
 
     test('crash-resume: existing handles seed the dedup set so slugs never collide with pre-existing handles', () => {
-      // Rename wf-2 to 'Coding Workflow' (same as wf-1) so the backfill must
-      // assign a collision suffix. Then give wf-1 a handle so the column already
-      // exists. Without seeding the dedup set from existing handles, the backfill
-      // would attempt to assign 'coding-workflow' to wf-2 and hit the unique index.
       db.exec(`ALTER TABLE space_workflows ADD COLUMN handle TEXT DEFAULT NULL`);
       db.prepare(`UPDATE space_workflows SET name = 'Coding Workflow' WHERE id = 'wf-2'`).run();
       db.prepare(`UPDATE space_workflows SET handle = 'coding-workflow' WHERE id = 'wf-1'`).run();
-      // wf-2: space-a, name='Coding Workflow', handle=NULL — wants 'coding-workflow' but taken
-      // wf-3: space-b, name='Coding Workflow', handle=NULL — independent space, no conflict
 
       expect(() => runMigration127(db)).not.toThrow();
 
@@ -226,11 +199,8 @@ describe('Migration 127: handle column on space_workflows', () => {
       }>;
       const map = new Map(rows.map((r) => [r.id, r.handle]));
 
-      // wf-1 unchanged
       expect(map.get('wf-1')).toBe('coding-workflow');
-      // wf-2 must get a collision suffix since 'coding-workflow' is taken in space-a
       expect(map.get('wf-2')).toBe('coding-workflow-2');
-      // wf-3 in space-b is independent — gets the canonical slug
       expect(map.get('wf-3')).toBe('coding-workflow');
     });
   });

@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Dropdown Component
- */
 
 import { render, cleanup, waitFor } from '@testing-library/preact';
 import { describe, it, expect, vi } from 'vitest';
@@ -120,7 +117,6 @@ describe('Dropdown', () => {
       await waitFor(() => {
         const menu = document.body.querySelector('[role="menu"]') as HTMLElement;
         expect(menu).toBeTruthy();
-        // Right alignment uses 'right' style property
         expect(menu?.style.right).toBeTruthy();
       });
     });
@@ -134,16 +130,13 @@ describe('Dropdown', () => {
       await waitFor(() => {
         const menu = document.body.querySelector('[role="menu"]') as HTMLElement;
         expect(menu).toBeTruthy();
-        // Left alignment uses 'left' style property
         expect(menu?.style.left).toBeTruthy();
       });
     });
 
     it('should position above trigger when there is not enough space below', async () => {
-      // Mock getBoundingClientRect to simulate trigger near bottom of viewport
       const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
       Element.prototype.getBoundingClientRect = function () {
-        // Simulate trigger positioned near the bottom of the viewport
         if (this.className?.includes?.('relative') || this.closest?.('.relative')) {
           return {
             top: 750,
@@ -160,7 +153,6 @@ describe('Dropdown', () => {
         return originalGetBoundingClientRect.call(this);
       };
 
-      // Mock window dimensions
       Object.defineProperty(window, 'innerHeight', { value: 800, writable: true });
       Object.defineProperty(window, 'innerWidth', { value: 1024, writable: true });
 
@@ -172,23 +164,20 @@ describe('Dropdown', () => {
       await waitFor(() => {
         const menu = document.body.querySelector('[role="menu"]') as HTMLElement;
         expect(menu).toBeTruthy();
-        // When positioned above, 'bottom' style property is set
         expect(menu?.style.bottom).not.toBe('auto');
       });
 
-      // Restore original
       Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
     });
 
     it('should adjust left position when menu would go off-screen to the right', async () => {
-      // Mock getBoundingClientRect to simulate trigger positioned far right
       const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
       Element.prototype.getBoundingClientRect = function () {
         if (this.className?.includes?.('relative') || this.closest?.('.relative')) {
           return {
             top: 100,
             bottom: 130,
-            left: 900, // Far right - menu (200px) would go past 1024px viewport
+            left: 900,
             right: 1000,
             width: 100,
             height: 30,
@@ -200,7 +189,6 @@ describe('Dropdown', () => {
         return originalGetBoundingClientRect.call(this);
       };
 
-      // Mock window dimensions
       Object.defineProperty(window, 'innerHeight', { value: 800, writable: true });
       Object.defineProperty(window, 'innerWidth', { value: 1024, writable: true });
 
@@ -212,16 +200,13 @@ describe('Dropdown', () => {
       await waitFor(() => {
         const menu = document.body.querySelector('[role="menu"]') as HTMLElement;
         expect(menu).toBeTruthy();
-        // Left position should be adjusted to fit within viewport
         expect(menu?.style.left).toBeTruthy();
       });
 
-      // Restore original
       Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
     });
 
     it('should constrain left position when menu overflows right edge of viewport', async () => {
-      // Mock getBoundingClientRect and offsetWidth to properly trigger the overflow branch
       const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
       const originalOffsetWidth = Object.getOwnPropertyDescriptor(
         HTMLElement.prototype,
@@ -232,11 +217,9 @@ describe('Dropdown', () => {
         'offsetHeight'
       );
 
-      // Mock element dimensions
       Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
         configurable: true,
         get() {
-          // Return 300 for menu elements to ensure overflow calculation triggers
           if (this.getAttribute('role') === 'menu') {
             return 300;
           }
@@ -252,10 +235,6 @@ describe('Dropdown', () => {
       });
 
       Element.prototype.getBoundingClientRect = function () {
-        // Trigger at left: 850, width 100
-        // Menu width: 300
-        // Viewport: 1024
-        // 850 + 300 = 1150 > 1024 - 8 = 1016 → should trigger adjustment
         if (this.className?.includes?.('relative') || this.closest?.('.relative')) {
           return {
             top: 100,
@@ -280,22 +259,17 @@ describe('Dropdown', () => {
       );
       container.querySelector('button')?.click();
 
-      // Wait for initial render and RAF callback
       await waitFor(() => {
         const menu = document.body.querySelector('[role="menu"]') as HTMLElement;
         expect(menu).toBeTruthy();
       });
 
-      // Wait for requestAnimationFrame to update position
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const menu = document.body.querySelector('[role="menu"]') as HTMLElement;
-      // When menu overflows, left should be adjusted (viewportWidth - menuWidth - 8 = 1024 - 300 - 8 = 716)
-      // The style.left should be set to the constrained value
       expect(menu?.style.left).toBeTruthy();
       expect(menu?.style.left).not.toBe('auto');
 
-      // Restore originals
       Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
       if (originalOffsetWidth) {
         Object.defineProperty(HTMLElement.prototype, 'offsetWidth', originalOffsetWidth);
@@ -326,7 +300,6 @@ describe('Dropdown', () => {
         <Dropdown trigger={<button>Open</button>} items={defaultItems} />
       );
 
-      // Click the trigger button directly
       const trigger = container.querySelector('button');
       trigger?.click();
 
@@ -337,7 +310,6 @@ describe('Dropdown', () => {
 
       trigger?.click();
 
-      // Menu should close
       await waitFor(() => {
         const menu = container.querySelector('[role="menu"]');
         expect(menu).toBeNull();
@@ -356,10 +328,6 @@ describe('Dropdown', () => {
         expect(menu).toBeTruthy();
       });
 
-      // Dispatch Escape inside waitFor: the listener may not be attached on
-      // the first poll (the open render is visible before Preact flushes the
-      // effect), so re-dispatch until the menu closes — no fixed sleep that
-      // flakes under load.
       await waitFor(() => {
         document.dispatchEvent(
           new KeyboardEvent('keydown', {
@@ -387,7 +355,6 @@ describe('Dropdown', () => {
       const menuItem = document.body.querySelector('[role="menuitem"]');
       menuItem?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-      // Wait for async onClick handling
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(onClick).toHaveBeenCalledTimes(1);
@@ -445,7 +412,6 @@ describe('Dropdown', () => {
       });
 
       const menuItems = document.body.querySelectorAll('[role="menuitem"]');
-      // All menu items should be buttons and focusable
       menuItems.forEach((item) => {
         expect(item.tagName.toLowerCase()).toBe('button');
       });
@@ -462,12 +428,10 @@ describe('Dropdown', () => {
         expect(menuItems.length).toBe(3);
       });
 
-      // Wait for keyboard handler setup
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const dropdown = container.querySelector('.relative') as HTMLElement;
 
-      // Simulate arrow down - should focus the second item
       const arrowDownEvent = new KeyboardEvent('keydown', {
         key: 'ArrowDown',
         bubbles: true,
@@ -475,13 +439,11 @@ describe('Dropdown', () => {
       });
       dropdown?.dispatchEvent(arrowDownEvent);
 
-      // Wait for focus to update
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const menuItems = document.body.querySelectorAll('[role="menuitem"]');
       expect(menuItems.length).toBe(3);
 
-      // Verify event was handled (by checking that menu items are still present)
       expect(document.body.querySelector('[role="menu"]')).toBeTruthy();
     });
 
@@ -496,12 +458,10 @@ describe('Dropdown', () => {
         expect(menuItems.length).toBe(3);
       });
 
-      // Wait for keyboard handler setup
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const dropdown = container.querySelector('.relative') as HTMLElement;
 
-      // Simulate arrow up - should wrap to last item
       const arrowUpEvent = new KeyboardEvent('keydown', {
         key: 'ArrowUp',
         bubbles: true,
@@ -509,14 +469,11 @@ describe('Dropdown', () => {
       });
       dropdown?.dispatchEvent(arrowUpEvent);
 
-      // Wait for focus to update
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Should wrap to last item (index 2)
       const menuItems = document.body.querySelectorAll('[role="menuitem"]');
       expect(menuItems.length).toBe(3);
 
-      // Verify event was handled
       expect(document.body.querySelector('[role="menu"]')).toBeTruthy();
     });
 
@@ -531,13 +488,11 @@ describe('Dropdown', () => {
         expect(menuItems.length).toBe(3);
       });
 
-      // Wait for keyboard handler setup
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const dropdown = container.querySelector('.relative') as HTMLElement;
       const menuItems = document.body.querySelectorAll('[role="menuitem"]');
 
-      // Dispatch ArrowDown event
       const arrowDownEvent = new KeyboardEvent('keydown', {
         key: 'ArrowDown',
         bubbles: true,
@@ -545,11 +500,8 @@ describe('Dropdown', () => {
       });
       dropdown?.dispatchEvent(arrowDownEvent);
 
-      // Wait for focus change
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // The second item (index 1) should be focused
-      // Note: In test environment, focus might not work perfectly but event should be handled
       expect(menuItems[1]).toBeTruthy();
     });
 
@@ -564,13 +516,11 @@ describe('Dropdown', () => {
         expect(menuItems.length).toBe(3);
       });
 
-      // Wait for keyboard handler setup
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const dropdown = container.querySelector('.relative') as HTMLElement;
       const menuItems = document.body.querySelectorAll('[role="menuitem"]');
 
-      // Dispatch ArrowUp event - should wrap to last item
       const arrowUpEvent = new KeyboardEvent('keydown', {
         key: 'ArrowUp',
         bubbles: true,
@@ -578,10 +528,8 @@ describe('Dropdown', () => {
       });
       dropdown?.dispatchEvent(arrowUpEvent);
 
-      // Wait for focus change
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // The last item (index 2) should be focused after wrapping
       expect(menuItems[2]).toBeTruthy();
     });
 
@@ -597,10 +545,8 @@ describe('Dropdown', () => {
         expect(menuItem).toBeTruthy();
       });
 
-      // Wait for the keyboard handler to be set up
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Focus the menu item and press Enter directly on it
       const menuItem = document.body.querySelector('[role="menuitem"]') as HTMLButtonElement;
       menuItem?.focus();
 
@@ -627,10 +573,8 @@ describe('Dropdown', () => {
         expect(menuItem).toBeTruthy();
       });
 
-      // Wait for the keyboard handler to be set up
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Focus the menu item and press Space directly on it
       const menuItem = document.body.querySelector('[role="menuitem"]') as HTMLButtonElement;
       menuItem?.focus();
 
@@ -658,7 +602,6 @@ describe('Dropdown', () => {
 
       const dropdown = container.querySelector('.relative');
 
-      // Navigate down 4 times (should wrap around to item 0)
       for (let i = 0; i < 4; i++) {
         const arrowDownEvent = new KeyboardEvent('keydown', {
           key: 'ArrowDown',
@@ -668,7 +611,6 @@ describe('Dropdown', () => {
         dropdown?.dispatchEvent(arrowDownEvent);
       }
 
-      // Should still have all items
       const menuItems = document.body.querySelectorAll('[role="menuitem"]');
       expect(menuItems.length).toBe(3);
     });
@@ -686,11 +628,9 @@ describe('Dropdown', () => {
         />
       );
 
-      // Should be closed
       let menu = document.body.querySelector('[role="menu"]');
       expect(menu).toBeNull();
 
-      // Rerender with isOpen=true
       rerender(
         <Dropdown
           trigger={<button>Open</button>}
@@ -790,14 +730,11 @@ describe('Dropdown', () => {
         expect(menu).toBeTruthy();
       });
 
-      // Wait for delayed click listener
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Click inside the dropdown
       const dropdown = container.querySelector('.relative');
       dropdown?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-      // Should stay open
       await new Promise((resolve) => setTimeout(resolve, 10));
       const menuAfter = document.body.querySelector('[role="menu"]');
       expect(menuAfter).toBeTruthy();
@@ -814,14 +751,11 @@ describe('Dropdown', () => {
         expect(menu).toBeTruthy();
       });
 
-      // Wait for delayed click listener
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Click inside the menu
       const menu = document.body.querySelector('[role="menu"]');
       menu?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-      // Should stay open (menu item clicks close it but generic menu clicks don't)
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
 
@@ -836,10 +770,8 @@ describe('Dropdown', () => {
         expect(menu).toBeTruthy();
       });
 
-      // Wait for delayed click listener
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Click outside the dropdown (on document body)
       document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
       await waitFor(() => {

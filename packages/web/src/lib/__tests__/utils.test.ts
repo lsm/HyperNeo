@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Utility Functions
- *
- * Tests the public API: cn, copyToClipboard, formatRelativeTime, formatTokens
- */
 
 import { cn, copyToClipboard, formatRelativeTime, formatTokens } from '../utils';
 
@@ -88,7 +83,6 @@ describe('copyToClipboard', () => {
       configurable: true,
     });
 
-    // Mock document methods for fallback
     const mockExecCommand = vi.fn(() => false);
     const mockTextarea = {
       value: '',
@@ -194,7 +188,6 @@ describe('copyToClipboard', () => {
       configurable: true,
     });
 
-    // Make createElement throw an error to trigger the catch block
     const mockCreateElement = vi.fn(() => {
       throw new Error('DOM operation failed');
     });
@@ -206,14 +199,13 @@ describe('copyToClipboard', () => {
 
     const result = await copyToClipboard('test');
     expect(result).toBe(false);
-    // Note: The implementation doesn't log errors, it just returns false
   });
 });
 
 describe('formatRelativeTime', () => {
   it('should return "Just now" for times less than 60 seconds ago', () => {
     const now = new Date();
-    const date = new Date(now.getTime() - 30 * 1000); // 30 seconds ago
+    const date = new Date(now.getTime() - 30 * 1000);
     expect(formatRelativeTime(date)).toBe('Just now');
   });
 
@@ -223,33 +215,32 @@ describe('formatRelativeTime', () => {
 
   it('should return minutes ago for times less than 1 hour ago', () => {
     const now = new Date();
-    const date = new Date(now.getTime() - 5 * 60 * 1000); // 5 minutes ago
+    const date = new Date(now.getTime() - 5 * 60 * 1000);
     expect(formatRelativeTime(date)).toBe('5m ago');
   });
 
   it('should return hours ago for times less than 24 hours ago', () => {
     const now = new Date();
-    const date = new Date(now.getTime() - 3 * 60 * 60 * 1000); // 3 hours ago
+    const date = new Date(now.getTime() - 3 * 60 * 60 * 1000);
     expect(formatRelativeTime(date)).toBe('3h ago');
   });
 
   it('should return "Yesterday" for times 24-48 hours ago', () => {
     const now = new Date();
-    const date = new Date(now.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago (1 day)
+    const date = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     expect(formatRelativeTime(date)).toBe('Yesterday');
   });
 
   it('should return days ago for times 2-7 days ago', () => {
     const now = new Date();
-    const date = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000); // 3 days ago
+    const date = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
     expect(formatRelativeTime(date)).toBe('3d ago');
   });
 
   it('should return formatted date for times more than 7 days ago', () => {
     const now = new Date();
-    const date = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000); // 10 days ago
+    const date = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
     const result = formatRelativeTime(date);
-    // Should be a formatted date string (locale-dependent)
     expect(result).not.toMatch(/ago$/);
     expect(result).not.toBe('Yesterday');
     expect(result).not.toBe('Just now');
@@ -270,7 +261,6 @@ describe('formatRelativeTime', () => {
   it('should handle exactly 7 days ago', () => {
     const now = new Date();
     const date = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    // 7 days should show formatted date (not "7d ago")
     const result = formatRelativeTime(date);
     expect(result).not.toMatch(/ago$/);
   });
@@ -292,8 +282,8 @@ describe('formatTokens', () => {
 
   it('should show 1 decimal place precision', () => {
     expect(formatTokens(1234)).toBe('1.2k');
-    expect(formatTokens(1250)).toBe('1.3k'); // 1.25 rounds to 1.3
-    expect(formatTokens(1240)).toBe('1.2k'); // 1.24 rounds to 1.2
+    expect(formatTokens(1250)).toBe('1.3k');
+    expect(formatTokens(1240)).toBe('1.2k');
     expect(formatTokens(16500)).toBe('16.5k');
   });
 

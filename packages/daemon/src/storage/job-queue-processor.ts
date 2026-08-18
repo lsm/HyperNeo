@@ -61,11 +61,6 @@ interface InFlightClaimRecord {
   generation?: number;
   lastLeaseLogAt: number;
   settlement?: string;
-  /**
-   * Set when the settling-grace expiry evicted this (wedged, non-settling)
-   * reclaimed handler's slot so its replacement could claim capacity. The
-   * handler's own finally then skips the second decrement. (Codex P2.)
-   */
   slotEvicted?: boolean;
 }
 
@@ -74,16 +69,6 @@ export type JobHandler = (
   context?: JobHandlerContext
 ) => Promise<Record<string, unknown> | void>;
 
-/**
- * Throw from a handler to force a job straight to `dead` (bypassing the retry
- * budget) while still firing the lane's `onDead` hook. Used by the
- * `message_delivery` lane for a turn that ended in a NON-recoverable error
- * (auth/permission/quota): retrying won't help, so the job dead-letters
- * immediately and `onDead` terminalizes the persisted message as `failed` (with
- * a Retry affordance) instead of burning all `maxRetries` attempts first. The
- * generic processor treats this as terminal without knowing anything about the
- * delivery domain. See docs/features/message-delivery-v2.md.
- */
 export class DeadLetterImmediatelyError extends Error {
   constructor(message: string) {
     super(message);
@@ -91,7 +76,6 @@ export class DeadLetterImmediatelyError extends Error {
   }
 }
 
-/** Derive a reactive change scope from a job's payload, when it carries one. */
 function scopeFromJob(job: Job): TableChangeScope | undefined {
   const sessionId = typeof job.payload?.sessionId === 'string' ? job.payload.sessionId : undefined;
   const taskId = typeof job.payload?.taskId === 'string' ? job.payload.taskId : undefined;
@@ -103,51 +87,12 @@ export interface JobQueueProcessorOptions {
   pollIntervalMs?: number;
   maxConcurrent?: number;
   staleThresholdMs?: number;
-  /**
-   * Random source for the stale-reclaim re-enqueue jitter (see
-   * {@link staleReclaimJitterDelays}). Defaults to Math.random; injectable so
-   * tests can make the herd spread deterministic.
-   */
   jitterRandom?: () => number;
-  /**
-   * Grace for a stale-reclaimed handler to settle after its abort before its
-   * replacement claim may proceed. Default {@link SETTLEMENT_GRACE_MS}. Lanes
-   * whose abort path awaits a bounded-but-slow settlement — message_delivery
-   * waits out the queue's 30s provider-owned acknowledgment when the admission
-   * can no longer be revoked — must set this BEYOND that bound so an expired
-   * deferral can never let a replacement claim overlap the still-settling
-   * attempt's handoff. Still bounded, so a wedged non-cancellable handler
-   * cannot suppress its replacement until restart. (Codex P1, PR #2499.)
-   */
   settlementGraceMs?: number;
 }
 
-/**
- * Per-lane options for {@link JobQueueProcessor.register}.
- */
 export interface RegisterOptions {
-  /**
-   * Jobs whose payload matches this predicate are claimed in a separate
-   * "exempt" dequeue pass that is NOT subject to `maxConcurrent` — they run as
-   * soon as claimed, even when every capped slot is held by a long-running job.
-   *
-   * `message_delivery` registers its steers here (`{ path: '$.role', equals:
-   * 'steer' }`): a steer is short and must reach the live turn BEFORE that turn
-   * ends, so it cannot wait behind a full pool of turns (at `maxConcurrent=1` or
-   * once the default five slots are all driving turns, a queued steer would
-   * otherwise sit until a turn ends and then be promoted to a later turn instead
-   * of interleaving). Exempt jobs count against a separate budget so they can't
-   * starve capped jobs either. See message-delivery-v2.md + Codex (#2587).
-   */
   exemptJobs?: PayloadMatch;
-  /**
-   * Invoked when a job in this lane exhausts its retry budget and goes `dead`.
-   * `message_delivery` uses this to terminalize the persisted message as
-   * `failed` + publish the status change — otherwise the row stays `enqueued`,
-   * which pagination hides, so the user's prompt vanishes without a terminal
-   * error. Hook errors are swallowed so a dead-letter side-effect can never
-   * break the processor. See message-delivery-v2.md + Codex (#2595).
-   */
   onDead?: (job: Job) => void;
 }
 
@@ -157,56 +102,20 @@ interface Registration {
   onDead?: (job: Job) => void;
 }
 
-/** Default grace for a stale-reclaimed handler to settle after its abort
- * before its replacement claim may proceed. Aborting handlers settle within
- * microtasks; the bound exists for wedged handlers that never observe the
- * signal. See {@link JobQueueProcessorOptions.settlementGraceMs} for lanes
- * needing a longer, still-bounded window. */
 const SETTLEMENT_GRACE_MS = 10_000;
 
-/** Slot width of the stale-reclaim jitter: a herd of M reclaimed jobs spreads
- * over M slots of this width, bounded by {@link STALE_RECLAIM_JITTER_MAX_MS}. */
 const STALE_RECLAIM_JITTER_STEP_MS = 2_000;
 
-/** Hard bound on the total stale-reclaim jitter spread, so even a large herd
- * is fully re-enqueued within 30 s and reclamation never parks work for long. */
 const STALE_RECLAIM_JITTER_MAX_MS = 30_000;
 
-/**
- * Randomized delays (ms from now) for one stale-reclaim pass's re-enqueued
- * run_at values.
- *
- * When the daemon dies with M message_delivery jobs in flight, their rows
- * freeze in `processing` until the leases go stale, and stale-reclaim then
- * re-enqueues ALL of them in the same instant. Each reclaimed job spawns a
- * fresh SDK subprocess resuming a large transcript; M simultaneous cold-starts
- * all exceed the 15 s startup timeout (a solo cold-start is ~4–5 s), so the
- * timeout/retry loop self-sustains instead of draining (measured in the live
- * incident: 10 claims within 12 ms → 120–160 timeouts, 0 successes over 7+ min).
- * Spreading run_at produces a rolling start where each session cold-starts
- * with the machine mostly to itself.
- *
- * The spread window [0, min(M·step, max)] is partitioned into M equal slots;
- * each job gets a randomly permuted slot plus a random offset within it, so
- * the delay order is random per pass (restarts never produce a deterministic
- * stagger) while the density is bounded by construction: with slot width w no
- * 1-second window holds more than ⌈1000/w⌉ + 1 reclaimed jobs (≤ 2 for M ≤ 15,
- * ≤ 3 through M ≈ 60). A single reclaimed job (M = 1) gets no delay — it
- * recovers immediately.
- */
 export function staleReclaimJitterDelays(count: number, random: () => number): number[] {
   if (count <= 1) return Array.from({ length: count }, () => 0);
   const windowMs = Math.min(count * STALE_RECLAIM_JITTER_STEP_MS, STALE_RECLAIM_JITTER_MAX_MS);
   const slotWidth = windowMs / count;
-  // Clamp each draw to [0, 1): an injected source returning NaN would poison
-  // run_at into a NULL SQLite binding that fails `run_at <= now` forever (a
-  // silent, unerrored park), and out-of-range draws break the shuffle.
   const draw = (): number => {
     const value = random();
     return Number.isFinite(value) ? Math.min(Math.max(value, 0), 0.999_999_999_999) : 0;
   };
-  // Random permutation of slot indices (Fisher–Yates over the injected random):
-  // which job lands in which slot is random per pass, never index-ordered.
   const slots = Array.from({ length: count }, (_slot, i) => i);
   for (let i = slots.length - 1; i > 0; i--) {
     const j = Math.min(i, Math.floor(draw() * (i + 1)));
@@ -215,27 +124,6 @@ export function staleReclaimJitterDelays(count: number, random: () => number): n
   return slots.map((slot) => slot * slotWidth + draw() * slotWidth);
 }
 
-/**
- * Apply {@link staleReclaimJitterDelays} to a re-enqueued herd's pending rows.
- * The single shared sequence for both herd paths — the processor's stale-reclaim
- * pass (crash recovery) and the graceful-shutdown requeue in `app.cleanup()`
- * (deploy/restart) — so they roll identically instead of drifting apart.
- *
- * Per-job isolation: one failed UPDATE (disk-full / I/O error) leaves THAT row
- * at its original — past, immediately claimable — run_at (the pre-jitter
- * behavior) while the rest of the herd keeps its jitter, and the failure is
- * surfaced through `onRescheduleError` with the thrown error (the processor
- * folds it into a `stale_reclaim_jitter_failed` lifecycle event; the shutdown
- * path logs it). Neither the UPDATE errors nor a throwing observer propagate,
- * so this can never skip the caller's remaining reclaim work (predecessor
- * aborts, settling deferrals). A throw from the reclaim transaction itself —
- * before any row flipped — still propagates from the caller; that rejects
- * tick()'s promise and exits the daemon on the unhandled rejection, and
- * recovery is a restart whose eager reclaim re-sweeps (and re-jitters) the
- * herd.
- *
- * @returns how many rows were successfully rescheduled.
- */
 export function applyStaleReclaimJitter(
   repo: Pick<JobQueueRepository, 'reschedulePending'>,
   jobIds: string[],
@@ -265,30 +153,11 @@ export function applyStaleReclaimJitter(
 export class JobQueueProcessor {
   private handlers = new Map<string, Registration>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
-  // Capped jobs count toward `maxConcurrent` (turns, and all non-exempt lanes).
   private inFlightCapped = 0;
-  // Exempt jobs (message_delivery steers) run on a separate budget so they can't
-  // be starved by — nor starve — capped jobs.
   private inFlightExempt = 0;
-  // Live handler count, independent of the admission budgets above: `stop()`
-  // drains on this, so slot eviction (evictWedgedClaimSlot, which releases an
-  // abort-ignoring reclaimed handler's ADMISSION slot while its handler is still
-  // running) can never make a still-live handler look quiescent during teardown.
-  // (Codex P2, PR #2499.)
   private activeHandlers = 0;
   private running = false;
   private inFlightClaims = new Map<string, Map<string, InFlightClaimRecord>>();
-  // Job IDs whose stale-reclaimed predecessor handler was aborted but has not
-  // settled yet, mapped to the reclaimed attempt's claim token and the moment
-  // the deferral expires. Their rows are already back to `pending`, but
-  // claiming them now (spare slots exist under a large budget) would overlap
-  // the aborting attempt — the predecessor may have fed the SDK before
-  // observing the abort. Cleared from processJob's finally when the settling
-  // attempt's claim token matches, so the replacement claim lands once
-  // cancellation has settled without a still-wedged earlier attempt (whose own
-  // deferral already expired) lifting a newer attempt's deferral. The expiry
-  // bounds the wait: a handler that never observes its abort signal would
-  // otherwise suppress its replacement forever.
   private settlingReclaimedJobIds = new Map<
     string,
     { claimToken: string | null; expireAt: number }
@@ -326,8 +195,6 @@ export class JobQueueProcessor {
 
   start(): void {
     this.running = true;
-    // Eagerly reclaim stale jobs from a previous crash before the first poll tick,
-    // so crash-recovery is instant rather than delayed by up to STALE_CHECK_INTERVAL.
     this.reclaimStaleClaims(Date.now() - this.staleThresholdMs);
     this.lastStaleCheck = Date.now();
     this.pollTimer = setInterval(() => {
@@ -336,7 +203,6 @@ export class JobQueueProcessor {
     this.tick();
   }
 
-  /** Stop claiming new work without waiting for in-flight handlers to drain. */
   stopPolling(): void {
     this.running = false;
     if (this.pollTimer !== null) {
@@ -365,20 +231,11 @@ export class JobQueueProcessor {
     this.checkStaleJobs();
 
     let claimed = 0;
-    // Exclude just-reclaimed jobs whose aborting handler hasn't settled, minus
-    // any whose deferral grace expired (a wedged non-cancellable handler would
-    // otherwise starve its replacement forever).
     let excludeIds: string[] | undefined;
     if (this.settlingReclaimedJobIds.size > 0) {
       const now = Date.now();
       for (const [jobId, entry] of this.settlingReclaimedJobIds) {
         if (entry.expireAt <= now) {
-          // Grace expiry alone does not free capacity: the wedged predecessor
-          // still counts toward maxConcurrent, so a saturated processor
-          // (e.g. maxConcurrent=1 held by a handler that never observes the
-          // abort) could never claim the replacement. Evict its slot too —
-          // its much-later finally skips the second decrement via slotEvicted.
-          // (Codex P2, PR #2499.)
           this.evictWedgedClaimSlot(jobId, entry.claimToken);
           this.settlingReclaimedJobIds.delete(jobId);
         }
@@ -388,9 +245,6 @@ export class JobQueueProcessor {
       }
     }
 
-    // Capped pass: subject to maxConcurrent. For lanes with an exempt spec,
-    // exclude exempt jobs (steers) so they're left for the exempt pass below and
-    // don't consume a turn slot.
     let cappedSlots = this.maxConcurrent - this.inFlightCapped;
     if (cappedSlots > 0) {
       for (const [queue, reg] of this.handlers) {
@@ -405,10 +259,6 @@ export class JobQueueProcessor {
       }
     }
 
-    // Exempt pass: NOT subject to maxConcurrent. Runs even when capped slots are
-    // full, so urgent jobs (steers) reach their target before it ends. Bounded
-    // by a separate budget (also maxConcurrent) so exempt jobs can't starve the
-    // capped pass either.
     let exemptSlots = this.maxConcurrent - this.inFlightExempt;
     if (exemptSlots > 0) {
       for (const [queue, reg] of this.handlers) {
@@ -437,9 +287,6 @@ export class JobQueueProcessor {
     const record = this.trackInFlightClaim(job, controller, exempt ? 'exempt' : 'capped');
     this.emitLifecycle('slot_acquired', job, record.slotClass, { stage: record.stage });
     const heartbeat = setInterval(() => {
-      // A stale reclaim already aborted this handler and emitted its
-      // old_handler_aborted event; stop heartbeating rather than emitting a
-      // duplicate heartbeat_rejected against the now-replaced row. (Codex P2.)
       if (controller.signal.aborted) {
         clearInterval(heartbeat);
         return;
@@ -450,9 +297,6 @@ export class JobQueueProcessor {
           reason: 'heartbeat_rejected',
         });
         controller.abort();
-        // Ownership loss is terminal: stop renewing so a wedged handler that
-        // ignores the abort does not emit a duplicate old_handler_aborted (and
-        // corrupt event counts) on every subsequent heartbeat. (Codex P2.)
         clearInterval(heartbeat);
         return;
       }
@@ -477,12 +321,6 @@ export class JobQueueProcessor {
       }
       const reportStage = (stage: string, details?: JobHandlerStageDetails): void => {
         if (this.getInFlightClaim(job) !== record) return;
-        // Monotonic lifecycle guard: the observable stages form a strict
-        // progression (query_ready → sdk_admitted → first_sdk_response). A fast
-        // cold-start init/history frame can record first_sdk_response before the
-        // driving attempt reports query_ready; the later report must not regress
-        // the tracked stage or emit the lifecycle events out of order.
-        // (Codex P2, PR #2499.)
         if (isLifecycleEventName(stage) && isLifecycleEventName(record.stage)) {
           if (LIFECYCLE_STAGE_ORDER[record.stage] >= LIFECYCLE_STAGE_ORDER[stage]) {
             return;
@@ -503,8 +341,6 @@ export class JobQueueProcessor {
         }
       };
       const result = await reg.handler(job, { signal: controller.signal, reportStage });
-      // message_delivery parks/promotes by requeueing the job itself; the
-      // auto-complete here is then a no-op (row no longer 'processing').
       const completed = this.repo.complete(job.id, result ?? undefined, job.claimToken);
       if (completed) {
         record.settlement = 'completed';
@@ -523,17 +359,11 @@ export class JobQueueProcessor {
       }
       this.notifyChange(scope);
     } catch (err) {
-      // A reclaimed predecessor lost ownership; cancellation is not a job
-      // failure and must not burn retries or invoke the dead-letter hook.
       if (controller.signal.aborted) {
         record.settlement = 'aborted';
         return;
       }
       const message = err instanceof Error ? err.message : String(err);
-      // A handler throws `DeadLetterImmediatelyError` to terminalize without
-      // burning the retry budget (e.g. a delivery turn that ended in a
-      // non-recoverable error). Force `dead` and fire `onDead` just like
-      // retry-exhaustion would.
       const updated =
         err instanceof DeadLetterImmediatelyError
           ? this.repo.markDead(job.id, message, job.claimToken)
@@ -561,12 +391,6 @@ export class JobQueueProcessor {
     } finally {
       clearInterval(heartbeat);
       this.untrackInFlightClaim(job, record);
-      // The handler settled — any replacement claim for this job (deferred by
-      // the settling exclusion after a stale reclaim) may proceed. Match on
-      // claim token: this finally may belong to an earlier attempt whose own
-      // deferral already expired and was superseded — deleting unconditionally
-      // would drop the CURRENT attempt's deferral and let a third claim
-      // overlap the still-settling replacement.
       const settlingEntry = this.settlingReclaimedJobIds.get(job.id);
       if (settlingEntry?.claimToken === job.claimToken) {
         this.settlingReclaimedJobIds.delete(job.id);
@@ -576,8 +400,6 @@ export class JobQueueProcessor {
       } else {
         if (!record.slotEvicted) this.inFlightCapped--;
       }
-      // Always release the live-handler count, even for an evicted-slot record:
-      // the handler is genuinely done now, so stop() must observe it drain.
       this.activeHandlers--;
       this.emitLifecycle('slot_released', job, record.slotClass, {
         stage: record.stage,
@@ -619,11 +441,6 @@ export class JobQueueProcessor {
     return this.inFlightClaims.get(job.id)?.get(job.claimToken);
   }
 
-  /**
-   * Stop counting a wedged reclaimed handler toward its slot budget once the
-   * settlement grace expires (see tick). The record stays tracked for its
-   * identity checks — only the capacity accounting is released, once.
-   */
   private evictWedgedClaimSlot(jobId: string, claimToken: string | null): void {
     if (!claimToken) return;
     const record = this.inFlightClaims.get(jobId)?.get(claimToken);
@@ -631,10 +448,6 @@ export class JobQueueProcessor {
     record.slotEvicted = true;
     if (record.slotClass === 'exempt') this.inFlightExempt--;
     else this.inFlightCapped--;
-    // Record the admission-slot release NOW — the handler's own `slot_released`
-    // fires only when it eventually settles (possibly much later or never), so
-    // without this the lifecycle trace shows a replacement acquiring an
-    // apparently-occupied slot. (Codex P2, PR #2499.)
     this.emitLifecycle('slot_released', record.job, record.slotClass, {
       stage: record.stage,
       reason: 'slot_evicted',
@@ -651,23 +464,8 @@ export class JobQueueProcessor {
   }
 
   private reclaimStaleClaims(staleBefore: number): void {
-    // Scoped to this processor's registered lanes: only the owner of a queue's
-    // in-flight claims can abort their handlers, so a processor must not sweep
-    // another processor's shared-repository lanes (its reclaim would flip the
-    // row to pending while the owner's handler keeps running until its next
-    // heartbeat, overlapping a replacement claim).
     const claims = this.repo.reclaimStale(staleBefore, [...this.handlers.keys()]);
     if (claims.length > 0) {
-      // Re-enqueue the whole herd with randomized run_at jitter: a crash that
-      // froze N in-flight deliveries would otherwise make every replacement
-      // claim cold-start its SDK subprocess in the same instant (see
-      // applyStaleReclaimJitter). Applied synchronously, before any tick can
-      // dequeue, so no reclaimed job slips through un-jittered. A failed
-      // reschedule emits stale_reclaim_jitter_failed and falls back to the
-      // pre-jitter (immediately claimable) behavior for that row — it can
-      // never skip the abort/deferral loop below, whose predecessor
-      // cancellation is what prevents replacement claims from overlapping
-      // live attempts.
       const claimByJobId = new Map(claims.map((claim) => [claim.jobId, claim] as const));
       applyStaleReclaimJitter(
         this.repo,
@@ -676,8 +474,6 @@ export class JobQueueProcessor {
         (jobId, error) => {
           const claim = claimByJobId.get(jobId);
           if (claim) {
-            // The cause rides in `reason` (disk-full vs locked vs …) so a
-            // recurrence is diagnosable, not just detectable.
             const cause = error instanceof Error ? error.message : String(error);
             this.emitLifecycle(
               'stale_reclaim_jitter_failed',
@@ -705,12 +501,6 @@ export class JobQueueProcessor {
         reason: 'stale_reclaim',
       });
       record.controller.abort();
-      // Aborting is asynchronous — the handler settles on a later microtask.
-      // Defer this job's replacement claim until then (see tick()'s dequeue
-      // exclusion) so the two attempts never overlap, bounded by a grace
-      // window for handlers that never observe the abort signal. Keyed to the
-      // aborted attempt's claim token so only THAT attempt's settlement lifts
-      // the deferral (processJob's finally matches on it).
       this.settlingReclaimedJobIds.set(claim.jobId, {
         claimToken: claim.claimToken,
         expireAt: Date.now() + this.settlementGraceMs,
@@ -721,11 +511,6 @@ export class JobQueueProcessor {
   snapshot(queue?: string): JobQueueProcessorSnapshot {
     const now = Date.now();
     const handlers: InFlightJobSnapshot[] = [];
-    // Admission counts exclude slot-evicted records: their slot was already
-    // released to a replacement, so they must not inflate the capacity the
-    // diagnostics RPC reports against tick()'s budget. The handler list and
-    // inFlightTotal still include them (they are genuinely live handlers).
-    // (Codex P2, PR #2499.)
     let cappedAdmitted = 0;
     let exemptAdmitted = 0;
     for (const claims of this.inFlightClaims.values()) {
@@ -849,7 +634,6 @@ function isLifecycleEventName(stage: string): stage is ObservableLifecycleStage 
   return stage === 'query_ready' || stage === 'sdk_admitted' || stage === 'first_sdk_response';
 }
 
-/** Strict progression of the observable delivery lifecycle stages. */
 const LIFECYCLE_STAGE_ORDER: Record<ObservableLifecycleStage, number> = {
   query_ready: 0,
   sdk_admitted: 1,

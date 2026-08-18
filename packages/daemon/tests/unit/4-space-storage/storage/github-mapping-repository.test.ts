@@ -3,10 +3,6 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { GitHubMappingRepository } from '../../../../src/storage/repositories/github-mapping-repository';
 import type { CreateRoomGitHubMappingParams, RepositoryMapping } from '@hyperneo/shared';
 
-// ============================================================================
-// Test Data Factories
-// ============================================================================
-
 function createRepositoryMapping(overrides: Partial<RepositoryMapping> = {}): RepositoryMapping {
   return {
     owner: 'testowner',
@@ -38,10 +34,6 @@ function createMappingTable(db: Database): void {
   `);
 }
 
-// ============================================================================
-// GitHubMappingRepository Tests
-// ============================================================================
-
 describe('GitHubMappingRepository', () => {
   let db: Database;
   let repository: GitHubMappingRepository;
@@ -61,7 +53,7 @@ describe('GitHubMappingRepository', () => {
       const params = createMappingParams();
       const mapping = repository.createMapping(params);
 
-      expect(mapping.id).toMatch(/^[\da-f-]{36}$/); // UUID format
+      expect(mapping.id).toMatch(/^[\da-f-]{36}$/);
       expect(mapping.roomId).toBe('room-123');
       expect(mapping.repositories).toHaveLength(1);
       expect(mapping.repositories[0]?.owner).toBe('testowner');
@@ -161,9 +153,9 @@ describe('GitHubMappingRepository', () => {
 
       const mappings = repository.listMappings();
 
-      expect(mappings[0]?.roomId).toBe('room-2'); // priority 10
-      expect(mappings[1]?.roomId).toBe('room-1'); // priority 5
-      expect(mappings[2]?.roomId).toBe('room-3'); // priority 2
+      expect(mappings[0]?.roomId).toBe('room-2');
+      expect(mappings[1]?.roomId).toBe('room-1');
+      expect(mappings[2]?.roomId).toBe('room-3');
     });
 
     it('should order by created_at ASC when priority is equal', async () => {
@@ -234,7 +226,7 @@ describe('GitHubMappingRepository', () => {
 
       const mappings = repository.listMappingsForRepository('owner', 'repo');
 
-      expect(mappings[0]?.roomId).toBe('room-2'); // higher priority first
+      expect(mappings[0]?.roomId).toBe('room-2');
       expect(mappings[1]?.roomId).toBe('room-1');
     });
   });

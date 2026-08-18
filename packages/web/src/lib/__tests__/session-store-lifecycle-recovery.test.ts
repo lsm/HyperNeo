@@ -1,21 +1,9 @@
 // @ts-nocheck
-/**
- * Chat/Thread Lifecycle Recovery — SessionStore cold mount + reconnect.
- *
- * Regression coverage for scenarios 1 (cold mount) and 4 (WebSocket
- * reconnect). The comprehensive suite covers the snapshot/delta apply and
- * the messagesLoaded gate; this file adds the missing recovery invariant:
- * on reconnect, the store re-subscribes to `messages.bySession` with the
- * SAME subscription id and a fresh snapshot re-applies, so a transient
- * socket drop never leaves the thread frozen on stale or empty content.
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sessionStore } from '../session-store';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
-// A single module-level hub that connectionManager.getHub() resolves to.
-// installLifecycleHub() re-binds its handlers with fresh state per test.
 const lifecycleHub = {
   request: vi.fn(),
   onEvent: vi.fn(),
@@ -124,7 +112,6 @@ describe('chat/thread lifecycle recovery — SessionStore', () => {
     expect(subId).toBeTruthy();
     expect(sessionStore.messagesLoaded.value).toBe(false);
 
-    // Snapshot delivered out of timestamp order — the store must sort.
     hub.fire('liveQuery.snapshot', {
       subscriptionId: subId,
       rows: [
@@ -142,10 +129,8 @@ describe('chat/thread lifecycle recovery — SessionStore', () => {
     const subId = hub.subscriptionId!;
     expect(hub.subscribeCalls).toHaveLength(1);
 
-    // Simulate a transient socket drop and recovery.
     hub.fireConnection('disconnected');
     hub.fireConnection('connected');
-    // The reconnect handler re-issues liveQuery.subscribe asynchronously.
     await vi.waitFor(() => {
       expect(hub.subscribeCalls).toHaveLength(2);
     });
@@ -153,9 +138,6 @@ describe('chat/thread lifecycle recovery — SessionStore', () => {
     const resubscribe = hub.subscribeCalls[1];
     expect(resubscribe.queryName).toBe('messages.bySession');
     expect(resubscribe.subscriptionId).toBe(subId);
-    // The re-subscribe must keep the SAME params (session id + message limit)
-    // as the initial subscription — a regression that re-subscribes with
-    // empty or another session's params would otherwise pass this mock.
     expect(resubscribe.params).toEqual(hub.subscribeCalls[0].params);
   });
 
@@ -169,7 +151,6 @@ describe('chat/thread lifecycle recovery — SessionStore', () => {
     });
     expect(sessionStore.sdkMessages.value.map((m) => m.uuid)).toEqual(['old']);
 
-    // Reconnect pushes a brand-new snapshot; the store replaces wholesale.
     hub.fireConnection('connected');
     await vi.waitFor(() => {
       expect(hub.subscribeCalls).toHaveLength(2);
@@ -190,18 +171,13 @@ describe('chat/thread lifecycle recovery — SessionStore', () => {
     await sessionStore.select('session-1');
     expect(hub.subscribeCalls).toHaveLength(1);
 
-    // Switch away — the active subscription id is replaced and the reconnect
-    // handler for the prior subscription must short-circuit.
     hub.subscribeCalls.length = 0;
     await sessionStore.select('session-2');
 
     hub.fireConnection('connected');
-    // The session-2 subscribe fires (new subscription id), but the superseded
-    // session-1 reconnect handler must NOT add an extra re-subscribe for it.
     await vi.waitFor(() => {
       expect(hub.subscribeCalls.length).toBeGreaterThanOrEqual(1);
     });
-    // Give any stray async re-subscribe a chance, then assert no further calls.
     await new Promise((resolve) => setTimeout(resolve, 0));
     const session1Resubscribes = hub.subscribeCalls.filter(
       (c) => c.params[0] === 'session-1'

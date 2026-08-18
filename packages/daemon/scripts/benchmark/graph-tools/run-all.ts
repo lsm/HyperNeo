@@ -1,11 +1,3 @@
-/**
- * Run all graph tool benchmark arms sequentially.
- * Each arm is a separate script — this orchestrator invokes them via bun.
- *
- * Usage:
- *   bun scripts/benchmark/graph-tools/run-all.ts
- */
-
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { readFileSync, existsSync, unlinkSync } from 'node:fs';
@@ -30,7 +22,6 @@ const OUTPUT_FILES = [
 
 console.log('=== Graph Tool Benchmark: All Arms ===\n');
 
-// Remove stale output files from previous runs
 for (const file of OUTPUT_FILES) {
   if (existsSync(file)) {
     unlinkSync(file);
@@ -46,7 +37,7 @@ for (const script of ARMS) {
   try {
     execFileSync('bun', [scriptPath], {
       stdio: 'inherit',
-      timeout: 900_000, // 15 min per arm
+      timeout: 900_000,
       env: { ...process.env },
     });
   } catch (err) {
@@ -55,7 +46,6 @@ for (const script of ARMS) {
   }
 }
 
-// Collect all results
 console.log('\n\n=== Collecting Results ===');
 interface BenchmarkOutput {
   timestamp: string;
@@ -90,7 +80,6 @@ for (const file of OUTPUT_FILES) {
   }
 }
 
-// Print summary
 if (allResults.length > 0) {
   console.log(`\n=== Benchmark Summary (model: ${model}, commit: ${commit}) ===`);
   console.log(

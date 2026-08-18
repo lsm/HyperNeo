@@ -1,17 +1,3 @@
-/**
- * Thinking Block Signature Tests
- *
- * Tests that verify thinking block handling across providers:
- * - Signature format comparison (GLM, MiniMax, Anthropic)
- * - Cross-provider resume with thinking blocks (stripping validates they'd be rejected)
- *
- * REQUIREMENTS:
- * - GLM_API_KEY or ZHIPU_API_KEY must be set
- * - MINIMAX_API_KEY must be set
- * - ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN must be set
- * - Makes real API calls (costs money)
- */
-
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
@@ -23,8 +9,6 @@ import type { DaemonAppContext } from '../../../src/app';
 import { getSDKSessionFilePath } from '../../../src/lib/sdk-session-file-manager';
 import { existsSync, readFileSync, realpathSync, mkdirSync } from 'node:fs';
 
-// Use realpath to resolve macOS symlinks (/var → /private/var).
-// The SDK subprocess resolves CWD via realpath, so our path must match.
 const TMP_DIR = realpathSync(process.env.TMPDIR || '/tmp');
 
 function requireCredentialsOrFail(): void {
@@ -66,10 +50,6 @@ async function waitForSDKSessionEstablished(
   throw new Error(`SDK session not established within ${timeout}ms.`);
 }
 
-/**
- * Wait for the SDK subprocess to flush the JSONL assistant response to disk.
- * The daemon reports idle before the file is written.
- */
 async function waitForJSONLFlush(filePath: string, maxAttempts = 20): Promise<void> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (existsSync(filePath)) {
@@ -80,9 +60,6 @@ async function waitForJSONLFlush(filePath: string, maxAttempts = 20): Promise<vo
   }
 }
 
-/**
- * Extract thinking block signatures from a JSONL session file.
- */
 function extractThinkingBlockSignatures(
   filePath: string,
   label: string
@@ -144,10 +121,6 @@ describe('Thinking Block Signatures', () => {
     }
   }, 20000);
 
-  /**
-   * Compare thinking block signatures across providers.
-   * GLM produces empty string, MiniMax produces 64-char hex, Anthropic produces 308-char base64.
-   */
   test('compare thinking block signatures: GLM vs MiniMax vs Anthropic', async () => {
     const providers = [
       { label: 'GLM', model: 'sonnet', provider: 'glm' },
@@ -182,10 +155,6 @@ describe('Thinking Block Signatures', () => {
     }
   }, 180000);
 
-  /**
-   * MiniMax → Anthropic with forced thinking.
-   * Verifies that thinking block stripping allows cross-provider resume to preserve context.
-   */
   test('MiniMax (think8k) → Anthropic: resume with thinking block stripping', async () => {
     const workspacePath = `${TMP_DIR}/test-minimax-think-to-anthropic-${Date.now()}`;
     mkdirSync(workspacePath, { recursive: true });
@@ -201,7 +170,6 @@ describe('Thinking Block Signatures', () => {
     })) as { sessionId: string };
     daemon.trackSession(sessionId);
 
-    // Phase 1: Establish MiniMax session with thinking enabled
     await sendMessage(daemon, sessionId, 'What is 17 * 23? Show your reasoning.');
     await waitForIdle(daemon, sessionId, 60000);
 
@@ -212,7 +180,6 @@ describe('Thinking Block Signatures', () => {
     await waitForJSONLFlush(filePathBefore);
     extractThinkingBlockSignatures(filePathBefore, 'MiniMax BEFORE switch');
 
-    // Phase 2: Switch to Anthropic sonnet (triggers thinking block stripping)
     const switchResult = (await daemon.messageHub.request('session.model.switch', {
       sessionId,
       model: 'sonnet',
@@ -222,7 +189,6 @@ describe('Thinking Block Signatures', () => {
 
     await waitForIdle(daemon, sessionId);
 
-    // Phase 3: Send message on Anthropic
     const systemInitPromise = waitForSystemInit(daemon, sessionId);
     await sendMessage(daemon, sessionId, 'Say "world" in one word.');
     const systemInit = await systemInitPromise;
@@ -243,10 +209,6 @@ describe('Thinking Block Signatures', () => {
     }
   }, 120000);
 
-  /**
-   * GLM → Anthropic with forced thinking (control).
-   * Same as above but with GLM (empty string signature).
-   */
   test('GLM (think8k) → Anthropic: resume with thinking block stripping', async () => {
     const workspacePath = `${TMP_DIR}/test-glm-think-to-anthropic-${Date.now()}`;
     mkdirSync(workspacePath, { recursive: true });
@@ -262,7 +224,6 @@ describe('Thinking Block Signatures', () => {
     })) as { sessionId: string };
     daemon.trackSession(sessionId);
 
-    // Phase 1: Establish GLM session with thinking enabled
     await sendMessage(daemon, sessionId, 'What is 17 * 23? Show your reasoning.');
     await waitForIdle(daemon, sessionId, 60000);
 
@@ -273,7 +234,6 @@ describe('Thinking Block Signatures', () => {
     await waitForJSONLFlush(filePathBefore);
     extractThinkingBlockSignatures(filePathBefore, 'GLM BEFORE switch');
 
-    // Phase 2: Switch to Anthropic sonnet (triggers thinking block stripping)
     const switchResult = (await daemon.messageHub.request('session.model.switch', {
       sessionId,
       model: 'sonnet',
@@ -283,7 +243,6 @@ describe('Thinking Block Signatures', () => {
 
     await waitForIdle(daemon, sessionId);
 
-    // Phase 3: Send message on Anthropic
     const systemInitPromise = waitForSystemInit(daemon, sessionId);
     await sendMessage(daemon, sessionId, 'Say "world" in one word.');
     const systemInit = await systemInitPromise;

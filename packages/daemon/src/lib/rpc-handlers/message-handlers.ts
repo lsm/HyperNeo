@@ -1,7 +1,3 @@
-/**
- * Message RPC Handlers
- */
-
 import type { MessageHub, ChatMessage } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
@@ -71,32 +67,24 @@ export function setupMessageHandlers(
     return sdkMessageRepo.searchMessages(params) satisfies MessageSearchResponse;
   });
 
-  // Remove large task output from a message to reduce session size
-  // This modifies the .jsonl file in ~/.claude/projects/ (SDK session storage)
-  // No SDK initialization required - only file system operations
   messageHub.onRequest('message.removeOutput', async (data) => {
     const { sessionId: targetSessionId, messageUuid } = data as {
       sessionId: string;
       messageUuid: string;
     };
 
-    // Get session metadata from database (no SDK initialization needed)
     const session = sessionManager.getSessionFromDB(targetSessionId);
 
     if (!session) {
       throw new Error('Session not found');
     }
 
-    // Try to get SDK session ID from active session if available
     let sdkSessionId: string | null = null;
     const agentSession = sessionManager.getSession(targetSessionId);
     if (agentSession) {
       sdkSessionId = agentSession.getSDKSessionId();
     }
 
-    // Remove tool_result from the .jsonl file
-    // Pass both SDK session ID and HyperNeo session ID for fallback search
-    // Use worktree path when available — SDK creates session files based on CWD
     const sdkWorkspacePath = session.worktree
       ? session.worktree.worktreePath
       : session.workspacePath;
@@ -114,11 +102,8 @@ export function setupMessageHandlers(
       throw new Error('Failed to remove output from SDK session file');
     }
 
-    // Mark output as removed in session metadata (for UI warning)
     await sessionManager.markOutputRemoved(targetSessionId, messageUuid);
 
-    // Broadcast update via state channel to refresh UI
-    // The client will reload messages after receiving this update
     messageHub.event(
       'sdk.message.updated',
       { sessionId: targetSessionId, messageUuid },
@@ -139,16 +124,15 @@ export function setupMessageHandlers(
     } = data as {
       sessionId: string;
       limit?: number;
-      before?: number; // Cursor: get messages older than this timestamp
-      since?: number; // Get messages newer than this timestamp
-      beforeRowid?: number; // Insertion-order tiebreak for same-ms pagination
+      before?: number;
+      since?: number;
+      beforeRowid?: number;
       sinceRowid?: number;
     };
 
     const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 
     if (!agentSession) {
-      // DB-only sessions (conversation sessions): read directly from DB
       if (targetSessionId.startsWith('conv:') && db) {
         const sdkMessageRepo = new SDKMessageRepository(db.getDatabase());
         const { messages: sdkMessages, hasMore } = sdkMessageRepo.getSDKMessages(
@@ -182,14 +166,12 @@ export function setupMessageHandlers(
     };
   });
 
-  // Get total message count for a session (useful for pagination UI)
   messageHub.onRequest('message.count', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 
     const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 
     if (!agentSession) {
-      // DB-only sessions (conversation sessions): count from DB
       if (targetSessionId.startsWith('conv:') && db) {
         const sdkMessageRepo = new SDKMessageRepository(db.getDatabase());
         const count = sdkMessageRepo.getSDKMessageCount(targetSessionId);
@@ -202,7 +184,6 @@ export function setupMessageHandlers(
     return { count };
   });
 
-  // Export session to markdown or JSON
   messageHub.onRequest('session.export', async (data) => {
     const { sessionId: targetSessionId, format = 'markdown' } = data as {
       sessionId: string;
@@ -215,7 +196,6 @@ export function setupMessageHandlers(
       throw new Error('Session not found');
     }
 
-    // Get all SDK messages (no limit)
     const { messages: sdkMessages } = agentSession.getSDKMessages(10000);
     const sessionData = agentSession.getSessionData();
 
@@ -226,15 +206,11 @@ export function setupMessageHandlers(
       };
     }
 
-    // Convert to markdown
     const markdown = convertToMarkdown(sessionData, sdkMessages);
     return { markdown };
   });
 }
 
-/**
- * Convert session and SDK messages to markdown format
- */
 function convertToMarkdown(
   session: {
     id: string;
@@ -244,11 +220,9 @@ function convertToMarkdown(
   },
   messages: ChatMessage[]
 ): string {
-  // Filter out HyperNeo-native action messages — they are UI prompts, not conversation content.
   const sdkOnly = messages.filter((m) => m.type !== 'hyperneo_action') as SDKMessage[];
   const lines: string[] = [];
 
-  // Header
   lines.push(`# ${session.title || 'Untitled Session'}`);
   lines.push('');
   lines.push(`**Session ID:** ${session.id}`);
@@ -258,7 +232,6 @@ function convertToMarkdown(
   lines.push('---');
   lines.push('');
 
-  // Messages
   for (const msg of sdkOnly) {
     const formatted = formatMessage(msg);
     if (formatted) {
@@ -284,9 +257,6 @@ function sanitizeTimestamp(value: unknown, fieldName: string): number | undefine
   return value;
 }
 
-/**
- * Format a single SDK message to markdown
- */
 function formatMessage(msg: SDKMessage): string | null {
   if (isSDKUserMessage(msg) || isSDKUserMessageReplay(msg)) {
     return formatUserMessage(msg);
@@ -300,13 +270,9 @@ function formatMessage(msg: SDKMessage): string | null {
     return formatResultMessage(msg);
   }
 
-  // Skip other message types (system, stream_event, tool_progress, etc.)
   return null;
 }
 
-/**
- * Format user message to markdown
- */
 function formatUserMessage(msg: Extract<SDKMessage, { type: 'user' }>): string {
   const lines: string[] = [];
   lines.push('## User');
@@ -328,9 +294,6 @@ function formatUserMessage(msg: Extract<SDKMessage, { type: 'user' }>): string {
   return lines.join('\n');
 }
 
-/**
- * Format assistant message to markdown
- */
 function formatAssistantMessage(msg: Extract<SDKMessage, { type: 'assistant' }>): string {
   const lines: string[] = [];
   lines.push('## Assistant');
@@ -364,9 +327,6 @@ function formatAssistantMessage(msg: Extract<SDKMessage, { type: 'assistant' }>)
   return lines.join('\n');
 }
 
-/**
- * Format result message to markdown
- */
 function formatResultMessage(msg: Extract<SDKMessage, { type: 'result' }>): string {
   const lines: string[] = [];
   lines.push('## Result');
@@ -376,7 +336,6 @@ function formatResultMessage(msg: Extract<SDKMessage, { type: 'result' }>): stri
     lines.push('*Query completed successfully*');
   } else {
     lines.push(`*Error: ${msg.subtype}*`);
-    // Error result messages have 'errors' array
     const errorMsg = msg as { errors?: string[] };
     if (errorMsg.errors && errorMsg.errors.length > 0) {
       lines.push('');

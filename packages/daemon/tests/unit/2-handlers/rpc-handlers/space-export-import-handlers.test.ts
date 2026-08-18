@@ -1,15 +1,3 @@
-/**
- * Space Export/Import RPC Handler Unit Tests
- *
- * Tests for:
- * - spaceExport.agents, spaceExport.workflows, spaceExport.bundle
- * - spaceImport.preview (conflict detection, validation, cross-ref checking)
- * - spaceImport.execute (all conflict resolutions, agent name→UUID mapping, node ID remapping)
- *
- * Uses in-memory SQLite with real repositories and managers so the full
- * business-logic path (including SpaceWorkflowManager validation) is exercised.
- */
-
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { MessageHub, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
@@ -28,8 +16,6 @@ import {
   type ImportExecuteResult,
 } from '../../../../src/lib/rpc-handlers/space-export-import-handlers';
 import { exportBundle } from '../../../../src/lib/space/export-format';
-
-// ─── DB schema ────────────────────────────────────────────────────────────────
 
 function createSchema(db: Database): void {
   db.exec('PRAGMA foreign_keys = ON');
@@ -138,9 +124,6 @@ function createSchema(db: Database): void {
 			FOREIGN KEY (to_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE
 		)
 	`);
-  // Minimal runs/tasks tables so the deletion-safety predicate (RFC §4 #3) has
-  // real data to query on the replace path. Only the columns hasExecutableRuns
-  // touches are needed; the full schema lives in migrations.
   db.exec(`
 		CREATE TABLE space_workflow_runs (
 			id TEXT PRIMARY KEY,
@@ -165,8 +148,6 @@ function insertSpace(db: Database, id: string, name = `Space ${id}`): void {
     `INSERT INTO spaces (id, workspace_path, name, slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
   ).run(id, `/workspace/${id}`, name, id, now, now);
 }
-
-// ─── Mock helpers ─────────────────────────────────────────────────────────────
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -236,8 +217,6 @@ async function call<T>(
   return (await handler(params, {})) as T;
 }
 
-// ─── Test setup ───────────────────────────────────────────────────────────────
-
 const SPACE_ID = 'space-1';
 const OTHER_SPACE_ID = 'space-2';
 
@@ -288,8 +267,6 @@ describe('Space Export/Import RPC Handlers', () => {
     );
   });
 
-  // ─── Handler registration ────────────────────────────────────────────────
-
   it('registers all 5 handlers', () => {
     expect(handlers.has('spaceExport.agents')).toBe(true);
     expect(handlers.has('spaceExport.workflows')).toBe(true);
@@ -297,8 +274,6 @@ describe('Space Export/Import RPC Handlers', () => {
     expect(handlers.has('spaceImport.preview')).toBe(true);
     expect(handlers.has('spaceImport.execute')).toBe(true);
   });
-
-  // ─── spaceId validation ───────────────────────────────────────────────────
 
   describe('spaceId validation', () => {
     it.each([
@@ -337,8 +312,6 @@ describe('Space Export/Import RPC Handlers', () => {
       ).rejects.toThrow('Space not found: ghost');
     });
   });
-
-  // ─── spaceExport.agents ───────────────────────────────────────────────────
 
   describe('spaceExport.agents', () => {
     it('exports all agents when no filter provided', async () => {
@@ -412,8 +385,6 @@ describe('Space Export/Import RPC Handlers', () => {
     });
   });
 
-  // ─── spaceExport.workflows ────────────────────────────────────────────────
-
   describe('spaceExport.workflows', () => {
     it('exports workflow with agentRef resolved to agent name', async () => {
       const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
@@ -432,7 +403,7 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(bundle.workflows).toHaveLength(1);
       const wf = bundle.workflows[0];
       expect(wf.name).toBe('Pipeline');
-      expect(wf.nodes[0].agents[0].agentRef).toBe('Coder'); // UUID resolved to name
+      expect(wf.nodes[0].agents[0].agentRef).toBe('Coder');
       expect(wf.nodes[0].name).toBe('Code');
     });
 
@@ -489,7 +460,6 @@ describe('Space Export/Import RPC Handlers', () => {
         spaceId: SPACE_ID,
       });
 
-      // Only Coder is referenced, Reviewer should NOT be included
       expect(bundle.agents).toHaveLength(1);
       expect(bundle.agents[0].name).toBe('Coder');
     });
@@ -520,8 +490,6 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(bundle.workflows[0].name).toBe('WF1');
     });
   });
-
-  // ─── spaceExport.bundle ───────────────────────────────────────────────────
 
   describe('spaceExport.bundle', () => {
     it('exports all agents and workflows', async () => {
@@ -573,8 +541,6 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(bundle.workflows[0].name).toBe('W1');
     });
   });
-
-  // ─── spaceImport.preview ─────────────────────────────────────────────────
 
   describe('spaceImport.preview', () => {
     it('returns validation error for invalid bundle', async () => {
@@ -662,7 +628,6 @@ describe('Space Export/Import RPC Handlers', () => {
 
     it('resolves agent ref from existing space agents', async () => {
       agentRepo.create({ spaceId: SPACE_ID, name: 'ExistingAgent' });
-      // Bundle has no agents but workflow references ExistingAgent (from target space)
       const bundle = makeBundle(
         [],
         [{ name: 'Pipeline', nodes: [{ agentRef: 'ExistingAgent', name: 'S' }] }]
@@ -688,8 +653,6 @@ describe('Space Export/Import RPC Handlers', () => {
     });
   });
 
-  // ─── spaceImport.execute ─────────────────────────────────────────────────
-
   describe('spaceImport.execute', () => {
     it('throws for invalid bundle', async () => {
       await expect(
@@ -698,10 +661,6 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('drops a legacy empty gate instead of rolling back the import', async () => {
-      // A v3 bundle carrying a legacy empty gate (no fields/script/validator/
-      // features) passes the permissive export schema but would fail validateGate
-      // at createWorkflow. The import boundary sanitizes it so the whole bundle
-      // imports instead of rolling back for one bad gate.
       const bundle = {
         version: 3,
         type: 'bundle',
@@ -828,7 +787,6 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(result.workflows).toHaveLength(1);
       expect(result.workflows[0]).toMatchObject({ name: 'Pipeline', action: 'created' });
 
-      // Verify data persisted
       const agents = agentRepo.getBySpaceId(SPACE_ID);
       const importedAgent = agents.find((a) => a.name === 'Coder');
       expect(importedAgent?.customPrompt).toBe('You code.');
@@ -842,7 +800,7 @@ describe('Space Export/Import RPC Handlers', () => {
         const existing = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
 
         const bundle = makeBundle(
-          [{ name: 'Coder', role: 'reviewer' }], // different role
+          [{ name: 'Coder', role: 'reviewer' }],
           [{ name: 'Pipeline', nodes: [{ agentRef: 'Coder', name: 'Code' }] }]
         );
 
@@ -858,10 +816,8 @@ describe('Space Export/Import RPC Handlers', () => {
           id: existing.id,
         });
 
-        // Agent should NOT have changed (skipped)
         agentRepo.getById(existing.id)!;
 
-        // Workflow should still be importable and reference the existing agent UUID
         expect(result.workflows[0].action).toBe('created');
         const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
         expect(wf.nodes[0].agents![0].agentId).toBe(existing.id);
@@ -894,7 +850,6 @@ describe('Space Export/Import RPC Handlers', () => {
           id: existingWf.id,
         });
 
-        // Only one workflow should exist (no duplicate)
         const all = workflowRepo.listWorkflows(SPACE_ID);
         expect(all).toHaveLength(1);
       });
@@ -915,7 +870,6 @@ describe('Space Export/Import RPC Handlers', () => {
 
         expect(result.agents[0]).toMatchObject({ name: 'Coder (2)', action: 'renamed' });
 
-        // Both old and new should exist
         const agents = agentRepo.getBySpaceId(SPACE_ID);
         expect(agents.map((a) => a.name)).toContain('Coder');
         const renamedAgent = agents.find((a) => a.name === 'Coder (2)');
@@ -1017,9 +971,6 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('clears the session provider when a replace import drops the override (P2)', async () => {
-        // A bundle without a provider field replaces the agent with
-        // provider: null — the session's persisted provider must be dropped or
-        // wake-time retention would restore the stale override.
         const runtimeService = {
           clearLongTermAgentSessionProvider: mock(async () => {}),
         };
@@ -1192,9 +1143,6 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('SKIPS replace when the existing workflow has a non-archived run (RFC §4 #3)', async () => {
-        // Replacing would delete the definition and orphan the run's pinned
-        // version. Import must keep the existing workflow (and its name slot),
-        // skip creating the imported copy, and warn — not fail the whole import.
         const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
         const existing = workflowManager.createWorkflow({
           spaceId: SPACE_ID,
@@ -1203,7 +1151,6 @@ describe('Space Export/Import RPC Handlers', () => {
           transitions: [],
           completionAutonomyLevel: 3,
         });
-        // Seed a run with a non-archived (executable) task for the existing workflow.
         const now = Date.now();
         const runId = 'run-with-live-task';
         (db as unknown as { prepare: (s: string) => { run: (...a: unknown[]) => void } })
@@ -1226,18 +1173,14 @@ describe('Space Export/Import RPC Handlers', () => {
           conflictResolution: { agents: { A: 'skip' }, workflows: { Pipeline: 'replace' } },
         });
 
-        // Skipped (kept existing), not replaced.
         expect(result.workflows[0]).toMatchObject({ name: 'Pipeline', action: 'skipped' });
         expect(result.warnings.some((w) => w.includes('not archived'))).toBe(true);
-        // The existing workflow is untouched (still the old node, still one row).
         const all = workflowRepo.listWorkflows(SPACE_ID);
         expect(all).toHaveLength(1);
         expect(all[0].id).toBe(existing.id);
         expect(all[0].nodes[0].name).toBe('OldStep');
       });
     });
-
-    // ─── Cross-reference mapping ───────────────────────────────────────
 
     describe('cross-reference mapping', () => {
       it('resolves agent name→UUID from bundle agents', async () => {
@@ -1259,7 +1202,6 @@ describe('Space Export/Import RPC Handlers', () => {
       it('resolves agent name→UUID from existing space agents (not in bundle)', async () => {
         const existing = agentRepo.create({ spaceId: SPACE_ID, name: 'LocalAgent' });
 
-        // Bundle has workflow referencing LocalAgent but does not include LocalAgent as agent
         const bundle = makeBundle(
           [],
           [{ name: 'Pipeline', nodes: [{ agentRef: 'LocalAgent', name: 'S' }] }]
@@ -1277,7 +1219,6 @@ describe('Space Export/Import RPC Handlers', () => {
       it('prefers bundle agent over existing space agent of same name', async () => {
         const existingAgent = agentRepo.create({ spaceId: SPACE_ID, name: 'Agent' });
 
-        // Bundle includes Agent → will be renamed (conflict resolution: rename)
         const bundle = makeBundle(
           [{ name: 'Agent', role: 'reviewer' }],
           [{ name: 'Pipeline', nodes: [{ agentRef: 'Agent', name: 'S' }] }]
@@ -1289,7 +1230,6 @@ describe('Space Export/Import RPC Handlers', () => {
           conflictResolution: { agents: { Agent: 'skip' } },
         });
 
-        // When Agent is skipped, bundle cross-ref maps to the existing agent UUID
         const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
         expect(wf.nodes[0].agents![0].agentId).toBe(existingAgent.id);
       });
@@ -1314,11 +1254,9 @@ describe('Space Export/Import RPC Handlers', () => {
         });
 
         const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-        // Node should have been imported with a fresh UUID
         const codeStep = wf.nodes.find((s) => s.name === 'Code')!;
         expect(codeStep).toBeTruthy();
         expect(codeStep.id).toMatch(/^[0-9a-f-]{36}$/i);
-        // startNodeId should reference the Code node's UUID
         expect(wf.startNodeId).toBe(codeStep.id);
       });
 
@@ -1334,14 +1272,11 @@ describe('Space Export/Import RPC Handlers', () => {
         });
 
         const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-        // Step ID should be a UUID (not 'MyStep' or any string from the bundle)
         const stepId = wf.nodes[0].id;
         expect(stepId).toMatch(/^[0-9a-f-]{36}$/i);
         expect(stepId).not.toBe('MyStep');
       });
     });
-
-    // ─── Multi-agent workflow ──────────────────────────────────────────
 
     it('imports workflow with multiple steps', async () => {
       const bundle = makeTwoStepBundle();
@@ -1372,12 +1307,8 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(result.warnings).toHaveLength(0);
     });
 
-    // ─── Transaction atomicity ─────────────────────────────────────────
-
     describe('transaction atomicity', () => {
       it('rolls back agent creation when workflow import fails (unresolved agent ref)', async () => {
-        // Bundle: first workflow imports fine, second has an unresolved agent ref.
-        // After failure, neither agent nor workflow should exist.
         const bundle = {
           version: 1,
           type: 'bundle',
@@ -1400,14 +1331,11 @@ describe('Space Export/Import RPC Handlers', () => {
           call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
         ).rejects.toThrow('unresolved agent reference');
 
-        // Nothing should have been committed — NewAgent must not exist
         const agents = agentRepo.getBySpaceId(SPACE_ID);
         expect(agents.find((a) => a.name === 'NewAgent')).toBeUndefined();
       });
 
       it('rolls back workflow deletion when replacement creation fails', async () => {
-        // A workflow that exists in the target space should NOT be deleted
-        // if the replacement creation fails.
         const existingAgent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
         const existingWf = workflowManager.createWorkflow({
           spaceId: SPACE_ID,
@@ -1417,7 +1345,6 @@ describe('Space Export/Import RPC Handlers', () => {
           completionAutonomyLevel: 3,
         });
 
-        // Bundle: replace "ToReplace" but the replacement references a ghost agent
         const bundle = {
           version: 1,
           type: 'bundle',
@@ -1444,14 +1371,11 @@ describe('Space Export/Import RPC Handlers', () => {
           })
         ).rejects.toThrow('unresolved agent reference');
 
-        // The original workflow must still exist (deletion was rolled back)
         const wf = workflowRepo.getWorkflow(existingWf.id);
         expect(wf).not.toBeNull();
         expect(wf!.name).toBe('ToReplace');
       });
     });
-
-    // ─── replace agent field clearing ─────────────────────────────────
 
     describe('replace agent: unset fields are cleared', () => {
       it('clears model when not present in exported agent', async () => {
@@ -1462,7 +1386,6 @@ describe('Space Export/Import RPC Handlers', () => {
           model: 'old-model',
         });
 
-        // Exported agent has no model field
         const bundle = makeBundle([{ name: 'Coder', role: 'reviewer' }], []);
 
         await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -1471,7 +1394,6 @@ describe('Space Export/Import RPC Handlers', () => {
           conflictResolution: { agents: { Coder: 'replace' } },
         });
 
-        // model should be cleared (not preserved from the existing agent)
         const agent = agentRepo.getById(existing.id)!;
         expect(agent.model).toBeUndefined();
       });
@@ -1547,8 +1469,6 @@ describe('Space Export/Import RPC Handlers', () => {
     });
   });
 
-  // ─── Event emission ──────────────────────────────────────────────────────
-
   describe('event emission after spaceImport.execute', () => {
     it('emits spaceAgent.created for each newly created agent', async () => {
       const bundle = makeBundle([{ name: 'NewAgent', role: 'coder' }], []);
@@ -1558,7 +1478,6 @@ describe('Space Export/Import RPC Handlers', () => {
         bundle,
       });
 
-      // Allow micro-task queue to flush (emit is async)
       await Promise.resolve();
 
       const agentCreated = emittedEvents.filter((e) => e.name === 'spaceAgent.created');
@@ -1619,7 +1538,6 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('emits spaceWorkflow.deleted (old id) + spaceWorkflow.created (new id) for replaced workflow', async () => {
-      // Create an agent and workflow that will be replaced
       const existingAgent = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
       const existingAgentId = existingAgent.id;
       const existingWf = workflowManager.createWorkflow({
@@ -1672,8 +1590,6 @@ describe('Space Export/Import RPC Handlers', () => {
     });
   });
 });
-
-// ─── Multi-agent step import tests ────────────────────────────────────────────
 
 describe('multi-agent step import', () => {
   let db: Database;
@@ -1750,11 +1666,9 @@ describe('multi-agent step import', () => {
     const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
     const step = wf.nodes[0];
 
-    // Multi-agent step should have agents array, not single agentId
     expect(step.agents).toHaveLength(2);
     expect(step.agentId).toBeUndefined();
 
-    // Each agent should be resolved to its UUID
     const coderAgent = agentRepo.getById(result.agents.find((a) => a.name === 'Coder')!.id)!;
     const reviewerAgent = agentRepo.getById(result.agents.find((a) => a.name === 'Reviewer')!.id)!;
     const agentIds = step.agents!.map((a) => a.agentId);
@@ -1843,7 +1757,6 @@ describe('multi-agent step import', () => {
     expect(wf.channels).toHaveLength(1);
     expect(wf.channels![0].from).toBe('coder');
     expect(wf.channels![0].to).toBe('reviewer');
-    // direction field removed from WorkflowChannel
     expect(wf.channels![0].label).toBe('feedback');
   });
 
@@ -1859,7 +1772,7 @@ describe('multi-agent step import', () => {
                 name: 'Parallel',
                 agents: [
                   { agentRef: 'Coder', name: 'coder' },
-                  { agentRef: 'GhostAgent', name: 'ghost' }, // not in bundle or space
+                  { agentRef: 'GhostAgent', name: 'ghost' },
                 ],
               },
             },
@@ -1912,14 +1825,10 @@ describe('multi-agent step import', () => {
 
     const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
     const step = wf.nodes[0];
-    // Single-agent step now uses agents[] with one entry
     const coderId = result.agents[0].id;
     expect(step.agents).toHaveLength(1);
     expect(step.agents![0].agentId).toBe(coderId);
   });
-
-  // This test was removed because validateChannels no longer does agent-name-to-agent lookup.
-  // It only validates structure (direction, non-empty from/to, and gate conditions).
 
   it('preview: wildcard channel role is always valid', async () => {
     const bundle = makeMultiAgentBundle(
@@ -1944,11 +1853,8 @@ describe('multi-agent step import', () => {
       bundle,
     });
 
-    // '*' wildcard should not produce a channel role validation error
     expect(result.validationErrors.filter((e) => e.includes('channel'))).toHaveLength(0);
   });
-
-  // This test was removed because validateChannels no longer does agent-name-to-agent lookup.
 
   it('resolves multi-agent step refs from existing space agents', async () => {
     const existing1 = agentRepo.create({ spaceId: SPACE_ID, name: 'LocalCoder' });
@@ -1958,7 +1864,6 @@ describe('multi-agent step import', () => {
       role: 'reviewer',
     });
 
-    // Bundle has no agents — refs resolve from existing space agents
     const bundle = makeMultiAgentBundle(
       [],
       [
@@ -1990,8 +1895,6 @@ describe('multi-agent step import', () => {
     expect(agentIds).toContain(existing2.id);
   });
 });
-
-// ─── Bundle builder helpers ───────────────────────────────────────────────────
 
 type BundleAgent = {
   name: string;
@@ -2028,7 +1931,6 @@ function makeBundle(agents: BundleAgent[], workflows: BundleWorkflow[]): object 
       version: 1,
       type: 'workflow',
       name: w.name,
-      // Each single-agent node wraps the agentRef in an agents array
       nodes: w.nodes.map((s) => ({
         agents: [
           {
@@ -2117,8 +2019,6 @@ function makeTwoStepBundle(): object {
   };
 }
 
-// ─── Multi-agent bundle builder helpers ──────────────────────────────────────
-
 type AgentPromptOverride = { value: string };
 
 type MultiAgentStepEntry =
@@ -2140,10 +2040,6 @@ type MultiAgentStepEntry =
       };
     };
 
-// End nodes must have exactly one agent. Tests below construct workflows whose
-// last meaningful node is multi-agent; we auto-append a synthetic single-agent
-// end node referencing the first agent of the last node so the workflow passes
-// validation without each test author having to wire it up.
 const SYNTHETIC_END_NODE_NAME = '__synthetic_end__';
 
 function makeMultiAgentBundle(
@@ -2163,7 +2059,6 @@ function makeMultiAgentBundle(
       name: a.name,
     })),
     workflows: workflows.map((w) => {
-      // Extract channels from multiAgentSteps in this workflow
       const workflowChannels: Array<{
         from: string;
         to: string | string[];
@@ -2241,12 +2136,6 @@ function makeSingleAgentBundle(agentName: string, _agentRole: string, stepName: 
   };
 }
 
-// ─── Full export→import round-trip tests ────────────────────────────────────
-//
-// These tests use exportBundle() to produce a real exported bundle from
-// SpaceWorkerAgent/SpaceWorkflow objects and then feed it into spaceImport.execute,
-// verifying that the imported workflow is equivalent to the original.
-
 describe('full export→import round-trip', () => {
   let db: Database;
   let agentRepo: SpaceAgentRepository;
@@ -2293,7 +2182,6 @@ describe('full export→import round-trip', () => {
   });
 
   it('single-agent workflow round-trip: export → import produces equivalent workflow', async () => {
-    // Build source agents and workflow
     const coderAgent: SpaceWorkerAgent = {
       id: 'src-agent-1',
       spaceId: 'other-space',
@@ -2336,13 +2224,11 @@ describe('full export→import round-trip', () => {
     expect(result.workflows[0].name).toBe('Code Pipeline');
     expect(result.workflows[0].action).toBe('created');
 
-    // Verify imported workflow structure
     const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
     expect(importedWf.name).toBe('Code Pipeline');
     expect(importedWf.description).toBe('A simple coder workflow');
     expect(importedWf.tags).toEqual(['coding']);
 
-    // Step resolved to correct agentId UUID (new, not source UUID)
     const importedAgent = agentRepo.getById(result.agents[0].id)!;
     expect(importedAgent.name).toBe('My Coder');
     expect(importedAgent.customPrompt).toBe('You write code.');
@@ -2351,11 +2237,8 @@ describe('full export→import round-trip', () => {
     const step = importedWf.nodes[0];
     expect(step.name).toBe('Code');
     expect(step.agents![0].agentId).toBe(importedAgent.id);
-    // Must NOT be the original source UUID
     expect(step.agents![0].agentId).not.toBe('src-agent-1');
-    // node.instructions removed from WorkflowNode schema
 
-    // Events emitted for real-time frontend updates
     const agentCreatedEvents = emittedEvents.filter((e) => e.name === 'spaceAgent.created');
     const wfCreatedEvents = emittedEvents.filter((e) => e.name === 'spaceWorkflow.created');
     expect(agentCreatedEvents).toHaveLength(1);
@@ -2403,8 +2286,6 @@ describe('full export→import round-trip', () => {
             },
           ],
         },
-        // Synthetic single-agent end node — end nodes own the workflow
-        // completion signal and must have exactly one agent.
         {
           id: 'step-end',
           name: 'End',
@@ -2441,10 +2322,8 @@ describe('full export→import round-trip', () => {
     const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
     const importedStep = importedWf.nodes[0];
 
-    // Multi-agent step preserved
     expect(importedStep.agents).toHaveLength(2);
 
-    // AgentIds resolved to new UUIDs (not source UUIDs)
     const coderImported = agentRepo.getById(
       result.agents.find((a) => a.name === 'Senior Coder')!.id
     )!;
@@ -2457,7 +2336,6 @@ describe('full export→import round-trip', () => {
     expect(importedAgentIds).not.toContain('src-coder');
     expect(importedAgentIds).not.toContain('src-reviewer');
 
-    // Per-agent customPrompt preserved (as override objects)
     const coderEntry = importedStep.agents!.find((a) => a.agentId === coderImported.id)!;
     const reviewerEntry = importedStep.agents!.find((a) => a.agentId === reviewerImported.id)!;
     expect((coderEntry.customPrompt as any)?.value).toBe('Implement the feature');
@@ -2465,14 +2343,9 @@ describe('full export→import round-trip', () => {
     expect((reviewerEntry.customPrompt as any)?.value).toBe('Review thoroughly');
     expect(reviewerEntry.name).toBe('reviewer');
 
-    // Shared step instructions preserved
-    // node.instructions removed from WorkflowNode schema
-
-    // Channels preserved at workflow level (role strings, not UUIDs)
     expect(importedWf.channels).toHaveLength(1);
     expect(importedWf.channels![0].from).toBe('coder');
     expect(importedWf.channels![0].to).toBe('reviewer');
-    // direction field removed from WorkflowChannel schema
     expect(importedWf.channels![0].label).toBe('hand-off');
 
     expect(importedWf.hooks).toEqual(workflow.hooks);
@@ -2489,7 +2362,7 @@ describe('full export→import round-trip', () => {
           nodes: [
             {
               name: 'Bad Node',
-              agents: [{ agentRef: 'Coder', name: '' }], // empty name — must be rejected
+              agents: [{ agentRef: 'Coder', name: '' }],
             },
           ],
           transitions: [],
@@ -2585,7 +2458,6 @@ describe('full export→import round-trip', () => {
     const ch = importedWf.channels![0];
     expect(ch.from).toBe('alpha');
     expect(ch.to).toBe('beta');
-    // direction field removed from WorkflowChannel
   });
 
   it('channel topology round-trip: fan-out (array `to`) preserved', async () => {
@@ -2653,7 +2525,6 @@ describe('full export→import round-trip', () => {
     const ch = importedWf.channels![0];
     expect(ch.from).toBe('hub');
     expect(ch.to).toEqual(['spoke1', 'spoke2']);
-    // direction field removed from WorkflowChannel
   });
 
   it('channel topology round-trip: wildcard (*) preserved', async () => {
@@ -2696,7 +2567,6 @@ describe('full export→import round-trip', () => {
     const ch = importedWf.channels![0];
     expect(ch.from).toBe('*');
     expect(ch.to).toBe('*');
-    // direction field removed from WorkflowChannel
   });
 
   it('mixed single/multi-agent workflow round-trip preserves both step types', async () => {
@@ -2767,28 +2637,21 @@ describe('full export→import round-trip', () => {
     });
 
     const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-    // Two real steps + synthetic single-agent end node.
     expect(importedWf.nodes).toHaveLength(3);
 
-    // Step 0: single-agent (plan)
     const planStep = importedWf.nodes.find((s) => s.name === 'Plan')!;
     expect(planStep.agents).toHaveLength(1);
-    // node.instructions removed from WorkflowNode schema
 
-    // Step 1: multi-agent (implement and review)
     const collabStep = importedWf.nodes.find((s) => s.name === 'Implement and Review')!;
     expect(collabStep.agents).toHaveLength(2);
     expect(importedWf.channels).toHaveLength(1);
-    // direction field removed from WorkflowChannel
 
     expect(importedWf.startNodeId).toBe(planStep.id);
 
-    // Tags preserved
     expect(importedWf.tags).toEqual(['mixed']);
   });
 
   it('single-agent workflow export → import via exportBundle', async () => {
-    // Simulates exporting a single-agent workflow using exportBundle and importing it back
     const agentSrc: SpaceWorkerAgent = {
       id: 'src-legacy',
       spaceId: 'other-space',
@@ -2816,9 +2679,7 @@ describe('full export→import round-trip', () => {
 
     const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
     const step = importedWf.nodes[0];
-    // Single-agent step uses agents[] with one entry
     expect(step.agents).toHaveLength(1);
-    // Must map to the imported agent's UUID, not the original
     const importedAgentId = result.agents[0].id;
     expect(step.agents![0].agentId).toBe(importedAgentId);
   });
@@ -2863,7 +2724,6 @@ describe('full export→import round-trip', () => {
       createdAt: 1000,
       updatedAt: 2000,
     };
-    // Deliberately reference an agent that is NOT in the bundle
     const wfSrc: SpaceWorkflow = {
       id: 'src-wf-err',
       spaceId: 'other-space',
@@ -2874,7 +2734,7 @@ describe('full export→import round-trip', () => {
           name: 'Parallel',
           agents: [
             { agentId: 'src-known', name: 'coder' },
-            { agentId: 'src-ghost', name: 'ghost' }, // not in bundle
+            { agentId: 'src-ghost', name: 'ghost' },
           ],
         },
       ],
@@ -2884,26 +2744,17 @@ describe('full export→import round-trip', () => {
       updatedAt: 2000,
     };
 
-    // Only include known agent in export, so ghost UUID falls back to UUID string
     const bundle = exportBundle([agentSrc], [wfSrc], 'Bad Export');
 
-    // The ghost agent's UUID (src-ghost) will be used as the agentRef in the export
-    // since it cannot be resolved to a name. On import it will be an unknown ref.
     await expect(
       call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
     ).rejects.toThrow('unresolved agent reference');
 
-    // Transaction rolled back: no agents or workflows created
     expect(agentRepo.getBySpaceId(SPACE_ID)).toHaveLength(0);
     expect(workflowRepo.listWorkflows(SPACE_ID)).toHaveLength(0);
   });
 
-  // This test was removed because validateChannels no longer does agent-name-to-agent lookup.
-
-  // This test was removed because validateChannels no longer does agent-name-to-agent lookup.
-
   it('surfaces a warning when imported workflow handle conflicts with an existing space handle', async () => {
-    // Create a workflow that already exists in the target space with a known handle.
     const existingAgent = agentRepo.create({
       spaceId: SPACE_ID,
       name: 'Existing Coder',
@@ -2918,10 +2769,8 @@ describe('full export→import round-trip', () => {
       startNodeId: 'n1',
       completionAutonomyLevel: 3,
     });
-    // Manually set the existing workflow's handle so we know the exact value.
     db.prepare(`UPDATE space_workflows SET handle = 'taken-handle' WHERE id = ?`).run(existing.id);
 
-    // Build an import bundle whose workflow uses the same handle.
     const bundleAgent: SpaceWorkerAgent = {
       id: 'bundle-agent',
       spaceId: 'src-space',
@@ -2950,14 +2799,12 @@ describe('full export→import round-trip', () => {
       bundle,
     });
 
-    // Import should succeed (handle is auto-generated), but a warning must be present.
     expect(result.workflows).toHaveLength(1);
     expect(result.workflows[0].name).toBe('New Workflow');
     expect(result.warnings.length).toBeGreaterThan(0);
     expect(result.warnings.some((w) => w.includes('taken-handle'))).toBe(true);
     expect(result.warnings.some((w) => /already exists/i.test(w))).toBe(true);
 
-    // The imported workflow should have a different (auto-generated) handle.
     const imported = workflowRepo.getWorkflow(result.workflows[0].id);
     expect(imported?.handle).not.toBe('taken-handle');
   });

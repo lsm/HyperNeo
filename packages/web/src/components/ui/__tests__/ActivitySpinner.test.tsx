@@ -1,7 +1,3 @@
-/**
- * Tests for ActivitySpinner component.
- */
-
 import { cleanup, render } from '@testing-library/preact';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ActivitySpinner } from '../ActivitySpinner';

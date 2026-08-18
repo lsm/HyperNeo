@@ -1,10 +1,3 @@
-/**
- * RejectModal Component
- *
- * A modal for rejecting task reviews with required feedback.
- * Built on top of Modal component with a text area for feedback input.
- */
-
 import { useState } from 'preact/hooks';
 import { Modal } from './Modal.tsx';
 
@@ -49,10 +42,8 @@ export function RejectModal({
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title={title} size="md" showCloseButton={true}>
       <div class="space-y-4">
-        {/* Message */}
         <p class="text-gray-300 text-sm leading-relaxed">{message}</p>
 
-        {/* Feedback input */}
         <textarea
           class="w-full h-32 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
           placeholder={placeholder}
@@ -62,7 +53,6 @@ export function RejectModal({
           autoFocus
         />
 
-        {/* Actions */}
         <div class="flex items-center justify-end gap-3 pt-2">
           <button
             type="button"

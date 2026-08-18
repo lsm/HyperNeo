@@ -611,11 +611,6 @@ describe('SpaceGoalService', () => {
     expect(edited.completedAt).toBe(completedAt);
   });
 
-  // ── In-place recurring schedule editing (cadence / add / remove) ─────────
-  // These cover the MCP/UI parity gap: changing a recurring goal's check-in
-  // cron/timezone in place without recreating the goal (which would change
-  // identity and risk detaching activeTaskId/history/Forge links).
-
   function pendingFireJobCount(scheduleId: string): number {
     const row = db
       .prepare(
@@ -641,18 +636,15 @@ describe('SpaceGoalService', () => {
 
     const updated = service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
 
-    // Identity, linkage, and run pointers preserved.
     expect(updated.id).toBe(goal.id);
     expect(updated.taskScheduleId).toBe(scheduleId);
     expect(updated.activeTaskId).toBeNull();
     expect(updated.lastTaskId).toBeNull();
     expect(updated.pendingNextRun).toBe(false);
-    // Cadence + nextCheckInAt recomputed (hourly ⇒ within the next hour).
     const schedule = scheduleRepo.getById(scheduleId);
     expect(schedule?.cronExpression).toBe('0 * * * *');
     expect(updated.nextCheckInAt).not.toBeNull();
     expect((updated.nextCheckInAt as number) - Date.now()).toBeLessThan(60 * 60 * 1000 + 5000);
-    // Exactly one pending fire job; the old one was cancelled.
     expect(pendingFireJobCount(scheduleId)).toBe(1);
     expect(schedule?.pendingJobId).toBeString();
     expect(schedule?.pendingJobId).not.toBe(originalJobId);
@@ -690,14 +682,12 @@ describe('SpaceGoalService', () => {
 
     const updated = service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
 
-    // Schedule config updated but stays paused — no stale job, no fire yet.
     const schedule = scheduleRepo.getById(scheduleId);
     expect(schedule?.status).toBe('paused');
     expect(schedule?.cronExpression).toBe('0 * * * *');
     expect(updated.nextCheckInAt).toBeNull();
     expect(pendingFireJobCount(scheduleId)).toBe(0);
 
-    // Resuming recomputes the next run from the NEW cron.
     const resumed = service.resumeGoal(goal.id);
     expect(resumed.nextCheckInAt).not.toBeNull();
     expect(scheduleRepo.getById(scheduleId)?.status).toBe('active');
@@ -712,9 +702,6 @@ describe('SpaceGoalService', () => {
       checkInCronExpression: '0 9 * * 1',
     });
     const scheduleId = goal.taskScheduleId as string;
-    // The schedule was paused via the Scheduled tab while the goal stayed
-    // active (status drift). Editing the cron must not advertise a stale
-    // nextCheckInAt for a schedule that will not fire.
     scheduleService.pauseSchedule(scheduleId);
     expect(goal.status).toBe('active');
 
@@ -734,10 +721,7 @@ describe('SpaceGoalService', () => {
       checkInCronExpression: '0 9 * * 1',
     });
     const scheduleId = goal.taskScheduleId as string;
-    service.pauseGoal(goal.id); // goal + schedule paused
-    // The schedule was manually resumed via the Scheduled tab while the goal
-    // stayed paused (status drift). A cron edit must not advertise a fire that
-    // can't claim a goal task; reconcile the schedule back to paused.
+    service.pauseGoal(goal.id);
     scheduleService.resumeSchedule(scheduleId);
     expect(scheduleRepo.getById(scheduleId)?.status).toBe('active');
 
@@ -796,7 +780,6 @@ describe('SpaceGoalService', () => {
     });
     const { task } = service.createImmediateTask(goal.id);
     expect(task).not.toBeNull();
-    // A second trigger while an active task exists queues a pending next run.
     const queued = service.createImmediateTask(goal.id);
     expect(queued.queued).toBe(true);
 
@@ -806,7 +789,6 @@ describe('SpaceGoalService', () => {
 
     const updated = service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
 
-    // Cadence changed; run state and identity untouched.
     expect(updated.activeTaskId).toBe(task!.id);
     expect(updated.pendingNextRun).toBe(true);
     expect(updated.taskScheduleId).toBe(goal.taskScheduleId);
@@ -839,7 +821,6 @@ describe('SpaceGoalService', () => {
     expect(() => service.updateGoal(goal.id, { checkInCronExpression: 'not a cron' })).toThrow(
       /cron/i
     );
-    // Original schedule untouched after the failed edit.
     expect(scheduleRepo.getById(goal.taskScheduleId as string)?.cronExpression).toBe('0 9 * * 1');
   });
 
@@ -851,8 +832,6 @@ describe('SpaceGoalService', () => {
       checkInCronExpression: '0 9 * * 1',
     });
 
-    // A raw payload like checkInCronExpression: false / 0 must be a validation
-    // error, not an accidental schedule removal.
     expect(() =>
       service.updateGoal(goal.id, {
         checkInCronExpression: false as unknown as string,
@@ -870,8 +849,6 @@ describe('SpaceGoalService', () => {
       checkInTimezone: 'Asia/Tokyo',
     });
 
-    // A null timezone must be rejected — it would persist SQL NULL (read as
-    // UTC) while next-run validation used the existing timezone.
     expect(() =>
       service.updateGoal(goal.id, {
         checkInTimezone: null as unknown as string,
@@ -908,9 +885,6 @@ describe('SpaceGoalService', () => {
     expect(scheduleRepo.getById(scheduleId)?.status).toBe('active');
     expect(pendingFireJobCount(scheduleId)).toBe(1);
 
-    // active→paused combined with an invalid cron must fail atomically: the
-    // schedule must NOT be left paused/dequeued (which would silently disable
-    // future check-ins while the goal row stays active).
     expect(() =>
       service.updateGoal(goal.id, { status: 'paused', checkInCronExpression: 'bad cron' })
     ).toThrow(/cron/i);
@@ -929,9 +903,6 @@ describe('SpaceGoalService', () => {
       type: 'recurring',
       checkInCronExpression: '0 9 * * 1',
     });
-    // Simulate a concurrent fire winning deleteSchedule's pending-job CAS: the
-    // schedule stays alive with a new pending job, so removal must NOT clear
-    // the goal link (which would orphan the active schedule).
     const spy = spyOn(scheduleService, 'deleteSchedule').mockReturnValue(false);
     try {
       expect(() => service.updateGoal(goal.id, { checkInCronExpression: null })).toThrow(
@@ -952,10 +923,6 @@ describe('SpaceGoalService', () => {
       type: 'recurring',
       checkInCronExpression: '0 9 * * 1',
     });
-    // Simulate the Scheduled-tab delete that removes the schedule but leaves
-    // goal.taskScheduleId dangling. An explicit remove must clear the stale
-    // link (the requested end state is already satisfied), not report a
-    // concurrency error.
     scheduleRepo.delete(goal.taskScheduleId as string);
 
     const updated = service.updateGoal(goal.id, { checkInCronExpression: null });
@@ -972,7 +939,6 @@ describe('SpaceGoalService', () => {
       checkInCronExpression: '0 9 * * 1',
     });
     const staleId = goal.taskScheduleId as string;
-    // Simulate the Scheduled-tab delete that orphans the goal's taskScheduleId.
     scheduleRepo.delete(staleId);
 
     const updated = service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
@@ -999,8 +965,6 @@ describe('SpaceGoalService', () => {
     const events = service.listGoalEvents(goal.id);
     const last = events[0];
     expect(last?.eventType).toBe('updated');
-    // nextCheckInAt is null on both sides for a paused goal, so the cadence
-    // fields are what make the change visible in the audit diff.
     expect(last?.diff?.checkInCronExpression).toBeDefined();
     expect((last?.diff?.checkInCronExpression as { previous: string }).previous).toBe('0 9 * * 1');
     expect((last?.diff?.checkInCronExpression as { current: string }).current).toBe('0 * * * *');

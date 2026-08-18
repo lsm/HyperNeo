@@ -1,15 +1,3 @@
-/**
- * SpaceTaskRepository — `approved` status + post_approval_* round-trip tests.
- *
- * PR 1/5 of the task-agent-as-post-approval-executor refactor. See
- * `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
- * §1.1.
- *
- * Covers the acceptance criterion "A task can be written to DB with
- * `status='approved'` and the new post-approval columns; selecting it back
- * returns the same data."
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';

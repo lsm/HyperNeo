@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for useSendMessage Hook
- *
- * Tests message sending with timeout, validation, and error handling.
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/preact';
@@ -11,7 +6,6 @@ import { signal } from '@preact/signals';
 import type { Session } from '@hyperneo/shared';
 import { useSendMessage } from '../useSendMessage.ts';
 
-// Mock connection state
 const mockConnectionState = signal<'connected' | 'disconnected' | 'connecting'>('connected');
 
 vi.mock('../../lib/state', () => ({
@@ -22,7 +16,6 @@ vi.mock('../../lib/state', () => ({
   },
 }));
 
-// Mock the connection manager
 const mockRequest = vi.fn();
 const mockGetHubIfConnected = vi.fn();
 
@@ -32,7 +25,6 @@ vi.mock('../../lib/connection-manager', () => ({
   },
 }));
 
-// Mock toast
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 const mockToastInfo = vi.fn();
@@ -411,7 +403,6 @@ describe('useSendMessage', () => {
       });
 
       expect(onSendStart).toHaveBeenCalled();
-      // Hub disappeared mid-send - message is queued for retry
       expect(mockToastInfo).toHaveBeenCalledWith('Message queued — will send when reconnected.');
       expect(onSendComplete).toHaveBeenCalled();
     });
@@ -494,7 +485,6 @@ describe('useSendMessage', () => {
         result.current.sendMessage('Hello');
       });
 
-      // Advance timer to trigger timeout (15 seconds)
       await act(async () => {
         vi.advanceTimersByTime(15000);
       });
@@ -503,7 +493,6 @@ describe('useSendMessage', () => {
       expect(onError).toHaveBeenCalledWith('Message send timed out.');
       expect(mockToastError).toHaveBeenCalledWith('Message send timed out.');
 
-      // Resolve the promise to clean up
       resolveCall!({});
     });
 
@@ -525,12 +514,10 @@ describe('useSendMessage', () => {
         await result.current.sendMessage('Hello');
       });
 
-      // Advance timer past timeout
       await act(async () => {
         vi.advanceTimersByTime(20000);
       });
 
-      // Error should not have been called because timeout was cleared
       expect(onError).not.toHaveBeenCalled();
     });
   });
@@ -617,7 +604,6 @@ describe('useSendMessage', () => {
         await result.current.sendMessage('Hello');
       });
 
-      // Null session doesn't have status 'archived', so it should proceed
       expect(onSendStart).toHaveBeenCalled();
     });
   });
@@ -664,7 +650,6 @@ describe('useSendMessage', () => {
         await result.current.sendMessage('  Hello  ');
       });
 
-      // Message with whitespace around it should still be sent
       expect(onSendStart).toHaveBeenCalled();
       expect(mockRequest).toHaveBeenCalled();
     });

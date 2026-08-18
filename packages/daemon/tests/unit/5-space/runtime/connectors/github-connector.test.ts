@@ -1,13 +1,3 @@
-/**
- * github connector op unit tests (epic #2299; promoted from the #2300 spike
- * in P2 #2302).
- *
- * Proves the L2 connector wraps `gh` correctly: each op returns the right
- * `ConnectorOutcome` for merged/open/conflict/UNKNOWN/rate-limit, review
- * threads compose into readiness, and reactions normalise + freshness-filter.
- * Mocked spawn — no real `gh` calls.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { createGithubConnector } from '../../../../../src/lib/space/runtime/connectors/github-connector';
 import type { ConnectorContext } from '../../../../../src/lib/space/runtime/connectors/connector';
@@ -24,13 +14,11 @@ function streamFromString(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-/** Build a mock spawn that returns a sequence of `{ stdout, stderr, exitCode }`. */
 function mockSpawn(
   results: Array<{ stdout: string; stderr: string; exitCode: number }>
 ): typeof Bun.spawn {
   let i = 0;
   return ((cmd: string[]) => {
-    // Disregard cmd; serve the next queued result.
     const result = results[i++] ?? { stdout: '', stderr: '', exitCode: 1 };
     return {
       stdout: streamFromString(result.stdout),
@@ -42,8 +30,6 @@ function mockSpawn(
   }) as unknown as typeof Bun.spawn;
 }
 
-/** Like mockSpawn, but also records each invocation's argv (for assert on
- *  pagination cursor binding etc.). */
 function capturingMockSpawn(
   results: Array<{ stdout: string; stderr: string; exitCode: number }>,
   calls: string[][]
@@ -122,7 +108,6 @@ describe('github connector.getPr', () => {
 
   test('rate-limit stderr → retryable outcome', async () => {
     const conn = createGithubConnector(
-      // First call: rate-limited pr view. Second call: the /rate_limit probe.
       mockSpawn([
         {
           stdout: '',
@@ -140,7 +125,6 @@ describe('github connector.getPr', () => {
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {
       expect(outcome.retryable).toBe(true);
-      // reset epoch 0 → computeRateLimitRetryMs floors at the minimum backoff.
       expect(outcome.retryAfterMs).toBe(RATE_LIMIT_MIN_BACKOFF_MS);
     }
   });
@@ -241,18 +225,13 @@ describe('github connector.getPrReadiness', () => {
     );
     const outcome = await conn.ops.getPrReadiness({ prUrl: PR_URL }, ctx());
     expect(outcome.ok).toBe(true);
-    // 3 gh calls: pr view, threads page 1, threads page 2.
     expect(calls).toHaveLength(3);
     const page2Args = calls[2]!.join(' ');
-    // Page 2 must supply the cursor variable the query declares ($cursor).
     expect(page2Args).toContain('cursor=YXJyYXljb25uZWN0aW9u');
-    // Page 1 must NOT carry a cursor binding.
     expect(calls[1]!.join(' ')).not.toContain('cursor=');
   });
 
   test('fails closed when neither input nor canonical URL parses', async () => {
-    // Noncanonical selector accepted by `gh pr view`, but the returned canonical
-    // URL is also unparseable — must NOT fabricate an empty thread list.
     const conn = createGithubConnector(
       mockSpawn([
         {
@@ -268,8 +247,6 @@ describe('github connector.getPrReadiness', () => {
   });
 
   test('falls back to the canonical URL from pr view for the threads query', async () => {
-    // Input is a noncanonical selector; gh pr view returns the canonical URL,
-    // which the threads query then uses.
     const conn = createGithubConnector(
       mockSpawn([
         { stdout: JSON.stringify({ ...READY_PR_VIEW, url: PR_URL }), stderr: '', exitCode: 0 },

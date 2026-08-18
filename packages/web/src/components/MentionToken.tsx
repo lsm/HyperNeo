@@ -32,12 +32,6 @@ const TYPE_STYLES: Record<ReferenceType, { container: string; icon: string; labe
   },
 };
 
-/**
- * Renders a single @ reference as a styled, interactive pill token.
- *
- * Display text is resolved from `metadata` first (by the @ref{type:id} key),
- * falling back to `mention.displayText`, then to `mention.id`.
- */
 export default function MentionToken({ mention, metadata, onClick }: MentionTokenProps) {
   const [showTooltip, setShowTooltip] = useState(false);
   const tooltipId = useId();

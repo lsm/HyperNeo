@@ -1,7 +1,3 @@
-/**
- * Tests for taskSchedule.fire job handler
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { handleTaskScheduleFire } from '../../../../src/lib/job-handlers/task-schedule-fire.handler';
@@ -53,7 +49,6 @@ describe('handleTaskScheduleFire', () => {
     db = new Database(':memory:');
     createSpaceTables(db);
 
-    // Add the job_queue table — not part of createSpaceTables.
     db.exec(`
 			CREATE TABLE IF NOT EXISTS job_queue (
 				id TEXT PRIMARY KEY,
@@ -256,7 +251,6 @@ describe('handleTaskScheduleFire', () => {
 
   it('creates a SpaceTask from the cron schedule template and re-enqueues itself', async () => {
     const scheduleId = createCronSchedule('goal-1');
-    // Set pendingJobId so idempotency check sees a match.
     scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
 
     const job = makeJob({ payload: { scheduleId } });
@@ -266,14 +260,12 @@ describe('handleTaskScheduleFire', () => {
     expect(result.taskId).not.toBeNull();
     expect(result.nextRunAt).not.toBeNull();
 
-    // Task was created with createdByTaskScheduleId pointing back at the schedule.
     const task = taskRepo.getTask(result.taskId as string);
     expect(task).not.toBeNull();
     expect(task?.createdByTaskScheduleId).toBe(scheduleId);
     expect(task?.goalId).toBe('goal-1');
     expect(task?.title).toBe('Daily Standup');
 
-    // A new fire job was enqueued.
     const updated = scheduleRepo.getById(scheduleId);
     expect(updated?.pendingJobId).not.toBeNull();
     expect(updated?.pendingJobId).not.toBe('job-1');
@@ -426,7 +418,6 @@ describe('handleTaskScheduleFire', () => {
     expect(result.skipReason).toBe('space_not_active');
     expect(result.taskId).toBeNull();
 
-    // Schedule was not advanced.
     const after = scheduleRepo.getById(scheduleId);
     expect(after?.lastCreatedTaskId).toBeNull();
   });
@@ -443,9 +434,6 @@ describe('handleTaskScheduleFire', () => {
     expect(result.skipReason).toBe('space_not_active');
     expect(taskRepo.listBySpace(spaceId)).toHaveLength(0);
 
-    // Pending linkage cleared so SpaceManager.resumeSpace can re-seed without
-    // the dangling job-1 reference, and `next_run_at` advanced so the schedule
-    // keeps moving forward when the space resumes.
     const after = scheduleRepo.getById(scheduleId);
     expect(after?.pendingJobId).toBeNull();
     expect(after?.status).toBe('active');
@@ -472,15 +460,6 @@ describe('handleTaskScheduleFire', () => {
     const scheduleId = createCronSchedule();
     scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
 
-    // Simulate the compare-and-swap path by injecting a scheduleRepo wrapper
-    // that returns false from `updateAfterFireIfPending` — the handler must
-    // then throw ScheduleSupersededError, the surrounding transaction
-    // rolls back, and we surface a `job_superseded` skip.
-    //
-    // (We can't simulate a true concurrent pause from another connection
-    // because bun:sqlite uses a single in-process handle; mutations inside
-    // the open transaction would just be rolled back too. Returning false
-    // from the CAS exercises the same control flow.)
     const wrappedScheduleRepo = new Proxy(scheduleRepo, {
       get(target, prop, recv) {
         if (prop === 'updateAfterFireIfPending') {
@@ -497,9 +476,7 @@ describe('handleTaskScheduleFire', () => {
 
     expect(result.skipped).toBe(true);
     expect(result.skipReason).toBe('job_superseded');
-    // Transaction was rolled back — the inserted task is gone.
     expect(taskRepo.listBySpace(spaceId)).toHaveLength(0);
-    // Schedule's bookkeeping fields were not advanced.
     const after = scheduleRepo.getById(scheduleId);
     expect(after?.lastCreatedTaskId).toBeNull();
     expect(after?.lastRunAt).toBeNull();
@@ -509,7 +486,6 @@ describe('handleTaskScheduleFire', () => {
     const scheduleId = createCronSchedule();
     scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
 
-    // First fire: succeeds, pendingJobId moves to a new job id.
     const firstResult = await handleTaskScheduleFire(
       makeJob({ payload: { scheduleId } }),
       makeDeps()
@@ -517,8 +493,6 @@ describe('handleTaskScheduleFire', () => {
     expect(firstResult.skipped).toBe(false);
     const tasksAfterFirst = taskRepo.listBySpace(spaceId).length;
 
-    // Now simulate the queue retrying the original `job-1`. Because pendingJobId
-    // has advanced to a new id, the handler should skip task creation.
     const retryResult = await handleTaskScheduleFire(
       makeJob({ id: 'job-1', payload: { scheduleId } }),
       makeDeps()
@@ -526,7 +500,6 @@ describe('handleTaskScheduleFire', () => {
     expect(retryResult.skipped).toBe(true);
     expect(retryResult.skipReason).toBe('job_superseded');
 
-    // And no extra task was created.
     const tasksAfterRetry = taskRepo.listBySpace(spaceId).length;
     expect(tasksAfterRetry).toBe(tasksAfterFirst);
   });
@@ -535,8 +508,6 @@ describe('handleTaskScheduleFire', () => {
     const scheduleId = createCronSchedule();
     scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
 
-    // Force jobQueue.enqueue to throw to simulate a failure between
-    // task creation and updating the schedule.
     const brokenJobQueue = {
       ...jobQueue,
       enqueue: () => {
@@ -554,7 +525,6 @@ describe('handleTaskScheduleFire', () => {
       })
     ).rejects.toThrow('synthetic enqueue failure');
 
-    // Transaction rolled back — no orphan task, schedule unchanged.
     const after = scheduleRepo.getById(scheduleId);
     expect(after?.lastCreatedTaskId).toBeNull();
     expect(after?.status).toBe('active');

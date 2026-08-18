@@ -1,17 +1,3 @@
-/**
- * Space Agent Repository
- *
- * CRUD operations for space_agents table.
- *
- * Column mapping:
- *   SpaceWorkerAgent.customPrompt   ↔  custom_prompt column (nullable text)
- *   SpaceWorkerAgent.tools          ↔  tools column (JSON string array; null/undefined → undefined,
- *                                                    empty array [] preserved as "inherit all")
- *   SpaceWorkerAgent.thinkingLevel  ↔  thinking_level column (nullable text)
- *   SpaceWorkerAgent.templateName   ↔  template_name column (nullable text; null for user-created agents)
- *   SpaceWorkerAgent.templateHash   ↔  template_hash column (nullable text; null for user-created agents)
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, slugifyWithinLimit } from '../../lib/space/slug';
 import { generateUUID } from '@hyperneo/shared';
@@ -25,9 +11,6 @@ import type { SQLiteValue } from '../types';
 export class SpaceAgentRepository {
   constructor(private db: BunDatabase) {}
 
-  /**
-   * Create a new space agent
-   */
   create(params: CreateSpaceWorkerAgentParams): SpaceWorkerAgent {
     const id = generateUUID();
     const now = Date.now();
@@ -62,9 +45,6 @@ export class SpaceAgentRepository {
     return this.getById(id)!;
   }
 
-  /**
-   * Get a single agent by ID
-   */
   getById(id: string): SpaceWorkerAgent | null {
     const row = this.db.prepare(`SELECT * FROM space_agents WHERE id = ?`).get(id) as
       | Record<string, unknown>
@@ -73,9 +53,6 @@ export class SpaceAgentRepository {
     return row ? this.rowToAgent(row) : null;
   }
 
-  /**
-   * Get all agents for a space
-   */
   getBySpaceId(spaceId: string): SpaceWorkerAgent[] {
     const rows = this.db
       .prepare(`SELECT * FROM space_agents WHERE space_id = ? ORDER BY created_at ASC`)
@@ -83,9 +60,6 @@ export class SpaceAgentRepository {
     return rows.map((r) => this.rowToAgent(r));
   }
 
-  /**
-   * Batch lookup agents by IDs. Returns only found agents (no error on missing).
-   */
   getAgentsByIds(ids: string[]): SpaceWorkerAgent[] {
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(', ');
@@ -95,10 +69,6 @@ export class SpaceAgentRepository {
     return rows.map((r) => this.rowToAgent(r));
   }
 
-  /**
-   * Check if a name is already taken within a space.
-   * Case-insensitive. Pass excludeId to ignore the agent being updated.
-   */
   isHandleTaken(spaceId: string, handle: string, excludeId?: string): boolean {
     if (excludeId) {
       const row = this.db
@@ -119,10 +89,6 @@ export class SpaceAgentRepository {
     return rows.map((row) => row.handle);
   }
 
-  /**
-   * Check if a name is already taken within a space.
-   * Case-insensitive. Pass excludeId to ignore the agent being updated.
-   */
   isNameTaken(spaceId: string, name: string, excludeId?: string): boolean {
     if (excludeId) {
       const row = this.db
@@ -138,9 +104,6 @@ export class SpaceAgentRepository {
     return row !== null && row !== undefined;
   }
 
-  /**
-   * Update an agent with partial updates. Returns the updated agent or null if not found.
-   */
   update(id: string, params: UpdateSpaceWorkerAgentParams): SpaceWorkerAgent | null {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
@@ -202,27 +165,14 @@ export class SpaceAgentRepository {
 
     this.db.prepare(`UPDATE space_agents SET ${fields.join(', ')} WHERE id = ?`).run(...values);
 
-    // Agent labels are derived at query time by joining `space_agents.name`
-    // (see live-query handlers' SPACE_TASK_MESSAGES_BASE_CTE), so a rename
-    // surfaces immediately with no extra denormalised store to refresh.
-
     return this.getById(id);
   }
 
-  /**
-   * Delete an agent by ID
-   */
   delete(id: string): void {
     this.db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(id);
   }
 
-  /**
-   * Check whether an agent is referenced by any workflow steps.
-   * Returns the names of workflows that reference this agent.
-   * Empty array means safe to delete.
-   */
   isAgentReferenced(agentId: string): { referenced: boolean; workflowNames: string[] } {
-    // config column stores JSON with agents array; use LIKE for a simple existence check
     const rows = this.db
       .prepare(
         `SELECT DISTINCT sw.name
@@ -244,10 +194,6 @@ export class SpaceAgentRepository {
   }
 
   private rowToAgent(row: Record<string, unknown>): SpaceWorkerAgent {
-    // Parse tools: null/undefined → undefined; a JSON array (including '[]')
-    // → string[]. Legacy rows may store the empty string '' (the m151
-    // migration treats tools = '' as an empty profile); normalize those to []
-    // so JSON.parse never throws on them.
     let tools: string[] | undefined;
     const rawTools = row.tools as string | null | undefined;
     if (rawTools === '') {
@@ -256,7 +202,6 @@ export class SpaceAgentRepository {
       tools = JSON.parse(rawTools) as string[];
     }
 
-    // Parse settingSources: null or missing → undefined
     let settingSources: SpaceWorkerAgent['settingSources'];
     if (row.setting_sources) {
       settingSources = JSON.parse(
@@ -278,9 +223,6 @@ export class SpaceAgentRepository {
       customPrompt: (row.custom_prompt as string | null) ?? null,
       tools,
       settingSources,
-      // `template_name` / `template_hash` may be missing entirely on
-      // schemas that predate M105 — guard with `??` so older test DBs
-      // (and any pre-migration call paths) don't return `undefined`.
       templateName: (row.template_name as string | null | undefined) ?? null,
       templateHash: (row.template_hash as string | null | undefined) ?? null,
       createdAt: row.created_at as number,

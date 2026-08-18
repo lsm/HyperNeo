@@ -1,23 +1,3 @@
-/**
- * Tests for Settings RPC Handlers
- *
- * Tests the RPC handlers for settings operations:
- * - settings.global.get - Get global settings
- * - settings.global.update - Update global settings (partial update)
- * - settings.global.save - Save global settings (full replace)
- * - settings.fileOnly.read - Read file-only settings
- * - settings.mcp.listFromSources - List MCP servers from enabled sources
- * - settings.session.get - Get session settings
- * - settings.session.update - Update session settings
- *
- * NOTE: The legacy `settings.mcp.toggle`, `settings.mcp.getDisabled`,
- * `settings.mcp.setDisabled`, and `settings.mcp.updateServerSettings` RPCs
- * were removed in M5 of `unify-mcp-config-model`. MCP enablement now flows
- * through the unified `app_mcp_servers` registry + `mcp_enablement` overrides.
- * `mcpServerSettings` and `disabledMcpServers` were also removed from
- * `GlobalSettings`; tests no longer set them.
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import {
   MessageHub,
@@ -38,10 +18,8 @@ import type {
 } from '../../../../src/lib/internal-event-bus';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 
-// Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
-// Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -72,7 +50,6 @@ function createMockMessageHub(): {
   return { hub, handlers };
 }
 
-// Helper to create mock DaemonHub
 function createMockDaemonHub(): {
   daemonHub: DaemonHub;
   emitMock: ReturnType<typeof mock>;
@@ -88,7 +65,6 @@ function createMockDaemonHub(): {
   return { daemonHub, emitMock };
 }
 
-// Helper to create mock InternalEventBus
 function createMockInternalEventBus(): {
   bus: InternalEventBus<DaemonInternalEventMap>;
   publishAsyncMock: ReturnType<typeof mock>;
@@ -107,14 +83,12 @@ function createMockInternalEventBus(): {
   return { bus, publishAsyncMock };
 }
 
-// Default global settings (mirrors the unified shape in @hyperneo/shared)
 const defaultGlobalSettings: GlobalSettings = {
   ...DEFAULT_GLOBAL_SETTINGS,
   showArchived: false,
   model: 'claude-sonnet-4-20250514',
 };
 
-// Helper to create mock SettingsManager
 function createMockSettingsManager(): {
   settingsManager: SettingsManager;
   mocks: {
@@ -147,7 +121,6 @@ function createMockSettingsManager(): {
   };
 }
 
-// Helper to create mock Database
 function createMockDatabase(): {
   db: Database;
   mocks: {
@@ -155,9 +128,6 @@ function createMockDatabase(): {
     getDatabase: ReturnType<typeof mock>;
   };
 } {
-  // Stub the prepared statement chain that `usage.calculate` walks; we
-  // exercise that handler indirectly via registration tests, so the chain
-  // just needs to be callable without throwing.
   const stmt = {
     get: mock(() => ({ totalCost: 0, totalTokens: 0, totalMessages: 0, sessionCount: 0 })),
     all: mock(() => []),
@@ -187,7 +157,6 @@ function createMockDatabase(): {
   };
 }
 
-// Helper to create mock McpImportService
 function createMockMcpImportService(): {
   service: import('../../../../src/lib/mcp').McpImportService;
   refreshAllMock: ReturnType<typeof mock>;
@@ -235,7 +204,6 @@ describe('Settings RPC Handlers', () => {
     dbData = createMockDatabase();
     mcpImportServiceData = createMockMcpImportService();
 
-    // Setup handlers with mocked dependencies
     registerSettingsHandlers(
       messageHubData.hub,
       settingsManagerData.settingsManager,
@@ -344,7 +312,6 @@ describe('Settings RPC Handlers', () => {
 
       await handler!({ updates: { showArchived: true } }, {});
 
-      // showArchived filter is handled client-side via LiveQuery — no separate filterChanged event
       expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
         'settings.updated',
         expect.objectContaining({
@@ -404,7 +371,6 @@ describe('Settings RPC Handlers', () => {
 
     it('removes stored voice credentials when hasApiKey is cleared', async () => {
       const credentialManager = createMockCredentialManager();
-      // Simulate a persisted key so the removal guard fires.
       settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
         ...defaultGlobalSettings,
         voice: {
@@ -538,7 +504,6 @@ describe('Settings RPC Handlers', () => {
               enabled: true,
               endpoint: 'https://attacker.example.com/v1/audio/transcriptions',
               model: 'whisper-1',
-              // Forged client-supplied scope + flag, no key:
               hasApiKey: true,
               apiKeyEndpoint: 'https://attacker.example.com/v1/audio/transcriptions',
             },
@@ -547,7 +512,6 @@ describe('Settings RPC Handlers', () => {
         {}
       )) as { settings: GlobalSettings };
 
-      // The server-owned scope is preserved; the forged scope is not trusted.
       expect(result.settings.voice?.apiKeyEndpoint).toBe(trustedScope);
       expect(result.settings.voice?.hasApiKey).toBe(true);
       expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
@@ -589,7 +553,6 @@ describe('Settings RPC Handlers', () => {
         )
       ).rejects.toThrow('partial write');
 
-      // The failed new-key write is followed by restoring the prior key.
       const calls = credentialManager.storeApiKey.mock.calls as Array<[string, string]>;
       expect(calls.map((c) => c[1])).toEqual(['new-key', 'old-key']);
     });
@@ -626,7 +589,6 @@ describe('Settings RPC Handlers', () => {
         )
       ).rejects.toThrow('keychain read failed');
 
-      // A read failure must abort before persisting settings or writing a key.
       expect(settingsManagerData.mocks.updateGlobalSettings).not.toHaveBeenCalled();
       expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
     });
@@ -663,8 +625,6 @@ describe('Settings RPC Handlers', () => {
         )
       ).rejects.toThrow('credential store unavailable');
 
-      // The full prior settings are restored via saveGlobalSettings so a
-      // credential failure rolls back the whole update, not just voice.
       expect(settingsManagerData.mocks.saveGlobalSettings).toHaveBeenCalledTimes(1);
       const rollbackCall = settingsManagerData.mocks.saveGlobalSettings.mock.calls[0][0];
       expect(rollbackCall.voice?.apiKeyEndpoint).toBeUndefined();
@@ -759,22 +719,16 @@ describe('Settings RPC Handlers', () => {
       );
     });
 
-    // Note: Testing with sessionId that creates a new SettingsManager requires
-    // a more complex setup with proper database mocking. This is better suited
-    // for integration tests that test the full flow.
     it('accepts sessionId parameter', async () => {
       const handler = messageHubData.handlers.get('settings.mcp.listFromSources');
       expect(handler).toBeDefined();
 
-      // Verify the handler is defined and accepts the sessionId parameter
-      // The actual session-specific SettingsManager creation is tested in integration tests
       expect(typeof handler).toBe('function');
     });
   });
 
   describe('settings.mcp.refreshImports', () => {
     it('returns empty results when mcpImportService is undefined', async () => {
-      // Re-register without the service to hit the short-circuit path
       registerSettingsHandlers(
         messageHubData.hub,
         settingsManagerData.settingsManager,

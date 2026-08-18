@@ -1,18 +1,13 @@
 // @ts-nocheck
-/**
- * Tests for CopyButton Component
- */
 
 import { render, cleanup, waitFor } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { CopyButton } from '../CopyButton';
 
-// Mock copyToClipboard
 vi.mock('../../../lib/utils.ts', () => ({
   copyToClipboard: vi.fn(),
 }));
 
-// Mock toast
 vi.mock('../../../lib/toast.ts', () => ({
   toast: {
     success: vi.fn(),
@@ -81,7 +76,6 @@ describe('CopyButton', () => {
       button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
       await waitFor(() => {
-        // On success, button shows checkmark and title changes to "Copied!"
         expect(button?.getAttribute('title')).toBe('Copied!');
       });
     });
@@ -94,7 +88,6 @@ describe('CopyButton', () => {
       button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
       await waitFor(() => {
-        // On success, title changes from custom label to "Copied!"
         expect(button?.getAttribute('title')).toBe('Copied!');
       });
     });
@@ -106,7 +99,6 @@ describe('CopyButton', () => {
       const button = document.body.querySelector('button');
       button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-      // On failure, title should remain as default label
       expect(button?.getAttribute('title')).toBe('Copy to clipboard');
     });
 
@@ -119,7 +111,6 @@ describe('CopyButton', () => {
 
       await waitFor(() => {
         const button = document.body.querySelector('button');
-        // Check for green color class indicating checkmark (class is on button, not svg)
         expect(button?.classList.contains('text-green-400')).toBe(true);
       });
     });
@@ -132,19 +123,14 @@ describe('CopyButton', () => {
       const button = document.body.querySelector('button');
       button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-      // Allow promises to resolve (for the async copyToClipboard)
       await Promise.resolve();
-      // Flush microtask queue for state update
       await vi.advanceTimersByTimeAsync(0);
 
-      // Initially should show checkmark (green - class is on button, not svg)
       let btn = document.body.querySelector('button');
       expect(btn?.classList.contains('text-green-400')).toBe(true);
 
-      // Advance time by 2 seconds
       await vi.advanceTimersByTimeAsync(2000);
 
-      // Should revert to clipboard icon (no green class)
       btn = document.body.querySelector('button');
       expect(btn?.classList.contains('text-green-400')).toBe(false);
 

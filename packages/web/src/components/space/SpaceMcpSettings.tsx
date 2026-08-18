@@ -1,21 +1,3 @@
-/**
- * SpaceMcpSettings — per-space MCP enablement panel.
- *
- * Lists every entry in the application-level MCP registry (`app_mcp_servers`)
- * grouped by provenance (builtin / user / imported) and renders a toggle
- * whose state reflects the per-space override, or the registry default when
- * no override exists.
- *
- * Toggling writes via `space.mcp.setEnabled`. A per-row "Reset" appears when
- * an override exists, issuing `space.mcp.clearOverride` so the space falls
- * back to the registry default again. A section-level "Refresh imports"
- * button triggers `mcp.imports.refresh` to rescan on-disk `.mcp.json` files.
- *
- * Per-space overrides take effect on **new** sessions only — already-running
- * task/coder sessions keep the MCP set they started with. The copy surfaces
- * this explicitly so toggles are never mistaken for a live-reload.
- */
-
 import { useSignalEffect } from '@preact/signals';
 import { useMemo, useState } from 'preact/hooks';
 import type { McpImportsRefreshResponse, SpaceMcpEntry } from '@hyperneo/shared';
@@ -58,10 +40,7 @@ export function SpaceMcpSettings({ spaceId, disabled = false }: SpaceMcpSettings
   const [refreshing, setRefreshing] = useState(false);
 
   useSignalEffect(() => {
-    // spaceMcpStore is a singleton, so `subscribe(spaceId)` is idempotent per
-    // spaceId and swaps subscriptions automatically if spaceId changes.
     spaceMcpStore.subscribe(spaceId).catch((err) => {
-      // Error surface is already stored in spaceMcpStore.error
       // eslint-disable-next-line no-console
       toast.error(
         `Failed to load MCP servers: ${err instanceof Error ? err.message : String(err)}`
@@ -149,7 +128,6 @@ export function SpaceMcpSettings({ spaceId, disabled = false }: SpaceMcpSettings
           : 'No changes from .mcp.json scan';
       toast.success(summary);
       for (const note of result.notes) {
-        // Parser warnings / name collisions surface here for visibility.
         toast.info(note);
       }
     } catch (err) {

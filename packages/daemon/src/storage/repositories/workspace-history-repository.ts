@@ -1,10 +1,3 @@
-/**
- * WorkspaceHistoryRepository
- *
- * CRUD operations for the workspace_history table.
- * Tracks recently-used workspace paths with usage counts and timestamps.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 
 export interface WorkspaceHistoryRow {
@@ -16,10 +9,6 @@ export interface WorkspaceHistoryRow {
 export class WorkspaceHistoryRepository {
   constructor(private db: BunDatabase) {}
 
-  /**
-   * Add or update a workspace path in history.
-   * If the path already exists, increment use_count and update last_used_at.
-   */
   upsert(path: string): WorkspaceHistoryRow {
     const now = Date.now();
     this.db
@@ -34,9 +23,6 @@ export class WorkspaceHistoryRepository {
     return this.get(path)!;
   }
 
-  /**
-   * Get a specific workspace entry by path.
-   */
   get(path: string): WorkspaceHistoryRow | null {
     const row = this.db
       .prepare('SELECT path, last_used_at, use_count FROM workspace_history WHERE path = ?')
@@ -44,15 +30,6 @@ export class WorkspaceHistoryRepository {
     return row;
   }
 
-  /**
-   * List all workspace history entries sorted by last_used_at DESC.
-   *
-   * Secondary sort by `id DESC` ensures deterministic ordering when two rows
-   * share the same `last_used_at` (e.g., two inserts in the same millisecond
-   * on fast hardware). The autoincrement `id` guarantees that the most
-   * recently inserted row wins the tiebreak, matching the user-visible
-   * "most recently used first" contract.
-   */
   list(limit = 20): WorkspaceHistoryRow[] {
     return this.db
       .prepare(
@@ -61,9 +38,6 @@ export class WorkspaceHistoryRepository {
       .all(limit) as WorkspaceHistoryRow[];
   }
 
-  /**
-   * Remove a workspace from history.
-   */
   remove(path: string): boolean {
     const result = this.db.prepare('DELETE FROM workspace_history WHERE path = ?').run(path);
     return result.changes > 0;

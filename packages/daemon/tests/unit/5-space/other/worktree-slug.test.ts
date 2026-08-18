@@ -43,9 +43,6 @@ describe('worktreeSlug', () => {
       expect(slug).toBe('refactor-database-layer');
     });
 
-    // Regression: titles that happen to produce 'unnamed-space' when slugified
-    // must NOT fall back to task-{taskNumber} — the sentinel-value check was
-    // removed in favour of testing the raw input for alphanumeric content.
     test('title "unnamed-space" is NOT treated as a fallback trigger', () => {
       expect(worktreeSlug('unnamed-space', 5)).toBe('unnamed-space');
     });
@@ -74,8 +71,6 @@ describe('worktreeSlug', () => {
       expect(worktreeSlug('', 2, ['task-2', 'task-2-2'])).toBe('task-2-3');
     });
 
-    // Regression: all-special-chars title with 'unnamed-space' already taken must
-    // fall back to task-N, not 'unnamed-space-2'.
     test('all-special-chars title with unnamed-space taken still uses task-N fallback', () => {
       expect(worktreeSlug('!!!', 7, ['unnamed-space'])).toBe('task-7');
     });

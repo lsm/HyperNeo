@@ -1,27 +1,9 @@
-/**
- * Migration 54 Tests
- *
- * The uq_space_tasks_run_node_agent index was created by M54 but the columns it
- * depends on (workflow_node_id, agent_name) were removed in M71. After a full
- * migration run the columns no longer exist and the index is never created
- * (M54's guard returns early).
- *
- * These tests verify that:
- * - runMigration54 is idempotent (safe to call on a fully-migrated DB without throwing)
- * - On a fully-migrated DB the index does NOT exist (columns were removed in M71)
- * - The guard correctly skips when workflow_node_id is absent
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { runMigration54 } from '../../../../../src/storage/schema/migrations.ts';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeDb(): { db: BunDatabase; dir: string } {
   const dir = join(
@@ -44,10 +26,6 @@ function getIndexNames(db: BunDatabase, table: string): string[] {
   return rows.map((r) => r.name);
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
   let db: BunDatabase;
   let dir: string;
@@ -62,19 +40,15 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
   });
 
   test('index does NOT exist on a fully-migrated DB (workflow_node_id removed in M71)', () => {
-    // After M71, workflow_node_id and agent_name columns no longer exist, so M54
-    // guard returns early and the index is never created.
     const indexes = getIndexNames(db, 'space_tasks');
     expect(indexes).not.toContain('uq_space_tasks_run_node_agent');
   });
 
   test('idempotent: calling runMigration54 on a fully-migrated DB does not error', () => {
-    // M54's guard checks for the presence of workflow_node_id and returns early if absent.
     expect(() => runMigration54(db)).not.toThrow();
   });
 
   test('skips gracefully when workflow_node_id column is absent', () => {
-    // Create a minimal space_tasks table WITHOUT workflow_node_id
     const db2Dir = join(process.cwd(), 'tmp', 'test-migration-54', `no-col-${Date.now()}`);
     mkdirSync(db2Dir, { recursive: true });
     const db2 = new BunDatabase(join(db2Dir, 'test2.db'));
@@ -94,9 +68,7 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 					updated_at INTEGER NOT NULL DEFAULT 0
 				)
 			`);
-      // runMigration54 should skip without throwing
       expect(() => runMigration54(db2)).not.toThrow();
-      // Index should NOT exist since workflow_node_id is absent
       const indexes = getIndexNames(db2, 'space_tasks');
       expect(indexes).not.toContain('uq_space_tasks_run_node_agent');
     } finally {

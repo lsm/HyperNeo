@@ -1,20 +1,3 @@
-/**
- * AppMcpLifecycleManager
- *
- * Converts application-level MCP registry entries into SDK McpServerConfig objects
- * ready for injection into agent sessions.
- *
- * Responsibilities:
- * - Reads the app_mcp_servers registry via the Database facade.
- * - Filters to enabled entries.
- * - Converts each entry to the appropriate SDK config type (stdio / sse / http).
- * - Validates entries and exposes startup errors for the UI warning badge.
- *
- * Health-checking and auto-restart are intentionally deferred to a future
- * iteration and MUST use JobQueueProcessor (following the github.poll pattern)
- * rather than setInterval or in-memory state.
- */
-
 import type { Database } from '../../storage/database';
 import type {
   AppMcpServer,
@@ -30,12 +13,7 @@ import {
   type ResolveMcpServersSession,
 } from './resolve-mcp-servers';
 
-// Re-export so callers can import from this module without reaching into shared.
 export type { ValidationResult } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 export interface McpStartupError {
   serverId: string;
@@ -43,18 +21,9 @@ export interface McpStartupError {
   error: string;
 }
 
-// ---------------------------------------------------------------------------
-// Manager
-// ---------------------------------------------------------------------------
-
 export class AppMcpLifecycleManager {
   constructor(private readonly db: Database) {}
 
-  /**
-   * Returns SDK MCP configs for all globally-enabled registry entries.
-   * Invalid entries (e.g. missing required fields) are silently skipped —
-   * call `getStartupErrors()` to surface them to the UI.
-   */
   getEnabledMcpConfigs(): Record<string, McpServerConfig> {
     const entries = this.db.appMcpServers.listEnabled();
     const result: Record<string, McpServerConfig> = {};
@@ -71,16 +40,6 @@ export class AppMcpLifecycleManager {
     return result;
   }
 
-  /**
-   * Returns SDK MCP configs effective for a given session, resolving the
-   * session's space / session scope chain against the registry via the
-   * pure {@link resolveMcpServers} function.
-   *
-   * This is the canonical entry point for all session-spawn paths (space ad-hoc,
-   * node-agent). Legacy variant
-   * ({@link getEnabledMcpConfigs}) remains for backward compatibility with
-   * callers that don't yet have a Session object.
-   */
   getEnabledMcpConfigsForSession(
     session: ResolveMcpServersSession
   ): Record<string, McpServerConfig> {
@@ -98,10 +57,6 @@ export class AppMcpLifecycleManager {
     return result;
   }
 
-  /**
-   * Validates a single registry entry, checking that required fields are
-   * present for its source type.
-   */
   validateEntry(entry: AppMcpServer): ValidationResult {
     switch (entry.sourceType) {
       case 'stdio':
@@ -141,13 +96,7 @@ export class AppMcpLifecycleManager {
     }
   }
 
-  /**
-   * Returns all registry entries (enabled or disabled) that fail validation.
-   * Exposed via the `mcp.registry.listErrors` RPC so the UI can render a
-   * warning badge next to misconfigured entries.
-   */
   getStartupErrors(): McpStartupError[] {
-    // Check all entries (not just enabled) so users can see invalid drafts too.
     const allEntries = this.db.appMcpServers.list();
     const errors: McpStartupError[] = [];
 
@@ -164,10 +113,6 @@ export class AppMcpLifecycleManager {
 
     return errors;
   }
-
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
 
   private convertEntry(entry: AppMcpServer): McpServerConfig {
     switch (entry.sourceType) {

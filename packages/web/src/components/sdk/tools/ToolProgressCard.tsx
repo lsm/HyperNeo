@@ -1,16 +1,9 @@
-/**
- * ToolProgressCard Component - Displays real-time tool execution progress
- */
-
 import type { ToolProgressCardProps } from './tool-types.ts';
 import { ToolIcon } from './ToolIcon.tsx';
 import { ToolSummary } from './ToolSummary.tsx';
 import { getToolDisplayName, getToolColors, formatElapsedTime } from './tool-utils.ts';
 import { cn } from '../../../lib/utils.ts';
 
-/**
- * ToolProgressCard Component
- */
 export function ToolProgressCard({
   toolName,
   toolInput,
@@ -23,7 +16,6 @@ export function ToolProgressCard({
   const colors = getToolColors(toolName);
   const displayName = getToolDisplayName(toolName);
 
-  // Compact variant for mobile/minimal display
   if (variant === 'compact') {
     return (
       <div
@@ -44,7 +36,6 @@ export function ToolProgressCard({
     );
   }
 
-  // Inline variant for text flow
   if (variant === 'inline') {
     return (
       <span
@@ -57,7 +48,6 @@ export function ToolProgressCard({
     );
   }
 
-  // Default variant - full display
   return (
     <div
       class={cn(
@@ -67,19 +57,16 @@ export function ToolProgressCard({
         className
       )}
     >
-      {/* Tool-specific icon with animation */}
       <div class="flex-shrink-0">
         <ToolIcon toolName={toolName} size="md" animated />
       </div>
 
-      {/* Tool info */}
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2">
           <span class={cn('font-mono text-sm font-medium', colors.text)}>{displayName}</span>
           <span class={cn('text-xs', colors.lightText)}>{formatElapsedTime(elapsedTime)}</span>
         </div>
 
-        {/* Summary or Tool ID */}
         {toolInput ? (
           <div class={cn('text-xs truncate', colors.lightText)}>
             <ToolSummary toolName={toolName} input={toolInput} maxLength={60} />
@@ -94,7 +81,6 @@ export function ToolProgressCard({
         )}
       </div>
 
-      {/* Progress indicator */}
       <div class="flex-shrink-0">
         <div class="flex gap-1">
           <div

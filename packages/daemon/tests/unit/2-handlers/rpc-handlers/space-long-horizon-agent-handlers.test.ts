@@ -256,9 +256,6 @@ describe('Space long-horizon agent handlers', () => {
     });
 
     it('clears the session provider when the override is explicitly cleared (P2)', async () => {
-      // provider: null is an explicit clear (vs absent = don't touch). The
-      // session's persisted provider must be dropped or wake-time retention
-      // would restore the stale override and make the clear a no-op.
       await call(hubData.handlers, 'spaceLongHorizonAgent.update', {
         agentId: 'agent-1',
         spaceId: 'space-1',
@@ -1062,8 +1059,6 @@ describe('Space long-horizon agent handlers', () => {
 
   describe('spaceLongHorizonAgent.listReminderCounts', () => {
     it('returns active-reminder counts for each requested agent in one call', async () => {
-      // agent-1 has 2 active + 1 non-active; agent-2 has only a fired reminder;
-      // agent-3 has none. Only `status === 'active'` rows count.
       repo.listReminders = mock((agentId: string) => {
         if (agentId === 'agent-1') {
           return [
@@ -1139,8 +1134,6 @@ describe('Space long-horizon agent handlers', () => {
   });
 });
 
-// Drives the createReminder RPC with a REAL repository so we can assert the
-// seeded next_run_at is visible to the reminder-fire scanner's due-query.
 describe('spaceLongHorizonAgent.createReminder — nextRunAt seeding', () => {
   let db: Database;
   let repo: SpaceLongHorizonAgentRepository;
@@ -1184,9 +1177,7 @@ describe('spaceLongHorizonAgent.createReminder — nextRunAt seeding', () => {
     );
     expect(result.reminder.nextRunAt).not.toBeNull();
     const nextRunAt = result.reminder.nextRunAt as number;
-    // Next occurrence is in the future -> not due yet.
     expect(repo.listDueReminders(Date.now()).map((r) => r.id)).toEqual([]);
-    // When the scheduled time arrives, the scanner selects it.
     expect(repo.listDueReminders(nextRunAt + 1000).map((r) => r.id)).toEqual([result.reminder.id]);
   });
 

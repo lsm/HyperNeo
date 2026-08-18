@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ToolSummary Component
- *
- * ToolSummary displays a summary of tool input parameters.
- */
 import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
@@ -41,7 +36,6 @@ describe('ToolSummary', () => {
 
   describe('Truncation', () => {
     it('should truncate long text to maxLength', () => {
-      // Read tool extracts just the filename, so use a tool that shows the full value
       const longCommand = 'npm run some-very-long-command-that-exceeds-the-limit';
       const { container } = render(
         <ToolSummary toolName="Bash" input={{ command: longCommand }} maxLength={20} />
@@ -330,7 +324,6 @@ describe('ToolSummary', () => {
       const { container } = render(
         <ToolSummary toolName="Read" input={{ file_path: '/path/to/dir/' }} />
       );
-      // When path ends with /, the filename extraction returns the path itself
       expect(container.textContent).toContain('/path/to/dir/');
     });
   });

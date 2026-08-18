@@ -1,4 +1,3 @@
-// Selector for all focusable elements
 export const FOCUSABLE_SELECTOR = [
   '[contentEditable=true]',
   '[tabindex]',
@@ -14,8 +13,8 @@ export const FOCUSABLE_SELECTOR = [
   .join(', ');
 
 export enum FocusableMode {
-  Strict = 0, // element must match FOCUSABLE_SELECTOR
-  Loose = 1, // element or any ancestor must match
+  Strict = 0,
+  Loose = 1,
 }
 
 export function isFocusableElement(

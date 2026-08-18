@@ -1,17 +1,6 @@
-/**
- * MessageHub - Unified messaging hub for bidirectional RPC and Pub/Sub
- *
- * Provides:
- * - Bidirectional RPC (client↔server)
- * - Pub/Sub messaging
- * - Session-based routing
- * - Type-safe method registry
- */
-
 import { createLogger } from '../logger.ts';
 import { generateUUID } from '../utils.ts';
 
-// Create logger for MessageHub (uses unified log levels)
 const log = createLogger('hyperneo:messagehub');
 
 import {
@@ -44,7 +33,6 @@ import type {
   RequestHandler,
 } from './types.ts';
 
-// Define UnsubscribeFn locally (removed from types.ts)
 type UnsubscribeFn = () => void;
 
 export class MessageHubResponseError extends Error {
@@ -57,13 +45,6 @@ export class MessageHubResponseError extends Error {
   }
 }
 
-/**
- * Error a request handler can throw to produce a STRUCTURED error response
- * carrying a specific {@link ErrorCode}. Without this, the hub maps every
- * handler throw to `HANDLER_ERROR`; wrapping the cause here lets the original
- * code (e.g. `TOO_MANY_SUBSCRIPTIONS`) reach the client so it can react
- * precisely — mirroring the structured `MESSAGE_TOO_LARGE` refusal pattern.
- */
 export class MessageHubHandlerError extends Error {
   constructor(
     message: string,
@@ -74,46 +55,27 @@ export class MessageHubHandlerError extends Error {
   }
 }
 
-/**
- * MessageHub class
- * Core implementation of unified messaging system
- *
- * ARCHITECTURE:
- * - MessageHub: Protocol layer (RPC + Pub/Sub logic)
- * - MessageHubRouter: Server-side routing layer (determines recipients)
- * - IMessageTransport: I/O layer (sends/receives over wire)
- *
- * Flow: MessageHub → Router (if server-side) → Transport → Wire
- */
 export class MessageHub {
   private transports: Map<string, IMessageTransport> = new Map();
   private primaryTransportName: string | null = null;
-  private router: MessageHubRouter | null = null; // Server-side only
+  private router: MessageHubRouter | null = null;
   private readonly defaultSessionId: string;
   private readonly defaultTimeout: number;
 
-  // Backpressure limits
   private readonly maxPendingCalls: number;
   private readonly maxEventDepth: number;
 
-  // RPC state
   private pendingCalls: Map<string, PendingCall<unknown>> = new Map();
 
-  // Unified request handlers (new API - replaces commandHandlers and queryHandlers)
   private requestHandlers: Map<string, RequestHandler> = new Map();
-  // Channel event handlers (client-side - keyed by method)
   private channelEventHandlers: Map<string, Set<ChannelEventHandler>> = new Map();
 
-  // Event handler recursion tracking (prevents infinite loops)
-  private eventDepthMap = new Map<string, number>(); // messageId -> depth
+  private eventDepthMap = new Map<string, number>();
 
-  // FIX P1.4: Event handler error handling mode
   private readonly stopOnEventHandlerError: boolean;
 
-  // Message inspection
   private messageHandlers: Set<MessageHandler> = new Set();
 
-  // Connection state
   private connectionStateHandlers: Set<ConnectionStateHandler> = new Set();
 
   constructor(options: MessageHubOptions = {}) {
@@ -121,19 +83,9 @@ export class MessageHub {
     this.defaultTimeout = options.timeout || 10000;
     this.maxPendingCalls = options.maxPendingCalls || 1000;
     this.maxEventDepth = options.maxEventDepth || 10;
-    this.stopOnEventHandlerError = options.stopOnEventHandlerError ?? false; // FIX P1.4: Continue on handler errors by default
+    this.stopOnEventHandlerError = options.stopOnEventHandlerError ?? false;
   }
 
-  // ========================================
-  // Transport Management
-  // ========================================
-
-  /**
-   * Register a transport with a unique name
-   * @param transport The transport to register
-   * @param name Unique name for this transport (e.g., 'websocket', 'neo')
-   * @param isPrimary Whether this is the primary transport for outgoing messages (default: first transport is primary)
-   */
   registerTransport(
     transport: IMessageTransport,
     name?: string,
@@ -147,7 +99,6 @@ export class MessageHub {
 
     this.transports.set(transportName, transport);
 
-    // First transport becomes primary by default
     if (this.transports.size === 1 || isPrimary) {
       this.primaryTransportName = transportName;
     }
@@ -156,24 +107,19 @@ export class MessageHub {
       `Transport registered: ${transportName} (primary: ${this.primaryTransportName === transportName})`
     );
 
-    // Subscribe to incoming messages
     const unsubMessage = transport.onMessage((message) => {
-      // Tag message with transport name for response routing
       message._transportName = transportName;
       this.handleIncomingMessage(message);
     });
 
-    // Subscribe to connection state changes
     const unsubConnection = transport.onConnectionChange((state, error) => {
       this.logDebug(`Connection state: ${state} on ${transportName}`, error);
       this.notifyConnectionStateHandlers(state, error);
     });
 
-    // Return unregister function
     return () => {
       this.transports.delete(transportName);
       if (this.primaryTransportName === transportName) {
-        // Pick new primary if available
         this.primaryTransportName = this.transports.keys().next().value || null;
       }
       unsubMessage();
@@ -182,31 +128,20 @@ export class MessageHub {
     };
   }
 
-  /**
-   * Get current connection state
-   */
   getState(): ConnectionState {
-    // Return state of primary transport
     const primary = this.primaryTransportName
       ? this.transports.get(this.primaryTransportName)
       : null;
     return primary?.getState() || 'disconnected';
   }
 
-  /**
-   * Check if connected
-   */
   isConnected(): boolean {
-    // Check if any transport is ready
     for (const transport of this.transports.values()) {
       if (transport.isReady()) return true;
     }
     return false;
   }
 
-  /**
-   * Subscribe to connection state changes
-   */
   onConnection(handler: ConnectionStateHandler): UnsubscribeFn {
     this.connectionStateHandlers.add(handler);
     return () => {
@@ -214,17 +149,6 @@ export class MessageHub {
     };
   }
 
-  /**
-   * Register a handler for client disconnect events (server-side only)
-   * Forwards to the primary transport's onClientDisconnect if supported.
-   * Returns a no-op unsubscribe function if the transport doesn't support it.
-   *
-   * NOTE: The transport is resolved at the time this method is called, not when
-   * a disconnect fires. If the primary transport changes after registration (e.g.
-   * a new transport is registered with isPrimary:true), this handler stays bound
-   * to the original transport. In practice this is not an issue because disconnect
-   * handlers are registered once at server startup before any transport changes.
-   */
   onClientDisconnect(handler: (clientId: string) => void): UnsubscribeFn {
     const transport = this.primaryTransportName
       ? this.transports.get(this.primaryTransportName)
@@ -232,21 +156,9 @@ export class MessageHub {
     if (transport?.onClientDisconnect) {
       return transport.onClientDisconnect(handler);
     }
-    // No-op: transport doesn't support disconnect events
     return () => {};
   }
 
-  // ========================================
-  // Router Management (Server-side)
-  // ========================================
-
-  /**
-   * Register a router for server-side message routing
-   * Optional - only needed for server-side deployments
-   *
-   * When registered, MessageHub uses the router to determine which clients
-   * should receive EVENT messages based on their subscriptions.
-   */
   registerRouter(router: MessageHubRouter): void {
     if (this.router) {
       log.warn('Router already registered, replacing...');
@@ -255,34 +167,10 @@ export class MessageHub {
     this.logDebug(`Router registered`);
   }
 
-  /**
-   * Get the registered router (if any)
-   */
   getRouter(): MessageHubRouter | null {
     return this.router;
   }
 
-  // ========================================
-  // RPC Pattern (Bidirectional) - REMOVED
-  // Old call() and handle() methods removed - use query() and onQuery() instead
-  // ========================================
-
-  // ========================================
-  // Pub/Sub Pattern - REMOVED
-  // Old publish(), subscribe(), subscribeOptimistic() methods removed
-  // Use event() and onEvent() instead
-  // ========================================
-
-  // ========================================
-  // Room-based API (New simplified protocol)
-  // ========================================
-
-  /**
-   * Send a request and wait for response
-   * Unified API that replaces both command() and query()
-   * - If server handler returns nothing, client receives { acknowledged: true }
-   * - If server handler returns value, client receives that value
-   */
   async request<TResult = unknown>(
     method: string,
     data?: unknown,
@@ -327,10 +215,6 @@ export class MessageHub {
     });
   }
 
-  /**
-   * Broadcast an event to a channel (server-side)
-   * If no channel specified, broadcasts globally
-   */
   event(method: string, data?: unknown, options: EventOptions = {}): void {
     if (!this.isConnected()) {
       this.logDebug(`Event skipped (no transport): ${method}`);
@@ -341,19 +225,12 @@ export class MessageHub {
     }
     const sessionId = options.channel || this.defaultSessionId;
     const message = createEventMessage({ method, data, sessionId });
-    // Set channel field for channel-based routing
     message.channel = options.channel;
     this.sendMessage(message).catch((error) => {
       log.error(`Failed to send event ${method}:`, error);
     });
   }
 
-  /**
-   * Register a request handler (server-side)
-   * Unified API that replaces both onCommand() and onQuery()
-   * - If handler returns void/undefined, sends { acknowledged: true }
-   * - If handler returns value, sends that value as response
-   */
   onRequest<TData = unknown, TResult = unknown>(
     method: string,
     handler: RequestHandler<TData, TResult>
@@ -372,10 +249,6 @@ export class MessageHub {
     };
   }
 
-  /**
-   * Listen for events (client-side)
-   * No subscription ceremony - just register handler locally
-   */
   onEvent<TData = unknown>(method: string, handler: ChannelEventHandler<TData>): UnsubscribeFn {
     if (!validateMethod(method)) {
       throw new Error(`Invalid method name: ${method}`);
@@ -391,13 +264,6 @@ export class MessageHub {
     };
   }
 
-  /**
-   * Join a channel with retry logic for reliability
-   *
-   * @param channel Channel to join
-   * @param maxRetries Maximum retry attempts (default: 3)
-   * @param retryDelay Base delay between retries in ms (default: 1000)
-   */
   async joinChannel(
     channel: string,
     maxRetries: number = 3,
@@ -414,7 +280,7 @@ export class MessageHub {
         if (attempt > 1) {
           this.logDebug(`joinChannel succeeded for ${channel} on attempt ${attempt}`);
         }
-        return; // Success
+        return;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         this.logDebug(
@@ -422,13 +288,11 @@ export class MessageHub {
         );
 
         if (attempt < maxRetries) {
-          // Check if still connected before retry
           if (!this.isConnected()) {
             log.error(`joinChannel aborted for ${channel} - disconnected during retry`);
             return;
           }
 
-          // Exponential backoff with jitter
           const baseDelay = retryDelay * 2 ** (attempt - 1);
           const jitter = Math.random() * baseDelay * 0.3;
           await new Promise((resolve) => setTimeout(resolve, baseDelay + jitter));
@@ -439,10 +303,6 @@ export class MessageHub {
     log.error(`joinChannel failed after ${maxRetries} attempts for ${channel}`);
   }
 
-  /**
-   * Leave a channel (client → server)
-   * Sends a request that the router handles
-   */
   async leaveChannel(channel: string): Promise<void> {
     if (!this.isConnected()) {
       this.logDebug(`leaveChannel skipped (not connected): ${channel}`);
@@ -451,24 +311,10 @@ export class MessageHub {
     try {
       await this.request('channel.leave', { channel });
     } catch (error) {
-      // Channel leave is optional - log but don't throw
-      // This prevents crashes when channel leave times out or fails
       this.logDebug(`leaveChannel failed for ${channel}:`, error);
     }
   }
 
-  // ========================================
-  // Message Inspection
-  // ========================================
-
-  /**
-   * Register a handler for all messages (for debugging/logging)
-   *
-   * @example
-   * hub.onMessage((message, direction) => {
-   *   console.log(`[${direction}] ${message.type} ${message.method}`, message);
-   * });
-   */
   onMessage(handler: MessageHandler): UnsubscribeFn {
     this.messageHandlers.add(handler);
     return () => {
@@ -476,15 +322,7 @@ export class MessageHub {
     };
   }
 
-  // ========================================
-  // Internal Message Handling
-  // ========================================
-
-  /**
-   * Handle incoming message from transport
-   */
   private async handleIncomingMessage(message: HubMessage): Promise<void> {
-    // Validate message structure
     if (!isValidMessage(message)) {
       log.warn(`Dropping invalid message:`, message);
       return;
@@ -492,7 +330,6 @@ export class MessageHub {
 
     this.logDebug(`← Incoming: ${message.type} ${message.method}`, message);
 
-    // Notify message handlers
     this.notifyMessageHandlers(message, 'in');
 
     try {
@@ -512,14 +349,9 @@ export class MessageHub {
     }
   }
 
-  /**
-   * Handle incoming REQUEST message (returns response)
-   * Uses requestHandlers with auto-ACK behavior
-   */
   private async handleIncomingRequest(message: HubMessage): Promise<void> {
     const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
 
-    // Handle reserved channel commands
     if (message.method === 'channel.join' || message.method === 'channel.leave') {
       if (this.router) {
         if (
@@ -535,7 +367,6 @@ export class MessageHub {
           }
         }
       }
-      // Send ACK response for channel commands
       const ackMsg = createResponseMessage({
         method: message.method,
         data: { acknowledged: true },
@@ -574,7 +405,6 @@ export class MessageHub {
       };
       const result = await Promise.resolve(handler(message.data, context));
 
-      // Auto-ACK: if handler returns undefined, send { acknowledged: true }
       const responseData = result === undefined ? { acknowledged: true } : result;
 
       const resultMsg = createResponseMessage({
@@ -586,9 +416,6 @@ export class MessageHub {
       resultMsg._transportName = message._transportName;
       await this.sendResponseToClient(resultMsg, clientId);
     } catch (error) {
-      // Preserve a structured code thrown via MessageHubHandlerError so callers
-      // can fail fast with a precise ErrorCode (e.g. TOO_MANY_SUBSCRIPTIONS);
-      // plain throws still map to HANDLER_ERROR as before.
       const code =
         error instanceof MessageHubHandlerError && error.code
           ? error.code
@@ -607,9 +434,6 @@ export class MessageHub {
     }
   }
 
-  /**
-   * Handle response message (RESPONSE only for queries)
-   */
   private handleResponse(message: HubMessage): void {
     const requestId = message.requestId;
     if (!requestId) {
@@ -617,18 +441,15 @@ export class MessageHub {
       return;
     }
 
-    // Check if it's a query response
     const pending = this.pendingCalls.get(requestId);
     if (!pending) {
       this.logDebug(`Response for unknown request: ${requestId} (method: ${message.method})`);
       return;
     }
 
-    // Clear timeout
     clearTimeout(pending.timer);
     this.pendingCalls.delete(requestId);
 
-    // Resolve or reject
     if (message.error) {
       pending.reject(new MessageHubResponseError(message.error, message.errorCode));
     } else {
@@ -636,13 +457,7 @@ export class MessageHub {
     }
   }
 
-  /**
-   * Handle event message
-   *
-   * FIX P0.4: Prevent infinite recursion in event handlers
-   */
   private async handleEvent(message: HubMessage): Promise<void> {
-    // FIX P0.4: Check recursion depth
     const currentDepth = this.eventDepthMap.get(message.id) || 0;
     if (currentDepth >= this.maxEventDepth) {
       log.error(
@@ -652,22 +467,15 @@ export class MessageHub {
       return;
     }
 
-    // Track depth
     this.eventDepthMap.set(message.id, currentDepth + 1);
 
     try {
-      // Dispatch to channel event handlers (new API)
       this.dispatchToChannelEventHandlers(message);
     } finally {
-      // Clean up depth tracking immediately after handlers complete
       this.eventDepthMap.delete(message.id);
     }
   }
 
-  /**
-   * Dispatch event to channel event handlers (new API)
-   * Called from handleEvent alongside existing subscription dispatch
-   */
   private dispatchToChannelEventHandlers(message: HubMessage): void {
     const handlers = this.channelEventHandlers.get(message.method);
     if (!handlers || handlers.size === 0) return;
@@ -691,13 +499,9 @@ export class MessageHub {
     }
   }
 
-  /**
-   * Handle PING message - respond with PONG
-   */
   private async handlePing(message: HubMessage): Promise<void> {
     this.logDebug(`Received PING from session: ${message.sessionId}`);
 
-    // Create PONG response
     const pongMessage: HubMessage = {
       id: generateUUID(),
       type: MessageType.PONG,
@@ -707,53 +511,29 @@ export class MessageHub {
       requestId: message.id,
     };
 
-    // Send PONG response
     await this.sendMessage(pongMessage);
   }
 
-  /**
-   * Handle PONG message - track connection health
-   */
   private handlePong(message: HubMessage): void {
     this.logDebug(`Received PONG from session: ${message.sessionId}`);
-    // Optional: Could track latency metrics here
-    // const latency = Date.now() - new Date(message.timestamp).getTime();
-    // this.connectionHealth.set(message.sessionId, { latency, lastPong: Date.now() });
   }
 
-  /**
-   * Send a message via transport
-   *
-   * Routing logic:
-   * - If router is registered (server-side) AND message is EVENT:
-   *   Router determines subscribers → Transport sends to those clients
-   * - Otherwise (client-side or non-EVENT):
-   *   Transport broadcasts directly
-   */
   private async sendMessage(message: HubMessage): Promise<void> {
     this.logDebug(`→ Outgoing: ${message.type} ${message.method}`, message);
 
-    // Notify message handlers
     this.notifyMessageHandlers(message, 'out');
 
-    // Server-side routing for EVENT messages
     if (this.router && message.type === MessageType.EVENT) {
-      // Channel-based routing if channel is set
       if (message.channel && this.router) {
         this.router.routeEventToChannel(message);
       } else {
-        // Use router to route EVENT to subscribed clients
         const result = this.router.routeEvent(message);
         this.logDebug(`Routed event: ${result.sent}/${result.totalSubscribers} delivered`);
       }
-      // Self-delivery: also invoke local event handlers on the same hub
-      // This ensures server-side onEvent() listeners receive events
-      // (e.g., test helpers, server-side state observers)
       this.dispatchToChannelEventHandlers(message);
       return;
     }
 
-    // Check if message has a specific transport to use (for responses)
     const targetTransport = message._transportName
       ? this.transports.get(message._transportName)
       : null;
@@ -763,7 +543,6 @@ export class MessageHub {
       return;
     }
 
-    // Send via primary transport (or all transports for broadcast)
     const primary = this.primaryTransportName
       ? this.transports.get(this.primaryTransportName)
       : null;
@@ -775,15 +554,9 @@ export class MessageHub {
     throw new Error('No transport ready');
   }
 
-  /**
-   * Send RPC response (RESULT/ERROR/SUBSCRIBED/UNSUBSCRIBED) to a specific client
-   * Server-side only - routes the response to the client that made the request
-   */
   private async sendResponseToClient(message: HubMessage, clientId?: string): Promise<void> {
-    // Notify message handlers
     this.notifyMessageHandlers(message, 'out');
 
-    // If we have a router and clientId, send to specific client
     if (this.router && clientId) {
       const result = this.router.sendToClientDetailed(clientId, message);
       if (!result.ok && result.reason === 'message_too_large') {
@@ -805,7 +578,6 @@ export class MessageHub {
       return;
     }
 
-    // Use the transport the request came from
     const targetTransport = message._transportName
       ? this.transports.get(message._transportName)
       : null;
@@ -815,7 +587,6 @@ export class MessageHub {
       return;
     }
 
-    // Fallback to primary transport
     const primary = this.primaryTransportName
       ? this.transports.get(this.primaryTransportName)
       : null;
@@ -828,9 +599,6 @@ export class MessageHub {
     throw new Error('No transport ready for response');
   }
 
-  /**
-   * Notify message handlers
-   */
   private notifyMessageHandlers(message: HubMessage, direction: 'in' | 'out'): void {
     for (const handler of this.messageHandlers) {
       try {
@@ -841,9 +609,6 @@ export class MessageHub {
     }
   }
 
-  /**
-   * Notify connection state handlers
-   */
   private notifyConnectionStateHandlers(state: ConnectionState, error?: Error): void {
     for (const handler of this.connectionStateHandlers) {
       try {
@@ -854,49 +619,29 @@ export class MessageHub {
     }
   }
 
-  // ========================================
-  // Cleanup
-  // ========================================
-
-  /**
-   * Cleanup all state
-   */
   cleanup(): void {
-    // Reject all pending calls
     for (const [_requestId, pending] of this.pendingCalls) {
       clearTimeout(pending.timer);
       pending.reject(new Error('MessageHub cleanup'));
     }
     this.pendingCalls.clear();
 
-    // Clear handlers
     this.requestHandlers.clear();
     this.channelEventHandlers.clear();
     this.messageHandlers.clear();
     this.connectionStateHandlers.clear();
     this.eventDepthMap.clear();
 
-    // Clear transports
     this.transports.clear();
     this.primaryTransportName = null;
 
     this.logDebug('MessageHub cleaned up');
   }
 
-  // ========================================
-  // Utilities
-  // ========================================
-
-  /**
-   * Debug logging - uses unified logger
-   */
   private logDebug(message: string, ...args: unknown[]): void {
     log.debug(message, ...args);
   }
 
-  /**
-   * Get pending call count
-   */
   getPendingCallCount(): number {
     return this.pendingCalls.size;
   }

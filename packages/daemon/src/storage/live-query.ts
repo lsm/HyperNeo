@@ -1,11 +1,3 @@
-/**
- * LiveQueryEngine
- *
- * Registers SQL queries with parameters and callbacks. When a table change event
- * fires from ReactiveDatabase, it re-evaluates all queries that depend on that
- * table, computes diffs, and invokes callbacks only when results actually changed.
- */
-
 import { Database as BunDatabase } from './sqlite-compat';
 import { Logger } from '../lib/logger';
 import { hashString32 } from '../lib/runtime-hash';
@@ -13,48 +5,17 @@ import type { ReactiveDatabase, TableChangeScope } from './reactive-database';
 
 const log = new Logger('live-query');
 
-// ============================================================================
-// Public API types
-// ============================================================================
-
 export interface LiveQueryHandle<T> {
-  /** Get current cached result */
   get(): T[];
-  /** Stop receiving updates */
   dispose(): void;
 }
 
 export interface LiveQuerySubscribeOptions {
-  /**
-   * Optional debounce for reevaluating this query after a table change.
-   *
-   * Default behavior remains microtask-based so normal UI surfaces stay
-   * immediate. Expensive high-frequency feeds can opt in to a short debounce
-   * to coalesce bursts of writes into one latest-state delta.
-   */
   debounceMs?: number;
-  /**
-   * Optional metadata builder for the whole result set. It is evaluated once
-   * per cached query evaluation, not once per subscriber.
-   */
   getMetadata?: (
     rows: Record<string, unknown>[],
     params: ReadonlyArray<unknown>
   ) => Record<string, unknown> | undefined;
-  /**
-   * Optional scope filter. When a table-change event carries scope metadata,
-   * this function decides whether the change is relevant to this particular
-   * query subscription. Return `false` to skip re-evaluation entirely.
-   *
-   * When the scope is absent (e.g. transaction flushes, methods without scope
-   * extraction) the filter is NOT called and the query is re-evaluated as
-   * usual — this preserves the existing fallback-to-full-reevaluation
-   * behaviour.
-   *
-   * Example: a `messages.bySession` subscription with `params[0] = "sess-A"`
-   * would provide `(scope) => scope.sessionId === "sess-A"` so that writes
-   * for session B skip re-evaluation of session A's feed.
-   */
   scopeFilter?: (scope: TableChangeScope) => boolean;
 }
 
@@ -67,10 +28,6 @@ export interface QueryDiff<T = Record<string, unknown>> {
   version: number;
   metadata?: Record<string, unknown>;
 }
-
-// ============================================================================
-// Internal types
-// ============================================================================
 
 interface Subscriber<T extends Record<string, unknown>> {
   onChange: (diff: QueryDiff<T>) => void;
@@ -93,13 +50,9 @@ interface QueryEntry<T extends Record<string, unknown>> {
       ) => Record<string, unknown> | undefined)
     | undefined;
   subscribers: Set<Subscriber<T>>;
-  /** True when a re-evaluation is already queued */
   pendingEval: boolean;
-  /** Timer handle when the pending evaluation uses debounceMs instead of a microtask. */
   pendingTimer: ReturnType<typeof setTimeout> | null;
-  /** Delay used for table-change reevaluations. */
   debounceMs: number;
-  /** Scope filter — when set, skips re-evaluation for unrelated scopes. */
   scopeFilter: ((scope: TableChangeScope) => boolean) | undefined;
 }
 
@@ -108,35 +61,9 @@ interface RowHashSnapshot {
   rowHashes: Map<unknown, number> | null;
 }
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/**
- * Extract table names referenced in FROM and JOIN clauses.
- *
- * Handles:
- * - Simple `FROM table` and all JOIN variants: LEFT JOIN, RIGHT JOIN,
- *   INNER JOIN, CROSS JOIN, FULL JOIN, LEFT OUTER JOIN, RIGHT OUTER JOIN
- * - Comma-separated tables in the FROM clause: `FROM a, b`
- * - Table aliases — `FROM items AS i` or `FROM items i` — returns base name
- * - Case-insensitive keywords; names are normalised to lowercase
- * - Subqueries: the pattern skips `FROM (` so the `(` is not treated as a
- *   table name; inner tables are still matched when the regex reaches them
- *
- * Known limitations (acceptable for the queries this engine handles):
- * - CTE aliases defined with `WITH alias AS (…)` may be captured as table
- *   names when they appear after a FROM/JOIN keyword.
- * - Quoted identifiers (`"my table"`, `` `col` ``) are not supported.
- *
- * @internal Exported for unit testing only.
- */
 export function extractTables(sql: string): string[] {
   const tables = new Set<string>();
 
-  // Match all JOIN variants followed by a bare identifier (not a `(`).
-  // This covers: JOIN, INNER JOIN, LEFT JOIN, RIGHT JOIN, CROSS JOIN,
-  // FULL JOIN, LEFT OUTER JOIN, RIGHT OUTER JOIN, etc.
   const joinPattern =
     /\b(?:(?:LEFT|RIGHT|INNER|CROSS|FULL)(?:\s+OUTER)?\s+)?JOIN\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi;
   let match: RegExpExecArray | null;
@@ -144,10 +71,6 @@ export function extractTables(sql: string): string[] {
     tables.add(match[1].toLowerCase());
   }
 
-  // Match FROM clauses and walk the comma-separated table list that follows.
-  // The pattern captures the raw list; we then split on commas and pick the
-  // first identifier from each item (ignoring AS alias and positional alias).
-  // We use a negative lookahead `(?!\s*\()` to skip `FROM (subquery)` openers.
   const fromPattern =
     /\bFROM\s+(?!\s*\()([a-zA-Z_][a-zA-Z0-9_\s,]*?)(?=\s+(?:WHERE|JOIN|ON|GROUP|ORDER|HAVING|LIMIT|UNION)\b|\s*(?:$|\)))/gi;
   while ((match = fromPattern.exec(sql)) !== null) {
@@ -166,12 +89,6 @@ function hashString(value: string): number {
   return hashString32(value);
 }
 
-/**
- * Build a compact hash for a result set.
- *
- * For the common `id`-keyed path, cache one hash per row so later diffs only
- * stringify newly fetched rows, not both the previous and next result sets.
- */
 function hashRows(rows: Record<string, unknown>[]): RowHashSnapshot {
   const hasId = rows.length > 0 && 'id' in rows[0];
   if (!hasId) {
@@ -194,12 +111,6 @@ function hashMetadata(metadata: Record<string, unknown> | undefined): number {
   return metadata === undefined ? 0 : hashString(JSON.stringify(metadata));
 }
 
-/**
- * Compute a row-level diff between old and new result sets.
- * Uses `id` field when available; falls back to positional comparison.
- *
- * @internal Exported for testing only.
- */
 export function computeDiff<T extends Record<string, unknown>>(
   oldRows: T[],
   newRows: T[],
@@ -210,7 +121,6 @@ export function computeDiff<T extends Record<string, unknown>>(
     (newRows.length > 0 && 'id' in newRows[0]) || (oldRows.length > 0 && 'id' in oldRows[0]);
 
   if (!hasId) {
-    // Positional diff: compare by full JSON
     const oldSet = new Set(oldRows.map((r) => JSON.stringify(r)));
     const newSet = new Set(newRows.map((r) => JSON.stringify(r)));
     const added: T[] = newRows.filter((r) => !oldSet.has(JSON.stringify(r)));
@@ -252,19 +162,9 @@ export function computeDiff<T extends Record<string, unknown>>(
   return { added, removed, updated };
 }
 
-// ============================================================================
-// LiveQueryEngine
-// ============================================================================
-
 export class LiveQueryEngine {
-  /** Map from cache key (`sql + JSON.stringify(params)`) to QueryEntry */
   private queries = new Map<string, QueryEntry<Record<string, unknown>>>();
-  /** Map from table name to set of cache keys that depend on it */
   private tableIndex = new Map<string, Set<string>>();
-  /**
-   * Prepared statements keyed by SQL text. Public subscriptions resolve to
-   * constant named-query SQL, so this stays bounded by the registry size.
-   */
   private statements = new Map<string, ReturnType<BunDatabase['prepare']>>();
   private changeListener: (data: {
     tables: string[];
@@ -285,10 +185,6 @@ export class LiveQueryEngine {
     this.reactiveDb.on('change', this.changeListener);
   }
 
-  /**
-   * Register a live query. Executes immediately and delivers current results
-   * to the callback as a 'snapshot'. Subsequent changes trigger 'delta' callbacks.
-   */
   subscribe<T extends Record<string, unknown>>(
     sql: string,
     params: ReadonlyArray<unknown>,
@@ -347,7 +243,6 @@ export class LiveQueryEngine {
     const subscriber: Subscriber<T> = { onChange, disposed: false };
     (entry as QueryEntry<T>).subscribers.add(subscriber);
 
-    // Deliver initial snapshot
     const version = this.computeVersion((entry as QueryEntry<T>).tables);
     onChange({
       type: 'snapshot',
@@ -361,7 +256,6 @@ export class LiveQueryEngine {
       dispose: () => {
         subscriber.disposed = true;
         (entry as QueryEntry<T>).subscribers.delete(subscriber);
-        // Clean up entry if no subscribers remain
         if ((entry as QueryEntry<T>).subscribers.size === 0) {
           if ((entry as QueryEntry<T>).pendingTimer) {
             clearTimeout((entry as QueryEntry<T>).pendingTimer!);
@@ -381,7 +275,6 @@ export class LiveQueryEngine {
     };
   }
 
-  /** Dispose all subscriptions and stop listening to ReactiveDatabase. */
   dispose(): void {
     this.disposed = true;
     this.reactiveDb.off('change', this.changeListener as (...args: unknown[]) => void);
@@ -394,10 +287,6 @@ export class LiveQueryEngine {
     this.tableIndex.clear();
     this.statements.clear();
   }
-
-  // ============================================================================
-  // Private
-  // ============================================================================
 
   private onTableChange(table: string, scope?: TableChangeScope): void {
     if (this.disposed) return;
@@ -412,8 +301,6 @@ export class LiveQueryEngine {
       const entry = this.queries.get(cacheKey);
       if (!entry || entry.pendingEval) continue;
 
-      // Scope filtering: when scope metadata is available and the entry
-      // has a filter, skip re-evaluation if the change is unrelated.
       if (scope && entry.scopeFilter && !entry.scopeFilter(scope)) {
         skipped++;
         continue;

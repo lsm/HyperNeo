@@ -1,13 +1,6 @@
-/**
- * AuthStatusCard Component - Displays authentication status
- */
-
 import type { AuthStatusCardProps } from './tool-types.ts';
 import { cn } from '../../../lib/utils.ts';
 
-/**
- * AuthStatusCard Component
- */
 export function AuthStatusCard({
   isAuthenticating,
   output,
@@ -15,7 +8,6 @@ export function AuthStatusCard({
   variant = 'default',
   className,
 }: AuthStatusCardProps) {
-  // Compact variant
   if (variant === 'compact') {
     return (
       <div
@@ -55,7 +47,6 @@ export function AuthStatusCard({
     );
   }
 
-  // Inline variant
   if (variant === 'inline') {
     return (
       <span
@@ -71,7 +62,6 @@ export function AuthStatusCard({
     );
   }
 
-  // Default variant - full display
   return (
     <div
       class={cn(

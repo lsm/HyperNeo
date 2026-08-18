@@ -1,10 +1,8 @@
 import { CheckCircle } from 'lucide-preact';
 
-// Shared radio input class - works with native <input> :checked pseudo-class
 const radioInputClass =
   'relative size-4 appearance-none rounded-full border border-gray-300 bg-white checked:border-indigo-600 checked:bg-indigo-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:border-gray-300 disabled:bg-gray-100 disabled:cursor-not-allowed dark:border-white/10 dark:bg-white/5 dark:checked:border-indigo-500 dark:checked:bg-indigo-500 dark:focus-visible:outline-indigo-500 dark:disabled:border-white/5 dark:disabled:bg-white/10 forced-colors:appearance-auto';
 
-// 1. Simple list
 function Example1() {
   return (
     <fieldset>
@@ -35,7 +33,6 @@ function Example1() {
   );
 }
 
-// 2. Simple inline list
 function Example2() {
   return (
     <fieldset>
@@ -66,7 +63,6 @@ function Example2() {
   );
 }
 
-// 3. List with description
 function Example3() {
   const plans = [
     { id: '2gb', label: '2 GB RAM', description: '8 CPUs, 50GB SSD' },
@@ -104,7 +100,6 @@ function Example3() {
   );
 }
 
-// 4. List with inline description
 function Example4() {
   return (
     <fieldset>
@@ -141,7 +136,6 @@ function Example4() {
   );
 }
 
-// 5. List with radio on right
 function Example5() {
   return (
     <fieldset>
@@ -172,7 +166,6 @@ function Example5() {
   );
 }
 
-// 6. Simple list with radio on right (transfer frequency)
 function Example6() {
   return (
     <fieldset>
@@ -208,7 +201,6 @@ function Example6() {
   );
 }
 
-// 7. Simple table
 function Example7() {
   return (
     <table class="w-full text-sm text-left">
@@ -255,7 +247,6 @@ function Example7() {
   );
 }
 
-// 8. List with descriptions in panel (privacy settings)
 function Example8() {
   return (
     <fieldset class="border border-gray-200 dark:border-white/10 rounded-lg p-4">
@@ -303,7 +294,6 @@ function Example8() {
   );
 }
 
-// 9. Color picker
 function Example9() {
   const colors = [
     { id: 'pink', color: 'bg-pink-500' },
@@ -339,7 +329,6 @@ function Example9() {
   );
 }
 
-// 10. Cards (mailing list)
 function Example10() {
   const plans = [
     {
@@ -394,7 +383,6 @@ function Example10() {
   );
 }
 
-// 11. Small cards (RAM options)
 function Example11() {
   const options = [
     { id: '4gb', label: '4 GB', disabled: false },

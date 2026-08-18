@@ -1,7 +1,3 @@
-/**
- * Tests for Provider RPC handlers.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import {
@@ -209,9 +205,6 @@ describe('Provider RPC handlers', () => {
     });
 
     it('does not store custom_endpoint credentials in the credential store', async () => {
-      // Custom endpoints keep auth inline in customEndpointConfigJson. The
-      // credential store must be skipped so a locked macOS Keychain cannot
-      // block creating the endpoint.
       const handlers = setup();
       const result = (await handlers.get('providers.create')!(
         {
@@ -231,11 +224,6 @@ describe('Provider RPC handlers', () => {
     });
 
     it('rolls back the provider row and surfaces keychain guidance when storeApiKey throws KeychainUnavailableError', async () => {
-      // Built-in providers persist secrets in the macOS Keychain. If the
-      // Keychain is locked, the create must (a) reject with an actionable
-      // message the UI can toast, (b) remove the just-inserted provider row
-      // so retries don't see 'already exists', and (c) skip the
-      // providers.changed broadcast.
       creds.storeApiKey = mock(async () => {
         throw new KeychainUnavailableError('User interaction is not allowed.');
       });
@@ -256,14 +244,11 @@ describe('Provider RPC handlers', () => {
         )
       ).rejects.toThrow('macOS Keychain is locked or unavailable');
 
-      // Compensating delete happened.
       expect(repo.listProviders()).toEqual([]);
-      // Broadcast skipped because nothing changed from the user's perspective.
       expect(eventBus.publishAsync).not.toHaveBeenCalled();
     });
 
     it('re-registers a built-in provider that was previously unregistered', async () => {
-      // Simulate deleting and re-adding a built-in provider
       const registry = getProviderRegistry();
       registry.unregister('anthropic-codex');
       expect(registry.has('anthropic-codex')).toBe(false);
@@ -561,10 +546,6 @@ describe('Provider RPC handlers', () => {
     });
 
     it('surfaces keychain guidance and leaves the record untouched when storeApiKey throws KeychainUnavailableError', async () => {
-      // If the credential write fails because the macOS Keychain is locked,
-      // the update must reject with an actionable message and must NOT flip
-      // authType or otherwise advance the DB row — the record should stay in
-      // its pre-update state so the user can retry after unlocking Keychain.
       const created = repo.createProvider({
         providerId: 'anthropic',
         displayName: 'Anthropic',
@@ -583,7 +564,6 @@ describe('Provider RPC handlers', () => {
         )
       ).rejects.toThrow('macOS Keychain is locked or unavailable');
 
-      // Record unchanged: authType stays 'none', no providers.changed emitted.
       const after = repo.getProvider(created.id);
       expect(after?.authType).toBe('none');
       expect(eventBus.publishAsync).not.toHaveBeenCalled();
@@ -617,8 +597,6 @@ describe('Provider RPC handlers', () => {
     });
 
     it('blocks delete when removeCredentials throws KeychainUnavailableError for built_in', async () => {
-      // Keychain-only persistence: if the keychain is locked, do not delete the
-      // provider config while a stale credential may remain in Keychain.
       const created = repo.createProvider({
         providerId: 'my-provider',
         displayName: 'My Provider',
@@ -640,8 +618,6 @@ describe('Provider RPC handlers', () => {
     });
 
     it('allows custom_endpoint delete even when keychain is locked', async () => {
-      // Custom endpoints store auth inline in config JSON, not the credential
-      // store. A locked keychain must not block removing the endpoint row.
       const created = repo.createProvider({
         providerId: 'my-endpoint',
         displayName: 'My Endpoint',
@@ -881,9 +857,6 @@ describe('Provider RPC handlers', () => {
 
   describe('credential hydration (connected-vs-available gap)', () => {
     it('hydrates the live GLM provider on create with an API key', async () => {
-      // After connecting GLM via the Provider panel, the live provider instance
-      // must be authenticated immediately — isAvailable() flips true without a
-      // daemon restart so GLM models reach the picker.
       const handlers = setup();
       await handlers.get('providers.create')!(
         {
@@ -904,11 +877,6 @@ describe('Provider RPC handlers', () => {
     });
 
     it('hydrates from the request even when the credential-store read returns null', async () => {
-      // The bug: storeApiKey persists the key but the subsequent getCredentials()
-      // read comes back null (locked-keychain read, fallback miss, or a stale
-      // value). Previously the live provider stayed un-hydrated (isAvailable()
-      // === false) while the panel showed "connected". Hydration must not depend
-      // on the store round-trip — it uses the request value directly.
       creds.getCredentials = mock(async () => null);
       const handlers = setup();
 
@@ -951,23 +919,6 @@ describe('Provider RPC handlers', () => {
     });
 
     it('invalidates the model cache when credentials change', async () => {
-      // providers.create clears the cache via clearCacheAndNotifyProvidersChanged,
-      // which calls clearModelsCache() and then publishes providers.changed. We
-      // assert the publish (via the LOCAL internalEventBus mock) rather than
-      // cache state because a leaking top-level mock.module in sibling shard
-      // files (custom-endpoint-handlers, settings-handlers-custom-endpoints)
-      // replaces the real clearModelsCache with a no-op under CI's file
-      // interleaving — so any assertion through model-service is unreliable
-      // here. session-handlers.test.ts documents the same constraint. We can't
-      // install our own model-service mock to spy on clearModelsCache directly:
-      // it would leak into session-handlers.test.ts (which needs the real
-      // setModelsCache/getAvailableModels) and break it.
-      //
-      // clearModelsCache() and the publish are sequential and unconditional in
-      // clearCacheAndNotifyProvidersChanged, so the publish firing proves the
-      // clear was invoked. That the real clearModelsCache actually empties the
-      // cache (and cancels in-flight refreshes) is covered by model-service's
-      // own tests.
       const handlers = setup();
       await handlers.get('providers.create')!(
         {
@@ -988,8 +939,6 @@ describe('Provider RPC handlers', () => {
     });
 
     it('preserves the live key on a config-only resync instead of re-reading a stale store', async () => {
-      // 1. Hydrate GLM with the request key 'new' (resolveCredentialsForHydration
-      //    hydrates API-key providers from the request, not the store).
       const handlers = setup();
       await handlers.get('providers.create')!(
         {
@@ -1004,36 +953,22 @@ describe('Provider RPC handlers', () => {
         {}
       );
       const provider = getProviderRegistry().get('glm') as GlmProvider | undefined;
-      // Assert via getCredentials() (the in-memory hydrated credential), not
-      // getApiKey(): getApiKey() is GLM_API_KEY/ZHIPU_API_KEY-env-prefixed, so
-      // it is environment-dependent and masks the hydration under a real key.
       const credAfterCreate = provider?.getCredentials();
       expect(credAfterCreate?.type === 'api_key' && credAfterCreate.apiKey).toBe('new');
 
-      // 2. Simulate a stale credential store: the keychain is still readable
-      //    with the old value after the fresh write fell through to the
-      //    encrypted fallback.
       creds.getCredentials = mock(async () => ({ type: 'api_key', apiKey: 'old' }));
 
-      // 3. Config-only resync (e.g. a Kimi-style region/config tweak) with no
-      //    new credentials. shouldResync is true because configJson changed.
       const created = repo.listProviders().find((p) => p.providerId === 'glm')!;
       await handlers.get('providers.update')!(
         { id: created.id, params: { configJson: '{"region":"x"}' } },
         {}
       );
 
-      // The live provider keeps the freshly-hydrated key — the stale store
-      // value did not overwrite it.
       const credAfterUpdate = provider?.getCredentials();
       expect(credAfterUpdate?.type === 'api_key' && credAfterUpdate.apiKey).toBe('new');
     });
 
     it('hydrateOAuth: submitted tokens win over a stale store, raw preserved', async () => {
-      // Same stale-read class as the API-key branch: a fallback keychain write
-      // can leave the store reporting an older OAuth token. Submitted tokens
-      // must be authoritative, while any normalised `raw` metadata the store
-      // holds (e.g. Codex accountId/planType) is preserved.
       const staleCm = {
         getCredentials: mock(async () => ({
           type: 'oauth' as const,

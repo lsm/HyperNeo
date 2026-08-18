@@ -1,7 +1,3 @@
-/**
- * Unit tests for Provider Registry
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { ModelInfo } from '@hyperneo/shared';
 import { Logger } from '@hyperneo/shared/logger';
@@ -19,7 +15,6 @@ import {
   resetProviderRegistry,
 } from '../../../../src/lib/providers/registry';
 
-// Mock provider for testing
 class MockProvider implements Provider {
   readonly id = 'mock';
   readonly displayName = 'Mock Provider';
@@ -72,7 +67,6 @@ class MockProvider implements Provider {
   }
 }
 
-// Provider subclass factories for collision tests
 function makeAnthropicProvider() {
   return new (class extends MockProvider {
     readonly id = 'anthropic' as const;
@@ -182,7 +176,6 @@ describe('ProviderRegistry', () => {
     it('should return all registered providers', () => {
       const mock1 = new MockProvider();
 
-      // Create another mock provider with different ID
       const mock2 = new (class extends MockProvider {
         readonly id = 'mock2' as const;
         readonly displayName = 'Mock Provider 2';
@@ -205,12 +198,11 @@ describe('ProviderRegistry', () => {
     it('should return only available providers', async () => {
       const availableProvider = new MockProvider(true);
 
-      // Create another provider class that is always unavailable
       class UnavailableMock extends MockProvider {
         readonly id = 'unavailable' as const;
         readonly displayName = 'Unavailable';
         constructor() {
-          super(false); // Explicitly pass false for unavailable
+          super(false);
         }
       }
 
@@ -235,7 +227,6 @@ describe('ProviderRegistry', () => {
       registry.register(makeAnthropicProvider());
       registry.register(makeAnthropicCopilotProvider());
 
-      // Deterministic: explicit providerId → always the right provider regardless of model
       const result = registry.detectProviderForModel('claude-opus-4.6', 'anthropic-copilot');
       expect(result?.id).toBe('anthropic-copilot');
     });
@@ -264,7 +255,6 @@ describe('ProviderRegistry', () => {
 
         const result = registry.detectProviderForModel('claude-opus-4.6', 'nonexistent-provider');
         expect(result).toBeUndefined();
-        // Error should be logged for the unknown provider
         expect(errorSpy).toHaveBeenCalledTimes(1);
         const errArg = errorSpy.mock.calls[0][0] as string;
         expect(errArg).toContain('nonexistent-provider');
@@ -323,8 +313,6 @@ describe('ProviderRegistry', () => {
   });
 
   describe('initializeProviders — all built-in providers registered', () => {
-    // Outer beforeEach already resets registry+factory; no per-test resets needed.
-
     it('should register exactly eleven built-in providers', async () => {
       const reg = initializeProviders();
       await waitForOptionalProviderRegistration();
@@ -407,7 +395,6 @@ describe('ProviderRegistry', () => {
       const reg1 = initializeProviders();
       await waitForOptionalProviderRegistration();
       const reg2 = initializeProviders();
-      // The global singleton must be the same reference — not a new instance
       expect(reg1).toBe(reg2);
       expect(reg2.size).toBe(11);
     });
@@ -471,7 +458,6 @@ describe('ProviderRegistry', () => {
       registry.register(makeAnthropicCopilotProvider());
       registry.register(makeAnthropicCodexProvider());
 
-      // Explicit routing — no ambiguity regardless of registration order
       expect(registry.detectProviderForModel('claude-sonnet-4.6', 'anthropic')?.id).toBe(
         'anthropic'
       );
@@ -486,7 +472,6 @@ describe('ProviderRegistry', () => {
     it('detectProviderForModel returns undefined for unknown provider regardless of model', () => {
       registry.register(makeAnthropicProvider());
 
-      // Suppress the expected error log produced by detectProviderForModel
       const errorSpy = spyOn(Logger.prototype, 'error').mockImplementation(mock(() => {}));
       try {
         const result = registry.detectProviderForModel('claude-sonnet-4.6', 'unknown-provider');
@@ -569,7 +554,6 @@ describe('inferProviderForModel', () => {
   });
 
   it('does not hijack Ollama tags with kimi/moonshot prefixes', () => {
-    // Ollama tags contain ':' — must fall through to Ollama routing
     expect(inferProviderForModel('kimi-k2:latest')).not.toBe('kimi');
     expect(inferProviderForModel('moonshot-v1:latest')).not.toBe('kimi');
   });
@@ -616,9 +600,6 @@ describe('inferProviderForModel', () => {
   });
 
   it('maps bare ollama/openrouter shorthands before registry fallback providers', () => {
-    // Anthropic's catch-all ownsModel claims these exact shorthands whenever the
-    // registry is populated (Anthropic is registered first) — they must
-    // pre-route like bare glm/minimax.
     try {
       getProviderRegistry().register(
         new (class extends MockProvider {
@@ -634,7 +615,6 @@ describe('inferProviderForModel', () => {
       expect(inferProviderForModel('Ollama')).toBe('ollama');
       expect(inferProviderForModel('ollama-cloud')).toBe('ollama-cloud');
       expect(inferProviderForModel('openrouter/auto')).toBe('openrouter');
-      // provider/model refs pre-route too; claude-* refs stay with the fallback.
       expect(inferProviderForModel('openai/gpt-5.4')).toBe('openrouter');
       expect(inferProviderForModel('anthropic/claude-sonnet-4.6')).toBe('openrouter');
       expect(inferProviderForModel('claude-sonnet-4.6/preview')).toBe('anthropic');
@@ -644,9 +624,6 @@ describe('inferProviderForModel', () => {
   });
 
   it('maps bare glm/minimax aliases before registry fallback providers', () => {
-    // Regression: the GLM/MiniMax providers only own the dashed prefixes, so a
-    // catch-all provider (Anthropic claims unknown IDs) would otherwise win the
-    // live-registry lookup for the bare aliases.
     try {
       getProviderRegistry().register(
         new (class extends MockProvider {
@@ -668,8 +645,6 @@ describe('inferProviderForModel', () => {
   });
 
   it('routes bare and dashed glm/minimax IDs with the real registry populated', () => {
-    // Anthropic's ownsModel excludes the dashed prefixes but claims the bare
-    // aliases — verify the pre-route + registry produce glm/minimax for both.
     try {
       initializeProviders();
 
@@ -727,9 +702,6 @@ describe('inferProviderForModel', () => {
 
 describe('inferPersistableProviderForModel', () => {
   it('returns undefined for contested anthropic/codex inferences', async () => {
-    // Catch-all results must not be persisted into session configs — cached
-    // model metadata is authoritative for these IDs (e.g. Copilot's
-    // gemini-3.1-pro-preview).
     expect(await inferPersistableProviderForModel('claude-sonnet-4.6')).toBeUndefined();
     expect(await inferPersistableProviderForModel('gemini-3.1-pro-preview')).toBeUndefined();
     expect(await inferPersistableProviderForModel('unknown-model')).toBeUndefined();
@@ -748,10 +720,6 @@ describe('inferPersistableProviderForModel', () => {
   });
 
   it('suppresses gpt-* only when an AVAILABLE provider also claims the ID', async () => {
-    // Copilot's static catalogue claims gpt-5.4/5.5 while gpt-5.6-sol is
-    // codex-only; the persistable outcome additionally depends on Copilot's
-    // availability (credential probe), which is environment-dependent — that
-    // branch is covered deterministically by the mock-based test below.
     try {
       const registry = initializeProviders();
       await waitForOptionalProviderRegistration(registry);
@@ -765,9 +733,6 @@ describe('inferPersistableProviderForModel', () => {
   });
 
   it('suppresses gpt-* when an available second owner claims the ID', async () => {
-    // An available Copilot claiming gpt-5.4 makes the codex inference contested
-    // — persist undefined so cached metadata decides. An unavailable Copilot
-    // (no GitHub auth — the default deployment) must NOT suppress it.
     const claimant = (id: string, available: boolean) =>
       ({
         id,
@@ -794,8 +759,6 @@ describe('inferPersistableProviderForModel', () => {
   });
 
   it('persists the static codex default for gpt-* when no live provider contests it', async () => {
-    // Empty registry: no live owner can contest, so the static gpt-* → codex
-    // mapping is unambiguous and safe to persist.
     expect(await inferPersistableProviderForModel('gpt-5.4')).toBe('anthropic-codex');
   });
 });

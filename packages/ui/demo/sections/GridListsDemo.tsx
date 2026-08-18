@@ -290,9 +290,6 @@ export function GridListsDemo() {
         </ul>
       </div>
 
-      {/* ============================================================ */}
-      {/* 03 - Simple Cards */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Simple cards</h3>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -320,9 +317,6 @@ export function GridListsDemo() {
         </div>
       </div>
 
-      {/* ============================================================ */}
-      {/* 04 - Horizontal Link Cards */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Horizontal link cards</h3>
         <div>
@@ -389,9 +383,6 @@ export function GridListsDemo() {
         </div>
       </div>
 
-      {/* ============================================================ */}
-      {/* 05 - Actions with Shared Borders */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Actions with shared borders</h3>
         <div class="divide-y divide-surface-border overflow-hidden rounded-lg bg-surface-2 shadow-sm sm:grid sm:grid-cols-2 sm:divide-y-0 dark:divide-white/10 dark:bg-surface-2 dark:shadow-none dark:outline dark:-outline-offset-1 dark:outline-white/20">
@@ -465,7 +456,6 @@ export function GridListsDemo() {
               <div class="mt-8">
                 <h3 class="text-base font-semibold text-text-primary">
                   <a href={action.href} class="focus:outline-hidden">
-                    {/* Extend touch target to entire panel */}
                     <span aria-hidden="true" class="absolute inset-0" />
                     {action.title}
                   </a>
@@ -480,9 +470,6 @@ export function GridListsDemo() {
         </div>
       </div>
 
-      {/* ============================================================ */}
-      {/* 06 - Images with Details */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Images with details</h3>
         <ul
@@ -537,9 +524,6 @@ export function GridListsDemo() {
         </ul>
       </div>
 
-      {/* ============================================================ */}
-      {/* 07 - Logos Cards with Description List */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">
           Logos cards with description list

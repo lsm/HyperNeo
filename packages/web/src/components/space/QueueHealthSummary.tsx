@@ -1,12 +1,3 @@
-/**
- * QueueHealthSummary — operator/debug view of pending external-event queue health.
- *
- * Daemon-wide aggregate (the runtime is a shared singleton). Shows cumulative
- * counters (enqueue by source/target state, flush, delivered, failures by
- * reason/category, skips) and live gauges (depth, age, in-flight, digest
- * backlog). Counters are process-lifetime and reset on daemon restart.
- */
-
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { spaceStore, type QueueAgeStats, type QueueHealthSnapshot } from '../../lib/space-store.ts';
 import { Button } from '../ui/Button.tsx';

@@ -1,11 +1,3 @@
-/**
- * StateProjectionService Tests
- *
- * Unit tests for the pure state projection service — maintains caches from
- * InternalEventBus and exposes read methods. All client delivery, broadcasts,
- * and RPC handlers are in ClientEventBridge.
- */
-
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { StateProjectionService } from '../../../../src/lib/state-projection-service';
@@ -35,7 +27,6 @@ describe('StateProjectionService', () => {
   beforeEach(() => {
     eventSubscribers = new Map();
 
-    // SessionManager mock
     mockSessionManager = {
       getActiveSessions: mock(() => 2),
       getTotalSessions: mock(() => 5),
@@ -43,7 +34,6 @@ describe('StateProjectionService', () => {
       getSessionAsync: mock(async () => null),
     } as unknown as SessionManager;
 
-    // AuthManager mock
     mockAuthManager = {
       getAuthStatus: mock(async () => ({
         isAuthenticated: true,
@@ -51,7 +41,6 @@ describe('StateProjectionService', () => {
       })),
     } as unknown as AuthManager;
 
-    // SettingsManager mock
     mockSettingsManager = {
       getGlobalSettings: mock(() => ({
         ...DEFAULT_GLOBAL_SETTINGS,
@@ -59,7 +48,6 @@ describe('StateProjectionService', () => {
       })),
     } as unknown as SettingsManager;
 
-    // Config mock
     mockConfig = {
       defaultModel: 'claude-sonnet-4-20250514',
       maxSessions: 10,
@@ -71,7 +59,6 @@ describe('StateProjectionService', () => {
       onRequest: mock(() => () => {}),
     };
 
-    // InternalEventBus mock — collects subscribers so we can fire events manually
     mockInternalEventBus = {
       subscribe: mock((event: string, handler: Function) => {
         const existing = eventSubscribers.get(event) || [];
@@ -107,7 +94,6 @@ describe('StateProjectionService', () => {
     });
 
     it('should not depend on messageHub', () => {
-      // StateProjectionService no longer takes messageHub — it's a pure projection
       expect(service).toBeDefined();
     });
   });
@@ -175,7 +161,6 @@ describe('StateProjectionService', () => {
       ];
       const activeSessions = allSessions.filter((s) => s.status !== 'archived');
 
-      // Server-side filtering: listSessions() returns different results based on params
       (mockSessionManager.listSessions as ReturnType<typeof mock>).mockImplementation(
         (options?: { includeArchived?: boolean }) => {
           return options?.includeArchived ? allSessions : activeSessions;
@@ -275,10 +260,6 @@ describe('StateProjectionService', () => {
     });
 
     it('should prefer processingStateCache over ghost session in-memory state', async () => {
-      // Simulate a room leader/worker session where the SessionCache has a "ghost"
-      // (an AgentSession loaded from DB) with stale idle state. The live session
-      // in RoomRuntimeService has transitioned to waiting_for_input, which was
-      // propagated to processingStateCache via session.updated event.
       const pendingQuestion = {
         toolUseId: 'tool-use-123',
         questions: [
@@ -292,7 +273,6 @@ describe('StateProjectionService', () => {
         askedAt: Date.now(),
       };
 
-      // Ghost session loaded from DB has stale idle state
       const ghostAgentSession = {
         getSessionData: mock(() => ({ id: 'leader-session-id', title: 'Leader' })),
         getProcessingState: mock(() => ({ status: 'idle' as const })),
@@ -303,28 +283,21 @@ describe('StateProjectionService', () => {
         ghostAgentSession
       );
 
-      // Simulate session.updated event populating the cache
       const updateHandler = eventSubscribers.get('session.updated')?.[0];
       await updateHandler!({
         sessionId: 'leader-session-id',
         processingState: { status: 'waiting_for_input', pendingQuestion },
       });
 
-      // The getSessionState should return cached waiting_for_input, not ghost's idle
       const result = await service.getSessionState('leader-session-id');
 
       expect(result.agentState.status).toBe('waiting_for_input');
       expect(result.agentState.pendingQuestion).toEqual(pendingQuestion);
-      // Confirm the ghost's getProcessingState was NOT used as the final value
       expect(ghostAgentSession.getProcessingState).toHaveBeenCalledTimes(0);
     });
   });
 
   describe('getSessionState capture-order revision', () => {
-    // P2-H: the client orders state.session updates by a server-stamped
-    // capture-order revision, so the daemon must stamp a strictly increasing,
-    // per-session revision on every getSessionState call (the path shared by
-    // the state.session RPC and the state.session broadcast).
     function mockAgent() {
       return {
         getSessionData: mock(() => ({ id: 'rev-session', title: 'Rev' })),
@@ -358,14 +331,11 @@ describe('StateProjectionService', () => {
       const a2 = await service.getSessionState('session-a');
 
       expect(a1.revision).toBe(1);
-      // session-b has its own counter, independent of session-a.
       expect(b1.revision).toBe(1);
-      // session-a's second call advances only its own counter.
       expect(a2.revision).toBe(2);
     });
 
     it('stamps a stable daemon-instance epoch alongside the revision', async () => {
-      // The epoch lets the client detect a daemon restart (counter reset).
       (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
         mockAgent()
       );
@@ -373,19 +343,14 @@ describe('StateProjectionService', () => {
       const b = await service.getSessionState('rev-session');
       expect(typeof a.daemonEpoch).toBe('string');
       expect(a.daemonEpoch).toBeTruthy();
-      // Same daemon instance => same epoch across calls.
       expect(b.daemonEpoch).toBe(a.daemonEpoch);
     });
   });
 
   describe('broadcastSessionStateChange fallback ordering fields', () => {
-    // The catch-block fallback must carry revision + daemonEpoch (ordering
-    // parity with the primary emission) so the client's gating covers it.
     it('stamps revision + daemonEpoch on the fallback state when getSessionState throws', async () => {
-      // Populate caches via session.created so the fallback has data to emit.
       const createdHandler = eventSubscribers.get('session.created')?.[0];
       await createdHandler!({ session: { id: 'fall-session', title: 'Fall' } });
-      // getSessionState throws (no AgentSession) -> fallback path.
       (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(null);
 
       await service.broadcastSessionStateChange('fall-session');
@@ -435,8 +400,6 @@ describe('StateProjectionService', () => {
 
         await handler!({ sessionId: 'new-session-id', session: mockSession });
 
-        // Verify the session was cached by checking getSessionState
-        // (it should be available in the processingStateCache)
         const mockAgentSession = {
           getSessionData: mock(() => mockSession),
           getProcessingState: mock(() => ({ status: 'idle' })),
@@ -453,14 +416,12 @@ describe('StateProjectionService', () => {
 
     describe('session.updated', () => {
       it('should update cache for existing session', async () => {
-        // First create a session to cache
         const createHandler = eventSubscribers.get('session.created')?.[0];
         await createHandler!({
           sessionId: 'test-id',
           session: { id: 'test-id', title: 'Original', status: 'active', metadata: {} },
         });
 
-        // Now update it
         const updateHandler = eventSubscribers.get('session.updated')?.[0];
         await updateHandler!({
           sessionId: 'test-id',
@@ -468,7 +429,6 @@ describe('StateProjectionService', () => {
           processingState: { status: 'processing' },
         });
 
-        // Verify the cache was updated by checking getSessionState
         const mockAgentSession = {
           getSessionData: mock(() => ({ id: 'test-id', title: 'Updated' })),
           getProcessingState: mock(() => ({ status: 'idle' })),
@@ -479,14 +439,12 @@ describe('StateProjectionService', () => {
         );
 
         const state = await service.getSessionState('test-id');
-        // processingStateCache should have 'processing' from the update event
         expect(state.agentState.status).toBe('processing');
       });
 
       it('should handle update for non-cached session gracefully', async () => {
         const updateHandler = eventSubscribers.get('session.updated')?.[0];
 
-        // Update without creating first (partial data scenario)
         let error: Error | null = null;
         try {
           await updateHandler!({
@@ -496,25 +454,21 @@ describe('StateProjectionService', () => {
         } catch (e) {
           error = e as Error;
         }
-        // The handler should not throw — it only updates caches
         expect(error).toBeNull();
       });
     });
 
     describe('session.deleted', () => {
       it('should clear caches including error cache', async () => {
-        // First create a session to cache
         const createHandler = eventSubscribers.get('session.created')?.[0];
         await createHandler!({
           sessionId: 'test-id',
           session: { id: 'test-id', title: 'Test', status: 'active', metadata: {} },
         });
 
-        // Now delete it
         const deleteHandler = eventSubscribers.get('session.deleted')?.[0];
         await deleteHandler!({ sessionId: 'test-id' });
 
-        // Session should be removed from cache — getSessionState should throw
         await expect(service.getSessionState('test-id')).rejects.toThrow('Session not found');
       });
     });
@@ -522,7 +476,6 @@ describe('StateProjectionService', () => {
     describe('settings.updated', () => {
       it('should handle settings.updated event without error', async () => {
         const handler = eventSubscribers.get('settings.updated')?.[0];
-        // Should not throw — handler is a no-op (broadcast handled by ClientEventBridge)
         await handler!({ sessionId: 'global', settings: {} as GlobalSettings });
         expect(true).toBe(true);
       });
@@ -533,7 +486,6 @@ describe('StateProjectionService', () => {
         const handler = eventSubscribers.get('commands.updated')?.[0];
         await handler!({ sessionId: 'test-id', commands: ['cmd1', 'cmd2'] });
 
-        // Verify by checking session state — commands should be in cache
         const mockAgentSession = {
           getSessionData: mock(() => ({ id: 'test-id' })),
           getProcessingState: mock(() => ({ status: 'idle' })),
@@ -543,9 +495,6 @@ describe('StateProjectionService', () => {
           mockAgentSession
         );
 
-        // Note: commands cache is used internally but commandsData comes from
-        // getSlashCommands() for session state. The cache is for future use.
-        // The main thing is the handler doesn't throw.
         const state = await service.getSessionState('test-id');
         expect(state).toBeDefined();
       });
@@ -560,7 +509,6 @@ describe('StateProjectionService', () => {
           details: { code: 'ERR_001' },
         });
 
-        // Verify error is in cache by checking session state
         const mockAgentSession = {
           getSessionData: mock(() => ({ id: 'test-id' })),
           getProcessingState: mock(() => ({ status: 'idle' })),
@@ -578,18 +526,15 @@ describe('StateProjectionService', () => {
 
     describe('session.errorClear', () => {
       it('should clear error from cache', async () => {
-        // First set an error
         const errorHandler = eventSubscribers.get('session.error')?.[0];
         await errorHandler!({
           sessionId: 'test-id',
           error: 'Something went wrong',
         });
 
-        // Now clear it
         const clearHandler = eventSubscribers.get('session.errorClear')?.[0];
         await clearHandler!({ sessionId: 'test-id' });
 
-        // Verify error is cleared
         const mockAgentSession = {
           getSessionData: mock(() => ({ id: 'test-id' })),
           getProcessingState: mock(() => ({ status: 'idle' })),
@@ -614,7 +559,6 @@ describe('StateProjectionService', () => {
 
         await handler!(connectionData);
 
-        // Verify by checking system state
         const state = await service.getSystemState();
         expect(state.apiConnection.status).toBe('disconnected');
       });
@@ -622,11 +566,6 @@ describe('StateProjectionService', () => {
   });
 });
 
-/**
- * Real-DB coverage for the `sessions.last_error` persistence that shadows the
- * in-memory errorCache. The mock-based suite above can't assert column writes,
- * so this block wires a genuine in-memory SQLite database through the service.
- */
 describe('StateProjectionService — session error persistence', () => {
   let service: StateProjectionService;
   let memDb: BunDatabase;
@@ -651,12 +590,7 @@ describe('StateProjectionService — session error persistence', () => {
       publishAsync: mock(() => {}),
     } as unknown as InternalEventBus<DaemonInternalEventMap>;
 
-    // `Database` facade stand-in — only `getDatabase()` is exercised by the
-    // persistence path, so a minimal mock over the real in-memory DB suffices.
     const dbFacade = { getDatabase: () => memDb } as unknown as Database;
-    // ReactiveDatabase stand-in — `notifyChange` is spied so the test asserts
-    // the LiveQuery engine is told the sessions table changed (the write
-    // bypasses the reactive proxy, so an explicit notify is required).
     const reactiveDb = { notifyChange } as unknown as ReactiveDatabase;
 
     service = new StateProjectionService(
@@ -700,8 +634,6 @@ describe('StateProjectionService — session error persistence', () => {
       message: 'Anthropic authentication failed.',
       providerId: 'anthropic',
     });
-    // The write bypasses the reactive proxy, so the LiveQuery engine must be
-    // notified explicitly that the sessions table changed.
     expect(notifyChange).toHaveBeenCalledWith('sessions');
   });
 
@@ -728,7 +660,6 @@ describe('StateProjectionService — session error persistence', () => {
       error: 'plain string error',
       details: { code: 'ERR_001' },
     });
-    // No category → nothing persisted (column stays NULL) and no notify fired.
     expect(lastError('sess-cooldown-1')).toBeNull();
     expect(notifyChange).not.toHaveBeenCalled();
   });

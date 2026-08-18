@@ -1,15 +1,3 @@
-/**
- * GoalRepository LiveQuery Integration Tests
- *
- * Unit test: LiveQueryEngine subscriptions on `goals` fire after every
- * write through GoalRepository (create, update, delete, link, unlink).
- *
- * Design: GoalRepository calls reactiveDb.notifyChange('goals') after each
- * mutating operation. LiveQueryEngine listens on the reactive change event and
- * re-evaluates registered queries in a microtask, then calls subscribers with
- * a diff. All assertions await a microtask flush before checking diffs.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables } from '../../../../src/storage/schema';
@@ -19,10 +7,6 @@ import { GoalRepository } from '../../../../src/storage/repositories/goal-reposi
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { QueryDiff } from '../../../../src/storage/live-query';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 const GOALS_SQL = `SELECT id, title, status FROM goals ORDER BY created_at ASC`;
 
 interface GoalRow {
@@ -30,10 +14,6 @@ interface GoalRow {
   title: string;
   status: string;
 }
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 describe('GoalRepository → LiveQueryEngine subscription on goals', () => {
   let bunDb: BunDatabase;
@@ -46,17 +26,11 @@ describe('GoalRepository → LiveQueryEngine subscription on goals', () => {
     bunDb = new BunDatabase(':memory:');
     createTables(bunDb);
 
-    // Insert a minimal room row so FK constraints are satisfied
     roomId = 'room-lq-test';
     bunDb.exec(
       `INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test Room', ${Date.now()}, ${Date.now()})`
     );
 
-    // Wire up reactive layer
-    // Note: createReactiveDatabase wraps a Database facade; here we pass the
-    // BunDatabase directly for a lightweight setup.  notifyChange() is called
-    // manually by GoalRepository, so the proxy is not needed.
-    // We build a minimal reactiveDb backed directly by the BunDatabase.
     reactiveDb = createReactiveDatabase({ getDatabase: () => bunDb } as never);
     engine = new LiveQueryEngine(bunDb, reactiveDb);
     repo = new GoalRepository(bunDb, reactiveDb);
@@ -67,15 +41,10 @@ describe('GoalRepository → LiveQueryEngine subscription on goals', () => {
     bunDb.close();
   });
 
-  // ---------------------------------------------------------------------------
-  // createGoal
-  // ---------------------------------------------------------------------------
-
   test('createGoal fires a LiveQuery delta', async () => {
     const diffs: QueryDiff<GoalRow>[] = [];
     engine.subscribe(GOALS_SQL, [], (diff) => diffs.push(diff));
 
-    // snapshot fires synchronously
     expect(diffs.length).toBe(1);
     expect(diffs[0].type).toBe('snapshot');
     expect(diffs[0].rows).toHaveLength(0);
@@ -90,10 +59,6 @@ describe('GoalRepository → LiveQueryEngine subscription on goals', () => {
     expect(diffs[1].added).toHaveLength(1);
     expect(diffs[1].added?.[0].title).toBe('First Goal');
   });
-
-  // ---------------------------------------------------------------------------
-  // updateGoal
-  // ---------------------------------------------------------------------------
 
   test('updateGoal fires a LiveQuery delta', async () => {
     const goal = repo.createGoal({ roomId, title: 'To Update' });
@@ -111,10 +76,6 @@ describe('GoalRepository → LiveQueryEngine subscription on goals', () => {
     expect(diffs[1].type).toBe('delta');
     expect(diffs[1].updated?.[0].status).toBe('completed');
   });
-
-  // ---------------------------------------------------------------------------
-  // deleteGoal
-  // ---------------------------------------------------------------------------
 
   test('deleteGoal fires a LiveQuery delta', async () => {
     const goal = repo.createGoal({ roomId, title: 'To Delete' });
@@ -134,14 +95,9 @@ describe('GoalRepository → LiveQueryEngine subscription on goals', () => {
     expect(diffs[1].removed?.[0].id).toBe(goal.id);
   });
 
-  // ---------------------------------------------------------------------------
-  // linkTaskToGoal (calls updateGoal internally)
-  // ---------------------------------------------------------------------------
-
   test('linkTaskToGoal fires a LiveQuery delta', async () => {
     const goal = repo.createGoal({ roomId, title: 'Link Test' });
 
-    // Insert a minimal task so we have a valid task ID to link
     const taskId = 'task-lq-link';
     bunDb.exec(
       `INSERT OR IGNORE INTO tasks
@@ -149,7 +105,6 @@ describe('GoalRepository → LiveQueryEngine subscription on goals', () => {
 			 VALUES ('${taskId}', '${roomId}', 'Task', '', 'pending', 'normal', ${Date.now()})`
     );
 
-    // Subscribe to linked_task_ids column
     const LINKED_SQL = `SELECT id, linked_task_ids FROM goals WHERE id = ?`;
     const diffs: QueryDiff<{ id: string; linked_task_ids: string }>[] = [];
     engine.subscribe(LINKED_SQL, [goal.id], (diff) => diffs.push(diff));
@@ -165,10 +120,6 @@ describe('GoalRepository → LiveQueryEngine subscription on goals', () => {
     const linkedIds = JSON.parse(diffs[1].updated?.[0].linked_task_ids ?? '[]');
     expect(linkedIds).toContain(taskId);
   });
-
-  // ---------------------------------------------------------------------------
-  // unlinkTaskFromGoal (calls updateGoal internally)
-  // ---------------------------------------------------------------------------
 
   test('unlinkTaskFromGoal fires a LiveQuery delta', async () => {
     const taskId = 'task-lq-unlink';
@@ -199,16 +150,11 @@ describe('GoalRepository → LiveQueryEngine subscription on goals', () => {
     expect(afterIds).not.toContain(taskId);
   });
 
-  // ---------------------------------------------------------------------------
-  // Multiple writes coalesce
-  // ---------------------------------------------------------------------------
-
   test('multiple rapid createGoal calls coalesce into one delta', async () => {
     const diffs: QueryDiff<GoalRow>[] = [];
     engine.subscribe(GOALS_SQL, [], (diff) => diffs.push(diff));
     expect(diffs[0].rows).toHaveLength(0);
 
-    // Three back-to-back writes without yielding
     repo.createGoal({ roomId, title: 'Goal A' });
     repo.createGoal({ roomId, title: 'Goal B' });
     repo.createGoal({ roomId, title: 'Goal C' });
@@ -216,7 +162,6 @@ describe('GoalRepository → LiveQueryEngine subscription on goals', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    // Should coalesce into one delta (snapshot + 1 delta)
     expect(diffs.length).toBe(2);
     expect(diffs[1].type).toBe('delta');
     expect(diffs[1].added).toHaveLength(3);

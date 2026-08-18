@@ -1,17 +1,3 @@
-/**
- * SpaceRuntime — Crash Recovery and Rehydration Tests (Task 3.3)
- *
- * Tests that the runtime correctly rehydrates in-progress workflow runs on startup:
- *
- *   1. in_progress runs are picked up by a fresh runtime (executor created)
- *   2. blocked runs are also rehydratable (human-gate-blocked runs resume after approval)
- *   3. done, cancelled, and pending runs are NOT rehydrated (terminal/transient states)
- *   4. taskAgentManager.rehydrate() is called during rehydrateExecutors()
- *   5. Open (unspawned) tasks for an in_progress run are processed after rehydration
- *   6. Multiple in_progress runs across the same space all rehydrate
- *   7. Runs across multiple spaces all rehydrate
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -29,13 +15,7 @@ import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// DB / seed helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
@@ -80,10 +60,6 @@ function buildLinearWorkflow(
     completionAutonomyLevel: 3,
   });
 }
-
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
 
 describe('SpaceRuntime — crash recovery and rehydration', () => {
   let db: BunDatabase;
@@ -141,17 +117,12 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // 1. in_progress run picked up by fresh runtime
-  // -------------------------------------------------------------------------
-
   describe('in_progress runs are rehydrated on startup', () => {
     test('fresh runtime creates executor for an in_progress run from DB', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      // Simulate: run was started before crash, now in_progress in DB
       const pendingRun = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
@@ -159,14 +130,11 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       });
       workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
 
-      // Fresh runtime — simulates daemon restart
       const freshRuntime = makeRuntime();
-      expect(freshRuntime.executorCount).toBe(0); // not yet rehydrated
+      expect(freshRuntime.executorCount).toBe(0);
 
-      // First executeTick() triggers rehydration
       await freshRuntime.executeTick();
 
-      // Executor should now exist for the in_progress run
       expect(freshRuntime.executorCount).toBe(1);
       expect(freshRuntime.getExecutor(pendingRun.id)).toBeDefined();
     });
@@ -188,11 +156,6 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 
       expect(freshRuntime.getExecutor(runA.id)).toBeDefined();
     });
-
-    // Tests for legacy gate poll behavior were removed along with the gate
-    // subsystem (gate-evaluator, gate-script-executor, GateDataRepository, etc.).
-    // The runtime no longer exposes isGatePollActive / getActiveGatePollCount,
-    // and SpaceRuntimeConfig no longer accepts gateDataRepo.
 
     test('multiple in_progress runs all rehydrated by fresh runtime', async () => {
       const wfA = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -225,14 +188,8 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 2. blocked runs are also rehydratable
-  // -------------------------------------------------------------------------
-
   describe('blocked runs are rehydrated on startup', () => {
     test('fresh runtime creates executor for a blocked run from DB', async () => {
-      // blocked runs represent human-gate-blocked workflows — they need their
-      // executor reloaded so the run can advance once the gate is resolved
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
@@ -248,15 +205,10 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       const freshRuntime = makeRuntime();
       await freshRuntime.executeTick();
 
-      // Blocked runs are rehydratable — executor should exist
       expect(freshRuntime.executorCount).toBe(1);
       expect(freshRuntime.getExecutor(pendingRun.id)).toBeDefined();
     });
   });
-
-  // -------------------------------------------------------------------------
-  // 3. Terminal and transient states are NOT rehydrated
-  // -------------------------------------------------------------------------
 
   describe('non-rehydratable run states are skipped', () => {
     test('done runs are not rehydrated', async () => {
@@ -362,13 +314,11 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      // Create run but do NOT transition to in_progress — stays pending
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Pending Run',
       });
-      // Verify it's actually pending
       expect(run.status).toBe('pending');
 
       const freshRuntime = makeRuntime();
@@ -392,7 +342,6 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         { id: 'step-blocked', name: 'Blocked', agentId: AGENT },
       ]);
 
-      // Active run (in_progress)
       const activeRun = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: wfActive.id,
@@ -400,7 +349,6 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       });
       workflowRunRepo.transitionStatus(activeRun.id, 'in_progress');
 
-      // Done run
       const doneRun = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: wfDone.id,
@@ -409,7 +357,6 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       workflowRunRepo.transitionStatus(doneRun.id, 'in_progress');
       workflowRunRepo.transitionStatus(doneRun.id, 'done');
 
-      // Cancelled run
       const cancelledRun = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: wfCancelled.id,
@@ -418,7 +365,6 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       workflowRunRepo.transitionStatus(cancelledRun.id, 'in_progress');
       workflowRunRepo.transitionStatus(cancelledRun.id, 'cancelled');
 
-      // Blocked run (rehydratable)
       const blockedRun = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: wfBlocked.id,
@@ -430,7 +376,6 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       const freshRuntime = makeRuntime();
       await freshRuntime.executeTick();
 
-      // Only in_progress and blocked runs should be rehydrated
       expect(freshRuntime.executorCount).toBe(2);
       expect(freshRuntime.getExecutor(activeRun.id)).toBeDefined();
       expect(freshRuntime.getExecutor(blockedRun.id)).toBeDefined();
@@ -438,10 +383,6 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       expect(freshRuntime.getExecutor(cancelledRun.id)).toBeUndefined();
     });
   });
-
-  // -------------------------------------------------------------------------
-  // 4. taskAgentManager.rehydrate() is called during rehydrateExecutors()
-  // -------------------------------------------------------------------------
 
   describe('agent session rehydration', () => {
     test('taskAgentManager.rehydrate() is called once on first executeTick()', async () => {
@@ -483,21 +424,16 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         taskAgentManager: mockTAM as never,
       });
 
-      // Before any tick, rehydrate has not been called
       expect(rehydrateCallCount).toBe(0);
 
-      // First tick triggers rehydration
       await rt.executeTick();
       expect(rehydrateCallCount).toBe(1);
 
-      // Second tick does NOT re-call rehydrate (idempotent)
       await rt.executeTick();
       expect(rehydrateCallCount).toBe(1);
     });
 
     test('taskAgentManager.rehydrate() called even when no runs exist', async () => {
-      // rehydrate() should be called regardless of how many runs are found —
-      // it's always called as part of the startup sequence
       let rehydrateCallCount = 0;
       const mockTAM = {
         isExecutionSpawning: () => false,
@@ -526,8 +462,6 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
     });
 
     test('executor map is populated before taskAgentManager.rehydrate() is called', async () => {
-      // Executors must be loaded first so Task Agents can use MCP tools
-      // that rely on the executor map during rehydration
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
@@ -553,7 +487,6 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
         cancelBySessionId: () => {},
         interruptBySessionId: async () => {},
         rehydrate: async () => {
-          // Capture executor count at the moment rehydrate() is called
           executorCountAtRehydrate = rtRef?.executorCount ?? 0;
         },
       };
@@ -571,25 +504,16 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 
       await rtRef.executeTick();
 
-      // Executor must have been added BEFORE rehydrate() was called
       expect(executorCountAtRehydrate).toBe(1);
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 5. Open tasks are processed after rehydration (work is not lost)
-  // -------------------------------------------------------------------------
-
   describe('open tasks resumed after rehydration', () => {
     test('open task for an in_progress run is spawned on first tick after restart', async () => {
-      // Scenario: daemon crashed after starting the run + creating a task,
-      // but before the Task Agent was spawned. On restart, the task should
-      // be picked up and spawned.
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
 
-      // Simulate crash: run is in_progress, task is open (not yet spawned)
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
@@ -640,7 +564,6 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 
       await freshRuntime.executeTick();
 
-      // The previously unspawned task should now have been picked up
       expect(spawned).toContain(unspawnedTask.id);
       const updated = taskRepo.getTask(unspawnedTask.id)!;
       expect(updated.status).toBe('in_progress');
@@ -648,8 +571,6 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
     });
 
     test('in_progress task with live agent is not re-spawned after rehydration', async () => {
-      // Scenario: task was already running when the daemon crashed.
-      // After restart, the Task Agent session is still alive — no re-spawn.
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
@@ -661,7 +582,6 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-      // Task was already in_progress with a session
       const existingTask = taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Step A',
@@ -677,7 +597,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       let spawnCount = 0;
       const mockTAM = {
         isExecutionSpawning: () => false,
-        isSessionAlive: (sessionId: string) => sessionId === 'session:existing', // alive
+        isSessionAlive: (sessionId: string) => sessionId === 'session:existing',
         spawnWorkflowNodeAgentForExecution: async (task: unknown) => {
           const t = task as { id: string };
           spawnCount++;
@@ -702,17 +622,11 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 
       await freshRuntime.executeTick();
 
-      // No new spawn — agent is alive
       expect(spawnCount).toBe(0);
       const task = taskRepo.getTask(existingTask.id)!;
-      // Session ID unchanged
       expect(task.taskAgentSessionId).toBe('session:existing');
     });
   });
-
-  // -------------------------------------------------------------------------
-  // 6. Runs across multiple spaces all rehydrate
-  // -------------------------------------------------------------------------
 
   describe('cross-space rehydration', () => {
     test('in_progress runs from two different spaces are both rehydrated', async () => {

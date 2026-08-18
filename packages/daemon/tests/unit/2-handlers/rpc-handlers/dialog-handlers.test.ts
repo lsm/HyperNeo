@@ -1,20 +1,7 @@
-/**
- * Tests for Dialog RPC Handlers
- *
- * Tests the RPC handlers for native OS dialogs:
- * - dialog.pickFolder - Open native folder picker dialog
- *
- * Bun.spawn is mocked to prevent actual OS dialogs from appearing during tests.
- * This allows tests to run safely in both CI and local development environments.
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach, spyOn } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import { setupDialogHandlers } from '../../../../src/lib/rpc-handlers/dialog-handlers';
 
-// Under Vitest/Node there is no global `Bun`; install a stub so `spyOn` can
-// patch `Bun.spawn` the same way it does when running under Bun. The handler
-// reads `Bun.spawn` at call time, so spying on this object intercepts it.
 const BunRef: typeof Bun =
   (globalThis as Record<string, unknown>).Bun ??
   (((globalThis as Record<string, unknown>).Bun = {
@@ -23,13 +10,8 @@ const BunRef: typeof Bun =
     },
   }) as unknown as typeof Bun);
 
-// Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
-/**
- * Create a mock Bun.Subprocess that mimics Bun.spawn output.
- * Returns stdout/stderr as ReadableStreams and exited as a resolved Promise.
- */
 function createMockProcess(stdout: string, exitCode: number = 0) {
   const encoder = new TextEncoder();
   const stdoutStream = new ReadableStream<Uint8Array>({
@@ -72,7 +54,6 @@ function createHangingMockProcess() {
   };
 }
 
-// Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -112,8 +93,6 @@ describe('Dialog RPC Handlers', () => {
     messageHubData = createMockMessageHub();
     originalPlatform = process.platform;
 
-    // Mock Bun.spawn to prevent real OS dialogs from appearing during tests.
-    // Default: return empty stdout with exit code 0 (no folder selected / cancelled).
     spawnSpy = spyOn(BunRef, 'spawn').mockImplementation(
       () => createMockProcess('') as unknown as ReturnType<typeof Bun.spawn>
     );
@@ -122,7 +101,6 @@ describe('Dialog RPC Handlers', () => {
   });
 
   afterEach(() => {
-    // Restore platform
     Object.defineProperty(process, 'platform', {
       value: originalPlatform,
       writable: true,
@@ -168,7 +146,6 @@ describe('Dialog RPC Handlers', () => {
       const handler = messageHubData.handlers.get('dialog.pickFolder')!;
       const result = await handler({}, {});
 
-      // pickFolder catches errors and returns null
       expect(result).toEqual({ path: null });
     });
 
@@ -229,7 +206,6 @@ describe('Dialog RPC Handlers', () => {
         const result = await handler({}, {});
 
         expect(result).toEqual({ path: '/home/user/workspace' });
-        // Verify zenity was used (not kdialog)
         const calls = spawnSpy.mock.calls as unknown as Array<[string[]]>;
         const zenityCall = calls.find(([args]) => args[0] === 'zenity');
         expect(zenityCall).toBeDefined();
@@ -240,7 +216,6 @@ describe('Dialog RPC Handlers', () => {
         setPlatform('linux');
         spawnSpy.mockImplementation((args: string[]) => {
           if (args[0] === 'which' && args[1] === 'zenity') {
-            // zenity not found
             return createMockProcess('', 1) as unknown as ReturnType<typeof Bun.spawn>;
           }
           if (args[0] === 'which' && args[1] === 'kdialog') {
@@ -248,7 +223,6 @@ describe('Dialog RPC Handlers', () => {
               typeof Bun.spawn
             >;
           }
-          // kdialog folder picker call
           return createMockProcess('/home/user/workspace\n') as unknown as ReturnType<
             typeof Bun.spawn
           >;
@@ -265,7 +239,6 @@ describe('Dialog RPC Handlers', () => {
 
       it('returns null when neither zenity nor kdialog is available', async () => {
         setPlatform('linux');
-        // All which/command calls fail
         spawnSpy.mockImplementation(
           () => createMockProcess('', 1) as unknown as ReturnType<typeof Bun.spawn>
         );
@@ -284,7 +257,6 @@ describe('Dialog RPC Handlers', () => {
               typeof Bun.spawn
             >;
           }
-          // zenity cancelled by user (exit code 1, empty output)
           return createMockProcess('', 1) as unknown as ReturnType<typeof Bun.spawn>;
         });
 

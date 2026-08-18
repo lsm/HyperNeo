@@ -111,23 +111,12 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
   const [autoTriggerNext, setAutoTriggerNext] = useState(false);
   const [checkInCronExpression, setCheckInCronExpression] = useState('');
   const [checkInTimezone, setCheckInTimezone] = useState('UTC');
-  // Snapshot of the linked schedule's cron/timezone when editing, so the
-  // update payload only carries a schedule change when the user actually
-  // edited it (omit === no change, matching the service contract).
   const [originalCron, setOriginalCron] = useState('');
   const [originalTimezone, setOriginalTimezone] = useState('UTC');
   const [triggerImmediately, setTriggerImmediately] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // True while the linked schedule's cron/timezone is being fetched for
-  // pre-fill. Saving is disabled until it settles, otherwise a submit before
-  // the baseline arrives would silently drop a cadence edit (originalCron is
-  // still '' and nextCron === '' makes the diff a no-op).
   const [scheduleLoading, setScheduleLoading] = useState(false);
-  // Per-field dirtiness: a slow schedule pre-fill must not clobber a field the
-  // user already edited, but should still pre-fill the one they haven't. A
-  // shared flag would discard the whole response on a timezone-only edit,
-  // leaving the cron empty and silently dropping the timezone change on save.
   const cronDirtyRef = useRef(false);
   const timezoneDirtyRef = useRef(false);
 
@@ -158,26 +147,15 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
     timezoneDirtyRef.current = false;
     setScheduleLoading(Boolean(goal?.taskScheduleId));
 
-    // Pre-fill the check-in cron/timezone from the goal's linked schedule so
-    // editing shows the current cadence. Clearing the field on save removes
-    // the schedule; changing it reschedules in place. A fetch failure (e.g.
-    // no connection, or the schedule was removed) leaves the fields empty.
     if (goal?.taskScheduleId) {
       spaceStore
         .getSchedule(goal.taskScheduleId)
         .then((schedule) => {
           if (cancelled) return;
-          // The baseline is known: enable saving. A null schedule means the
-          // linked schedule is genuinely gone (definitive) — empty fields are
-          // the correct baseline, and saving can add/remove a schedule.
           setScheduleLoading(false);
           if (!schedule) return;
           const cron = schedule.cronExpression ?? '';
           const tz = schedule.timezone ?? 'UTC';
-          // Always record the fetched originals so the save diff is correct
-          // even when the user edited the field first (e.g. clearing an
-          // existing cron before the fetch resolves must still register as a
-          // removal). Only the displayed value is guarded by dirtiness.
           setOriginalCron(cron);
           setOriginalTimezone(tz);
           if (!cronDirtyRef.current) setCheckInCronExpression(cron);
@@ -185,10 +163,6 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
         })
         .catch(() => {
           if (cancelled) return;
-          // Transient failure (e.g. opened while disconnected): the baseline is
-          // unknown, so keep saving unavailable and surface the error rather
-          // than mimicking an empty schedule (which would silently drop a
-          // cadence edit on reconnect). The user closes/reopens to retry.
           setError('Could not load the check-in schedule. Close and reopen the dialog to retry.');
         });
     }

@@ -24,7 +24,6 @@ describe('wav utilities', () => {
   });
 
   it('downsampleChunks matches downsampleMono on the concatenated signal', () => {
-    // Uneven chunk sizes so downsample windows straddle chunk boundaries.
     const total = 10_000;
     const full = new Float32Array(total);
     for (let i = 0; i < total; i++) full[i] = Math.sin(i / 7) * 0.8;
@@ -59,8 +58,6 @@ describe('wav utilities', () => {
   });
 
   it('encodes multi-chunk payloads as valid base64 (no mid-string padding)', () => {
-    // A 40 KB payload spans two 32 KB chunks. A per-chunk btoa would emit '='
-    // padding at the chunk boundary, which the daemon rejects as invalid base64.
     const input = new Uint8Array(40_000);
     for (let i = 0; i < input.length; i++) input[i] = (i * 7 + 3) % 251;
     const encoded = bytesToBase64(input);

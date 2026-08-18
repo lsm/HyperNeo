@@ -1,25 +1,5 @@
 import type { Database as BunDatabase } from '../sqlite-compat';
 
-/**
- * Durable store for agent-registered (`dynamic`) workflow external-event
- * subscriptions.
- *
- * The in-memory `TopicTrie` in `SpaceRuntime` derives its `dynamic` entries
- * from this table on daemon rehydrate. Dynamic interests cannot be re-derived
- * from the workflow definition (they are created at runtime via MCP tooling such
- * as `subscribe_pr_events`), so this table is their only source of truth —
- * without it they lived only in the trie and were silently lost on daemon
- * restart. Workflow-template `static` interests are NOT persisted here: they are
- * re-materialized from the definition by `ensureExecutorRegistered` / the
- * static-rebuild loop on rehydrate.
- *
- * Keying: a subscription is uniquely identified by its agent slot
- * (workflow_run_id + task_id + node_id + agent_name), the (case-insensitive)
- * topic pattern, and the subscription kind. `topic` preserves the original
- * casing; `topic_normalized` (lowercased) is the dedup/conflict key so that
- * `GitHub/Foo` and `github/foo` collapse to one row — matching the trie's
- * case-insensitive segment matching and the existing remove-then-insert dedup.
- */
 export function createWorkflowEventSubscriptionTables(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_workflow_event_subscriptions (
@@ -47,17 +27,14 @@ export function createWorkflowEventSubscriptionTables(db: BunDatabase): void {
 			FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE
 		)
 	`);
-  // Per-space rebuild on rehydrate (mirrors long-horizon subscription lookup).
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_wf_event_subs_space ` +
       `ON space_workflow_event_subscriptions(space_id)`
   );
-  // Run-scoped teardown / static-interest refresh.
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_wf_event_subs_run ` +
       `ON space_workflow_event_subscriptions(workflow_run_id, subscription_kind)`
   );
-  // Task-scoped cleanup (clearTaskInterests*).
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_wf_event_subs_task ` +
       `ON space_workflow_event_subscriptions(task_id, subscription_kind)`

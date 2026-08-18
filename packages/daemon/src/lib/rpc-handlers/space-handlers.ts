@@ -1,16 +1,3 @@
-/**
- * Space RPC Handlers
- *
- * RPC handlers for Space CRUD operations:
- * - space.create  - Create a Space (validates workspace path exists, rejects invalid paths)
- * - space.list    - List all Spaces (optionally including archived)
- * - space.get     - Get a Space by ID
- * - space.update  - Update Space metadata
- * - space.archive - Archive a Space (emits dedicated space.archived event)
- * - space.delete  - Delete a Space
- * - space.overview - Get a Space with tasks, workflowRuns, and sessions
- */
-
 import {
   MAX_SPACE_CONCURRENT_TASKS,
   MIN_SPACE_CONCURRENT_TASKS,
@@ -121,7 +108,6 @@ export function setupSpaceHandlers(
   spaceRuntimeService?: SpaceRuntimeService,
   options: SetupSpaceHandlersOptions = {}
 ): void {
-  // ─── space.create ───────────────────────────────────────────────────────────
   messageHub.onRequest('space.create', async (data) => {
     const params = data as CreateSpaceParams;
 
@@ -142,7 +128,6 @@ export function setupSpaceHandlers(
     if (params.maxConcurrentTasks !== undefined) {
       params.maxConcurrentTasks = validateConcurrentLimit(params.maxConcurrentTasks);
     }
-    // TODO: Drop this deprecated config path after older clients send only top-level maxConcurrentTasks.
     if (params.config?.maxConcurrentTasks !== undefined) {
       params.config.maxConcurrentTasks = validateConcurrentLimit(params.config.maxConcurrentTasks);
     }
@@ -151,8 +136,6 @@ export function setupSpaceHandlers(
     const seedWarnings: string[] = [];
     options.longHorizonAgentRepo?.ensureCoordinator(space.id);
 
-    // Seed preset agents (Coder, General, Planner, Reviewer, etc.) for the new space.
-    // Errors are non-fatal — the space is still usable without preset agents.
     try {
       const agentSeedResult = await seedPresetAgents(space.id, spaceAgentManager);
       if (agentSeedResult.errors.length > 0) {
@@ -168,8 +151,6 @@ export function setupSpaceHandlers(
       seedWarnings.push('Failed to seed preset agents');
     }
 
-    // Seed built-in workflow templates after preset agents are available.
-    // Resolves role names ('planner', 'coder', 'general') to SpaceWorkerAgent UUIDs.
     try {
       const agents = spaceAgentManager.listBySpaceId(space.id);
       const workflowSeedResult = seedBuiltInWorkflows(
@@ -190,9 +171,6 @@ export function setupSpaceHandlers(
       seedWarnings.push('Failed to seed built-in workflows');
     }
 
-    // Create the space's user-facing chat session.
-    // Session ID format: space:chat:${spaceId}
-    // Mirrors the room:chat:${roomId} pattern from room-handlers.ts.
     if (sessionManager) {
       const spaceChatSessionId = `space:chat:${space.id}`;
       try {
@@ -206,11 +184,7 @@ export function setupSpaceHandlers(
           sessionType: 'space_chat',
           spaceId: space.id,
         });
-        // Register the session on the space so it appears in space.sessionIds.
-        // Mirrors roomManager.assignSession() in room-handlers.ts.
         await spaceManager.addSession(space.id, spaceChatSessionId);
-        // Attach MCP tools and system prompt directly (session is in DB now).
-        // This avoids relying on the space.created event which fires asynchronously.
         if (spaceRuntimeService) {
           await spaceRuntimeService.setupSpaceAgentSession(space).catch((err) => {
             log.warn(`Failed to provision space chat session for space ${space.id}:`, err);
@@ -233,14 +207,11 @@ export function setupSpaceHandlers(
     return space;
   });
 
-  // ─── space.list ─────────────────────────────────────────────────────────────
   messageHub.onRequest('space.list', async (data) => {
     const params = (data ?? {}) as { includeArchived?: boolean };
     return spaceManager.listSpaces(params.includeArchived ?? false);
   });
 
-  // ─── space.get ──────────────────────────────────────────────────────────────
-  // Accepts either { id } or { slug } to look up a space.
   messageHub.onRequest('space.get', async (data) => {
     const params = data as { id?: string; slug?: string };
 
@@ -262,7 +233,6 @@ export function setupSpaceHandlers(
     return space;
   });
 
-  // ─── space.updateSlug ──────────────────────────────────────────────────────
   messageHub.onRequest('space.updateSlug', async (data) => {
     const params = data as { id: string; slug: string };
 
@@ -284,7 +254,6 @@ export function setupSpaceHandlers(
     return space;
   });
 
-  // ─── space.update ───────────────────────────────────────────────────────────
   messageHub.onRequest('space.update', async (data) => {
     const params = data as { id: string } & UpdateSpaceParams;
 
@@ -302,7 +271,6 @@ export function setupSpaceHandlers(
     if (params.maxConcurrentTasks !== undefined) {
       params.maxConcurrentTasks = validateConcurrentLimit(params.maxConcurrentTasks);
     }
-    // TODO: Drop this deprecated config path after older clients send only top-level maxConcurrentTasks.
     if (params.config?.maxConcurrentTasks !== undefined) {
       params.config.maxConcurrentTasks = validateConcurrentLimit(params.config.maxConcurrentTasks);
     }
@@ -319,7 +287,6 @@ export function setupSpaceHandlers(
     return space;
   });
 
-  // ─── space.setConcurrentLimit ────────────────────────────────────────────────
   messageHub.onRequest('space.setConcurrentLimit', async (data) => {
     const params = data as { spaceId?: string; id?: string; limit: unknown };
     const spaceId = params.spaceId ?? params.id;
@@ -340,7 +307,6 @@ export function setupSpaceHandlers(
     return space;
   });
 
-  // ─── space.archive ──────────────────────────────────────────────────────────
   messageHub.onRequest('space.archive', async (data) => {
     const params = data as { id: string };
 
@@ -350,8 +316,6 @@ export function setupSpaceHandlers(
 
     const space = await spaceManager.archiveSpace(params.id);
 
-    // Emit a dedicated space.archived event (consistent with room.archived pattern),
-    // carrying the full archived space object so subscribers have complete state.
     internalEventBus
       .publish('space.archived', { sessionId: 'global', spaceId: params.id, space })
       .catch((err) => {
@@ -361,11 +325,6 @@ export function setupSpaceHandlers(
     return space;
   });
 
-  // ─── space.stop ─────────────────────────────────────────────────────────────
-  // Stops all active work (terminates running agent sessions, cancels in-progress
-  // tasks and workflow runs) and marks the space as stopped.
-  // Unlike space.archive, a stopped space remains active and can be restarted.
-  // The stopped flag persists across daemon restarts — no work auto-starts.
   messageHub.onRequest('space.stop', async (data) => {
     const params = data as { id: string };
 
@@ -373,7 +332,6 @@ export function setupSpaceHandlers(
       throw new Error('id is required');
     }
 
-    // Terminate all running agent sessions and cancel active tasks/workflow runs.
     if (spaceRuntimeService) {
       await spaceRuntimeService.stopActiveWork(params.id);
     }
@@ -389,8 +347,6 @@ export function setupSpaceHandlers(
     return space;
   });
 
-  // ─── space.start ────────────────────────────────────────────────────────────
-  // Clears the stopped flag so the runtime resumes scheduling new work.
   messageHub.onRequest('space.start', async (data) => {
     const params = data as { id: string };
 
@@ -409,7 +365,6 @@ export function setupSpaceHandlers(
     return space;
   });
 
-  // ─── space.pause ───────────────────────────────────────────────────────────
   messageHub.onRequest('space.pause', async (data) => {
     const params = data as { id: string };
 
@@ -428,7 +383,6 @@ export function setupSpaceHandlers(
     return space;
   });
 
-  // ─── space.resume ──────────────────────────────────────────────────────────
   messageHub.onRequest('space.resume', async (data) => {
     const params = data as { id: string };
 
@@ -447,7 +401,6 @@ export function setupSpaceHandlers(
     return space;
   });
 
-  // ─── space.delete ───────────────────────────────────────────────────────────
   messageHub.onRequest('space.delete', async (data) => {
     const params = data as { id: string };
 
@@ -469,15 +422,10 @@ export function setupSpaceHandlers(
     return { success: true };
   });
 
-  // ─── space.listWithTasks ────────────────────────────────────────────────────
-  // Returns all spaces with their active (non-completed, non-cancelled) tasks
-  // and up to 3 recent active sessions per space.
-  // Used by the SpacesPage and Context Panel to show the space list.
   messageHub.onRequest('space.listWithTasks', async (data) => {
     const params = (data ?? {}) as { includeArchived?: boolean };
     const spaces = await spaceManager.listSpaces(params.includeArchived ?? false);
 
-    // Load all non-archived sessions once; filter per-space below.
     const allSessions = sessionManager?.listSessions({ includeArchived: false }) ?? [];
     const sessionById = new Map(allSessions.map((s) => [s.id, s]));
 
@@ -516,8 +464,6 @@ export function setupSpaceHandlers(
     });
   });
 
-  // ─── space.overview ─────────────────────────────────────────────────────────
-  // Accepts either { id } or { slug } to look up the space.
   messageHub.onRequest('space.overview', async (data) => {
     const params = data as { id?: string; slug?: string };
 

@@ -1,40 +1,3 @@
-/**
- * Task Agent Lifecycle — Online Tests with Dev Proxy
- *
- * Tests verify the full Task Agent lifecycle end-to-end:
- * 1. SpaceRuntime detects a pending task and spawns a Task Agent session
- * 2. Task Agent session has correct type, context, and MCP tools attached
- * 3. Task Agent processes its initial context message
- * 4. Task Agent can call each workflow tool (spawn_node_agent, check_node_status)
- *    verified via probe mocks
- * 5. Completing a node execution transitions it to `idle`
- *
- * Note: advance_workflow was removed in Task 3.5 (agent-driven progression).
- *
- * ## How probe mocks work
- *
- * Each tool-call test injects a unique probe phrase into the Task Agent session via
- * sendMessage(). The dev proxy intercepts the subsequent API call and matches the
- * bodyFragment (substring search on the serialized request body). Matching mocks
- * return a pre-configured response.
- *
- * Tool call verification tests (spawn_node_agent, check_node_status)
- * use TEXT-ONLY mock responses. We cannot use tool_use blocks with the Claude Agent SDK
- * because it dispatches ALL tool_use content blocks regardless of stop_reason. Since the
- * short tool names (e.g. "spawn_node_agent") don't match the registered MCP names (e.g.
- * "mcp__task-agent__spawn_node_agent"), dispatch fails and the SDK retries indefinitely
- * (each retry re-sends the probe phrase, matching the same mock — infinite loop). Instead,
- * the mocks return text mentioning the tool name and relevant IDs for test assertions.
- *
- * ## Running
- *
- *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/space/task-agent-lifecycle.test.ts
- *
- * MODES:
- * - Dev Proxy (recommended): Set HYPERNEO_USE_DEV_PROXY=1 for offline testing
- * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- */
-
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
@@ -47,22 +10,14 @@ import type {
   SpaceWorkflowRun,
 } from '@hyperneo/shared';
 
-// Detect mock mode for faster timeouts
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const IDLE_TIMEOUT = IS_MOCK ? 10_000 : 60_000;
 const SETUP_TIMEOUT = IS_MOCK ? 20_000 : 60_000;
 const TEST_TIMEOUT = IS_MOCK ? 60_000 : 240_000;
 
-// How long to wait for SpaceRuntime tick loop to spawn a Task Agent (default tick: 5s)
 const TASK_AGENT_SPAWN_TIMEOUT = IS_MOCK ? 15_000 : 45_000;
 
-// Pre-assigned step ID used in all test workflows so mocks can reference it by ID.
-// Fresh DB per test daemon means no cross-test ID conflicts.
 const STEP_CODE_ID = 'step-code-lifecycle-001';
-
-// ---------------------------------------------------------------------------
-// Fixture helpers
-// ---------------------------------------------------------------------------
 
 type TestFixtures = {
   space: Space;
@@ -70,13 +25,6 @@ type TestFixtures = {
   workflow: SpaceWorkflow;
 };
 
-/**
- * Create a Space with a single-step workflow.
- *
- * The runtime now spawns workflow node-agent sessions directly from node_executions
- * (one-task-per-run architecture), so a single step is enough to exercise spawn,
- * session liveness, completion, and global notification behavior.
- */
 async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixtures> {
   const space = (await daemon.messageHub.request('space.create', {
     name: 'Task Agent Lifecycle Test Space',
@@ -85,7 +33,6 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
     autonomyLevel: 1,
   })) as Space;
 
-  // space.create auto-seeds preset agents — look up Coder by role
   const { agents } = (await daemon.messageHub.request('spaceAgent.list', {
     spaceId: space.id,
   })) as { agents: SpaceWorkerAgent[] };
@@ -110,11 +57,6 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
   };
 }
 
-/**
- * Start a workflow run and return:
- * - the canonical run task (one-task-per-run envelope)
- * - the first node execution created for the start node
- */
 async function startWorkflowRunAndGetTask(
   daemon: DaemonServerContext,
   spaceId: string,
@@ -167,9 +109,6 @@ async function startWorkflowRunAndGetTask(
   };
 }
 
-/**
- * Poll nodeExecution.list until agentSessionId is set for the given execution.
- */
 async function waitForNodeAgentSpawned(
   daemon: DaemonServerContext,
   spaceId: string,
@@ -193,9 +132,6 @@ async function waitForNodeAgentSpawned(
   );
 }
 
-/**
- * Poll nodeExecution.list until the execution status matches one of expected statuses.
- */
 async function waitForExecutionStatus(
   daemon: DaemonServerContext,
   spaceId: string,
@@ -239,10 +175,6 @@ async function waitForRunStatus(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Message extraction helpers
-// ---------------------------------------------------------------------------
-
 function getAssistantMessages(
   sdkMessages: Array<Record<string, unknown>>
 ): Array<Record<string, unknown>> {
@@ -258,15 +190,10 @@ function extractTextContent(assistantMessages: Array<Record<string, unknown>>): 
     .join(' ');
 }
 
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
-
 describe('Task Agent Lifecycle — Online Tests', () => {
   let daemon: DaemonServerContext;
 
   beforeEach(async () => {
-    // Each test gets a fresh daemon with its own in-memory SQLite DB — no cross-test state.
     daemon = await createDaemonServer();
   }, SETUP_TIMEOUT);
 
@@ -294,9 +221,6 @@ describe('Task Agent Lifecycle — Online Tests', () => {
     }
   }, 30_000);
 
-  // -------------------------------------------------------------------------
-  // Test 1: Pending node execution pickup and node-agent session creation
-  // -------------------------------------------------------------------------
   test(
     'SpaceRuntime spawns a workflow node-agent session for a pending node execution',
     async () => {
@@ -344,9 +268,6 @@ describe('Task Agent Lifecycle — Online Tests', () => {
     TEST_TIMEOUT
   );
 
-  // -------------------------------------------------------------------------
-  // Test 2: Node agent gets kickoff context when spawned for pending execution
-  // -------------------------------------------------------------------------
   test(
     'Node-agent session receives kickoff context when spawned via runtime tick',
     async () => {
@@ -379,9 +300,6 @@ describe('Task Agent Lifecycle — Online Tests', () => {
     TEST_TIMEOUT
   );
 
-  // -------------------------------------------------------------------------
-  // Test 3: probe response for spawn_node_agent
-  // -------------------------------------------------------------------------
   test(
     'Node-agent session processes spawn probe and returns meaningful response',
     async () => {
@@ -418,13 +336,9 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 
       const assistantMsgs = getAssistantMessages(sdkMessages);
       const textContent = extractTextContent(assistantMsgs);
-      // Verify the agent processed the probe and produced a response.
-      // In mock mode the response contains [MOCKED LIFECYCLE] with spawn_node_agent;
-      // when the catch-all fires instead, the response is generic but still non-empty.
       expect(assistantMsgs.length).toBeGreaterThan(0);
       expect(textContent.length).toBeGreaterThan(0);
       if (IS_MOCK && textContent.includes('[MOCKED LIFECYCLE]')) {
-        // Mock routing worked — verify expected keywords
         expect(textContent).toContain('spawn_node_agent');
         expect(textContent).toContain(STEP_CODE_ID);
       } else if (IS_MOCK) {
@@ -439,9 +353,6 @@ describe('Task Agent Lifecycle — Online Tests', () => {
     TEST_TIMEOUT
   );
 
-  // -------------------------------------------------------------------------
-  // Test 4: probe response for check_node_status
-  // -------------------------------------------------------------------------
   test(
     'Node-agent session processes check-status probe and returns meaningful response',
     async () => {
@@ -478,11 +389,9 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 
       const assistantMsgs = getAssistantMessages(sdkMessages);
       const textContent = extractTextContent(assistantMsgs);
-      // Verify the agent processed the probe and produced a response.
       expect(assistantMsgs.length).toBeGreaterThan(0);
       expect(textContent.length).toBeGreaterThan(0);
       if (IS_MOCK && textContent.includes('[MOCKED LIFECYCLE]')) {
-        // Mock routing worked — verify expected keywords
         expect(textContent).toContain('check_node_status');
       } else if (IS_MOCK) {
         // eslint-disable-next-line no-console
@@ -496,9 +405,6 @@ describe('Task Agent Lifecycle — Online Tests', () => {
     TEST_TIMEOUT
   );
 
-  // -------------------------------------------------------------------------
-  // Test 5: direct execution completion via nodeExecution.update
-  // -------------------------------------------------------------------------
   test(
     'Completing a node execution marks it done',
     async () => {

@@ -1,9 +1,3 @@
-/**
- * File Manager - Handles file system operations with security
- *
- * Provides safe file read/list/tree operations with path traversal protection.
- */
-
 import { join, normalize, relative } from 'node:path';
 import { stat, readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -26,9 +20,6 @@ export interface FileTree {
 export class FileManager {
   constructor(private workspacePath: string) {}
 
-  /**
-   * Validate that a path is within the workspace (prevent path traversal)
-   */
   private validatePath(targetPath: string): string {
     const normalizedWorkspace = normalize(this.workspacePath);
     const normalizedTarget = normalize(join(this.workspacePath, targetPath));
@@ -42,9 +33,6 @@ export class FileManager {
     return normalizedTarget;
   }
 
-  /**
-   * Read file content
-   */
   async readFile(
     filePath: string,
     encoding: 'utf-8' | 'base64' = 'utf-8'
@@ -83,9 +71,6 @@ export class FileManager {
     };
   }
 
-  /**
-   * List directory contents
-   */
   async listDirectory(dirPath: string = '.', recursive: boolean = false): Promise<FileInfo[]> {
     const absolutePath = this.validatePath(dirPath);
 
@@ -121,7 +106,6 @@ export class FileManager {
     }
 
     return files.sort((a, b) => {
-      // Directories first, then alphabetical
       if (a.type !== b.type) {
         return a.type === 'directory' ? -1 : 1;
       }
@@ -129,9 +113,6 @@ export class FileManager {
     });
   }
 
-  /**
-   * Helper method to recursively walk a directory
-   */
   private async walkDirectory(dirPath: string, files: FileInfo[]): Promise<void> {
     const entries = await readdir(dirPath, { withFileTypes: true });
 
@@ -154,9 +135,6 @@ export class FileManager {
     }
   }
 
-  /**
-   * Get file tree for UI (with max depth)
-   */
   async getFileTree(
     dirPath: string = '.',
     maxDepth: number = 3,
@@ -189,7 +167,6 @@ export class FileManager {
       children: [],
     };
 
-    // Stop recursion at max depth
     if (currentDepth >= maxDepth) {
       return tree;
     }
@@ -198,7 +175,6 @@ export class FileManager {
     const dirEntries = await readdir(absolutePath, { withFileTypes: true });
 
     for (const entry of dirEntries) {
-      // Skip hidden files and common ignore patterns
       if (entry.name.startsWith('.')) continue;
       if (['node_modules', 'dist', 'build', 'coverage'].includes(entry.name)) {
         continue;
@@ -214,7 +190,6 @@ export class FileManager {
       });
     }
 
-    // Sort: directories first, then files
     entries.sort((a, b) => {
       if (a.type !== b.type) {
         return a.type === 'directory' ? -1 : 1;
@@ -222,7 +197,6 @@ export class FileManager {
       return a.name.localeCompare(b.name);
     });
 
-    // Recursively build tree
     for (const entry of entries) {
       if (entry.type === 'directory') {
         const subtree = await this.getFileTree(entry.path, maxDepth, currentDepth + 1);
@@ -239,9 +213,6 @@ export class FileManager {
     return tree;
   }
 
-  /**
-   * Check if path exists
-   */
   async pathExists(filePath: string): Promise<boolean> {
     try {
       const absolutePath = this.validatePath(filePath);
@@ -251,9 +222,6 @@ export class FileManager {
     }
   }
 
-  /**
-   * Get workspace path
-   */
   getWorkspacePath(): string {
     return this.workspacePath;
   }

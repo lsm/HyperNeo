@@ -1,20 +1,3 @@
-/**
- * Migration 192 Tests — `pending_agent_messages.delivery_mode`.
- *
- * A deferred ("queue for next turn") human message that lands in the pending
- * queue (target not live yet) must retain its mode across the queue so the
- * flush replays it as 'defer' instead of defaulting to immediate and steering
- * the kickoff turn. M192 adds the column; these tests cover the migration
- * itself (column add). Round-trip persist/replay is covered by the
- * PendingAgentMessageRepository + handler suites.
- *
- * Covers:
- *   - Pre-M192 schema: the column is added.
- *   - Idempotent re-run.
- *   - Fresh, fully-migrated DB carries the column.
- *   - Missing-table guard (empty DB).
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -27,7 +10,6 @@ function columnNames(db: BunDatabase, table: string): string[] {
   return rows.map((r) => r.name);
 }
 
-/** Minimal pre-M192 shape: pending_agent_messages without delivery_mode. */
 function seedPreM192Schema(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE pending_agent_messages (

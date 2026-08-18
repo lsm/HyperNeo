@@ -1,27 +1,3 @@
-/**
- * PendingTaskCompletionBanner — thread-view CTA for `submit_for_approval` pauses.
- *
- * Renders when the task is paused at a `submit_for_approval` checkpoint — i.e.
- * `task.pendingCheckpointType === 'task_completion'`. Provides Approve and
- * Reject controls.
- *
- * - Approve → `spaceTask.approvePendingCompletion({ approved: true, reason? })`
- *   which transitions review → done, stamps human approval metadata, clears
- *   the pending-completion fields, and fires `space.task.updated`.
- * - Reject  → `spaceTask.approvePendingCompletion({ approved: false, reason? })`
- *   which transitions review → in_progress so the end-node agent can revise
- *   its output; clears the pending-completion fields.
- *
- * Compact design: shows a single status line inline; full details and
- * confirmation are shown in modals opened by the Approve / Send back buttons.
- *
- * The legacy completion-action checkpoint pipeline (and its dedicated banner)
- * was removed in PR 4/5 — post-approval work now runs through
- * `PostApprovalRouter` instead. PR 5/5 followed up by dropping the
- * `'completion_action'` value from `pendingCheckpointType` entirely. See
- * `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`.
- */
-
 import { useCallback, useState } from 'preact/hooks';
 import type { SpaceTask } from '@hyperneo/shared';
 import { spaceStore } from '../../lib/space-store';
@@ -128,7 +104,6 @@ export function PendingTaskCompletionBanner({
         testId="pending-task-completion-banner"
       />
 
-      {/* Approve modal */}
       <Modal
         isOpen={showApproveModal}
         onClose={() => {
@@ -210,7 +185,6 @@ export function PendingTaskCompletionBanner({
         </div>
       </Modal>
 
-      {/* Reject / Send back modal */}
       <Modal
         isOpen={showRejectModal}
         onClose={() => {

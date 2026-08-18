@@ -6,10 +6,6 @@ import {
 } from '../../../../src/storage/repositories/inbox-item-repository';
 import type { SecurityCheckResult, InboxItem } from '@hyperneo/shared';
 
-// ============================================================================
-// Test Data Factories
-// ============================================================================
-
 function createSecurityCheck(overrides: Partial<SecurityCheckResult> = {}): SecurityCheckResult {
   return {
     passed: true,
@@ -59,10 +55,6 @@ function createInboxTable(db: Database): void {
   `);
 }
 
-// ============================================================================
-// InboxItemRepository Tests
-// ============================================================================
-
 describe('InboxItemRepository', () => {
   let db: Database;
   let repository: InboxItemRepository;
@@ -82,7 +74,7 @@ describe('InboxItemRepository', () => {
       const params = createInboxItemParams();
       const item = repository.createItem(params);
 
-      expect(item.id).toMatch(/^[\da-f-]{36}$/); // UUID format
+      expect(item.id).toMatch(/^[\da-f-]{36}$/);
       expect(item.source).toBe('github_issue');
       expect(item.repository).toBe('owner/repo');
       expect(item.issueNumber).toBe(42);
@@ -242,7 +234,6 @@ describe('InboxItemRepository', () => {
         repository.createItem(createInboxItemParams({ issueNumber: i }));
       }
 
-      // SQLite requires LIMIT when using OFFSET
       const items = repository.listItems({ limit: 3, offset: 2 });
 
       expect(items).toHaveLength(3);

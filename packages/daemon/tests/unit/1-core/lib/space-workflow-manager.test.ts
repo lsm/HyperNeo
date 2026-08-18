@@ -1,9 +1,3 @@
-/**
- * SpaceWorkflowManager Unit Tests
- *
- * Verifies start/end node invariants on create and update operations.
- */
-
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import type { EventInterest } from '@hyperneo/shared';
 import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
@@ -336,9 +330,6 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('rejects a topicFrom pattern with surrounding whitespace', () => {
-      // The Zod import path trims the pattern; the manager must keep direct
-      // creation consistent so a stored pattern always resolves to a usable
-      // glob (surrounding spaces would survive resolution and fail the trie).
       expect(() =>
         manager.createWorkflow({
           spaceId: 'space-1',
@@ -399,9 +390,6 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('rejects a malformed topic value paired with topicFrom (presence before type)', () => {
-      // `{ topic: 123, topicFrom: {...} }`: topic is present (even though not a
-      // string), so both branches are "set" → exactly-one-of must fire, rather
-      // than the malformed topic silently falling through to the topicFrom path.
       const bothSet = [
         {
           topic: 123,
@@ -746,7 +734,6 @@ describe('SpaceWorkflowManager', () => {
         postApproval: { targetAgent: 'reviewer', instructions: '' },
       });
 
-      // Update the stable node so `reviewer` is no longer a declared agent.
       expect(() =>
         manager.updateWorkflow(created.id, {
           nodes: [
@@ -804,8 +791,6 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('strips a stale postApproval route on read instead of failing', () => {
-      // Persist a route that is valid at create time, then corrupt the DB
-      // to simulate a post-hoc node rename that was never re-validated.
       const wf = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'WF',
@@ -820,8 +805,6 @@ describe('SpaceWorkflowManager', () => {
         postApproval: { targetAgent: 'reviewer', instructions: '' },
       });
 
-      // Rename the node agent directly in the config JSON to make the
-      // saved route stale. Manager.getWorkflow should sanitise on read.
       const staleCfg = JSON.stringify({
         agents: [{ agentId: 'agent-1', name: 'coder' }],
       });
@@ -888,8 +871,6 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('appends numeric suffix on handle collision when auto-generating', () => {
-      // Seed a handle directly via repo to simulate an existing workflow
-      // with a handle that a new workflow's name would collide with.
       repo.createWorkflow({
         spaceId: 'space-1',
         name: 'Existing',
@@ -967,8 +948,6 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('does not regenerate handle on rename when existing handle was cleared', () => {
-      // Create, then clear the handle (handle: null). A subsequent rename
-      // must NOT auto-generate a new handle — the null state must persist.
       const created = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'Original Name',
@@ -977,11 +956,9 @@ describe('SpaceWorkflowManager', () => {
       });
       expect(created.handle).toBeDefined();
 
-      // Clear the handle explicitly.
       const cleared = manager.updateWorkflow(created.id, { handle: null });
       expect(cleared?.handle).toBeUndefined();
 
-      // Rename without providing handle — must stay null, not regenerate.
       const renamed = manager.updateWorkflow(created.id, { name: 'New Name After Clear' });
       expect(renamed?.handle).toBeUndefined();
     });
@@ -1065,7 +1042,6 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('allows same handle in different spaces', () => {
-      // Insert a second space
       const now = Date.now();
       db.prepare(
         `INSERT INTO spaces (id, workspace_path, name, slug, created_at, updated_at)
@@ -1142,7 +1118,6 @@ describe('SpaceWorkflowManager', () => {
       runRepo = new SpaceWorkflowRunRepository(db as any);
     });
 
-    /** Append a version row for the current head and return its hash. */
     function pinHead(workflowId: string): string {
       const raw = repo.getWorkflow(workflowId)!;
       const { versionHash, payload } = computeDefinitionVersion(raw);
@@ -1177,12 +1152,11 @@ describe('SpaceWorkflowManager', () => {
       });
       const pin = pinHead(wf.id);
 
-      // Edit the mutable head AFTER the run was pinned.
       manager.updateWorkflow(wf.id, { name: 'Edited' });
 
       const resolved = manager.getWorkflowForRun({ workflowId: wf.id, definitionVersion: pin });
-      expect(resolved!.name).toBe('Original'); // pinned version wins
-      expect(manager.getWorkflow(wf.id)!.name).toBe('Edited'); // head moved on
+      expect(resolved!.name).toBe('Original');
+      expect(manager.getWorkflow(wf.id)!.name).toBe('Edited');
     });
 
     it('falls back to the live head when the pinned version row is absent', () => {
@@ -1210,15 +1184,10 @@ describe('SpaceWorkflowManager', () => {
       const resolved = manager.getWorkflowForRun({ workflowId: wf.id, definitionVersion: pin })!;
       const live = manager.getWorkflow(wf.id)!;
 
-      // Behavioral fields match. layout/templateHash are absent on the pinned view
-      // (non-behavioral, stripped from the version payload) and timestamps are stable
-      // (the version row's created_at) rather than the head's volatile values.
       expect(resolved.nodes).toEqual(live.nodes);
       expect(resolved.channels ?? []).toEqual(live.channels ?? []);
       expect(resolved.completionAutonomyLevel).toBe(live.completionAutonomyLevel);
       expect(resolved.startNodeId).toBe(live.startNodeId);
-      // updatedAt is derived from the immutable version hash, so the gate-open cache
-      // fingerprint is version-stable for the run's lifetime and does not churn on head edits.
       expect(resolved.updatedAt).toBe(stableVersionTimestamp(pin));
     });
 
@@ -1229,7 +1198,6 @@ describe('SpaceWorkflowManager', () => {
         nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
         completionAutonomyLevel: 3,
       });
-      // A damaged version row: hash present, payload corrupt.
       versionRepo.appendVersion({
         workflowId: wf.id,
         spaceId: 'space-1',
@@ -1242,7 +1210,6 @@ describe('SpaceWorkflowManager', () => {
         workflowId: wf.id,
         definitionVersion: 'corrupt-payload',
       });
-      // Parse failure must not break the run — it resolves to the live head.
       expect(resolved).toEqual(manager.getWorkflow(wf.id));
     });
 
@@ -1253,7 +1220,6 @@ describe('SpaceWorkflowManager', () => {
         nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
         completionAutonomyLevel: 3,
       });
-      // Valid JSON but no .nodes array — would crash sanitizePostApprovalForLoad if unchecked.
       versionRepo.appendVersion({
         workflowId: wf.id,
         spaceId: 'space-1',
@@ -1276,7 +1242,6 @@ describe('SpaceWorkflowManager', () => {
         nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
         completionAutonomyLevel: 3,
       });
-      // Valid shape but the versionHash doesn't match the payload's SHA-256.
       const raw = repo.getWorkflow(wf.id)!;
       const { payload } = computeDefinitionVersion(raw);
       versionRepo.appendVersion({
@@ -1301,9 +1266,7 @@ describe('SpaceWorkflowManager', () => {
         nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
         completionAutonomyLevel: 3,
       });
-      // Legacy run with no creation-time pin.
       const run = runRepo.createRun({ spaceId: 'space-1', workflowId: wf.id, title: 'Legacy' });
-      // Backfill only considers runs with a non-archived canonical task.
       const now = Date.now();
       db.prepare(
         `INSERT INTO space_tasks (id, space_id, task_number, title, status, workflow_run_id, created_at, updated_at)
@@ -1311,31 +1274,24 @@ describe('SpaceWorkflowManager', () => {
       ).run(`task-${run.id}`, run.id, run.id, now, now);
       expect(run.definitionVersion).toBeNull();
 
-      // Startup backfill: pin to the current head (the raw repo read, as wired in rpc-handlers).
       const count = runRepo.backfillDefinitionPins((id) => repo.getWorkflow(id));
       expect(count).toBe(1);
 
       const pinned = runRepo.getRun(run.id)!;
       expect(pinned.definitionVersion).not.toBeNull();
-      // The pin equals the head's version (content-neutral cutover).
       expect(pinned.definitionVersion).toBe(
         computeDefinitionVersion(repo.getWorkflow(wf.id)!).versionHash
       );
 
-      // Resolving through the pin is behaviorally equal to reading the live head.
       const resolved = manager.getWorkflowForRun(pinned)!;
       const head = manager.getWorkflow(wf.id)!;
       expect(resolved.nodes).toEqual(head.nodes);
       expect(resolved.name).toBe(head.name);
       expect(resolved.completionAutonomyLevel).toBe(head.completionAutonomyLevel);
-      // updatedAt is version-derived, so the gate-open cache fingerprint is version-stable.
       expect(resolved.updatedAt).toBe(stableVersionTimestamp(pinned.definitionVersion!));
     });
 
     it('rehydrated updatedAt tracks the live head, independent of a reused version row', () => {
-      // PR-review #11/cutover: appendVersion is INSERT OR IGNORE, so a reused hash keeps its
-      // original created_at. The rehydrated updatedAt must depend only on the version hash,
-      // not the row's created_at, so initial and recovered reads fingerprint identically.
       const wf = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'W',
@@ -1344,8 +1300,6 @@ describe('SpaceWorkflowManager', () => {
       });
       const raw = repo.getWorkflow(wf.id)!;
       const { versionHash, payload } = computeDefinitionVersion(raw);
-      // Append the version row with an ARBITRARY created_at (simulating a pre-cutover /
-      // reused row whose created_at is not the current head's updatedAt).
       versionRepo.appendVersion({
         workflowId: wf.id,
         spaceId: 'space-1',
@@ -1358,10 +1312,8 @@ describe('SpaceWorkflowManager', () => {
         workflowId: wf.id,
         definitionVersion: versionHash,
       })!;
-      // updatedAt depends only on the version hash — NOT the stale row created_at (1).
       expect(resolved.updatedAt).toBe(stableVersionTimestamp(versionHash));
       expect(resolved.updatedAt).not.toBe(1);
-      // Equal across resolves (initial == recovery).
       const resolvedAgain = manager.getWorkflowForRun({
         workflowId: wf.id,
         definitionVersion: versionHash,
@@ -1370,8 +1322,6 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('still resolves (version-derived updatedAt) when the head is deleted', () => {
-      // A deleted-definition orphan: the run still resolves its pinned payload, with the
-      // version-hash-derived updatedAt (stable per version — no head required).
       const wf = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'W',
@@ -1379,7 +1329,6 @@ describe('SpaceWorkflowManager', () => {
         completionAutonomyLevel: 3,
       });
       const pin = pinHead(wf.id);
-      // Delete the head row (orphan the run's pinned version).
       db.prepare(`DELETE FROM space_workflows WHERE id = ?`).run(wf.id);
 
       const resolved = manager.getWorkflowForRun({ workflowId: wf.id, definitionVersion: pin });
@@ -1388,9 +1337,6 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('two runs of one workflow pinned to different versions resolve distinctly', () => {
-      // PR-review #4: the property the actor-registry version-keyed cache enforces — two
-      // runs of the same workflow, pinned to different versions, must resolve to their own
-      // pinned content, not a shared head.
       const wf = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'V1',
@@ -1403,7 +1349,6 @@ describe('SpaceWorkflowManager', () => {
         title: 'A',
         rawWorkflow: repo.getWorkflow(wf.id)!,
       });
-      // Edit the head → V2, then pin a second run to it.
       manager.updateWorkflow(wf.id, { name: 'V2' });
       const runB = runRepo.createPinnedRun({
         spaceId: 'space-1',
@@ -1415,9 +1360,6 @@ describe('SpaceWorkflowManager', () => {
       expect(runA.definitionVersion).not.toBe(runB.definitionVersion);
       const resolvedA = manager.getWorkflowForRun(runA)!;
       const resolvedB = manager.getWorkflowForRun(runB)!;
-      // Distinct pinned CONTENT — the property the actor-registry version-keyed cache
-      // preserves. Different version hashes also yield different version-derived gate
-      // fingerprints (updatedAt), so each run's gate-open cache is self-consistent.
       expect(resolvedA.name).toBe('V1');
       expect(resolvedB.name).toBe('V2');
       expect(resolvedA.updatedAt).not.toBe(resolvedB.updatedAt);
@@ -1478,8 +1420,6 @@ describe('SpaceWorkflowManager', () => {
           },
         ],
       });
-      // Explicitly re-read from the DB (not the createWorkflow return value) to
-      // exercise the repository's NodeConfigJson serialize/deserialize path.
       const reread = repo.getWorkflow(created.id);
       expect(reread?.nodes[0].transitions).toEqual(transitions);
     });
@@ -1507,8 +1447,6 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('rejects more than MAX_NODE_HANDOFF_TRANSITIONS transitions on a node', () => {
-      // 33 transitions — exceeds the cap (32). The array-length check runs before
-      // per-transition uniqueness, so duplicate targets here don't mask the cap.
       const tooMany = Array.from({ length: MAX_NODE_HANDOFF_TRANSITIONS + 1 }, (_, i) => ({
         id: `t${i}`,
         target: 'Review',
@@ -1596,8 +1534,6 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('rejects non-string id/target/hookId without throwing a TypeError', () => {
-      // Untyped RPC JSON could send numbers; field reads (.trim/.length) must
-      // yield a clean WorkflowValidationError, not an uncaught TypeError.
       expect(() =>
         manager.createWorkflow(twoNodeParams([{ id: 42 as unknown as string, target: 'Review' }]))
       ).toThrow("'id' must be a string");
@@ -1620,8 +1556,6 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('rejects a non-array transitions payload (untyped RPC JSON)', () => {
-      // A plain object `{}` is truthy with no .length; without this guard it
-      // would slip through validation and be silently dropped by the repository.
       const params: import('@hyperneo/shared').CreateSpaceWorkflowParams = {
         spaceId: 'space-1',
         name: 'Bad',
@@ -1643,8 +1577,6 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('rejects an ambiguous target whose name matches multiple nodes', () => {
-      // Two nodes share the agent-slot name 'shared-slot', so a handoff targeting
-      // that name cannot select a single destination.
       const params: import('@hyperneo/shared').CreateSpaceWorkflowParams = {
         spaceId: 'space-1',
         name: 'Ambiguous',

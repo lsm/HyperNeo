@@ -1,35 +1,3 @@
-/**
- * Provider auth lifecycle regression matrix
- *
- * Walks the full auth lifecycle on AnthropicToCodexBridgeProvider — the Codex
- * bridge, which is the regression target and uniquely supports BOTH auth modes
- * natively:
- *   - OAuth   (ChatGPT PKCE → ~/.hyperneo/auth.json["openai"])
- *   - API key (imported key or OPENAI_API_KEY env)
- *
- * Lifecycle stages (task #755):
- *   1. login               — setCredentials() (the post-OAuth-callback path)
- *   2. authenticated call  — getModels() probes the correct upstream
- *   3. logout              — provider.logout() clears the in-memory cache
- *   4. credential removal  — auth.json["openai"] removed from disk
- *   5. stale token cleanup — refreshToken() definitive vs transient (OAuth);
- *                            no-op for API key (no token to refresh)
- *   6. failed credential   — probe 401 surfaces a rejection error
- *   7. re-add after removal — fresh login restores auth with no stale leak
- *
- * Why a matrix (vs the per-scenario tests in
- * anthropic-to-codex-bridge-provider.test.ts): the sibling suite tests each
- * stage in isolation. This suite COMPOSES the stages — driving
- * login → call → logout → stale-cleanup → re-add on one instance — to pin the
- * cross-stage state-machine transitions that broke ("stale-token and
- * removal/re-add flows"). The composed walks at the bottom are the
- * highest-signal cases.
- *
- * Fetch seams: probeUpstream() uses the injected fetchImpl, but
- * refreshCodexToken() calls the module-level global fetch. Probe stages use
- * the injected impl; refresh stages spy on globalThis.fetch.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { vi } from 'vitest';
 import {
@@ -47,9 +15,6 @@ import * as path from 'node:path';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
 
-// 'fs/promises' namespace exports are not configurable in ESM, so
-// `spyOn(fs, ...)` cannot work under Vitest. Mock the module with vi.fn()
-// indirection instead. The provider imports plain 'fs/promises'.
 const fsPromiseMocks = vi.hoisted(() => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
@@ -68,10 +33,6 @@ vi.mock('fs/promises', async (importOriginal) => {
   };
 });
 
-// ---------------------------------------------------------------------------
-// Constants & fixtures
-// ---------------------------------------------------------------------------
-
 const OAUTH_PROBE_URL = 'https://chatgpt.com/backend-api/codex/responses';
 const API_KEY_PROBE_URL = 'https://api.openai.com/v1/responses';
 
@@ -86,13 +47,6 @@ function probeUrlFor(mode: Mode): string {
   return mode === 'oauth' ? OAUTH_PROBE_URL : API_KEY_PROBE_URL;
 }
 
-/**
- * Credentials handed to setCredentials() — the post-OAuth-callback login path.
- * `variant` distinguishes a re-added credential from the original: the probe
- * cache (`verifyCredentials`) keys on `bridgeAuthCacheKey(auth)` (account id for
- * OAuth, sha256 of the key for API key), so re-adding a *different* credential
- * forces a genuine second upstream probe rather than hitting the 30s cache.
- */
 function loginCredsFor(mode: Mode, variant: 1 | 2 = 1): ProviderCredentials {
   const accessToken = variant === 1 ? 'oauth-access-matrix' : 'oauth-access-readded';
   const refreshToken = variant === 1 ? 'oauth-refresh-matrix' : 'oauth-refresh-readded';
@@ -110,7 +64,6 @@ function loginCredsFor(mode: Mode, variant: 1 | 2 = 1): ProviderCredentials {
   return { type: 'api_key', apiKey };
 }
 
-/** On-disk openai entry shape for ~/.hyperneo/auth.json (persisted creds). */
 function diskCredsFor(mode: Mode): Record<string, unknown> {
   if (mode === 'oauth') {
     return {
@@ -124,13 +77,11 @@ function diskCredsFor(mode: Mode): Record<string, unknown> {
   return { type: 'api_key', access: 'sk-matrix-key' };
 }
 
-/** Write ~/.hyperneo/auth.json with an openai entry. */
 function writeAuthFile(dir: string, creds: Record<string, unknown>): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, 'auth.json'), JSON.stringify({ openai: creds }), { mode: 0o600 });
 }
 
-/** Read the openai entry from an auth.json dir, or undefined if absent. */
 function readAuthOpenai(dir: string): Record<string, unknown> | undefined {
   try {
     const data = JSON.parse(readFileSync(path.join(dir, 'auth.json'), 'utf-8')) as Record<
@@ -143,11 +94,6 @@ function readAuthOpenai(dir: string): Record<string, unknown> | undefined {
   }
 }
 
-/**
- * Whether ~/.hyperneo/auth.json exists in `dir`. Used for removal assertions
- * where `readAuthOpenai()` returning `undefined` must mean the file was cleanly
- * unlinked, not truncated/corrupted (which a swallowed-parse check would hide).
- */
 function authFileExists(dir: string): boolean {
   try {
     readFileSync(path.join(dir, 'auth.json'));
@@ -157,7 +103,6 @@ function authFileExists(dir: string): boolean {
   }
 }
 
-/** 401 invalid_grant refresh response — definitive refresh failure. */
 function invalidGrantResponse(): Response {
   return new Response('{"error":"invalid_grant"}', {
     status: 401,
@@ -165,10 +110,6 @@ function invalidGrantResponse(): Response {
   });
 }
 
-/**
- * Controllable fetch for the injected fetchImpl. Returns queued responses in
- * order, then a default 200. Records every call.
- */
 function createFetchImpl(): {
   impl: typeof fetch;
   calls: Array<{ url: string; init: RequestInit }>;
@@ -203,10 +144,6 @@ function makeProvider(
   return new AnthropicToCodexBridgeProvider(env, authDir, codexAuthDir, fetchImpl);
 }
 
-// ---------------------------------------------------------------------------
-// Matrix
-// ---------------------------------------------------------------------------
-
 describe('Provider auth lifecycle regression matrix', () => {
   const fsSpies = [
     fsPromiseMocks.readFile,
@@ -218,9 +155,6 @@ describe('Provider auth lifecycle regression matrix', () => {
   let tmpRoot: string;
 
   beforeEach(() => {
-    // Bridge the Bun/Linux async-fs race (same workaround as the sibling suite):
-    // route async fs ops through sync counterparts so fixtures are visible to
-    // the provider's loadCredentials()/saveCredentials()/logout().
     fsPromiseMocks.readFile.mockImplementation(
       (
         filePath: Parameters<typeof fs.readFile>[0],
@@ -285,16 +219,12 @@ describe('Provider auth lifecycle regression matrix', () => {
     return provider;
   }
 
-  // -------------------------------------------------------------------------
-  // Per-mode stage matrix
-  // -------------------------------------------------------------------------
-
   describe.each(MODES)('$label auth mode', ({ mode }) => {
     it('login: setCredentials() flips availability on', async () => {
       const { hyperneo, codex } = newDirs();
       const provider = track(makeProvider({}, hyperneo, codex, createFetchImpl().impl));
 
-      expect(await provider.isAvailable()).toBe(false); // unauthenticated before login
+      expect(await provider.isAvailable()).toBe(false);
 
       provider.setCredentials(loginCredsFor(mode));
 
@@ -304,7 +234,6 @@ describe('Provider auth lifecycle regression matrix', () => {
         expect(status.isAuthenticated).toBe(true);
         expect(status.method).toBe('oauth');
       } else {
-        // API-key auth powers API calls but is not a UI-authenticated session.
         expect(status.isAuthenticated).toBe(false);
       }
     });
@@ -339,23 +268,17 @@ describe('Provider auth lifecycle regression matrix', () => {
 
       expect(await provider.isAvailable()).toBe(false);
       expect(await provider.getApiKey()).toBeUndefined();
-      // Auth gate (getBridgeAuth) returns no auth → getModels short-circuits to []
-      // without probing, so a stale cached probe can never fake "healthy".
       expect(await provider.getModels()).toEqual([]);
     });
 
     it('credential removal: removes the openai entry from auth.json on disk', async () => {
       const { hyperneo, codex } = newDirs();
-      writeAuthFile(hyperneo, diskCredsFor(mode)); // start from persisted state
+      writeAuthFile(hyperneo, diskCredsFor(mode));
       const provider = track(makeProvider({}, hyperneo, codex, createFetchImpl().impl));
       expect(readAuthOpenai(hyperneo)).toBeDefined();
 
       await provider.logout();
 
-      // The openai key is gone. Because openai was the only entry, logout()
-      // unlinks auth.json entirely — assert the file is actually gone rather
-      // than merely unreadable (a corrupted/truncated write would also make
-      // readAuthOpenai() return undefined and falsely pass).
       expect(authFileExists(hyperneo)).toBe(false);
     });
 
@@ -401,7 +324,6 @@ describe('Provider auth lifecycle regression matrix', () => {
           expect(await provider.refreshToken()).toBe(false);
           expect(await provider.isAvailable()).toBe(true);
           expect(await provider.getApiKey()).toBe('valid-access');
-          // Credentials preserved intact on disk (not truncated/corrupted).
           const preserved = readAuthOpenai(hyperneo);
           expect(preserved).toBeDefined();
           expect(preserved?.access).toBe('valid-access');
@@ -416,7 +338,6 @@ describe('Provider auth lifecycle regression matrix', () => {
         provider.setCredentials(loginCredsFor('api_key'));
 
         expect(await provider.refreshToken()).toBe(false);
-        // Credentials unchanged — API keys have no refresh lifecycle.
         expect(await provider.isAvailable()).toBe(true);
         expect(await provider.getApiKey()).toBe('sk-matrix-key');
       });
@@ -441,18 +362,12 @@ describe('Provider auth lifecycle regression matrix', () => {
       await provider.logout();
       expect(await provider.isAvailable()).toBe(false);
 
-      provider.setCredentials(loginCredsFor(mode)); // re-add
+      provider.setCredentials(loginCredsFor(mode));
 
       expect(await provider.isAvailable()).toBe(true);
-      // getModels returns the catalogue only when getBridgeAuth resolves auth —
-      // a stale logged-out cache would instead return [].
       expect((await provider.getModels()).length).toBeGreaterThan(0);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Composed lifecycle walks — the regression class
-  // -------------------------------------------------------------------------
 
   describe('composed lifecycle walk (cross-stage state transitions)', () => {
     it.each(
@@ -464,22 +379,15 @@ describe('Provider auth lifecycle regression matrix', () => {
       const fetcher = createFetchImpl();
       const provider = track(makeProvider({}, hyperneo, codex, fetcher.impl));
 
-      // login + authenticated call (probe 1)
       provider.setCredentials(loginCredsFor(mode, 1));
       expect(await provider.isAvailable()).toBe(true);
       expect((await provider.getModels()).length).toBeGreaterThan(0);
       expect(fetcher.calls[0].url).toBe(probeUrlFor(mode));
 
-      // logout (removal)
       await provider.logout();
       expect(await provider.isAvailable()).toBe(false);
       expect(await provider.getModels()).toEqual([]);
 
-      // re-add with a DISTINCT credential. verifyCredentials() caches a
-      // successful probe for 30s keyed by bridgeAuthCacheKey(auth); re-adding
-      // the same key/account would hit that cache and skip the upstream probe,
-      // so a different credential is required to force a genuine second
-      // authenticated request and make a stale-auth regression observable.
       provider.setCredentials(loginCredsFor(mode, 2));
       expect(await provider.isAvailable()).toBe(true);
       expect((await provider.getModels()).length).toBeGreaterThan(0);
@@ -492,8 +400,6 @@ describe('Provider auth lifecycle regression matrix', () => {
     });
 
     it('OAuth: stale-token-cleanup then removal then re-add restores auth (regression target)', async () => {
-      // Headline bug class: a definitive refresh failure wipes creds; the user
-      // must then be able to log back in cleanly with no stale-cache leak.
       const { hyperneo, codex } = newDirs();
       writeAuthFile(hyperneo, {
         type: 'oauth',
@@ -505,7 +411,6 @@ describe('Provider auth lifecycle regression matrix', () => {
       const fetcher = createFetchImpl();
       const provider = track(makeProvider({}, hyperneo, codex, fetcher.impl));
 
-      // stale-token-cleanup: definitive refresh failure wipes creds + disk
       const refreshSpy = spyOn(globalThis, 'fetch').mockResolvedValue(invalidGrantResponse());
       try {
         expect(await provider.refreshToken()).toBe(false);
@@ -516,7 +421,6 @@ describe('Provider auth lifecycle regression matrix', () => {
       expect(await provider.isAvailable()).toBe(false);
       expect(authFileExists(hyperneo)).toBe(false);
 
-      // re-add via a fresh login (post-callback setCredentials path)
       provider.setCredentials(loginCredsFor('oauth'));
       expect(await provider.isAvailable()).toBe(true);
       expect((await provider.getModels()).length).toBeGreaterThan(0);
@@ -524,14 +428,12 @@ describe('Provider auth lifecycle regression matrix', () => {
     });
 
     it('OAuth: removal then re-add then stale-token-cleanup clears again (no zombie cache)', async () => {
-      // A second lifecycle cycle must clear credentials just like the first —
-      // no in-memory cache may resurrect a logged-out state across cycles.
       const { hyperneo, codex } = newDirs();
       const provider = track(makeProvider({}, hyperneo, codex, createFetchImpl().impl));
 
       provider.setCredentials(loginCredsFor('oauth'));
       await provider.logout();
-      provider.setCredentials(loginCredsFor('oauth')); // re-add
+      provider.setCredentials(loginCredsFor('oauth'));
       expect(await provider.isAvailable()).toBe(true);
 
       const refreshSpy = spyOn(globalThis, 'fetch').mockResolvedValue(invalidGrantResponse());

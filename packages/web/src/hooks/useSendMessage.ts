@@ -1,10 +1,3 @@
-/**
- * useSendMessage Hook
- *
- * Handles message sending with timeout, validation, and error handling.
- * Extracted from ChatContainer.tsx for better separation of concerns.
- */
-
 import type { MessageDeliveryMode, MessageImage, Session } from '@hyperneo/shared';
 import { useCallback, useRef } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager';
@@ -35,9 +28,6 @@ export interface UseSendMessageResult {
 
 const SEND_TIMEOUT_MS = 15000;
 
-/**
- * Hook for sending messages with proper timeout and error handling
- */
 export function useSendMessage({
   sessionId,
   session,
@@ -72,7 +62,6 @@ export function useSendMessage({
 
       const isConnected = connectionState.value === 'connected';
       if (!isConnected) {
-        // Queue message for when connection is restored
         const label =
           content.length > 40 ? `Message: ${content.slice(0, 40)}…` : `Message: ${content}`;
         enqueueAction(label, async () => {
@@ -105,7 +94,6 @@ export function useSendMessage({
 
         const hub = connectionManager.getHubIfConnected();
         if (!hub) {
-          // Hub disappeared during send (race during socket teardown) - queue for retry
           const qLabel =
             content.length > 40 ? `Message: ${content.slice(0, 40)}…` : `Message: ${content}`;
           const qPayload: {
@@ -117,7 +105,6 @@ export function useSendMessage({
           if (deliveryMode !== 'immediate') {
             qPayload.deliveryMode = deliveryMode;
           }
-          // Force queue â hub is null so immediate execution would fail
           enqueueAction(
             qLabel,
             async () => {
@@ -150,7 +137,6 @@ export function useSendMessage({
           onMessageAccepted?.(result.messageId);
         }
 
-        // Clear timeout on successful send
         clearSendTimeout();
         return true;
       } catch (err) {

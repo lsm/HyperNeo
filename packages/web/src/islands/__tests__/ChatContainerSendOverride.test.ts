@@ -62,10 +62,6 @@ describe('sendChatContainerMessage override path', () => {
   });
 
   it('forwards deferred (Queue) delivery to the override instead of rejecting', async () => {
-    // Regression: task-agent overlays used to reject `deliveryMode: 'defer'`
-    // with a toast. The override now honors defer so a human message lands as
-    // a `deferred` row replayed at the next idle boundary (handled downstream
-    // by injectSubSessionMessage).
     const result = await sendChatContainerMessage({
       content: 'hello',
       deliveryMode: 'defer',

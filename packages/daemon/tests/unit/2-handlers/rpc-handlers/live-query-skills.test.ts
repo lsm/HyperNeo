@@ -1,8 +1,3 @@
-/**
- * Unit tests for the `skills.list` named query in NAMED_QUERY_REGISTRY
- * and for `SkillRepository` reactive notifications on write operations.
- */
-
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables } from '../../../../src/storage/schema';
@@ -10,10 +5,6 @@ import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-quer
 import { SkillRepository } from '../../../../src/storage/repositories/skill-repository';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { AppSkill } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -36,10 +27,6 @@ function makeSkill(overrides: Partial<AppSkill> = {}): AppSkill {
     ...overrides,
   };
 }
-
-// ---------------------------------------------------------------------------
-// skills.list — NAMED_QUERY_REGISTRY
-// ---------------------------------------------------------------------------
 
 describe('skills.list named query', () => {
   let db: BunDatabase;
@@ -165,10 +152,6 @@ describe('skills.list named query', () => {
     expect(row).toHaveProperty('createdAt');
   });
 });
-
-// ---------------------------------------------------------------------------
-// SkillRepository — reactiveDb.notifyChange('skills') on writes
-// ---------------------------------------------------------------------------
 
 describe('SkillRepository reactive notifications', () => {
   let db: BunDatabase;

@@ -1,16 +1,3 @@
-/**
- * Tests for Space Task RPC Handlers
- *
- * Covers:
- * - spaceTask.create: happy path, missing spaceId, missing title, null description,
- *   empty description (allowed), space not found, dependency not found error propagation
- * - spaceTask.list: happy path, missing spaceId, space not found
- * - spaceTask.get: happy path, space existence check, missing params, task not found
- * - spaceTask.update: status transition (delegates to setTaskStatus), same-status update
- *   (routes to updateTask — not spurious transition error), non-status update, missing params
- * - InternalEventBus events published on mutations
- */
-
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Space, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type {
@@ -25,8 +12,6 @@ import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/sp
 import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
-
-// ─── Fixtures ───────────────────────────────────────────────────────────────
 
 const NOW = Date.now();
 
@@ -91,8 +76,6 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
     ...overrides,
   };
 }
-
-// ─── Mock helpers ────────────────────────────────────────────────────────────
 
 function createMockMessageHub(): {
   hub: MessageHub;
@@ -159,10 +142,6 @@ function createMockTaskManager(task: SpaceTask | null = mockTask): SpaceTaskMana
     })),
     updateTaskProgress: mock(async () => ({ ...task!, progress: 50 })),
     publishTask: mock(async () => ({ ...task!, status: 'open' as const })),
-    // Unified entry point used by both `spaceTask.submitForReview` (UI) and
-    // the agent `submit_for_approval` tool. Returns a task in `review` with
-    // the pending-completion fields stamped — mirrors the real manager's
-    // output shape so handler-level assertions stay accurate.
     submitTaskForReview: mock(async (_taskId: string, opts: { reason: string | null }) => ({
       ...task!,
       status: 'review' as const,
@@ -173,8 +152,6 @@ function createMockTaskManager(task: SpaceTask | null = mockTask): SpaceTaskMana
     })),
   } as unknown as SpaceTaskManager;
 }
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('space-task-handlers', () => {
   let hub: MessageHub;
@@ -216,8 +193,6 @@ describe('space-task-handlers', () => {
     if (!handler) throw new Error(`No handler registered for ${method}`);
     return handler(data);
   };
-
-  // ─── spaceTask.create ──────────────────────────────────────────────────────
 
   describe('spaceTask.create', () => {
     beforeEach(() => setup());
@@ -342,8 +317,6 @@ describe('space-task-handlers', () => {
     });
   });
 
-  // ─── spaceTask.list ────────────────────────────────────────────────────────
-
   describe('spaceTask.list', () => {
     beforeEach(() => setup());
 
@@ -415,7 +388,7 @@ describe('space-task-handlers', () => {
         expect(taskManager.listTasksByStatusPaginated).toHaveBeenCalledWith(
           'blocked',
           null,
-          10, // default limit
+          10,
           0,
           undefined
         );
@@ -492,8 +465,6 @@ describe('space-task-handlers', () => {
     });
   });
 
-  // ─── spaceTask.get ─────────────────────────────────────────────────────────
-
   describe('spaceTask.get', () => {
     beforeEach(() => setup());
 
@@ -532,8 +503,6 @@ describe('space-task-handlers', () => {
       );
     });
   });
-
-  // ─── spaceTask.archive (via spaceTask.update status: 'archived') ─────────────
 
   describe('spaceTask.archive via spaceTask.update', () => {
     it('archives a completed task via status transition and publishes space.task.updated', async () => {
@@ -603,9 +572,6 @@ describe('space-task-handlers', () => {
     });
 
     it('rejects archiving a task that belongs to an active (non-terminal) workflow run (G1, task #849)', async () => {
-      // Archiving the canonical task of an active run would strand the run
-      // (listByWorkflowRun excludes archived → processRunTick early-returns,
-      // no reconciliation cancels the orphan). G1 widened this to open→archived.
       const runTask = {
         ...mockTask,
         status: 'open' as const,
@@ -623,7 +589,6 @@ describe('space-task-handlers', () => {
           status: 'archived',
         })
       ).rejects.toThrow(/active workflow run/);
-      // The guard must fire before any status write.
       expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
     });
 
@@ -657,8 +622,6 @@ describe('space-task-handlers', () => {
     });
 
     it('allows archiving a task with no workflow run (G1 shelve case)', async () => {
-      // No workflowRunId → the G1 "shelve a queued, not-yet-attached task" case.
-      // The guard is skipped (no runtime, no run).
       const freeTask = { ...mockTask, status: 'open' as const };
       setup(mockSpace, freeTask);
       (taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
@@ -675,8 +638,6 @@ describe('space-task-handlers', () => {
       expect((result as SpaceTask).status).toBe('archived');
     });
   });
-
-  // ─── reactivation via spaceTask.update ─────────────────────────────────────
 
   describe('spaceTask.reactivate via spaceTask.update', () => {
     it('routes workflow-backed Resume through workflow recovery instead of task-only status update', async () => {
@@ -825,8 +786,6 @@ describe('space-task-handlers', () => {
     });
   });
 
-  // ─── spaceTask.update ──────────────────────────────────────────────────────
-
   describe('spaceTask.update', () => {
     beforeEach(() => setup());
 
@@ -852,11 +811,10 @@ describe('space-task-handlers', () => {
     });
 
     it('does NOT call setTaskStatus when status is unchanged (avoids spurious transition error)', async () => {
-      // mockTask has status: 'open'; sending status: 'open' should not call setTaskStatus
       const result = await call('spaceTask.update', {
         spaceId: 'space-1',
         taskId: 'task-1',
-        status: 'open', // same as current
+        status: 'open',
         title: 'New title',
       });
 
@@ -1621,9 +1579,6 @@ describe('space-task-handlers', () => {
     });
 
     it('applies non-status fields (e.g. taskAgentSessionId) after status transition', async () => {
-      // setTaskStatus handles the status transition but does not know about
-      // taskAgentSessionId. The handler must follow up with updateTask to
-      // apply the remaining fields.
       (taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
         ...mockTask,
         status: 'in_progress' as const,
@@ -1643,13 +1598,11 @@ describe('space-task-handlers', () => {
         taskAgentSessionId: 'session-abc',
       });
 
-      // setTaskStatus was called for the transition
       expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
         result: undefined,
         approvalReason: undefined,
         approvalSource: undefined,
       });
-      // updateTask was called with the non-status fields (no status, no result)
       expect(taskManager.updateTask).toHaveBeenCalledWith(
         'task-1',
         {
@@ -1657,7 +1610,6 @@ describe('space-task-handlers', () => {
         },
         expect.objectContaining({ onCascadedTasks: expect.any(Function) })
       );
-      // Final result has both fields
       expect((result as SpaceTask).status).toBe('in_progress');
       expect((result as SpaceTask).taskAgentSessionId).toBe('session-abc');
     });
@@ -1675,7 +1627,7 @@ describe('space-task-handlers', () => {
     });
 
     it('throws Space not found when space does not exist', async () => {
-      setup(null); // spaceManager.getSpace returns null
+      setup(null);
       await expect(
         call('spaceTask.update', { spaceId: 'ghost', taskId: 'task-1', title: 'X' })
       ).rejects.toThrow('Space not found: ghost');
@@ -1684,10 +1636,6 @@ describe('space-task-handlers', () => {
     });
 
     it('maps cancelReason onto approvalReason for review→cancelled audit trail', async () => {
-      // Rejecting a paused task goes review→cancelled. The single
-      // `approval_reason` column doubles as an audit trail for both
-      // approvals and rejections, so the handler must fold cancelReason
-      // into the same persistence path.
       const reviewTask = { ...mockTask, status: 'review' as const };
       setup(mockSpace, reviewTask);
       (taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
@@ -1709,14 +1657,11 @@ describe('space-task-handlers', () => {
         cancelReason: 'not worth shipping',
       });
 
-      // setTaskStatus is called with the rejection reason mapped onto approvalReason.
       expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'cancelled', {
         result: undefined,
         approvalSource: undefined,
         approvalReason: 'not worth shipping',
       });
-      // A follow-up updateTask ensures approvalReason lands even though
-      // setTaskStatus only stamps it on review→done.
       expect(taskManager.updateTask).toHaveBeenCalledWith(
         'task-1',
         {
@@ -1773,14 +1718,6 @@ describe('space-task-handlers', () => {
     });
 
     it('rejects bare in_progress→review transitions and points at spaceTask.submitForReview', async () => {
-      // Unification (Task #123): every task that lands in `review` must
-      // carry the pending-completion fields so `PendingTaskCompletionBanner`
-      // renders and approvals route through `PostApprovalRouter`. The
-      // `spaceTask.update` path can't stamp those fields, so the handler
-      // must reject `status: 'review'` requests and direct callers to
-      // `spaceTask.submitForReview` (or the agent `submit_for_approval`
-      // tool). Without this guard the legacy bare-status flow would slip
-      // back in and produce banner-less `review` tasks.
       const inProgressTask = { ...mockTask, status: 'in_progress' as const };
       setup(mockSpace, inProgressTask);
 
@@ -1791,23 +1728,11 @@ describe('space-task-handlers', () => {
           status: 'review',
         })
       ).rejects.toThrow(/spaceTask\.submitForReview/);
-      // The handler must short-circuit before hitting the manager so a
-      // bad caller never gets a partial write.
       expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
       expect(taskManager.updateTask).not.toHaveBeenCalled();
     });
 
     it('rejects bare → approved transitions and points at the post-approval router', async () => {
-      // Exit-side counterpart to the `→ review` guard. The `approved`
-      // status is owned by the post-approval pipeline:
-      //   - human approvals route through `spaceTask.approvePendingCompletion`
-      //     which dispatches `PostApprovalRouter` (the router calls
-      //     `setTaskStatus(approved)` with the right metadata).
-      //   - agent approvals route through the runtime's reactive
-      //     `reportedStatus='done'` handler — also via the router.
-      // A bare `update({status:'approved'})` would skip the awareness
-      // event, the dispatch, and the approval-source stamping. The
-      // handler must short-circuit so neither manager method is called.
       const inProgressTask = { ...mockTask, status: 'in_progress' as const };
       setup(mockSpace, inProgressTask);
 
@@ -1823,12 +1748,6 @@ describe('space-task-handlers', () => {
     });
 
     it('allows approved → done via spaceTask.update — relies on setTaskStatus to clear post-approval-* atomically', async () => {
-      // Counterpart fact: the `→ approved` guard does NOT block exits
-      // FROM `approved`. UI escape hatches (Mark Done / Reopen / Archive
-      // from approved) flow through `spaceTask.update`, which delegates
-      // to `setTaskStatus`. The manager's centralised "exit approved"
-      // cleanup nulls postApprovalSessionId/StartedAt/BlockedReason in
-      // the same SQL UPDATE — see the manager-level atomicity test.
       const approvedTask = { ...mockTask, status: 'approved' as const };
       setup(mockSpace, approvedTask);
       (taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
@@ -1864,27 +1783,10 @@ describe('space-task-handlers', () => {
     });
   });
 
-  // The `spaceTask.update` completion-action resume intercept was removed in
-  // PR 4/5 along with the completion-action pipeline. `review → done` now
-  // proceeds through the plain `taskManager.setTaskStatus` path for any task
-  // without a `task_completion` checkpoint; tasks with `task_completion` are
-  // routed through `approvePendingCompletion` (tested in its own file).
-
-  // ─── spaceTask.submitForReview ────────────────────────────────────────────
-  //
-  // User-initiated counterpart to the agent `submit_for_approval` tool. The
-  // handler must funnel the request through `SpaceTaskManager.submitTaskForReview`
-  // (the unified entry point) so the resulting task always carries the
-  // pending-completion fields that drive `PendingTaskCompletionBanner`. These
-  // tests pin the handler-level contract: argument shape, validation, event
-  // emission, and error propagation.
   describe('spaceTask.submitForReview', () => {
     beforeEach(() => setup());
 
     it('delegates to taskManager.submitTaskForReview with submittedByNodeId=null and the reason', async () => {
-      // `submittedByNodeId: null` is load-bearing — it tells the
-      // PostApprovalRouter that no end-node session is waiting to be
-      // resumed (same semantics as a Task Agent self-submit).
       const result = await call('spaceTask.submitForReview', {
         spaceId: 'space-1',
         taskId: 'task-1',
@@ -1901,9 +1803,6 @@ describe('space-task-handlers', () => {
     });
 
     it('coerces missing reason to null so the manager always receives an explicit value', async () => {
-      // Defensive: the manager treats `undefined` and `null` differently for
-      // its DB writer (only `null` clears the column). The handler must
-      // normalize so callers can omit the field without ambiguity.
       await call('spaceTask.submitForReview', {
         spaceId: 'space-1',
         taskId: 'task-1',
@@ -1956,8 +1855,6 @@ describe('space-task-handlers', () => {
     });
 
     it('propagates manager errors (e.g. invalid status transition)', async () => {
-      // E.g. attempting to submit an `archived` task — the manager's
-      // `setTaskStatus(taskId, 'review')` step rejects the transition.
       (taskManager.submitTaskForReview as ReturnType<typeof mock>).mockRejectedValue(
         new Error("Invalid status transition from 'archived' to 'review'. Allowed: none")
       );
@@ -1967,8 +1864,6 @@ describe('space-task-handlers', () => {
       ).rejects.toThrow('Invalid status transition');
     });
   });
-
-  // ─── spaceTask.approvePendingCompletion ─────────────────────────────────────
 
   describe('spaceTask.approvePendingCompletion', () => {
     beforeEach(() => setup());
@@ -2008,11 +1903,6 @@ describe('space-task-handlers', () => {
     });
 
     it('surfaces a post-approval dispatch failure as a warning, not a raw throw (Layer C)', async () => {
-      // Reproducer task #847: setTaskStatus('approved') committed inside
-      // dispatchPostApproval, then the async dispatch threw an SDK abort
-      // ("user interrupted"). The handler must NOT propagate the raw throw —
-      // the approval is durable — and instead capture the failure as a
-      // post-approval-blocked reason so the UI shows a recovery banner.
       const reviewTask = {
         ...mockTask,
         status: 'review' as const,
@@ -2026,24 +1916,20 @@ describe('space-task-handlers', () => {
       } as unknown as SpaceRuntimeService;
       setup(mockSpace, reviewTask, runtime);
       (taskManager.getTask as ReturnType<typeof mock>)
-        .mockResolvedValueOnce(reviewTask) // currentTask (checkpoint guard)
-        .mockResolvedValueOnce(approvedTask) // afterCommit status check in catch
-        .mockResolvedValueOnce(approvedTask); // refreshed re-read after catch
+        .mockResolvedValueOnce(reviewTask)
+        .mockResolvedValueOnce(approvedTask)
+        .mockResolvedValueOnce(approvedTask);
 
-      // (a) Must NOT throw to the caller.
       const result = await call('spaceTask.approvePendingCompletion', {
         spaceId: 'space-1',
         taskId: 'task-1',
         approved: true,
       });
 
-      // (c) status remains approved; the approval was durable.
       expect(result.status).toBe('approved');
-      // (b)/(e) postApprovalBlockedReason captures the mapped warning.
       expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
         postApprovalBlockedReason: expect.stringContaining('Approval recorded'),
       });
-      // space.task.updated still fires so the UI refreshes to the blocked banner.
       expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.updated', {
         sessionId: 'global',
         spaceId: 'space-1',
@@ -2053,9 +1939,6 @@ describe('space-task-handlers', () => {
     });
 
     it('rethrows when the status transition itself failed (approval did not happen)', async () => {
-      // If setTaskStatus threw inside dispatchPostApproval (e.g. invalid
-      // transition), the task never reached `approved`. The handler must
-      // rethrow — this is NOT the Layer C "durable approval" case.
       const reviewTask = {
         ...mockTask,
         status: 'review' as const,
@@ -2067,7 +1950,6 @@ describe('space-task-handlers', () => {
         }),
       } as unknown as SpaceRuntimeService;
       setup(mockSpace, reviewTask, runtime);
-      // Task is still in review (transition failed) → not approved → rethrow.
       (taskManager.getTask as ReturnType<typeof mock>)
         .mockResolvedValueOnce(reviewTask)
         .mockResolvedValueOnce(reviewTask);
@@ -2079,7 +1961,6 @@ describe('space-task-handlers', () => {
           approved: true,
         })
       ).rejects.toThrow('Invalid status transition');
-      // No warning captured — the approval genuinely failed.
       expect(taskManager.updateTask).not.toHaveBeenCalledWith(
         'task-1',
         expect.objectContaining({ postApprovalBlockedReason: expect.any(String) })

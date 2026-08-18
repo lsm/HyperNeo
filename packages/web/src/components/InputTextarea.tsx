@@ -1,29 +1,3 @@
-/**
- * InputTextarea Component
- *
- * iOS 26-style floating textarea input pill with auto-resize,
- * character counter, and send button.
- * Extracted from MessageInput.tsx for better separation of concerns.
- *
- * CURSOR PRESERVATION FIX:
- * This component uses an "uncontrolled with sync" pattern instead of the
- * standard controlled input pattern (`value={content}`). This is intentional.
- *
- * PROBLEM: Controlled inputs cause cursor position reset on every re-render.
- * When any prop changes (isAgentWorking, etc.) or when the parent re-renders,
- * Preact sets textarea.value = content. Even if the DOM already has the correct
- * value, setting element.value programmatically resets cursor position.
- *
- * SYMPTOMS:
- * - Lost keystrokes when typing fast
- * - Arrow keys "stop working" after a few presses (cursor keeps resetting)
- *
- * SOLUTION: Use useLayoutEffect to sync content to DOM only when they differ.
- * After user types, DOM already has the new value (browser updated it).
- * Our onInput updates the signal to match. On re-render, DOM === content,
- * so we skip the DOM write and cursor position is preserved.
- */
-
 import type { ComponentChildren } from 'preact';
 import type { MutableRef } from 'preact/hooks';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -43,52 +17,36 @@ export interface InputTextareaProps {
   disabled?: boolean;
   maxChars?: number;
   placeholder?: string;
-  // Command autocomplete
   showCommandAutocomplete?: boolean;
   filteredCommands?: string[];
   selectedCommandIndex?: number;
   onCommandSelect?: (command: string) => void;
   onCommandClose?: () => void;
-  // Reference autocomplete
   showReferenceAutocomplete?: boolean;
   referenceResults?: ReferenceSearchResult[];
   selectedReferenceIndex?: number;
   onReferenceSelect?: (result: ReferenceSearchResult) => void;
   onReferenceClose?: () => void;
-  // Agent mention autocomplete
   showAgentMentionAutocomplete?: boolean;
   agentMentionCandidates?: Array<{ id: string; name: string }>;
   selectedAgentMentionIndex?: number;
   onAgentMentionSelect?: (name: string) => void;
-  /**
-   * Fires on every caret/selection change of this textarea — including
-   * collapsed caret moves (arrow keys, clicks) that do NOT emit the native
-   * `select` event. Implemented via the document `selectionchange` event.
-   */
   onSelect?: () => void;
   onAgentMentionClose?: () => void;
-  // Agent state - passed as prop to avoid direct signal reads that cause re-renders
   isAgentWorking?: boolean;
 
   onStop?: () => void;
   onQueue?: () => void;
   onPaste?: (e: ClipboardEvent) => void;
   voiceControl?: ComponentChildren;
-  /** When set, renders in place of the textarea (the voice waveform) and hides the send button / counters. */
   recordingBody?: ComponentChildren;
-  /** Optional control rendered inside the input, on the left side */
   leadingElement?: ComponentChildren;
-  /** Left padding class used when leadingElement is present */
   leadingPaddingClass?: string;
-  /** Optional ref forwarded to the underlying textarea element */
   textareaRef?: MutableRef<HTMLTextAreaElement | null>;
   transparent?: boolean;
   onHeightChange?: (heightPx: number) => void;
 }
 
-/**
- * Floating textarea input with send/stop buttons
- */
 export function InputTextarea({
   content,
   onContentChange,
@@ -129,43 +87,20 @@ export function InputTextarea({
   const textareaRef = externalTextareaRef ?? internalTextareaRef;
   const [isMultiline, setIsMultiline] = useState(false);
 
-  // Sync content prop to textarea DOM only when they differ
-  // This prevents cursor position reset during re-renders caused by signal changes
-  // or other prop updates. Using useLayoutEffect for synchronous DOM updates.
-  //
-  // KEY INSIGHT: When user types, the browser updates DOM value immediately.
-  // Our onInput handler then updates the signal/state to match DOM.
-  // On the next render, content === textarea.value, so we skip the DOM write.
-  // This preserves cursor position because we never programmatically set value
-  // when it already matches.
-  // NOTE: `recordingBody` is a dependency because while it is shown the textarea
-  // is unmounted; when it clears, a FRESH textarea mounts with an empty DOM value
-  // and unchanged `content` — without this dep the sync below would not re-run
-  // and the draft would render blank (while still being submitted on Send).
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
 
-    // Only update DOM if the value actually differs
     if (textarea.value !== content) {
-      // Save cursor position before updating
       const { selectionStart, selectionEnd } = textarea;
 
-      // Update value
       textarea.value = content;
 
-      // Restore cursor position (clamped to valid range)
-      // This handles external content changes (e.g., loading draft, clearing)
       const maxPos = content.length;
       textarea.setSelectionRange(Math.min(selectionStart, maxPos), Math.min(selectionEnd, maxPos));
     }
   }, [content, recordingBody]);
 
-  // Auto-resize textarea.
-  // Uses useLayoutEffect so the height is recalculated synchronously
-  // before paint. This ensures the composer padding (driven by
-  // syncMessagesContainerPadding in MessageInput) always measures the
-  // correct footer height before auto-scroll fires on a new message.
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -178,23 +113,14 @@ export function InputTextarea({
     onHeightChange?.(newHeight);
   }, [content, onHeightChange, recordingBody]);
 
-  // While recording (no textarea) keep the footer height in sync with the fixed
-  // 40px waveform body so the messages bottom padding stays correct.
   useEffect(() => {
     if (recordingBody) onHeightChange?.(40);
   }, [recordingBody, onHeightChange]);
 
-  // Focus on mount, and re-focus when the textarea remounts after a recording
-  // (the recording body replaces it in the DOM).
   useEffect(() => {
     if (!recordingBody) textareaRef.current?.focus();
   }, [recordingBody]);
 
-  // Continuous caret/selection tracking. The native `select` event does not
-  // fire for collapsed caret moves (plain arrow keys or clicks), so we listen
-  // to the document-level `selectionchange` and forward only the events that
-  // belong to THIS textarea. Consumers rely on this for voice transcript
-  // placement whenever the textarea is (or is about to be) gone.
   useEffect(() => {
     if (!onSelect) return;
     const handler = () => {
@@ -218,15 +144,8 @@ export function InputTextarea({
   const controlCount = 1 + (showQueue ? 1 : 0) + (voiceControl ? 1 : 0);
   const textareaRightPadding = controlCount >= 3 ? 'pr-36' : controlCount === 2 ? 'pr-24' : 'pr-14';
 
-  // Count @ref{} tokens in content — use REFERENCE_PATTERN.source to get a fresh regex
-  // instance each render, avoiding stale lastIndex from the shared global-flag regex.
   const refCount = [...content.matchAll(new RegExp(REFERENCE_PATTERN.source, 'g'))].length;
 
-  // Shared agent Stop-generation button (normal right cluster only). It is NOT
-  // rendered while recording: the recording row has its own red stop (the mic
-  // slot) and two stop buttons must never coexist. The agent keeps running and
-  // can be stopped again once the recording ends (a transcription can run up
-  // to ~2 min).
   const renderAgentStopButton = () => (
     <button
       type="button"
@@ -250,7 +169,6 @@ export function InputTextarea({
 
   return (
     <div class="relative min-w-0 flex-1">
-      {/* Autocomplete menus — only one shown at a time; agent mention takes highest priority */}
       {showAgentMentionAutocomplete && onAgentMentionSelect && onAgentMentionClose ? (
         <MentionAutocomplete
           agents={agentMentionCandidates}
@@ -299,17 +217,7 @@ export function InputTextarea({
             {leadingElement}
           </div>
         )}
-        {/* Textarea - Uncontrolled with sync pattern
-				    We DON'T use value={content} here because controlled inputs cause
-				    cursor position reset on every re-render. Instead, we sync content
-				    to the DOM via useLayoutEffect only when they actually differ.
-				    See the useLayoutEffect above for details. */}
         {recordingBody ? (
-          // Recording row: waveform + voice controls laid out in flow (no
-          // absolute positioning), so nothing can overlap regardless of how
-          // many controls the parent passes in. Symmetric 6px insets (pl-1.5 /
-          // pr-1.5) seat the X (cancel) and the stop/send buttons flush into
-          // the pill's rounded ends, tracing its curve.
           <div class="flex h-10 w-full items-center gap-2 pl-1.5 pr-1.5">
             <div class="min-w-0 flex-1">{recordingBody}</div>
             {voiceControl}
@@ -336,7 +244,6 @@ export function InputTextarea({
           />
         )}
 
-        {/* Character Counter */}
         {!recordingBody && showCharCount && (
           <div
             class={cn(
@@ -348,7 +255,6 @@ export function InputTextarea({
           </div>
         )}
 
-        {/* Reference Badge — shows count of @ref{} tokens in content */}
         {!recordingBody && refCount > 0 && (
           <div
             class="absolute -bottom-6 left-0 flex items-center gap-1 text-xs text-gray-400"
@@ -373,8 +279,6 @@ export function InputTextarea({
           </div>
         )}
 
-        {/* Send or Stop Button — hidden while recording; the voice controls are
-            rendered in the in-flow recording row above instead. */}
         {!recordingBody && (
           <div
             class={cn(

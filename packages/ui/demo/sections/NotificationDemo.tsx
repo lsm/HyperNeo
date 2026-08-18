@@ -351,7 +351,6 @@ function NotificationWithAvatar() {
         Show avatar notification
       </button>
 
-      {/* Fixed overlay container - note: multiple visible notifications will stack at sm:items-end */}
       <div
         aria-live="assertive"
         class="pointer-events-none fixed inset-0 flex items-end px-4 py-6 sm:items-start sm:p-6"
@@ -409,7 +408,6 @@ function NotificationWithSplitButtons() {
         Show split-button notification
       </button>
 
-      {/* Fixed overlay container - note: multiple visible notifications will stack at sm:items-end */}
       <div
         aria-live="assertive"
         class="pointer-events-none fixed inset-0 flex items-end px-4 py-6 sm:items-start sm:p-6"
@@ -473,7 +471,6 @@ function SimpleIconNotification() {
         Show simple notification
       </button>
 
-      {/* Fixed overlay container */}
       <div
         aria-live="assertive"
         class="pointer-events-none fixed inset-0 flex items-end px-4 py-6 sm:items-start sm:p-6"
@@ -530,7 +527,6 @@ function CondensedNotification() {
         Show condensed notification
       </button>
 
-      {/* Fixed overlay container */}
       <div
         aria-live="assertive"
         class="pointer-events-none fixed inset-0 flex items-end px-4 py-6 sm:items-start sm:p-6"
@@ -589,7 +585,6 @@ function NotificationWithActionsBelow() {
         Show notification with actions
       </button>
 
-      {/* Fixed overlay container */}
       <div
         aria-live="assertive"
         class="pointer-events-none fixed inset-0 flex items-end px-4 py-6 sm:items-start sm:p-6"
@@ -660,7 +655,6 @@ function NotificationWithButtonsBelow() {
         Show notification with buttons
       </button>
 
-      {/* Fixed overlay container */}
       <div
         aria-live="assertive"
         class="pointer-events-none fixed inset-0 flex items-end px-4 py-6 sm:items-start sm:p-6"

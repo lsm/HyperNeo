@@ -1,22 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Database Recovery Script
- *
- * Recovers SDK messages from a corrupted or data-lost database by scanning
- * the raw database file for JSON message remnants in free pages.
- *
- * Usage:
- *   bun packages/daemon/scripts/recover-messages.ts <db-path>
- *
- * Example:
- *   bun packages/daemon/scripts/recover-messages.ts ./tmp/self-dev/daemon.db
- *
- * This script will:
- * 1. Scan the raw database file for SDK message JSON objects
- * 2. Match messages to existing sessions via sdk_session_id
- * 3. Create placeholder sessions only for truly orphaned messages
- * 4. Restore all recoverable messages to correct sessions
- */
 
 import { readFileSync } from 'fs';
 import { Database } from '../src/storage/sqlite-compat';
@@ -32,7 +14,6 @@ if (!dbPath) {
 
 console.log(`\n🔍 Recovering messages from: ${dbPath}\n`);
 
-// Step 1: Extract messages from raw database file
 console.log('Step 1: Scanning raw database for message remnants...');
 
 const raw = readFileSync(dbPath);
@@ -41,7 +22,7 @@ const content = raw.toString('utf8', 0, raw.length);
 interface RecoveredMessage {
   type: string;
   uuid: string;
-  sdk_session_id?: string; // SDK session ID from JSON (NOT HyperNeo session ID)
+  sdk_session_id?: string;
   raw: string;
 }
 
@@ -78,7 +59,7 @@ while (pos < raw.length) {
         messages.push({
           type: obj.type,
           uuid: obj.uuid,
-          sdk_session_id: obj.session_id, // This is the SDK session ID!
+          sdk_session_id: obj.session_id,
           raw: jsonStr,
         });
       }
@@ -92,12 +73,10 @@ while (pos < raw.length) {
 
 console.log(`   Found ${messages.length} unique messages`);
 
-// Step 2: Open database and build session mappings
 console.log('\nStep 2: Building session mappings...');
 
 const db = new Database(dbPath);
 
-// Map: SDK session ID -> HyperNeo session ID
 const sdkToKai = new Map<string, string>();
 const sessions = db.query('SELECT id, sdk_session_id FROM sessions').all() as {
   id: string;
@@ -122,7 +101,6 @@ console.log(`   Existing sessions: ${existingSessionIds.size}`);
 console.log(`   SDK→HyperNeo mappings: ${sdkToKai.size}`);
 console.log(`   Existing messages: ${existingMessageIds.size}`);
 
-// Step 3: Group messages by SDK session and resolve to HyperNeo sessions
 console.log('\nStep 3: Resolving message ownership...');
 
 const messagesByKaiSession = new Map<string, RecoveredMessage[]>();
@@ -134,7 +112,6 @@ for (const msg of messages) {
     continue;
   }
 
-  // Try to find the HyperNeo session for this SDK session
   const kaiSessionId = sdkToKai.get(msg.sdk_session_id);
 
   if (kaiSessionId) {
@@ -143,7 +120,6 @@ for (const msg of messages) {
     }
     messagesByKaiSession.get(kaiSessionId)!.push(msg);
   } else {
-    // No existing session has this SDK session ID - treat as orphan
     orphanMessages.push(msg);
   }
 }
@@ -151,7 +127,6 @@ for (const msg of messages) {
 console.log(`   Messages matched to existing sessions: ${messages.length - orphanMessages.length}`);
 console.log(`   Orphan messages (no session found): ${orphanMessages.length}`);
 
-// Step 4: Insert messages for existing sessions
 console.log('\nStep 4: Restoring messages to existing sessions...');
 
 const insertMessage = db.prepare(`
@@ -160,11 +135,6 @@ const insertMessage = db.prepare(`
 `);
 
 let messagesInserted = 0;
-// Every matched session is recomputed on every run, even if this invocation
-// inserts no new rows for it: a prior interrupted run may have inserted rows
-// but exited before Step 6, leaving the counter stale, and the existing-UUID
-// `continue` below would then skip the session entirely. recomputeVisibleMessageCount
-// is idempotent, so recomputing all matched sessions each run is safe.
 const touchedSessions = new Set<string>();
 
 for (const [kaiSessionId, msgs] of messagesByKaiSession.entries()) {
@@ -191,10 +161,8 @@ for (const [kaiSessionId, msgs] of messagesByKaiSession.entries()) {
 
 console.log(`   Messages restored to existing sessions: ${messagesInserted}`);
 
-// Step 5: Handle orphan messages by creating placeholder sessions
 console.log('\nStep 5: Handling orphan messages...');
 
-// Group orphans by SDK session ID
 const orphansBySDKSession = new Map<string, RecoveredMessage[]>();
 for (const msg of orphanMessages) {
   const key = msg.sdk_session_id || 'unknown';
@@ -219,7 +187,6 @@ let orphanMessagesInserted = 0;
 for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
   if (sdkSessionId === 'unknown' || msgs.length === 0) continue;
 
-  // Extract metadata from messages
   let workspacePath = '/tmp/recovered';
   let title = 'Recovered Session';
 
@@ -252,7 +219,6 @@ for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
     }
   }
 
-  // Generate a new HyperNeo session ID (don't reuse SDK session ID!)
   const newSessionId = crypto.randomUUID();
 
   try {
@@ -282,7 +248,7 @@ for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
       null,
       null,
       null,
-      sdkSessionId, // Store SDK session ID for future reference
+      sdkSessionId,
       null,
       null,
       null
@@ -290,13 +256,12 @@ for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
     orphanSessionsCreated++;
     touchedSessions.add(newSessionId);
 
-    // Insert messages for this new session
     for (const msg of msgs) {
       try {
         const parsed = JSON.parse(msg.raw);
         const result = insertMessage.run(
           msg.uuid,
-          newSessionId, // Use the NEW HyperNeo session ID
+          newSessionId,
           msg.type,
           parsed.subtype || null,
           msg.raw,
@@ -315,13 +280,7 @@ for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
 console.log(`   Orphan sessions created: ${orphanSessionsCreated}`);
 console.log(`   Orphan messages restored: ${orphanMessagesInserted}`);
 
-// Step 6: Recompute visible_message_count for every touched session.
 console.log('\nStep 6: Recomputing visible_message_count for recovered sessions...');
-// The inserts above bypass SDKMessageRepository, so reuse its shared badge
-// predicate to recompute the maintained counter (no-op on a schema that
-// doesn't carry the visible_message_count column yet — the migration backfill
-// covers that). Deliberately no hardcoded migration number here so this comment
-// survives future renumbers.
 const recoverRepo = new SDKMessageRepository(db);
 let recomputed = 0;
 for (const sid of touchedSessions) {
@@ -334,7 +293,6 @@ for (const sid of touchedSessions) {
 }
 console.log(`   Recomputed ${recomputed} session(s)`);
 
-// Final summary
 const finalSessions = db.query('SELECT COUNT(*) as count FROM sessions').get() as { count: number };
 const finalMessages = db.query('SELECT COUNT(*) as count FROM sdk_messages').get() as {
   count: number;

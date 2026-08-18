@@ -1,22 +1,10 @@
-/**
- * DiffViewer - Component for displaying file diffs
- *
- * Displays side-by-side or unified diff view for file changes,
- * particularly useful for Edit tool output.
- */
-
 import { cn } from '../../../lib/utils.ts';
 
 export interface DiffViewerProps {
-  /** The original text (before changes) */
   oldText: string;
-  /** The new text (after changes) */
   newText: string;
-  /** File path being edited */
   filePath?: string;
-  /** Display mode: 'unified' (default) or 'split' */
   mode?: 'unified' | 'split';
-  /** Custom class names */
   className?: string;
 }
 
@@ -27,15 +15,11 @@ interface DiffLine {
   content: string;
 }
 
-/**
- * Simple diff algorithm that finds the changed section
- */
 function generateDiff(oldText: string, newText: string): DiffLine[] {
   const oldLines = oldText.split('\n');
   const newLines = newText.split('\n');
   const diff: DiffLine[] = [];
 
-  // Find the first different line
   let firstDiffIndex = 0;
   while (
     firstDiffIndex < Math.min(oldLines.length, newLines.length) &&
@@ -44,7 +28,6 @@ function generateDiff(oldText: string, newText: string): DiffLine[] {
     firstDiffIndex++;
   }
 
-  // Find the last different line
   let lastDiffIndexOld = oldLines.length - 1;
   let lastDiffIndexNew = newLines.length - 1;
   while (
@@ -56,7 +39,6 @@ function generateDiff(oldText: string, newText: string): DiffLine[] {
     lastDiffIndexNew--;
   }
 
-  // Add context lines before the change (up to 3 lines)
   const contextBefore = Math.max(0, firstDiffIndex - 3);
   for (let i = contextBefore; i < firstDiffIndex; i++) {
     diff.push({
@@ -67,7 +49,6 @@ function generateDiff(oldText: string, newText: string): DiffLine[] {
     });
   }
 
-  // Add separator if there's context before
   if (contextBefore > 0) {
     diff.push({
       type: 'separator',
@@ -75,7 +56,6 @@ function generateDiff(oldText: string, newText: string): DiffLine[] {
     });
   }
 
-  // Add removed lines
   for (let i = firstDiffIndex; i <= lastDiffIndexOld; i++) {
     diff.push({
       type: 'remove',
@@ -84,7 +64,6 @@ function generateDiff(oldText: string, newText: string): DiffLine[] {
     });
   }
 
-  // Add added lines
   for (let i = firstDiffIndex; i <= lastDiffIndexNew; i++) {
     diff.push({
       type: 'add',
@@ -93,7 +72,6 @@ function generateDiff(oldText: string, newText: string): DiffLine[] {
     });
   }
 
-  // Add context lines after the change (up to 3 lines)
   const contextAfter = Math.min(oldLines.length, lastDiffIndexOld + 4);
   for (let i = lastDiffIndexOld + 1; i < contextAfter; i++) {
     if (i < oldLines.length) {
@@ -106,7 +84,6 @@ function generateDiff(oldText: string, newText: string): DiffLine[] {
     }
   }
 
-  // Add separator if there's more context after
   if (contextAfter < oldLines.length) {
     diff.push({
       type: 'separator',
@@ -135,7 +112,6 @@ export function DiffViewer({
         className
       )}
     >
-      {/* Header */}
       {filePath && (
         <div class="bg-gray-100 dark:bg-gray-800 px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
           <div class="text-xs font-mono text-gray-700 dark:text-gray-300">{filePath}</div>
@@ -146,7 +122,6 @@ export function DiffViewer({
         </div>
       )}
 
-      {/* Diff content */}
       <div class="bg-gray-50 dark:bg-gray-900 overflow-x-auto">
         <table class="w-full text-xs font-mono">
           <tbody>
@@ -190,13 +165,10 @@ export function DiffViewer({
 
               return (
                 <tr key={idx} class={bgClass}>
-                  {/* Line number */}
                   <td class="px-2 py-0.5 text-right text-gray-500 dark:text-gray-500 select-none w-12 border-r border-gray-200 dark:border-gray-700">
                     {lineNum}
                   </td>
-                  {/* Sign */}
                   <td class={cn('px-2 py-0.5 w-6 select-none', signClass)}>{sign}</td>
-                  {/* Content */}
                   <td class={cn('px-2 py-0.5 whitespace-pre', textClass)}>{line.content || ' '}</td>
                 </tr>
               );
@@ -205,7 +177,6 @@ export function DiffViewer({
         </table>
       </div>
 
-      {/* Stats footer */}
       <div class="bg-gray-100 dark:bg-gray-800 px-3 py-1.5 border-t border-gray-200 dark:border-gray-700 flex gap-4 text-xs">
         <div class="flex items-center gap-1">
           <span class="text-green-700 dark:text-green-400">+</span>

@@ -1,13 +1,3 @@
-/**
- * MentionToken Component
- *
- * Renders a styled inline pill token for @ref{type:id} mentions in user messages.
- * On hover, lazily fetches full entity data via the reference.resolve RPC and
- * shows a popover with entity details.
- *
- * Performance: wrapped in memo to prevent re-renders during message list scrolling.
- */
-
 import type { JSX } from 'preact';
 import { memo } from 'preact/compat';
 import { useState, useCallback, useRef } from 'preact/hooks';
@@ -15,8 +5,6 @@ import { cn } from '../../lib/utils.ts';
 import { useMessageHub } from '../../hooks/useMessageHub.ts';
 import type { ReferenceType, ReferenceMetadata, ResolvedReference } from '@hyperneo/shared';
 import { REFERENCE_PATTERN } from '@hyperneo/shared';
-
-// ─── Type-specific styles ────────────────────────────────────────────────────
 
 const TYPE_STYLES: Record<ReferenceType, { pill: string; label: string }> = {
   task: {
@@ -37,11 +25,8 @@ const TYPE_STYLES: Record<ReferenceType, { pill: string; label: string }> = {
   },
 };
 
-// ─── Popover content helpers ─────────────────────────────────────────────────
-
 function renderResolvedContent(resolved: ResolvedReference): JSX.Element {
   switch (resolved.type) {
-    // task and goal share the same shape
     case 'task':
     case 'goal': {
       const d = resolved.data as { title?: string; status?: string; description?: string };
@@ -87,24 +72,19 @@ function renderResolvedContent(resolved: ResolvedReference): JSX.Element {
   }
 }
 
-// ─── MentionToken component ──────────────────────────────────────────────────
-
 export interface MentionTokenProps {
   refType: ReferenceType;
   id: string;
   displayText: string;
   status?: string;
-  /** Session ID used for reference.resolve RPC calls. Required for hover preview. */
   sessionId?: string;
 }
 
 type LoadState = 'idle' | 'loading' | 'loaded' | 'error';
 
-/** Popover position computed from getBoundingClientRect, used for fixed positioning. */
 interface PopoverPos {
   top: number;
   left: number;
-  /** True when the popover is rendered below the token (not enough space above). */
   below: boolean;
 }
 
@@ -118,23 +98,16 @@ function MentionTokenBase({ refType, id, displayText, status, sessionId }: Menti
 
   const typeStyle = TYPE_STYLES[refType];
 
-  // Entity is considered deleted/not-found when:
-  // 1. The persisted metadata status was 'not_found' at message-save time, OR
-  // 2. The live RPC resolve returned null after a successful fetch
   const isNotFound = status === 'not_found' || (loadState === 'loaded' && resolvedData === null);
 
   const handleMouseEnter = useCallback(async () => {
-    // Compute fixed viewport position before showing — escapes scroll containers
-    // and overflow:hidden ancestors that would clip an absolute popover.
     if (tokenRef.current) {
       const rect = tokenRef.current.getBoundingClientRect();
-      // Flip below the token when there is insufficient space above (< 160 px)
       const below = rect.top < 160;
       setPopoverPos({ top: below ? rect.bottom : rect.top, left: rect.left, below });
     }
     setIsHovered(true);
 
-    // Only fetch once; skip if already fetched or no sessionId to call with
     if (loadState === 'idle' && sessionId) {
       setLoadState('loading');
       try {
@@ -154,7 +127,6 @@ function MentionTokenBase({ refType, id, displayText, status, sessionId }: Menti
     setIsHovered(false);
   }, []);
 
-  // Popover offset from the token edge (px)
   const POPOVER_GAP = 6;
 
   return (
@@ -211,8 +183,6 @@ function MentionTokenBase({ refType, id, displayText, status, sessionId }: Menti
 
 export const MentionToken = memo(MentionTokenBase);
 
-// ─── Text parsing ─────────────────────────────────────────────────────────────
-
 export type TextSegment = { kind: 'text'; content: string };
 export type MentionSegment = {
   kind: 'mention';
@@ -225,7 +195,6 @@ export type MentionSegment = {
 export type UnknownMentionSegment = { kind: 'unknown-mention'; content: string };
 export type Segment = TextSegment | MentionSegment | UnknownMentionSegment;
 
-// Use `satisfies` so the compiler catches any mismatch with the ReferenceType union
 const VALID_REF_TYPES: ReadonlySet<string> = new Set<string>([
   'task',
   'goal',
@@ -233,17 +202,8 @@ const VALID_REF_TYPES: ReadonlySet<string> = new Set<string>([
   'folder',
 ] satisfies readonly ReferenceType[]);
 
-/**
- * Parse text content into display segments, resolving @ref{type:id} tokens.
- *
- * - Known type + metadata   → MentionSegment with displayText from metadata
- * - Known type + no metadata → MentionSegment with raw id as displayText
- * - Unknown type             → UnknownMentionSegment (rendered with warning styling)
- * - Plain text / plain @     → TextSegment (rendered as-is)
- */
 export function parseTextWithReferences(text: string, metadata: ReferenceMetadata): Segment[] {
   const segments: Segment[] = [];
-  // Clone the regex to get a fresh lastIndex; never mutate the shared export
   const pattern = new RegExp(REFERENCE_PATTERN.source, REFERENCE_PATTERN.flags);
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -269,7 +229,6 @@ export function parseTextWithReferences(text: string, metadata: ReferenceMetadat
         status: meta?.status,
       });
     } else {
-      // Unrecognised type — render as plain text with a subtle warning indicator
       segments.push({ kind: 'unknown-mention', content: raw });
     }
 

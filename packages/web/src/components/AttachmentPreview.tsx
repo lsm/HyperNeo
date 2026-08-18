@@ -1,7 +1,3 @@
-/**
- * Component for previewing attached images before sending
- */
-
 import type { MessageImage } from '@hyperneo/shared/types';
 import { formatFileSize } from '../lib/file-utils.ts';
 
@@ -20,20 +16,17 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
           key={index}
           class="relative group w-20 h-20 rounded overflow-hidden border border-gray-600 hover:border-gray-500 transition-colors"
         >
-          {/* Image preview */}
           <img
             src={`data:${attachment.media_type};base64,${attachment.data}`}
             alt={attachment.name}
             class="w-full h-full object-cover"
           />
 
-          {/* Overlay with file info */}
           <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-1">
             <div class="text-xs text-white text-center truncate w-full px-1">{attachment.name}</div>
             <div class="text-xs text-gray-300">{formatFileSize(attachment.size)}</div>
           </div>
 
-          {/* Remove button */}
           <button
             type="button"
             onClick={() => onRemove(index)}

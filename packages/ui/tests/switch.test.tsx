@@ -83,7 +83,6 @@ describe('Switch', () => {
     expect(sw.getAttribute('aria-checked')).toBe('false');
     fireEvent.click(sw);
     expect(onChange).toHaveBeenCalledWith(true);
-    // Controlled: state does not change internally
     expect(sw.getAttribute('aria-checked')).toBe('false');
   });
 
@@ -113,7 +112,6 @@ describe('Switch', () => {
   it('disabled prevents Enter key form submit path (no throw)', () => {
     render(<Switch disabled />);
     const sw = screen.getByRole('switch');
-    // Should not throw
     fireEvent.keyDown(sw, { key: 'Enter' });
     expect(sw.getAttribute('aria-checked')).toBe('false');
   });
@@ -213,10 +211,8 @@ describe('Switch', () => {
     await act(async () => {
       fireEvent.click(sw);
     });
-    // data-changing should be set immediately after toggle
     expect(sw.hasAttribute('data-changing')).toBe(true);
 
-    // After flushing RAF, changing should be false
     await act(async () => {
       raf.flush();
     });
@@ -306,7 +302,6 @@ describe('Switch', () => {
   });
 
   it('Enter key outside form does nothing', () => {
-    // Should not throw
     render(<Switch name="s" />);
     const sw = screen.getByRole('switch');
     fireEvent.keyDown(sw, { key: 'Enter' });

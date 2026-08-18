@@ -11,14 +11,12 @@ describe('Skeleton', () => {
   describe('role and accessibility', () => {
     it('renders with role="presentation"', () => {
       render(<Skeleton />);
-      // role="presentation" is hidden from accessibility tree; query via the DOM directly
       const el = document.querySelector('[role="presentation"]');
       expect(el).not.toBeNull();
     });
 
     it('has aria-hidden="true"', () => {
       render(<Skeleton />);
-      // aria-hidden elements are not accessible to getByRole; query directly
       const el = document.querySelector('[data-slot="skeleton"]');
       expect(el?.getAttribute('aria-hidden')).toBe('true');
     });
@@ -92,8 +90,6 @@ describe('Skeleton', () => {
 
   describe('ref forwarding', () => {
     it('component accepts a ref prop and renders correctly', () => {
-      // Skeleton passes a ref through the render() utility to the underlying element.
-      // Verify the component renders the expected DOM without error when a ref is supplied.
       function WithRef() {
         const ref = useRef<HTMLElement>(null);
         return <Skeleton ref={ref} data-testid="skeleton-with-ref" />;

@@ -1,20 +1,9 @@
-/**
- * Unit tests for heuristic token accounting in the anthropic-copilot bridge.
- *
- * The Copilot SDK does not expose real token counts, so we use a 4-chars-per-token
- * heuristic.  These tests verify the formula and its integration with SSE events.
- */
-
 import { describe, expect, it } from 'bun:test';
 import type { ServerResponse } from 'node:http';
 import {
   estimateTokens,
   AnthropicStreamWriter,
 } from '../../../../../src/lib/providers/anthropic-copilot/sse';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeRes(): { written: string[]; res: ServerResponse } {
   const written: string[] = [];
@@ -45,10 +34,6 @@ function parseEvents(written: string[]): Array<{ type: string; data: unknown }> 
   return events;
 }
 
-// ---------------------------------------------------------------------------
-// estimateTokens()
-// ---------------------------------------------------------------------------
-
 describe('estimateTokens()', () => {
   it('returns 0 for empty input', () => {
     expect(estimateTokens(0)).toBe(0);
@@ -65,9 +50,7 @@ describe('estimateTokens()', () => {
   });
 
   it('applies ceil for non-divisible lengths', () => {
-    // 7 chars → ceil(7/4) = 2
     expect(estimateTokens(7)).toBe(2);
-    // 9 chars → ceil(9/4) = 3
     expect(estimateTokens(9)).toBe(3);
   });
 
@@ -77,16 +60,10 @@ describe('estimateTokens()', () => {
   });
 
   it('known inputs produce expected values', () => {
-    // "hello world" = 11 chars → ceil(11/4) = 3
     expect(estimateTokens('hello world'.length)).toBe(3);
-    // 100-char string → ceil(100/4) = 25
     expect(estimateTokens(100)).toBe(25);
   });
 });
-
-// ---------------------------------------------------------------------------
-// message_start: input_tokens estimate
-// ---------------------------------------------------------------------------
 
 describe('message_start input_tokens', () => {
   it('is 0 when no inputTokens are provided', () => {
@@ -110,7 +87,6 @@ describe('message_start input_tokens', () => {
     const usage = ((start!.data as Record<string, unknown>)['message'] as Record<string, unknown>)[
       'usage'
     ] as Record<string, unknown>;
-    // SDK 0.2.84+ expects these fields to be present (not undefined)
     expect(usage['cache_creation_input_tokens']).toBe(0);
     expect(usage['cache_read_input_tokens']).toBe(0);
   });
@@ -118,7 +94,6 @@ describe('message_start input_tokens', () => {
   it('is non-zero for a non-empty inputTokens value', () => {
     const { written, res } = makeRes();
     const writer = new AnthropicStreamWriter();
-    // 40-char input → ceil(40/4) = 10
     writer.start(res, 'model', estimateTokens(40));
     const events = parseEvents(written);
     const start = events.find((e) => e.type === 'message_start');
@@ -131,7 +106,6 @@ describe('message_start input_tokens', () => {
   it('reflects exact formula: ceil(charCount / 4)', () => {
     const { written, res } = makeRes();
     const writer = new AnthropicStreamWriter();
-    // "system: do stuff\nuser: hello" = 29 chars → ceil(29/4) = 8
     const inputText = 'system: do stuff\nuser: hello';
     writer.start(res, 'model', estimateTokens(inputText.length));
     const events = parseEvents(written);
@@ -142,10 +116,6 @@ describe('message_start input_tokens', () => {
     expect(usage['input_tokens']).toBe(Math.ceil(inputText.length / 4));
   });
 });
-
-// ---------------------------------------------------------------------------
-// message_delta: output_tokens estimate
-// ---------------------------------------------------------------------------
 
 describe('message_delta output_tokens', () => {
   it('is 0 when no text was flushed', () => {
@@ -163,12 +133,11 @@ describe('message_delta output_tokens', () => {
     const { written, res } = makeRes();
     const writer = new AnthropicStreamWriter();
     writer.start(res, 'model');
-    writer.flushDeltas(res, ['hello world']); // 11 chars
+    writer.flushDeltas(res, ['hello world']);
     writer.sendCompleted(res);
     const events = parseEvents(written);
     const delta = events.find((e) => e.type === 'message_delta');
     const usage = (delta!.data as Record<string, unknown>)['usage'] as Record<string, unknown>;
-    // ceil(11/4) = 3
     expect(usage['output_tokens']).toBe(3);
   });
 
@@ -176,7 +145,6 @@ describe('message_delta output_tokens', () => {
     const { written, res } = makeRes();
     const writer = new AnthropicStreamWriter();
     writer.start(res, 'model');
-    // 4 chars + 8 chars = 12 chars total → ceil(12/4) = 3
     writer.flushDeltas(res, ['abcd']);
     writer.flushDeltas(res, ['efghijkl']);
     writer.sendCompleted(res);
@@ -190,7 +158,6 @@ describe('message_delta output_tokens', () => {
     const { written, res } = makeRes();
     const writer = new AnthropicStreamWriter();
     writer.start(res, 'model');
-    // ['abc', 'de'] = 3 + 2 = 5 chars → ceil(5/4) = 2
     writer.flushDeltas(res, ['abc', 'de']);
     writer.sendCompleted(res);
     const events = parseEvents(written);
@@ -203,7 +170,7 @@ describe('message_delta output_tokens', () => {
     const { written, res } = makeRes();
     const writer = new AnthropicStreamWriter();
     writer.start(res, 'model');
-    const outputText = 'The answer is 42, and the universe is vast.'; // 43 chars
+    const outputText = 'The answer is 42, and the universe is vast.';
     writer.flushDeltas(res, [outputText]);
     writer.sendCompleted(res);
     const events = parseEvents(written);
@@ -216,13 +183,11 @@ describe('message_delta output_tokens', () => {
     const { written, res } = makeRes();
     const writer = new AnthropicStreamWriter();
     writer.start(res, 'model');
-    // Emit some text before tool call
-    writer.flushDeltas(res, ['thinking...']); // 11 chars
+    writer.flushDeltas(res, ['thinking...']);
     writer.sendToolUse(res, 'tc_1', 'bash', { command: 'ls' });
     const events = parseEvents(written);
     const delta = events.find((e) => e.type === 'message_delta');
     const usage = (delta!.data as Record<string, unknown>)['usage'] as Record<string, unknown>;
-    // ceil(11/4) = 3
     expect(usage['output_tokens']).toBe(3);
   });
 

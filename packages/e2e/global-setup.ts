@@ -1,24 +1,14 @@
-/**
- * Global Setup - Runs BEFORE all tests
- * Ensures clean state to prevent nested worktrees
- */
-
 import { execSync } from 'child_process';
 import { join, dirname } from 'path';
 import { existsSync, rmSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 
-// Shared test environment - Node.js caches this module, so the workspace path
-// is computed once and shared between playwright.config.ts and global-setup.ts.
 import { e2eWorkspaceDir } from './test-env';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 async function globalSetup() {
-  // Safety check: Prevent running E2E tests when a dev server is running without
-  // pointing tests at it. Skip when E2E_PORT is set (standalone random-port mode)
-  // or when PLAYWRIGHT_BASE_URL is already set (external server mode).
   if (!process.env.PLAYWRIGHT_BASE_URL && !process.env.E2E_PORT) {
     let currentDir = __dirname;
     for (let i = 0; i < 5; i++) {
@@ -45,14 +35,6 @@ Or set PLAYWRIGHT_BASE_URL explicitly:
     }
   }
 
-  // Initialize the E2E workspace as a git repo so that task planning worktrees can
-  // be created. Without a .git directory, WorktreeManager.findGitRoot() returns null,
-  // causing "task requires isolation" errors and daemon log spam during tests.
-  // The workspace path is shared from test-env.ts (same module instance).
-  //
-  // NOTE: Seed files are created in test-env.ts at config evaluation time (before the
-  // webServer starts) because the daemon's FileIndex scans the workspace during server
-  // init, which happens before globalSetup runs.
   if (e2eWorkspaceDir && existsSync(e2eWorkspaceDir)) {
     console.log(`\n🔧 Initializing workspace as git repo: ${e2eWorkspaceDir}`);
     try {
@@ -62,7 +44,6 @@ Or set PLAYWRIGHT_BASE_URL explicitly:
         stdio: 'inherit',
       });
       execSync('git config user.name "HyperNeo E2E"', { cwd: e2eWorkspaceDir, stdio: 'inherit' });
-      // Create initial commit so the repo is valid (seed files already exist from test-env.ts)
       execSync('git add -A && git commit -m "Initial commit for E2E testing"', {
         cwd: e2eWorkspaceDir,
         stdio: 'inherit',
@@ -70,12 +51,9 @@ Or set PLAYWRIGHT_BASE_URL explicitly:
       });
       console.log('✅ Workspace initialized as git repo\n');
     } catch (error) {
-      // Log but don't fail — some tests may not need git functionality
       console.warn('⚠️  Failed to initialize git repo in workspace (continuing):', error);
     }
 
-    // Create test files so the FileIndex has entries for reference autocomplete E2E tests.
-    // Tests that search for files via @pack / @p / @src need at least one indexed file.
     try {
       const pkgJson = JSON.stringify({ name: 'e2e-test-workspace', version: '0.0.1' }, null, 2);
       writeFileSync(join(e2eWorkspaceDir, 'package.json'), pkgJson, 'utf-8');
@@ -86,7 +64,6 @@ Or set PLAYWRIGHT_BASE_URL explicitly:
     }
   }
 
-  // Skip cleanup in CI - handled by fresh checkout each time
   if (process.env.CI) {
     console.log('\n🔵 CI environment detected - skipping worktree cleanup\n');
     return;
@@ -107,10 +84,8 @@ Or set PLAYWRIGHT_BASE_URL explicitly:
     const worktrees = readdirSync(worktreesDir);
     console.log(`⚠️  Found ${worktrees.length} existing worktree(s) - cleaning...`);
 
-    // Prune git metadata
     execSync('git worktree prune', { cwd: projectRoot, stdio: 'inherit' });
 
-    // Delete session branches
     try {
       execSync('git branch --list "session/*" | xargs git branch -D 2>/dev/null || true', {
         cwd: projectRoot,
@@ -121,7 +96,6 @@ Or set PLAYWRIGHT_BASE_URL explicitly:
       // Ignore - branches may not exist
     }
 
-    // Remove directory
     rmSync(worktreesDir, { recursive: true, force: true });
 
     console.log('✅ Pre-test cleanup complete\n');

@@ -1,14 +1,3 @@
-/**
- * SpaceMemories Component
- *
- * Browse and manage a space's agent memories: list, hybrid search, create,
- * edit, and delete. Delegates all data access to the `agentMemory.*` RPCs via
- * `memoryStore`.
- *
- * Space-scoped only — per-agent (mine / space / all) filtering lands with the
- * per-agent namespacing task.
- */
-
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { AgentMemoryEntry } from '@hyperneo/shared';
 import { Button } from '../ui/Button';
@@ -142,15 +131,9 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Tracks the space the current delete operation was started in. SpaceMemories
-  // is reused across spaces (not remounted), so a delete RPC that resolves after
-  // a space switch must not mutate this component's state (close a new modal,
-  // fire a cross-space toast). Unlike the editor's mountedRef, the component
-  // stays mounted — so we scope by space id instead.
   const deleteSpaceRef = useRef<string | null>(null);
 
   useEffect(() => {
-    // Reset local UI state on space switch so stale modals/search don't carry over.
     setSearchInput('');
     setEditorMemory(null);
     setEditorOpen(false);
@@ -158,9 +141,6 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
     setDeleteError(null);
     setDeleting(false);
     deleteSpaceRef.current = spaceId;
-    // Cancel any in-flight debounced search so it can't fire against the new
-    // space after detach/attach (Preact reuses the component across spaces, so
-    // the empty-deps unmount cleanup below does not run on a space switch).
     if (debounceRef.current) clearTimeout(debounceRef.current);
     memoryStore.attach(spaceId).catch(() => {
       // Error surfaced via memoryStore.error signal.
@@ -171,7 +151,6 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
     };
   }, [spaceId]);
 
-  // Clear any pending debounced search on unmount.
   useEffect(
     () => () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -217,8 +196,6 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
     setDeleteError(null);
     try {
       await memoryStore.deleteMemory(key);
-      // If the space switched while the delete was in flight, leave the new
-      // space's state alone — don't close its modal or fire a cross-space toast.
       if (deleteSpaceRef.current !== startedSpace) return;
       setDeletingMemory(null);
       toast.success(`Memory "${key}" deleted`);
@@ -422,8 +399,6 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
         <ConfirmModal
           isOpen
           onClose={() => {
-            // Block backdrop/Escape dismissal while the delete RPC is in flight
-            // so it can't race a newly-opened delete confirmation.
             if (deleting) return;
             setDeletingMemory(null);
             setDeleteError(null);

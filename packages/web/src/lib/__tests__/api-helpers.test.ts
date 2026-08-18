@@ -1,13 +1,7 @@
 // @ts-nocheck
-/**
- * Comprehensive tests for api-helpers.ts
- *
- * Tests typed convenience functions for common daemon operations.
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-// Mock connection-manager module - must be at top level and use inline factory
 vi.mock('../connection-manager.js', () => {
   const mockHub = {
     request: vi.fn().mockResolvedValue({ acknowledged: true }),
@@ -27,19 +21,15 @@ vi.mock('../connection-manager.js', () => {
   };
 });
 
-// Import errors module normally (not mocked)
 import { ConnectionNotReadyError } from '../errors.js';
 
-// Import api-helpers after mocking connection-manager
 import * as apiHelpers from '../api-helpers.js';
 
-// Import connectionManager to access the mock
 import { connectionManager } from '../connection-manager.js';
 
 describe('api-helpers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset default mock behavior - return a working hub
     (
       connectionManager as unknown as {
         getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
@@ -676,10 +666,6 @@ describe('api-helpers', () => {
         expect(result.success).toBe(true);
       });
     });
-
-    // NOTE: Tests for `listMcpServersFromSources` and `updateMcpServerSettings`
-    // were removed in M5 of `unify-mcp-config-model`. Those helpers no longer
-    // exist; the unified MCP registry (`app_mcp_servers`) drives enablement.
   });
 
   describe('rewind operations', () => {
@@ -1064,7 +1050,6 @@ describe('api-helpers', () => {
 
       const elapsed = Date.now() - start;
 
-      // Should be near-instant (< 10ms)
       expect(elapsed).toBeLessThan(10);
     });
   });

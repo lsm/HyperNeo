@@ -19,14 +19,12 @@ import { VoiceRecordingIndicator } from '../components/voice/VoiceRecordingIndic
 import { VoiceSurfaceContext } from '../hooks/useVoiceRecorder';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 
-// Lazy-loaded route components — reduces initial module count in dev mode
 const ChatContainer = lazy(() => import('./ChatContainer.tsx'));
 const SpaceIsland = lazy(() => import('./SpaceIsland.tsx'));
 const SessionsPage = lazy(() =>
   import('./SessionsPage.tsx').then((m) => ({ default: m.SessionsPage }))
 );
 
-// Lazy-loaded settings panels
 const GeneralSettings = lazy(() =>
   import('../components/settings/GeneralSettings.tsx').then((m) => ({ default: m.GeneralSettings }))
 );
@@ -63,7 +61,6 @@ const ShortcutsSettings = lazy(() =>
   }))
 );
 
-/** Shared Suspense fallback for lazy-loaded route components. */
 const lazyFallback = (
   <div class="flex-1 flex items-center justify-center bg-app-content">
     <div class="text-xs text-gray-600">Loading...</div>
@@ -326,8 +323,6 @@ function SpacesHome() {
 }
 
 export default function MainContent() {
-  // IMPORTANT: Access .value directly in component body to enable Preact Signals auto-tracking
-  // The @preact/preset-vite plugin will transform this to create proper subscriptions
   const sessionId = currentSessionIdSignal.value;
   const spaceRouteId = currentSpaceIdSignal.value;
   const spaceId = currentSpaceCanonicalIdSignal.value ?? spaceRouteId;
@@ -337,17 +332,6 @@ export default function MainContent() {
   const navSection = navSectionSignal.value;
   const settingsSection = settingsSectionSignal.value;
 
-  // A session route mounts ChatContainer even when the id is NOT in the cached
-  // sessions list — a deep link to a stale/deleted id, or the list simply
-  // hasn't loaded yet. ChatContainer + the store resolve the correct state,
-  // including the unavailable-session view for a confirmed-missing id, so a
-  // deep link to an invalid nonempty id never silently falls through to the
-  // sessions list (task #873).
-
-  // Compute a stable key that changes when the major content view changes.
-  // This drives the animate-fadeIn-200 transition wrapper below.
-  // Use spaceRouteId (the URL-facing identifier) rather than the canonical UUID
-  // so slug resolution doesn't trigger an unnecessary remount.
   let contentKey: string;
   if (spaceRouteId) {
     contentKey = `space-${spaceRouteId}-${spaceViewMode}`;
@@ -358,14 +342,12 @@ export default function MainContent() {
   } else if (navSection === 'chats') {
     contentKey = 'chats';
   } else if (navSection === 'settings') {
-    // Settings sub-section changes don't re-animate — only the major section switch does
     contentKey = 'settings';
   } else {
     contentKey = 'home';
   }
 
   function renderContent() {
-    // Space route takes priority
     if (spaceId) {
       return (
         <Suspense fallback={lazyFallback}>
@@ -380,15 +362,10 @@ export default function MainContent() {
       );
     }
 
-    // /spaces route: sidebar owns the list; main pane stays quiet.
     if (navSection === 'spaces') {
       return <SpacesHome />;
     }
 
-    // A session route always shows the chat. For an id that isn't in the cached
-    // sessions list (deep link to a stale/deleted id, or list not yet loaded),
-    // ChatContainer's store load resolves the state — including the unavailable
-    // view for a confirmed-missing id — instead of falling through to the list.
     if (sessionId) {
       return (
         <Suspense fallback={lazyFallback}>
@@ -397,7 +374,6 @@ export default function MainContent() {
       );
     }
 
-    // /sessions route: show sessions grid
     if (navSection === 'chats') {
       return (
         <Suspense fallback={lazyFallback}>
@@ -406,11 +382,9 @@ export default function MainContent() {
       );
     }
 
-    // If Settings is selected, show the selected settings section content
     if (navSection === 'settings') {
       return (
         <div class="flex-1 flex flex-col bg-app-content overflow-hidden">
-          {/* Settings Header */}
           <div
             class="relative z-10 flex h-[52px] flex-shrink-0 items-center bg-app-content px-4"
             data-tauri-drag-region
@@ -425,7 +399,6 @@ export default function MainContent() {
               </h2>
             </div>
           </div>
-          {/* Settings Content */}
           <div class="scrollbar-dark min-h-0 flex-1 overflow-y-auto px-4 py-4 pr-3 sm:px-6 sm:py-5 sm:pr-4">
             <div class="mx-auto w-full max-w-5xl">
               <Suspense fallback={lazyFallback}>
@@ -445,18 +418,9 @@ export default function MainContent() {
       );
     }
 
-    // Default: Space-first landing surface
     return <SpacesHome />;
   }
 
-  // Wrap content in a keyed div so Preact remounts it (and replays animate-fadeIn-200)
-  // whenever the major content view changes.
-  // BottomTabBar sits outside the keyed div so it never remounts on view transitions.
-  // The VoiceSurfaceContext identifies this as the PRIMARY surface for voice
-  // composers (chat views and Space panes alike): the global recording chip
-  // needs to know which surface owns a recording when two surfaces display
-  // the same session, and the recorder needs the surface's Space to stamp
-  // recordings started here. The agent overlay provides its own context.
   return (
     <VoiceSurfaceContext.Provider
       value={{ surfaceId: 'primary', spaceId: spaceId ?? null, taskId: null }}

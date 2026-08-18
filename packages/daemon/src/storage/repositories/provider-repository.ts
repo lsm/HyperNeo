@@ -1,20 +1,8 @@
-/**
- * ProviderRepository
- *
- * CRUD operations for the unified providers registry.
- * Each write method calls reactiveDb.notifyChange('providers') so that
- * LiveQueryEngine can invalidate frontend subscriptions on every change.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type { ProviderRecord, CreateProviderParams, UpdateProviderParams } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 import type { SQLiteValue } from '../types';
-
-// ---------------------------------------------------------------------------
-// Internal row type (mirrors SQLite columns)
-// ---------------------------------------------------------------------------
 
 interface ProviderRow {
   id: string;
@@ -33,10 +21,6 @@ interface ProviderRow {
   created_at: number;
   updated_at: number;
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function rowToRecord(row: ProviderRow): ProviderRecord {
   return {
@@ -75,19 +59,12 @@ function validateAuthType(authType: string): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Repository
-// ---------------------------------------------------------------------------
-
 export class ProviderRepository {
   constructor(
     private db: BunDatabase,
     private reactiveDb: ReactiveDatabase
   ) {}
 
-  /**
-   * List all providers ordered by sort_order ASC.
-   */
   listProviders(): ProviderRecord[] {
     const rows = this.db
       .prepare(`SELECT * FROM providers ORDER BY sort_order ASC, created_at ASC`)
@@ -95,9 +72,6 @@ export class ProviderRepository {
     return rows.map(rowToRecord);
   }
 
-  /**
-   * List only enabled providers.
-   */
   listEnabledProviders(): ProviderRecord[] {
     const rows = this.db
       .prepare(
@@ -107,9 +81,6 @@ export class ProviderRepository {
     return rows.map(rowToRecord);
   }
 
-  /**
-   * Get a provider by its UUID PK.
-   */
   getProvider(id: string): ProviderRecord | null {
     const row = this.db.prepare(`SELECT * FROM providers WHERE id = ?`).get(id) as
       | ProviderRow
@@ -117,9 +88,6 @@ export class ProviderRepository {
     return row ? rowToRecord(row) : null;
   }
 
-  /**
-   * Get a provider by its provider_id (e.g. 'anthropic').
-   */
   getProviderByProviderId(providerId: string): ProviderRecord | null {
     const row = this.db.prepare(`SELECT * FROM providers WHERE provider_id = ?`).get(providerId) as
       | ProviderRow
@@ -127,9 +95,6 @@ export class ProviderRepository {
     return row ? rowToRecord(row) : null;
   }
 
-  /**
-   * Check whether a provider_id is already taken.
-   */
   isProviderIdTaken(providerId: string, excludeId?: string): boolean {
     if (excludeId) {
       const row = this.db
@@ -141,9 +106,6 @@ export class ProviderRepository {
     return row !== null;
   }
 
-  /**
-   * Create a new provider record.
-   */
   createProvider(params: CreateProviderParams): ProviderRecord {
     validateKind(params.kind);
     validateAuthType(params.authType);
@@ -185,9 +147,6 @@ export class ProviderRepository {
     return result;
   }
 
-  /**
-   * Update an existing provider record. Returns the updated record or null if not found.
-   */
   updateProvider(id: string, params: UpdateProviderParams): ProviderRecord | null {
     const existing = this.getProvider(id);
     if (!existing) return null;
@@ -254,9 +213,6 @@ export class ProviderRepository {
     return result;
   }
 
-  /**
-   * Delete a provider record. Returns true if a row was deleted.
-   */
   deleteProvider(id: string): boolean {
     const result = this.db.prepare(`DELETE FROM providers WHERE id = ?`).run(id);
     const deleted = result.changes > 0;
@@ -266,9 +222,6 @@ export class ProviderRepository {
     return deleted;
   }
 
-  /**
-   * Set a provider as the default, clearing is_default on all others.
-   */
   setDefaultProvider(id: string): void {
     const existing = this.getProvider(id);
     if (!existing) throw new Error(`Provider ${id} not found`);
@@ -282,9 +235,6 @@ export class ProviderRepository {
     this.reactiveDb.notifyChange('providers');
   }
 
-  /**
-   * Count all provider rows.
-   */
   countProviders(): number {
     const row = this.db.prepare(`SELECT COUNT(*) as count FROM providers`).get() as {
       count: number;

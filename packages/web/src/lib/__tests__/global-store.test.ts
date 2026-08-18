@@ -1,18 +1,10 @@
 // @ts-nocheck
-/**
- * Tests for GlobalStore
- *
- * Tests the GlobalStore class which manages application-wide state.
- * Since GlobalStore imports connection-manager (which needs DOM),
- * we test the class behavior patterns instead of the actual singleton.
- */
 
 import { signal, computed } from '@preact/signals';
 import type { Session, AuthStatus, HealthStatus, SystemState } from '@hyperneo/shared';
 import type { LiveQueryDeltaEvent, LiveQuerySnapshotEvent } from '@hyperneo/shared';
 import { vi } from 'vitest';
 
-// Mock connection-manager before importing GlobalStore
 const mockHub = {
   request: vi.fn().mockResolvedValue({ acknowledged: true }),
   onEvent: vi.fn(() => vi.fn()),
@@ -29,7 +21,6 @@ vi.mock('../connection-manager', () => ({
   },
 }));
 
-// Recreate GlobalStore class locally for testing without connection-manager dependency
 class TestGlobalStore {
   readonly sessions = signal<Session[]>([]);
   readonly sessionsTotalCount = signal<number>(0);
@@ -100,19 +91,14 @@ class TestGlobalStore {
   }
 }
 
-// Use TestGlobalStore instead of actual GlobalStore for isolated tests
 const GlobalStore = TestGlobalStore;
 
-// Import actual GlobalStore for initialize/refresh tests
 import { GlobalStore as ActualGlobalStore } from '../global-store';
 
-// Create a fresh GlobalStore instance for each test
-// (not using singleton to isolate tests)
 function createTestStore() {
   return new GlobalStore();
 }
 
-// Helper to create mock sessions
 function createMockSession(id: string, lastActiveAt = new Date().toISOString()): Session {
   return {
     id,
@@ -126,7 +112,6 @@ function createMockSession(id: string, lastActiveAt = new Date().toISOString()):
   } as Session;
 }
 
-// Test for applySessionsDelta edge cases
 describe('GlobalStore - Delta Application Edge Cases', () => {
   let store: GlobalStore;
 
@@ -175,7 +160,6 @@ describe('GlobalStore - Delta Application Edge Cases', () => {
         updated: [{ ...createMockSession('nonexistent'), title: 'Updated' }],
       });
 
-      // LiveQuery delta uses Map.set, so it gets added
       expect(store.sessions.value).toHaveLength(2);
       const added = store.sessions.value.find((s) => s.id === 'nonexistent');
       expect(added?.title).toBe('Updated');
@@ -197,11 +181,8 @@ describe('GlobalStore - Delta Application Edge Cases', () => {
       });
 
       expect(store.sessions.value).toHaveLength(3);
-      // Session '2' should be removed
       expect(store.sessions.value.find((s) => s.id === '2')).toBeUndefined();
-      // Session '1' should be updated
       expect(store.sessions.value.find((s) => s.id === '1')?.title).toBe('Updated 1');
-      // Session '4' should be added
       expect(store.sessions.value.find((s) => s.id === '4')).toBeDefined();
     });
 
@@ -257,7 +238,7 @@ describe('GlobalStore - Delta Application Edge Cases', () => {
       });
 
       expect(store.sessions.value.find((s) => s.id === '1')?.title).toBe('Title 1');
-      expect(store.sessions.value.find((s) => s.id === '2')?.title).toBe('Session 2'); // Unchanged
+      expect(store.sessions.value.find((s) => s.id === '2')?.title).toBe('Session 2');
       expect(store.sessions.value.find((s) => s.id === '3')?.title).toBe('Title 3');
     });
 
@@ -289,7 +270,6 @@ describe('GlobalStore - Delta Application Edge Cases', () => {
     it('should handle combined remove + update of same session (update wins)', () => {
       store.sessions.value = [createMockSession('1')];
 
-      // Process in order: removed first, then updated
       store.applySessionsDelta({
         subscriptionId: 'test',
         version: 1,
@@ -297,7 +277,6 @@ describe('GlobalStore - Delta Application Edge Cases', () => {
         updated: [{ ...createMockSession('1'), title: 'Still here' }],
       });
 
-      // removed deletes from map, then updated sets it back
       expect(store.sessions.value).toHaveLength(1);
       expect(store.sessions.value[0].title).toBe('Still here');
     });
@@ -385,7 +364,7 @@ describe('GlobalStore', () => {
 
       const recent = store.recentSessions.value;
       expect(recent).toHaveLength(5);
-      expect(recent[0].id).toBe('6'); // Most recent
+      expect(recent[0].id).toBe('6');
       expect(recent[1].id).toBe('2');
       expect(recent[2].id).toBe('4');
       expect(recent[3].id).toBe('3');
@@ -493,7 +472,6 @@ describe('GlobalStore', () => {
 
   describe('destroy', () => {
     it('should reset initialized flag', () => {
-      // Access private initialized via reflection
       const privateStore = store as unknown as { initialized: boolean };
       privateStore.initialized = true;
 
@@ -507,7 +485,6 @@ describe('GlobalStore', () => {
         cleanupFunctions: Array<() => void>;
       };
 
-      // Add some cleanup functions
       privateStore.cleanupFunctions = [() => {}, () => {}];
 
       store.destroy();
@@ -541,10 +518,8 @@ describe('GlobalStore', () => {
       const cleanup2 = vi.fn(() => {});
       privateStore.cleanupFunctions = [cleanupError, cleanup2];
 
-      // Should not throw
       expect(() => store.destroy()).not.toThrow();
 
-      // Second cleanup should still be called
       expect(cleanup2).toHaveBeenCalled();
     });
   });
@@ -624,7 +599,6 @@ describe('GlobalStore', () => {
   });
 });
 
-// Tests for actual GlobalStore with mocked connection-manager
 describe('GlobalStore - initialize()', () => {
   let store: ActualGlobalStore;
 
@@ -638,16 +612,13 @@ describe('GlobalStore - initialize()', () => {
   });
 
   it('should return early if already initialized', async () => {
-    // First initialize
     mockHub.request.mockResolvedValue({ acknowledged: true });
     await store.initialize();
 
-    // Reset call count
     mockHub.request.mockClear();
     mockHub.onEvent.mockClear();
     mockHub.onConnection.mockClear();
 
-    // Second initialize should return early
     await store.initialize();
 
     expect(mockHub.request).not.toHaveBeenCalled();
@@ -658,22 +629,18 @@ describe('GlobalStore - initialize()', () => {
 
     await store.initialize();
 
-    // Should call liveQuery.subscribe for sessions.list
     expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
       queryName: 'sessions.list',
       params: [0],
       subscriptionId: 'sessions-list',
     });
 
-    // Should subscribe to liveQuery.snapshot and liveQuery.delta events
     expect(mockHub.onEvent).toHaveBeenCalledWith('liveQuery.snapshot', expect.any(Function));
     expect(mockHub.onEvent).toHaveBeenCalledWith('liveQuery.delta', expect.any(Function));
 
-    // Should subscribe to system and settings state channels
     expect(mockHub.onEvent).toHaveBeenCalledWith('state.system', expect.any(Function));
     expect(mockHub.onEvent).toHaveBeenCalledWith('state.settings', expect.any(Function));
 
-    // Should register connection handler for reconnect
     expect(mockHub.onConnection).toHaveBeenCalledWith(expect.any(Function));
   });
 
@@ -682,9 +649,7 @@ describe('GlobalStore - initialize()', () => {
 
     await store.initialize();
 
-    // Should have 5 onEvent subscriptions: snapshot, delta, system, settings, settings-watcher
     expect(mockHub.onEvent).toHaveBeenCalledTimes(5);
-    // Should have 1 onConnection handler
     expect(mockHub.onConnection).toHaveBeenCalledTimes(1);
   });
 
@@ -701,7 +666,6 @@ describe('GlobalStore - initialize()', () => {
 
     await store.initialize();
 
-    // Simulate snapshot event
     snapshotCallback?.({
       subscriptionId: 'sessions-list',
       rows: [createMockSession('new-1'), createMockSession('new-2')],
@@ -725,7 +689,6 @@ describe('GlobalStore - initialize()', () => {
 
     await store.initialize();
 
-    // Simulate snapshot for different subscription ID
     snapshotCallback?.({
       subscriptionId: 'other-subscription',
       rows: [createMockSession('new-1')],
@@ -748,7 +711,6 @@ describe('GlobalStore - initialize()', () => {
 
     await store.initialize();
 
-    // Simulate snapshot with null rows
     snapshotCallback?.({
       subscriptionId: 'sessions-list',
       rows: null as unknown as Session[],
@@ -771,7 +733,6 @@ describe('GlobalStore - initialize()', () => {
 
     await store.initialize();
 
-    // First set up some sessions via snapshot
     deltaCallback?.({
       subscriptionId: 'sessions-list',
       version: 1,
@@ -780,7 +741,6 @@ describe('GlobalStore - initialize()', () => {
 
     expect(store.sessions.value).toHaveLength(2);
 
-    // Simulate delta: remove one, add one
     deltaCallback?.({
       subscriptionId: 'sessions-list',
       version: 2,
@@ -807,7 +767,6 @@ describe('GlobalStore - initialize()', () => {
 
     await store.initialize();
 
-    // Simulate delta for different subscription ID
     deltaCallback?.({
       subscriptionId: 'other-subscription',
       version: 1,
@@ -830,7 +789,6 @@ describe('GlobalStore - initialize()', () => {
 
     await store.initialize();
 
-    // Simulate system state update
     const newSystemState = {
       auth: { authenticated: true, method: 'oauth' },
       health: { status: 'degraded' },
@@ -854,7 +812,6 @@ describe('GlobalStore - initialize()', () => {
 
     await store.initialize();
 
-    // Simulate settings update
     settingsCallback?.({ settings: { showArchived: true, theme: 'dark' } });
 
     expect(store.settings.value).toEqual({ showArchived: true, theme: 'dark' });
@@ -873,7 +830,6 @@ describe('GlobalStore - initialize()', () => {
 
     await store.initialize();
 
-    // Simulate settings update with null
     settingsCallback?.({ settings: null });
 
     expect(store.settings.value).toBeNull();
@@ -890,11 +846,9 @@ describe('GlobalStore - initialize()', () => {
 
     await store.initialize();
 
-    // Simulate reconnection
     mockHub.request.mockClear();
     connectionCallback?.('connected');
 
-    // Should re-subscribe to LiveQuery on reconnect
     expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
       queryName: 'sessions.list',
       params: [0],
@@ -913,7 +867,6 @@ describe('GlobalStore - initialize()', () => {
 
     await store.initialize();
 
-    // Simulate disconnecting state
     mockHub.request.mockClear();
     connectionCallback?.('disconnected');
 
@@ -926,7 +879,6 @@ describe('GlobalStore - initialize()', () => {
 
     await store.initialize();
 
-    // Store should remain in uninitialized state
     const privateStore = store as unknown as { initialized: boolean };
     expect(privateStore.initialized).toBe(false);
   });
@@ -951,32 +903,26 @@ describe('GlobalStore - refresh()', () => {
   });
 
   it('should re-subscribe to LiveQuery and fetch GLOBAL_SNAPSHOT when initialized', async () => {
-    // Initialize first
     mockHub.request.mockResolvedValue({ acknowledged: true });
     await store.initialize();
 
-    // Set up refresh mocks
-    mockHub.request
-      .mockResolvedValueOnce({ acknowledged: true }) // liveQuery.subscribe
-      .mockResolvedValueOnce({
-        system: {
-          auth: { authenticated: true, method: 'api_key' },
-          health: { status: 'healthy' },
-          apiConnection: { status: 'connected' },
-        },
-        settings: { settings: { refreshed: true } },
-      }); // GLOBAL_SNAPSHOT
+    mockHub.request.mockResolvedValueOnce({ acknowledged: true }).mockResolvedValueOnce({
+      system: {
+        auth: { authenticated: true, method: 'api_key' },
+        health: { status: 'healthy' },
+        apiConnection: { status: 'connected' },
+      },
+      settings: { settings: { refreshed: true } },
+    });
 
     await store.refresh();
 
-    // Should re-subscribe to LiveQuery
     expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
       queryName: 'sessions.list',
       params: [0],
       subscriptionId: 'sessions-list',
     });
 
-    // Should fetch GLOBAL_SNAPSHOT
     expect(mockHub.request).toHaveBeenCalledWith('state.global.snapshot', {});
 
     expect(store.systemState.value?.auth).toEqual({
@@ -987,17 +933,13 @@ describe('GlobalStore - refresh()', () => {
   });
 
   it('should handle GLOBAL_SNAPSHOT with null fields', async () => {
-    // Initialize first
     mockHub.request.mockResolvedValue({ acknowledged: true });
     await store.initialize();
 
-    // Refresh with null snapshot
-    mockHub.request
-      .mockResolvedValueOnce({ acknowledged: true }) // liveQuery.subscribe
-      .mockResolvedValueOnce({
-        system: null,
-        settings: null,
-      }); // GLOBAL_SNAPSHOT
+    mockHub.request.mockResolvedValueOnce({ acknowledged: true }).mockResolvedValueOnce({
+      system: null,
+      settings: null,
+    });
 
     await store.refresh();
 
@@ -1006,16 +948,12 @@ describe('GlobalStore - refresh()', () => {
   });
 
   it('should handle GLOBAL_SNAPSHOT with missing settings field', async () => {
-    // Initialize first
     mockHub.request.mockResolvedValue({ acknowledged: true });
     await store.initialize();
 
-    // Refresh with missing settings
-    mockHub.request
-      .mockResolvedValueOnce({ acknowledged: true }) // liveQuery.subscribe
-      .mockResolvedValueOnce({
-        system: { auth: { authenticated: true } },
-      }); // GLOBAL_SNAPSHOT without settings
+    mockHub.request.mockResolvedValueOnce({ acknowledged: true }).mockResolvedValueOnce({
+      system: { auth: { authenticated: true } },
+    });
 
     await store.refresh();
 
@@ -1023,33 +961,26 @@ describe('GlobalStore - refresh()', () => {
   });
 
   it('should handle refresh when LiveQuery subscribe fails', async () => {
-    // Initialize first
     mockHub.request.mockResolvedValue({ acknowledged: true });
     await store.initialize();
 
-    // Refresh with LiveQuery subscribe failure (swallowed by .catch)
-    mockHub.request
-      .mockRejectedValueOnce(new Error('Subscribe failed')) // liveQuery.subscribe (caught)
-      .mockResolvedValueOnce({
-        system: null,
-        settings: null,
-      }); // GLOBAL_SNAPSHOT
+    mockHub.request.mockRejectedValueOnce(new Error('Subscribe failed')).mockResolvedValueOnce({
+      system: null,
+      settings: null,
+    });
 
-    // Should not throw because liveQuery.subscribe error is caught
     await store.refresh();
 
     expect(store.systemState.value).toBeNull();
   });
 });
 
-// Tests for actual GlobalStore session helpers
 describe('GlobalStore - Session Helpers (actual)', () => {
   let store: ActualGlobalStore;
 
   beforeEach(() => {
     vi.clearAllMocks();
     store = new ActualGlobalStore();
-    // Set up initial sessions directly
     store.sessions.value = [createMockSession('1'), createMockSession('2'), createMockSession('3')];
   });
 
@@ -1099,7 +1030,6 @@ describe('GlobalStore - Session Helpers (actual)', () => {
   });
 });
 
-// Tests for actual GlobalStore destroy with cleanup errors
 describe('GlobalStore - destroy (actual)', () => {
   let store: ActualGlobalStore;
 
@@ -1109,10 +1039,8 @@ describe('GlobalStore - destroy (actual)', () => {
   });
 
   it('should handle cleanup function errors gracefully', async () => {
-    // Initialize first
     mockHub.request.mockResolvedValue({ acknowledged: true });
 
-    // Make one of the unsubscribe functions throw
     let callCount = 0;
     mockHub.onEvent.mockImplementation(() => {
       callCount++;
@@ -1126,12 +1054,10 @@ describe('GlobalStore - destroy (actual)', () => {
 
     await store.initialize();
 
-    // Should not throw even if cleanup throws
     expect(() => store.destroy()).not.toThrow();
   });
 
   it('should reset initialized flag on destroy', async () => {
-    // Initialize first
     mockHub.request.mockResolvedValue({ acknowledged: true });
     await store.initialize();
 
@@ -1144,12 +1070,10 @@ describe('GlobalStore - destroy (actual)', () => {
   });
 
   it('should clear cleanup functions on destroy', async () => {
-    // Initialize first
     mockHub.request.mockResolvedValue({ acknowledged: true });
     await store.initialize();
 
     const privateStore = store as unknown as { cleanupFunctions: Array<() => void> };
-    // 5 onEvent unsubs + 1 onConnection unsub + 1 no-op = 7
     expect(privateStore.cleanupFunctions.length).toBe(7);
 
     store.destroy();
@@ -1158,7 +1082,6 @@ describe('GlobalStore - destroy (actual)', () => {
   });
 
   it('should call liveQuery.unsubscribe on destroy when connected', async () => {
-    // Initialize first
     mockHub.request.mockResolvedValue({ acknowledged: true });
     await store.initialize();
 
@@ -1172,7 +1095,6 @@ describe('GlobalStore - destroy (actual)', () => {
   });
 
   it('should not call liveQuery.unsubscribe on destroy when not connected', async () => {
-    // Don't initialize - store is not connected
     const { connectionManager } = await import('../connection-manager');
     vi.mocked(connectionManager.getHubIfConnected).mockReturnValueOnce(null);
 
@@ -1182,7 +1104,6 @@ describe('GlobalStore - destroy (actual)', () => {
   });
 });
 
-// Tests for actual GlobalStore applySessionsDelta
 describe('GlobalStore - applySessionsDelta (actual)', () => {
   let store: ActualGlobalStore;
   let deltaCallback: ((event: LiveQueryDeltaEvent) => void) | null = null;
@@ -1191,10 +1112,8 @@ describe('GlobalStore - applySessionsDelta (actual)', () => {
     vi.clearAllMocks();
     store = new ActualGlobalStore();
 
-    // Initialize with LiveQuery subscription
     mockHub.request.mockResolvedValue({ acknowledged: true });
 
-    // Capture the delta callback
     mockHub.onEvent.mockImplementation((channel: string, callback: unknown) => {
       if (channel === 'liveQuery.delta') {
         deltaCallback = callback as typeof deltaCallback;
@@ -1204,7 +1123,6 @@ describe('GlobalStore - applySessionsDelta (actual)', () => {
 
     await store.initialize();
 
-    // Set up initial sessions via snapshot
     store.sessions.value = [createMockSession('1'), createMockSession('2'), createMockSession('3')];
   });
 
@@ -1262,7 +1180,6 @@ describe('GlobalStore - applySessionsDelta (actual)', () => {
       version: 1,
       updated: [{ ...createMockSession('nonexistent'), title: 'New' }],
     });
-    // LiveQuery delta uses Map.set, so it gets added
     expect(store.sessions.value).toHaveLength(4);
     expect(store.sessions.value.find((s) => s.id === 'nonexistent')?.title).toBe('New');
   });
@@ -1294,7 +1211,6 @@ describe('GlobalStore - applySessionsDelta (actual)', () => {
   });
 });
 
-// Tests for liveQuery.snapshot events on actual GlobalStore
 describe('GlobalStore - LiveQuery Snapshot (actual)', () => {
   let store: ActualGlobalStore;
   let snapshotCallback: ((event: LiveQuerySnapshotEvent) => void) | null = null;
@@ -1380,7 +1296,6 @@ describe('GlobalStore - LiveQuery Snapshot (actual)', () => {
   });
 });
 
-// Tests for subscription callbacks (actual GlobalStore)
 describe('GlobalStore - Subscription Callbacks (actual)', () => {
   let store: ActualGlobalStore;
   let systemCallback: ((state: SystemState) => void) | null = null;
@@ -1392,7 +1307,6 @@ describe('GlobalStore - Subscription Callbacks (actual)', () => {
 
     mockHub.request.mockResolvedValue({ acknowledged: true });
 
-    // Capture callbacks
     mockHub.onEvent.mockImplementation((channel: string, callback: unknown) => {
       if (channel === 'state.system') {
         systemCallback = callback as typeof systemCallback;
@@ -1432,7 +1346,6 @@ describe('GlobalStore - Subscription Callbacks (actual)', () => {
   });
 });
 
-// Tests for actual GlobalStore computed accessors
 describe('GlobalStore - Computed Accessors (actual)', () => {
   let store: ActualGlobalStore;
 
@@ -1488,7 +1401,7 @@ describe('GlobalStore - Computed Accessors (actual)', () => {
 
       const recent = store.recentSessions.value;
       expect(recent).toHaveLength(5);
-      expect(recent[0].id).toBe('6'); // Most recent
+      expect(recent[0].id).toBe('6');
       expect(recent[1].id).toBe('2');
       expect(recent[2].id).toBe('4');
       expect(recent[3].id).toBe('3');

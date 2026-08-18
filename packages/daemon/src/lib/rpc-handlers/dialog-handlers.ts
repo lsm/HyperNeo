@@ -1,10 +1,3 @@
-/**
- * Dialog Handlers
- *
- * RPC handlers for native OS dialogs.
- * - dialog.pickFolder - Open native folder picker dialog
- */
-
 import type { MessageHub } from '@hyperneo/shared';
 import { Logger } from '../logger';
 
@@ -21,17 +14,11 @@ function normalizePickerTimeout(timeoutMs: unknown): number {
     : FOLDER_PICKER_TIMEOUT_MS;
 }
 
-/**
- * Open a native folder picker dialog
- * Returns the selected folder path or null if cancelled
- */
 async function pickFolder(timeoutMs = FOLDER_PICKER_TIMEOUT_MS): Promise<string | null> {
   const platform = process.platform;
 
   try {
     if (platform === 'darwin') {
-      // macOS - use osascript with AppleScript
-      // Use POSIX path to get the full filesystem path directly
       const result = await runCommand(
         'osascript',
         ['-e', `POSIX path of (choose folder with prompt "Select a workspace folder:")`],
@@ -39,7 +26,6 @@ async function pickFolder(timeoutMs = FOLDER_PICKER_TIMEOUT_MS): Promise<string 
       );
       return result?.trim() || null;
     } else if (platform === 'linux') {
-      // Linux - try zenity first, then kdialog
       if (await commandExists('zenity')) {
         const result = await runCommand(
           'zenity',
@@ -59,7 +45,6 @@ async function pickFolder(timeoutMs = FOLDER_PICKER_TIMEOUT_MS): Promise<string 
         return null;
       }
     } else if (platform === 'win32') {
-      // Windows - use PowerShell with FolderBrowserDialog
       const psScript = `
 				Add-Type -AssemblyName System.Windows.Forms
 				$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
@@ -81,9 +66,6 @@ async function pickFolder(timeoutMs = FOLDER_PICKER_TIMEOUT_MS): Promise<string 
   }
 }
 
-/**
- * Run a command and return stdout
- */
 async function runCommand(cmd: string, args: string[], timeoutMs?: number): Promise<string | null> {
   const proc = Bun.spawn([cmd, ...args], {
     stdout: 'pipe',
@@ -96,7 +78,6 @@ async function runCommand(cmd: string, args: string[], timeoutMs?: number): Prom
   const stdoutReader = proc.stdout.getReader();
   const stderrReader = proc.stderr.getReader();
 
-  // Read all stdout asynchronously
   const readStdout = async () => {
     while (true) {
       const { done, value } = await stdoutReader.read();
@@ -105,7 +86,6 @@ async function runCommand(cmd: string, args: string[], timeoutMs?: number): Prom
     }
   };
 
-  // Read all stderr asynchronously
   const readStderr = async () => {
     while (true) {
       const { done, value } = await stderrReader.read();
@@ -147,7 +127,6 @@ async function runCommand(cmd: string, args: string[], timeoutMs?: number): Prom
 
   const { exitCode } = outcome;
 
-  // Combine all chunks
   const stdout =
     stdoutChunks.length > 0 ? new TextDecoder().decode(Buffer.concat(stdoutChunks)) : '';
   const stderr =
@@ -161,9 +140,6 @@ async function runCommand(cmd: string, args: string[], timeoutMs?: number): Prom
   }
 }
 
-/**
- * Check if a command exists
- */
 async function commandExists(cmd: string): Promise<boolean> {
   try {
     const result = await runCommand('which', [cmd]);
@@ -174,7 +150,6 @@ async function commandExists(cmd: string): Promise<boolean> {
 }
 
 export function setupDialogHandlers(messageHub: MessageHub): void {
-  // dialog.pickFolder - Open native folder picker
   messageHub.onRequest('dialog.pickFolder', async (data: DialogPickFolderRequest | undefined) => {
     const path = await pickFolder(normalizePickerTimeout(data?.timeoutMs));
     return { path };

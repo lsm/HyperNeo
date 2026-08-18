@@ -1,9 +1,3 @@
-/**
- * WebSocketServerTransport Tests
- *
- * Tests for the server-side WebSocket transport layer.
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { WebSocketServerTransport } from '../../../../src/lib/websocket-server-transport';
 import { MessageHubRouter } from '@hyperneo/shared';
@@ -19,7 +13,6 @@ describe('WebSocketServerTransport', () => {
     mockConnections = new Map();
     registeredConnection = null;
 
-    // Create mock router
     mockRouter = {
       registerConnection: mock((conn: ClientConnection) => {
         mockConnections.set(conn.id, conn);
@@ -40,13 +33,12 @@ describe('WebSocketServerTransport', () => {
     transport = new WebSocketServerTransport({
       router: mockRouter,
       name: 'test-transport',
-      staleTimeout: 5000, // Short timeout for tests
+      staleTimeout: 5000,
       staleCheckInterval: 1000,
     });
   });
 
   afterEach(async () => {
-    // Clean up transport
     await transport.close();
   });
 
@@ -67,14 +59,11 @@ describe('WebSocketServerTransport', () => {
   describe('initialize', () => {
     it('should initialize transport', async () => {
       await transport.initialize();
-      // If no error, initialization succeeded
       expect(true).toBe(true);
     });
 
     it('should start stale connection checker', async () => {
       await transport.initialize();
-      // The stale checker is internal, but we can test by closing
-      // which should stop it without error
       await transport.close();
       expect(true).toBe(true);
     });
@@ -143,10 +132,6 @@ describe('WebSocketServerTransport', () => {
     });
 
     it('reconciles the real router subscription counter on disconnect (task #899)', async () => {
-      // End-to-end: the daemon live-query disconnect handler only disposes
-      // handles; it relies on the transport calling router.unregisterConnection
-      // to reset the per-client subscription counter. Prove that coupling holds
-      // against a real MessageHubRouter.
       const realRouter = new MessageHubRouter();
       const realTransport = new WebSocketServerTransport({
         router: realRouter,
@@ -158,14 +143,12 @@ describe('WebSocketServerTransport', () => {
         const mockWs = createMockWebSocket();
         const clientId = realTransport.registerClient(mockWs, 'test-session-123');
 
-        // Simulate a client holding several live-query subscriptions.
         realRouter.addClientSubscription(clientId);
         realRouter.addClientSubscription(clientId);
         expect(realRouter.getClientSubscriptionCount(clientId)).toBe(2);
 
         realTransport.unregisterClient(clientId);
 
-        // Counter reconciled to zero — no leaked slots after disconnect.
         expect(realRouter.getClientSubscriptionCount(clientId)).toBe(0);
       } finally {
         await realTransport.close();
@@ -251,14 +234,11 @@ describe('WebSocketServerTransport', () => {
       const handler = mock(() => {});
       const unsubscribe = transport.onMessage(handler);
 
-      // First message should trigger handler
       transport.handleClientMessage({ type: 'REQ', method: 'test', id: '1', sessionId: 'test' });
       expect(handler).toHaveBeenCalledTimes(1);
 
-      // Unsubscribe
       unsubscribe();
 
-      // Second message should not trigger handler
       transport.handleClientMessage({ type: 'REQ', method: 'test', id: '2', sessionId: 'test' });
       expect(handler).toHaveBeenCalledTimes(1);
     });
@@ -275,10 +255,8 @@ describe('WebSocketServerTransport', () => {
 
       unsubscribe();
 
-      // Create another transport to register new client
       const mockWs2 = createMockWebSocket();
       transport.registerClient(mockWs2, 'session-2');
-      // Handler should not be called again after unsubscribe
       expect(handler).toHaveBeenCalledTimes(1);
     });
   });
@@ -298,7 +276,6 @@ describe('WebSocketServerTransport', () => {
       const mockWs2 = createMockWebSocket();
       const clientId2 = transport.registerClient(mockWs2, 'session-2');
       transport.unregisterClient(clientId2);
-      // Handler should not be called again
       expect(handler).toHaveBeenCalledTimes(1);
     });
   });
@@ -368,13 +345,11 @@ describe('WebSocketServerTransport', () => {
       const mockWs = createMockWebSocket();
       const clientId = transport.registerClient(mockWs, 'session-1');
 
-      // Should not throw
       transport.updateClientActivity(clientId);
       expect(true).toBe(true);
     });
 
     it('should not throw for unknown client', () => {
-      // Should not throw
       transport.updateClientActivity('unknown-client');
       expect(true).toBe(true);
     });
@@ -428,7 +403,6 @@ describe('WebSocketServerTransport', () => {
 
       await transport.close();
 
-      // Handler may be called multiple times during close
       expect(handler).toHaveBeenCalledWith('disconnected', undefined);
     });
   });
@@ -484,12 +458,11 @@ describe('WebSocketServerTransport', () => {
 
   describe('stale connection checking', () => {
     it('should close stale connections after timeout', async () => {
-      // Create transport with very short timeout for testing
       const shortTimeoutTransport = new WebSocketServerTransport({
         router: mockRouter,
         name: 'stale-test-transport',
-        staleTimeout: 50, // 50ms timeout
-        staleCheckInterval: 20, // Check every 20ms
+        staleTimeout: 50,
+        staleCheckInterval: 20,
       });
 
       await shortTimeoutTransport.initialize();
@@ -497,22 +470,19 @@ describe('WebSocketServerTransport', () => {
       const mockWs = createMockWebSocket();
       shortTimeoutTransport.registerClient(mockWs, 'session-1');
 
-      // Wait for the stale checker to run
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // The connection should have been closed due to inactivity
       expect(mockWs.close).toHaveBeenCalled();
 
       await shortTimeoutTransport.close();
     });
 
     it('should not close active connections', async () => {
-      // Create transport with very short timeout for testing
       const shortTimeoutTransport = new WebSocketServerTransport({
         router: mockRouter,
         name: 'active-test-transport',
-        staleTimeout: 100, // 100ms timeout
-        staleCheckInterval: 20, // Check every 20ms
+        staleTimeout: 100,
+        staleCheckInterval: 20,
       });
 
       await shortTimeoutTransport.initialize();
@@ -520,24 +490,20 @@ describe('WebSocketServerTransport', () => {
       const mockWs = createMockWebSocket();
       const clientId = shortTimeoutTransport.registerClient(mockWs, 'session-1');
 
-      // Keep the connection active by updating activity
       const activityInterval = setInterval(() => {
         shortTimeoutTransport.updateClientActivity(clientId);
       }, 30);
 
-      // Wait for multiple stale checks
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       clearInterval(activityInterval);
 
-      // The connection should NOT have been closed
       expect(mockWs.close).not.toHaveBeenCalled();
 
       await shortTimeoutTransport.close();
     });
 
     it('should handle errors when closing stale connections', async () => {
-      // Create transport with very short timeout for testing
       const shortTimeoutTransport = new WebSocketServerTransport({
         router: mockRouter,
         name: 'error-test-transport',
@@ -547,7 +513,6 @@ describe('WebSocketServerTransport', () => {
 
       await shortTimeoutTransport.initialize();
 
-      // Create a mock WS that throws on close
       const errorWs = {
         send: mock(() => {}),
         close: mock(() => {
@@ -558,10 +523,8 @@ describe('WebSocketServerTransport', () => {
 
       shortTimeoutTransport.registerClient(errorWs, 'session-1');
 
-      // Wait for the stale checker to run - should not throw
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // close was called (even though it threw)
       expect(errorWs.close).toHaveBeenCalled();
 
       await shortTimeoutTransport.close();
@@ -569,11 +532,10 @@ describe('WebSocketServerTransport', () => {
   });
 });
 
-// Helper function to create mock WebSocket
 function createMockWebSocket() {
   return {
     send: mock(() => {}),
     close: mock(() => {}),
-    readyState: 1, // OPEN
+    readyState: 1,
   } as unknown as import('bun').ServerWebSocket<unknown>;
 }

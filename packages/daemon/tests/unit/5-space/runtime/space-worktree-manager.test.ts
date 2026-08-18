@@ -1,25 +1,3 @@
-/**
- * SpaceWorktreeManager unit tests
- *
- * Tests use a real temporary git repository to exercise actual git worktree
- * operations.  Each test suite creates its own isolated git repo and SQLite
- * database so that tests are fully independent.
- *
- * TEST_WORKTREE_BASE_DIR is set so worktrees are created under the temp
- * directory instead of ~/.hyperneo.
- *
- * Covered scenarios:
- * - createTaskWorktree: creates filesystem worktree + DB record
- * - createTaskWorktree: idempotent (returns existing record on second call)
- * - createTaskWorktree: stale branch cleanup before recreation
- * - createTaskWorktree: recovers from stale directory left by crashed run
- * - removeTaskWorktree: removes worktree dir, branch, and DB record
- * - removeTaskWorktree: no-op when no record exists
- * - getTaskWorktreePath: returns path for existing task, null for missing
- * - listWorktrees: returns all tracked worktrees for a space
- * - cleanupOrphaned: removes DB records whose directories are missing
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,19 +9,8 @@ import { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-w
 import { worktreeSlug } from '../../../../src/lib/space/worktree-slug.ts';
 import { getProjectShortKey } from '../../../../src/lib/worktree-path-utils.ts';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-// NOTE: under the Vitest/Node migration these tests run inside a sandbox that
-// denies writes to any `.git` directory within the repo worktree, so the temp
-// git repos must live in the OS temp dir rather than `packages/daemon/tmp`.
 const TMP_ROOT = join(tmpdir(), 'test-space-worktree-manager');
 
-/**
- * Create a fresh temporary directory, initialise a git repo with an initial
- * commit, and return its path.
- */
 async function makeGitRepo(label: string): Promise<string> {
   const dir = join(TMP_ROOT, `${label}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(dir, { recursive: true });
@@ -52,7 +19,6 @@ async function makeGitRepo(label: string): Promise<string> {
   execSync('git config user.name "Test User"', { cwd: dir });
   execSync('git config user.email "test@example.com"', { cwd: dir });
 
-  // Create an initial commit so HEAD exists and worktrees can be based on it
   writeFileSync(join(dir, 'README.md'), '# test\n');
   execSync('git add .', { cwd: dir });
   execSync('git commit -m "initial commit"', { cwd: dir });
@@ -60,10 +26,6 @@ async function makeGitRepo(label: string): Promise<string> {
   return dir;
 }
 
-/**
- * Create an in-memory SQLite database with all migrations applied, seed a
- * space row pointing at the given workspace path, and return the db + spaceId.
- */
 function makeDb(workspacePath: string): { db: BunDatabase; spaceId: string } {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
@@ -79,10 +41,6 @@ function makeDb(workspacePath: string): { db: BunDatabase; spaceId: string } {
   return { db, spaceId };
 }
 
-/**
- * Seed a space_tasks row so FK constraints on space_worktrees.task_id are satisfied.
- * Returns the inserted task ID.
- */
 function seedTask(db: BunDatabase, spaceId: string, taskId: string, taskNumber: number): string {
   db.prepare(
     `INSERT INTO space_tasks
@@ -98,11 +56,8 @@ let db: BunDatabase;
 let spaceId: string;
 let manager: SpaceWorktreeManager;
 
-// Each setup/teardown spawns several real git subprocesses; on a loaded CI
-// machine that can exceed the 10s default hook timeout, so allow 60s.
 beforeEach(async () => {
   repoDir = await makeGitRepo('repo');
-  // Set TEST_WORKTREE_BASE_DIR so worktrees go to a controlled temp location
   testBaseDir = join(TMP_ROOT, `hyperneo-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(testBaseDir, { recursive: true });
   process.env.TEST_WORKTREE_BASE_DIR = testBaseDir;
@@ -128,10 +83,6 @@ afterEach(() => {
   }
 }, 60_000);
 
-// ---------------------------------------------------------------------------
-// createTaskWorktree
-// ---------------------------------------------------------------------------
-
 describe('createTaskWorktree', () => {
   test('creates a worktree directory and returns slug + path', async () => {
     const taskId = seedTask(db, spaceId, 'task-001', 1);
@@ -147,7 +98,6 @@ describe('createTaskWorktree', () => {
     const taskId = seedTask(db, spaceId, 'task-001b', 1);
     const result = await manager.createTaskWorktree(spaceId, taskId, 'Feature B', 1);
 
-    // Path should be under testBaseDir, not under repoDir
     expect(result.path).toContain(testBaseDir);
     expect(result.path).not.toContain(repoDir);
     expect(existsSync(result.path)).toBe(true);
@@ -188,13 +138,10 @@ describe('createTaskWorktree', () => {
   });
 
   test('uses custom baseBranch when provided', async () => {
-    // Create a feature branch to base the worktree on; use -B to force-create
-    // so the test is not sensitive to the repo's default branch name.
     execSync('git checkout -B base-branch-for-test', { cwd: repoDir });
     writeFileSync(join(repoDir, 'base.txt'), 'base\n');
     execSync('git add .', { cwd: repoDir });
     execSync('git commit -m "base commit"', { cwd: repoDir });
-    // Go back to the initial branch (main/master/dev — whatever init defaulted to)
     const branches = execSync('git branch', { cwd: repoDir }).toString();
     const initialBranch = branches
       .split('\n')
@@ -216,14 +163,10 @@ describe('createTaskWorktree', () => {
   });
 
   test('is safe with shell-special characters in baseBranch', async () => {
-    // Create a feature branch with characters that are valid for git refs but have
-    // special meaning in shells (e.g., ~ and ^ are valid in git rev-parse but
-    // have special shell meaning). This verifies execFileSync passes them literally.
     execSync('git checkout -B base-branch-special', { cwd: repoDir });
     writeFileSync(join(repoDir, 'special.txt'), 'special\n');
     execSync('git add .', { cwd: repoDir });
     execSync('git commit -m "special test commit"', { cwd: repoDir });
-    // Go back to the initial branch
     const branches = execSync('git branch', { cwd: repoDir }).toString();
     const initialBranch = branches
       .split('\n')
@@ -234,8 +177,6 @@ describe('createTaskWorktree', () => {
     }
 
     const taskId = seedTask(db, spaceId, 'task-injection', 99);
-    // Use baseBranch with characters that would be interpreted by a shell
-    // but are passed literally via execFileSync array args
     const result = await manager.createTaskWorktree(
       spaceId,
       taskId,
@@ -244,9 +185,6 @@ describe('createTaskWorktree', () => {
       'base-branch-special~1'
     );
 
-    // Worktree should be created successfully
-    // The ~1 suffix is valid for git (means "1 commit before base-branch-special")
-    // but would be interpreted by a shell if passed through execSync template string
     expect(existsSync(result.path)).toBe(true);
   });
 
@@ -256,10 +194,8 @@ describe('createTaskWorktree', () => {
     const shortKey = getProjectShortKey(repoDir);
     const expectedPath = join(testBaseDir, shortKey, 'worktrees', slug);
 
-    // Simulate a partial previous run: directory exists but no DB record
     mkdirSync(expectedPath, { recursive: true });
 
-    // Should succeed without throwing
     const result = await manager.createTaskWorktree(spaceId, taskId, 'Stale Dir Task', 99);
     expect(result.path).toBe(expectedPath);
     expect(existsSync(result.path)).toBe(true);
@@ -270,32 +206,20 @@ describe('createTaskWorktree', () => {
     const stalePath = join(testBaseDir, shortKey, 'worktrees', 'prune-test-stale');
     mkdirSync(join(testBaseDir, shortKey, 'worktrees'), { recursive: true });
     execSync(`git worktree add "${stalePath}" -b space/prune-test HEAD`, { cwd: repoDir });
-    // Verify the branch exists
     const branchesBeforeRm = execSync('git branch --list', { cwd: repoDir }).toString();
     expect(branchesBeforeRm).toContain('space/prune-test');
 
-    // Simulate crash: remove the directory but leave the git worktree reference
     rmSync(stalePath, { recursive: true, force: true });
 
-    // git worktree list should still show the stale entry (path gone, ref alive)
     const wtList = execSync('git worktree list', { cwd: repoDir }).toString();
     expect(wtList).toContain('prune-test-stale');
 
-    // Now call createTaskWorktree for a task that resolves to the same slug.
-    // The manager should:
-    //   1. Detect the stale branch via git branch --list
-    //   2. Fail on the first git branch -D (worktree path deleted but ref alive)
-    //   3. Run git worktree prune to clear the stale ref
-    //   4. Succeed on the second git branch -D
-    //   5. Create the new worktree successfully
     const slug = 'prune-test';
     const taskId = seedTask(db, spaceId, 'task-prune', 77);
-    // Use a title that slugifies to 'prune-test' so it maps to the same branch
     const result = await manager.createTaskWorktree(spaceId, taskId, 'prune test', 77);
     expect(result.slug).toBe(slug);
     expect(existsSync(result.path)).toBe(true);
 
-    // Branch should be recreated
     const branchesAfter = execSync('git branch --list', { cwd: repoDir }).toString();
     expect(branchesAfter).toContain('space/prune-test');
   });
@@ -306,10 +230,6 @@ describe('createTaskWorktree', () => {
     ).rejects.toThrow('Space not found');
   });
 });
-
-// ---------------------------------------------------------------------------
-// removeTaskWorktree
-// ---------------------------------------------------------------------------
 
 describe('removeTaskWorktree', () => {
   test('removes the worktree directory, branch, and DB record', async () => {
@@ -322,24 +242,17 @@ describe('removeTaskWorktree', () => {
 
     expect(existsSync(path)).toBe(false);
 
-    // Branch should be gone
     const branchList = execSync('git branch', { cwd: repoDir }).toString();
     expect(branchList).not.toContain(`space/${slug}`);
 
-    // DB record should be gone
     const retrieved = await manager.getTaskWorktreePath(spaceId, taskId);
     expect(retrieved).toBeNull();
   });
 
   test('is a no-op when no record exists for the task', async () => {
-    // Should not throw
     await expect(manager.removeTaskWorktree(spaceId, 'nonexistent-task')).resolves.toBeUndefined();
   });
 });
-
-// ---------------------------------------------------------------------------
-// getTaskWorktreePath
-// ---------------------------------------------------------------------------
 
 describe('getTaskWorktreePath', () => {
   test('returns the path for an existing task worktree', async () => {
@@ -355,9 +268,6 @@ describe('getTaskWorktreePath', () => {
     expect(result).toBeNull();
   });
 
-  // Sync variant was introduced so sync call sites (e.g. TaskAgentManager's
-  // public getter used by tool handlers and RPCs) can read the persisted
-  // path without bouncing through a Promise. The two variants must agree.
   test('getTaskWorktreePathSync mirrors the async variant', async () => {
     const taskId = seedTask(db, spaceId, 'task-path-sync-01', 6);
     const { path } = await manager.createTaskWorktree(spaceId, taskId, 'Sync Task', 6);
@@ -366,10 +276,6 @@ describe('getTaskWorktreePath', () => {
     expect(manager.getTaskWorktreePathSync(spaceId, 'no-such-task')).toBeNull();
   });
 });
-
-// ---------------------------------------------------------------------------
-// listWorktrees
-// ---------------------------------------------------------------------------
 
 describe('listWorktrees', () => {
   test('returns an empty array when no worktrees exist', async () => {
@@ -386,7 +292,6 @@ describe('listWorktrees', () => {
     const list = await manager.listWorktrees(spaceId);
     expect(list).toHaveLength(2);
 
-    // Derive expected slugs from worktreeSlug() to stay in sync with slugification rules
     const expectedSlugA = worktreeSlug('Task A', 1);
     const expectedSlugB = worktreeSlug('Task B', 2);
     const slugs = list.map((w) => w.slug).sort();
@@ -403,7 +308,6 @@ describe('listWorktrees', () => {
     const taskId = seedTask(db, spaceId, 'task-x', 1);
     await manager.createTaskWorktree(spaceId, taskId, 'Task X', 1);
 
-    // Create a second space pointing at a different workspace
     const otherSpaceId = `space-other-${Math.random().toString(36).slice(2)}`;
     db.prepare(
       `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
@@ -423,26 +327,18 @@ describe('listWorktrees', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// cleanupOrphaned
-// ---------------------------------------------------------------------------
-
 describe('cleanupOrphaned', () => {
   test('removes DB records for missing directories', async () => {
     const taskId = seedTask(db, spaceId, 'task-orphan-01', 20);
     const { path } = await manager.createTaskWorktree(spaceId, taskId, 'Orphan Task', 20);
 
-    // Simulate the worktree directory disappearing without going through removeTaskWorktree
-    // (e.g. manual deletion or OS cleanup)
     rmSync(path, { recursive: true, force: true });
     expect(existsSync(path)).toBe(false);
 
-    // DB record still there
     expect(await manager.getTaskWorktreePath(spaceId, taskId)).toBe(path);
 
     await manager.cleanupOrphaned(spaceId);
 
-    // DB record should now be gone
     expect(await manager.getTaskWorktreePath(spaceId, taskId)).toBeNull();
   });
 
@@ -453,7 +349,6 @@ describe('cleanupOrphaned', () => {
 
     await manager.cleanupOrphaned(spaceId);
 
-    // Record should still be there
     expect(await manager.getTaskWorktreePath(spaceId, taskId)).toBe(path);
   });
 
@@ -469,7 +364,6 @@ describe('cleanupOrphaned', () => {
     const t2 = await manager.createTaskWorktree(spaceId, t2Id, 'Orphan 2', 31);
     const t3 = await manager.createTaskWorktree(spaceId, t3Id, 'Live', 32);
 
-    // Remove two of the three directories
     rmSync(t1.path, { recursive: true, force: true });
     rmSync(t2.path, { recursive: true, force: true });
 

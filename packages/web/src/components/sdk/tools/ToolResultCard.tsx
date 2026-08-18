@@ -1,7 +1,3 @@
-/**
- * ToolResultCard Component - Displays completed tool execution results with syntax highlighting
- */
-
 import { useState } from 'preact/hooks';
 import type { ToolResultCardProps } from './tool-types.ts';
 import { ToolIcon } from './ToolIcon.tsx';
@@ -23,24 +19,16 @@ import { connectionManager } from '../../../lib/connection-manager.ts';
 import { toast } from '../../../lib/toast.ts';
 import { ConfirmModal } from '../../ui/ConfirmModal.tsx';
 
-/**
- * Strip line numbers from Read tool output
- * Read tool output format: "   1→content\n   2→content"
- */
 function stripLineNumbers(content: string): string {
   return content
     .split('\n')
     .map((line) => {
-      // Match pattern: optional spaces, digits, →, then content
       const match = line.match(/^\s*\d+→(.*)$/);
       return match ? match[1] : line;
     })
     .join('\n');
 }
 
-/**
- * Build a unified diff string from a structured patch for display fallback
- */
 function structuredPatchToDiff(
   patch: {
     oldStart: number;
@@ -58,9 +46,6 @@ function structuredPatchToDiff(
     .join('\n');
 }
 
-/**
- * ToolResultCard Component
- */
 export function ToolResultCard({
   toolName,
   toolId,
@@ -78,15 +63,10 @@ export function ToolResultCard({
   taskNotification,
   taskProgress,
 }: ToolResultCardProps) {
-  // Terminal task_notification status. When present it is the authoritative
-  // signal (green check on completed, red X on failed/stopped). When absent we
-  // fall back to the legacy `isError` flag so existing tool_result errors still
-  // render the red X.
   const taskStatus = taskNotification?.status;
   const notificationIsError = taskStatus === 'failed' || taskStatus === 'stopped';
   const notificationIsSuccess = taskStatus === 'completed';
   const showErrorIcon = notificationIsError || (!taskNotification && isError);
-  // Type-safe access to input/output properties
   const inputRecord = input as Record<string, unknown>;
   const outputRecord = (output || {}) as Record<string, unknown>;
 
@@ -118,7 +98,6 @@ export function ToolResultCard({
       toast.success('Tool output removed. Reloading session...');
       setShowConfirmModal(false);
 
-      // Reload the page to refresh messages
       setTimeout(() => {
         window.location.reload();
       }, 500);
@@ -129,7 +108,6 @@ export function ToolResultCard({
     }
   };
 
-  // Compact variant - minimal display
   if (variant === 'compact') {
     return (
       <div
@@ -161,7 +139,6 @@ export function ToolResultCard({
     );
   }
 
-  // Inline variant - for text flow
   if (variant === 'inline') {
     return (
       <span
@@ -174,12 +151,10 @@ export function ToolResultCard({
     );
   }
 
-  // Helper function to calculate diff line counts (same logic as DiffViewer)
   const calculateDiffCounts = (oldText: string, newText: string) => {
     const oldLines = oldText.split('\n');
     const newLines = newText.split('\n');
 
-    // Find the first different line
     let firstDiffIndex = 0;
     while (
       firstDiffIndex < Math.min(oldLines.length, newLines.length) &&
@@ -188,7 +163,6 @@ export function ToolResultCard({
       firstDiffIndex++;
     }
 
-    // Find the last different line
     let lastDiffIndexOld = oldLines.length - 1;
     let lastDiffIndexNew = newLines.length - 1;
     while (
@@ -206,7 +180,6 @@ export function ToolResultCard({
     return { addedLines, removedLines };
   };
 
-  // Calculate line counts for Read, Write, Edit tools
   const getLineCountDisplay = () => {
     if (toolName === 'Read') {
       if (isFileReadOutput(output) && output.type === 'text') {
@@ -216,7 +189,6 @@ export function ToolResultCard({
           </span>
         );
       }
-      // Fallback for legacy string/object output
       const content =
         typeof output === 'string'
           ? output
@@ -228,7 +200,6 @@ export function ToolResultCard({
         return <span class="text-xs text-gray-600 dark:text-gray-400 font-mono">{lineCount}</span>;
       }
     } else if (toolName === 'Write') {
-      // Count lines in input content
       const content = inputRecord?.content as string | undefined;
       if (content && typeof content === 'string') {
         const lineCount = content.split('\n').length;
@@ -237,7 +208,6 @@ export function ToolResultCard({
         );
       }
     } else if (toolName === 'Edit') {
-      // Count actual diff changes (not total lines)
       const oldText = inputRecord?.old_string as string | undefined;
       const newText = inputRecord?.new_string as string | undefined;
       if (oldText && newText) {
@@ -255,10 +225,6 @@ export function ToolResultCard({
 
   const lineCountDisplay = getLineCountDisplay();
 
-  // Default & detailed variants - full display with expand/collapse
-  // Note: the running-state shimmer is a `.running-shimmer` overlay rendered
-  // inside this card while isRunning (added below). overflow-hidden contains
-  // it to the card's rounded surface.
   const card = (
     <div
       class={cn(
@@ -269,7 +235,6 @@ export function ToolResultCard({
         className
       )}
     >
-      {/* Header - clickable to expand/collapse */}
       <button
         onClick={() => !disableExpand && setIsExpanded(!isExpanded)}
         class={cn(
@@ -349,10 +314,8 @@ export function ToolResultCard({
 
       {isRunning && taskProgress && <TaskProgressLine progress={taskProgress} />}
 
-      {/* Expanded content - input and output details */}
       {isExpanded && (
         <div class={cn('p-3 border-t bg-white dark:bg-gray-900 space-y-3', colors.border)}>
-          {/* Folded task_notification: terminal status summary + usage. */}
           {taskNotification && (taskNotification.summary || taskNotification.usage) && (
             <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
               {taskNotification.summary && (
@@ -378,7 +341,6 @@ export function ToolResultCard({
               )}
             </div>
           )}
-          {/* Error display takes priority when tool failed */}
           {isError && output !== undefined && output !== null && (
             <div>
               <div class="text-xs font-semibold text-red-600 dark:text-red-400 mb-2">
@@ -400,11 +362,9 @@ export function ToolResultCard({
             </div>
           )}
 
-          {/* Custom renderer takes priority */}
           {customRenderer ? (
             customRenderer({ toolName, input, output, isError, variant })
-          ) : /* Special handling for Edit tool - show diff view */
-          toolName === 'Edit' && !isError ? (
+          ) : toolName === 'Edit' && !isError ? (
             isFileEditOutput(output) ? (
               <div class="space-y-3">
                 <DiffViewer
@@ -440,8 +400,7 @@ export function ToolResultCard({
                 filePath={inputRecord.file_path as string | undefined}
               />
             ) : null
-          ) : /* Special handling for Read tool - show syntax-highlighted code */
-          toolName === 'Read' && !isError ? (
+          ) : toolName === 'Read' && !isError ? (
             isFileReadOutput(output) ? (
               output.type === 'text' ? (
                 <CodeViewer
@@ -484,8 +443,7 @@ export function ToolResultCard({
                 maxHeight="none"
               />
             ) : null
-          ) : /* Special handling for Write tool - show syntax-highlighted code */
-          toolName === 'Write' && !isError ? (
+          ) : toolName === 'Write' && !isError ? (
             isFileWriteOutput(output) ? (
               <div>
                 {variant === 'detailed' && (
@@ -522,8 +480,7 @@ export function ToolResultCard({
                 />
               </div>
             ) : null
-          ) : /* Special handling for Thinking tool - just show the content */
-          toolName === 'Thinking' ? (
+          ) : toolName === 'Thinking' ? (
             <div>
               {variant === 'detailed' && (
                 <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
@@ -546,7 +503,6 @@ export function ToolResultCard({
             </div>
           ) : (
             <>
-              {/* Tool ID (only in detailed variant) */}
               {variant === 'detailed' && (
                 <div>
                   <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">
@@ -558,7 +514,6 @@ export function ToolResultCard({
                 </div>
               )}
 
-              {/* Input */}
               <div>
                 <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
                   Input:
@@ -568,7 +523,6 @@ export function ToolResultCard({
                 </pre>
               </div>
 
-              {/* Output/Result */}
               {!isError && output !== undefined && output !== null && (
                 <div>
                   <div class="flex items-center justify-between mb-2">
@@ -647,7 +601,6 @@ export function ToolResultCard({
         </div>
       )}
 
-      {/* Confirmation Modal */}
       <ConfirmModal
         isOpen={showConfirmModal}
         onClose={() => setShowConfirmModal(false)}

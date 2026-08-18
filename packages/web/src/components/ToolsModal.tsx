@@ -1,26 +1,3 @@
-/**
- * Tools Modal Component (session-scoped, task #122)
- *
- * Unified view of MCP servers and tools for a single session. The modal
- * never mutates global registry state — every toggle here is session-scoped
- * and deferred until the user clicks Save:
- *
- *   - Agent Runtime Tools — in-process MCPs attached at session-spawn time
- *     (space-agent-tools, db-query, task-agent, node-agent, etc.). Read-only.
- *   - Skills — *all* app-level skills (builtin, plugin, mcp_server) merged
- *     into a single list. Source is shown as a per-row badge, not a grouping
- *     axis. Disabling a skill writes the skill ID into
- *     `ToolsConfig.disabledSkills` for this session only — globals are
- *     untouched.
- *   - MCP Servers — every `app_mcp_servers` registry entry visible to this
- *     session, with its current effective enablement (resolved by the daemon
- *     across the session > room > space > registry chain). Toggling a server
- *     stages a pending session-scope override; on Save the modal calls
- *     `mcp.enablement.setOverride` (or `clearOverride` for items the user
- *     reverted to inheritance).
- *   - Advanced — Claude Code preset toggle.
- */
-
 import { useSignal, useComputed } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
@@ -41,14 +18,6 @@ import { listRuntimeMcpServers } from '../lib/api-helpers.ts';
 import { skillsStore } from '../lib/skills-store.ts';
 import { globalSettings } from '../lib/state.ts';
 
-/**
- * Human-friendly labels for runtime-attached (SDK-type) MCP servers.
- * Keys must match the names used in `SessionConfig.mcpServers` — i.e., the
- * names passed to `mergeRuntimeMcpServers` on the daemon side.
- *
- * Unknown names fall through to the raw server name so new runtime MCPs are
- * still surfaced even before a label is added.
- */
 const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }> = {
   'space-agent-tools': {
     title: 'Space coordination',
@@ -89,13 +58,6 @@ interface ToolsModalProps {
   session: Session | null;
 }
 
-// Collapsible group header component.
-//
-// `scopeNote` is rendered in place of the legacy "All sessions / This session"
-// badge. With unified, deferred-save groups the entire modal is now session-
-// scoped, so the per-group scope badge would be redundant — but a short
-// inline note still helps anchor users to that fact for the section that has
-// the most cross-scope inheritance ambiguity (MCP Servers).
 interface GroupHeaderProps {
   title: string;
   isOpen: boolean;
@@ -165,8 +127,6 @@ function GroupHeader({
   );
 }
 
-// Small inline source badge — same Tailwind pill styling for skills and MCP
-// servers so the two sections feel related.
 function SourceBadge({ label, className }: { label: string; className: string }) {
   return <span class={`text-[10px] px-1.5 py-0.5 rounded font-medium ${className}`}>{label}</span>;
 }
@@ -175,42 +135,23 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
   const saving = useSignal(false);
   const globalConfig = useSignal<GlobalToolsConfig | null>(null);
 
-  // Collapsible group state (open by default)
   const runtimeMcpGroupOpen = useSignal(true);
   const skillsGroupOpen = useSignal(true);
   const mcpServersGroupOpen = useSignal(true);
   const advancedOpen = useSignal(false);
 
-  // Runtime-attached (SDK-type) MCP servers for this session —
-  // space-agent-tools, db-query, task-agent, node-agent, etc.
   const runtimeMcpServers = useSignal<string[]>([]);
 
-  // Per-session MCP registry state (resolved server > room > space >
-  // registry by the daemon).
   const sessionMcpEntries = useSignal<SessionMcpServerEntry[]>([]);
   const mcpServerSearch = useSignal('');
-  // Tracks whether the per-session MCP list has been fetched at least once.
-  // We can't use `sessionMcpEntries.length > 0` as a proxy because an empty
-  // registry is a legitimate stable state — without this flag, runtime
-  // indicators on `mcp_server` skills would flicker as "unknown" → "missing"
-  // during the initial load.
   const sessionMcpLoaded = useSignal(false);
 
-  // Search filter for the unified Skills section.
   const skillSearch = useSignal('');
 
-  // Pending session-scope override changes for MCP servers, keyed by
-  // `app_mcp_servers.id`. Cleared on Cancel / Save.
-  //   `enabled: boolean` — user toggled the checkbox; queue an override.
-  //   `enabled: null`    — user cleared the existing session override.
   const pendingMcpOverrides = useSignal<Map<string, PendingMcpOverride>>(new Map());
 
-  // Pending session-scope skill disable list — IDs the user has unchecked in
-  // the modal. Initialised from `session.config.tools.disabledSkills` on
-  // open.
   const pendingDisabledSkills = useSignal<Set<string>>(new Set());
 
-  // Advanced settings (hidden by default)
   const useClaudeCodePreset = useSignal(true);
   const settingSources = useSignal<import('@hyperneo/shared').SettingSource[]>([
     'user',
@@ -223,34 +164,24 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
     'local',
   ]);
 
-  // Has the user staged any change since the modal was opened? Drives the
-  // Save button's enabled state. Computed from the four sources of pending
-  // state so we don't have to manually flip a flag in every handler.
   const initialDisabledSkills = useSignal<Set<string>>(new Set());
   const initialClaudeCodePreset = useSignal(true);
   const hasChanges = useComputed(() => {
-    // MCP overrides: any pending entry counts (we filter no-ops on Save).
     if (pendingMcpOverrides.value.size > 0) return true;
-    // Skills: compare the current pending set against the snapshot taken on open.
     const a = pendingDisabledSkills.value;
     const b = initialDisabledSkills.value;
     if (a.size !== b.size) return true;
     for (const id of a) {
       if (!b.has(id)) return true;
     }
-    // Advanced: claudeCodePreset toggle.
     if (useClaudeCodePreset.value !== initialClaudeCodePreset.value) return true;
-    // Advanced: settingSources change.
     if (JSON.stringify(settingSources.value) !== JSON.stringify(initialSettingSources.value))
       return true;
     return false;
   });
 
-  // Load current config and MCP servers when modal opens
   useEffect(() => {
     if (isOpen && session) {
-      // `loadConfig` is sync; the rest are async fire-and-forget — `void`
-      // keeps the floating-promise lint rule happy and signals intent.
       loadConfig();
       void loadGlobalConfig();
       void loadRuntimeMcpServers();
@@ -270,21 +201,15 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
     useClaudeCodePreset.value = tools?.useClaudeCodePreset ?? true;
     initialClaudeCodePreset.value = useClaudeCodePreset.value;
 
-    // Snapshot the persisted disable list and seed the pending set so the
-    // checkboxes reflect the saved state on open.
     const disabled = new Set<string>(tools?.disabledSkills ?? []);
     pendingDisabledSkills.value = disabled;
     initialDisabledSkills.value = new Set(disabled);
 
-    // Load setting sources from session config
     const sources = session.config.settingSources ??
       globalSettings.value?.settingSources ?? ['user', 'project', 'local'];
     settingSources.value = sources;
     initialSettingSources.value = [...sources];
 
-    // Reset MCP overrides — the modal always starts from a clean slate;
-    // it's the daemon's resolved view that drives the initial checkbox
-    // state.
     pendingMcpOverrides.value = new Map();
   };
 
@@ -322,13 +247,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
       sessionMcpEntries.value = response.entries ?? [];
       sessionMcpLoaded.value = true;
     } catch {
-      // Typically means the daemon rejected the session id; show nothing
-      // rather than an error banner — the empty state is self-explanatory.
       sessionMcpEntries.value = [];
-      // Keep sessionMcpLoaded=false: we genuinely don't know the effective
-      // MCP state, so per-skill runtime indicators stay hidden ("unknown")
-      // rather than risk showing a misleading "server missing" when the
-      // backing data just wasn't retrieved.
       sessionMcpLoaded.value = false;
     }
   };
@@ -337,15 +256,12 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
     () => globalConfig.value?.systemPrompt?.claudeCodePreset?.allowed ?? true
   );
 
-  // Unified list of every app-level skill, sorted by display name so the
-  // merged view stays stable as new skills are registered.
   const allSkills = useComputed(() =>
     [...skillsStore.skills.value].sort((a, b) =>
       a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' })
     )
   );
 
-  // Filtered by the skill search box.
   const filteredSkills = useComputed(() => {
     const q = skillSearch.value.trim().toLowerCase();
     if (!q) return allSkills.value;
@@ -356,7 +272,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
     );
   });
 
-  // Filtered MCP server entries.
   const filteredMcpEntries = useComputed(() => {
     const q = mcpServerSearch.value.trim().toLowerCase();
     if (!q) return sessionMcpEntries.value;
@@ -367,12 +282,9 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
     );
   });
 
-  // Group-state inputs — operate on the *effective for this session* flag,
-  // not the raw global enabled flag. This makes the "All on / Mixed / All
-  // off" header reflect what Save will actually do.
   const skillsGroupState = useComputed(() => {
     const items = allSkills.value
-      .filter((s) => s.enabled) // skills globally disabled are not togglable; exclude
+      .filter((s) => s.enabled)
       .map((s) => ({
         enabled: isSkillEnabledForSession(s, pendingDisabledSkills.value),
       }));
@@ -385,12 +297,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
     return computeSkillGroupState(items);
   });
 
-  // ---------------------------------------------------------------------------
-  // Toggle handlers — all session-scoped & deferred (no RPC until Save)
-  // ---------------------------------------------------------------------------
-
   const toggleSkill = (skill: AppSkill) => {
-    if (!skill.enabled) return; // globally disabled skills are read-only here
+    if (!skill.enabled) return;
     const next = new Set(pendingDisabledSkills.value);
     if (next.has(skill.id)) {
       next.delete(skill.id);
@@ -406,10 +314,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
     const allOn = togglable.every((s) => isSkillEnabledForSession(s, pendingDisabledSkills.value));
     const next = new Set(pendingDisabledSkills.value);
     if (allOn) {
-      // Disable every togglable skill at session scope.
       for (const s of togglable) next.add(s.id);
     } else {
-      // Enable every togglable skill at session scope.
       for (const s of togglable) next.delete(s.id);
     }
     pendingDisabledSkills.value = next;
@@ -424,8 +330,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
   };
 
   const clearMcpOverride = (entry: SessionMcpServerEntry) => {
-    // Only meaningful when the daemon currently reports the source as
-    // 'session' — for other sources there is no override row to delete.
     if (entry.source !== 'session') return;
     const next = new Map(pendingMcpOverrides.value);
     next.set(entry.server.id, { enabled: null });
@@ -444,38 +348,21 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
     pendingMcpOverrides.value = next;
   };
 
-  // ---------------------------------------------------------------------------
-  // Save flow
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Apply pending MCP server overrides via the existing
-   * `mcp.enablement.setOverride` / `clearOverride` RPCs. Each override is a
-   * separate write because the daemon's API is row-at-a-time; we
-   * `Promise.allSettled` so a single failure doesn't block the rest.
-   *
-   * Returns the count of overrides that succeeded so the caller can decide
-   * whether the partial result still warrants a "saved" toast.
-   */
   const applyMcpOverrides = async (): Promise<{ ok: number; failed: string[] }> => {
     if (!session) return { ok: 0, failed: [] };
     const hub = await connectionManager.getHub();
     const sessionId = session.id;
 
-    // Build the list of meaningful changes — drop entries that match the
-    // daemon's current effective state (no-op toggles when the user toggled
-    // twice, etc.).
     const ops: Array<{ entry: SessionMcpServerEntry; pending: PendingMcpOverride }> = [];
     for (const entry of sessionMcpEntries.value) {
       const pending = pendingMcpOverrides.value.get(entry.server.id);
       if (!pending) continue;
-      if (pending.enabled === null && entry.source !== 'session') continue; // already inherited
+      if (pending.enabled === null && entry.source !== 'session') continue;
       if (
         pending.enabled !== null &&
         pending.enabled === entry.enabled &&
         entry.source === 'session'
       ) {
-        // User toggled to the same value that's already overridden at session scope.
         continue;
       }
       ops.push({ entry, pending });
@@ -513,8 +400,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
     try {
       saving.value = true;
 
-      // 1. Persist MCP server overrides first — these are session-scope
-      //    rows in `mcp_enablement`, independent from the session config.
       const mcp = await applyMcpOverrides();
       if (mcp.failed.length > 0) {
         toast.error(
@@ -522,11 +407,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
         );
       }
 
-      // 2. Persist session config changes (skills + advanced) via tools.save.
-      //    `tools.save` updates `session.config` in-memory + DB and emits
-      //    `session.updated`; it does not restart the SDK query directly.
-      //    `QueryOptionsBuilder.build()` runs fresh on every message, so the
-      //    new `disabledSkills` set takes effect on the next user message.
       const toolsConfig: ToolsConfig = {
         ...session.config.tools,
         useClaudeCodePreset: useClaudeCodePreset.value,
@@ -542,7 +422,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
         return;
       }
 
-      // 3. Persist settingSources change via session.update.
       if (JSON.stringify(settingSources.value) !== JSON.stringify(initialSettingSources.value)) {
         await hub.request('session.update', {
           sessionId: session.id,
@@ -550,8 +429,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
         });
       }
 
-      // 4. Refresh the resolved MCP entries so the next open of the modal
-      //    sees the updated `source`/`enabled` flags.
       await loadSessionMcpEntries();
       toast.success('Tools configuration saved');
       onClose();
@@ -578,8 +455,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
   return (
     <Modal isOpen={isOpen} onClose={handleCancel} title="Tools" size="md">
       <div class="space-y-4">
-        {/* Agent Runtime Tools Section — shown only when the session has
-				    runtime-attached SDK-type MCP servers (e.g. space sessions). */}
         {runtimeMcpServers.value.length > 0 && (
           <>
             <div>
@@ -648,7 +523,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
           </>
         )}
 
-        {/* Unified Skills Section */}
         <div>
           {allSkills.value.length > 0 ? (
             <>
@@ -776,7 +650,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
         <div class={`border-t ${borderColors.ui.secondary}`} />
 
-        {/* Unified MCP Servers Section */}
         <div>
           {sessionMcpEntries.value.length > 0 ? (
             <>
@@ -901,7 +774,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
         <div class={`border-t ${borderColors.ui.secondary}`} />
 
-        {/* Advanced Section (collapsed by default) */}
         <div>
           <button
             type="button"
@@ -929,7 +801,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
           {advancedOpen.value && (
             <div class="mt-3 space-y-4 ml-5">
-              {/* Claude Code Preset */}
               <div>
                 <h4 class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
                   System Prompt
@@ -952,7 +823,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                   />
                 </label>
               </div>
-              {/* Setting Sources */}
               <div>
                 <h4 class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
                   Setting Sources
@@ -1006,7 +876,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
           )}
         </div>
 
-        {/* Footer */}
         <div class={`pt-4 border-t ${borderColors.ui.secondary} flex gap-3 justify-end`}>
           <button
             type="button"

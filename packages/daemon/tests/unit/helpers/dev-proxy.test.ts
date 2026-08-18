@@ -1,10 +1,3 @@
-/**
- * Unit tests for Dev Proxy helper module
- *
- * Note: Most tests skip when devproxy is not installed since
- * the helper requires the actual devproxy binary to run.
- */
-
 import { describe, it, expect, beforeEach, afterEach, vi } from 'bun:test';
 import { spawnSync } from 'child_process';
 import net from 'net';
@@ -18,10 +11,6 @@ import {
   type DevProxyOptions,
 } from '../../helpers/dev-proxy';
 
-/**
- * Bind a TCP server on a random available port and return the server + port.
- * Used to simulate an already-running proxy process in tests.
- */
 async function bindTcpServer(): Promise<{ server: net.Server; port: number }> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -39,7 +28,6 @@ async function closeTcpServer(server: net.Server): Promise<void> {
   });
 }
 
-// Check if devproxy is available
 async function isDevProxyInstalled(): Promise<boolean> {
   try {
     const result = spawnSync('which', ['devproxy'], { stdio: 'pipe' });
@@ -49,14 +37,8 @@ async function isDevProxyInstalled(): Promise<boolean> {
   }
 }
 
-/**
- * Returns true if a devproxy process is already running on this machine.
- * devproxy enforces a single-instance constraint regardless of port, so when
- * it is already running, tests that need to start a fresh instance must skip.
- */
 async function isDevProxyAlreadyRunning(): Promise<boolean> {
   try {
-    // pgrep -x matches the exact process name (macOS / Linux)
     const result = spawnSync('pgrep', ['-x', 'devproxy'], { stdio: 'ignore' });
     return result.status === 0;
   } catch {
@@ -65,8 +47,6 @@ async function isDevProxyAlreadyRunning(): Promise<boolean> {
 }
 
 const DEV_PROXY_INSTALLED = await isDevProxyInstalled();
-// Tests that need to start a fresh devproxy instance must skip when one is already running
-// because devproxy enforces a single-instance constraint (any port).
 const DEV_PROXY_FREE_TO_START = DEV_PROXY_INSTALLED && !(await isDevProxyAlreadyRunning());
 
 describe('Dev Proxy Helper', () => {
@@ -101,16 +81,6 @@ describe('Dev Proxy Helper', () => {
   });
 
   describe('start/stop lifecycle', () => {
-    // Skip when devproxy is not installed or when an instance is already running.
-    // devproxy enforces a single-instance constraint so a second start attempt
-    // on any port will fail when the binary is already in use.
-    // Conditional runner: execute when a fresh devproxy can start, skip
-    // otherwise. A bare ternary (`it : it.skip`) breaks under Vitest 4: the
-    // bun:test shim only reorders (name, fn, {timeout}) -> (name, {timeout}, fn)
-    // when args[1] is a function and args[2] is an object, so `it.skip(name, fn,
-    // {timeout})` throws whenever devproxy is absent (CI). Call the Vitest 4 form
-    // (name, fn, timeout) directly — a number in the 3rd slot, which the shim
-    // passes through untouched and Vitest parses as the per-test timeout.
     const itif = (name: string, fn: () => Promise<unknown>, opts?: { timeout?: number }): void => {
       if (DEV_PROXY_FREE_TO_START) {
         it(name, fn, opts?.timeout);
@@ -124,16 +94,14 @@ describe('Dev Proxy Helper', () => {
       async () => {
         const controller = createDevProxyController({
           port: 8100 + Math.floor(Math.random() * 100),
-          logLevel: 'error', // Reduce log noise in tests
+          logLevel: 'error',
         });
 
         try {
           await controller.start();
           expect(controller.isRunning()).toBe(true);
-          // Detached devproxy process doesn't expose a stable PID in this helper.
           expect(controller.pid).toBeUndefined();
 
-          // Verify ANTHROPIC_BASE_URL is redirected to the local proxy
           expect(process.env.ANTHROPIC_BASE_URL).toBe(controller.proxyUrl);
         } finally {
           await controller.stop();
@@ -146,7 +114,6 @@ describe('Dev Proxy Helper', () => {
     itif(
       'should restore environment variables after stop',
       async () => {
-        // Save original values
         const originalAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL;
 
         const controller = createDevProxyController({
@@ -160,7 +127,6 @@ describe('Dev Proxy Helper', () => {
 
           controller.restoreEnv();
 
-          // Should restore to original values
           expect(process.env.ANTHROPIC_BASE_URL).toBe(originalAnthropicBaseUrl);
         } finally {
           await controller.stop();
@@ -191,7 +157,6 @@ describe('Dev Proxy Helper', () => {
       'should handle stop when not started',
       async () => {
         const controller = createDevProxyController();
-        // Should not throw
         await controller.stop();
       },
       { timeout: 5000 }
@@ -217,13 +182,6 @@ describe('Dev Proxy Helper', () => {
   });
 
   describe('Global Dev Proxy', () => {
-    // Conditional runner: execute when a fresh devproxy can start, skip
-    // otherwise. A bare ternary (`it : it.skip`) breaks under Vitest 4: the
-    // bun:test shim only reorders (name, fn, {timeout}) -> (name, {timeout}, fn)
-    // when args[1] is a function and args[2] is an object, so `it.skip(name, fn,
-    // {timeout})` throws whenever devproxy is absent (CI). Call the Vitest 4 form
-    // (name, fn, timeout) directly — a number in the 3rd slot, which the shim
-    // passes through untouched and Vitest parses as the per-test timeout.
     const itif = (name: string, fn: () => Promise<unknown>, opts?: { timeout?: number }): void => {
       if (DEV_PROXY_FREE_TO_START) {
         it(name, fn, opts?.timeout);
@@ -275,9 +233,6 @@ describe('Dev Proxy Helper', () => {
       expect(controller.isExternal).toBe(false);
     });
 
-    // All tests below need a live TCP server to simulate a pre-existing proxy.
-    // A shared server + controller are set up in beforeEach and torn down in
-    // afterEach so the framework guarantees cleanup even when assertions throw.
     describe('with a simulated pre-existing proxy', () => {
       let tcpServer: net.Server;
       let tcpPort: number;
@@ -293,19 +248,15 @@ describe('Dev Proxy Helper', () => {
       });
 
       afterEach(async () => {
-        // Stop controller first (no-op for external, but keeps state consistent).
         if (controller.isRunning()) {
           await controller.stop();
         }
         controller.restoreEnv();
-        // Restore env regardless of what each test did.
         if (originalBaseUrl === undefined) {
           delete process.env.ANTHROPIC_BASE_URL;
         } else {
           process.env.ANTHROPIC_BASE_URL = originalBaseUrl;
         }
-        // Close the TCP server last so the controller stop() check above
-        // (which probes the port) still sees it open.
         await closeTcpServer(tcpServer);
       });
 
@@ -323,9 +274,7 @@ describe('Dev Proxy Helper', () => {
 
         await controller.stop();
 
-        // Controller should report not running after stop
         expect(controller.isRunning()).toBe(false);
-        // The TCP server (external proxy) must still be accepting connections
         await expect(
           new Promise<void>((resolve, reject) => {
             const socket = net.createConnection({ port: tcpPort, host: '127.0.0.1' });
@@ -347,23 +296,19 @@ describe('Dev Proxy Helper', () => {
       });
 
       it('sets env vars when setEnvVars=true and adopting external proxy', async () => {
-        // Re-create controller with setEnvVars=true for this specific test.
         controller = createDevProxyController({ port: tcpPort, setEnvVars: true });
 
         await controller.start();
 
         expect(controller.isExternal).toBe(true);
         expect(process.env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${tcpPort}`);
-        // afterEach will call restoreEnv() and reset ANTHROPIC_BASE_URL.
       });
 
       it('can be restarted after stopping an external proxy', async () => {
-        // First adoption
         await controller.start();
         expect(controller.isExternal).toBe(true);
         await controller.stop();
 
-        // Second adoption (same external server still running)
         await controller.start();
         expect(controller.isExternal).toBe(true);
         expect(controller.isRunning()).toBe(true);
@@ -382,9 +327,7 @@ describe('Dev Proxy Helper', () => {
 
   describe('when devproxy is not installed', () => {
     it('should throw error on start if not installed', async () => {
-      // Only meaningful when devproxy is not installed and no process is running
       if (DEV_PROXY_INSTALLED) {
-        // Can't test this path when devproxy IS installed
         return;
       }
 

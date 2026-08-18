@@ -1,11 +1,3 @@
-/**
- * Benchmark helpers for graph tool comparison.
- *
- * Uses Claude Agent SDK directly (no daemon) with GLM provider routing
- * via environment variables. MCP-only arms use `tools: []` to disable
- * all built-ins; the baseline arm uses built-in Read/Grep/Glob only.
- */
-
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { execSync, execFileSync } from 'node:child_process';
@@ -14,23 +6,15 @@ import { createHash } from 'node:crypto';
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
-// ---------------------------------------------------------------------------
-// Shared config
-// ---------------------------------------------------------------------------
-
-/** Resolve the repo root (5 levels up from this file). */
 export const WORKTREE =
   process.env.HYPERNEO_BENCHMARK_WORKTREE || join(import.meta.dir, '..', '..', '..', '..', '..');
 
-/** GLM model to benchmark. Default: glm-5.1. */
 export const BENCHMARK_MODEL = process.env.HYPERNEO_BENCHMARK_MODEL || 'glm-5.1';
 
-/** Get git commit SHA. */
 export function resolveCommitSha(): string {
   return execSync('git rev-parse HEAD', { encoding: 'utf-8', cwd: WORKTREE }).trim();
 }
 
-/** GLM API key from env. */
 export function getGlmApiKey(): string {
   const key = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY || '';
   if (!key) {
@@ -40,7 +24,6 @@ export function getGlmApiKey(): string {
   return key;
 }
 
-/** Run a benchmark case with GLM env vars set/restored. */
 export async function runWithGlm(
   options: Omit<BenchmarkCaseOptions, 'cwd'>
 ): Promise<BenchmarkResult> {
@@ -52,10 +35,6 @@ export async function runWithGlm(
     restoreEnvVars(envVars);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Prompts
-// ---------------------------------------------------------------------------
 
 export const BENCHMARK_PROMPT_UNSEDED =
   `We need to improve HyperNeo's Space task/workflow runtime so stuck or idle task agents do not loop forever or spam operators.
@@ -104,10 +83,6 @@ Produce an implementation plan with:
 - risks and edge cases,
 - estimated change scope.` as const;
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 export interface BenchmarkResult {
   caseName: string;
   wallTimeMs: number;
@@ -131,27 +106,12 @@ export interface BenchmarkOutput {
 
 export interface BenchmarkCaseOptions {
   name: string;
-  /** Absolute path to the workspace/repo */
   cwd: string;
   prompt: string;
-  /** MCP servers to attach. Baseline passes empty/undefined. */
   mcpServers?: Record<string, { command: string; args?: string[] }>;
-  /**
-   * Built-in tools to make available. Use `[]` to disable all built-ins
-   * and force MCP-only usage. Omit for default tool set.
-   */
   tools?: string[];
-  /**
-   * Tool name patterns to auto-approve (e.g. ["mcp__codegraph__*"]).
-   * Required for MCP tools — without this, the model sees them but
-   * cannot call them, even with bypassPermissions.
-   */
   allowedTools?: string[];
 }
-
-// ---------------------------------------------------------------------------
-// GLM provider env var helpers
-// ---------------------------------------------------------------------------
 
 const GLM_ENV_VARS = [
   'ANTHROPIC_AUTH_TOKEN',
@@ -164,14 +124,12 @@ const GLM_ENV_VARS = [
   'ANTHROPIC_DEFAULT_OPUS_MODEL',
 ] as const;
 
-/** Set GLM routing env vars. Returns originals for restoration. */
 export function setGlmEnvVars(apiKey: string, model: string): Map<string, string | undefined> {
   const originals = new Map<string, string | undefined>();
   for (const key of GLM_ENV_VARS) {
     originals.set(key, process.env[key]);
   }
 
-  // Clear ANTHROPIC_API_KEY to prevent SDK from using wrong credential source
   delete process.env.ANTHROPIC_API_KEY;
   process.env.ANTHROPIC_AUTH_TOKEN = apiKey;
   process.env.ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
@@ -184,7 +142,6 @@ export function setGlmEnvVars(apiKey: string, model: string): Map<string, string
   return originals;
 }
 
-/** Restore env vars from a previous setGlmEnvVars call. */
 export function restoreEnvVars(originals: Map<string, string | undefined>): void {
   for (const [key, value] of originals.entries()) {
     if (value !== undefined) {
@@ -195,11 +152,6 @@ export function restoreEnvVars(originals: Map<string, string | undefined>): void
   }
 }
 
-// ---------------------------------------------------------------------------
-// SDK message parsing
-// ---------------------------------------------------------------------------
-
-/** Count tool_use blocks across all SDK messages. */
 export function extractToolCalls(messages: Array<Record<string, unknown>>): Map<string, number> {
   const counts = new Map<string, number>();
   for (const msg of messages) {
@@ -216,9 +168,7 @@ export function extractToolCalls(messages: Array<Record<string, unknown>>): Map<
   return counts;
 }
 
-/** Extract text from the final assistant message only (excludes interim narration). */
 export function extractResponseText(messages: Array<Record<string, unknown>>): string {
-  // Find the last assistant message — that's the final answer
   let lastAssistantContent: unknown[] | null = null;
   for (const msg of messages) {
     if ((msg as { type?: string }).type !== 'assistant') continue;
@@ -238,22 +188,10 @@ export function extractResponseText(messages: Array<Record<string, unknown>>): s
   return parts.join('\n');
 }
 
-// ---------------------------------------------------------------------------
-// Runner
-// ---------------------------------------------------------------------------
-
-/**
- * Run a single benchmark case using the Claude Agent SDK directly.
- *
- * Caller must set GLM env vars before calling and restore after.
- * Uses `query()` from the SDK with the provided MCP servers and tool config.
- */
 export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<BenchmarkResult> {
   const { name, cwd, prompt, mcpServers, tools, allowedTools } = options;
 
   const startMs = Date.now();
-  // Build SDK options — only include `tools` when explicitly set.
-  // Omitting `tools` uses SDK defaults; passing `[]` disables all built-ins.
   const sdkOptions: Record<string, unknown> = {
     model: 'default',
     cwd,
@@ -293,10 +231,6 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
         session_id?: string;
         result?: string;
       };
-      // Reject all non-success terminal subtypes.
-      // Success: undefined (older SDK) or 'success'.
-      // Error: error, error_max_turns, error_during_execution,
-      //   error_max_budget_usd, error_max_structured_output_retries, etc.
       if (result.subtype !== undefined && result.subtype !== 'success') {
         throw new Error(
           `Benchmark case "${name}" ended with non-success subtype: ${result.subtype}. ` +
@@ -311,7 +245,6 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
     }
   }
 
-  // Fail fast if stream ended without a result message (interrupted/incomplete run)
   if (!gotResult) {
     throw new Error(
       `Benchmark case "${name}" ended without a result message — ` +
@@ -323,7 +256,6 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 
   const toolCallMap = extractToolCalls(sdkMessages);
   const streamedText = extractResponseText(sdkMessages);
-  // Use streamed text if available, fall back to result message text
   const responseText = streamedText || resultText;
 
   const toolCalls = Array.from(toolCallMap.entries()).map(([toolName, count]) => ({
@@ -345,10 +277,6 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
   };
 }
 
-// ---------------------------------------------------------------------------
-// Output
-// ---------------------------------------------------------------------------
-
 export function writeBenchmarkResults(
   results: BenchmarkResult[],
   worktreePath: string,
@@ -368,19 +296,7 @@ export function writeBenchmarkResults(
   return path;
 }
 
-// ---------------------------------------------------------------------------
-// ast-grep MCP server wrapper (stdio JSON-RPC)
-// ---------------------------------------------------------------------------
-
-/**
- * Generate a stdio MCP server script wrapping ast-grep CLI.
- *
- * @param workspacePath   Repo root to search
- * @param astGrepBin      Absolute path to pre-resolved ast-grep binary,
- *                        or 'npx' to fall back to per-call npx invocation
- */
 export function makeAstGrepMcpServerScript(workspacePath: string, astGrepBin: string): string {
-  // When astGrepBin is 'npx', use npx-based invocation with the full package prefix
   const useNpx = astGrepBin === 'npx';
   const binExpr = JSON.stringify(astGrepBin);
   const npxRunPrefix = useNpx ? `['npx', '-y', '-p', '@ast-grep/cli', 'ast-grep']` : `[${binExpr}]`;

@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VoiceWaveform } from '../voice/VoiceWaveform.tsx';
 
 beforeEach(() => {
-  // Default: no-op rAF so the meter loop never schedules (structural tests).
   vi.stubGlobal(
     'requestAnimationFrame',
     vi.fn(() => 0)
@@ -17,8 +16,6 @@ afterEach(() => {
   delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
 });
 
-// happy-dom reports clientWidth as 0; the waveform derives its column count
-// from it, so tests that assert a count stub the width explicitly.
 function stubClientWidth(px: number) {
   Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
     configurable: true,
@@ -64,7 +61,6 @@ describe('VoiceWaveform', () => {
       />
     );
     const cancel = screen.getByLabelText('Cancel recording');
-    // X is the first control in the row, before the bars.
     const panel = screen.getByTestId('voice-recording-panel');
     expect(panel.firstElementChild).toBe(cancel);
     fireEvent.click(cancel);
@@ -73,7 +69,7 @@ describe('VoiceWaveform', () => {
 
   it('derives the column count from the row width on narrow viewports', () => {
     vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
-    stubClientWidth(160); // narrow pitch is 4px → 40 columns
+    stubClientWidth(160);
     render(
       <VoiceWaveform
         getLevel={() => 0}
@@ -86,9 +82,8 @@ describe('VoiceWaveform', () => {
   });
 
   it('drives the bar meters from getLevel via requestAnimationFrame', () => {
-    // Restore a real rAF, then fake the clock so we can advance frames deterministically.
     vi.unstubAllGlobals();
-    stubClientWidth(600); // wide pitch is 5px → 120 columns
+    stubClientWidth(600);
     vi.useFakeTimers();
     render(
       <VoiceWaveform
@@ -98,7 +93,6 @@ describe('VoiceWaveform', () => {
         onCancel={() => {}}
       />
     );
-    // ~30 frames: a new column is pushed every 3rd frame.
     vi.advanceTimersByTime(500);
 
     const row = screen.getByTestId('voice-bars');
@@ -108,7 +102,6 @@ describe('VoiceWaveform', () => {
       const match = (b as HTMLElement).style.transform.match(/scaleY\(([\d.]+)\)/);
       return match ? Number.parseFloat(match[1]) : 0;
     });
-    // Spoken-level samples (0.9) must push at least one bar well above the floor.
     expect(Math.max(...scales)).toBeGreaterThan(0.5);
   });
 });

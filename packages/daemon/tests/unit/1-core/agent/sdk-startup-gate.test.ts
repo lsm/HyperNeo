@@ -1,13 +1,3 @@
-/**
- * SdkStartupConcurrencyGate unit tests
- *
- * Covers the gate primitives in isolation: cap enforcement, FIFO admission,
- * the release→acquire transfer race (no double-grant), abort handling, and
- * env-var fallbacks. QueryRunner-level behaviour (release on first message,
- * startup-timeout abort, retry re-admission) lives in
- * query-runner-startup-gate*.test.ts.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   DEFAULT_SDK_STARTUP_MAX_CONCURRENT,
@@ -93,12 +83,12 @@ describe('SdkStartupConcurrencyGate', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 5));
 
-    a.release(); // frees one slot → c must be admitted before d
+    a.release();
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(grants).toEqual(['c']);
     expect(gate.getStats()).toEqual({ active: 2, queued: 1, maxConcurrent: 2 });
 
-    (await cPromise).release(); // → d admitted
+    (await cPromise).release();
     await dPromise;
     expect(grants).toEqual(['c', 'd']);
     expect(gate.getStats().queued).toBe(0);
@@ -109,12 +99,8 @@ describe('SdkStartupConcurrencyGate', () => {
     const a = await gate.acquire({ sessionId: 'a' });
 
     const bPromise = gate.acquire({ sessionId: 'b' });
-    // acquire() runs synchronously up to the enqueue, so b is queued now.
     expect(gate.getStats()).toEqual({ active: 1, queued: 1, maxConcurrent: 1 });
 
-    // Release and immediately race a new acquire in the same synchronous
-    // block, before b's grant microtask runs. The slot must transfer to b —
-    // c must NOT take a fast path through a transiently-free count.
     a.release();
     const cPromise = gate.acquire({ sessionId: 'c' });
     expect(gate.getStats()).toEqual({ active: 1, queued: 1, maxConcurrent: 1 });
@@ -143,8 +129,6 @@ describe('SdkStartupConcurrencyGate', () => {
     await expect(rejection).resolves.toBe('AbortError');
     expect(gate.getStats()).toEqual({ active: 2, queued: 0, maxConcurrent: 2 });
 
-    // The aborted waiter must not receive a later grant: releasing both
-    // holders drains the gate to zero instead of waking c's promise.
     a.release();
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(gate.getStats().active).toBe(1);
@@ -165,7 +149,6 @@ describe('SdkStartupConcurrencyGate', () => {
     a.release();
     expect(gate.getStats()).toEqual({ active: 0, queued: 0, maxConcurrent: 2 });
 
-    // A double-release must not hand the same slot to two waiters.
     await gate.acquire({ sessionId: 'b' });
     await gate.acquire({ sessionId: 'c' });
     const dPromise = gate.acquire({ sessionId: 'd' });
@@ -182,10 +165,10 @@ describe('SdkStartupConcurrencyGate', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     a.release();
     const c: SdkStartupPermit = await cPromise;
-    expect(c.queuedBehind).toBe(0); // first waiter: nobody ahead
+    expect(c.queuedBehind).toBe(0);
     c.release();
     const d: SdkStartupPermit = await dPromise;
-    expect(d.queuedBehind).toBe(1); // queued behind c
+    expect(d.queuedBehind).toBe(1);
     expect(d.waitedMs).toBeGreaterThanOrEqual(0);
     expect(d.admittedAt).toBeGreaterThan(0);
     d.release();

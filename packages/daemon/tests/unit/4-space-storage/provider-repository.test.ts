@@ -1,7 +1,3 @@
-/**
- * ProviderRepository tests
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../src/storage/sqlite-compat';
 import { createTables } from '../../../src/storage/schema/index';

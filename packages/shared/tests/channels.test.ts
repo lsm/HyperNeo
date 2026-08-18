@@ -1,12 +1,3 @@
-/**
- * Channels & ChannelRegistry — unit tests
- *
- * Verifies the typed channel ADT can be serialized to and parsed back from
- * the wire strings used by the existing router. The wire format is fixed by
- * the architecture migration plan; these tests guard it against accidental
- * drift while we incrementally migrate publishers.
- */
-
 import { describe, expect, it } from 'bun:test';
 import {
   Channels,
@@ -108,9 +99,6 @@ describe('channelRegistry.parse', () => {
   });
 
   it('preserves ids that themselves contain colons (workflowRun/task)', () => {
-    // Wire format splits only on the first ':' after the prefix and the next
-    // ':' between the two ids; everything after is part of the trailing id.
-    // This matches the raw concatenation in toWire.
     const parsed = channelRegistry.parse('workflowRun:sp1:wr-1:extra');
     expect(parsed).toEqual({
       kind: 'workflowRun',

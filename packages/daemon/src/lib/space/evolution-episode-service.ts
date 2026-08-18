@@ -121,11 +121,6 @@ export interface EvolutionEpisodeServiceDeps {
   taskRepo: SpaceTaskRepository;
   workflowRunRepo: SpaceWorkflowRunRepository;
   artifactRepo: WorkflowRunArtifactRepository;
-  /**
-   * Domain artifact profile. Used by the result-artifact gap detector to read
-   * a run's terminal outcome (coding: the kindless `decision` summary) without
-   * this service naming domain kinds.
-   */
   artifactProfile?: WorkflowArtifactProfile;
   goalService?: Pick<SpaceGoalService, 'getGoal' | 'updateGoal'>;
   taskIdFactory?: () => string;
@@ -490,8 +485,6 @@ export class EvolutionEpisodeService {
 
       let hasResultArtifact = runHasResultArtifact.get(runId);
       if (hasResultArtifact === undefined) {
-        // Delegated to the domain artifact profile (coding: the kindless
-        // terminal `decision` summary).
         hasResultArtifact = this.deps.artifactProfile?.summarizeRunOutcome(runId) != null;
         runHasResultArtifact.set(runId, hasResultArtifact);
       }
@@ -764,8 +757,6 @@ async function judgeEpisodeWithModel(
       string,
       string | undefined
     >;
-    // Use the provider's resolved upstream model ID (e.g. canonical Kimi ID)
-    // so prefix aliases don't get passed to the SDK as the raw configured string.
     const sdkModelId = provider === 'glm' ? 'haiku' : (providerEnvVars.ANTHROPIC_MODEL ?? modelId);
     const agentQuery = query({
       prompt,
@@ -781,9 +772,6 @@ async function judgeEpisodeWithModel(
         executable: isRunningUnderBun() ? 'bun' : undefined,
         settings: withSdkTranscriptRetention(),
         env: mergeProviderEnvVars(providerEnvVars),
-        // Kimi K3 rejects `thinking.type` and K2.7 requires enabled thinking.
-        // Only apply the Kimi-specific override for the Kimi provider; other
-        // providers keep the safe disabled-thinking default.
         thinking:
           provider === 'kimi'
             ? KimiProvider.resolveKimiTitleThinkingConfig(sdkModelId)

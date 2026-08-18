@@ -1,14 +1,3 @@
-/**
- * TaskAgentManager rate-limit pause/resume listener tests (Part C).
- *
- * Verifies that a worker session hitting a rate/usage cap (no fallback left)
- * surfaces a paused task status with a resume-at restriction, and auto-resumes
- * (in_progress + restrictions cleared) when the limit lifts.
- *
- * The session→task link is the in-memory `subSessions` map seeded directly; the
- * listener logic itself (findParentTaskIdForSubSession + updateTask) is what's
- * under test, exercised through the real internalEventBus.
- */
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
@@ -44,8 +33,6 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
 
     bus = createDaemonInternalEventBus();
 
-    // Minimal config: only db / taskRepo / internalEventBus are touched by the
-    // listener and the constructor. The rest are stubbed.
     const config = {
       db: { getDatabase: () => db },
       taskRepo,
@@ -53,7 +40,6 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     } as unknown as TaskAgentManagerConfig;
     manager = new TaskAgentManager(config);
 
-    // Seed the in-memory session→task map the listener resolves through.
     const subSessions = (manager as unknown as { subSessions: Map<string, Map<string, unknown>> })
       .subSessions;
     subSessions.set(taskId, new Map());
@@ -128,7 +114,7 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
 
   it('does not override a terminal/blocked status on pause (done/blocked/cancelled/archived)', async () => {
     for (const terminal of ['done', 'blocked', 'cancelled', 'archived'] as const) {
-      taskRepo.updateTask(taskId, { status: 'in_progress' }); // reset between iterations
+      taskRepo.updateTask(taskId, { status: 'in_progress' });
       taskRepo.updateTask(taskId, { status: terminal });
       bus.publish('session.rate_limit_pause', {
         sessionId: subSessionId,
@@ -142,8 +128,6 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
   });
 
   it('a late resume does not resurrect a terminal task (cancelled/done/archived)', async () => {
-    // Seed a paused state + restriction, then move the task terminal via a
-    // manual transition (which auto-clears restrictions), then fire resume.
     for (const terminal of ['cancelled', 'done', 'archived'] as const) {
       taskRepo.updateTask(taskId, {
         status: 'usage_limited',
@@ -160,7 +144,7 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
       bus.publish('session.rate_limit_resume', { sessionId: subSessionId });
       await flush();
       const task = taskRepo.getTask(taskId);
-      expect(task?.status).toBe(terminal); // not resurrected to in_progress
+      expect(task?.status).toBe(terminal);
       expect(task?.restrictions).toBeNull();
     }
   });
@@ -174,12 +158,10 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
 
   it('does not restore until every limited sub-session for the task resumes', async () => {
     const secondSession = 'worker-session-2';
-    // Seed a second sub-session under the same task.
     const subSessions = (manager as unknown as { subSessions: Map<string, Map<string, unknown>> })
       .subSessions;
     subSessions.get(taskId)!.set(secondSession, { id: secondSession });
 
-    // Both sessions pause.
     bus.publish('session.rate_limit_pause', {
       sessionId: subSessionId,
       kind: 'usage_limit',
@@ -195,12 +177,10 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     await flush();
     expect(taskRepo.getTask(taskId)?.status).toBe('usage_limited');
 
-    // First resume must NOT restore the task — the second session is still limited.
     bus.publish('session.rate_limit_resume', { sessionId: subSessionId });
     await flush();
     expect(taskRepo.getTask(taskId)?.status).toBe('usage_limited');
 
-    // Second resume (last limited session) restores the task.
     bus.publish('session.rate_limit_resume', { sessionId: secondSession });
     await flush();
     expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
@@ -218,8 +198,6 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
         reason: 'parsed-reset',
       });
       await flush();
-      // Task row untouched — the session-level cooldown still holds, but the
-      // approval/review lifecycle is preserved.
       expect(taskRepo.getTask(taskId)?.status).toBe(nonProgress);
       expect(taskRepo.getTask(taskId)?.restrictions).toBeNull();
     }
@@ -231,7 +209,6 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
       .subSessions;
     subSessions.get(taskId)!.set(secondSession, { id: secondSession });
 
-    // Session A pauses (transient rate limit) with a near reset.
     const nearReset = Date.now() + 10 * 60 * 1000;
     bus.publish('session.rate_limit_pause', {
       sessionId: subSessionId,
@@ -243,8 +220,6 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     expect(taskRepo.getTask(taskId)?.status).toBe('rate_limited');
     expect(taskRepo.getTask(taskId)?.restrictions?.resetAt).toBe(nearReset);
 
-    // Session B pauses (usage cap) with a LATER reset — must merge, not be
-    // discarded, so a restart waits for the slowest session.
     const farReset = Date.now() + 30 * 60 * 1000;
     bus.publish('session.rate_limit_pause', {
       sessionId: secondSession,
@@ -254,21 +229,16 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     });
     await flush();
     const task = taskRepo.getTask(taskId);
-    expect(task?.status).toBe('usage_limited'); // stronger kind wins
-    expect(task?.restrictions?.resetAt).toBe(farReset); // later reset wins
+    expect(task?.status).toBe('usage_limited');
+    expect(task?.restrictions?.resetAt).toBe(farReset);
   });
 
   it('recomputes the restriction on partial resume (cross-restart resetAt reflects only remaining sessions)', async () => {
-    // Regression for the partial-resume bug: when the latest-deadline session
-    // resumes first, the persisted restriction must shrink to the remaining
-    // sessions — otherwise recoverRateLimitedTasks trusts a stale later resetAt
-    // (delaying recovery) and the status stays at the stronger kind.
     const secondSession = 'worker-session-2';
     const subSessions = (manager as unknown as { subSessions: Map<string, Map<string, unknown>> })
       .subSessions;
     subSessions.get(taskId)!.set(secondSession, { id: secondSession });
 
-    // Session A: usage cap with a LATER reset.
     const farReset = Date.now() + 30 * 60 * 1000;
     bus.publish('session.rate_limit_pause', {
       sessionId: subSessionId,
@@ -280,7 +250,6 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     expect(taskRepo.getTask(taskId)?.status).toBe('usage_limited');
     expect(taskRepo.getTask(taskId)?.restrictions?.resetAt).toBe(farReset);
 
-    // Session B: transient rate limit with an EARLIER reset.
     const nearReset = Date.now() + 10 * 60 * 1000;
     bus.publish('session.rate_limit_pause', {
       sessionId: secondSession,
@@ -289,14 +258,10 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
       reason: 'backoff-ladder',
     });
     await flush();
-    // Merged while both are limited: stronger kind (usage) + later reset win.
     const merged = taskRepo.getTask(taskId);
     expect(merged?.status).toBe('usage_limited');
     expect(merged?.restrictions?.resetAt).toBe(farReset);
 
-    // Session A (the far/usage one) resumes first. The task must NOT stay
-    // usage_limited with farReset — only the transient B remains, so the
-    // restriction recomputes to rate_limited + nearReset.
     bus.publish('session.rate_limit_resume', { sessionId: subSessionId });
     await flush();
     const afterPartial = taskRepo.getTask(taskId);
@@ -304,7 +269,6 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     expect(afterPartial?.restrictions?.type).toBe('rate_limit');
     expect(afterPartial?.restrictions?.resetAt).toBe(nearReset);
 
-    // Last session resumes → task restored to in_progress, restrictions cleared.
     bus.publish('session.rate_limit_resume', { sessionId: secondSession });
     await flush();
     const restored = taskRepo.getTask(taskId);

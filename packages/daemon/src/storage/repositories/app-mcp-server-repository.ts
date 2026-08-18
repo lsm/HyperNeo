@@ -1,11 +1,3 @@
-/**
- * AppMcpServerRepository
- *
- * CRUD operations for the application-level MCP server registry.
- * Each write method calls reactiveDb.notifyChange('app_mcp_servers') so that
- * LiveQueryEngine can invalidate frontend subscriptions on every registry change.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type {
@@ -18,16 +10,8 @@ import type {
 import type { ReactiveDatabase } from '../reactive-database';
 import type { SQLiteValue } from '../types';
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const VALID_SOURCE_TYPES = new Set<AppMcpServerSourceType>(['stdio', 'sse', 'http']);
 const VALID_SOURCES = new Set<AppMcpServerSource>(['builtin', 'user', 'imported']);
-
-// ---------------------------------------------------------------------------
-// Internal row type (mirrors SQLite columns)
-// ---------------------------------------------------------------------------
 
 interface AppMcpServerRow {
   id: string;
@@ -46,15 +30,7 @@ interface AppMcpServerRow {
   updated_at: number | null;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function rowToServer(row: AppMcpServerRow): AppMcpServer {
-  // Legacy rows written before migration 100 landed may have `source=NULL`.
-  // Treat them as 'user' for forward compatibility — migration 100 backfills
-  // on next startup, but we don't want a transient read to crash or return
-  // an invalid discriminant to the UI.
   const source = (row.source ?? 'user') as AppMcpServerSource;
 
   return {
@@ -89,20 +65,12 @@ function validateSource(source: string): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Repository
-// ---------------------------------------------------------------------------
-
 export class AppMcpServerRepository {
   constructor(
     private db: BunDatabase,
     private reactiveDb: ReactiveDatabase
   ) {}
 
-  /**
-   * Check whether a name is already taken in the registry.
-   * Pass `excludeId` when renaming an existing entry to avoid a false positive.
-   */
   isNameTaken(name: string, excludeId?: string): boolean {
     if (excludeId) {
       const row = this.db
@@ -114,15 +82,6 @@ export class AppMcpServerRepository {
     return row !== null;
   }
 
-  /**
-   * Create a new MCP server registry entry.
-   * Throws if the name is already taken, if sourceType is invalid, or if
-   * `source` is supplied with an invalid value. Defaults:
-   *   - `source` defaults to `'user'` (matches pre-M2 behaviour).
-   *   - `sourcePath` must be an absolute path when `source === 'imported'`
-   *     and must be omitted/null otherwise — callers are trusted to enforce
-   *     this; the import service is the only sanctioned writer for 'imported'.
-   */
   create(req: CreateAppMcpServerRequest): AppMcpServer {
     validateSourceType(req.sourceType);
 
@@ -163,11 +122,6 @@ export class AppMcpServerRepository {
     return this.get(id)!;
   }
 
-  /**
-   * List all entries for a given `sourcePath`. Used by `McpImportService`
-   * to diff the set of imported rows against what's currently declared in
-   * a `.mcp.json` file on disk, so that removed entries can be pruned.
-   */
   listBySourcePath(sourcePath: string): AppMcpServer[] {
     const rows = this.db
       .prepare(`SELECT * FROM app_mcp_servers WHERE source_path = ? AND source = 'imported'`)
@@ -175,11 +129,6 @@ export class AppMcpServerRepository {
     return rows.map(rowToServer);
   }
 
-  /**
-   * List all `source='imported'` entries. Used by `McpImportService` to find
-   * stale rows whose originating file no longer exists (e.g. the workspace
-   * was removed) and prune them.
-   */
   listImported(): AppMcpServer[] {
     const rows = this.db
       .prepare(`SELECT * FROM app_mcp_servers WHERE source = 'imported'`)
@@ -187,10 +136,6 @@ export class AppMcpServerRepository {
     return rows.map(rowToServer);
   }
 
-  /**
-   * Look up an imported entry by its unique `(sourcePath, name)` key.
-   * Returns null when no matching imported row exists.
-   */
   getImportedByPathAndName(sourcePath: string, name: string): AppMcpServer | null {
     const row = this.db
       .prepare(
@@ -200,9 +145,6 @@ export class AppMcpServerRepository {
     return row ? rowToServer(row) : null;
   }
 
-  /**
-   * Get a server entry by ID. Returns null if not found.
-   */
   get(id: string): AppMcpServer | null {
     const row = this.db.prepare(`SELECT * FROM app_mcp_servers WHERE id = ?`).get(id) as
       | AppMcpServerRow
@@ -210,9 +152,6 @@ export class AppMcpServerRepository {
     return row ? rowToServer(row) : null;
   }
 
-  /**
-   * Get a server entry by name. Returns null if not found.
-   */
   getByName(name: string): AppMcpServer | null {
     const row = this.db.prepare(`SELECT * FROM app_mcp_servers WHERE name = ?`).get(name) as
       | AppMcpServerRow
@@ -220,9 +159,6 @@ export class AppMcpServerRepository {
     return row ? rowToServer(row) : null;
   }
 
-  /**
-   * List all MCP server entries, ordered by created_at (NULLs last).
-   */
   list(): AppMcpServer[] {
     const rows = this.db
       .prepare(`SELECT * FROM app_mcp_servers ORDER BY created_at IS NULL, created_at ASC`)
@@ -230,9 +166,6 @@ export class AppMcpServerRepository {
     return rows.map(rowToServer);
   }
 
-  /**
-   * List only enabled MCP server entries, ordered by created_at (NULLs last).
-   */
   listEnabled(): AppMcpServer[] {
     const rows = this.db
       .prepare(
@@ -242,10 +175,6 @@ export class AppMcpServerRepository {
     return rows.map(rowToServer);
   }
 
-  /**
-   * Update an existing MCP server entry. Returns the updated entry or null if not found.
-   * Throws if the new name is already taken by another entry, or if sourceType is invalid.
-   */
   update(id: string, updates: Omit<UpdateAppMcpServerRequest, 'id'>): AppMcpServer | null {
     const existing = this.get(id);
     if (!existing) return null;
@@ -324,9 +253,6 @@ export class AppMcpServerRepository {
     return this.get(id);
   }
 
-  /**
-   * Delete an MCP server entry. Returns true if a row was deleted.
-   */
   delete(id: string): boolean {
     const result = this.db.prepare(`DELETE FROM app_mcp_servers WHERE id = ?`).run(id);
     const deleted = result.changes > 0;

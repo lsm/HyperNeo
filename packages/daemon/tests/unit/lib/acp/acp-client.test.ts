@@ -1,9 +1,3 @@
-/**
- * AcpClient Tests
- *
- * Unit tests for ACP protocol client lifecycle and request handling.
- */
-
 import { describe, expect, test, mock, beforeEach, afterAll } from 'bun:test';
 import type {
   AcpJsonRpcNotification,
@@ -11,10 +5,6 @@ import type {
   AcpJsonRpcResponse,
   AcpTransportOptions,
 } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Mock AcpTransport
-// ---------------------------------------------------------------------------
 
 let lastMockTransport: MockAcpTransport | null = null;
 
@@ -63,15 +53,6 @@ class MockAcpTransport {
   }
 }
 
-// Bun:test shares one module registry across all files in a process, so the
-// transport stub below would otherwise leak into sibling suites (e.g.
-// acp-transport.test.ts, which imports the real buildAcpProcessEnv and would get
-// `undefined` from the stub). Capture the real module and re-point the mock at
-// it in afterAll — Bun-only: Vitest scopes vi.mock per file (no leak), its
-// hoisting means a require/import here would capture the stub anyway, and
-// Vitest's require() cannot resolve this relative TS path. Under Bun, require()
-// is synchronous and runs before mock.module registers the stub, so it captures
-// the genuine implementation.
 let originalAcpTransport: typeof import('../../../../src/lib/acp/acp-transport') | undefined;
 if (typeof Bun !== 'undefined') {
   originalAcpTransport = require('../../../../src/lib/acp/acp-transport');
@@ -81,13 +62,9 @@ mock.module('../../../../src/lib/acp/acp-transport', () => ({
   AcpTransport: MockAcpTransport,
 }));
 
-// Import after mock
 const { AcpClient } = await import('../../../../src/lib/acp/acp-client');
 
 afterAll(() => {
-  // Restore the real module so sibling files get the genuine AcpTransport /
-  // buildAcpProcessEnv under Bun's shared module registry. (No-op under Vitest,
-  // where `Bun` is undefined and vi.mock is already file-scoped.)
   if (originalAcpTransport) {
     mock.module('../../../../src/lib/acp/acp-transport', () => originalAcpTransport);
   }
@@ -97,10 +74,6 @@ describe('AcpClient', () => {
   beforeEach(() => {
     lastMockTransport = null;
   });
-
-  // -------------------------------------------------------------------------
-  // Lifecycle
-  // -------------------------------------------------------------------------
 
   test('initialize sends correct params and stores capabilities', async () => {
     const client = new AcpClient({ command: 'acp-agent' });
@@ -138,7 +111,6 @@ describe('AcpClient', () => {
     const client = new AcpClient({ command: 'acp-agent' });
     const transport = lastMockTransport!;
 
-    // Set up auth methods via initialize
     const initPromise = client.initialize();
     transport.resolveRequest(1, {
       protocolVersion: 1,
@@ -167,7 +139,6 @@ describe('AcpClient', () => {
     await initPromise;
 
     await client.authenticate();
-    // Only initialize was sent
     expect(transport.sendRequest).toHaveBeenCalledTimes(1);
   });
 
@@ -277,25 +248,18 @@ describe('AcpClient', () => {
     ]);
   });
 
-  // -------------------------------------------------------------------------
-  // Prompt streaming
-  // -------------------------------------------------------------------------
-
   test('sendPrompt yields session/update notifications', async () => {
     const client = new AcpClient({ command: 'acp-agent' });
     const transport = lastMockTransport!;
 
-    // Set up session
     const sessionPromise = client.createSession('/tmp');
     transport.resolveRequest(1, { sessionId: 'sess-456' });
     await sessionPromise;
 
     const gen = client.sendPrompt([{ type: 'text', text: 'hello' }]);
 
-    // Start generator (async generators are lazy)
     const nextPromise = gen.next();
 
-    // Emit notification after generator has started
     transport.emitNotification({
       jsonrpc: '2.0',
       method: 'session/update',
@@ -305,7 +269,6 @@ describe('AcpClient', () => {
       },
     });
 
-    // Resolve the prompt request to end the generator
     transport.resolveRequest(2, { stopReason: 'end_turn' });
 
     const updates: unknown[] = [];
@@ -338,7 +301,6 @@ describe('AcpClient', () => {
 
     const gen = client.sendPrompt([{ type: 'text', text: 'hello' }]);
 
-    // Start generator and reject the prompt request
     const nextPromise = gen.next();
     transport.resolveError(2, { code: -32600, message: 'Bad prompt' });
 
@@ -367,10 +329,6 @@ describe('AcpClient', () => {
     });
 
     const nextPromise = gen.next();
-    // Zero-update prompt: the successful prompt response is the acceptance
-    // fallback, and its callback throws. The generator must still TERMINATE —
-    // previously `done` was never set and sendPrompt waited forever with no
-    // request left to resolve it.
     transport.resolveRequest(2, { stopReason: 'end_turn' });
 
     const result = await nextPromise;
@@ -395,8 +353,6 @@ describe('AcpClient', () => {
 
     const nextPromise = gen.next();
 
-    // First update: the acceptance callback throws — the update must NOT be
-    // dropped with it, and acceptance must stay retryable (not suppressed).
     transport.emitNotification({
       jsonrpc: '2.0',
       method: 'session/update',
@@ -424,12 +380,8 @@ describe('AcpClient', () => {
     }
 
     expect(updates.length).toBe(2);
-    expect(acceptCalls).toBe(2); // failed once, retried on the next update
+    expect(acceptCalls).toBe(2);
   });
-
-  // -------------------------------------------------------------------------
-  // Cancel / close
-  // -------------------------------------------------------------------------
 
   test('cancel sends session/cancel notification', async () => {
     const client = new AcpClient({ command: 'acp-agent' });
@@ -467,10 +419,6 @@ describe('AcpClient', () => {
     expect(transport.close).toHaveBeenCalledTimes(1);
   });
 
-  // -------------------------------------------------------------------------
-  // Server-to-client request handlers
-  // -------------------------------------------------------------------------
-
   test('delegates fs/read to onFsRead callback', async () => {
     const onFsRead = mock(async () => ({ content: 'file contents' }));
     const client = new AcpClient({ command: 'acp-agent', onFsRead });
@@ -483,7 +431,6 @@ describe('AcpClient', () => {
       params: { sessionId: 's1', path: '/tmp/file.txt' },
     });
 
-    // Allow async handler to run
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     expect(onFsRead).toHaveBeenCalledWith({ sessionId: 's1', path: '/tmp/file.txt' });
@@ -595,7 +542,6 @@ describe('AcpClient', () => {
     const client = new AcpClient({ command: 'acp-agent' });
     const transport = lastMockTransport!;
 
-    // Should not throw
     transport.emitNotification({
       jsonrpc: '2.0',
       method: 'session/update',

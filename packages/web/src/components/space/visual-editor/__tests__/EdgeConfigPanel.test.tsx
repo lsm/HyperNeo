@@ -1,36 +1,9 @@
-// @vitest-environment happy-dom
-
-/**
- * Unit tests for EdgeConfigPanel component.
- *
- * Tests:
- * - Renders from/to step names (read-only)
- * - Renders condition type selector with current value
- * - Does not show expression input for 'always' condition type
- * - Does not show expression input for 'human' condition type
- * - Shows expression input for 'condition' type
- * - Expression input reflects current expression value
- * - Changing condition type calls onUpdateCondition with new type
- * - Switching away from 'condition' type clears expression
- * - Switching to 'condition' type preserves existing expression
- * - Editing expression calls onUpdateCondition with updated expression
- * - Shows expression input for 'task_result' type with "Match value" label
- * - Editing task_result expression calls onUpdateCondition with 'task_result' type (not 'condition')
- * - Switching from 'condition' to 'task_result' preserves expression
- * - Clicking delete button calls onDelete with transition id
- * - Clicking close button calls onClose
- */
-
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { EdgeConfigPanel } from '../EdgeConfigPanel';
 import type { EdgeConfigPanelProps, EdgeTransition } from '../EdgeConfigPanel';
 
 afterEach(() => cleanup());
-
-// ============================================================================
-// Fixtures
-// ============================================================================
 
 function makeTransition(overrides?: Partial<EdgeTransition>): EdgeTransition {
   return {
@@ -54,10 +27,6 @@ function makeProps(
     ...overrides,
   };
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 describe('EdgeConfigPanel', () => {
   it('renders from step name', () => {

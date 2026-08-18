@@ -1,20 +1,3 @@
-/**
- * Migration 177 Tests — `sessions.visible_message_count` counter + backfill.
- *
- * The space-sessions badge (`spaceSessions.bySpace`) used to run a correlated
- * COUNT(*) over `sdk_messages` per session. Migration 177 replaces that with a
- * maintained column. These tests cover only the migration itself (column add +
- * one-time backfill); the incremental maintenance is covered by the
- * SDKMessageRepository suite.
- *
- * Covers:
- *   - Pre-M177 schema: the column is added and backfilled from the badge
- *     predicate (top-level rows, non-deferred user rows, non-hidden subtypes).
- *   - Idempotent re-run recomputes the same totals.
- *   - Fresh, fully-migrated DB carries the column from createTables.
- *   - Missing-table guards (empty DB; sessions without sdk_messages).
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -27,7 +10,6 @@ function columnNames(db: BunDatabase, table: string): string[] {
   return rows.map((r) => r.name);
 }
 
-/** Minimal pre-M177 shape: sessions without visible_message_count + sdk_messages. */
 function seedPreM177Schema(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE sessions (
@@ -108,17 +90,15 @@ describe('Migration 177: sessions.visible_message_count counter + backfill', () 
     beforeEach(() => {
       seedPreM177Schema(db);
       db.prepare(`INSERT INTO sessions (id, title) VALUES (?, '')`).run('s1');
-      db.prepare(`INSERT INTO sessions (id, title) VALUES (?, '')`).run('s2'); // no messages
-      // s1 visible rows
+      db.prepare(`INSERT INTO sessions (id, title) VALUES (?, '')`).run('s2');
       insertMessage(db, 'a1', 's1', 'assistant');
       insertMessage(db, 'a2', 's1', 'user', { sendStatus: 'consumed' });
       insertMessage(db, 'a3', 's1', 'user', { sendStatus: 'failed' });
-      // s1 invisible rows
       insertMessage(db, 'a4', 's1', 'user', { sendStatus: 'deferred' });
       insertMessage(db, 'a5', 's1', 'user', { sendStatus: 'enqueued' });
       insertMessage(db, 'a6', 's1', 'system', { subtype: 'session_state_changed' });
       insertMessage(db, 'a7', 's1', 'system', { subtype: 'thinking_tokens' });
-      insertMessage(db, 'a8', 's1', 'assistant', { parent: 'toolu_1' }); // subagent
+      insertMessage(db, 'a8', 's1', 'assistant', { parent: 'toolu_1' });
     });
 
     test('adds the NOT NULL DEFAULT 0 column', () => {
@@ -129,8 +109,6 @@ describe('Migration 177: sessions.visible_message_count counter + backfill', () 
 
     test('backfills the badge predicate (3 visible for s1, 0 for s2)', () => {
       runMigration177(db);
-      // assistant + consumed user + failed user; deferred/enqueued, hidden
-      // subtypes, and the subagent row are all excluded.
       expect(visibleCount(db, 's1')).toBe(3);
       expect(visibleCount(db, 's2')).toBe(0);
     });
@@ -146,7 +124,6 @@ describe('Migration 177: sessions.visible_message_count counter + backfill', () 
 
   describe('fresh DB (all migrations applied)', () => {
     beforeEach(() => {
-      // Real daemon init order: bootstrap tables, then run migrations.
       createTables(db);
       runMigrations(db, () => {});
     });

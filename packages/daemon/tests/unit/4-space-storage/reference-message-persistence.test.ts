@@ -1,7 +1,3 @@
-/**
- * Reference Resolver + MessagePersistence integration tests
- */
-
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
 import type { Database } from '../../../src/storage/database';
@@ -15,10 +11,6 @@ import type {
   GoalRepoForReference,
 } from '../../../src/lib/rpc-handlers/reference-handlers';
 import type { NeoTask, RoomGoal } from '@hyperneo/shared';
-
-// ============================================================================
-// Helpers
-// ============================================================================
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -46,10 +38,6 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     ...overrides,
   };
 }
-
-// ============================================================================
-// ReferenceResolver.extractReferences
-// ============================================================================
 
 describe('ReferenceResolver.extractReferences', () => {
   it('returns empty array when text has no references', () => {
@@ -95,14 +83,12 @@ describe('ReferenceResolver.extractReferences', () => {
   });
 
   it('skips malformed tokens that do not match the pattern', () => {
-    // No colon separator — won't match
     const result = ReferenceResolver.extractReferences('Bad: @ref{taskonly} and @ref{} and text');
     expect(result).toEqual([]);
   });
 
   it('is not affected by stateful regex between multiple calls', () => {
     const text = '@ref{task:t-10}';
-    // Call multiple times — lastIndex should be reset each time
     const r1 = ReferenceResolver.extractReferences(text);
     const r2 = ReferenceResolver.extractReferences(text);
     const r3 = ReferenceResolver.extractReferences(text);
@@ -111,10 +97,6 @@ describe('ReferenceResolver.extractReferences', () => {
     expect(r3).toHaveLength(1);
   });
 });
-
-// ============================================================================
-// ReferenceResolver.resolveAllReferences
-// ============================================================================
 
 describe('ReferenceResolver.resolveAllReferences', () => {
   let taskRepo: TaskRepoForReference;
@@ -223,24 +205,18 @@ describe('ReferenceResolver.resolveAllReferences', () => {
   it('deduplicates duplicate references before resolving', async () => {
     const text = '@ref{task:t-1} and again @ref{task:t-1}';
     const mentions = ReferenceResolver.extractReferences(text);
-    expect(mentions).toHaveLength(2); // extraction returns duplicates
+    expect(mentions).toHaveLength(2);
 
     const getTaskSpy = taskRepo.getTask as ReturnType<typeof mock>;
     const getByShortIdSpy = taskRepo.getTaskByShortId as ReturnType<typeof mock>;
 
     await resolver.resolveAllReferences(mentions, { workspacePath: '/ws', roomId: 'room-1' });
 
-    // getTask should be called at most once for t-1 (deduplication)
     const taskCallCount =
       (getTaskSpy.mock.calls.length as number) + (getByShortIdSpy.mock.calls.length as number);
-    // With deduplication, we resolve each unique token once
-    expect(taskCallCount).toBeLessThanOrEqual(2); // at most 1 getTask + 1 getByShortId for the single unique token
+    expect(taskCallCount).toBeLessThanOrEqual(2);
   });
 });
-
-// ============================================================================
-// MessagePersistence.persist with ReferenceResolver
-// ============================================================================
 
 describe('MessagePersistence with ReferenceResolver', () => {
   let mockSessionCache: SessionCache;
@@ -394,7 +370,6 @@ describe('MessagePersistence with ReferenceResolver', () => {
       'test-session-id',
       expect.objectContaining({
         referenceMetadata: {
-          // displayText uses the task title, not the raw ID
           '@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Task one' },
         },
       }),
@@ -470,14 +445,12 @@ describe('MessagePersistence with ReferenceResolver', () => {
       badResolver
     );
 
-    // Should not throw — errors are swallowed in preprocessReferences
     await persistence.persist({
       sessionId: 'test-session-id',
       messageId: 'msg-5',
       content: 'See @ref{task:t-1}',
     });
 
-    // Message is still saved — without metadata
     expect(saveUserMessageSpy).toHaveBeenCalledWith(
       'test-session-id',
       expect.objectContaining({ uuid: 'msg-5', type: 'user' }),
@@ -530,9 +503,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
       'test-session-id',
       expect.objectContaining({
         referenceMetadata: {
-          // Resolved reference uses entity title
           '@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Task one' },
-          // Unresolved reference is included with status: 'unresolved'
           '@ref{task:t-999}': {
             type: 'task',
             id: 't-999',

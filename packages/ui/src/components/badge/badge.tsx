@@ -3,8 +3,6 @@ import { useCallback, useState } from 'preact/hooks';
 import { render } from '../../internal/render.ts';
 import type { ElementType } from '../../internal/types.ts';
 
-// --- Badge ---
-
 type BadgeVariant = 'subtle' | 'outline' | 'solid';
 type BadgeColor = 'gray' | 'red' | 'yellow' | 'green' | 'blue' | 'indigo' | 'purple' | 'pink';
 type BadgeSize = 'sm' | 'md';
@@ -52,7 +50,6 @@ function BadgeFn({
     'data-shape': shape,
     'data-dot': dot ? '' : undefined,
     'data-removable': removable ? '' : undefined,
-    // Interaction state handlers
     onMouseEnter: () => setHover(true),
     onMouseLeave: () => setHover(false),
     onFocus: () => setFocus(true),
@@ -61,7 +58,6 @@ function BadgeFn({
     onMouseUp: () => setActive(false),
   };
 
-  // Build children with optional dot and remove button
   const dotElement = dot
     ? createElement('svg', {
         'aria-hidden': 'true',

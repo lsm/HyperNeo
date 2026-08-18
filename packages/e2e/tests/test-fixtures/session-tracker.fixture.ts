@@ -1,41 +1,21 @@
-/**
- * Session Tracker Fixture
- *
- * Automatically tracks all sessions created during tests and ensures cleanup
- * even when tests fail. Uses direct RPC calls that don't depend on page state.
- */
-
 import { test as base, type Page } from '@playwright/test';
 
-// Global registry of sessions to clean up
 const sessionsToCleanup = new Set<string>();
 
-/**
- * Track a session ID for cleanup
- */
 export function trackSession(sessionId: string): void {
   if (sessionId && sessionId !== 'undefined' && sessionId !== 'null') {
     sessionsToCleanup.add(sessionId);
   }
 }
 
-/**
- * Remove session from cleanup registry (already cleaned up)
- */
 export function untrackSession(sessionId: string): void {
   sessionsToCleanup.delete(sessionId);
 }
 
-/**
- * Get all tracked sessions
- */
 export function getTrackedSessions(): string[] {
   return Array.from(sessionsToCleanup);
 }
 
-/**
- * Direct RPC cleanup via WebSocket (doesn't depend on page state)
- */
 async function cleanupSessionDirect(page: Page, sessionId: string): Promise<boolean> {
   try {
     const result = await page.evaluate(async (sid) => {
@@ -62,23 +42,12 @@ async function cleanupSessionDirect(page: Page, sessionId: string): Promise<bool
   }
 }
 
-/**
- * Extended test fixture with automatic session cleanup
- */
 export const test = base.extend({
   page: async ({ page }, use) => {
-    // Provide page to test
     await use(page);
-
-    // After test completes (or fails), cleanup any sessions created in this test
-    // Note: Individual tests should still call cleanupTestSession in afterEach
-    // This is a safety net for when tests fail before cleanup
   },
 });
 
-/**
- * Global cleanup - runs after ALL tests complete
- */
 export async function globalCleanup(page: Page): Promise<void> {
   const sessions = getTrackedSessions();
 
@@ -105,5 +74,4 @@ export async function globalCleanup(page: Page): Promise<void> {
   console.log(`✅ Cleaned: ${cleaned}, ❌ Failed: ${failed}`);
 }
 
-// Export base test for tests that don't need session tracking
 export { expect } from '@playwright/test';

@@ -59,9 +59,6 @@ const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
   open: 'Open',
   in_progress: 'In Progress',
   review: 'Awaiting Review',
-  // `approved` is the post-approval staging status: tasks land here when an
-  // agent calls `approve_task`, then the PostApprovalRouter dispatches the
-  // follow-up (auto-merge, human gate, or no-route → `done`).
   approved: 'Approved',
   done: 'Done',
   blocked: 'Blocked',
@@ -166,7 +163,6 @@ export function SpaceTaskPane({
   navigationSpaceId: routeSpaceId,
   onClose,
 }: SpaceTaskPaneProps) {
-  // Lazy-load agents/workflows needed for mention autocomplete and canvas
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
   }, [spaceId]);
@@ -196,12 +192,7 @@ export function SpaceTaskPane({
   const draftWasActiveRef = useRef(false);
   const currentTaskIdRef = useRef<string | null>(taskId);
   currentTaskIdRef.current = taskId;
-  // Monotonic counter bumped on every node click so an async handleNodeClick
-  // continuation can detect that a newer click superseded it (not just a task
-  // switch) and bail before overwriting the newer node's result.
   const nodeClickGenRef = useRef(0);
-  // Cleared on unmount so an async handleNodeClick continuation (the
-  // workflow-detail fetch) can't push overlay state after the pane is gone.
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -209,18 +200,10 @@ export function SpaceTaskPane({
       mountedRef.current = false;
     };
   }, []);
-  // Modal-local error feedback. Separate from `threadSendError` because
-  // `threadSendError` is rendered inside `TaskSessionChatComposer`, which is
-  // only mounted when the inline composer is visible. A failed submit-for-
-  // review RPC needs to surface inside the modal regardless of composer
-  // visibility — see `SubmitForReviewModalProps.error`.
   const [submitForReviewError, setSubmitForReviewError] = useState<string | null>(null);
   const [showEditTaskModal, setShowEditTaskModal] = useState(false);
   const [editTaskBusy, setEditTaskBusy] = useState(false);
   const [editTaskError, setEditTaskError] = useState<string | null>(null);
-  // Identity-safe node-click picker. Set when a clicked node resolves to an
-  // ambiguous (multi-agent / multi-slot) or zero-agent state; selecting a
-  // choice transitions into the proper session/pending overlay.
   const [nodeChoice, setNodeChoice] = useState<{
     taskId: string;
     nodeName: string;
@@ -259,8 +242,6 @@ export function SpaceTaskPane({
     };
   }, [taskId]);
 
-  // Resolve runId/workflowId here (before the early returns) so the hook-state
-  // hook is always called — React's Rules of Hooks require a stable call order.
   const _runId = task?.workflowRunId ?? null;
   const _workflowRunForHook = _runId
     ? (spaceStore.workflowRuns.value.find((r) => r.id === _runId) ?? null)
@@ -328,21 +309,14 @@ export function SpaceTaskPane({
     navigateToSpaceTask(navigationSpaceId, task.id, 'thread', true);
   }, [auxiliaryPanelTab, navigationSpaceId, targetSpaceIdForTask, task.id, task.workflowRunId]);
 
-  // Resolve the primary agent session from activity members (node-agent sessions).
-  // Previously derived from threadSessionId (task-agent session), which no longer exists.
   const agentSessionId =
     activityMembers.find((m) => m.kind === 'node_agent' && m.sessionId)?.sessionId ?? null;
 
-  // Resolve workflowId from the active run for canvas mode
   const workflowRun = task.workflowRunId
     ? (spaceStore.workflowRuns.value.find((r) => r.id === task.workflowRunId) ?? null)
     : null;
   const canvasWorkflowId = workflowRun?.workflowId ?? null;
 
-  // Fetch full workflow detail for composer targets and declared-agent slots.
-  // spaceStore.workflows only holds lightweight summaries.
-  // Read the workflow version so the effect re-runs when the same workflow
-  // is edited in place (spaceStore bumps the version on spaceWorkflow.updated).
   const workflowVersion = spaceStore.workflowVersions.value.get(canvasWorkflowId ?? '') ?? 0;
   useEffect(() => {
     if (!canvasWorkflowId) {
@@ -350,9 +324,6 @@ export function SpaceTaskPane({
       return;
     }
     let cancelled = false;
-    // Clear stale workflow immediately so composer targets and @mention
-    // candidates are never derived from a previous workflow while the new
-    // fetch is in flight.
     setFullWorkflow(null);
     spaceStore.fetchWorkflowDetail(canvasWorkflowId).then((wf) => {
       if (!cancelled) setFullWorkflow(wf);
@@ -362,34 +333,18 @@ export function SpaceTaskPane({
     };
   }, [canvasWorkflowId, workflowVersion]);
 
-  // Scope @mention autocomplete to workflow agents only (no agents for non-workflow tasks)
   const workflow = fullWorkflow;
   const spaceAgents = spaceStore.agents.value;
   const nodeExecutions = spaceStore.nodeExecutions.value;
   const composerTargets: TaskComposerTarget[] = useMemo(() => {
-    // The durable node the post-approval worker spawns on — the node DECLARING
-    // the target agent slot (spawnPostApprovalSubSession scans for that slot),
-    // NOT task.postApprovalSourceNodeId (the SUBMITTER node, which may differ).
-    // Mirrors handleNodeClick's postApprovalNodeId: prefer the current worker
-    // member's nodeId, else the workflow node whose agents include the route's
-    // target agent.
     const composerWorkerMember = activityMembers.find(
       (m) =>
         m.kind === 'node_agent' &&
         m.nodeExecution?.isCurrentPostApproval === true &&
-        // Durable cross-check (mirrors handleNodeClick's currentWorkerMember):
-        // a snapshot-lagging W1 must not supply the durable worker node while
-        // postApprovalSessionId already points at W2.
         (!task.postApprovalSessionId || m.sessionId === task.postApprovalSessionId)
     );
     let composerPostApprovalTarget: string | null =
-      // Prefer the current worker member's own slot name (mirrors handleNodeClick)
-      // so the durable fallback works even when the workflow detail isn't loaded
-      // and survives a post-spawn route edit (provenanceName != new targetAgent).
       composerWorkerMember?.nodeExecution?.agentName ?? null;
-    // Fall back to the workflow route ONLY when no durable member identity is
-    // available — an unconditional overwrite would let an edited route rename
-    // the target and strip the actual worker slot of its durable protection.
     if (!composerPostApprovalTarget && workflow) {
       for (const n of workflow.nodes) {
         const t = n.postApproval?.targetAgent;
@@ -413,9 +368,6 @@ export function SpaceTaskPane({
     const nodeTargets =
       workflow?.nodes.flatMap((node) =>
         node.agents.map((agent) => {
-          // EXACT name match when the member has execution identity (mirrors
-          // resolveTargetSessionId) so separator-distinct siblings (qa / qa_one)
-          // don't collide; normalized matching only for role-only members.
           const matchingMembers = activityMembers.filter((m) => {
             if (m.kind !== 'node_agent') return false;
             if (m.nodeExecution?.nodeId && m.nodeExecution.nodeId !== node.id) return false;
@@ -427,19 +379,10 @@ export function SpaceTaskPane({
             matchingMembers.find(
               (m) =>
                 m.nodeExecution?.isCurrentPostApproval === true &&
-                // Durable cross-check: a lagging W1 must not claim its old slot
-                // while postApprovalSessionId already points at W2.
                 (!task.postApprovalSessionId || m.sessionId === task.postApprovalSessionId)
             ) ??
-            // Fallback to a NON-worker member; a stale current W1 (session !=
-            // durable) must NOT be trusted — matchingMembers[0] could select it
-            // and its isCurrentPostApproval flag would drop the old slot's pin.
             matchingMembers.find((m) => m.nodeExecution?.isCurrentPostApproval !== true) ??
             null;
-          // nodeExecutions is ORDER BY created_at ASC; the NEWEST matching
-          // execution is authoritative (mirror the daemon's .at(-1) reuse
-          // path). Exclude cancelled/pending residue rows that retain a dead
-          // agentSessionId.
           const nodeExecution =
             task.workflowRunId && node.id
               ? (nodeExecutions
@@ -449,35 +392,12 @@ export function SpaceTaskPane({
                       execution.workflowNodeId === node.id &&
                       execution.status !== 'cancelled' &&
                       execution.status !== 'pending' &&
-                      // EXACT slot name (mirrors the resolver) so separator-
-                      // distinct siblings (qa-one / qa_one) don't cross-bind.
                       execution.agentName === agent.name
                   )
                   .at(-1) ?? null)
               : null;
           const spaceAgent = spaceAgents.find((a) => a.id === agent.agentId) ?? null;
-          // When the current post-approval worker owns this node+slot, the
-          // slot's live identity is the execution-less worker — NOT the stale
-          // ordinary node_execution row a review-then-merge slot may also
-          // carry. Drop the execution pin so the composer's model/thinking/
-          // context and sendThreadMessage route to the worker (via
-          // matchesPostApproval) instead of the ordinary session. The durable
-          // postApprovalSessionId is carried as nodeExecutionSessionId so the
-          // binding path (resolveTargetSessionId) can prefer it over a lagging
-          // snapshot.
-          // workerOwnsSlot must survive an activity snapshot gap: derive it
-          // from the DURABLE post-approval signal (this node is the worker's
-          // DECLARING node — durableWorkerNodeId — AND a worker session exists)
-          // in addition to the transient member flag. Without this, a resnapshot
-          // that briefly omits the worker member flips it false and the composer
-          // regains the stale ordinary execution pin, routing sends to the
-          // ordinary session instead of the worker.
           const durableWorkerNode = durableWorkerNodeId === node.id && !!task.postApprovalSessionId;
-          // The durable fallback applies ONLY to the worker's OWN target slot —
-          // the declared slot whose name equals the post-approval target agent.
-          // (member.role === agent.name was trivially true for every populated
-          // slot on the worker's node, hijacking live siblings like coder on a
-          // merger node and routing their sends to the merger.)
           const durableWorkerSlot = durableWorkerNode && agent.name === composerPostApprovalTarget;
           const workerOwnsSlot =
             member?.nodeExecution?.isCurrentPostApproval === true || durableWorkerSlot;
@@ -498,24 +418,15 @@ export function SpaceTaskPane({
         })
       ) ?? [];
 
-    // Fallback: when the workflow definition is unavailable (async fetch race,
-    // deleted/renamed workflow, stale run metadata), derive targets from live
-    // activity members so the composer still works against running agents.
     const fallbackTargets: TaskComposerTarget[] = [];
     if (nodeTargets.length === 0 && activityMembers.length > 0) {
       const seen = new Set<string>();
       for (const m of activityMembers) {
         if (m.kind !== 'node_agent' || !m.role) continue;
-        // Exclude cancelled / pending-with-retained-session members (dead
-        // session) — advertising one would route sends into a session the
-        // daemon's route filter won't inject into.
         if (m.nodeExecution?.status === 'cancelled' || m.nodeExecution?.status === 'pending')
           continue;
         const name = normalizeTargetName(m.role);
         if (seen.has(name)) continue;
-        // Prefer the durable-current worker over a historical W1 that may have a
-        // newer updatedAt (W1 encountered first would otherwise be kept while
-        // sends route to W2).
         const preferred =
           m.nodeExecution?.isCurrentPostApproval === true &&
           (!task.postApprovalSessionId || m.sessionId === task.postApprovalSessionId)
@@ -525,22 +436,9 @@ export function SpaceTaskPane({
                   other.kind === 'node_agent' &&
                   normalizeTargetName(other.role ?? '') === name &&
                   other.nodeExecution?.isCurrentPostApproval === true &&
-                  // Durable cross-check: a lagging W1 must not be preferred
-                  // while postApprovalSessionId already points at W2.
                   (!task.postApprovalSessionId || other.sessionId === task.postApprovalSessionId)
               ) ?? m);
         seen.add(name);
-        // When the chosen member is flagged isCurrentPostApproval but its
-        // session differs from the durable pointer (snapshot-lag W1 while the
-        // durable is W2), DROP its nodeExecutionId — the pinned id would defeat
-        // both resolveTargetSessionId's durable override and the daemon's
-        // matchesPostApproval, pinning display+send to W1. With no execution
-        // pin, the durable session carry below dominates.
-        // When the only member for this role is a snapshot-lagging W1 (flagged
-        // current but session != durable W2), WITHHOLD the target entirely —
-        // pairing W2's session with W1's node/role would send a provenance that
-        // the daemon rejects (or that lazy-activates the wrong ordinary slot).
-        // Wait for W2's provenance to arrive instead of offering a broken target.
         if (
           preferred.nodeExecution?.isCurrentPostApproval === true &&
           !!task.postApprovalSessionId &&
@@ -554,10 +452,6 @@ export function SpaceTaskPane({
           label: preferred.label,
           agentName: preferred.role,
           nodeExecutionId: preferred.nodeExecution?.nodeExecutionId,
-          // For the current worker, carry the DURABLE pointer so
-          // resolveTargetSessionId's durable override fires even on this
-          // degraded path (a transient W1 id would otherwise let the composer
-          // bind W1 while sends route to W2).
           nodeExecutionSessionId:
             preferred.nodeExecution?.isCurrentPostApproval === true && task.postApprovalSessionId
               ? task.postApprovalSessionId
@@ -578,10 +472,6 @@ export function SpaceTaskPane({
     spaceAgents,
   ]);
 
-  // Extract per-agent default models from the workflow definition so the
-  // composer can show the workflow-defined model as the default for agents
-  // that haven't started yet. Keyed by target ID (node:${nodeId}:${agentName})
-  // to avoid collisions when multiple nodes reuse the same agent slot name.
   const defaultAgentModels = useMemo(() => {
     const map = new Map<string, string>();
     if (!workflow) return map;
@@ -602,29 +492,12 @@ export function SpaceTaskPane({
   const isTerminalTask =
     task.status === 'done' || task.status === 'cancelled' || task.status === 'archived';
 
-  // Close edit modal if the task becomes terminal while the modal is open
-  // (e.g. another client transitions the task to done/cancelled/archived).
   useEffect(() => {
     if (isTerminalTask && showEditTaskModal) {
       setShowEditTaskModal(false);
     }
   }, [isTerminalTask]);
 
-  // Per-agent activity. Each member that's currently executing (not idle /
-  // completed / failed / interrupted) contributes its label to the active set.
-  // The thread feed keys the live rail off this set so that, in multi-session
-  // workflows, every still-running agent's trailing non-terminal block renders
-  // its own active rail — a single boolean would collapse incorrectly when one
-  // agent's terminal result row lands after another agent's last visible row.
-  //
-  // `useMemo` keeps the `Set` reference stable between renders when the
-  // activity-members snapshot hasn't changed, so descendants that diff
-  // `activeAgentLabels` by identity (or use it as a hook dependency) don't
-  // see spurious churn on every re-render of the pane.
-  //
-  // Aggregate boolean is still useful for UI bits that ask "is anything
-  // running?" (the chat composer's processing indicator), so derive it from
-  // the set rather than recomputing from `activityMembers`.
   const activeAgentLabels = useMemo(() => {
     const labels = new Set<string>();
     for (const m of activityMembers) {
@@ -634,10 +507,6 @@ export function SpaceTaskPane({
     }
     return labels;
   }, [activityMembers]);
-  // Worker members in rate-limit cooldown / provider auth error, for the pinned
-  // banners above the feed. Derived from the same activity subscription that
-  // drives the live rails so the banners appear/disappear reactively as the
-  // session transitions in and out of cooldown / error state.
   const cooldownBannerMembers = useMemo(
     () =>
       activityMembers
@@ -695,9 +564,6 @@ export function SpaceTaskPane({
   const canSendThreadMessage =
     !isTerminalTask && !ensuringThread && !sendingThread && composerTargets.length > 0;
 
-  // Thread-column image drop zone. The inline composer registers its file-drop
-  // handler upward via registerDropTarget; this column owns the drag/drop surface
-  // so an image can be dropped anywhere over the thread (feed + composer).
   const dropFilesRef = useRef<FileDropHandler | null>(null);
   const registerDropTarget = useCallback((fn: FileDropHandler | null) => {
     dropFilesRef.current = fn;
@@ -741,10 +607,6 @@ export function SpaceTaskPane({
     setSelectedTargetId(defaultTarget.id);
   }, [defaultTarget, hasComposerDraft, selectedTargetId, targetLocked]);
 
-  // The global recording chip asked this task thread to restore a specific
-  // recipient (the target whose session owns the recording). Select + lock it
-  // once its target row is present, then clear the request so a later mount
-  // does not re-select a stale target.
   const voiceReturnTargetSession = voiceReturnTaskTargetSessionSignal.value;
   useEffect(() => {
     if (!voiceReturnTargetSession) return;
@@ -828,22 +690,10 @@ export function SpaceTaskPane({
     }
   }, [activeView, canShowCanvasTab, navigationSpaceId, taskId]);
 
-  // Ensure node-execution liveness is loaded for thread-view workflow tasks, not
-  // only when the canvas is toggled. The composer target's nodeExecutionSessionId
-  // (the execution's live agentSessionId) is derived from this; without it the
-  // session latch can't detect a detached worker, so opening a task directly in
-  // thread would leave a stale session latched.
-  // Passing null (standalone task / no task) tears down any prior run's
-  // subscription so only the open task's run — if any — stays live.
   useEffect(() => {
     spaceStore.ensureNodeExecutions(task?.workflowRunId ?? null).catch(() => {});
   }, [task?.workflowRunId]);
 
-  // Release the node-execution subscription when the pane unmounts (closing the
-  // pane or navigating to another view in the same space) so no run keeps
-  // streaming with no open task. Empty deps → cleanup runs only on unmount, not
-  // on every task switch (the [workflowRunId] effect above handles rescoping).
-  // ensureNodeExecutions(null) is a safe no-op when nothing is active.
   useEffect(() => {
     return () => {
       spaceStore.ensureNodeExecutions(null).catch(() => {});
@@ -861,28 +711,10 @@ export function SpaceTaskPane({
   }, [activeView, canShowCanvasTab, navigationSpaceId, taskId]);
 
   const handleNodeClick = async (nodeId: string, nodeName: string, agentSlotNames: string[]) => {
-    // Resolve the clicked node STRICTLY by its persisted node ID + declared
-    // agent slot identity — never falling back to another node's session. The
-    // previous "last resort: use the task's own agentSessionId" fallback was
-    // the root cause of clicking an unstarted node B opening node A's chat.
-    // See lib/node-click-resolver.ts for the full decision table.
-    //
-    // The canvas can become interactive before this pane's async fullWorkflow
-    // fetch resolves. For ordinary node clicks that's fine (the resolver falls
-    // back to live-member/node-execution identity), but the spawned merger
-    // session (task.postApprovalSessionId) is only identifiable once we know
-    // the post-approval route, which comes from the workflow. So when a merger
-    // might be involved and the detail isn't loaded yet, fetch it before
-    // resolving — otherwise a merger click would resolve as an unstarted slot
-    // and a follow-up send could spawn a duplicate ordinary merger session.
-    // Gated on postApprovalSessionId so ordinary clicks stay synchronous.
     const clickGen = ++nodeClickGenRef.current;
     let wf = workflow;
     if (!wf && task.postApprovalSessionId && canvasWorkflowId) {
       wf = await spaceStore.fetchWorkflowDetail(canvasWorkflowId).catch(() => null);
-      // The await may have spanned a task switch, another node click, OR an
-      // unmount; bail if the user has moved on so a slow fetch can't complete
-      // an obsolete click or push overlay state after unmount.
       if (
         !mountedRef.current ||
         currentTaskIdRef.current !== task.id ||
@@ -890,9 +722,6 @@ export function SpaceTaskPane({
       )
         return;
     }
-    // Re-read reactive values from the CURRENT store/refs after the await — the
-    // render-time closure captured `task`, `activityMembers`, `nodeExecutions`
-    // which may have been superseded by a reactive rebind during the fetch.
     const currentTask = taskId
       ? (spaceStore.tasks.value.find((t) => t.id === taskId) ?? null)
       : null;
@@ -903,33 +732,14 @@ export function SpaceTaskPane({
     const currentNodeExecutions = spaceStore.nodeExecutions.value;
     const clickedNode = wf?.nodes.find((n) => n.id === nodeId) ?? null;
     const slotLabel = (agentName: string): string => {
-      // Exact match (the resolver/labels preserve separator-distinct slots):
-      // normalizing would collapse qa-one / qa_one onto the first slot.
       const slot = clickedNode?.agents.find((a) => a.name === agentName) ?? null;
       const spaceAgent = slot?.agentId ? spaceAgents.find((a) => a.id === slot.agentId) : undefined;
       return spaceAgent?.name ?? formatAgentSlotLabel(agentName);
     };
-    // Agent the workflow's post-approval route targets (e.g. 'merger'). The
-    // spawned merger session carries no node_execution row, so its identity is
-    // tied to this slot via task.postApprovalSessionId inside the resolver.
-    // Mirror collectPostApprovalRoutes: prefer node-level routes, then fall
-    // back to the legacy workflow-level route for persisted workflows that
-    // predate node-level post-approval.
-    // Prefer the durable post-approval worker identity from the current
-    // activity member (agentName + nodeId captured at spawn) over the mutable
-    // workflow route — re-deriving from `wf` would send a stale/edited name
-    // while the daemon knows the worker by its provenance name, breaking
-    // matchesPostApproval and misrouting the reply.
     const currentWorkerMember = currentActivityMembers.find(
       (m) =>
         m.kind === 'node_agent' &&
         m.nodeExecution?.isCurrentPostApproval === true &&
-        // Accept the member only when its session matches the DURABLE pointer —
-        // a snapshot-lagging member (W1) for a task whose postApprovalSessionId
-        // already advanced to W2 would otherwise open W2 with W1's node/agent
-        // context. Withhold until the matching activity identity arrives.
-        // Compare against the REFRESHED task pointer (currentTask), not the
-        // render-time task — the await may have spanned a W1→W2 advance.
         (!currentTask.postApprovalSessionId || m.sessionId === currentTask.postApprovalSessionId)
     );
     let postApprovalTargetAgent: string | null =
@@ -949,13 +759,6 @@ export function SpaceTaskPane({
         }
       }
     }
-    // Resolve the node that actually declares the post-approval target slot —
-    // the node the merger session was spawned for. Binding postApprovalSessionId
-    // to this exact node ID prevents multiple same-named nodes from each opening
-    // the singular merger session. Prefer the durable node on the current
-    // worker's activity member; fall back to the workflow, matching the spawn
-    // path exactly (slot.name === targetAgent) so separator-distinct slots
-    // (qa_one / qa-one) aren't collapsed.
     const postApprovalNodeId =
       currentWorkerMember?.nodeExecution?.nodeId ??
       (postApprovalTargetAgent
@@ -980,18 +783,6 @@ export function SpaceTaskPane({
 
     switch (outcome.type) {
       case 'open_session': {
-        // Route overlay sends through space.task.sendMessage so the daemon
-        // restores + delivers to the right session. For a real node-execution
-        // session the execution id selects it directly; for the execution-less
-        // post-approval merger (no nodeExecutionId) the handler's
-        // matchesPostApproval path resolves the worker via
-        // getPostApprovalWorkerSession and calls restorePostApprovalWorkerSession
-        // before delivery — so a post-restart merger reply still reaches the
-        // worker with its node-agent tools. workflowNodeId keeps both paths
-        // node-scoped.
-        // Use the REFRESHED task (post-await) for the terminal check — the
-        // task may transition to done/cancelled while the workflow fetch was
-        // in flight, and a historical session must open read-only.
         const currentIsTerminal =
           currentTask.status === 'done' ||
           currentTask.status === 'cancelled' ||
@@ -1001,7 +792,6 @@ export function SpaceTaskPane({
           agentName: outcome.session.agentName,
           workflowNodeId: nodeId,
           sessionId: outcome.session.sessionId,
-          // A terminal task's canvas session is historical — open read-only.
           ...(currentIsTerminal ? { readonly: true } : {}),
           ...(outcome.session.nodeExecutionId
             ? { nodeExecutionId: outcome.session.nodeExecutionId }
@@ -1016,9 +806,6 @@ export function SpaceTaskPane({
         return;
       }
       case 'activate_slot':
-        // On a TERMINAL task, an unstarted slot can never activate (the daemon
-        // rejects terminal tasks) — don't offer a pending composer that only
-        // errors. Show the empty state instead.
         if (
           currentTask.status === 'done' ||
           currentTask.status === 'cancelled' ||
@@ -1027,25 +814,13 @@ export function SpaceTaskPane({
           setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: [] });
           return;
         }
-        // If a merger exists (postApprovalSessionId) but its node identity
-        // couldn't be resolved (no durable worker member AND no workflow
-        // detail), do NOT activate — activating a merger node without identity
-        // would spawn a duplicate ordinary merger session. Gate on identity
-        // availability (postApprovalNodeId), not on wf alone — durable worker
-        // identity can exist without wf, so !wf would wrongly block an
-        // unrelated unstarted node's activation until the fetch recovers.
         if (currentTask.postApprovalSessionId && !postApprovalNodeId) {
           setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: [] });
           return;
         }
-        // Unstarted single-slot node: open its OWN pending-agent overlay,
-        // carrying the node ID so the first message activates only this node
-        // (not another node that reuses the same slot name).
         pushOverlayHistoryForPendingAgent(currentTask.id, outcome.agentName, outcome.nodeId);
         return;
       case 'choose':
-        // On a TERMINAL task, pending choices can never activate (the daemon
-        // rejects terminal tasks) — withhold them; live choices stay (read-only).
         if (
           currentTask.status === 'done' ||
           currentTask.status === 'cancelled' ||
@@ -1059,36 +834,23 @@ export function SpaceTaskPane({
           });
           return;
         }
-        // Same identity-unavailability guard as activate_slot (postApprovalNodeId,
-        // not wf): don't offer pending choices that could activate a duplicate
-        // merger when identity is unavailable. Preserve live choices — they
-        // can't activate a duplicate and may belong to an unrelated node.
         if (currentTask.postApprovalSessionId && !postApprovalNodeId) {
           const safeChoices = outcome.choices.filter((c) => c.kind === 'live');
           setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: safeChoices });
           return;
         }
-        // Multi-agent node (several live) or multi-slot unstarted node: let
-        // the user pick rather than silently selecting an arbitrary slot.
         setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: outcome.choices });
         return;
       case 'empty':
-        // Zero-agent node: present a clear empty state, no fallback.
         setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: [] });
         return;
     }
   };
 
   const handleNodeChoiceSelect = (choice: NodeChoice) => {
-    // All choices belong to the one node the overlay was opened for; capture
-    // its ID before clearing so the live branch can scope routing to it.
     const clickedNodeId = nodeChoice?.nodeId;
     setNodeChoice(null);
     if (choice.kind === 'live') {
-      // Mirror open_session: always route through space.task.sendMessage so a
-      // live execution-less post-approval worker (no nodeExecutionId) is
-      // restored + delivered via matchesPostApproval, and a real node-execution
-      // choice is selected by id. workflowNodeId keeps both node-scoped.
       const taskContext: {
         taskId: string;
         agentName: string;
@@ -1099,30 +861,13 @@ export function SpaceTaskPane({
       } = {
         taskId: task.id,
         agentName: choice.agentName,
-        // On a terminal task, an execution-backed live choice is historical —
-        // open read-only so a send can't inject into the completed worker.
         ...(isTerminalTask ? { readonly: true } : {}),
         ...(clickedNodeId ? { workflowNodeId: clickedNodeId } : {}),
         ...(choice.nodeExecutionId ? { nodeExecutionId: choice.nodeExecutionId } : {}),
       };
-      // sessionId is set below after revalidation and merged into taskContext.
-      // Revalidate the session id at selection time: nodeChoice.choices is
-      // snapshotted at click time, so an execution that rebinds while the modal
-      // is open (restart/recovery/spawn) would otherwise open a stale session.
-      // For an execution-backed choice, require a CURRENT live agentSessionId —
-      // if the execution is now detached/removed (null session), do NOT fall
-      // back to the stale snapshot (the modal is already closed; the user can
-      // re-click for fresh choices). The snapshot fallback is kept ONLY for
-      // execution-less merger choices (no nodeExecutionId), whose session id is
-      // the durable postApprovalSessionId.
       let liveSessionId: string;
       if (choice.nodeExecutionId) {
         const liveExec = nodeExecutions.find((e) => e.id === choice.nodeExecutionId);
-        // A cancelled / pending-with-retained-session execution retains its stale
-        // agentSessionId (resetWorkflowNodeExecutionForSpawnRetry keeps it) —
-        // don't open it; the daemon could rehydrate/inject into the failed
-        // session while the pending execution is still eligible to spawn a
-        // replacement.
         if (
           !liveExec?.agentSessionId ||
           liveExec.status === 'cancelled' ||
@@ -1131,20 +876,7 @@ export function SpaceTaskPane({
           return;
         liveSessionId = liveExec.agentSessionId;
       } else {
-        // Execution-less (merger) choice. If the current pointer is set, use it
-        // (a W1→W2 swap while the modal was open must not open the stale W1
-        // snapshot — it would diverge from where sends route). If the pointer is
-        // cleared on a TERMINAL task (worker completed / task done), the
-        // historical workers are still viewable read-only — open the choice's
-        // snapshot. On a non-terminal task a cleared pointer mid-flow is stale —
-        // reject.
         if (task.postApprovalSessionId) {
-          // The current worker (W2) substituted for the snapshotted W1 must
-          // still belong to the CHOSEN node+slot — otherwise the overlay would
-          // display W2 under W1's identity and sends would fail provenance.
-          // Find the current worker member at the clicked node with this slot's
-          // role; if none, the W1→W2 swap moved the worker elsewhere — close
-          // the stale chooser.
           const currentWorkerForSlot = activityMembers.find(
             (m) =>
               m.kind === 'node_agent' &&
@@ -1157,9 +889,6 @@ export function SpaceTaskPane({
           liveSessionId = task.postApprovalSessionId;
         } else if (isTerminalTask) {
           liveSessionId = choice.sessionId;
-          // Historical worker on a terminal task: open it with an explicit
-          // readonly marker (no send override / composer) — the daemon would
-          // otherwise restore + inject into the completed worker.
           pushOverlayHistory(liveSessionId, choice.label, undefined, {
             taskId: task.id,
             agentName: choice.agentName,
@@ -1186,8 +915,6 @@ export function SpaceTaskPane({
   ): Promise<boolean> => {
     if (!nextMessage) return false;
     if (!runtimeSpaceId || !task) return false;
-    // Require an explicit node_agent target — messages without one are rejected
-    // by the daemon ("Target agent is required"). Guard here to avoid a round-trip.
     if (target?.kind !== 'node_agent' || !target.agentName) {
       setThreadSendError('Select a target agent before sending.');
       return false;
@@ -1204,17 +931,12 @@ export function SpaceTaskPane({
           kind: 'node_agent',
           agentName: target.agentName,
           ...(target.nodeExecutionId ? { nodeExecutionId: target.nodeExecutionId } : {}),
-          // Carry the node ID so lazy activation targets the exact node when
-          // multiple nodes reuse the same agent slot name.
           ...(target.nodeId ? { workflowNodeId: target.nodeId } : {}),
         },
         images,
         deliveryMode
       );
 
-      // When the daemon queued the message for a not-yet-spawned agent,
-      // keep the draft and surface a user-visible signal so the message
-      // is never silently lost.
       if (result?.delivered === false && !result?.queued) {
         setThreadSendError(
           'Agent is starting — your message could not be delivered. Try again in a moment.'
@@ -1241,11 +963,6 @@ export function SpaceTaskPane({
   }, []);
 
   const handleStatusTransition = async (newStatus: SpaceTaskStatus) => {
-    // Submitting for review is the human counterpart of the agent
-    // `submit_for_approval` tool — it must stamp pending-completion metadata
-    // so `PendingTaskCompletionBanner` renders. Open the optional-reason
-    // modal instead of issuing a bare status update; the modal calls
-    // `spaceStore.submitForReview` on confirm.
     if (newStatus === 'review') {
       setThreadSendError(null);
       setSubmitForReviewError(null);
@@ -1266,10 +983,6 @@ export function SpaceTaskPane({
       } else if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
         await spaceStore.recoverWorkflowTask(task.id, newStatus);
       } else {
-        // Mark Done routes through `buildMarkDonePayload` so the `approved →
-        // done` path clears post-approval fields — same payload the
-        // `PendingPostApprovalBanner` uses (task #849, G4). Other transitions
-        // are a bare status update.
         const payload = newStatus === 'done' ? buildMarkDonePayload(task) : { status: newStatus };
         await spaceStore.updateTask(task.id, payload);
       }
@@ -1287,9 +1000,6 @@ export function SpaceTaskPane({
       await spaceStore.submitForReview(task.id, reason);
       setShowSubmitForReviewModal(false);
     } catch (err) {
-      // Render the error inside the modal — `threadSendError` is invisible
-      // when the inline composer is hidden, which would leave the modal
-      // frozen with no feedback after a failed submit.
       setSubmitForReviewError(formatTaskThreadError(err));
     } finally {
       setStatusTransitioning(false);
@@ -1303,9 +1013,6 @@ export function SpaceTaskPane({
       priority: import('@hyperneo/shared').SpaceTaskPriority;
     }>
   ) => {
-    // Capture the current taskId before the async gap. After `await`,
-    // the closure's `task` is stale (captured at render time), so we
-    // read `currentTaskIdRef.current` which is updated on each render.
     const savedTaskId = task.id;
     try {
       setEditTaskBusy(true);
@@ -1326,37 +1033,17 @@ export function SpaceTaskPane({
   };
 
   const allTransitionActions = getTransitionActions(task.status);
-  // Mirrors the filter in `TaskStatusActions`: any task in `review` is
-  // "awaiting human approval via a dedicated banner" — the bare review→done /
-  // review→cancelled buttons would bypass `PostApprovalRouter` and the
-  // approval metadata stamping. Hide them so the only Approve / Cancel path
-  // is the banner. Non-approval escape hatches (Reopen, Archive) stay.
   const filteredTransitionActions =
     task.status === 'review' || task.pendingCheckpointType === 'task_completion'
       ? allTransitionActions.filter(({ target }) => target !== 'done' && target !== 'cancelled')
       : allTransitionActions;
 
-  // Merge live activity members with workflow-declared agents so the dropdown
-  // renders every peer the task can ever address — even those that haven't
-  // spawned a session yet. Activity members are the source of truth for state;
-  // the workflow definition is the source of truth for "what peers exist".
-  //
-  // Without this merge, a workflow-declared agent (e.g. `reviewer`) would not
-  // appear until the workflow tick loop activates its node, which made the
-  // peer feel "missing" to the user even though Task Agent send_message can
-  // already lazily activate it on first contact (see Task #133).
-  // Key liveness by (nodeId, agentName) so two nodes reusing a slot name are
-  // tracked independently — otherwise node A's live 'reviewer' would hide node
-  // B's unstarted 'reviewer' from the pending dropdown.
   const activeNodeSlots = new Set(
     activityMembers
       .filter(
         (m) =>
           m.kind === 'node_agent' &&
           m.nodeExecution?.nodeId &&
-          // Exclude cancelled / pending-with-retained-session rows so a dead
-          // slot doesn't suppress its workflow-declared pending-activation
-          // entry.
           m.nodeExecution?.status !== 'cancelled' &&
           m.nodeExecution?.status !== 'pending'
       )
@@ -1383,12 +1070,7 @@ export function SpaceTaskPane({
     });
   }
   const openableActivityMembers = activityMembers.filter(
-    (m) =>
-      // Exclude cancelled / pending-with-retained-session rows — their dead
-      // agentSessionId would pin a session the daemon's route filter (now
-      // excluding cancelled/pending) won't inject into, so a send would fall
-      // through to lazy-activation and spawn a fresh session (divergence).
-      m.nodeExecution?.status !== 'cancelled' && m.nodeExecution?.status !== 'pending'
+    (m) => m.nodeExecution?.status !== 'cancelled' && m.nodeExecution?.status !== 'pending'
   );
   if (openableActivityMembers.length > 0) {
     taskActionItems.push(
@@ -1399,12 +1081,6 @@ export function SpaceTaskPane({
             member.sessionId,
             member.label,
             undefined,
-            // On a TERMINAL task, open historical members READ-ONLY (explicit
-            // readonly marker) — a live context would keep the composer active
-            // and inject into the completed worker. Non-node members (Task
-            // Agent / Space Agent) on an ACTIVE task route via the generic
-            // contextless message.send path, not the workflow node-agent
-            // sender (space.task.sendMessage only resolves node agents).
             isTerminalTask
               ? {
                   taskId: task.id,
@@ -1417,9 +1093,6 @@ export function SpaceTaskPane({
                 : {
                     taskId: task.id,
                     agentName: member.role,
-                    // Pin the displayed session + node scope so a superseded
-                    // worker (W1 after W2) opens/sends to ITS OWN session (via
-                    // the daemon's hint path) instead of the current worker.
                     sessionId: member.sessionId,
                     ...(member.nodeExecution?.nodeId
                       ? { workflowNodeId: member.nodeExecution.nodeId }
@@ -1433,13 +1106,6 @@ export function SpaceTaskPane({
       }))
     );
   }
-  // Workflow-declared agents that have never spawned a session yet. We surface
-  // them as clickable entries that open a "pending" overlay routed by agent
-  // name; the first message the user sends from that overlay invokes
-  // `space.task.activateNodeAgent`, which lazily spawns the workflow node.
-  // Once `taskActivity` reflects the new session, the overlay hydrates to a
-  // normal session-mode chat and this entry is replaced by the live member
-  // from `activityMembers` above.
   if (declaredAgentSlots.length > 0) {
     taskActionItems.push(
       ...declaredAgentSlots.map((slot) => ({
@@ -1548,17 +1214,7 @@ export function SpaceTaskPane({
         </div>
       </div>
 
-      {/* Banner block lives outside the tab content so blocked / pending
-			    banners stay visible regardless of which tab the user is on.
-			    `resolveActiveTaskBanner` returns null when no banner applies —
-			    the wrapping fragment then renders nothing and the block takes
-			    zero height. */}
       {(() => {
-        // Single-slot precedence renderer — at most one banner is ever
-        // shown. Precedence (high → low):
-        //   blocked > post_approval_blocked > task_completion_pending > hook_pending
-        // The helper captures the rule so it can be unit-tested
-        // independently of the render tree.
         const banner = activeBanner;
         if (!banner) return null;
         const child =
@@ -1573,8 +1229,6 @@ export function SpaceTaskPane({
           ) : banner.kind === 'task_completion_pending' ? (
             <PendingTaskCompletionBanner task={task} spaceId={runtimeSpaceId} />
           ) : (
-            // hook_pending — PendingHookBanner renders rows for every
-            // blocked or retryable hook on the run.
             <PendingHookBanner
               runId={banner.runId}
               spaceId={runtimeSpaceId}

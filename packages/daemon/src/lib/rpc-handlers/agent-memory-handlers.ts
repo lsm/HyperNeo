@@ -15,20 +15,11 @@ export function setupAgentMemoryHandlers(
       spaceId: request.spaceId,
       key: readRequiredString(payload, 'key'),
       content: readRequiredString(payload, 'content'),
-      // Forward `tags` only when the caller actually sent it so the repository
-      // can preserve previously stored tags on content-only updates instead of
-      // silently clearing them.
       tags: readOptionalStringArray(payload, 'tags'),
-      // Provenance is never trusted from RPC payloads — RPC writes have no
-      // agent-session attribution. Agent-authored writes flow through the MCP
-      // tool, which supplies the session id from the runtime.
       createdBySession: null,
     });
   });
 
-  // Atomic insert-only create: fails when the (spaceId, key) already exists, so
-  // the management UI's "New Memory" flow can never silently overwrite. Edits
-  // go through agentMemory.write (upsert) instead.
   messageHub.onRequest('agentMemory.create', async (payload: unknown) => {
     const request = parseSpaceScopedRequest(payload);
     return deps.memoryRepo.create({
@@ -67,8 +58,6 @@ export function setupAgentMemoryHandlers(
       query: readOptionalString(payload, 'query') ?? undefined,
       limit: readOptionalInteger(payload, 'limit') ?? 50,
       offset: readOptionalInteger(payload, 'offset') ?? 0,
-      // Management reads must not mutate agent telemetry (access_count /
-      // last_accessed_at), which drives core-ranking and stale-pruning.
       recordAccess: false,
     });
   });
@@ -110,9 +99,6 @@ function readOptionalInteger(payload: unknown, key: string): number | undefined 
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new Error(`${key} must be a finite number.`);
   }
-  // SQLite stores integers as int64, but any value outside the JS safe-integer
-  // range loses precision before reaching the driver and is rejected with a
-  // datatype-mismatch error. Validate up-front so callers see a clean message.
   if (!Number.isSafeInteger(value)) {
     throw new Error(`${key} must be a safe integer.`);
   }

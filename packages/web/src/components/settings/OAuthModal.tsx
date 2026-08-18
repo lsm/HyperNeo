@@ -30,7 +30,6 @@ export function OAuthModal({
   const isDeviceFlow = !!userCode && !!verificationUri;
   const isRedirectFlow = !!authUrl;
 
-  // Auto-close on successful auth (parent component polls)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -68,15 +67,12 @@ export function OAuthModal({
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
       <div
         class="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer"
         onClick={onCancel}
       />
 
-      {/* Modal */}
       <div class="relative bg-dark-900 border border-dark-700 rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
-        {/* Header */}
         <div class="flex items-center justify-between mb-4">
           <h3 class="text-lg font-semibold text-gray-100">Authenticate with {providerName}</h3>
           <button onClick={onCancel} class="text-gray-400 hover:text-gray-200 transition-colors">
@@ -91,20 +87,16 @@ export function OAuthModal({
           </button>
         </div>
 
-        {/* Content */}
         <div class="space-y-4">
           {isDeviceFlow && (
             <>
-              {/* Device flow instructions */}
               <div class="text-sm text-gray-300">
                 <p class="mb-3">Enter this code when prompted at the verification URL:</p>
 
-                {/* User code display */}
                 <div class="bg-dark-800 border border-dark-700 rounded-lg p-4 text-center mb-4">
                   <code class="text-2xl font-mono text-blue-400 tracking-wider">{userCode}</code>
                 </div>
 
-                {/* Copy button */}
                 <div class="flex justify-center mb-4">
                   <Button variant="secondary" size="sm" onClick={copyUserCode}>
                     {copied ? (
@@ -145,7 +137,6 @@ export function OAuthModal({
                   </Button>
                 </div>
 
-                {/* Verification URL */}
                 <div class="text-center">
                   <p class="text-gray-400 text-sm mb-2">Verification URL:</p>
                   <a
@@ -158,7 +149,6 @@ export function OAuthModal({
                   </a>
                 </div>
 
-                {/* Open URL button */}
                 <div class="flex justify-center mt-4">
                   <Button variant="primary" size="sm" onClick={openVerificationUrl}>
                     <svg
@@ -183,7 +173,6 @@ export function OAuthModal({
 
           {isRedirectFlow && !isDeviceFlow && (
             <>
-              {/* Redirect flow instructions */}
               <div class="text-sm text-gray-300">
                 <p class="mb-4">
                   A browser window has been opened for you to authenticate with {providerName}.
@@ -212,14 +201,12 @@ export function OAuthModal({
             </>
           )}
 
-          {/* Loading indicator */}
           <div class="flex items-center justify-center py-4">
             <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500 mr-3" />
             <span class="text-sm text-gray-400">Waiting for authentication...</span>
           </div>
         </div>
 
-        {/* Footer */}
         <div class="mt-6 pt-4 border-t border-dark-700 flex justify-end">
           <Button variant="secondary" onClick={onCancel}>
             Cancel

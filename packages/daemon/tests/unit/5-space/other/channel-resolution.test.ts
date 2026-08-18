@@ -1,18 +1,6 @@
-/**
- * Channel validation tests.
- *
- * Covers: validateChannels() for the new node-to-node channel model.
- * Channels use node names (WorkflowNode.name) as from/to addresses.
- * Node names must be unique within a workflow.
- */
-
 import { describe, test, expect } from 'bun:test';
 import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
 import { validateChannels } from '@hyperneo/shared';
-
-// ============================================================================
-// Test fixtures
-// ============================================================================
 
 function makeAgent(id: string, name = id): SpaceWorkerAgent {
   return { id, spaceId: 'space-1', name, instructions: null, createdAt: 0, updatedAt: 0 };
@@ -39,10 +27,6 @@ function makeWorkflow(nodes: WorkflowNode[], channels?: SpaceWorkflow['channels'
 const agentCoder = makeAgent('agent-coder', 'Coder');
 const agentReviewer = makeAgent('agent-reviewer', 'Reviewer');
 const allAgents = [agentCoder, agentReviewer];
-
-// ============================================================================
-// validateChannels tests
-// ============================================================================
 
 describe('validateChannels — node-to-node model', () => {
   test('returns no errors for a valid simple workflow', () => {

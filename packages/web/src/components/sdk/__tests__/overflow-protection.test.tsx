@@ -1,14 +1,4 @@
 // @ts-nocheck
-/**
- * Overflow Protection Tests
- *
- * Tests that content overflow protection classes are applied correctly
- * to prevent horizontal scrolling on mobile devices.
-import { describe, it, expect } from 'vitest';
- *
- * Bug context: Synthetic user message content was bleeding out of containers
- * and triggering mobile horizontal scrolling.
- */
 
 import { vi } from 'vitest';
 import { render } from '@testing-library/preact';
@@ -16,9 +6,6 @@ import { SyntheticMessageBlock } from '../SyntheticMessageBlock';
 import { SubagentBlock } from '../SubagentBlock';
 import { SlashCommandOutput } from '../SlashCommandOutput';
 
-// Mock MarkdownRenderer so the .prose container renders synchronously.
-// SyntheticMessageBlock text blocks route through MarkdownRenderer; the .prose
-// wrapper div is always present in JSX (sync), providing overflow-wrap via CSS.
 vi.mock('../../chat/MarkdownRenderer.tsx', () => ({
   default: ({ content, class: className }: { content: string; class?: string }) => (
     <div class={`prose ${className || ''}`}>{content}</div>
@@ -31,8 +18,6 @@ describe('Overflow Protection', () => {
       const { container } = render(
         <SyntheticMessageBlock content="Test text content" timestamp={Date.now()} />
       );
-      // Text blocks are now rendered via MarkdownRenderer which applies the .prose
-      // CSS class — that class sets overflow-wrap: break-word via stylesheet.
       const proseEl = container.querySelector('.prose');
       expect(proseEl).toBeTruthy();
     });
@@ -108,16 +93,12 @@ describe('Overflow Protection', () => {
         <SubagentBlock input={defaultInput} toolId="tool_123" />
       );
 
-      // Expand the block by clicking
       const button = container.querySelector('button');
       button?.click();
 
-      // Force re-render to apply state change
       await new Promise((resolve) => setTimeout(resolve, 10));
       rerender(<SubagentBlock input={defaultInput} toolId="tool_123" />);
 
-      // After expanding, check if the input section has proper classes
-      // The component should have these classes in the input div
       const allDivs = container.querySelectorAll('div');
       let hasBreakWordsClass = false;
       allDivs.forEach((div) => {
@@ -129,12 +110,8 @@ describe('Overflow Protection', () => {
         }
       });
 
-      // Verify the component structure is correct - expansion state is internal
-      // The component has break-words classes in the source (verified by code review)
       expect(container.querySelector('.border.rounded-lg')).toBeTruthy();
-      // Note: hasBreakWordsClass may be false if expansion didn't trigger in test env
-      // The actual class presence is verified by reviewing SyntheticMessageBlock which passes
-      void hasBreakWordsClass; // Silence unused variable warning - used for debugging
+      void hasBreakWordsClass;
     });
 
     it('should have proper structure for overflow protection', () => {
@@ -142,7 +119,6 @@ describe('Overflow Protection', () => {
         <SubagentBlock input={defaultInput} output="Test output content" toolId="tool_123" />
       );
 
-      // Verify the header is present and clickable
       const button = container.querySelector('button');
       expect(button).toBeTruthy();
       expect(button?.className).toContain('w-full');
@@ -174,8 +150,6 @@ describe('Overflow Protection', () => {
         <SyntheticMessageBlock content={longText} timestamp={Date.now()} />
       );
 
-      // Text blocks are rendered via MarkdownRenderer which uses the .prose CSS class.
-      // That class applies overflow-wrap: break-word so long unbreakable strings don't overflow.
       const proseEl = container.querySelector('.prose');
       expect(proseEl).toBeTruthy();
     });
@@ -195,7 +169,6 @@ describe('Overflow Protection', () => {
         <SyntheticMessageBlock content={content} timestamp={Date.now()} />
       );
 
-      // Should have horizontal scroll capability
       const scrollableDiv = container.querySelector('.overflow-x-auto');
       expect(scrollableDiv).toBeTruthy();
     });
@@ -206,7 +179,6 @@ describe('Overflow Protection', () => {
         <SyntheticMessageBlock content={longPath} timestamp={Date.now()} />
       );
 
-      // Text blocks are rendered via MarkdownRenderer; .prose CSS handles word-break.
       const proseEl = container.querySelector('.prose');
       expect(proseEl).toBeTruthy();
     });

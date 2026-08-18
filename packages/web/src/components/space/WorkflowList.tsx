@@ -1,15 +1,3 @@
-/**
- * WorkflowList Component
- *
- * Displays all workflows in the space with:
- * - Workflow cards: name, description, step count, tag chips
- * - Mini step visualization (horizontal dots showing step sequence)
- * - "Create Workflow" button and template options
- * - Edit, Delete, and Export actions per card
- * - Import and Export All toolbar actions
- * - Real-time updates via SpaceStore
- */
-
 import { useState, useEffect } from 'preact/hooks';
 import type {
   SpaceWorkflowSummary,
@@ -25,10 +13,6 @@ import { ImportPreviewDialog } from './ImportPreviewDialog.tsx';
 import type { ImportPreviewResult, ImportConflictResolution } from './ImportPreviewDialog.tsx';
 import { downloadBundle, pickImportFile } from './export-import-utils.ts';
 import { WorkflowTemplateSyncDiffModal } from './WorkflowTemplateSyncDiffModal.tsx';
-
-// ============================================================================
-// Mini Step Visualization
-// ============================================================================
 
 const GATE_COLORS: Record<WorkflowConditionType, string> = {
   always: 'bg-blue-500',
@@ -58,7 +42,6 @@ function MiniConnector({ conditionType }: { conditionType?: WorkflowConditionTyp
   );
 }
 
-// Show at most MAX_DOTS dots; if there are more steps, show a "+N" overflow label.
 const MAX_DOTS = 6;
 
 function MiniStepViz({ workflow }: { workflow: SpaceWorkflowSummary }) {
@@ -66,7 +49,6 @@ function MiniStepViz({ workflow }: { workflow: SpaceWorkflowSummary }) {
     return <span class="text-xs text-gray-400 italic">No steps</span>;
   }
 
-  // Cap display at MAX_DOTS; show overflow count if needed
   const overflow = workflow.nodeCount > MAX_DOTS ? workflow.nodeCount - MAX_DOTS : 0;
   const display = overflow > 0 ? workflow.nodeCount - overflow : workflow.nodeCount;
 
@@ -83,23 +65,9 @@ function MiniStepViz({ workflow }: { workflow: SpaceWorkflowSummary }) {
   );
 }
 
-// ============================================================================
-// Workflow Card
-// ============================================================================
-
-/**
- * Duplicate-drift info for a single workflow card.
- *
- * Computed at the list level (one RPC call per space) and passed down so each
- * card can render a "Duplicate" badge + a "Resync duplicates" action on the
- * newest row in a drift group.
- */
 interface DuplicateDriftInfo {
-  /** Shared `templateName` that formed the drift group. */
   templateName: string;
-  /** Total rows in the drift group (always >= 2). */
   groupSize: number;
-  /** True if this workflow is the newest row in the group (becomes the kept row on resync). */
   isNewest: boolean;
 }
 
@@ -124,8 +92,6 @@ function WorkflowCard({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Drift detection state: null = unknown/checking, otherwise the two-signal
-  // split (updateAvailable = template improved; customized = user edited).
   const [driftState, setDriftState] = useState<{
     updateAvailable: boolean;
     customized: boolean;
@@ -135,12 +101,10 @@ function WorkflowCard({
   const [confirmSync, setConfirmSync] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
 
-  // Duplicate-drift resync state
   const [confirmDupResync, setConfirmDupResync] = useState(false);
   const [dupResyncing, setDupResyncing] = useState(false);
   const [dupResyncError, setDupResyncError] = useState<string | null>(null);
 
-  // Check for template drift whenever workflow changes (if it came from a template)
   useEffect(() => {
     if (!workflow.templateName) return;
 
@@ -210,7 +174,6 @@ function WorkflowCard({
         spaceId,
       });
       setConfirmSync(false);
-      // Sync re-stamps the hash and overwrites structure → neither signal fires.
       setDriftState({ updateAvailable: false, customized: false });
       toast.success(`"${workflow.name}" updated from template`);
     } catch (err) {
@@ -258,7 +221,6 @@ function WorkflowCard({
           {workflow.description && (
             <p class="mt-1 line-clamp-2 text-xs leading-5 text-gray-400">{workflow.description}</p>
           )}
-          {/* Template badge + drift indicator */}
           {workflow.templateName && (
             <div class="mt-1.5 flex items-center gap-1.5">
               <span class="inline-flex items-center rounded border border-white/10 px-1.5 py-0.5 text-xs text-gray-400">
@@ -296,7 +258,6 @@ function WorkflowCard({
           )}
         </div>
 
-        {/* Action buttons */}
         <div
           data-testid="workflow-card-actions"
           class="flex flex-shrink-0 items-center gap-1.5 opacity-70 transition-opacity group-hover:opacity-100"
@@ -407,7 +368,6 @@ function WorkflowCard({
         )}
       </div>
 
-      {/* Resync duplicates confirmation modal */}
       {confirmDupResync && duplicateDrift && (
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
           <div class="bg-dark-850 border border-dark-700 rounded-lg p-5 max-w-md w-full shadow-xl">
@@ -459,7 +419,6 @@ function WorkflowCard({
         </div>
       )}
 
-      {/* Apply template update confirmation modal (safe case: no local edits) */}
       {confirmSync && (
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
           <div class="bg-dark-850 border border-dark-700 rounded-lg p-5 max-w-md w-full shadow-xl">
@@ -502,7 +461,6 @@ function WorkflowCard({
         </div>
       )}
 
-      {/* Review-diff modal (dangerous case: customized + update available) */}
       {diffOpen && (
         <WorkflowTemplateSyncDiffModal
           workflow={workflow}
@@ -513,10 +471,6 @@ function WorkflowCard({
     </div>
   );
 }
-
-// ============================================================================
-// Main Component
-// ============================================================================
 
 interface WorkflowListProps {
   spaceId: string;
@@ -538,14 +492,10 @@ export function WorkflowList({
   const [importPreview, setImportPreview] = useState<ImportPreviewResult | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
 
-  // Map of workflow id → duplicate-drift info (only present for workflows in a drift group).
   const [duplicateDriftMap, setDuplicateDriftMap] = useState<Map<string, DuplicateDriftInfo>>(
     new Map()
   );
 
-  // Fetch duplicate-drift reports whenever the set of workflows changes. We
-  // watch the list of (id, updatedAt) tuples so the effect re-runs when a
-  // workflow is added, removed, or edited.
   const driftKey = workflows
     .map((w) => `${w.id}:${w.updatedAt}`)
     .sort()
@@ -563,7 +513,6 @@ export function WorkflowList({
         if (cancelled) return;
         const map = new Map<string, DuplicateDriftInfo>();
         for (const report of result.reports) {
-          // Rows are newest-first; the first entry becomes the kept row on resync.
           for (const [i, row] of report.rows.entries()) {
             map.set(row.id, {
               templateName: report.templateName,
@@ -600,9 +549,6 @@ export function WorkflowList({
     const removed = result.deletedIds.length;
     const skipped = result.skippedDueToExecutableRuns?.length ?? 0;
     if (skipped > 0) {
-      // A duplicate was kept because it still has an executable run — tell the
-      // user it's a partial result and what to do next, instead of implying all
-      // duplicates were resynced.
       toast.warning(
         `Resynced "${templateName}"${removed > 0 ? ` — removed ${removed} older ${removed === 1 ? 'duplicate' : 'duplicates'}` : ''}; kept ${skipped} ${skipped === 1 ? 'duplicate' : 'duplicates'} with an active run — archive its task(s) and re-sync`
       );
@@ -612,8 +558,6 @@ export function WorkflowList({
       );
     }
   }
-
-  // ─── Import/Export helpers ──────────────────────────────────────────────
 
   async function exportAll() {
     const hub = connectionManager.getHubIfConnected();
@@ -674,12 +618,6 @@ export function WorkflowList({
           ? `Imported ${createdWorkflows} workflow${createdWorkflows === 1 ? '' : 's'}`
           : 'Nothing imported'
       );
-      // Surface every warning in ONE toast (joined). The toast container caps
-      // visible toasts at 3 and each toast is a role="alert" region, so a
-      // per-warning loop would lose earlier warnings past 3 and spam assistive
-      // tech; a single summary would hide which workflows were skipped. Joining
-      // all warnings into one toast keeps every detail visible (which workflow
-      // needs its task archived before retry) without the cap/spam problems.
       if (result.warnings.length > 0) {
         toast.warning(result.warnings.join(' · '));
       }
@@ -812,7 +750,6 @@ export function WorkflowList({
         </div>
       </div>
 
-      {/* Import Preview Dialog */}
       {importPreview && importBundle && (
         <ImportPreviewDialog
           key={importBundle.exportedAt}

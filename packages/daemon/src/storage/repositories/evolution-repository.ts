@@ -30,11 +30,6 @@ import type {
 } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
 
-/**
- * Upper bound on a single page. Mirrors the safety cap other list methods apply
- * (e.g. SpaceGoalEventRepository MAX_LIMIT) so an oversized client request can't
- * pull the whole table in one shot.
- */
 const MAX_LIST_LIMIT = 200;
 
 export class EvolutionRepository {
@@ -569,14 +564,6 @@ function jsonOrNull(value: unknown): string | null {
   return value === null || value === undefined ? null : JSON.stringify(value);
 }
 
-/**
- * Build a `LIMIT ? [OFFSET ?]` suffix (and its bound values) for the list
- * methods. Returns an empty suffix when no positive `limit` is given so callers
- * that omit pagination keep their existing unbounded behaviour.
- *
- * OFFSET is only emitted alongside LIMIT (SQLite ignores OFFSET without LIMIT,
- * and an unbounded+offset slice is not meaningful here).
- */
 function appendLimitOffset(pagination: EvolutionListPagination | undefined): {
   sql: string;
   paginationValues: SQLiteValue[];

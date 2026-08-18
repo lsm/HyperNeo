@@ -1,18 +1,3 @@
-/**
- * ClientEventGateway — unit tests
- *
- * Covers:
- *   • publish() serializes the channel descriptor via the registry and forwards
- *     to the underlying sink with the correct method, payload, and channel
- *     wire string;
- *   • publishGlobal() targets the global channel;
- *   • a custom registry can override the wire format without changing the API.
- *
- * The tests use a tiny fake `ClientEventSink` so we don't need a full
- * MessageHub instance; this matches the structural typing that the gateway
- * accepts and keeps the tests transport-free.
- */
-
 import { describe, it, expect, beforeEach } from 'bun:test';
 import {
   ClientEventGateway,
@@ -83,8 +68,6 @@ describe('ClientEventGateway', () => {
   });
 
   it('honours an injected registry', () => {
-    // Custom registry that prefixes every wire string. We use this to verify
-    // the gateway delegates serialization rather than hardcoding the format.
     const fakeRegistry: ChannelRegistry = {
       toWire: (channel: EventChannel) => `prefix:${channelRegistry.toWire(channel)}`,
       parse: () => null,

@@ -1,10 +1,3 @@
-/**
- * Unit tests for transient-error-patterns.ts
- *
- * Covers the bounded-retry detection helper (isRetryableProviderError) and
- * the shared pattern arrays used by query-runner.ts and api-error-circuit-breaker.ts.
- */
-
 import { describe, it, expect } from 'bun:test';
 import {
   TRANSIENT_CONNECTION_ERROR_SUBSTRINGS,
@@ -26,8 +19,6 @@ describe('TRANSIENT_CONNECTION_ERROR_SUBSTRINGS / REGEXES', () => {
 describe('RETRYABLE_PROVIDER_ERROR_TEXT', () => {
   it('does not include bare numeric status codes (handled by regex)', () => {
     const joined = RETRYABLE_PROVIDER_ERROR_TEXT.join(' ');
-    // Numeric codes are matched via HTTP_5XX_STATUS_RE, not as substrings,
-    // to avoid false positives on longer digit sequences.
     expect(joined).not.toContain('500');
     expect(joined).not.toContain('502');
     expect(joined).not.toContain('503');
@@ -187,15 +178,10 @@ describe('isRetryableProviderError', () => {
   });
 
   describe('GLM (Zhipu) multi-language provider overload', () => {
-    // Acceptance case: a GLM 529 `[1305]` payload ("该模型当前访问量过大，请您稍后再试"
-    // — model traffic too high, try again later) must be retryable. The HTTP 529
-    // transport status may not appear in the surfaced string, so the provider-specific
-    // code/Chinese signals are matched directly.
     it('classifies the full GLM 1305 payload as retryable', () => {
       expect(isRetryableProviderError('[1305][该模型当前访问量过大，请您稍后再试]')).toBe(true);
     });
 
-    // Each signal must independently classify as retryable (defence in depth).
     const glmSignals = ['[1305]', '访问量过大', '当前访问量过大'];
     for (const signal of glmSignals) {
       it(`classifies GLM signal "${signal}" as retryable`, () => {
@@ -203,10 +189,6 @@ describe('isRetryableProviderError', () => {
       });
     }
 
-    // The GLM code is matched in its bracketed payload shape only — a bare 1305
-    // (token count, port, request id) must NOT false-positive into a retry, and
-    // generic Chinese retry advice (稍后再试 = "try again later") must NOT either
-    // (it appears on localized terminal/validation errors).
     const glmFalsePositives = [
       'prompt is too long: 1305 tokens > 1000 maximum',
       'request id: req_1305abc',

@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ActionBar Component
- */
 
 import { render, fireEvent } from '@testing-library/preact';
 import { describe, it, expect, vi } from 'vitest';
@@ -81,7 +78,6 @@ describe('ActionBar', () => {
           primaryAction={{ label: 'Approve', onClick: vi.fn() }}
         />
       );
-      // Title is present, no description span
       expect(queryByText('Please check the changes')).toBeNull();
     });
   });

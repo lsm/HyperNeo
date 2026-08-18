@@ -1,9 +1,3 @@
-/**
- * Built-in Commands Tests
- *
- * Tests command name retrieval and command expansion functionality.
- */
-
 import { describe, expect, it } from 'bun:test';
 import {
   getBuiltInCommandNames,
@@ -75,7 +69,6 @@ describe('Built-in Commands', () => {
     });
 
     it('should be case-sensitive for command names', () => {
-      // Command names should match exactly as defined
       const result = expandBuiltInCommand('/MERGE-SESSION');
       expect(result).toBeNull();
     });

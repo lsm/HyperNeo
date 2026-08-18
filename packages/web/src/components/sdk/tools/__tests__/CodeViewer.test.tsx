@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for CodeViewer Component
- *
- * CodeViewer displays syntax-highlighted code using highlight.js.
- */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
 import { render } from '@testing-library/preact';
@@ -30,9 +25,7 @@ describe('CodeViewer', () => {
       const { container } = render(
         <CodeViewer code="const x = 1;" filePath="/path/to/file.ts" showHeader={false} />
       );
-      // Check for header structure
       const headerDivs = container.querySelectorAll('.border-b');
-      // With showHeader=false, there should be fewer header elements
       const hasFilePath = Array.from(headerDivs).some((div) =>
         div.textContent?.includes('/path/to/file.ts')
       );
@@ -51,16 +44,13 @@ describe('CodeViewer', () => {
       const { container } = render(
         <CodeViewer code="line1\nline2\nline3" showLineNumbers={true} />
       );
-      // Footer should exist when showLineNumbers is true
       const footer = container.querySelector('.border-t');
       expect(footer).toBeTruthy();
-      // Should show "lines" text
       expect(footer?.textContent).toContain('line');
     });
 
     it('should not show footer when showLineNumbers is false', () => {
       const { container } = render(<CodeViewer code="line1\nline2" showLineNumbers={false} />);
-      // Footer with line count should not exist
       const footers = container.querySelectorAll('.border-t');
       const hasLineCount = Array.from(footers).some((f) => f.textContent?.includes('lines'));
       expect(hasLineCount).toBe(false);
@@ -183,14 +173,12 @@ describe('CodeViewer', () => {
           showHeader={true}
         />
       );
-      // Header should contain file path and language
       const header = container.querySelector('.border-b');
       expect(header?.textContent).toContain('file.ts');
     });
 
     it('should not show header when filePath is not provided even if showHeader is true', () => {
       const { container } = render(<CodeViewer code="const x = 1;" showHeader={true} />);
-      // No file path means no header with file info
       const headerDivs = container.querySelectorAll('.border-b');
       const hasFilePath = Array.from(headerDivs).some((div) => div.textContent?.includes('/'));
       expect(hasFilePath).toBe(false);
@@ -227,7 +215,6 @@ describe('CodeViewer', () => {
     });
 
     it('should fallback to auto-detect when hljs.highlight throws', () => {
-      // Mock hljs.highlight to throw an error on first call
       const originalHighlight = hljs.highlight;
       let callCount = 0;
       vi.spyOn(hljs, 'highlight').mockImplementation((...args) => {
@@ -238,15 +225,12 @@ describe('CodeViewer', () => {
         return originalHighlight.call(hljs, ...args);
       });
 
-      // Use a TypeScript file which will trigger the highlight with language call
       const { container } = render(<CodeViewer code="const x = 1;" filePath="/test/file.ts" />);
-      // Should still render the code (via auto-detect fallback)
       const code = container.querySelector('code');
       expect(code).toBeTruthy();
     });
 
     it('should handle unknown file extensions gracefully', () => {
-      // Unknown extensions use auto-detect path (not the catch block)
       const { container } = render(
         <CodeViewer code="const x = 1;" filePath="/test/file.unknown_ext" />
       );

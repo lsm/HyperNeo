@@ -114,8 +114,6 @@ describe('router', () => {
     expect(createSpaceEvolvePath(SPACE_ID)).toBe(`/space/${SPACE_ID}/evolve`);
     expect(getSpaceEvolveFromPath(`/space/${SPACE_ID}/evolve`)).toBe(SPACE_ID);
     expect(getSpaceIdFromPath(`/space/${SPACE_ID}/evolve`)).toBe(SPACE_ID);
-    // Legacy /forge alias still resolves, and the Forge helpers are compat
-    // wrappers that delegate to the canonical /evolve helpers.
     expect(createSpaceForgePath(SPACE_ID)).toBe(`/space/${SPACE_ID}/evolve`);
     expect(getSpaceForgeFromPath(`/space/${SPACE_ID}/forge`)).toBe(SPACE_ID);
     expect(getSpaceForgeFromPath(`/space/${SPACE_ID}/evolve`)).toBe(SPACE_ID);

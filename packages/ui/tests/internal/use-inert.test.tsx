@@ -30,7 +30,6 @@ describe('useInert', () => {
     parent.appendChild(sibling2);
     document.body.appendChild(parent);
 
-    // Render the InertContainer into the sibling slot
     const containerDiv = document.createElement('div');
     containerDiv.id = 'container-slot';
     parent.appendChild(containerDiv);
@@ -48,20 +47,10 @@ describe('useInert', () => {
     render(<TestComp />, { container: containerDiv });
     await act(async () => {});
 
-    // siblings of the rendered div inside containerDiv should be inert
-    // Actually the ref points to the div inside containerDiv, so parent is containerDiv
-    // Let's test with a simpler setup
-
     document.body.removeChild(parent);
   });
 
   it('marks siblings inert and restores on unmount', async () => {
-    // Build structure: parent > [sib1, sib2, mountPoint]
-    // The rendered component's ref points to a div INSIDE mountPoint,
-    // so the parentElement of the ref is mountPoint, and its siblings are sib1/sib2/mountPoint.
-    // We need the rendered div to be a direct child of parent.
-    // @testing-library renders into `container`, making the component a child of it.
-    // So render into parent directly.
     const parent = document.createElement('div');
     const sib1 = document.createElement('section');
     sib1.id = 'inert-sib1';
@@ -81,17 +70,12 @@ describe('useInert', () => {
       );
     }
 
-    // render() wraps output in container div appended to document.body by default.
-    // We pass `container: parent` so the rendered <div ref=...> is a child of parent,
-    // making sib1/sib2 siblings of the ref'd element.
     const { unmount } = render(<TestComp />, { container: parent });
     await act(async () => {});
 
-    // sib1 and sib2 should be inert now
     expect(sib1.hasAttribute('inert')).toBe(true);
     expect(sib2.hasAttribute('inert')).toBe(true);
 
-    // unmount should restore
     unmount();
     await act(async () => {});
 
@@ -153,15 +137,12 @@ describe('useInert', () => {
   });
 
   it('cleanup logic correctly restores inert attributes', () => {
-    // Test the cleanup logic directly — simulating what useInert does internally
-    // for a sibling that already has an inert attribute
     const parent = document.createElement('div');
     const sib = document.createElement('div');
     sib.setAttribute('inert', 'preexisting');
     parent.appendChild(sib);
     document.body.appendChild(parent);
 
-    // Simulate useInert effect: record original, set to ''
     const siblings: HTMLElement[] = [];
     const originalInert: (string | null)[] = [];
 
@@ -173,10 +154,8 @@ describe('useInert', () => {
       }
     }
 
-    // After effect: sib should have inert=''
     expect(sib.getAttribute('inert')).toBe('');
 
-    // Simulate cleanup
     siblings.forEach((s, i) => {
       const original = originalInert[i];
       if (original === null) {
@@ -186,7 +165,6 @@ describe('useInert', () => {
       }
     });
 
-    // After cleanup: sib should have inert='preexisting' (restored)
     expect(sib.getAttribute('inert')).toBe('preexisting');
 
     document.body.removeChild(parent);

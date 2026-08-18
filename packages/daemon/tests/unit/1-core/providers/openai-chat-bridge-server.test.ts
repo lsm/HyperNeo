@@ -7,11 +7,6 @@ import {
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
-/**
- * Encode a sequence of OpenAI Chat Completions SSE chunks as a single
- * stream body. Each chunk is JSON-stringified and emitted as `data: {...}\n\n`,
- * terminated with `data: [DONE]\n\n`.
- */
 function sseBody(chunks: unknown[]): string {
   return chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n';
 }
@@ -256,10 +251,6 @@ describe('OpenAI Chat Completions bridge server', () => {
   });
 
   it('does not crash when controller is already closed before upstream error', async () => {
-    // Regression: catch-block `send()` calls used to throw TypeError when the
-    // ReadableStreamDefaultController was already closed (client disconnect /
-    // upstream tear-down), taking the daemon down with them. The catch block
-    // must now swallow those secondary errors.
     const upstreamBody = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.error(new Error('upstream blew up mid-stream'));
@@ -270,8 +261,6 @@ describe('OpenAI Chat Completions bridge server', () => {
       headers: { 'Content-Type': 'text/event-stream' },
     });
 
-    // Create a stream that is already closed by the time streamChatToAnthropic
-    // reaches its catch block.
     let captured: ReadableStreamDefaultController<Uint8Array> | undefined;
     const closedStream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -279,12 +268,9 @@ describe('OpenAI Chat Completions bridge server', () => {
       },
     });
     const reader = closedStream.getReader();
-    // Close the underlying controller and release the reader so the controller
-    // is in the "closed" state.
     captured!.close();
     reader.releaseLock();
 
-    // Must NOT throw — this is the regression.
     await expect(
       _openAIChatBridgeTesting.streamChatToAnthropic({
         upstreamResponse,
@@ -611,12 +597,6 @@ describe('OpenAI Chat Completions bridge server', () => {
           fetchImpl: (async () => new Response('', { status: 500 })) as typeof fetch,
         });
         servers.push(server);
-        // Bun.serve exposes the hostname on the server instance via `.hostname`.
-        // We can't easily introspect that here, but we can assert that the bridge
-        // is not reachable via the machine's external interfaces. The most
-        // portable check is that the port is non-zero and that connecting via
-        // 127.0.0.1 works (covered by every other test above). This test pins
-        // the contract so a future change away from loopback fails review.
         expect(typeof server.port).toBe('number');
         expect(server.port).toBeGreaterThan(0);
       }
@@ -625,10 +605,6 @@ describe('OpenAI Chat Completions bridge server', () => {
     it.skipIf(!isBun)(
       'defers tool_use block until upstream id arrives and forwards it verbatim',
       async () => {
-        // Upstream sends `name` in the first chunk but `id` only in the second
-        // chunk. The bridge must wait — otherwise the client would see a
-        // synthetic id and the model's follow-up `tool` message (with the
-        // real upstream id) would fail strict tool_call_id validation.
         const fetchMock = mock(async () => {
           const body = sseBody([
             {
@@ -684,15 +660,11 @@ describe('OpenAI Chat Completions bridge server', () => {
         });
         const text = await response.text();
         expect(text).toContain('"id":"call_late"');
-        // Must not have leaked a synthetic toolu_oai_* id.
         expect(text).not.toMatch(/"id":"toolu_oai_/);
       }
     );
 
     it.skipIf(!isBun)('synthesises a tool_use id when upstream never sends one', async () => {
-      // Some non-strict backends omit `tool_calls[].id` entirely. The
-      // bridge must still emit a syntactically valid Anthropic tool_use
-      // block at stream end rather than dropping the call.
       const fetchMock = mock(async () => {
         const body = sseBody([
           {
@@ -785,13 +757,11 @@ describe('OpenAI Chat Completions bridge server', () => {
     );
 
     it('preserves a query string on the baseUrl when appending /chat/completions', () => {
-      // Azure-style URL: deployment path + ?api-version=... query string.
       const azure =
         'https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview';
       expect(_openAIChatBridgeTesting.buildChatCompletionsUrl(azure)).toBe(
         'https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview'
       );
-      // Base prefix without the chat suffix — query string must survive too.
       const azureBase =
         'https://x.openai.azure.com/openai/deployments/gpt-4o?api-version=2024-08-01-preview';
       expect(_openAIChatBridgeTesting.buildChatCompletionsUrl(azureBase)).toBe(
@@ -906,10 +876,6 @@ describe('OpenAI Chat Completions bridge server', () => {
   });
 
   describe('stream_options gating', () => {
-    // Many strict OpenAI-compatible backends reject unknown request fields
-    // with HTTP 400/422 before any generation. `stream_options.include_usage`
-    // is non-essential (the bridge falls back to a token estimator), so it
-    // must be opt-in to avoid breaking otherwise-functional endpoints.
     it.skipIf(!isBun)('omits stream_options by default', async () => {
       let captured: Record<string, unknown> = {};
       const fetchMock = mock(async (_url: string, init?: RequestInit) => {
@@ -972,10 +938,6 @@ describe('OpenAI Chat Completions bridge server', () => {
     it.skipIf(!isBun)(
       'emits an error envelope when upstream 200 contains no SSE data chunks',
       async () => {
-        // A misconfigured proxy or non-streaming endpoint might return 200
-        // with a one-shot JSON object. The bridge must NOT pretend that was
-        // a successful empty assistant message — clients need to see the
-        // failure so they can fix the endpoint.
         const fetchMock = mock(
           async () =>
             new Response(JSON.stringify({ choices: [{ message: { content: 'hello' } }] }), {
@@ -1008,12 +970,6 @@ describe('OpenAI Chat Completions bridge server', () => {
     it.skipIf(!isBun)(
       'concatenates consecutive data: lines within one event before JSON parsing',
       async () => {
-        // Some proxies pretty-print JSON across multiple `data:` lines.
-        // The SSE spec mandates that the parser join them with `\n` before
-        // treating the result as the event payload. Without this the
-        // bridge would JSON.parse each fragment, silently drop the event,
-        // and (with the new non-SSE 200 guard) potentially raise a bogus
-        // error on a valid stream.
         const body =
           `data: {\n` +
           `data:   "choices": [{ "index": 0, "delta": { "content": "hello" }, "finish_reason": "stop" }]\n` +
@@ -1041,9 +997,7 @@ describe('OpenAI Chat Completions bridge server', () => {
           }),
         });
         const text = await response.text();
-        // Must not trigger the non-SSE guard.
         expect(text).not.toContain('non-SSE');
-        // The content from the joined payload should have surfaced.
         expect(text).toContain('"text":"hello"');
         expect(text).toContain('"stop_reason":"end_turn"');
       }
@@ -1116,11 +1070,9 @@ describe('OpenAI Chat Completions bridge server', () => {
           }),
         });
         const text = await response.text();
-        // thinking block opens first
         expect(text).toContain('"type":"thinking"');
         expect(text).toContain('"thinking":"Let"');
         expect(text).toContain('"thinking":" me think"');
-        // text block follows
         expect(text).toContain('"text":"Hello"');
         expect(text).toContain('"text":" world"');
         expect(text).toContain('"stop_reason":"end_turn"');
@@ -1158,7 +1110,6 @@ describe('OpenAI Chat Completions bridge server', () => {
         const match = text.match(/event: message_delta\s*\ndata:.*?"output_tokens":(\d+)/);
         expect(match).not.toBeNull();
         const outputTokens = Number(match![1]);
-        // reasoning (9 chars) => ceil(9/4)=3, text (4 chars) => ceil(4/4)=1, total 4.
         expect(outputTokens).toBe(4);
       }
     );
@@ -1207,12 +1158,10 @@ describe('OpenAI Chat Completions bridge server', () => {
           }),
         });
         const text = await response.text();
-        // thinking opens, then closes before tool_use
         expect(text).toContain('"type":"thinking"');
         expect(text).toContain('"type":"tool_use"');
         expect(text).toContain('"name":"act"');
         expect(text).toContain('"stop_reason":"tool_use"');
-        // ensure the thinking block is stopped before the tool_use block starts
         const thinkingStopPos = text.indexOf('event: content_block_stop');
         const toolUseStartPos = text.indexOf('"type":"tool_use"');
         expect(thinkingStopPos).toBeGreaterThan(-1);
@@ -1249,7 +1198,6 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(text).toContain('"thinking":"Only reasoning"');
       expect(text).toContain('"stop_reason":"end_turn"');
       expect(text).toContain('event: message_stop');
-      // must not contain a text block
       expect(text).not.toContain('"type":"text"');
     });
 
@@ -1294,11 +1242,6 @@ describe('OpenAI Chat Completions bridge server', () => {
   });
 
   describe('chat_template_kwargs injection', () => {
-    // Per-model Jinja template kwargs (e.g. `{ enable_thinking: false }`)
-    // forward verbatim into every upstream request body. The field is not
-    // part of the OpenAI Chat schema — only llama.cpp / vLLM-style backends
-    // read it — but other OpenAI-compatible servers ignore unknown fields
-    // silently, so it's safe to inject unconditionally.
     it.skipIf(!isBun)(
       'forwards chat_template_kwargs into the upstream request body when configured',
       async () => {

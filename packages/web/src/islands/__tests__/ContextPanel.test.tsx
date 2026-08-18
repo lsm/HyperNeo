@@ -220,9 +220,6 @@ describe('ContextPanel', () => {
     cleanup();
   });
 
-  // Space switching is only available from the space list (shown when no space is selected).
-  // When inside a space, the sidebar shows SpaceDetailPanel; users return to the list via
-  // the "All Spaces" button. Tests set currentSpaceIdSignal = null to show the list.
   it.each([
     ['overview', mockNavigateToSpace, ['space-2']],
     ['goals', mockNavigateToSpaceGoals, ['space-2']],
@@ -231,7 +228,7 @@ describe('ContextPanel', () => {
     ['configure', mockNavigateToSpaceConfigure, ['space-2', 'agents']],
   ] as const)('preserves the %s view mode when switching spaces', (viewMode, expectedNavigate, args) => {
     mockCurrentSpaceViewModeSignal.value = viewMode;
-    mockCurrentSpaceIdSignal.value = null; // show the space list
+    mockCurrentSpaceIdSignal.value = null;
     render(<ContextPanel />);
 
     fireEvent.click(screen.getByText('Beta'));
@@ -244,7 +241,7 @@ describe('ContextPanel', () => {
   it('preserves the current task filter when switching spaces from tasks', () => {
     mockCurrentSpaceViewModeSignal.value = 'tasks';
     mockCurrentSpaceTasksFilterTabSignal.value = 'completed';
-    mockCurrentSpaceIdSignal.value = null; // show the space list
+    mockCurrentSpaceIdSignal.value = null;
     render(<ContextPanel />);
 
     fireEvent.click(screen.getByText('Beta'));
@@ -256,7 +253,7 @@ describe('ContextPanel', () => {
   it('preserves the current configure subtab when switching spaces from configure', () => {
     mockCurrentSpaceViewModeSignal.value = 'configure';
     mockCurrentSpaceConfigureTabSignal.value = 'workflows';
-    mockCurrentSpaceIdSignal.value = null; // show the space list
+    mockCurrentSpaceIdSignal.value = null;
     render(<ContextPanel />);
 
     fireEvent.click(screen.getByText('Beta'));
@@ -267,7 +264,7 @@ describe('ContextPanel', () => {
 
   it('navigates to tasks view when switching spaces while tasks view is active', () => {
     mockCurrentSpaceViewModeSignal.value = 'tasks';
-    mockCurrentSpaceIdSignal.value = null; // show the space list
+    mockCurrentSpaceIdSignal.value = null;
     render(<ContextPanel />);
 
     fireEvent.click(screen.getByText('Beta'));
@@ -302,7 +299,7 @@ describe('ContextPanel', () => {
   });
 
   it('opens the create space dialog directly from the mobile switcher', () => {
-    mockCurrentSpaceIdSignal.value = null; // show the space switcher so "Create Space" is visible
+    mockCurrentSpaceIdSignal.value = null;
     render(<ContextPanel />);
 
     fireEvent.click(screen.getByText('Create Space'));

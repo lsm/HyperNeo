@@ -15,7 +15,7 @@ function ToastItem({ toast }: ToastItemProps) {
   useEffect(() => {
     if (!toast.duration || toast.duration <= 0) return;
 
-    const interval = 50; // Update every 50ms
+    const interval = 50;
     const steps = toast.duration / interval;
     const decrement = 100 / steps;
 
@@ -121,13 +121,10 @@ function ToastItem({ toast }: ToastItemProps) {
       )}
       role="alert"
     >
-      {/* Icon */}
       <div class="flex-shrink-0">{getIcon(toast.type)}</div>
 
-      {/* Message */}
       <div class="flex-1 text-sm text-gray-100 pt-0.5">{toast.message}</div>
 
-      {/* Dismiss button */}
       <button
         onClick={handleDismiss}
         class="flex-shrink-0 text-gray-400 hover:text-gray-100 transition-colors"
@@ -142,7 +139,6 @@ function ToastItem({ toast }: ToastItemProps) {
         </svg>
       </button>
 
-      {/* Progress bar */}
       {toast.duration && toast.duration > 0 && (
         <div class="absolute bottom-0 left-0 right-0 h-1 bg-white/10">
           <div

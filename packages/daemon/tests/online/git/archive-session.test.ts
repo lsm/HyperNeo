@@ -1,29 +1,9 @@
-/**
- * Archive Session Tests
- *
- * These tests use the REAL Claude Agent SDK with actual API credentials.
- * They verify session.archive RPC with real git worktrees via WebSocket:
- * - Archive without worktree (direct archive)
- * - Archive with worktree (no commits ahead)
- * - Archive with worktree (commits ahead, requires confirmation)
- * - Squash-merge detection
- * - Error handling and idempotency
- *
- * MODES:
- * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Dev Proxy: Set HYPERNEO_USE_DEV_PROXY=1 for offline testing with mocked responses
- *
- * Run with Dev Proxy:
- *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/git/archive-session.test.ts
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 
-// Detect mock mode for faster timeouts (Dev Proxy)
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
 const TEST_TIMEOUT = IS_MOCK ? 30000 : 90000;
@@ -33,7 +13,6 @@ const TMP_DIR = process.env.TMPDIR || '/tmp';
 describe('Archive Session', () => {
   let daemon: DaemonServerContext;
 
-  // Worktree tests need longer hook timeouts on CI (daemon cleanup after worktree ops)
   beforeEach(async () => {
     daemon = await createDaemonServer();
   }, SETUP_TIMEOUT);
@@ -89,13 +68,11 @@ describe('Archive Session', () => {
   ): Promise<{ sessionId: string; worktreePath: string; branch: string }> {
     const sessionId = await createSession(repoPath);
 
-    // Choose worktree mode
     await daemon.messageHub.request('session.setWorktreeMode', {
       sessionId,
       mode: 'worktree',
     });
 
-    // Get session to find worktree path (worktree was created synchronously by setWorktreeMode)
     const session = await getSession(sessionId);
     const worktree = session.worktree as { worktreePath: string; branch: string } | undefined;
 
@@ -123,7 +100,6 @@ describe('Archive Session', () => {
       expect(session.status).toBe('archived');
       expect(session.archivedAt).toBeString();
 
-      // Verify archivedAt is a valid ISO timestamp
       const archivedDate = new Date(session.archivedAt as string);
       expect(archivedDate.getTime()).toBeGreaterThan(0);
     });
@@ -138,13 +114,11 @@ describe('Archive Session', () => {
         try {
           const { sessionId } = await createSessionWithWorktree(repoPath);
 
-          // Archive without confirmation (no commits ahead)
           const result = await archiveSession(sessionId, false);
 
           expect(result.success).toBe(true);
           expect(result.requiresConfirmation).toBe(false);
 
-          // Verify session is archived
           const session = await getSession(sessionId);
           expect(session.status).toBe('archived');
           expect(session.archivedAt).toBeString();
@@ -166,12 +140,10 @@ describe('Archive Session', () => {
         try {
           const { sessionId, worktreePath } = await createSessionWithWorktree(repoPath);
 
-          // Make a commit in the worktree
           fs.writeFileSync(path.join(worktreePath, 'feature.txt'), 'new feature');
           execSync('git add .', { cwd: worktreePath });
           execSync('git commit -m "Add new feature"', { cwd: worktreePath });
 
-          // Try to archive without confirmation
           const result = await archiveSession(sessionId, false);
 
           expect(result.success).toBe(false);
@@ -187,7 +159,6 @@ describe('Archive Session', () => {
           expect(commitStatus.commits[0].message).toBe('Add new feature');
           expect(commitStatus.commits[0].author).toBe('Test User');
 
-          // Session should still be active
           const session = await getSession(sessionId);
           expect(session.status).toBe('active');
         } finally {
@@ -205,7 +176,6 @@ describe('Archive Session', () => {
         try {
           const { sessionId, worktreePath } = await createSessionWithWorktree(repoPath);
 
-          // Make multiple commits
           fs.writeFileSync(path.join(worktreePath, 'file1.txt'), 'content 1');
           execSync('git add .', { cwd: worktreePath });
           execSync('git commit -m "First change"', { cwd: worktreePath });
@@ -214,7 +184,6 @@ describe('Archive Session', () => {
           execSync('git add .', { cwd: worktreePath });
           execSync('git commit -m "Second change"', { cwd: worktreePath });
 
-          // Archive with confirmation
           const result = await archiveSession(sessionId, true);
 
           expect(result.success).toBe(true);
@@ -241,7 +210,6 @@ describe('Archive Session', () => {
         try {
           const { sessionId, worktreePath, branch } = await createSessionWithWorktree(repoPath);
 
-          // Make commits in worktree
           fs.writeFileSync(path.join(worktreePath, 'feature.txt'), 'feature code');
           execSync('git add .', { cwd: worktreePath });
           execSync('git commit -m "Add feature"', { cwd: worktreePath });
@@ -250,12 +218,10 @@ describe('Archive Session', () => {
           execSync('git add .', { cwd: worktreePath });
           execSync('git commit -m "Add more feature"', { cwd: worktreePath });
 
-          // Simulate squash merge to main
           execSync('git checkout main', { cwd: repoPath });
           execSync(`git merge --squash refs/heads/${branch}`, { cwd: repoPath });
           execSync('git commit -m "feat: add feature (squash merged)"', { cwd: repoPath });
 
-          // Archive should NOT require confirmation
           const result = await archiveSession(sessionId, false);
 
           expect(result.success).toBe(true);
@@ -275,22 +241,18 @@ describe('Archive Session', () => {
         try {
           const { sessionId, worktreePath, branch } = await createSessionWithWorktree(repoPath);
 
-          // Make initial commit
           fs.writeFileSync(path.join(worktreePath, 'feature.txt'), 'feature code');
           execSync('git add .', { cwd: worktreePath });
           execSync('git commit -m "Add feature"', { cwd: worktreePath });
 
-          // Squash merge to main
           execSync('git checkout main', { cwd: repoPath });
           execSync(`git merge --squash refs/heads/${branch}`, { cwd: repoPath });
           execSync('git commit -m "feat: add feature (squash merged)"', { cwd: repoPath });
 
-          // Make another commit in worktree (new work not on main)
           fs.writeFileSync(path.join(worktreePath, 'new-work.txt'), 'new work');
           execSync('git add .', { cwd: worktreePath });
           execSync('git commit -m "Add new work"', { cwd: worktreePath });
 
-          // Should require confirmation — new work not on main
           const result = await archiveSession(sessionId, false);
 
           expect(result.success).toBe(false);
@@ -321,7 +283,6 @@ describe('Archive Session', () => {
 
       await archiveSession(sessionId);
 
-      // Archive again — should be idempotent
       const result = await archiveSession(sessionId);
       expect(result.success).toBe(true);
     });
@@ -346,13 +307,11 @@ describe('Archive Session', () => {
 
       await archiveSession(sessionId);
 
-      // Default list should NOT include archived sessions
       const defaultResult = (await daemon.messageHub.request('session.list', {})) as {
         sessions: Array<{ id: string }>;
       };
       expect(defaultResult.sessions.find((s) => s.id === sessionId)).toBeUndefined();
 
-      // Filter by status=archived should include it
       const archivedResult = (await daemon.messageHub.request('session.list', {
         status: 'archived',
       })) as { sessions: Array<{ id: string; status: string }> };
@@ -365,7 +324,6 @@ describe('Archive Session', () => {
       const tmpPath = `${TMP_DIR}/test-metadata-${Date.now()}`;
       const sessionId = await createSession(tmpPath);
 
-      // Update metadata before archiving
       await daemon.messageHub.request('session.update', {
         sessionId,
         title: 'Test Session Title',

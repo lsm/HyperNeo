@@ -13,12 +13,10 @@ export function useTrackedPointer(): {
 
   return {
     wasMoved: useCallback((event: PointerEvent) => {
-      // First event — initialize
       if (pointer.current.x === -1 && pointer.current.y === -1) {
         pointer.current = { x: event.screenX, y: event.screenY };
         return false;
       }
-      // Check if pointer actually moved (prevents hover events from keyboard scrolling)
       if (pointer.current.x !== event.screenX || pointer.current.y !== event.screenY) {
         pointer.current = { x: event.screenX, y: event.screenY };
         return true;

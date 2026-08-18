@@ -1,11 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for tool-utils utility functions
- *
- * Tests for getToolSummary, getToolDisplayName, getToolColors,
- * getIconSizeClasses, formatElapsedTime, truncateText, getOutputDisplayText,
- * hasCustomRenderer, getCustomRenderer, shouldExpandByDefault
- */
 
 import {
   getToolSummary,

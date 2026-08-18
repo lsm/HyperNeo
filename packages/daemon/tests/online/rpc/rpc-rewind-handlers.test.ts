@@ -1,12 +1,3 @@
-/**
- * Rewind RPC Handlers Tests
- *
- * Tests for the rewind feature RPC handlers via WebSocket:
- * - rewind.checkpoints
- * - rewind.preview
- * - rewind.execute
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 
@@ -173,7 +164,6 @@ describe('Rewind RPC Handlers', () => {
 
   describe('rewind handler registration', () => {
     test('should have all rewind handlers registered', async () => {
-      // All handlers should respond (even if with errors for invalid data)
       const checkpoints = (await daemon.messageHub.request('rewind.checkpoints', {
         sessionId: 'test',
       })) as { rewindPoints: unknown[] };

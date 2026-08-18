@@ -239,9 +239,6 @@ describe('SpaceWorkerAgentList', () => {
 
     fireEvent.click(getByText('Apply update'));
 
-    // The quick Apply path passes the drift report's rowHash as the
-    // optimistic-concurrency guard, so a concurrent edit between fetch and
-    // confirm is rejected instead of silently overwritten.
     await waitFor(() =>
       expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent', 'row-hash-coder')
     );
@@ -251,7 +248,6 @@ describe('SpaceWorkerAgentList', () => {
   it('uses the rowHash snapshotted at open time, not a later drift refresh', async () => {
     const agent = makeAgent('coder-agent', { templateName: 'coder' });
     mockAgents.value = [agent];
-    // First drift fetch (mount): rowHash = 'original', not customized.
     mockHubRequest.mockResolvedValueOnce({
       report: {
         agents: [
@@ -268,10 +264,8 @@ describe('SpaceWorkerAgentList', () => {
     const { getByText } = render(<SpaceWorkerAgentList />);
 
     await waitFor(() => expect(getByText('Apply')).toBeTruthy());
-    fireEvent.click(getByText('Apply')); // openSyncConfirm snapshots 'original'
+    fireEvent.click(getByText('Apply'));
 
-    // A concurrent edit lands as a drift refresh: the row now diverges
-    // (customized:true, different rowHash) and the card flips to "Review diff".
     mockHubRequest.mockResolvedValueOnce({
       report: {
         agents: [
@@ -287,9 +281,6 @@ describe('SpaceWorkerAgentList', () => {
     mockAgents.value = [{ ...agent, updatedAt: agent.updatedAt + 1 }];
     await waitFor(() => expect(getByText('Review diff')).toBeTruthy());
 
-    // The confirm modal is still open from the earlier click. Confirming must
-    // use the rowHash pinned at open time — not the refreshed 'refreshed' — or
-    // the optimistic guard would accept and overwrite the unreviewed edit.
     fireEvent.click(getByText('Apply update'));
 
     await waitFor(() =>
@@ -321,15 +312,11 @@ describe('SpaceWorkerAgentList', () => {
 
     await waitFor(() => expect(getByText(/Review update/)).toBeTruthy());
     await waitFor(() => expect(mockPreviewAgentTemplateSync).toHaveBeenCalledWith('coder-agent'));
-    // Before/after content rendered.
     expect(getByText('old prompt')).toBeTruthy();
     expect(getByText('new prompt')).toBeTruthy();
   });
 
   it('requires reviewing the diff before applying an update to a customized agent', async () => {
-    // Dangerous case: customized AND update available. The only card action is
-    // "Review diff" — there is no quick "Apply" — so the user must view the
-    // diff before the sync applies.
     mockAgents.value = [makeAgent('coder-agent', { templateName: 'Coder' })];
     mockHubRequest.mockResolvedValueOnce({
       report: { agents: [{ agentId: 'coder-agent', updateAvailable: true, customized: true }] },
@@ -351,7 +338,6 @@ describe('SpaceWorkerAgentList', () => {
 
     const { getByText, queryByText } = render(<SpaceWorkerAgentList />);
 
-    // Both badges present; no quick Apply button on a customized row.
     await waitFor(() => expect(getByText('Update available')).toBeTruthy());
     expect(getByText('Customized')).toBeTruthy();
     expect(queryByText('Apply')).toBeNull();
@@ -360,12 +346,10 @@ describe('SpaceWorkerAgentList', () => {
     await waitFor(() => expect(getByText('Apply update')).toBeTruthy());
     fireEvent.click(getByText('Apply update'));
 
-    // The apply passes the reviewed row hash (optimistic-concurrency guard).
     await waitFor(() =>
       expect(mockSyncAgentFromTemplate).toHaveBeenCalledWith('coder-agent', 'row')
     );
     await waitFor(() => expect(queryByText(/Review update/)).toBeNull());
-    // Both badges cleared eagerly after the apply.
     await waitFor(() => expect(queryByText('Update available')).toBeNull());
   });
 

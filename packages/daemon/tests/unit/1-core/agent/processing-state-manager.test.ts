@@ -1,16 +1,3 @@
-/**
- * ProcessingStateManager Tests
- *
- * Tests for agent processing state machine including:
- * - State transitions (idle -> queued -> processing -> idle)
- * - Streaming phase tracking
- * - Database persistence
- * - Event emission
- * - State restoration after restart
- * - Question/answer handling
- * - Compacting state tracking
- */
-
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { AgentProcessingState, PendingUserQuestion } from '@hyperneo/shared';
@@ -109,13 +96,10 @@ describe('ProcessingStateManager', () => {
     });
 
     test('resets streaming phase tracking', async () => {
-      // First set to processing
       await manager.setProcessing('msg-1', 'streaming');
 
-      // Then back to idle
       await manager.setIdle();
 
-      // Check internal state was reset
       expect(manager.getIsCompacting()).toBe(false);
     });
 
@@ -134,17 +118,12 @@ describe('ProcessingStateManager', () => {
       });
       manager.setOnIdleCallback(callbackMock);
 
-      // Should not throw
       await manager.setIdle();
 
       expect(callbackMock).toHaveBeenCalled();
     });
 
     test('waiter onEnd fires BEFORE the waiter promise resolves on a terminal idle', async () => {
-      // The delivery-turn completion marker must be persisted before the delivery
-      // job (`await turn`) resolves on the idle drain — a crash after idle but
-      // before the write would otherwise re-drive a result-less consumed turn.
-      // See Codex (PR #2463, P2).
       const events: string[] = [];
       const waiter = manager.waitForIdleTransition(undefined, () => events.push('onEnd'));
       void waiter.promise.then(() => events.push('waiter-resolved'));
@@ -154,10 +133,6 @@ describe('ProcessingStateManager', () => {
     });
 
     test('waiter onEnd (marker) fires BEFORE the awaited idle side effects (P2)', async () => {
-      // The durable marker must be persisted synchronously at the START of
-      // setIdle — before the session.updated publish and the deferred-restart
-      // callback — so a crash after the idle-state DB write can't lose it.
-      // The waiter promise (job completion) stays deferred until the finally.
       const events: string[] = [];
       let resolveCallback!: () => void;
       manager.setOnIdleCallback(
@@ -169,12 +144,8 @@ describe('ProcessingStateManager', () => {
       const waiter = manager.waitForIdleTransition(undefined, () => events.push('onEnd'));
       void waiter.promise.then(() => events.push('waiter-resolved'));
       const setIdlePromise = manager.setIdle();
-      // onEnd fires synchronously (before setIdle's first await); the waiter
-      // does NOT resolve until the finally (after the deferred callback).
       expect(events).toEqual(['onEnd']);
       expect(events).not.toContain('waiter-resolved');
-      // Flush microtasks so setState's publish resolves and onIdleCallback is
-      // invoked (now awaiting our resolver) — still before the finally drain.
       await new Promise((r) => setTimeout(r, 0));
       expect(typeof resolveCallback).toBe('function');
       expect(events).not.toContain('waiter-resolved');
@@ -232,9 +203,6 @@ describe('ProcessingStateManager', () => {
     });
 
     test('waiter onEnd fires on a direct releaseIdleWaiters (restart/reset failure path)', async () => {
-      // Direct releaseIdleWaiters (query-lifecycle restart/reset failures,
-      // ask-user-question answer-reinjection) must still record the turn-end
-      // marker — the waiter-owned callback covers it. See Codex (PR #2463, P2).
       let ended = false;
       manager.waitForIdleTransition(undefined, () => {
         ended = true;
@@ -245,11 +213,6 @@ describe('ProcessingStateManager', () => {
     });
 
     test('cancel() does NOT fire onEnd (cleanup, not a turn-end) — P2', async () => {
-      // cancel() is the delivery bridge's finally / rejected-acknowledgment /
-      // query-close abandon path. It must NOT persist the turn-completion marker
-      // (a consumed-but-never-delivered prompt must not be marked ended, or the
-      // retried job completes without delivering). Only genuine terminal paths
-      // (setIdle drain, releaseIdleWaiters) fire onEnd.
       let ended = false;
       const handle = manager.waitForIdleTransition(undefined, () => {
         ended = true;
@@ -292,10 +255,6 @@ describe('ProcessingStateManager', () => {
     });
 
     test('does NOT resolve on a suppressed (retry mid-point) setIdle, then does on a terminal one', async () => {
-      // The contract every retry-path setIdle site depends on: a retry
-      // mid-point (QueryRunner startup/message-not-found/transient, rate-limit,
-      // ACP, AskUserQuestion restart) suppresses the drain so the durable
-      // delivery job isn't completed while the prompt is still being retried.
       let resolved = false;
       void manager.waitForIdleTransition().promise.then(() => {
         resolved = true;
@@ -307,9 +266,6 @@ describe('ProcessingStateManager', () => {
     });
 
     test('cancel() is idempotent and releases the waiter without firing onEnd; a later terminal idle does not re-fire it', async () => {
-      // cancel() is cleanup/abandon — it releases the awaiting job WITHOUT
-      // persisting the turn-end marker. Idempotent (double cancel is a no-op),
-      // and a later genuine terminal idle must not re-fire a cancelled waiter.
       let endedCount = 0;
       const handle = manager.waitForIdleTransition(undefined, () => endedCount++);
       let resolved = false;
@@ -319,15 +275,13 @@ describe('ProcessingStateManager', () => {
       handle.cancel();
       handle.cancel();
       await Promise.resolve();
-      expect(endedCount).toBe(0); // no marker on cancel
-      expect(resolved).toBe(true); // but the await IS released
+      expect(endedCount).toBe(0);
+      expect(resolved).toBe(true);
       await manager.setIdle();
-      expect(endedCount).toBe(0); // cancelled waiter isn't re-fired
+      expect(endedCount).toBe(0);
     });
 
     test('drains waiters even when idle-state publication throws', async () => {
-      // Resilient drain (setIdle try/finally): the state is persisted before
-      // publish, so a publish failure must still release a waiting turn.
       const failingBus = {
         publish: mock(async () => {
           throw new Error('publish failed');
@@ -345,13 +299,6 @@ describe('ProcessingStateManager', () => {
     });
 
     test('releaseIdleWaiters(gen) resolves only the matching episode, not a newer turn', async () => {
-      // The race this guards: a superseded rate-limit retry (episode gen 0)
-      // releases its turn-end waiter so its abandoned job doesn't hang — but a
-      // NEWER turn (gen 1, armed after a cancel/reset bumped the generation) must
-      // NOT have its waiter resolved, or its durable job completes prematurely and
-      // frees the active-turn slot for a competing turn. driveDeliveryTurn tags
-      // each waiter with the rate-limit generation at arm time; the superseded
-      // retry releases only its own gen.
       let oldResolved = false;
       let newResolved = false;
       void manager.waitForIdleTransition(0).promise.then(() => {
@@ -361,23 +308,17 @@ describe('ProcessingStateManager', () => {
         newResolved = true;
       });
 
-      manager.releaseIdleWaiters(0); // superseded gen-0 retry releases its own
-      // releaseIdleWaiters is synchronous; flush the resolution microtask before
-      // asserting (the .then handlers run on the next microtask tick).
+      manager.releaseIdleWaiters(0);
       await Promise.resolve();
 
       expect(oldResolved).toBe(true);
       expect(newResolved).toBe(false);
 
-      // The newer turn's waiter still resolves on a real terminal idle.
       await manager.setIdle();
       expect(newResolved).toBe(true);
     });
 
     test('releaseIdleWaiters() with no generation resolves all waiters (unscoped fallback)', async () => {
-      // Omitting the generation (a release site that has no episode context)
-      // resolves every armed waiter — preserving the original drain-all behavior
-      // for callers that don't track a generation.
       let aResolved = false;
       let bResolved = false;
       void manager.waitForIdleTransition(0).promise.then(() => {
@@ -397,25 +338,20 @@ describe('ProcessingStateManager', () => {
 
   describe('onIdleCallback ordering (deferred restart)', () => {
     test('fires the callback BEFORE draining delivery waiters (ownership held through the restart)', async () => {
-      // A deferred restart (settings change) runs as the onIdleCallback. It must
-      // run BEFORE the waiters drain, or driveDeliveryTurn completes + frees the
-      // active-turn slot while the restart is still stopping/starting the query
-      // — a message arriving then starts a new turn concurrent with the restart.
       let waiterResolvedAtCallback = true;
       let waiterResolved = false;
       void manager.waitForIdleTransition().promise.then(() => {
         waiterResolved = true;
       });
       manager.setOnIdleCallback(async () => {
-        // At callback time the waiter must still be pending — drain is deferred.
         waiterResolvedAtCallback = waiterResolved;
       });
 
       await manager.setIdle();
       await Promise.resolve();
 
-      expect(waiterResolvedAtCallback).toBe(false); // NOT drained during the callback
-      expect(waiterResolved).toBe(true); // drained after the callback completed
+      expect(waiterResolvedAtCallback).toBe(false);
+      expect(waiterResolved).toBe(true);
     });
 
     test('a reentrant terminal idle consumes its fence without draining early', async () => {
@@ -428,14 +364,11 @@ describe('ProcessingStateManager', () => {
 
       await manager.setIdle();
 
-      expect(terminalInFlightAfterReentrantIdle).toBe(true); // outer transition still owns the drain
-      expect(manager.isTerminalIdleInFlight()).toBe(false); // both transitions settled
+      expect(terminalInFlightAfterReentrantIdle).toBe(true);
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
     });
 
     test('a reentrant setIdle during the callback does not re-fire it or drain early', async () => {
-      // The callback's restart drives its own idle (reentrant setIdle). The guard
-      // must prevent a double restart AND keep the drain deferred to the outer
-      // call (a reentrant drain would defeat the ordering above).
       let fires = 0;
       let outerResolved = false;
       void manager.waitForIdleTransition().promise.then(() => {
@@ -443,14 +376,14 @@ describe('ProcessingStateManager', () => {
       });
       manager.setOnIdleCallback(async () => {
         fires += 1;
-        await manager.setIdle(); // reentrant idle from the restart's stop/start
+        await manager.setIdle();
       });
 
       await manager.setIdle();
       await Promise.resolve();
 
-      expect(fires).toBe(1); // reentrant idle did NOT re-fire the callback
-      expect(outerResolved).toBe(true); // outer call drained after the callback
+      expect(fires).toBe(1);
+      expect(outerResolved).toBe(true);
     });
   });
 
@@ -653,7 +586,6 @@ describe('ProcessingStateManager', () => {
       const draftResponses = [{ questionIndex: 0, selectedOptionIndices: [1] }];
       await manager.updateQuestionDraft(draftResponses);
 
-      // Should have been called for both setWaitingForInput and updateQuestionDraft
       expect(updateSessionMock).toHaveBeenCalledTimes(2);
     });
 
@@ -726,7 +658,6 @@ describe('ProcessingStateManager', () => {
     test('does not emit event when not processing', async () => {
       await manager.setCompacting(true);
 
-      // Only the initial setCompacting should set the internal flag
       expect(manager.getIsCompacting()).toBe(true);
     });
   });
@@ -752,8 +683,6 @@ describe('ProcessingStateManager', () => {
 
       test('thinking deltas keep the Thinking phase (extended thinking is not Streaming)', async () => {
         await manager.setProcessing('msg-1', 'initializing');
-        // A long redacted-thinking generation streams thinking_delta frames —
-        // the UI must show "Thinking", not "Streaming", for its whole duration.
         for (let i = 0; i < 3; i++) {
           await manager.detectPhaseFromMessage(
             streamEvent({
@@ -763,7 +692,6 @@ describe('ProcessingStateManager', () => {
           );
         }
         expect(manager.getState().phase).toBe('thinking');
-        // A thinking content_block_start must not flip an existing streaming phase either.
         await manager.updatePhase('streaming');
         await manager.detectPhaseFromMessage(
           streamEvent({ type: 'content_block_start', content_block: { type: 'thinking' } })
@@ -842,7 +770,6 @@ describe('ProcessingStateManager', () => {
       const message = { type: 'stream_event' } as SDKMessage;
       await manager.detectPhaseFromMessage(message);
 
-      // Should not throw and state should remain idle
       expect(manager.getState().status).toBe('idle');
     });
 
@@ -922,7 +849,6 @@ describe('ProcessingStateManager', () => {
       } as unknown as SDKMessage;
       await manager.detectPhaseFromMessage(message);
 
-      // Should not emit since already in streaming phase
       expect(emitMock).not.toHaveBeenCalled();
     });
   });
@@ -967,7 +893,6 @@ describe('ProcessingStateManager', () => {
 
       manager.restoreFromDatabase();
 
-      // Processing state should be reset to idle
       expect(manager.getState().status).toBe('idle');
     });
 
@@ -987,7 +912,6 @@ describe('ProcessingStateManager', () => {
     test('handles missing processingState gracefully', () => {
       mockDb.getSession = mock(() => null);
 
-      // Should not throw
       manager.restoreFromDatabase();
 
       expect(manager.getState().status).toBe('idle');
@@ -998,7 +922,6 @@ describe('ProcessingStateManager', () => {
         processingState: 'invalid json',
       }));
 
-      // Should not throw
       manager.restoreFromDatabase();
 
       expect(manager.getState().status).toBe('idle');
@@ -1017,18 +940,14 @@ describe('ProcessingStateManager', () => {
 
   describe('state transition flow', () => {
     test('complete flow: idle -> queued -> processing -> idle', async () => {
-      // Start idle
       expect(manager.getState().status).toBe('idle');
 
-      // Queue message
       await manager.setQueued('msg-1');
       expect(manager.getState().status).toBe('queued');
 
-      // Start processing
       await manager.setProcessing('msg-1', 'initializing');
       expect(manager.getState().status).toBe('processing');
 
-      // Update phases
       await manager.updatePhase('thinking');
       expect(manager.getState().phase).toBe('thinking');
 
@@ -1038,7 +957,6 @@ describe('ProcessingStateManager', () => {
       await manager.updatePhase('finalizing');
       expect(manager.getState().phase).toBe('finalizing');
 
-      // Back to idle
       await manager.setIdle();
       expect(manager.getState().status).toBe('idle');
     });
@@ -1080,7 +998,6 @@ describe('ProcessingStateManager', () => {
       mockInternalEventBus = createMockInternalEventBus();
       manager = new ProcessingStateManager(sessionId, mockInternalEventBus, mockDb);
 
-      // Should not throw
       await manager.setIdle();
 
       expect(manager.getState().status).toBe('idle');

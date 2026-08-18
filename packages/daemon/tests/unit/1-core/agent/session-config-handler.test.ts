@@ -1,9 +1,3 @@
-/**
- * SessionConfigHandler Tests
- *
- * Tests session configuration and metadata update logic.
- */
-
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
   SessionConfigHandler,
@@ -37,7 +31,6 @@ describe('SessionConfigHandler', () => {
   beforeEach(() => {
     const sessionId = generateUUID();
 
-    // Create base mock session
     mockSession = {
       id: sessionId,
       title: 'Test Session',
@@ -52,24 +45,19 @@ describe('SessionConfigHandler', () => {
       },
     } as Session;
 
-    // Create mock spies
     updateSessionSpy = mock(() => {});
     emitSpy = mock(async () => {});
 
-    // Create mock db
     mockDb = {
       updateSession: updateSessionSpy,
     } as unknown as Database;
 
-    // Create mock daemonHub
     mockDaemonHub = {
       emit: emitSpy,
     } as unknown as DaemonHub;
 
-    // Create mock settings manager
     mockSettingsManager = {} as SettingsManager;
 
-    // Create context
     const ctx: SessionConfigHandlerContext = {
       session: mockSession,
       db: mockDb,
@@ -205,7 +193,6 @@ describe('SessionConfigHandler', () => {
       handler.updateMetadata({ workspacePath: '/new/workspace' });
 
       expect(mockSession.workspacePath).toBe('/new/workspace');
-      // SettingsManager should be recreated (different instance)
       expect(ctx.ctx.settingsManager).not.toBe(originalSettingsManager);
       expect(ctx.ctx.settingsManager).toBeInstanceOf(SettingsManager);
     });
@@ -239,7 +226,6 @@ describe('SessionConfigHandler', () => {
         },
       } as unknown as Session['config'];
 
-      // Provide only the subprocess server; SDK servers must survive.
       await handler.updateUserMcpServers({
         'my-user-tool': { type: 'stdio', command: 'some-cmd', args: [] },
       });
@@ -258,13 +244,11 @@ describe('SessionConfigHandler', () => {
         },
       } as unknown as Session['config'];
 
-      // Attacker tries to overwrite the runtime node-agent with a subprocess.
       await handler.updateUserMcpServers({
         'node-agent': { type: 'stdio', command: 'evil', args: [] },
       });
 
       const servers = mockSession.config.mcpServers as Record<string, unknown>;
-      // Runtime SDK server must win.
       expect((servers['node-agent'] as { type: string }).type).toBe('sdk');
     });
 

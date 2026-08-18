@@ -1,28 +1,3 @@
-/**
- * Custom Endpoint Provider
- *
- * Wraps a user-defined API endpoint of one of three upstream types:
- *
- *   - `openai-chat`         OpenAI Chat Completions (default for legacy
- *                           configs persisted before the discriminator existed)
- *   - `anthropic-messages`  Anthropic Messages pass-through
- *   - `ollama-native`       Ollama native `/api/chat` (NDJSON streaming)
- *
- * Each instance:
- *
- * 1. Has a deterministic provider ID of the form `custom:<endpointId>` so it
- *    coexists with the built-in providers in the registry.
- * 2. Owns one or more embedded bridge servers, lazily started on first
- *    `buildSdkConfig` call. The bridge selected by `type` translates between
- *    the Anthropic Messages API the SDK speaks and the upstream wire format.
- * 3. Reports model-level capabilities (`toolUse`, `vision`, `thinking`,
- *    `caching`, `maxContextTokens`) so the rest of the system can degrade
- *    gracefully when a feature isn't supported.
- *
- * Tests can pass `bridgeFactories` and `bridgeFetchImpl` to substitute fake
- * bridges or fetch implementations on a per-type basis.
- */
-
 import type {
   ModelTier,
   Provider,
@@ -59,7 +34,6 @@ import {
   type OllamaNativeBridgeServer,
 } from './ollama-native-bridge/server.js';
 
-/** Prefix prepended to user-supplied endpoint IDs to form a provider ID. */
 export const CUSTOM_ENDPOINT_PROVIDER_PREFIX = 'custom:';
 
 export function customProviderIdFor(endpointId: string): string {
@@ -70,11 +44,6 @@ export function isCustomEndpointProviderId(providerId: string): boolean {
   return providerId.startsWith(CUSTOM_ENDPOINT_PROVIDER_PREFIX);
 }
 
-/**
- * Common shape every bridge type exposes. Lets the provider hold a
- * heterogeneous map of bridges without leaking the per-type config to
- * higher layers.
- */
 interface CustomEndpointBridge {
   port: number;
   stop(): void;
@@ -85,26 +54,15 @@ interface CustomEndpointBridge {
 }
 
 export interface CustomEndpointProviderOptions {
-  /** Override fetch used by every bridge type (tests). */
   bridgeFetchImpl?: typeof fetch;
-  /**
-   * Per-type factory overrides for tests. Any type not overridden falls back
-   * to the real implementation.
-   */
   bridgeFactories?: {
     'openai-chat'?: (config: OpenAIChatBridgeConfig) => OpenAIChatBridgeServer;
     'anthropic-messages'?: (config: AnthropicMessagesBridgeConfig) => AnthropicMessagesBridgeServer;
     'ollama-native'?: (config: OllamaNativeBridgeConfig) => OllamaNativeBridgeServer;
   };
-  /**
-   * Legacy single-factory override. Equivalent to passing the factory under
-   * `bridgeFactories['openai-chat']`. Retained so existing tests don't need
-   * to be rewritten just to keep working with the OpenAI Chat default type.
-   */
   bridgeFactory?: (config: OpenAIChatBridgeConfig) => OpenAIChatBridgeServer;
 }
 
-/** Resolve model-level capabilities with type-specific then global defaults applied. */
 export function resolveModelCapabilities(
   model: CustomEndpointModel,
   type: CustomEndpointType = 'openai-chat'
@@ -147,12 +105,6 @@ export class CustomEndpointProvider implements Provider {
     this.capabilities = this.aggregateCapabilities(config.models);
   }
 
-  /**
-   * Aggregate provider-level capabilities by taking the most-permissive value
-   * across all configured models. Per-request gating still uses each model's
-   * own capability map so unsupported features are dropped before they hit
-   * the upstream.
-   */
   private aggregateCapabilities(models: CustomEndpointModel[]): ProviderCapabilities {
     let streaming = false;
     let extendedThinking = false;
@@ -178,24 +130,9 @@ export class CustomEndpointProvider implements Provider {
   }
 
   async isAvailable(): Promise<boolean> {
-    // Local endpoints (no API key) are available if baseUrl is set; for
-    // remote endpoints with an API key we still report true and let the
-    // upstream surface auth errors on first request. We avoid a probe here
-    // to keep startup fast and to support endpoints that don't expose a
-    // reachable health check.
     return Boolean(this.config.baseUrl);
   }
 
-  /**
-   * Probe the configured endpoint with a lightweight GET request to verify
-   * reachability and credential validity. Path is chosen by endpoint type to
-   * mirror `testCustomEndpoint()` in the web UI so daemon-side health checks
-   * (`providers.test`, `providers.healthCheck`) and the UI "Test" button
-   * agree on what "healthy" means.
-   *
-   * @throws {Error} when the upstream is unreachable, returns non-2xx, or the
-   *   request times out.
-   */
   private async probeEndpoint(): Promise<void> {
     const fetchImpl = this.options.bridgeFetchImpl ?? fetch;
     const baseUrl = normalizeBaseUrlForProbe(this.config.baseUrl);
@@ -209,12 +146,6 @@ export class CustomEndpointProvider implements Provider {
 
     const headers: Record<string, string> = {};
     if (this.config.apiKey) {
-      // For anthropic-messages endpoints, also send `x-api-key` so
-      // Anthropic-native upstreams that enforce the x-api-key header
-      // (rather than Bearer) accept the probe. Mirrors
-      // anthropic-messages-bridge/server.ts:206-211 and
-      // shared/credential-probe.ts:85-86. OpenAI Chat and Ollama variants
-      // ignore the extra header.
       if (this.type === 'anthropic-messages') {
         headers['x-api-key'] = this.config.apiKey;
       }
@@ -250,9 +181,6 @@ export class CustomEndpointProvider implements Provider {
   }
 
   async getModels(): Promise<ModelInfo[]> {
-    // Verify the endpoint is reachable with the stored credentials before
-    // returning the model list. Aligns daemon-side health checks with the
-    // UI's "Test" button (testCustomEndpoint in CustomEndpointEditor.tsx).
     await this.probeEndpoint();
     return this.config.models.map((model) => this.toModelInfo(model));
   }
@@ -304,13 +232,6 @@ export class CustomEndpointProvider implements Provider {
     return 'default';
   }
 
-  /**
-   * Per-model thinking mode. Returns `'off'` for models that declare
-   * `thinking: false` so the query-options builder skips the thinking
-   * payload — critical for `anthropic-messages` endpoints because that
-   * bridge forwards request bytes verbatim and a `thinking` field sent to
-   * a non-thinking upstream model would 4xx.
-   */
   getModelThinkingMode(modelId: string): 'off' | 'on' | 'granular' | undefined {
     const model = this.config.models.find((m) => m.id === modelId);
     if (!model) return undefined;
@@ -318,14 +239,6 @@ export class CustomEndpointProvider implements Provider {
     return caps.thinking ? 'on' : 'off';
   }
 
-  /**
-   * Propagate the session's thinking level to all chat bridges.
-   *
-   * The Claude Code CLI handles thinking internally and does not include the
-   * thinking field in Anthropic Messages API request bodies. Without this
-   * side-channel the bridge has no way to know that reasoning should be
-   * forwarded to the OpenAI Chat Completions API.
-   */
   setSessionThinkingConfig(sessionId: string, thinkingLevel: string | undefined): void {
     const tokens = THINKING_LEVEL_TOKENS[thinkingLevel as keyof typeof THINKING_LEVEL_TOKENS];
     const thinking =
@@ -351,12 +264,10 @@ export class CustomEndpointProvider implements Provider {
     this.bridges.clear();
   }
 
-  /** Snapshot of the underlying endpoint config (for RPC responses). */
   getConfig(): CustomEndpointConfig {
     return this.config;
   }
 
-  /** Resolved type (with the legacy `openai-chat` default applied). */
   getType(): CustomEndpointType {
     return this.type;
   }
@@ -414,8 +325,6 @@ export class CustomEndpointProvider implements Provider {
           headers: this.config.headers,
           toolUseSupported: caps.toolUse,
           modelContextWindow: caps.maxContextTokens,
-          // Bind to loopback so other local users can't reach this bridge
-          // with the configured upstream API key.
           hostname: '127.0.0.1',
           ...(fetchImpl ? { fetchImpl } : {}),
         });

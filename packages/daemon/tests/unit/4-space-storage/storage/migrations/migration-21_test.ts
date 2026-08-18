@@ -1,9 +1,3 @@
-/**
- * Migration 21 Tests
- *
- * Tests for Migration 21: Backfill submittedForReview metadata from legacy state.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';

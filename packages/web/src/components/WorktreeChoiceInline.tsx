@@ -12,7 +12,7 @@ export function WorktreeChoiceInline({
   workspacePath: _workspacePath,
   onModeChange,
 }: WorktreeChoiceInlineProps) {
-  const [selectedMode, setSelectedMode] = useState<'worktree' | 'direct'>('worktree'); // Default to worktree
+  const [selectedMode, setSelectedMode] = useState<'worktree' | 'direct'>('worktree');
 
   const handleModeChange = (mode: 'worktree' | 'direct') => {
     setSelectedMode(mode);

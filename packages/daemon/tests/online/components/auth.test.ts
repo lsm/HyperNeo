@@ -1,23 +1,7 @@
-/**
- * Authentication Integration Tests (API-dependent)
- *
- * Tests for authentication functionality that requires API credentials.
- * These tests verify that authenticated sessions work correctly.
- *
- * REQUIREMENTS:
- * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Makes real API calls (costs money, uses rate limits)
- *
- * MODEL:
- * - Uses 'haiku-4.5' (faster and cheaper than Sonnet for tests)
- * - Note: Short alias 'haiku' doesn't work with Claude OAuth (SDK hangs)
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 
-// Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
 describe('Authentication Integration (API-dependent)', () => {
@@ -45,7 +29,6 @@ describe('Authentication Integration (API-dependent)', () => {
 
       expect(result.sessionId).toBeString();
 
-      // Verify session was created via RPC
       const sessionResult = (await daemon.messageHub.request('session.get', {
         sessionId: result.sessionId,
       })) as { session: Record<string, unknown> };

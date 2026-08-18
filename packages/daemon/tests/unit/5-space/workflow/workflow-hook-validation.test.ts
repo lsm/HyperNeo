@@ -6,8 +6,6 @@ import { registerProductionConnectors } from '../../../../src/lib/space/runtime/
 
 const runtimeService = new WorkflowHookRuntimeService();
 
-// externalLookups are admitted via the connector registry, so seed it with the
-// github connector before exercising validation.
 beforeAll(() => {
   registerProductionConnectors();
 });
@@ -110,7 +108,6 @@ describe('workflow hook validation', () => {
       nodes
     ).join('\n');
     expect(errors).toContain('expected "bash"');
-    // 'github' is a registered connector (admitted); 'jira' is not.
     expect(errors).toContain('"jira" is not a registered connector');
     expect(errors).not.toContain('"github" is not a registered connector');
   });
@@ -132,8 +129,6 @@ describe('workflow hook validation', () => {
       nodes
     ).join('\n');
     expect(errors).toContain('unknown built-in validator');
-    // Admission is registry-driven: the error lists the registered presets
-    // rather than a hardcoded literal (epic #2299, P2 #2302).
     expect(errors).toContain('registered presets');
     expect(errors).toContain('"pr_ready"');
     expect(errors).toContain('"pr_merged"');

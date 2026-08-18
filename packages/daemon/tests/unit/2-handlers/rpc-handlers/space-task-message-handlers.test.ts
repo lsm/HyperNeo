@@ -1,13 +1,3 @@
-/**
- * Tests for Space Task Message RPC Handlers
- *
- * Covers:
- * - space.task.sendMessage: happy path, missing params, task not found,
- *   @mention routing, explicit node-agent target, image attachments,
- *   channel-cycle reset on human touch
- * - space.task.activateNodeAgent: lazy-activation of workflow node agents
- */
-
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { MessageHub } from '@hyperneo/shared';
@@ -30,8 +20,6 @@ import { ChannelCycleRepository } from '../../../../src/storage/repositories/cha
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
-
-// ─── Fixtures ───────────────────────────────────────────────────────────────
 
 const NOW = Date.now();
 
@@ -72,8 +60,6 @@ const mockSDKMessages: SDKMessage[] = [
     message: { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
   },
 ] as unknown as SDKMessage[];
-
-// ─── Mock helpers ────────────────────────────────────────────────────────────
 
 function createMockMessageHub(): {
   hub: MessageHub;
@@ -128,7 +114,6 @@ function createMockDatabase(
       prepare: mock((_sql: string) => ({
         get: mock((_id: string) => {
           if (!task) return undefined;
-          // Simulate the repository row format
           return {
             id: task.id,
             space_id: task.spaceId,
@@ -156,8 +141,6 @@ function createMockDatabase(
   } as unknown as Database;
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 describe('setupSpaceTaskMessageHandlers', () => {
   let hub: MessageHub;
   let handlers: Map<string, RequestHandler>;
@@ -165,11 +148,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
   let db: Database;
   let internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 
-  /**
-   * Sets up all mocks and registers handlers.
-   * @param task       Task to return from repository (null = "not found")
-   * @param liveSession Live AgentSession (unused after task-agent removal)
-   */
   function setup(
     task: SpaceTask | null = mockTaskWithSession,
     liveSession: Partial<AgentSession> | null = null,
@@ -193,7 +171,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     return handler(data);
   };
 
-  // Mock NodeExecutionLookup — includes status field (required by NodeExecutionLookup interface)
   function makeNodeExecutionRepo(
     agents: Array<{
       id?: string;
@@ -210,8 +187,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     };
   }
 
-  // ─── Registration ──────────────────────────────────────────────────────────
-
   describe('handler registration', () => {
     beforeEach(() => setup());
 
@@ -219,8 +194,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(handlers.has('space.task.sendMessage')).toBe(true);
     });
   });
-
-  // ─── space.task.sendMessage ────────────────────────────────────────────────
 
   describe('space.task.sendMessage', () => {
     beforeEach(() => setup());
@@ -437,11 +410,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
     });
 
-    // ─── Image attachment routing ─────────────────────────────────────────────
-    // Regression coverage for the bug where the space thread / slide-out chat
-    // silently dropped image uploads. The RPC handler must forward `images`
-    // to the underlying inject* call so the agent sees image blocks alongside
-    // the text in the SDK message content.
     describe('image attachments', () => {
       const sampleImage = {
         media_type: 'image/png' as const,
@@ -562,7 +530,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
           publish: mock(async () => ({ delivered: 0, failures: [] })),
           publishAsync: mock(() => {}),
         } as unknown as InternalEventBus<DaemonInternalEventMap>;
-        // Reviewer has no agentSessionId → not spawned yet
         const nodeExecutionRepo = makeNodeExecutionRepo([
           {
             id: 'exec-reviewer',
@@ -595,20 +562,11 @@ describe('setupSpaceTaskMessageHandlers', () => {
           })
         ).rejects.toThrow(/images.*starting|starting.*images/i);
 
-        // Did not silently fall through to the text-only pending queue.
         expect(pendingMessageQueue.enqueue).not.toHaveBeenCalled();
         expect(injectSubSession).not.toHaveBeenCalled();
       });
     });
 
-    // ─── delivery mode forwarding (task #949) ─────────────────────────────────
-    // space.task.sendMessage threads `deliveryMode` ('defer' → persisted as
-    // `deferred`, replayed at the next idle boundary) into injectSubSessionMessage
-    // as its 5th positional arg on every direct-delivery path (explicit
-    // node-agent target, @mention, and the execution-less post-approval worker).
-    // Omitted / 'immediate' forwards `undefined` (the inject default). The
-    // defer→deferred-row persistence itself is covered by the task-agent-manager
-    // tests; here we only assert the handler forwards the mode end-to-end.
     describe('delivery mode forwarding', () => {
       const mockTaskWithWorkflowRun: SpaceTask = {
         ...mockTaskWithSession,
@@ -705,8 +663,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
 
       it('forwards deliveryMode:"defer" to the execution-less post-approval worker', async () => {
-        // The worker direct-delivery path must also honor defer so a queued
-        // reply to a busy merger lands as a deferred row, not a steer.
         const mh = createMockMessageHub();
         hub = mh.hub;
         handlers = mh.handlers;
@@ -750,8 +706,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
 
       it('rejects an invalid deliveryMode at the RPC boundary', async () => {
-        // Mirrors the `message.send` guard in session-handlers.ts — a non-TS
-        // caller can pass an arbitrary string, so validate before forwarding.
         setupDeliveryMode();
 
         await expect(
@@ -766,10 +720,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
 
       it('persists deliveryMode:"defer" on the pending row when the target is not live yet', async () => {
-        // A deferred message to a not-yet-spawned agent falls through to the
-        // pending-message queue. The mode must be persisted with the row so the
-        // flush replays it as 'defer' after spawn — otherwise it defaults to
-        // immediate and steers the kickoff turn. (Review P2.)
         const mh = createMockMessageHub();
         hub = mh.hub;
         handlers = mh.handlers;
@@ -793,7 +743,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
               id: 'exec-coder',
               workflowNodeId: 'node-1',
               agentName: 'Coder',
-              agentSessionId: null, // not spawned yet → pending-queue path
+              agentSessionId: null,
             },
           ]),
           undefined,
@@ -824,11 +774,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
     });
 
-    // ─── Post-approval worker routing (task #857 / #864) ───────────────────────
-    // The merger is an execution-less node agent: it has a live session but no
-    // node_executions row. A human overlay reply targets it by agent slot name
-    // (`merger`) and must reach the live session instead of throwing
-    // "Workflow agent not found: agent".
     describe('post-approval worker routing', () => {
       const mockTaskWithWorkflowRun: SpaceTask = {
         ...mockTaskWithSession,
@@ -840,7 +785,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         postApproval?: { sessionId: string; agentName: string } | null;
         declared?: string[];
         injectImpl?: (subSessionId: string) => Promise<void>;
-        /** Restored session id returned by restorePostApprovalWorkerSession; null to simulate restore failure. */
         restoreResult?: string | null;
         withQueue?: boolean;
       }) {
@@ -918,8 +862,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
 
       it('does not collapse an unmatched target onto the post-approval worker', async () => {
-        // Targeting `coder` must NOT be misrouted into the live merger session
-        // just because it is the only execution-less worker available.
         const { injectSubSession } = setupPostApproval({
           postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
           declared: ['coder', 'reviewer', 'merger'],
@@ -937,10 +879,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
 
       it('restores the worker when it is not in memory, then delivers the reply', async () => {
-        // Post-restart the merger is not in memory (no node_executions row to
-        // rehydrate from) — inject throws "Sub-session not found". The handler
-        // must restore the worker and retry rather than silently queueing a
-        // reply that would never drain.
         let callCount = 0;
         const { injectSubSession, pendingMessageQueue } = setupPostApproval({
           postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
@@ -960,15 +898,12 @@ describe('setupSpaceTaskMessageHandlers', () => {
         });
 
         expect(res).toEqual({ ok: true, routedTo: ['merger'] });
-        expect(injectSubSession).toHaveBeenCalledTimes(2); // initial fail → retry after restore
+        expect(injectSubSession).toHaveBeenCalledTimes(2);
         expect(injectSubSession.mock.calls[1][0]).toBe(mergerSessionId);
-        // The leaky text-only queue fallback is gone — nothing is enqueued.
         expect(pendingMessageQueue!.enqueue).not.toHaveBeenCalled();
       });
 
       it('fails honestly when the worker cannot be restored', async () => {
-        // Restore returns null (e.g. the persisted session is gone) — surface a
-        // clear error instead of a success-shaped response that never delivers.
         setupPostApproval({
           postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
           restoreResult: null,
@@ -1009,8 +944,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
 
       it('does not match the worker by name when an execution id disambiguates the target', async () => {
-        // An explicit nodeExecutionId must bypass the post-approval name
-        // shortcut so a shared slot name is never misrouted onto the worker.
         const { injectSubSession } = setupPostApproval({
           postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
           declared: ['merger'],
@@ -1028,8 +961,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
 
       it('diagnostics list workflow-declared slots, not only execution rows', async () => {
-        // No executions exist; declared slots (incl. the merger) must still
-        // surface in "Available agents" so the user knows they are reachable.
         setupPostApproval({
           postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
           declared: ['coder', 'reviewer', 'merger'],
@@ -1047,10 +978,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
   });
 
-  // ─── @mention routing ─────────────────────────────────────────────────────────
-
   describe('@mention routing in space.task.sendMessage', () => {
-    // Task with a workflowRunId set
     const mockTaskWithWorkflowRun: SpaceTask = {
       ...mockTaskWithSession,
       workflowRunId: 'run-abc-123',
@@ -1102,19 +1030,15 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
 
     it('does not @mention-inject into a spawn-retry pending dead session', async () => {
-      // Round-43: a pending execution retaining a dead agentSessionId
-      // (resetWorkflowNodeExecutionForSpawnRetry) must not receive @mention
-      // injection — the session is still eligible to spawn a replacement.
       const { injectSubSession } = setupWithMention([
         { agentName: 'Coder', agentSessionId: 'session-coder-live' },
         {
           agentName: 'Reviewer',
           agentSessionId: 'session-reviewer-dead',
-          status: 'pending', // spawn-retry, dead session retained
+          status: 'pending',
         },
       ]);
 
-      // The pending reviewer is not reachable — the mention throws.
       await expect(
         call('space.task.sendMessage', {
           spaceId: 'space-1',
@@ -1165,7 +1089,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
           message: '@Ghost please do something',
         })
       ).rejects.toThrow('@mention not found: Ghost');
-      // Error message should list available agents
       await expect(
         call('space.task.sendMessage', {
           spaceId: 'space-1',
@@ -1178,7 +1101,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
     it('ambiguous @mention (multiple agents with same name) routes to all matching sessions', async () => {
       const { injectSubSession } = setupWithMention([
         { agentName: 'Coder', agentSessionId: 'session-coder-1' },
-        { agentName: 'Coder', agentSessionId: 'session-coder-2' }, // same name, two sessions
+        { agentName: 'Coder', agentSessionId: 'session-coder-2' },
       ]);
 
       const result = await call('space.task.sendMessage', {
@@ -1188,7 +1111,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
 
       expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
-      // Should have injected into both Coder sessions
       expect(injectSubSession).toHaveBeenCalledTimes(2);
       expect(injectSubSession).toHaveBeenCalledWith(
         'session-coder-1',
@@ -1231,7 +1153,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
       const result = await call('space.task.sendMessage', {
         spaceId: 'space-1',
         taskId: 'task-1',
-        message: '@coder please fix', // lowercase mention, mixed-case agent name
+        message: '@coder please fix',
       });
 
       expect(result).toMatchObject({ ok: true, routedTo: ['coder'] });
@@ -1283,9 +1205,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
 
     it('routes @mention to idle agents — core fix for the reported bug', async () => {
-      // Idle agents (waiting for input) should receive @mention messages.
-      // Previously this was broken: only 'in_progress' and 'pending' passed the filter,
-      // so @Reviewer returned "Available agents: none" when the agent was idle.
       const { injectSubSession } = setupWithMention([
         { agentName: 'Reviewer', agentSessionId: 'session-reviewer-idle', status: 'idle' },
       ]);
@@ -1307,8 +1226,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
 
     it('only excludes cancelled agents — idle, blocked, and pending are all routable', async () => {
-      // Only 'cancelled' is truly terminal. All other statuses (idle, blocked, pending,
-      // in_progress) can still receive and process messages.
       const { injectSubSession } = setupWithMention([
         { agentName: 'Coder', agentSessionId: 'session-coder-cancelled', status: 'cancelled' },
         { agentName: 'Coder', agentSessionId: 'session-coder-idle', status: 'idle' },
@@ -1322,9 +1239,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
         message: '@Coder please check',
       });
 
-      // All non-cancelled sessions should receive the message
       expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
-      expect(injectSubSession).toHaveBeenCalledTimes(3); // idle + blocked + in_progress
+      expect(injectSubSession).toHaveBeenCalledTimes(3);
       expect(injectSubSession).not.toHaveBeenCalledWith(
         'session-coder-cancelled',
         expect.anything(),
@@ -1360,7 +1276,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         { agentName: 'Coder', agentSessionId: 'session-coder-cancelled', status: 'cancelled' },
       ]);
 
-      // Coder exists but is cancelled — should be treated as unavailable
       await expect(
         call('space.task.sendMessage', {
           spaceId: 'space-1',
@@ -1401,8 +1316,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
 
     it('routes an @merger mention to the execution-less post-approval worker', async () => {
-      // The merger has no node_executions row, so mention matching against
-      // executions alone would miss it. The worker resolver must be consulted.
       const mh = createMockMessageHub();
       hub = mh.hub;
       handlers = mh.handlers;
@@ -1441,9 +1354,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
 
     it('rethrows a resolved @merger mention delivery error instead of masking it as not-found', async () => {
-      // The worker name IS resolved, so a non-rehydration delivery failure
-      // (terminal session / provider error) must propagate honestly — not be
-      // reported as "@mention not found" or hidden behind partial success.
       const mh = createMockMessageHub();
       hub = mh.hub;
       handlers = mh.handlers;
@@ -1482,18 +1392,12 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
   });
 
-  // ─── P2: Matcher correctness + activation path (PR #1660 review) ──────────
-
   describe('explicit target: matcher correctness (PR #1660 review)', () => {
     const mockTaskWithRun: SpaceTask = {
       ...mockTaskWithSession,
       workflowRunId: 'run-match-1',
     };
 
-    /**
-     * Sets up handlers with activateNode + pendingMessageQueue for
-     * activation-path tests.
-     */
     function setupWithActivation(opts: {
       nodeExecAgents: Array<{
         id?: string;
@@ -1574,10 +1478,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     }
 
     it('nodeExecutionId mismatch with valid agentName throws (does not broaden)', async () => {
-      // Two nodes both declare a "Coder" agent. The user picked
-      // exec-coder-A by nodeExecutionId, but that ID no longer exists.
-      // The handler must NOT fall back to agentName and deliver to
-      // exec-coder-B instead.
       const { injectSubSession } = setupWithActivation({
         nodeExecAgents: [
           {
@@ -1597,7 +1497,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
           target: {
             kind: 'node_agent',
             agentName: 'Coder',
-            nodeExecutionId: 'exec-coder-A', // wrong ID
+            nodeExecutionId: 'exec-coder-A',
           },
         })
       ).rejects.toThrow('Workflow agent not found');
@@ -1605,8 +1505,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
 
     it('agentName-only target fans out to all same-named executions', async () => {
-      // Two nodes both declare "Coder". No nodeExecutionId provided.
-      // Both should receive the message.
       const { injectSubSession } = setupWithActivation({
         nodeExecAgents: [
           {
@@ -1631,7 +1529,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         target: {
           kind: 'node_agent',
           agentName: 'Coder',
-          // no nodeExecutionId — should fan out
         },
       });
 
@@ -1654,9 +1551,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
 
     it('workflowNodeId scopes an agentName-only target to the clicked node', async () => {
-      // Two nodes both declare "Coder" with live sessions. Providing
-      // workflowNodeId (from a canvas node click) must route to ONLY that
-      // node's session — the same-slot disambiguation the identity fix needs.
       const { injectSubSession } = setupWithActivation({
         nodeExecAgents: [
           {
@@ -1700,10 +1594,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
 
     it('fails a send pinned to a session that no longer has an execution (no lazy-activation fallback)', async () => {
-      // Round-58: an overlay pins session W1, but the execution rebinds to W2
-      // before the send. The pinned sessionId must NOT fall back to agentName
-      // lazy-activation (which would inject into W2 while the user views W1) —
-      // the send must fail loudly.
       const mh = createMockMessageHub();
       hub = mh.hub;
       handlers = mh.handlers;
@@ -1732,7 +1622,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         undefined
       );
 
-      // Pin W1 — no execution carries it anymore.
       await expect(
         call('space.task.sendMessage', {
           spaceId: 'space-1',
@@ -1741,17 +1630,10 @@ describe('setupSpaceTaskMessageHandlers', () => {
           target: { kind: 'node_agent', agentName: 'Coder', sessionId: 'session-w1' },
         })
       ).rejects.toThrow('no longer attached');
-      // No injection, no lazy-activation fallback.
       expect(injectSub).not.toHaveBeenCalled();
     });
 
     it('post-activation refresh stays scoped to the clicked node (no same-name capture)', async () => {
-      // node-1's Coder is LIVE; node-2's Coder is a sessionless (pending)
-      // execution. Targeting node-2 by workflowNodeId: the initial match is
-      // node-2 (sessionless), so activateNode fires for node-2 and brings its
-      // session online. The refresh must deliver ONLY to node-2's new session —
-      // without the workflowNodeId scope it would also capture node-1's live
-      // session and inject the message there.
       const mutableRepo = {
         listByWorkflowRun: mock(() => [
           {
@@ -1786,7 +1668,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       const activateCalls: string[] = [];
       const mockActivate = mock(async (_runId: string, nodeId: string) => {
         activateCalls.push(nodeId);
-        // node-2's execution gains a live session after activation.
         mutableRepo.listByWorkflowRun = mock(() => [
           {
             id: 'exec-coder-A',
@@ -1842,11 +1723,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
 
     it('node-scoped send to a sibling node is NOT misrouted into a legacy post-approval worker', async () => {
-      // Round-9 regression: a legacy (pre-provenance) worker resolves to
-      // nodeId 'node-merger' (route-derived). A node-scoped send to a SIBLING
-      // node 'node-sibling' that reuses the 'merger' slot name (unstarted, no
-      // session/execution) must NOT take the worker shortcut — it must
-      // lazy-activate node-sibling instead of delivering into the worker.
       const mutableRepo = {
         listByWorkflowRun: mock(
           () =>
@@ -1879,7 +1755,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
               agentName,
               ...(options?.workflowNodeId ? { workflowNodeId: options.workflowNodeId } : {}),
             });
-            // node-sibling's execution comes online after activation.
             mutableRepo.listByWorkflowRun = mock(() => [
               {
                 id: 'exec-sibling',
@@ -1916,7 +1791,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         target: { kind: 'node_agent', agentName: 'merger', workflowNodeId: 'node-sibling' },
       })) as Record<string, unknown>;
 
-      // Delivered to the sibling node's freshly-activated session, never the worker.
       expect(injectSub).toHaveBeenCalledWith(
         'sibling-session',
         'hi sibling',
@@ -1942,11 +1816,11 @@ describe('setupSpaceTaskMessageHandlers', () => {
             id: 'exec-coder-1',
             workflowNodeId: 'node-1',
             agentName: 'Coder',
-            agentSessionId: null, // no session yet
+            agentSessionId: null,
           },
           {
             id: 'exec-coder-2',
-            workflowNodeId: 'node-1', // same nodeId — deduped
+            workflowNodeId: 'node-1',
             agentName: 'Coder',
             agentSessionId: null,
           },
@@ -1963,12 +1837,9 @@ describe('setupSpaceTaskMessageHandlers', () => {
         target: { kind: 'node_agent', agentName: 'Coder' },
       });
 
-      // activateNode called exactly once (deduped by workflowNodeId)
       expect(nodeExecCalls).toHaveLength(1);
       expect(nodeExecCalls[0].nodeId).toBe('node-1');
-      // No injection (no sessions)
       expect(injectSubSession).not.toHaveBeenCalled();
-      // Message queued for delivery when session comes online
       expect(result).toMatchObject({
         ok: true,
         delivered: false,
@@ -1977,8 +1848,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
 
     it('activateNode + re-query delivers when session becomes available', async () => {
-      // Mutable repo that returns null session initially, then
-      // returns a live session after activateNode is called.
       const mutableRepo = {
         listByWorkflowRun: mock(() => [
           {
@@ -2008,7 +1877,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       const activateCalls: string[] = [];
       const mockActivate = mock(async (_runId: string, nodeId: string) => {
         activateCalls.push(nodeId);
-        // Simulate session available after activation
         mutableRepo.listByWorkflowRun = mock(() => [
           {
             id: 'exec-reviewer',
@@ -2056,7 +1924,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         routedTo: ['Reviewer'],
         activated: true,
       });
-      // No delivered:false — message was actually delivered
       expect((result as { delivered?: boolean }).delivered).toBeUndefined();
     });
 
@@ -2115,12 +1982,10 @@ describe('setupSpaceTaskMessageHandlers', () => {
         queued: true,
         activated: true,
       });
-      // Message persisted to queue
       expect(enqueueCalls).toHaveLength(1);
       expect(enqueueCalls[0].targetAgentName).toBe('Reviewer');
       expect(enqueueCalls[0].message).toBe('Queue this');
       expect(enqueueCalls[0].sourceAgentName).toBe('human');
-      // No injection (no sessions)
       expect(injectSubSession).not.toHaveBeenCalled();
     });
 
@@ -2149,7 +2014,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         },
       ]);
 
-      // No pendingMessageQueue (7th arg = undefined)
       setupSpaceTaskMessageHandlers(
         mh.hub,
         taskAgentManager,
@@ -2174,7 +2038,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         delivered: false,
         activated: true,
       });
-      // No queued field
       expect((result as { queued?: boolean }).queued).toBeUndefined();
       expect(injectSubSession).not.toHaveBeenCalled();
     });
@@ -2190,7 +2053,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         publishAsync: mock(() => {}),
       } as unknown as InternalEventBus<DaemonInternalEventMap>;
 
-      // No nodeExecutionRepo (5th arg = undefined)
       setupSpaceTaskMessageHandlers(hub, taskAgentManager, db, internalEventBus);
 
       await expect(
@@ -2207,7 +2069,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       const mh = createMockMessageHub();
       hub = mh.hub;
       handlers = mh.handlers;
-      // Manager WITHOUT injectSubSessionMessage
       taskAgentManager = {};
       db = createMockDatabase(mockTaskWithRun);
       internalEventBus = {
@@ -2231,8 +2092,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       ).rejects.toThrow('Workflow agent targeting is unavailable');
     });
   });
-
-  // ─── channel-cycle reset on human touch ───────────────────────────────────────
 
   describe('channel-cycle reset on human touch in space.task.sendMessage', () => {
     const mockTaskWithRun: SpaceTask = {
@@ -2308,7 +2167,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(resetter.resetAllForRun).toHaveBeenCalledTimes(1);
       expect(resetter.resetAllForRun).toHaveBeenCalledWith('run-cyc-1');
 
-      // internalEventBus.publish should have been called with 'space.workflowRun.cyclesReset'
       const publishCalls = (dh.publish as ReturnType<typeof mock>).mock.calls;
       const cyclesResetCall = publishCalls.find((c) => c[0] === 'space.workflowRun.cyclesReset') as
         | [string, Record<string, unknown>]
@@ -2362,9 +2220,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
 
       expect(result).toMatchObject({ ok: true });
-      // The reset statement still runs (it's cheap and idempotent)...
       expect(resetter.resetAllForRun).toHaveBeenCalledTimes(1);
-      // ...but no event is published because nothing actually changed.
       const publishCalls = (dh.publish as ReturnType<typeof mock>).mock.calls;
       expect(publishCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(false);
     });
@@ -2395,18 +2251,11 @@ describe('setupSpaceTaskMessageHandlers', () => {
         message: '@Coder please continue',
       });
 
-      // RPC success is not impacted by a failed side-effect.
       expect(result).toMatchObject({ ok: true });
       expect(resetter.resetAllForRun).toHaveBeenCalledTimes(1);
     });
 
     it('acceptance: 4 autonomous cycles + human message -> cycles reset -> 5th cycle allowed', async () => {
-      // Integration test per Task #101 acceptance criteria:
-      //   "simulate 4 autonomous Review→Coding cycles, inject a human message,
-      //    verify cycle count is 0, verify a 5th autonomous cycle is allowed."
-      //
-      // Uses the real ChannelCycleRepository (not a mock) to exercise the full
-      // SQL path that production hits.
       const sqlite = new BunDatabase(':memory:');
       createSpaceTables(sqlite);
       const now = Date.now();
@@ -2421,16 +2270,12 @@ describe('setupSpaceTaskMessageHandlers', () => {
       );
       const cycleRepo = new ChannelCycleRepository(sqlite);
 
-      // Simulate 4 autonomous Review→Coding traversals against the backward
-      // channel (channel index 1). The rate-based detector counts these in a
-      // rolling window; 4 is well below the threshold (15).
       const CHANNEL_INDEX = 1;
       for (let i = 0; i < 4; i++) {
         cycleRepo.recordCycleEvent('run-cyc-1', CHANNEL_INDEX, now - i * 1000);
       }
       expect(cycleRepo.countRecentCycleEvents('run-cyc-1', CHANNEL_INDEX)).toBe(4);
 
-      // Wire handlers with the real repo as the ChannelCycleResetter.
       const mh = createMockMessageHub();
       const taskAgent = createMockTaskAgentManager(null, {
         ...mockTaskWithSession,
@@ -2442,7 +2287,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         publishAsync: mock(() => {}),
       } as unknown as InternalEventBus<DaemonInternalEventMap>;
 
-      // Add nodeExecutionRepo so @mention routing resolves.
       const nodeExecRepo = makeNodeExecutionRepo([
         { agentName: 'Coder', agentSessionId: 'session-coder-1', status: 'in_progress' },
       ]);
@@ -2460,7 +2304,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         cycleRepo
       );
 
-      // Human sends a message via the RPC — this must reset cycle counters.
       const result = await (mh.handlers.get('space.task.sendMessage') as RequestHandler)({
         spaceId: 'space-1',
         taskId: 'task-1',
@@ -2468,10 +2311,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
       expect(result).toMatchObject({ ok: true });
 
-      // The rate-window history must now be cleared.
       expect(cycleRepo.countRecentCycleEvents('run-cyc-1', CHANNEL_INDEX)).toBe(0);
 
-      // A further autonomous traversal is recorded fresh after the reset.
       cycleRepo.recordCycleEvent('run-cyc-1', CHANNEL_INDEX, now);
       expect(cycleRepo.countRecentCycleEvents('run-cyc-1', CHANNEL_INDEX)).toBe(1);
 
@@ -2479,11 +2320,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
 
     it('NOT human touch: agent-to-agent delivery via injectSubSessionMessage does NOT reset', async () => {
-      // Agent `send_message` tool → pending_agent_messages →
-      // flushPendingMessagesForTarget → TaskAgentManager.injectSubSessionMessage
-      // calls `injectSubSessionMessage` directly on the manager, NOT through the
-      // RPC. This test verifies that such a direct call path has no way to
-      // trigger the reset: only the RPC handler holds the resetter.
       const sqlite = new BunDatabase(':memory:');
       createSpaceTables(sqlite);
       const now = Date.now();
@@ -2502,26 +2338,19 @@ describe('setupSpaceTaskMessageHandlers', () => {
       const before = cycleRepo.countRecentCycleEvents('run-a2a', 0);
       expect(before).toBe(2);
 
-      // Simulate the agent-to-agent path: the TaskAgentManager's
-      // injectSubSessionMessage is called directly, not via the RPC.
       const injectSubSession = mock(async (_sid: string, _msg: string) => {});
       const taskAgent: TaskAgentManagerInterface = {
         injectSubSessionMessage: injectSubSession,
       };
 
-      // Call injectSubSessionMessage directly — this is what
-      // flushPendingMessagesForTarget / the send_message tool dispatcher do.
       await taskAgent.injectSubSessionMessage!('sess-some-agent', 'hello from an agent');
 
-      // The counter must be UNCHANGED — the RPC reset path was never invoked.
       expect(cycleRepo.countRecentCycleEvents('run-a2a', 0)).toBe(before);
 
       sqlite.close();
     });
 
     it('is a no-op (no error) when channelCycleResetter is not provided', async () => {
-      // Setup a handler WITHOUT the resetter argument — simulates older wiring
-      // or callers that opt out of reset-on-human-touch.
       const mh = createMockMessageHub();
       let taskAgent = createMockTaskAgentManager(null, mockTaskWithRun);
       const localDb = createMockDatabase(mockTaskWithRun);
@@ -2552,21 +2381,12 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
 
       expect(result).toMatchObject({ ok: true });
-      // Without a resetter, no cyclesReset event should be published.
       const publishCalls = (localInternalEventBus.publish as ReturnType<typeof mock>).mock.calls;
       expect(publishCalls.some((c) => c[0] === 'space.workflowRun.cyclesReset')).toBe(false);
     });
   });
 
-  // ─── space.task.activateNodeAgent ─────────────────────────────────────────────
-
   describe('space.task.activateNodeAgent', () => {
-    // Web client RPC for Task #139 Fix 2 — lazy-activate a workflow-declared
-    // node agent on first click of a "(Not started)" entry. Validates the
-    // agent name against the workflow declaration, short-circuits to a live
-    // session when present, and otherwise queues the user's first message
-    // while triggering the daemon's activation kick.
-
     const mockTaskWithRun: SpaceTask = {
       ...mockTaskWithSession,
       workflowRunId: 'run-act-1',
@@ -2755,7 +2575,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(result.sessionId).toBe('sess-live-reviewer');
       expect(result.activated).toBe(false);
       expect(result.queued).toBe(false);
-      // Direct injection — no queue, no activation kick.
       expect(injectCalls).toHaveLength(1);
       expect(injectCalls[0].sessionId).toBe('sess-live-reviewer');
       expect(injectCalls[0].message).toBe('[Message from human]: hi reviewer');
@@ -2764,10 +2583,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
 
     it('throws and does not report success when activation is rejected (stale node id)', async () => {
-      // A mismatched workflowNodeId whose node does not declare the agent:
-      // ensureWorkflowNodeActivationForAgent returns false. The handler must
-      // surface a failure (not ok:true queued:true) so the client doesn't wait
-      // for a session that will never come.
       const { handlers: h, ensureCalls } = setupActivate({ ensureReturns: false });
       await expect(
         (h.get('space.task.activateNodeAgent') as RequestHandler)({
@@ -2796,16 +2611,13 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(result.queued).toBe(true);
       expect(result.queuedMessageId).toBe('pending-1');
 
-      // No direct injection — target had no live session.
       expect(injectCalls).toHaveLength(0);
 
-      // Message queued for the lazily-spawned target to drain on first activation.
       expect(enqueueCalls).toHaveLength(1);
       expect(enqueueCalls[0].targetAgentName).toBe('reviewer');
       expect(enqueueCalls[0].message).toBe('wake up reviewer');
       expect(enqueueCalls[0].sourceAgentName).toBe('human');
 
-      // Activation kick fired against the workflow-declared peer.
       expect(ensureCalls).toHaveLength(1);
       expect(ensureCalls[0].taskId).toBe('task-1');
       expect(ensureCalls[0].agentName).toBe('reviewer');
@@ -2827,10 +2639,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
 
     it('forwards workflowNodeId to the live-session lookup and the activation kick', async () => {
-      // Same-slot disambiguation: the clicked node ID must reach both
-      // getSubSessionByAgentName (so a same-name session on another node does
-      // not short-circuit) and ensureWorkflowNodeActivationForAgent (so the
-      // backend activates the exact clicked node).
       const { handlers: h, ensureCalls, getSubSessionCalls } = setupActivate();
       await (h.get('space.task.activateNodeAgent') as RequestHandler)({
         spaceId: 'space-1',
@@ -2845,8 +2653,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
 
     it('omits workflowNodeId from the activation options when the caller does not supply it', async () => {
-      // Backward compatibility: callers without node context (e.g. legacy
-      // dropdown) must not regress — no workflowNodeId is forwarded.
       const { handlers: h, ensureCalls } = setupActivate();
       await (h.get('space.task.activateNodeAgent') as RequestHandler)({
         spaceId: 'space-1',
@@ -2908,8 +2714,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
   });
 });
 
-// ─── parseMentions unit tests ────────────────────────────────────────────────
-
 describe('parseMentions', () => {
   it('extracts a single @mention', () => {
     expect(parseMentions('@Coder please fix')).toEqual(['Coder']);
@@ -2940,7 +2744,6 @@ describe('parseMentions', () => {
   });
 
   it('does not extract names starting with a digit after @', () => {
-    // @123bot: starts with digit — should not match
     expect(parseMentions('@123bot hello')).toEqual([]);
   });
 
@@ -2949,8 +2752,6 @@ describe('parseMentions', () => {
   });
 
   it('email false-positive: extracts @domain from emails (known limitation, degrades gracefully)', () => {
-    // @mention regex cannot distinguish emails; user@example.com extracts 'example'
-    // This is acceptable since unmatched mentions end up in notFound, not silently injected
     const result = parseMentions('contact user@example.com for help');
     expect(result).toEqual(['example']);
   });

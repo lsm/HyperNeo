@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for AuthStatusCard Component
- *
- * AuthStatusCard displays authentication status with various states.
- */
 import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
@@ -127,7 +122,6 @@ describe('AuthStatusCard', () => {
 
     it('should show emoji for authenticating in inline mode', () => {
       const { container } = render(<AuthStatusCard isAuthenticating={true} variant="inline" />);
-      // Uses emoji in inline mode
       expect(container.textContent).toContain('Authenticating...');
     });
 
@@ -186,7 +180,6 @@ describe('AuthStatusCard', () => {
   describe('Edge Cases', () => {
     it('should handle empty string error', () => {
       const { container } = render(<AuthStatusCard isAuthenticating={false} error="" />);
-      // Empty error should not be displayed
       expect(container.textContent?.includes('Error:')).toBe(false);
     });
 

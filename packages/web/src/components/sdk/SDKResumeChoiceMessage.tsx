@@ -1,17 +1,3 @@
-/**
- * SDKResumeChoiceMessage — interactive prompt shown when the SDK transcript
- * file cannot be found at session resume time.
- *
- * The user can choose one of two actions:
- *   • Start Fresh Session — clears sdkSessionId so the next message begins a
- *     brand-new SDK conversation (clean slate, no prior context).
- *   • Leave as Is — keeps sdkSessionId; the SDK will encounter a
- *     "No conversation found" error and decide on its own what to do.
- *
- * After the user makes a choice the buttons are replaced by a dimmed
- * "resolved" state showing which option was picked.
- */
-
 import { useState } from 'preact/hooks';
 import type { HyperNeoActionMessage } from '@hyperneo/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
@@ -25,7 +11,6 @@ export function SDKResumeChoiceMessage({ message, sessionId }: Props) {
   const [loading, setLoading] = useState<'start_fresh' | 'leave_as_is' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // If already resolved, render a dimmed "answered" state.
   if (message.resolved && message.chosenOption) {
     const label = message.chosenOption === 'start_fresh' ? 'Start Fresh Session' : 'Leave as Is';
     return (
@@ -68,7 +53,6 @@ export function SDKResumeChoiceMessage({ message, sessionId }: Props) {
 
   return (
     <div class="flex flex-col gap-3 px-3 py-3 mb-4 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/10">
-      {/* Header */}
       <div class="flex items-start gap-2">
         <svg
           class="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400"
@@ -92,7 +76,6 @@ export function SDKResumeChoiceMessage({ message, sessionId }: Props) {
         </div>
       </div>
 
-      {/* Action buttons */}
       <div class="flex items-center gap-2 ml-5">
         <button
           onClick={() => handleChoice('start_fresh')}
@@ -124,7 +107,6 @@ export function SDKResumeChoiceMessage({ message, sessionId }: Props) {
         </button>
       </div>
 
-      {/* Error message */}
       {error && <p class="ml-5 text-xs text-red-600 dark:text-red-400">{error}</p>}
     </div>
   );

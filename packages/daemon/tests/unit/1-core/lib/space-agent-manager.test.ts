@@ -1,10 +1,3 @@
-/**
- * SpaceAgentManager Unit Tests
- *
- * Tests for business-logic validation: name uniqueness (DB-level), provider-aware
- * model validation, legacy model ID resolution, model clearing, and deletion protection.
- */
-
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
@@ -46,7 +39,6 @@ describe('SpaceAgentManager', () => {
     repo = new SpaceAgentRepository(db as any);
     longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
     manager = new SpaceAgentManager(repo, longHorizonRepo);
-    // Clear models cache so model validation is skipped by default
     setModelsCache(new Map());
   });
 
@@ -54,10 +46,6 @@ describe('SpaceAgentManager', () => {
     db.close();
     setModelsCache(new Map());
   });
-
-  // -------------------------------------------------------------------------
-  // create
-  // -------------------------------------------------------------------------
 
   describe('create', () => {
     it('creates an agent with minimal params', async () => {
@@ -184,8 +172,6 @@ describe('SpaceAgentManager', () => {
     });
 
     it('accepts legacy full model IDs via unfiltered path (no provider)', async () => {
-      // 'claude-3-5-sonnet-20241022' is a legacy full ID mapped to 'sonnet' by LEGACY_MODEL_MAPPINGS
-      // getModelInfoUnfiltered must resolve it; a naive find() would miss it
       const cache = new Map([['global', [makeModelInfo('sonnet', 'sonnet')]]]);
       setModelsCache(cache);
 
@@ -209,7 +195,6 @@ describe('SpaceAgentManager', () => {
       ]);
       setModelsCache(cache);
 
-      // GLM model with Anthropic provider should fail
       const bad = await manager.create({
         spaceId: 'space-1',
         name: 'Agent',
@@ -219,7 +204,6 @@ describe('SpaceAgentManager', () => {
       expect(bad.ok).toBe(false);
       if (!bad.ok) expect(bad.error).toMatch(/anthropic/);
 
-      // GLM model with GLM provider should pass
       const good = await manager.create({
         spaceId: 'space-1',
         name: 'Agent2',
@@ -229,10 +213,6 @@ describe('SpaceAgentManager', () => {
       expect(good.ok).toBe(true);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // update
-  // -------------------------------------------------------------------------
 
   describe('update', () => {
     it('updates fields', async () => {
@@ -338,10 +318,6 @@ describe('SpaceAgentManager', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // delete
-  // -------------------------------------------------------------------------
-
   describe('delete', () => {
     it('deletes an unreferenced agent', async () => {
       const created = await manager.create({ spaceId: 'space-1', name: 'Agent' });
@@ -375,10 +351,6 @@ describe('SpaceAgentManager', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // listBySpaceId / getAgentsByIds
-  // -------------------------------------------------------------------------
-
   describe('listBySpaceId', () => {
     it('returns all agents for a space', async () => {
       await manager.create({ spaceId: 'space-1', name: 'A' });
@@ -399,10 +371,6 @@ describe('SpaceAgentManager', () => {
       expect(result[0].name).toBe('A');
     });
   });
-
-  // -------------------------------------------------------------------------
-  // tools validation (KNOWN_TOOLS)
-  // -------------------------------------------------------------------------
 
   describe('create — tools validation', () => {
     it('accepts valid tool names from KNOWN_TOOLS', async () => {
@@ -495,10 +463,6 @@ describe('SpaceAgentManager', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // drift detection — getAgentDriftReport / syncFromTemplate
-  // -------------------------------------------------------------------------
-
   describe('getAgentDriftReport', () => {
     it('returns an empty report when the space has no agents', () => {
       const report = manager.getAgentDriftReport('space-1');
@@ -513,8 +477,6 @@ describe('SpaceAgentManager', () => {
     });
 
     it('reports a pristine row as neither updateAvailable nor customized', async () => {
-      // Use a known preset name ("Coder") so the manager can find a live
-      // preset to compare against. We seed it with the real preset's hash.
       const { getPresetAgentTemplates } = await import(
         '../../../../src/lib/space/agents/seed-agents'
       );
@@ -539,8 +501,6 @@ describe('SpaceAgentManager', () => {
       expect(report.agents).toHaveLength(1);
       expect(report.agents[0].agentName).toBe('Coder');
       expect(report.agents[0].templateName).toBe('Coder');
-      // Regression guard: updateAvailable is byte-identical to the former
-      // `drifted` flag on a pristine row (storedHash === currentHash → false).
       expect(report.agents[0].updateAvailable).toBe(false);
       expect(report.agents[0].customized).toBe(false);
       expect(report.agents[0].rowHash).toBe(hash);
@@ -561,9 +521,7 @@ describe('SpaceAgentManager', () => {
 
       const report = manager.getAgentDriftReport('space-1');
       expect(report.agents).toHaveLength(1);
-      // Template moved (stale storedHash ≠ current preset hash) → updateAvailable.
       expect(report.agents[0].updateAvailable).toBe(true);
-      // Row was edited (rowHash ≠ 'stale-hash-value') → customized.
       expect(report.agents[0].customized).toBe(true);
       expect(report.agents[0].storedHash).toBe('stale-hash-value');
       expect(report.agents[0].currentHash).not.toBe('stale-hash-value');
@@ -596,8 +554,6 @@ describe('SpaceAgentManager', () => {
 
       const report = manager.getAgentDriftReport('space-1');
       expect(report.agents).toHaveLength(1);
-      // The row carries the legacy prompt verbatim, so its rowHash equals the
-      // stored legacy hash → not customized. The template moved on → updateAvailable.
       expect(report.agents[0].updateAvailable).toBe(true);
       expect(report.agents[0].customized).toBe(false);
       expect(report.agents[0].storedHash).toBe(legacyHash);
@@ -641,13 +597,11 @@ describe('SpaceAgentManager', () => {
         spaceId: 'space-1',
         name: 'Coder',
         templateName: 'Coder',
-        // Intentionally omit templateHash — exercises the null-hash branch.
       });
 
       const report = manager.getAgentDriftReport('space-1');
       expect(report.agents).toHaveLength(1);
       expect(report.agents[0].storedHash).toBeNull();
-      // null !== currentHash → updateAvailable; rowHash !== null → customized.
       expect(report.agents[0].updateAvailable).toBe(true);
       expect(report.agents[0].customized).toBe(true);
     });
@@ -665,9 +619,6 @@ describe('SpaceAgentManager', () => {
     });
 
     it('derives all four states from the three hashes (customized-only + update-available-only)', async () => {
-      // Explicit four-state matrix using an isolated space per state. The
-      // pristine case (both false) is covered above; here we pin the two
-      // mixed states that the legacy tests don't construct cleanly.
       const { getPresetAgentTemplates } = await import(
         '../../../../src/lib/space/agents/seed-agents'
       );
@@ -680,8 +631,6 @@ describe('SpaceAgentManager', () => {
       const oldVersion = { ...coder, customPrompt: 'old prompt' };
       const oldHash = computeAgentTemplateHash(oldVersion);
 
-      // update-available only: row matches its stored OLD version, but the
-      // live template has since moved → rowHash === storedHash, currentHash ≠.
       insertSpace(db, 'space-update-only');
       await manager.create({
         spaceId: 'space-update-only',
@@ -697,8 +646,6 @@ describe('SpaceAgentManager', () => {
       expect(updateOnly.customized).toBe(false);
       expect(updateOnly.rowHash).toBe(oldHash);
 
-      // customized only: template did NOT move (storedHash === currentHash),
-      // but the user edited the row → rowHash ≠ storedHash.
       insertSpace(db, 'space-custom-only');
       await manager.create({
         spaceId: 'space-custom-only',
@@ -715,10 +662,6 @@ describe('SpaceAgentManager', () => {
       expect(customOnly.rowHash).not.toBe(currentHash);
     });
 
-    // -------------------------------------------------------------------------
-    // Orphan recovery — preset-named rows that lost template tracking.
-    // -------------------------------------------------------------------------
-
     it('includes a matching orphaned preset-named agent as a one-click re-attach', async () => {
       const { getPresetAgentTemplates } = await import(
         '../../../../src/lib/space/agents/seed-agents'
@@ -726,8 +669,6 @@ describe('SpaceAgentManager', () => {
       const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
       if (!coder) throw new Error('Coder preset missing');
 
-      // Preset-named row with NO templateName — orphaned from tracking, but its
-      // fields already match the current preset.
       await manager.create({
         spaceId: 'space-1',
         name: 'Coder',
@@ -740,16 +681,13 @@ describe('SpaceAgentManager', () => {
       expect(report.agents).toHaveLength(1);
       const entry = report.agents[0];
       expect(entry.orphaned).toBe(true);
-      expect(entry.templateName).toBe('Coder'); // resolved canonical name
+      expect(entry.templateName).toBe('Coder');
       expect(entry.storedHash).toBeNull();
-      // A re-attach is always available; fields match so no diff review needed.
       expect(entry.updateAvailable).toBe(true);
       expect(entry.customized).toBe(false);
     });
 
     it('flags a divergent orphaned preset-named agent as customized (forces diff review)', async () => {
-      // Preset-named row with NO templateName whose fields diverge from the
-      // current preset (e.g. a stale prompt version or a user edit).
       await manager.create({
         spaceId: 'space-1',
         name: 'Reviewer',
@@ -762,8 +700,6 @@ describe('SpaceAgentManager', () => {
       expect(report.agents).toHaveLength(1);
       expect(report.agents[0].orphaned).toBe(true);
       expect(report.agents[0].updateAvailable).toBe(true);
-      // Diverges from the Reviewer preset → customized, so the UI forces a
-      // diff review before the re-attach overwrites anything.
       expect(report.agents[0].customized).toBe(true);
     });
 
@@ -847,7 +783,6 @@ describe('SpaceAgentManager', () => {
       });
       if (!created.ok) throw new Error('create failed');
 
-      // Force a model + provider after create (to verify they survive sync).
       const updated = await manager.update(created.value.id, {
         model: 'sonnet',
         provider: 'anthropic',
@@ -884,7 +819,6 @@ describe('SpaceAgentManager', () => {
       expect(sync.ok).toBe(true);
 
       const after = manager.getAgentDriftReport('space-1');
-      // Sync overwrites fields + re-stamps the hash → both signals clear.
       expect(after.agents[0].updateAvailable).toBe(false);
       expect(after.agents[0].customized).toBe(false);
       expect(after.agents[0].storedHash).toBe(after.agents[0].currentHash);
@@ -938,13 +872,11 @@ describe('SpaceAgentManager', () => {
         customPrompt: 'old',
       });
 
-      // Another client edits the row after the review → its row hash changes.
       await manager.update(created.value.id, { customPrompt: 'concurrent edit by another client' });
 
       const result = await manager.syncFromTemplate(created.value.id, reviewedRowHash);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/changed since/i);
-      // The row is untouched — the sync was rejected, not applied.
       expect(manager.getById(created.value.id)?.customPrompt).toBe(
         'concurrent edit by another client'
       );
@@ -960,7 +892,6 @@ describe('SpaceAgentManager', () => {
       const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
       if (!coder) throw new Error('Coder preset missing');
 
-      // Orphaned: preset-named row with NO templateName, stale fields.
       const created = await manager.create({
         spaceId: 'space-1',
         name: 'Coder',
@@ -977,11 +908,9 @@ describe('SpaceAgentManager', () => {
       expect(result.value.description).toBe(coder.description);
       expect(result.value.tools).toEqual(coder.tools);
       expect(result.value.customPrompt).toBe(coder.customPrompt);
-      // Re-attach re-stamps tracking so the row rejoin drift detection.
       expect(result.value.templateName).toBe('Coder');
       expect(result.value.templateHash).toBe(computeAgentTemplateHash(coder));
 
-      // A follow-up drift report no longer marks it orphaned.
       const report = manager.getAgentDriftReport('space-1');
       expect(report.agents[0].orphaned).toBe(false);
       expect(report.agents[0].updateAvailable).toBe(false);
@@ -1057,11 +986,9 @@ describe('SpaceAgentManager', () => {
         before: 'User-edited description',
         after: coder.description,
       });
-      // Coder preset has an empty tool profile []; row has [Read, Bash].
       expect(preview.diff.tools?.added).toEqual([]);
       expect(preview.diff.tools?.removed).toEqual(['Read', 'Bash']);
 
-      // Preview must NOT write — the row is unchanged.
       const row = manager.getById(created.value.id);
       expect(row?.customPrompt).toBe('User-edited prompt');
       expect(row?.templateHash).toBe('stale-hash');
@@ -1099,9 +1026,6 @@ describe('SpaceAgentManager', () => {
     });
 
     it('reports updateAvailable=true with an empty diff when only the stored hash is missing', async () => {
-      // A backfill-unmatched legacy row: fields match the preset but
-      // templateHash was never stamped. Preview should still flag drift
-      // (hash mismatch) while reporting no field changes.
       const { getPresetAgentTemplates } = await import(
         '../../../../src/lib/space/agents/seed-agents'
       );
@@ -1115,7 +1039,6 @@ describe('SpaceAgentManager', () => {
         tools: coder.tools,
         customPrompt: coder.customPrompt,
         templateName: 'Coder',
-        // Intentionally omit templateHash.
       });
       if (!created.ok) throw new Error('create failed');
 
@@ -1165,7 +1088,6 @@ describe('SpaceAgentManager', () => {
         description: 'stale description',
         tools: ['Read'],
         customPrompt: 'stale prompt',
-        // No templateName — orphaned.
       });
       if (!created.ok) throw new Error('create failed');
 
@@ -1174,13 +1096,11 @@ describe('SpaceAgentManager', () => {
       if (!result.ok) throw new Error('expected ok');
 
       const preview = result.value;
-      // templateName is resolved from the row's name (the row has none stored).
       expect(preview.templateName).toBe('Coder');
       expect(preview.diff.customPrompt).toEqual({
         before: 'stale prompt',
         after: coder.customPrompt,
       });
-      // Preview must NOT write — the row is still untracked.
       expect(manager.getById(created.value.id)?.templateName).toBeFalsy();
     });
 
@@ -1191,7 +1111,6 @@ describe('SpaceAgentManager', () => {
       const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
       if (!coder) throw new Error('Coder preset missing');
 
-      // Divergent orphan: row fields differ from the preset → customized true.
       insertSpace(db, 'space-divergent');
       const divergent = await manager.create({
         spaceId: 'space-divergent',
@@ -1204,8 +1123,6 @@ describe('SpaceAgentManager', () => {
       if (!divergentPreview.ok) throw new Error('expected ok');
       expect(divergentPreview.value.customized).toBe(true);
 
-      // Matching orphan: row fields equal the preset (only tracking missing)
-      // → customized false, mirroring getAgentDriftReport's orphaned branch.
       insertSpace(db, 'space-matching');
       const matching = await manager.create({
         spaceId: 'space-matching',

@@ -1,15 +1,7 @@
-/**
- * Setup WebSocket Handlers Unit Tests
- *
- * Unit tests for WebSocket message handling functions.
- * Tests the createWebSocketHandlers function in isolation with mock dependencies.
- */
-
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { createWebSocketHandlers } from '../../../../src/routes/setup-websocket';
 import { MessageType } from '@hyperneo/shared';
 
-// Mock types
 interface MockWebSocket {
   data: {
     connectionSessionId: string;
@@ -57,7 +49,6 @@ describe('createWebSocketHandlers', () => {
   });
 
   afterEach(() => {
-    // Clear mocks
     mockTransport.registerClient.mockClear();
     mockTransport.unregisterClient.mockClear();
     mockTransport.updateClientActivity.mockClear();
@@ -211,7 +202,7 @@ describe('createWebSocketHandlers', () => {
 
         await handlers.message(
           ws as unknown as Parameters<typeof handlers.message>[0],
-          JSON.stringify({ type: 'ping' }) // No sessionId
+          JSON.stringify({ type: 'ping' })
         );
 
         const sentMessage = JSON.parse(ws.send.mock.calls[0][0] as string);
@@ -264,7 +255,6 @@ describe('createWebSocketHandlers', () => {
           })
         );
 
-        // getSessionAsync should NOT be called for global session
         expect(mockSessionManager.getSessionAsync).not.toHaveBeenCalled();
         expect(mockTransport.handleClientMessage).toHaveBeenCalled();
       });
@@ -282,11 +272,9 @@ describe('createWebSocketHandlers', () => {
             id: 'req-1',
             type: 'REQ',
             method: 'test.method',
-            // No sessionId
           })
         );
 
-        // Should process without error (global session)
         expect(mockTransport.handleClientMessage).toHaveBeenCalled();
       });
     });
@@ -383,8 +371,6 @@ describe('createWebSocketHandlers', () => {
           readyState: 1,
         };
 
-        // Create a message that would be > 50MB when encoded
-        // 51MB of 'x' characters
         const largeContent = 'x'.repeat(51 * 1024 * 1024);
         const largeMessage = JSON.stringify({
           type: 'REQ',
@@ -473,7 +459,7 @@ describe('createWebSocketHandlers', () => {
 
       it('should handle messages without clientId', async () => {
         const ws: MockWebSocket = {
-          data: { connectionSessionId: 'global' }, // No clientId
+          data: { connectionSessionId: 'global' },
           send: mock(),
           readyState: 1,
         };
@@ -488,7 +474,6 @@ describe('createWebSocketHandlers', () => {
           })
         );
 
-        // Should not call handleClientMessage without clientId
         expect(mockTransport.handleClientMessage).not.toHaveBeenCalled();
       });
     });
@@ -517,7 +502,6 @@ describe('createWebSocketHandlers', () => {
 
         expect(mockTransport.handleClientMessage).toHaveBeenCalledTimes(1);
 
-        // Check that message was passed with clientId as second argument
         expect(mockTransport.handleClientMessage).toHaveBeenCalledWith(
           expect.objectContaining({
             id: 'req-1',
@@ -537,7 +521,7 @@ describe('createWebSocketHandlers', () => {
       const ws: MockWebSocket = {
         data: { connectionSessionId: 'global', clientId: 'client-123' },
         send: mock(),
-        readyState: 3, // CLOSED
+        readyState: 3,
       };
 
       handlers.close(ws as unknown as Parameters<typeof handlers.close>[0]);
@@ -547,12 +531,11 @@ describe('createWebSocketHandlers', () => {
 
     it('should handle close without clientId', () => {
       const ws: MockWebSocket = {
-        data: { connectionSessionId: 'global' }, // No clientId
+        data: { connectionSessionId: 'global' },
         send: mock(),
         readyState: 3,
       };
 
-      // Should not throw
       handlers.close(ws as unknown as Parameters<typeof handlers.close>[0]);
 
       expect(mockTransport.unregisterClient).not.toHaveBeenCalled();
@@ -575,13 +558,12 @@ describe('createWebSocketHandlers', () => {
 
     it('should handle error without clientId', () => {
       const ws: MockWebSocket = {
-        data: { connectionSessionId: 'global' }, // No clientId
+        data: { connectionSessionId: 'global' },
         send: mock(),
         readyState: 1,
       };
 
       const error = new Error('WebSocket error');
-      // Should not throw
       handlers.error(ws as unknown as Parameters<typeof handlers.error>[0], error);
 
       expect(mockTransport.unregisterClient).not.toHaveBeenCalled();

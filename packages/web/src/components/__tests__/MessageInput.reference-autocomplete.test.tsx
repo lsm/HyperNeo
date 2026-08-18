@@ -1,13 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for MessageInput reference autocomplete integration.
- *
- * Verifies that:
- * - useReferenceAutocomplete is wired up and its props are passed to InputTextarea
- * - handleReferenceSelect replaces @query with @ref{type:id} token
- * - Reference autocomplete keyboard events take precedence over command autocomplete
- * - Command autocomplete is suppressed when reference autocomplete is visible
- */
 
 import { signal } from '@preact/signals';
 import { act, cleanup, fireEvent, render } from '@testing-library/preact';
@@ -22,7 +13,6 @@ const mockClearAttachments = vi.fn(() => {});
 const mockGetImagesForSend = vi.fn(() => undefined);
 const mockRequest = vi.fn(async () => ({ messages: [] }));
 
-// Mutable reference autocomplete state
 let mockReferenceShowAutocomplete = false;
 let mockReferenceResults = [];
 let mockReferenceSelectedIndex = 0;
@@ -30,11 +20,8 @@ const mockReferenceHandleKeyDown = vi.fn(() => false);
 const mockReferenceHandleSelect = vi.fn(() => {});
 const mockReferenceClose = vi.fn(() => {});
 
-// Captures the onSelect callback passed to useReferenceAutocomplete so tests can
-// invoke handleReferenceSelect directly and verify its content-replacement logic.
 let capturedOnSelect = null;
 
-// Mutable command autocomplete state
 let mockCommandShowAutocomplete = false;
 let mockCommandFilteredCommands = [];
 const mockCommandHandleKeyDown = vi.fn(() => false);
@@ -86,7 +73,6 @@ vi.mock('../../hooks', () => ({
     handleKeyDown: mockCommandHandleKeyDown,
   }),
   useReferenceAutocomplete: (opts) => {
-    // Capture the onSelect (= handleReferenceSelect) so tests can call it directly
     capturedOnSelect = opts.onSelect;
     return {
       showAutocomplete: mockReferenceShowAutocomplete,
@@ -99,7 +85,6 @@ vi.mock('../../hooks', () => ({
     };
   },
   extractActiveAtQuery: vi.fn((content) => {
-    // Mirror the real implementation so handleReferenceSelect tests work correctly
     if (!content.includes('@')) return null;
     for (let i = content.length - 1; i >= 0; i--) {
       if (content[i] === '@') {
@@ -270,8 +255,6 @@ describe('MessageInput reference autocomplete', () => {
         capturedOnSelect({ type: 'task', id: 't-42', displayText: 'Fix login bug' });
       });
 
-      // content = 'fix @task', query = 'task', atPos = 4
-      // newContent = 'fix ' + '@ref{task:t-42} '
       expect(mockSetContent).toHaveBeenCalledWith('fix @ref{task:t-42} ');
     });
 
@@ -284,8 +267,6 @@ describe('MessageInput reference autocomplete', () => {
         capturedOnSelect({ type: 'task', id: 't-99', displayText: 'Do something' });
       });
 
-      // content = '/agent @task', query = 'task', atPos = 7
-      // newContent = '/agent ' + '@ref{task:t-99} '
       expect(mockSetContent).toHaveBeenCalledWith('/agent @ref{task:t-99} ');
     });
 
@@ -298,8 +279,6 @@ describe('MessageInput reference autocomplete', () => {
         capturedOnSelect({ type: 'goal', id: 'g-5', displayText: 'Launch v2' });
       });
 
-      // content = 'hello @', query = '', atPos = 6
-      // newContent = 'hello ' + '@ref{goal:g-5} '
       expect(mockSetContent).toHaveBeenCalledWith('hello @ref{goal:g-5} ');
     });
 
@@ -325,9 +304,7 @@ describe('MessageInput reference autocomplete', () => {
 
       const { getByText, queryByText } = renderInput();
 
-      // Reference menu should be visible
       expect(getByText('References')).toBeTruthy();
-      // Command menu should be suppressed
       expect(queryByText('Slash Commands')).toBeNull();
     });
 
@@ -380,14 +357,10 @@ describe('MessageInput reference autocomplete', () => {
 
       const { container } = renderInput();
 
-      // The grouped component renders buttons with type="button"
       const resultButtons = container.querySelectorAll('button[type="button"]');
-      // Exclude the send/stop button (last one, inside the pill border)
-      // The reference buttons are the first N buttons rendered by ReferenceAutocomplete
       const refButtons = Array.from(resultButtons).filter(
         (b) => b.textContent?.includes('First task') || b.textContent?.includes('Second task')
       );
-      // selectedIndex=1 → second result is highlighted
       expect(refButtons).toHaveLength(2);
       expect(refButtons[1].className).toContain('border-blue-500');
       expect(refButtons[0].className).not.toContain('border-blue-500');

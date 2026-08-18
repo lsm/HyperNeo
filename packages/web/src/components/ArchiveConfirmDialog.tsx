@@ -1,11 +1,3 @@
-/**
- * ArchiveConfirmDialog Component
- *
- * Modal dialog for confirming session archive when there are uncommitted changes.
- * Shows list of commits that will be removed.
- * Extracted from ChatContainer.tsx for better separation of concerns.
- */
-
 import type { ArchiveSessionResponse } from '@hyperneo/shared';
 import { borderColors } from '../lib/design-tokens';
 import { Button } from './ui/Button';

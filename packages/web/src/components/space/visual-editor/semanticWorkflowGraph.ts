@@ -10,11 +10,6 @@ export interface SemanticWorkflowEdge {
   toStepId: string;
   channelCount: number;
   hasCyclic: boolean;
-  /**
-   * Visual direction derived from the channel topology.
-   * 'bidirectional' means channels exist in both directions (rendered as ↔).
-   * 'one-way' means a single direction.
-   */
   direction: 'one-way' | 'bidirectional';
   channelIndexes: number[];
 }
@@ -117,7 +112,6 @@ export function buildSemanticWorkflowEdges(
 
   return Array.from(aggregates.values()).map((aggregate) => {
     if (aggregate.lowToHigh && aggregate.highToLow) {
-      // Two one-way channels in opposite directions — rendered as a bidirectional arrow.
       return {
         id: `${aggregate.lowId}:${aggregate.highId}`,
         fromStepId: aggregate.lowId,
@@ -129,9 +123,6 @@ export function buildSemanticWorkflowEdges(
       };
     }
 
-    // One-way channel: emit the edge in the channel's actual direction so a
-    // backward (highToLow) feedback/cyclic channel renders with a correct
-    // highId → lowId arrow, not a reversed lowId → highId one.
     if (aggregate.lowToHigh) {
       return {
         id: `${aggregate.lowId}:${aggregate.highId}`,

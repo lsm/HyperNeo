@@ -1,12 +1,3 @@
-/**
- * Session Repository
- *
- * Responsibilities:
- * - Session create/read/update/delete operations
- * - Row-to-Session object mapping
- * - Partial update merging (metadata, config)
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import type { Session, SessionType, SessionContext } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
@@ -23,9 +14,6 @@ export class SessionRepository {
     }
   }
 
-  /**
-   * Create a new session
-   */
   createSession(session: Session): void {
     const stmt = this.db.prepare(
       `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, acp_session_id, sdk_origin_path, available_commands, processing_state, archived_at, type, session_context)
@@ -60,9 +48,6 @@ export class SessionRepository {
     );
   }
 
-  /**
-   * Get a session by ID
-   */
   getSession(id: string): Session | null {
     const stmt = this.db.prepare(`SELECT * FROM sessions WHERE id = ?`);
     const row = stmt.get(id) as Record<string, unknown> | undefined;
@@ -72,12 +57,6 @@ export class SessionRepository {
     return this.rowToSession(row);
   }
 
-  /**
-   * List sessions ordered by last active time (most recent first)
-   *
-   * @param options.status - Filter by status ('active', 'archived'). If omitted, excludes archived.
-   * @param options.includeArchived - If true, returns all sessions regardless of status.
-   */
   listSessions(options?: {
     status?: string;
     includeArchived?: boolean;
@@ -106,11 +85,6 @@ export class SessionRepository {
     return rows.map((r) => this.rowToSession(r));
   }
 
-  /**
-   * Update a session with partial updates
-   *
-   * Supports merging partial metadata and config updates with existing values.
-   */
   updateSession(id: string, updates: Partial<Session>): void {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
@@ -132,8 +106,6 @@ export class SessionRepository {
       values.push(updates.lastActiveAt);
     }
     if (updates.metadata) {
-      // Merge partial metadata updates with existing metadata
-      // Filter out undefined/null values to allow clearing fields
       const existing = this.getSession(id);
       const mergedMetadata = existing ? { ...existing.metadata } : {};
       for (const [key, value] of Object.entries(updates.metadata)) {
@@ -147,13 +119,8 @@ export class SessionRepository {
       values.push(JSON.stringify(mergedMetadata));
     }
     if (updates.config) {
-      // Merge partial config updates with existing config
       const existing = this.getSession(id);
       const mergedConfig = existing ? { ...existing.config, ...updates.config } : updates.config;
-      // Strip runtime-only fields that must not be persisted:
-      // - mcpServers: may contain live Server instances with circular references
-      //   (attached via AgentSession.mergeRuntimeMcpServers(), intentionally not serialized)
-      // - function values (runtime-only fields like spawnClaudeCodeProcess)
       let serializedConfig: string;
       try {
         serializedConfig = JSON.stringify(mergedConfig, (key, val) => {
@@ -193,10 +160,8 @@ export class SessionRepository {
       fields.push('archived_at = ?');
       values.push(updates.archivedAt ?? null);
     }
-    // Handle worktree update (including clearing it when archiving)
     if ('worktree' in updates) {
       if (updates.worktree === undefined || updates.worktree === null) {
-        // Clear worktree fields
         fields.push(
           'is_worktree = ?',
           'worktree_path = ?',
@@ -205,7 +170,6 @@ export class SessionRepository {
         );
         values.push(0, null, null, null);
       } else {
-        // Update worktree fields
         fields.push(
           'is_worktree = ?',
           'worktree_path = ?',
@@ -221,13 +185,11 @@ export class SessionRepository {
       }
     }
 
-    // Handle type update (for unified session architecture)
     if (updates.type !== undefined) {
       fields.push('type = ?');
       values.push(updates.type);
     }
 
-    // Handle context update (for unified session architecture)
     if ('context' in updates) {
       fields.push('session_context = ?');
       values.push(updates.context ? JSON.stringify(updates.context) : null);
@@ -333,21 +295,6 @@ export class SessionRepository {
       .run(sessionId);
   }
 
-  /**
-   * Delete a session by ID.
-   *
-   * Also drops any `mcp_enablement` rows targeting this session (scope_type =
-   * 'session', scope_id = id) in the same transaction. Per-session MCP
-   * overrides from MCP M6 would otherwise become orphan rows on hard-delete:
-   * harmless (no code reads overrides for a non-existent session), but they
-   * accumulate forever on workloads with many short-lived sessions. Doing
-   * this here — rather than in session-lifecycle.ts — keeps the invariant
-   * "no session row ⇒ no session-scope override rows" true regardless of
-   * which delete path (UI, tests, explicit RPC, …) is used.
-   *
-   * Note: `mcp_enablement` has no FK on `sessions.id` (the column is generic
-   * `scope_id TEXT`), so cascade must be done explicitly.
-   */
   deleteSession(id: string): void {
     const deleteOverrides = this.db.prepare(
       `DELETE FROM mcp_enablement WHERE scope_type = 'session' AND scope_id = ?`
@@ -357,10 +304,6 @@ export class SessionRepository {
           `DELETE FROM message_search_content WHERE kind = 'message' AND session_id = ?`
         )
       : null;
-    // delivery_turn_end has no FK on sessions.id (schema tables avoid FKs; the
-    // full space schema is migration-owned), so cascade it explicitly — the
-    // handler records a marker after every completed delivery turn, and hard-
-    // deleting sessions would otherwise leak those rows. See Codex (PR #2463).
     const deleteTurnEndRows = this.tableExists('delivery_turn_end')
       ? this.db.prepare(`DELETE FROM delivery_turn_end WHERE session_id = ?`)
       : null;
@@ -374,19 +317,12 @@ export class SessionRepository {
     tx(id);
   }
 
-  /**
-   * Archive a session by ID (soft delete)
-   */
   archiveSession(id: string): void {
     const stmt = this.db.prepare(`UPDATE sessions SET status = 'archived' WHERE id = ?`);
     stmt.run(id);
     this.deleteMessageSearchRows(id);
   }
 
-  /**
-   * Convert a database row to a Session object
-   * Shared helper for getSession and listSessions
-   */
   rowToSession(row: Record<string, unknown>): Session {
     const isWorktree = row.is_worktree === 1;
     const worktree = isWorktree
@@ -403,7 +339,6 @@ export class SessionRepository {
         ? (JSON.parse(row.available_commands) as string[])
         : undefined;
 
-    // Parse session_context JSON if present
     const sessionContext =
       row.session_context && typeof row.session_context === 'string'
         ? (JSON.parse(row.session_context) as SessionContext)
@@ -431,10 +366,6 @@ export class SessionRepository {
     };
   }
 
-  /**
-   * Find a room session by room ID
-   * Returns the room's session if it exists
-   */
   findByRoomId(roomId: string): Session | null {
     const stmt = this.db.prepare(
       `SELECT * FROM sessions WHERE type = 'room' AND json_extract(session_context, '$.roomId') = ?`
@@ -446,10 +377,6 @@ export class SessionRepository {
     return this.rowToSession(row);
   }
 
-  /**
-   * Find the lobby session
-   * Returns the lobby session if it exists
-   */
   findLobbySession(): Session | null {
     const stmt = this.db.prepare(`SELECT * FROM sessions WHERE type = 'lobby' LIMIT 1`);
     const row = stmt.get() as Record<string, unknown> | undefined;
@@ -459,9 +386,6 @@ export class SessionRepository {
     return this.rowToSession(row);
   }
 
-  /**
-   * List sessions by type
-   */
   listSessionsByType(type: SessionType): Session[] {
     const stmt = this.db.prepare(
       `SELECT * FROM sessions WHERE type = ? ORDER BY last_active_at DESC`
@@ -483,19 +407,10 @@ export class SessionRepository {
     return rows.map((r) => this.rowToSession(r));
   }
 
-  /**
-   * Batch-fetch sessions by their IDs.
-   * Returns a Map<id, Session> for the found sessions.
-   * Uses a single SQL query with IN clause to avoid N+1 lookups.
-   * Falls back to individual queries when the list is empty or too large
-   * for SQLite's variable limit (999).
-   */
   getSessionsByIds(ids: string[]): Map<string, Session> {
     const result = new Map<string, Session>();
     if (ids.length === 0) return result;
 
-    // SQLite has a default limit of 999 variables per statement.
-    // Batch in chunks to stay within this limit.
     const CHUNK_SIZE = 900;
     for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
       const chunk = ids.slice(i, i + CHUNK_SIZE);

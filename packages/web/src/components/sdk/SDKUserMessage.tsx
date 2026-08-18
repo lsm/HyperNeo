@@ -1,9 +1,3 @@
-/**
- * SDKUserMessage Renderer
- *
- * Renders user messages from the SDK message stream
- */
-
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { MessageDeliveryRetryInfo, MessageDeliveryStatus } from '@hyperneo/shared';
 import { useCallback, useEffect, useState } from 'preact/hooks';
@@ -26,16 +20,11 @@ import type { JSX } from 'preact';
 import { Fragment } from 'preact';
 import type { ReferenceMetadata } from '@hyperneo/shared';
 
-/**
- * Render text content, replacing @ref{type:id} tokens with styled MentionToken
- * components and leaving all other text (including plain @) unchanged.
- */
 function renderMessageText(
   text: string,
   metadata: ReferenceMetadata,
   sessionId?: string
 ): JSX.Element {
-  // Fast path: skip parsing when there are no @ref tokens
   if (!text.includes('@ref{')) {
     return <>{text}</>;
   }
@@ -46,8 +35,6 @@ function renderMessageText(
     <>
       {segments.map((seg, idx) => {
         if (seg.kind === 'text') {
-          // Use Fragment to emit text nodes without a DOM wrapper, preserving
-          // the original text-node structure for selection and layout.
           return <Fragment key={idx}>{seg.content}</Fragment>;
         }
         if (seg.kind === 'mention') {
@@ -62,7 +49,6 @@ function renderMessageText(
             />
           );
         }
-        // unknown-mention: render the raw token string with warning styling
         return (
           <span key={idx} class="text-yellow-500/70 italic" title="Unknown reference type">
             {seg.content}
@@ -74,20 +60,12 @@ function renderMessageText(
 }
 
 type UserMessage = Extract<SDKMessage, { type: 'user' }> & {
-  /** User-facing delivery lifecycle from sdk_messages.send_status (task #862). */
   deliveryStatus?: MessageDeliveryStatus;
-  /** Active-job retry detail (count / next-attempt / max) when retrying. */
   deliveryRetry?: MessageDeliveryRetryInfo;
-  /** Persisted row id (attached by the messages.bySession LiveQuery mapper). */
   id?: string;
 };
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
-/**
- * Per-status copy for the user-message delivery badge (task #862). "delivered"
- * is intentionally NOT rendered here (the caller hides it) to avoid noisy
- * indicators on normal fast delivery.
- */
 const DELIVERY_BADGE_COPY: Record<
   Exclude<MessageDeliveryStatus, 'delivered'>,
   { label: string; tooltip: string }
@@ -124,13 +102,6 @@ function formatRetryCountdown(ms: number): string {
   return `${seconds}s`;
 }
 
-/**
- * Inline retry affordance for a user message:
- *  - `retrying`: a live countdown to the next automatic attempt + "attempt N/M",
- *    so a delivery-driven turn that died on a transient provider error shows
- *    visible progress instead of silently idling.
- *  - `failed`: a "Retry" button that reopens + re-enqueues the message.
- */
 function UserMessageRetryControl({
   sessionId,
   messageDbId,
@@ -147,7 +118,6 @@ function UserMessageRetryControl({
   );
   const [retrying, setRetrying] = useState(false);
 
-  // Tick the countdown while retrying.
   useEffect(() => {
     if (deliveryStatus !== 'retrying' || !deliveryRetry?.runAt) return;
     const interval = setInterval(() => {
@@ -172,9 +142,6 @@ function UserMessageRetryControl({
   }, [sessionId, messageDbId]);
 
   if (deliveryStatus === 'retrying') {
-    // `count` is the active job's retry_count (completed failures), not the
-    // current attempt number — so label it "retry N/Max" (Nth retry of Max
-    // retries), not "attempt N/M", which would read off-by-one.
     const attempt = deliveryRetry
       ? `retry ${deliveryRetry.count}${deliveryRetry.maxRetries ? `/${deliveryRetry.maxRetries}` : ''}`
       : '';
@@ -208,9 +175,8 @@ function UserMessageRetryControl({
   return null;
 }
 
-/** True when a user message's delivery is terminal (settled) and rewind-safe. */
 function isDeliveryTerminal(status: MessageDeliveryStatus | undefined): boolean {
-  if (!status) return true; // legacy row without delivery metadata — treat as settled
+  if (!status) return true;
   return status === 'delivered' || status === 'failed';
 }
 
@@ -218,12 +184,11 @@ interface Props {
   message: UserMessage;
   onEdit?: () => void;
   onDelete?: () => void;
-  sessionInfo?: SystemInitMessage; // Optional session init info to display
-  isReplay?: boolean; // Whether this is a replay message (slash command response)
-  sessionId?: string; // Session ID for rewind operations
-  onRewind?: (uuid: string) => void; // Rewind to this message
-  rewindingMessageUuid?: string | null; // UUID of message currently being rewound
-  /** Render user rows whose content is tool_result blocks. */
+  sessionInfo?: SystemInitMessage;
+  isReplay?: boolean;
+  sessionId?: string;
+  onRewind?: (uuid: string) => void;
+  rewindingMessageUuid?: string | null;
   showToolResultMessages?: boolean;
 }
 
@@ -241,7 +206,6 @@ export function SDKUserMessage({
   const { message: apiMessage } = message;
   const [copied, setCopied] = useState(false);
 
-  // Check if this is a tool result message (should not be rendered as user message)
   const isToolResultMessage = (): boolean => {
     if (Array.isArray(apiMessage.content)) {
       return apiMessage.content.some(
@@ -251,12 +215,10 @@ export function SDKUserMessage({
     return false;
   };
 
-  // Don't render tool result messages - they'll be shown with their tool use blocks
   if (isToolResultMessage() && !showToolResultMessages) {
     return null;
   }
 
-  // Don't render hidden command outputs (e.g., "Compacted" is shown in CompactBoundaryMessage)
   if (isReplay) {
     const content = typeof apiMessage.content === 'string' ? apiMessage.content : '';
     if (isHiddenCommandOutput(content)) {
@@ -264,17 +226,14 @@ export function SDKUserMessage({
     }
   }
 
-  // Extract text content from the message
   const getTextContent = (): string => {
     if (Array.isArray(apiMessage.content)) {
       return apiMessage.content
         .map((block: unknown) => {
           const b = block as Record<string, unknown>;
-          // Text blocks
           if (b.type === 'text') {
             return b.text as string;
           }
-          // Image blocks or other types - skip or show type
           if (b.type === 'tool_result') {
             const rawContent = b.content;
             if (typeof rawContent === 'string') return rawContent;
@@ -308,7 +267,6 @@ export function SDKUserMessage({
     return '';
   };
 
-  // Extract image blocks from the message
   const getImageBlocks = (): Array<Record<string, unknown>> => {
     if (!Array.isArray(apiMessage.content)) return [];
 
@@ -321,11 +279,9 @@ export function SDKUserMessage({
   const textContent = getTextContent();
   const imageBlocks = getImageBlocks();
 
-  // Extract reference metadata from the message blob for rendering @ref tokens
   const referenceMetadata: ReferenceMetadata =
     (message as typeof message & { referenceMetadata?: ReferenceMetadata }).referenceMetadata ?? {};
 
-  // For synthetic messages, extract all content blocks for detailed display
   const getSyntheticContentBlocks = (): Array<Record<string, unknown>> | string | null => {
     if (!message.isSynthetic) return null;
 
@@ -338,7 +294,6 @@ export function SDKUserMessage({
       });
     }
 
-    // For string content (like compact summaries), return the string directly
     if (typeof apiMessage.content === 'string') {
       return apiMessage.content;
     }
@@ -348,14 +303,11 @@ export function SDKUserMessage({
 
   const syntheticContentBlocks = getSyntheticContentBlocks();
 
-  // Check if this is a slash command output (has <local-command-stdout> tags)
   const hasCommandOutput = (): boolean => {
     if (!isReplay) return false;
     return /<local-command-stdout>[\s\S]*?<\/local-command-stdout>/.test(textContent);
   };
 
-  // Check if this contains an error output (has <local-command-stderr> tags)
-  // This can happen in both replay and synthetic messages (SDK injects errors as user messages)
   const containsErrorOutput = (): boolean => {
     return hasErrorOutput(textContent);
   };
@@ -375,9 +327,7 @@ export function SDKUserMessage({
     }
   };
 
-  // Get timestamp from message
   const getTimestamp = (): string => {
-    // Use the timestamp injected by the database (milliseconds since epoch)
     const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
     const date = messageWithTimestamp.timestamp
       ? new Date(messageWithTimestamp.timestamp)
@@ -388,7 +338,6 @@ export function SDKUserMessage({
     });
   };
 
-  // Get full timestamp for tooltip
   const getFullTimestamp = (): string => {
     const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
     const date = messageWithTimestamp.timestamp
@@ -397,7 +346,6 @@ export function SDKUserMessage({
     return date.toLocaleString();
   };
 
-  // If this is a replay message with command output, use SlashCommandOutput component
   if (isReplay && hasCommandOutput()) {
     return (
       <div class={cn(messageSpacing.assistant.container.combined)}>
@@ -406,8 +354,6 @@ export function SDKUserMessage({
     );
   }
 
-  // If this contains error output (<local-command-stderr>), render as error message
-  // This takes priority over generic synthetic message rendering
   if (containsErrorOutput()) {
     return (
       <div class={cn(messageSpacing.assistant.container.combined)}>
@@ -416,10 +362,8 @@ export function SDKUserMessage({
     );
   }
 
-  // Get message metadata for E2E tests
   const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 
-  // Message bubble component - extracted for proper checkbox alignment
   const messageBubble = syntheticContentBlocks ? (
     <SyntheticMessageBlock
       content={syntheticContentBlocks}
@@ -435,12 +379,10 @@ export function SDKUserMessage({
         messageSpacing.user.bubble.combined
       )}
     >
-      {/* Main Content */}
       <div class={cn(messageColors.user.text, 'whitespace-pre-wrap break-words')}>
         {renderMessageText(textContent, referenceMetadata, sessionId)}
       </div>
 
-      {/* Attached images */}
       {imageBlocks.length > 0 && (
         <div class="mt-3 space-y-2">
           {imageBlocks.map((img, idx) => {
@@ -461,7 +403,6 @@ export function SDKUserMessage({
         </div>
       )}
 
-      {/* Parent tool use indicator (for sub-agent messages) */}
       {message.parent_tool_use_id && (
         <div class="mt-2 text-xs text-gray-500 dark:text-gray-400 italic">
           Sub-agent message (parent: {message.parent_tool_use_id.slice(0, 8)}...)
@@ -470,7 +411,6 @@ export function SDKUserMessage({
     </div>
   );
 
-  // Actions/toolbar component
   const messageActions = (
     <div
       class={cn(
@@ -503,14 +443,10 @@ export function SDKUserMessage({
         deliveryRetry={message.deliveryRetry}
       />
 
-      {/* Rewind button - only for non-replay user messages with valid UUID */}
       {!isReplay &&
         onRewind &&
         sessionId &&
         message.uuid &&
-        // Task #862 (review P1): only allow rewind on terminal (settled)
-        // deliveries — a queued/processing/retrying row's active message_delivery
-        // job would otherwise keep executing after the rewind deletes it.
         isDeliveryTerminal(message.deliveryStatus) &&
         (rewindingMessageUuid === message.uuid ? (
           <Spinner size="sm" color="border-amber-500" />
@@ -529,7 +465,6 @@ export function SDKUserMessage({
           </Tooltip>
         ))}
 
-      {/* Session info icon (if session info is attached) */}
       {sessionInfo && (
         <Dropdown
           trigger={<MessageInfoButton />}
@@ -562,7 +497,6 @@ export function SDKUserMessage({
     </div>
   );
 
-  // Wrap with checkbox if in rewind mode - simpler structure for proper alignment
   const messageContent = (
     <div
       class={cn(messageSpacing.user.container.combined, 'flex justify-end')}

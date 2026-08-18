@@ -1,13 +1,3 @@
-/**
- * SpaceOverview Component
- *
- * Overview dashboard showing:
- * - Runtime state indicator with pause/resume/stop/start controls (when available)
- * - Task stats summary (active, review, done counts)
- * - Recent tasks feed (latest task updates)
- * - Recent sessions (latest active sessions)
- */
-
 import { useState, useCallback, useMemo } from 'preact/hooks';
 import type {
   RuntimeState,
@@ -31,8 +21,6 @@ import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
 import { FLAT_SURFACE, GLASS_SURFACE } from './glass-workspace';
-
-// ─── Stat Card ───────────────────────────────────────────────────────────────
 
 function StatCard({
   label,
@@ -64,8 +52,6 @@ function StatCard({
     </button>
   );
 }
-
-// ─── Runtime Controls ────────────────────────────────────────────────────────
 
 const RUNTIME_STYLES: Record<
   RuntimeState,
@@ -184,8 +170,6 @@ function RuntimeControlBar({
   );
 }
 
-// ─── Autonomy Level ─────────────────────────────────────────────────────────
-
 function AutonomyLevelBar({
   level,
   workflows,
@@ -228,8 +212,6 @@ function AutonomyLevelBar({
   );
 }
 
-// ─── Concurrency Bar ──────────────────────────────────────────────────────
-
 function ConcurrencyBar({ limit, onChange }: { limit: number; onChange: (n: number) => void }) {
   return (
     <div class={cn('min-h-[5.25rem] rounded-xl border px-4 py-3.5', GLASS_SURFACE)}>
@@ -254,8 +236,6 @@ function ConcurrencyBar({ limit, onChange }: { limit: number; onChange: (n: numb
     </div>
   );
 }
-
-// ─── Recent Tasks ─────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, string> = {
   in_progress: 'bg-blue-400/80 ring-blue-300/20',
@@ -302,8 +282,6 @@ function RecentTaskItem({ task, onClick }: { task: SpaceTask; onClick?: () => vo
     </button>
   );
 }
-
-// ─── Main Dashboard ──────────────────────────────────────────────────────────
 
 interface SpaceOverviewProps {
   spaceId: string;
@@ -387,22 +365,15 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
   const runtimeState = spaceStore.runtimeState.value;
   const sessions = spaceStore.sessions.value;
 
-  // Memoize the full-array derivations so an unrelated signal tick (runtime
-  // state, autonomy, concurrency) doesn't re-run every task pass + the
-  // sessions sort on each render. All derivations are computed before the
-  // early returns so the hook order stays stable across renders.
   const recentSessions = useMemo(
     () => [...sessions].sort((a, b) => b.lastActiveAt - a.lastActiveAt).slice(0, 5),
     [sessions]
   );
 
-  // Task counts
   const activeTasks = useMemo(
     () => tasks.filter((t) => t.status === 'open' || t.status === 'in_progress'),
     [tasks]
   );
-  // Matches the Action-tab predicate (isActionRequired) so the overview count
-  // and the Action list can't drift — rate/usage-limited tasks count here too.
   const reviewTasks = useMemo(() => tasks.filter(isActionRequired), [tasks]);
   const doneTasks = useMemo(
     () =>
@@ -412,7 +383,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
     [tasks]
   );
 
-  // Recent tasks — sorted by updatedAt, top 5
   const recentTasks = useMemo(
     () => [...tasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5),
     [tasks]
@@ -448,7 +418,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
       <div class="mx-auto min-h-[calc(100%+1px)] max-w-6xl space-y-6">
         <SpaceCreateTaskDialog isOpen={showCreateTask} onClose={() => setShowCreateTask(false)} />
 
-        {/* Runtime state stays visible without delaying the operational summary. */}
         {runtimeState && (
           <RuntimeControlBar
             state={runtimeState}
@@ -460,7 +429,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           />
         )}
 
-        {/* Task state is the primary first-screen summary. */}
         <div class="grid grid-cols-3 gap-3">
           <StatCard
             label="Active"
@@ -482,7 +450,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           />
         </div>
 
-        {/* Configuration remains accessible but secondary to current state. */}
         <div class="grid gap-3 lg:grid-cols-2">
           <AutonomyLevelBar
             level={space.autonomyLevel ?? 1}
@@ -496,7 +463,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
         </div>
 
         <div class="grid items-stretch gap-4 xl:grid-cols-2">
-          {/* Recent Tasks */}
           <section
             class={cn(
               'h-full overflow-hidden rounded-2xl border',
@@ -549,7 +515,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
             )}
           </section>
 
-          {/* Recent Sessions */}
           {recentSessions.length > 0 && (
             <section
               class={cn('h-full overflow-hidden rounded-2xl border', FLAT_SURFACE)}
@@ -583,7 +548,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           )}
         </div>
 
-        {/* Stop Confirmation */}
         <ConfirmModal
           isOpen={showStopConfirm}
           onClose={() => setShowStopConfirm(false)}

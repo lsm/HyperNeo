@@ -1,11 +1,3 @@
-/**
- * Scoped Invalidation Integration Tests
- *
- * End-to-end test using real ReactiveDatabase + LiveQueryEngine + real sdk_messages
- * table to verify that writing SDK messages for one session does not re-evaluate
- * live queries subscribed to a different session.
- */
-
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -91,11 +83,9 @@ describe('Scoped invalidation — sdk_messages integration', () => {
   });
 
   test('writing message for sess-B does NOT trigger delta for sess-A subscription', async () => {
-    // Create two sessions
     reactiveDb.db.createSession(makeSession('sess-A'));
     reactiveDb.db.createSession(makeSession('sess-B'));
 
-    // Subscribe to messages for sess-A with scope filter
     const diffsA: QueryDiff<Record<string, unknown>>[] = [];
     engine.subscribe(SQL, ['sess-A'], (diff) => diffsA.push(diff), {
       debounceMs: 0,
@@ -105,9 +95,8 @@ describe('Scoped invalidation — sdk_messages integration', () => {
       },
     });
 
-    expect(diffsA.length).toBe(1); // initial snapshot (empty)
+    expect(diffsA.length).toBe(1);
 
-    // Write 5 messages for sess-B
     for (let i = 0; i < 5; i++) {
       reactiveDb.db.saveSDKMessage('sess-B', {
         type: 'assistant',
@@ -120,7 +109,6 @@ describe('Scoped invalidation — sdk_messages integration', () => {
 
     await Promise.resolve();
 
-    // sess-A should NOT have been re-evaluated at all
     expect(diffsA.length).toBe(1);
   });
 
@@ -157,7 +145,6 @@ describe('Scoped invalidation — sdk_messages integration', () => {
     reactiveDb.db.createSession(makeSession('sess-A'));
     reactiveDb.db.createSession(makeSession('sess-B'));
 
-    // Insert a message for sess-A via raw db to get its ID
     const msgId = reactiveDb.db.saveUserMessage(
       'sess-A',
       {
@@ -170,7 +157,6 @@ describe('Scoped invalidation — sdk_messages integration', () => {
       'enqueued'
     );
 
-    // Subscribe to sess-A and sess-B with scope filters
     const diffsA: QueryDiff<Record<string, unknown>>[] = [];
     const diffsB: QueryDiff<Record<string, unknown>>[] = [];
     engine.subscribe(SQL, ['sess-A'], (diff) => diffsA.push(diff), {
@@ -184,14 +170,11 @@ describe('Scoped invalidation — sdk_messages integration', () => {
 
     expect(diffsA.length).toBe(1);
 
-    // updateMessageStatus has NO scope extractor → both queries re-evaluate
     reactiveDb.db.updateMessageStatus([msgId], 'consumed');
 
     await Promise.resolve();
 
-    // sess-A sees the status change (message appears because send_status changed)
     expect(diffsA.length).toBe(2);
-    // sess-B is re-evaluated too (unscoped change) but result unchanged → no callback
     expect(diffsB.length).toBe(1);
   });
 
@@ -211,7 +194,6 @@ describe('Scoped invalidation — sdk_messages integration', () => {
       scopeFilter: (scope) => !scope.sessionId || scope.sessionId === 'sess-B',
     });
 
-    // Interleave writes
     reactiveDb.db.saveSDKMessage('sess-A', {
       type: 'assistant',
       uuid: 'a1',
@@ -238,11 +220,9 @@ describe('Scoped invalidation — sdk_messages integration', () => {
 
     await Promise.resolve();
 
-    // sess-A should have 1 delta (2 messages coalesced into 1 re-evaluation)
-    expect(diffsA.length).toBe(2); // snapshot + 1 delta
+    expect(diffsA.length).toBe(2);
     expect(diffsA[1].added?.length).toBe(2);
 
-    // sess-B should have 1 delta
     expect(diffsB.length).toBe(2);
     expect(diffsB[1].added?.length).toBe(1);
   });

@@ -1,10 +1,3 @@
-/**
- * useFileAttachments Hook
- *
- * Handles file attachment state, validation, and base64 conversion.
- * Extracted from MessageInput.tsx for better separation of concerns.
- */
-
 import type { RefObject } from 'preact';
 import { useState, useCallback, useRef } from 'preact/hooks';
 import type { MessageImage } from '@hyperneo/shared';
@@ -23,21 +16,12 @@ export interface UseFileAttachmentsResult {
   handleFileDrop: (files: FileList) => Promise<void>;
   handleRemove: (index: number) => void;
   clear: () => void;
-  /**
-   * Re-populate the attachment list after an optimistic `clear()`. Used by
-   * the message composer to restore attachments when a send fails so the
-   * user doesn't have to re-attach files. Pass the list snapshotted before
-   * the optimistic clear.
-   */
   restore: (attachments: AttachmentWithMetadata[]) => void;
   openFilePicker: () => void;
   getImagesForSend: () => MessageImage[] | undefined;
   handlePaste: (e: ClipboardEvent) => void;
 }
 
-/**
- * Hook for managing file attachments
- */
 export function useFileAttachments(): UseFileAttachmentsResult {
   const [attachments, setAttachments] = useState<AttachmentWithMetadata[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -62,7 +46,6 @@ export function useFileAttachments(): UseFileAttachmentsResult {
           },
         ]);
       } catch (error) {
-        // Show error message from fileToBase64 if available (e.g., size limit errors)
         const errorMessage = error instanceof Error ? error.message : `Failed to read ${file.name}`;
         toast.error(errorMessage);
       }
@@ -96,8 +79,6 @@ export function useFileAttachments(): UseFileAttachmentsResult {
       const imageFiles = extractImagesFromClipboard(items);
       if (imageFiles.length === 0) return;
 
-      // Process images as attachments
-      // Do NOT call e.preventDefault() — let text paste continue normally
       await processFiles(imageFiles);
     },
     [processFiles]
@@ -119,7 +100,6 @@ export function useFileAttachments(): UseFileAttachmentsResult {
     fileInputRef.current?.click();
   }, []);
 
-  // Strip metadata for sending
   const getImagesForSend = useCallback((): MessageImage[] | undefined => {
     if (attachments.length === 0) return undefined;
     return attachments.map(({ data, media_type }) => ({ data, media_type }));

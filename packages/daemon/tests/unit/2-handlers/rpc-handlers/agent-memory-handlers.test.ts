@@ -120,7 +120,6 @@ describe('agent memory RPC handlers', () => {
 
     await handlers.get('agentMemory.list')?.({ spaceId: 'space-a', query: 'conventions' });
 
-    // Management reads must not mutate access_count / last_accessed_at.
     expect(calls[0]?.recordAccess).toBe(false);
   });
 
@@ -139,7 +138,6 @@ describe('agent memory RPC handlers', () => {
     await handlers.get('agentMemory.read')?.({ spaceId: 'space-a', key: 'k', recordAccess: false });
     await handlers.get('agentMemory.read')?.({ spaceId: 'space-a', key: 'k' });
 
-    // Explicit false is forwarded; absent leaves the repo default (record).
     expect(calls[0]?.recordAccess).toBe(false);
     expect(calls[1]?.recordAccess).toBeUndefined();
   });

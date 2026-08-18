@@ -35,7 +35,6 @@ export function App() {
         setPage('');
         setActiveSection('');
       }
-      // Otherwise ignore — within-page anchor handled by onClick+scrollIntoView
     }
 
     window.addEventListener('hashchange', onHashChange);
@@ -52,7 +51,6 @@ export function App() {
       />
 
       <div class="ml-64">
-        {/* Header */}
         <header class="px-8 pt-10 pb-4 border-b border-surface-border flex items-start justify-between">
           <div>
             <h1 class="text-3xl font-bold text-text-primary">
@@ -82,7 +80,6 @@ export function App() {
           </div>
         </header>
 
-        {/* Page content */}
         {page === '' ? (
           <HomePage setActiveSection={setActiveSection} />
         ) : (

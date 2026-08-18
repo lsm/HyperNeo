@@ -152,9 +152,6 @@ function extractAssistantEvents(
     const eventId = `${String(row.id)}-assistant-${idx}`;
 
     if (isThinkingBlock(block)) {
-      // Skip Opus 4.7 "omitted" thinking stubs — they carry an empty
-      // `thinking` payload (plus a signature for multi-turn continuity)
-      // and would otherwise produce a blank "Thinking" thread event.
       if (!hasRenderableThinking(block)) {
         continue;
       }
@@ -175,25 +172,12 @@ function extractAssistantEvents(
     }
 
     if (isToolUseBlock(block)) {
-      // Special-case request_human_input: surface the question as a visible
-      // text message in the thread instead of a collapsed tool card. The
-      // tool stores the question only in task.result, so without this the
-      // question would be invisible in the thread.
       if (block.name === 'request_human_input') {
         const input = (block.input ?? {}) as Record<string, unknown>;
         const question = typeof input.question === 'string' ? input.question.trim() : '';
         const questionContext = typeof input.context === 'string' ? input.context.trim() : '';
         const body = questionContext ? `${question}\n\nContext: ${questionContext}` : question;
         if (body) {
-          // Synthesize a text-only SDKMessage so the renderer treats the
-          // question as plain markdown. We intentionally DROP the original
-          // tool_use block from this synthesized event's content: keeping
-          // it would cause SDKAssistantMessage to also render a collapsed
-          // tool card alongside the text bubble (see SDKAssistantMessage
-          // toolBlocks path), defeating the purpose of surfacing the
-          // question as visible text. Tool_use/tool_result pairing is
-          // unaffected — toolResultsMap in useMessageMaps is built from
-          // the raw messages array, not from synthesized events.
           const questionMessage = {
             ...message,
             message: {
@@ -476,9 +460,6 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 
     if (isSDKRateLimitEvent(row.message)) {
       const rateLimitInfo = row.message.rate_limit_info;
-      // Only surface hard-rejected rate-limit states in compact feeds.
-      // `allowed` / `allowed_warning` are informational noise here, even if
-      // overageStatus contains warnings or restrictions.
       const isRejected = rateLimitInfo.status === 'rejected';
       const rateLimitType = rateLimitInfo.rateLimitType
         ? rateLimitInfo.rateLimitType.replace(/_/g, ' ')
@@ -568,27 +549,14 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
   return events;
 }
 
-// ============================================================================
-// File operations extraction (for non-git workspaces)
-// ============================================================================
-
 export interface FileOperation {
   path: string;
-  /** Last tool that touched this file */
   tool: 'Write' | 'Edit' | 'MultiEdit';
-  /** Write: full file content written */
   content?: string;
-  /** Edit: the string that was replaced */
   oldString?: string;
-  /** Edit: the replacement string */
   newString?: string;
 }
 
-/**
- * Scan all assistant tool-use blocks in `parsedRows` and return the last
- * Write/Edit operation per file path. Used as a fallback when the workspace
- * is not a git repository.
- */
 export function extractFileOperations(parsedRows: ParsedThreadRow[]): FileOperation[] {
   const opsByFile = new Map<string, FileOperation>();
 
@@ -637,13 +605,6 @@ export function extractFileOperations(parsedRows: ParsedThreadRow[]): FileOperat
   return Array.from(opsByFile.values());
 }
 
-/**
- * Build a synthetic unified diff string from a FileOperation so it can be
- * displayed in FileDiffView without a real git repo.
- *
- * - Write → full content shown as a new-file addition
- * - Edit  → old_string lines as removals, new_string lines as additions
- */
 export function buildSyntheticDiff(op: FileOperation): {
   diff: string;
   additions: number;

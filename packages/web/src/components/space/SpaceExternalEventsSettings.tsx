@@ -1,7 +1,3 @@
-/**
- * SpaceExternalEventsSettings — external event source configuration for a Space.
- */
-
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import {
@@ -127,19 +123,10 @@ export function SpaceExternalEventsSettings({
   const [loading, setLoading] = useState(true);
   const [deliveryLoading, setDeliveryLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
-  // True while the health panel is running an in-panel action (re-register
-  // webhooks / poll now). Propagated from the panel via onBusyChange so sibling
-  // repository mutations can be locked for the duration — a re-register recreates
-  // the watched repo server-side and must not race an operator removing it.
   const [panelBusy, setPanelBusy] = useState(false);
-  // Stabilized callback: the child's [busy, onBusyChange] effect re-runs on
-  // identity change — an inline closure here would loop (re-render → new identity
-  // → cleanup→re-run → re-render). useCallback with a stable setPanelBusy avoids it.
   const handlePanelBusyChange = useCallback((panelActionBusy: 'poll' | 'reregister' | null) => {
     setPanelBusy(panelActionBusy !== null);
   }, []);
-  // Bumped after sibling settings mutations so the health panel re-fetches its
-  // snapshot (its own effect only keys on spaceId).
   const [healthNonce, setHealthNonce] = useState(0);
   const [repoInput, setRepoInput] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
@@ -161,11 +148,6 @@ export function SpaceExternalEventsSettings({
   const githubWebhooksEnabled = githubExtension?.config.capabilities.webhooks !== false;
   const githubControlsEnabled = githubGloballyEnabled && githubRpcConfigEnabled;
   const githubSpaceEnabled = spaceConfig?.enabled ?? true;
-  // spacePollingIntent reflects the user's express wish to use polling in
-  // this space, persisted server-side independent of the rows that happen
-  // to exist right now. The connection-card checkbox is bound to this so
-  // the first polling-only add is reachable even when no polling row
-  // exists yet to derive the state from.
   const spacePollingIntent =
     (spaceConfig?.settings as { pollingIntent?: boolean } | undefined)?.pollingIntent === true;
   const spacePollingActive = githubPollingEnabled && spacePollingIntent;
@@ -210,10 +192,6 @@ export function SpaceExternalEventsSettings({
   async function refresh({
     bumpHealthNonce = true,
   }: {
-    // Only mutation-driven refreshes (token save, repo add/remove, poll/re-register
-    // via onAfterAction) should signal the health panel — the panel's own spaceId
-    // effect handles initial and space-change loads, so the load path skips the
-    // nonce bump to avoid a redundant /user validation on mount.
     bumpHealthNonce?: boolean;
   } = {}): Promise<void> {
     const refreshToken = refreshTokenRef.current + 1;
@@ -233,10 +211,6 @@ export function SpaceExternalEventsSettings({
         setLoading(false);
         setDeliveryLoading(false);
       }
-      // Bump the health nonce even on the no-hub path so the panel marks its
-      // snapshot stale — without this the nonce bump in `finally` (below) is
-      // skipped (the return at line 236 exits before the try), and the panel
-      // retains a non-stale snapshot with pre-mutation targets.
       if (bumpHealthNonce) setHealthNonce((n) => n + 1);
       return;
     }
@@ -268,14 +242,10 @@ export function SpaceExternalEventsSettings({
         }),
       ]);
       if (!isCurrentRefresh()) return;
-      // Surface local config/repos first so the panel becomes interactive
-      // even if the auxiliary `/user` token-validation call hangs.
       setSpaceConfig(configResult);
       setRepos(repoResult.repositories);
       setTokenStatus(null);
       setTokenStatusError(null);
-      // Fire token-status fetch in the background; setLoading(false) below
-      // does NOT wait on it.
       void (async () => {
         try {
           const tokenResult = await hub.request<GitHubTokenStatus>(
@@ -301,8 +271,6 @@ export function SpaceExternalEventsSettings({
       );
     } finally {
       if (isCurrentRefresh()) setLoading(false);
-      // Signal sibling state changes to the health panel regardless of outcome,
-      // but only for mutation-driven refreshes — not the initial/space load.
       if (bumpHealthNonce) setHealthNonce((n) => n + 1);
     }
   }
@@ -501,9 +469,6 @@ export function SpaceExternalEventsSettings({
               repo: parsed.repo,
               webhookSecret: secret || undefined,
               webhookEnabled: Boolean(secret),
-              // Default to polling only when this space's polling control is
-              // already active — daemon-wide capability alone is not enough,
-              // since another space may be the one keeping it on.
               pollingEnabled: !secret && spacePollingActive,
             }
       );
@@ -695,8 +660,6 @@ export function SpaceExternalEventsSettings({
                   disabled={
                     disabled ||
                     busy === `global:${extension.source}` ||
-                    // An in-panel GitHub action (poll/re-register) must lock the
-                    // GitHub extension toggle too, not just the repo rows.
                     (panelBusy && extension.source === 'github')
                   }
                   onToggle={(enabled) => setGlobalEnabled(extension.source, enabled)}
@@ -1295,11 +1258,6 @@ function GitHubConnectionCard({
 }: GitHubConnectionCardProps) {
   const tokenInvalid = tokenStatus?.configured === true && Boolean(tokenStatus.error);
   const connected = tokenStatus?.configured === true && !tokenInvalid;
-  // Block destructive token writes while we don't yet know whether a token
-  // is already configured. Without this guard the overwrite/shadow confirm
-  // prompts would silently no-op because saveToken sees tokenStatus === null.
-  // Polling toggle is intentionally NOT blocked here — it doesn't touch the
-  // token, so it should stay usable while /user validation is in flight.
   const tokenWriteDisabled = busy || disabled || tokenStatusUnknown;
   const pollingDisabled = busy || disabled;
   const [replaceMode, setReplaceMode] = useState(false);

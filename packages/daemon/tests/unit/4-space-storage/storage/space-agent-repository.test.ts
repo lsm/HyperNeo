@@ -1,10 +1,3 @@
-/**
- * SpaceAgentRepository Unit Tests
- *
- * Tests for CRUD operations, JSON serialization, batch lookup, deletion protection,
- * and the DB-level name uniqueness check.
- */
-
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
@@ -104,8 +97,6 @@ describe('SpaceAgentRepository', () => {
     });
 
     it('normalizes a legacy empty-string tools column to an inherit-all profile', () => {
-      // Upgraded DBs may store tools = '' (the m151 migration explicitly handles
-      // that value). rowToAgent must not call JSON.parse('') and throw.
       const created = repo.create({ spaceId: 'space-1', name: 'Legacy' });
       db.prepare(`UPDATE space_agents SET tools = '' WHERE id = ?`).run(created.id);
 
@@ -148,14 +139,12 @@ describe('SpaceAgentRepository', () => {
 
     it('excludes the specified agent id (update scenario)', () => {
       const agent = repo.create({ spaceId: 'space-1', name: 'Coder' });
-      // Same name, same id — should not count as taken
       expect(repo.isNameTaken('space-1', 'Coder', agent.id)).toBe(false);
     });
 
     it('is scoped to the space', () => {
       insertSpace(db, 'space-2');
       repo.create({ spaceId: 'space-1', name: 'Coder' });
-      // Name exists in space-1 but not space-2
       expect(repo.isNameTaken('space-2', 'Coder')).toBe(false);
     });
   });

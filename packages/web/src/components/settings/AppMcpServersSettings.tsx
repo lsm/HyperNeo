@@ -1,10 +1,3 @@
-/**
- * AppMcpServersSettings Component
- *
- * Settings panel for managing application-level MCP server registry.
- * Allows users to add, edit, delete, and enable/disable MCP servers.
- */
-
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { AppMcpServer, AppMcpServerSourceType } from '@hyperneo/shared';
 import {
@@ -59,15 +52,7 @@ export function AppMcpServersSettings() {
   const servers = appMcpStore.appMcpServers.value;
   const loading = appMcpStore.loading.value;
   const error = appMcpStore.error.value;
-  // Read the skills signal so the component re-renders when wrappers are added
-  // or removed. We cross-reference skills against servers to show "this server
-  // is exposed via skill X" (or warn when a server has no wrapper and is
-  // therefore never injected into any session).
   const skills = skillsStore.skills.value;
-  // Explicit "first snapshot arrived" flag from the skills store. We need this
-  // (not `skills.length > 0`) to correctly distinguish "subscription still
-  // loading" from "there genuinely are zero skills" — otherwise a space with
-  // MCP servers but zero wrapper skills would never show orphan warnings.
   const skillsLoaded = skillsStore.loaded.value;
 
   const [showForm, setShowForm] = useState(false);
@@ -79,12 +64,6 @@ export function AppMcpServersSettings() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
-  // Subscribe to both stores on mount.
-  // - appMcpStore drives the server list shown in this panel.
-  // - skillsStore drives the cross-linkage: each server row needs to know
-  //   whether a skill wraps it so we can render "Exposed via skill X" vs the
-  //   "⚠️ Not exposed to sessions" warning. Missing either subscription hides
-  //   a real and actionable state from the user.
   useEffect(() => {
     appMcpStore.subscribe().catch((err) => {
       toast.error(
@@ -92,9 +71,6 @@ export function AppMcpServersSettings() {
       );
     });
     skillsStore.subscribe().catch((err) => {
-      // Non-fatal: the panel still works without linkage info; we just lose
-      // the "Exposed via skill …" / "No skill wrapper" annotations. Use a
-      // softer warning rather than a blocking error toast.
       // eslint-disable-next-line no-console
       console.warn(
         'Failed to load skills for MCP linkage:',
@@ -108,8 +84,6 @@ export function AppMcpServersSettings() {
     };
   }, []);
 
-  // Memoise the (serverId → wrapping skill) map so the O(n) scan runs once per
-  // skills-array change rather than once per server row.
   const skillLinkage = useMemo(() => computeMcpServerSkillLinkage(skills), [skills]);
 
   const validateForm = (): boolean => {
@@ -124,7 +98,6 @@ export function AppMcpServersSettings() {
         errors.command = 'Command is required for stdio servers';
       }
     } else {
-      // sse or http
       if (!formData.url.trim()) {
         errors.url = 'URL is required for SSE/HTTP servers';
       } else if (!/^https?:\/\//i.test(formData.url.trim())) {
@@ -133,7 +106,6 @@ export function AppMcpServersSettings() {
     }
 
     if (formData.args.trim()) {
-      // Validate that args are space-separated without quotes issues
       const args = formData.args.trim().split(/\s+/);
       if (args.some((a) => a.includes('"'))) {
         errors.args = 'Args should be space-separated without quotes';
@@ -141,7 +113,6 @@ export function AppMcpServersSettings() {
     }
 
     if (formData.envVars.trim()) {
-      // Validate key=value format
       const lines = formData.envVars.trim().split('\n');
       for (const line of lines) {
         if (!line.includes('=')) {
@@ -157,7 +128,6 @@ export function AppMcpServersSettings() {
     }
 
     if (formData.headers.trim()) {
-      // Validate key=value format
       const lines = formData.headers.trim().split('\n');
       for (const line of lines) {
         if (!line.includes('=')) {
@@ -357,10 +327,6 @@ export function AppMcpServersSettings() {
         ) : (
           <div class="space-y-2">
             {servers.map((server) => {
-              // Show linkage info only after the skills subscription has delivered
-              // its first snapshot (`skillsLoaded`). Before that, we genuinely
-              // don't know whether a wrapper exists, so suppressing the annotation
-              // prevents a misleading "⚠️ Not exposed" flash during initial mount.
               const linkedSkill = skillLinkage.get(server.id);
               return (
                 <div
@@ -459,7 +425,6 @@ export function AppMcpServersSettings() {
         )}
       </SettingsSection>
 
-      {/* Add/Edit Form Modal */}
       <Modal
         isOpen={showForm}
         onClose={closeForm}
@@ -467,7 +432,6 @@ export function AppMcpServersSettings() {
         size="lg"
       >
         <form onSubmit={handleSubmit} class="space-y-4">
-          {/* Name */}
           <div>
             <label class="block text-sm font-medium text-gray-300 mb-1">
               Name <span class="text-red-400">*</span>
@@ -488,7 +452,6 @@ export function AppMcpServersSettings() {
             {formErrors.name && <p class="text-xs text-red-400 mt-1">{formErrors.name}</p>}
           </div>
 
-          {/* Description */}
           <div>
             <label class="block text-sm font-medium text-gray-300 mb-1">Description</label>
             <input
@@ -502,7 +465,6 @@ export function AppMcpServersSettings() {
             />
           </div>
 
-          {/* Source Type */}
           <div>
             <label class="block text-sm font-medium text-gray-300 mb-1">
               Source Type <span class="text-red-400">*</span>
@@ -523,7 +485,6 @@ export function AppMcpServersSettings() {
             </select>
           </div>
 
-          {/* Stdio-specific fields */}
           {formData.sourceType === 'stdio' && (
             <>
               <div>
@@ -569,7 +530,6 @@ export function AppMcpServersSettings() {
             </>
           )}
 
-          {/* SSE/HTTP-specific fields */}
           {formData.sourceType !== 'stdio' && (
             <>
               <div>
@@ -615,7 +575,6 @@ export function AppMcpServersSettings() {
             </>
           )}
 
-          {/* Env Vars (for all source types) */}
           <div>
             <label class="block text-sm font-medium text-gray-300 mb-1">
               Environment Variables
@@ -640,7 +599,6 @@ export function AppMcpServersSettings() {
             </p>
           </div>
 
-          {/* Form Actions */}
           <div class="flex items-center justify-end gap-3 pt-2">
             <Button type="button" variant="secondary" size="sm" onClick={closeForm}>
               Cancel
@@ -652,7 +610,6 @@ export function AppMcpServersSettings() {
         </form>
       </Modal>
 
-      {/* Delete Confirmation Modal */}
       <ConfirmModal
         isOpen={showDeleteConfirm}
         onClose={() => {

@@ -1,10 +1,3 @@
-/**
- * MessageInfoButton Component
- *
- * Info icon button that triggers the session info dropdown
- * Used in user message actions
- */
-
 import { IconButton } from '../ui/IconButton.tsx';
 
 interface Props {

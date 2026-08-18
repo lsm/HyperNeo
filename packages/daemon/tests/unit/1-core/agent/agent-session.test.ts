@@ -1,11 +1,3 @@
-/**
- * AgentSession Tests
- *
- * Tests for the main agent orchestration class.
- * Note: AgentSession has many dependencies, so we test what we can without
- * using mock.module() which affects other test files globally.
- */
-
 import { describe, expect, it, mock, beforeEach, afterEach, spyOn } from 'bun:test';
 import type {
   Session,
@@ -24,9 +16,6 @@ import {
   createTestInternalEventBus,
   createTestSession,
 } from '../../../helpers/database';
-
-// Test the AgentSession class indirectly through its components
-// since direct testing with mock.module() causes global mock pollution
 
 type DeliveryResponseObserver = {
   generation: number;
@@ -182,7 +171,6 @@ describe('AgentSession', () => {
         toolCallCount: 3,
       };
 
-      // Simulate partial update
       const updates = { toolCallCount: 10 };
       const merged = { ...metadata, ...updates };
 
@@ -326,7 +314,6 @@ describe('AgentSession', () => {
       const agentSession = createAgentSession();
       let fireExit: (() => void) | null = null;
       const noPidProc = {
-        // No pid — the VM/container/remote spawn path.
         once: mock((_event: string, handler: () => void) => {
           if (_event === 'exit') fireExit = handler;
           return noPidProc;
@@ -337,27 +324,21 @@ describe('AgentSession', () => {
       agentSession.trackAgentProcess(noPidProc as never);
       agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 10 });
 
-      // SIGTERM is signaled immediately via the handle's kill().
       expect(noPidProc.kill).toHaveBeenCalledWith('SIGTERM');
 
       await new Promise((resolve) => setTimeout(resolve, 25));
-      // The deferred SIGKILL fired for the no-PID handle too.
       expect(noPidProc.kill).toHaveBeenCalledWith('SIGKILL');
 
-      // Natural exit self-cleans the durable handle collection.
       fireExit?.();
       agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 5 });
       await new Promise((resolve) => setTimeout(resolve, 15));
       const sigtermCalls = (noPidProc.kill as ReturnType<typeof mock>).mock.calls.filter(
         (args) => args[0] === 'SIGTERM'
       ).length;
-      expect(sigtermCalls).toBe(1); // not re-signaled after exit
+      expect(sigtermCalls).toBe(1);
     });
 
     it('scopes no-PID termination to the supplied snapshot, sparing a replacement handle', async () => {
-      // Codex P2 follow-up: stop() captures a snapshot before awaiting so a
-      // concurrently started replacement is not killed. The no-PID path must
-      // honor the snapshot exactly like the PID path.
       const agentSession = createAgentSession();
       const mkProc = () => {
         const p = {
@@ -371,7 +352,6 @@ describe('AgentSession', () => {
 
       agentSession.trackAgentProcess(oldProc as never);
       const snapshot = agentSession.snapshotNoPidTrackedProcesses();
-      // The replacement starts AFTER the snapshot was captured.
       agentSession.trackAgentProcess(replacementProc as never);
 
       agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 10, noPidProcesses: snapshot });
@@ -383,10 +363,6 @@ describe('AgentSession', () => {
     });
 
     it('keeps a retained no-PID orphan in the exit aggregate after reset (Codex P2, PR #2491)', async () => {
-      // resetProcessExitedPromise() abandons the wait but must not drop a
-      // still-live orphan's exit promise: the next updateProcessExitedPromise()
-      // rebuild derives from the retained handles, so a later stop() still
-      // waits for the orphan to exit before restarting.
       const agentSession = createAgentSession();
       let fireExitA: (() => void) | null = null;
       const procA = {
@@ -405,9 +381,9 @@ describe('AgentSession', () => {
         kill: mock(() => true),
       };
 
-      agentSession.trackAgentProcess(procA as never); // no-PID orphan
-      agentSession.resetProcessExitedPromise(); // retry path abandons the wait
-      agentSession.trackAgentProcess(procB as never); // replacement tracked
+      agentSession.trackAgentProcess(procA as never);
+      agentSession.resetProcessExitedPromise();
+      agentSession.trackAgentProcess(procB as never);
       const aggregate = agentSession.processExitedPromise;
       expect(aggregate).not.toBeNull();
 
@@ -415,8 +391,8 @@ describe('AgentSession', () => {
       void aggregate!.then(() => {
         resolved = true;
       });
-      await new Promise((resolve) => setTimeout(resolve, 50)); // B exited, A alive
-      expect(resolved).toBe(false); // aggregate still waits on the orphan
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(resolved).toBe(false);
       fireExitA?.();
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(resolved).toBe(true);
@@ -563,7 +539,6 @@ describe('AgentSession', () => {
     it('preserves existing processExitedPromise when tracking a no-PID process', async () => {
       const agentSession = createAgentSession();
 
-      // Track a numeric-PID process first
       const numericProc = {
         pid: 500,
         once: mock((_event: string, _handler: () => void) => numericProc),
@@ -573,7 +548,6 @@ describe('AgentSession', () => {
       const existingPromise = agentSession.processExitedPromise;
       expect(existingPromise).not.toBeNull();
 
-      // Track a no-PID process — should NOT overwrite processExitedPromise
       const noPidProc = {
         once: mock((_event: string, _handler: () => void) => noPidProc),
         kill: mock(() => true),
@@ -581,17 +555,13 @@ describe('AgentSession', () => {
       agentSession.trackAgentProcess(noPidProc as never);
       const updatedPromise = agentSession.processExitedPromise;
 
-      // processExitedPromise should still be set (not null) and should
-      // aggregate both the numeric-PID and no-PID exit promises
       expect(updatedPromise).not.toBeNull();
-      // It should be a new promise (aggregated), not the same reference
       expect(updatedPromise).not.toBe(existingPromise);
     });
 
     it('aggregates no-PID exit promise with existing numeric-PID promises', async () => {
       const agentSession = createAgentSession();
 
-      // Track a numeric-PID process
       let exitHandler1: (() => void) | null = null;
       const proc1 = {
         pid: 600,
@@ -603,7 +573,6 @@ describe('AgentSession', () => {
       };
       agentSession.trackAgentProcess(proc1 as never);
 
-      // Track a no-PID process
       let exitHandlerNoPid: (() => void) | null = null;
       const noPidProc = {
         once: mock((_event: string, handler: () => void) => {
@@ -617,11 +586,8 @@ describe('AgentSession', () => {
       const promise = agentSession.processExitedPromise;
       expect(promise).not.toBeNull();
 
-      // Resolve the numeric-PID process — promise should NOT resolve yet
-      // because the no-PID promise is still pending
       exitHandler1?.();
       await new Promise((resolve) => setTimeout(resolve, 5));
-      // Resolve the no-PID process
       exitHandlerNoPid?.();
       await expect(promise).resolves.toBeUndefined();
     });
@@ -629,7 +595,6 @@ describe('AgentSession', () => {
     it('no-PID-first then numeric-PID keeps no-PID promise in aggregation', async () => {
       const agentSession = createAgentSession();
 
-      // Track a no-PID process first
       let noPidExitHandler: (() => void) | null = null;
       const noPidProc = {
         once: mock((_event: string, handler: () => void) => {
@@ -640,8 +605,6 @@ describe('AgentSession', () => {
       };
       agentSession.trackAgentProcess(noPidProc as never);
 
-      // Now track a numeric-PID process — updateProcessExitedPromise must
-      // still include the pending no-PID promise.
       let numericExitHandler: (() => void) | null = null;
       const numericProc = {
         pid: 700,
@@ -656,11 +619,9 @@ describe('AgentSession', () => {
       const promise = agentSession.processExitedPromise;
       expect(promise).not.toBeNull();
 
-      // Resolve the numeric process — promise should NOT resolve yet
       numericExitHandler?.();
       await new Promise((resolve) => setTimeout(resolve, 5));
 
-      // Now resolve the no-PID process
       noPidExitHandler?.();
       await expect(promise).resolves.toBeUndefined();
     });
@@ -687,12 +648,10 @@ describe('AgentSession', () => {
       const promise = agentSession.processExitedPromise;
       expect(promise).not.toBeNull();
 
-      // Resolve first two — promise should still be pending
       exitHandlers[0]();
       exitHandlers[1]();
       await new Promise((resolve) => setTimeout(resolve, 5));
 
-      // Resolve the last one
       exitHandlers[2]();
       await expect(promise).resolves.toBeUndefined();
     });
@@ -821,14 +780,12 @@ describe('AgentSession', () => {
     });
 
     it('should NOT have startupTimeoutAutoRecoverAttempts field (Task 2.2)', () => {
-      // Regression guard: auto-recovery wiring removed in Task 2.1/2.2
       expect(
         'startupTimeoutAutoRecoverAttempts' in (agentSession as unknown as Record<string, unknown>)
       ).toBe(false);
     });
 
     it('should NOT have onStartupTimeoutAutoRecover method (Task 2.2)', () => {
-      // Regression guard: auto-recovery wiring removed in Task 2.1/2.2
       expect(
         typeof (agentSession as unknown as Record<string, unknown>).onStartupTimeoutAutoRecover
       ).toBe('undefined');
@@ -909,7 +866,6 @@ describe('AgentSession', () => {
 
     it('getContextInfo should delegate to contextTracker', () => {
       const info = agentSession.getContextInfo();
-      // May be null if no context has been tracked yet
       expect(info).toBeNull();
     });
 
@@ -1029,14 +985,6 @@ describe('AgentSession', () => {
     });
 
     it('driveDeliveryTurn reopens a no-result consumed row for retry only while the claim is current', async () => {
-      // A turn that consumed its kickoff but produced no result must flip the
-      // row back to `enqueued` so the retry RE-FEEDS it (resume alone does not
-      // continue an incomplete trailing user turn) — but ONLY while this
-      // attempt's job claim is still current. An interrupt (Stop) deletes the
-      // delivery job FIRST and leaves the consumed row by design; the unwind's
-      // idle transition then lands in the no-result branch with a dead claim.
-      // Reopening there would strand an `enqueued` orphan that the reconciler
-      // replays, undoing the user's Stop. (Codex P1.)
       const retrySpy = mock(() => 'db-1');
       mockDb.getSDKMessageRepo = mock(() => ({
         getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
@@ -1051,24 +999,16 @@ describe('AgentSession', () => {
         isProcessingDelivery: mock(() => true),
       }));
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
-      // A query that never settles on its own — the turn-end waiter drives the
-      // outcome, like a real long turn.
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
       );
 
-      // Live claim: the row is reopened, and the bridge throws recoverable so
-      // the job retries (and re-feeds).
       await agentSession.stateManager.setProcessing('uuid-reopen');
       const live = agentSession.driveDeliveryTurn('uuid-reopen', 'hello', null, true, () => true);
       await agentSession.stateManager.setIdle();
       await expect(live).rejects.toThrow('Turn ended without a response');
       expect(retrySpy).toHaveBeenCalledTimes(1);
 
-      // Dead claim (interrupt deleted the job mid-turn): the row must stay
-      // `consumed`. The claim was live when the turn started — the interrupt
-      // deletes the job while the turn is being awaited, so the idle transition
-      // lands in the no-result branch with a dead claim.
       let claimAlive = true;
       await agentSession.stateManager.setProcessing('uuid-reopen-2');
       const cancelled = agentSession.driveDeliveryTurn(
@@ -1078,22 +1018,14 @@ describe('AgentSession', () => {
         true,
         () => claimAlive
       );
-      // Let the drive pass its locked start section, then kill the claim
-      // (InterruptHandler deletes the delivery job before unwinding the query).
       await new Promise((resolve) => setTimeout(resolve, 10));
       claimAlive = false;
       await agentSession.stateManager.setIdle();
       await expect(cancelled).rejects.toThrow();
-      expect(retrySpy).toHaveBeenCalledTimes(1); // no additional reopen
+      expect(retrySpy).toHaveBeenCalledTimes(1);
     });
 
     it('driveDeliveryTurn re-arms through a spurious turn-end fired right after a fresh admission', async () => {
-      // The previous turn's teardown can release idle waiters a few ms AFTER a
-      // promoted kickoff was admitted — before this turn's result can possibly
-      // exist. Failing there reopened the row and re-fed a prompt the
-      // still-live query was already answering (duplicate feed → dead air →
-      // stall watchdog). The drive must re-arm its waiter and wait for the
-      // turn's REAL end instead. (PR #2499 CI trace.)
       let resultLanded = false;
       let sendStatus = 'enqueued';
       mockDb.getSDKMessageRepo = mock(() => ({
@@ -1113,8 +1045,6 @@ describe('AgentSession', () => {
         isProcessingDelivery: mock(() => true),
       }));
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
-      // A query that never settles on its own — only the idle waiter can end
-      // the turn, so a premature failure cannot hide behind queryPromise.
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
       );
@@ -1132,14 +1062,9 @@ describe('AgentSession', () => {
         false,
         () => true
       );
-      // Admission resolves; the PREVIOUS turn's teardown then fires an idle
-      // transition almost immediately — before any result exists.
       await new Promise((resolve) => setTimeout(resolve, 10));
       await agentSession.stateManager.setIdle();
-      // The drive must NOT fail on the spurious fire (query alive, no result):
-      // give it a beat to prove it is still waiting rather than thrown.
       await new Promise((resolve) => setTimeout(resolve, 20));
-      // The turn's REAL end: the result lands, then the terminal idle.
       resultLanded = true;
       await agentSession.stateManager.setProcessing('uuid-spurious');
       await agentSession.stateManager.setIdle();
@@ -1147,11 +1072,6 @@ describe('AgentSession', () => {
     });
 
     it('driveDeliveryTurn narrows the batch payload even when only the kickoff is admitted', async () => {
-      // Singleton admission (e.g. the budget fits only the kickoff, or every
-      // other member was deferred/removed since enqueue) must STILL persist the
-      // admitted set — otherwise the payload keeps the full batchUuids and the
-      // omitted tail is consumed at ACP acceptance / failed on dead-letter as
-      // part of a batch it was never fed into. (Codex round 3, P1.)
       const narrowSpy = mock(() => true);
       const contents: Record<string, { content: string; sendStatus: string }> = {
         'kick-only': { content: 'first and only fitting message', sendStatus: 'enqueued' },
@@ -1174,8 +1094,6 @@ describe('AgentSession', () => {
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
       );
-      // A never-resolving admission keeps the drive pending on the (unmocked)
-      // consume path — the narrowing happens BEFORE admission under the lock.
       (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
         admitWithId: mock(() => new Promise<void>(() => {})),
         isRunning: mock(() => false),
@@ -1183,7 +1101,6 @@ describe('AgentSession', () => {
       };
 
       await agentSession.stateManager.setProcessing('kick-only');
-      // Intentionally not awaited: the turn awaits a never-settling admission.
       void agentSession.driveDeliveryTurn('kick-only', 'estimate', null, false, () => true, [
         'kick-only',
         'tail-member',
@@ -1195,10 +1112,6 @@ describe('AgentSession', () => {
     });
 
     it('driveDeliveryTurn refuses to feed a reduced batch when narrowing cannot persist', async () => {
-      // Narrowing is REQUIRED before feeding: if it returns false (claim
-      // cancelled / row gone) the drive aborts WITHOUT admitting the prompt —
-      // never feed a reduced prompt while the durable payload still holds the
-      // superset (ACP acceptance / dead-letter would settle unsent rows).
       const admitSpy = mock(() => new Promise<void>(() => {}));
       mockDb.getSDKMessageRepo = mock(() => ({
         getDeliveryContent: mock((_sid: string, uuid: string) =>
@@ -1242,11 +1155,6 @@ describe('AgentSession', () => {
     });
 
     it('isWaitingForInput sees an unresolved sdk_resume_choice even while parked as queued', async () => {
-      // A resume-blocked startup persists the sdk_resume_choice action and
-      // parks the session as `queued` — `waiting_for_input` belongs to
-      // AskUserQuestion, so the state alone can't see this gate. Steers parked
-      // behind an unanswered resume card must not charge their park budget.
-      // (Codex P2.)
       let unresolved = true;
       mockDb.getSDKMessageRepo = mock(() => ({
         hasUnresolvedHyperNeoAction: mock(() => unresolved),
@@ -1332,8 +1240,6 @@ describe('AgentSession', () => {
       const result = await agentSession.revokePendingDelivery('db-1', 'remove');
 
       expect(result.changed).toBe(true);
-      // No hardcoded 'enqueued' filter — the frontend Remove button targets
-      // both current-turn (enqueued) and next-turn (deferred) rows.
       expect(deletePendingSpy).toHaveBeenCalledWith(mockSession.id, 'db-1');
       expect(cancelDeliverySpy).toHaveBeenCalledWith(mockSession.id, 'uuid-1');
     });
@@ -1382,16 +1288,11 @@ describe('AgentSession', () => {
     });
 
     it('deliverChatMessage cancels a rate-limit cooldown for a replacement chat even when classified as a steer', async () => {
-      // During rate_limit_cooldown the prior durable turn still occupies the
-      // active-turn slot, so the replacement is classified as a steer. It must
-      // STILL cancel the cooldown or the watchdog's timer replays the stale
-      // prompt instead of letting the user's replacement take over. (Codex P1.)
       let turnAttempt = 0;
       const jobQueue = {
         enqueue: mock(() => {
           turnAttempt++;
           if (turnAttempt === 1) {
-            // First (turn) insert hits the active-turn unique index → re-insert as steer.
             throw new Error('UNIQUE constraint failed: job_queue.uq_message_delivery_active_turn');
           }
           return { id: 'job' };
@@ -1414,15 +1315,10 @@ describe('AgentSession', () => {
       await agentSession.deliverChatMessage('cooldown-replacement');
 
       expect(cancelSpy).toHaveBeenCalledTimes(1);
-      // A steer does not claim the queued marker (only the turn owner does).
       expect(agentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
     });
 
     it('deliverChatMessage does NOT bump the watchdog generation for a steer into a live turn', async () => {
-      // A normal steer feeds a LIVE turn; cancelling here would bump the episode
-      // generation and desync the rate-limit episode from the active turn's
-      // turn-end waiter tag (P1-2), stranding it on a later 429. Only a turn, or
-      // a steer during rate_limit_cooldown, may cancel.
       let turnAttempt = 0;
       const jobQueue = {
         enqueue: mock(() => {
@@ -1744,10 +1640,6 @@ describe('AgentSession', () => {
     });
 
     it('incrementQueryGeneration claims a pending delivery observer', () => {
-      // Codex P2 (PR #2499): the bump that starts the delivery's query must
-      // retag AND claim (clear pendingStart) the armed observer, so the new
-      // query's first frame fences clean while a predecessor's earlier frame
-      // (before this bump) stays inactive.
       const reportStage = mock(() => {});
       setDeliveryResponseObserver(agentSession, {
         generation: 0,
@@ -1764,10 +1656,6 @@ describe('AgentSession', () => {
     });
 
     it('reportFirstDeliverySDKResponse ignores a pending (unclaimed) observer', () => {
-      // Codex P2 (PR #2499): a predecessor query's late terminal frame landing
-      // while ensureQueryStarted awaits an interrupt must not be consumed as
-      // THIS delivery's first response — it carries the pre-bump generation and
-      // would clear the observer before the replacement query claims it.
       const reportStage = mock(() => {});
       setDeliveryResponseObserver(agentSession, {
         generation: 0,
@@ -1802,7 +1690,6 @@ describe('AgentSession', () => {
     let agentSession: AgentSession;
 
     beforeEach(() => {
-      // Create minimal mock session
       mockSession = {
         id: 'test-session-id',
         title: 'Test Session',
@@ -1825,7 +1712,6 @@ describe('AgentSession', () => {
         },
       } as Session;
 
-      // Create minimal mock database
       mockDb = {
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
@@ -1839,12 +1725,10 @@ describe('AgentSession', () => {
         updateMessage: mock(() => {}),
       } as unknown as Database;
 
-      // Create minimal mock message hub
       mockMessageHub = {
         sendMessage: mock(() => {}),
       } as unknown as MessageHub;
 
-      // Create mock API key getter
       mockInternalEventBus = {
         publish: mock(async () => {}),
         publishAsync: mock(() => {}),
@@ -1853,7 +1737,6 @@ describe('AgentSession', () => {
 
       mockGetApiKey = mock(async () => 'test-api-key');
 
-      // Create AgentSession instance
       agentSession = new AgentSession(
         mockSession,
         mockDb,
@@ -1873,17 +1756,14 @@ describe('AgentSession', () => {
         rewindCase: 'sdk-native',
       };
 
-      // Mock the rewindHandler's executeSelectiveRewind method
       const executeSelectiveRewindSpy = mock(() => Promise.resolve(expectedResult));
       // biome-ignore lint: test mock access
       (agentSession as unknown as Record<string, unknown>).rewindHandler = {
         executeSelectiveRewind: executeSelectiveRewindSpy,
       };
 
-      // Call the method
       const result = await agentSession.executeSelectiveRewind(messageIds, mode);
 
-      // Verify the handler was called with correct arguments
       expect(executeSelectiveRewindSpy).toHaveBeenCalledTimes(1);
       expect(executeSelectiveRewindSpy).toHaveBeenCalledWith(messageIds, mode);
       expect(result).toEqual(expectedResult);
@@ -1898,17 +1778,14 @@ describe('AgentSession', () => {
         rewindCase: 'diff-based',
       };
 
-      // Mock the rewindHandler's executeSelectiveRewind method
       const executeSelectiveRewindSpy = mock(() => Promise.resolve(expectedResult));
       // biome-ignore lint: test mock access
       (agentSession as unknown as Record<string, unknown>).rewindHandler = {
         executeSelectiveRewind: executeSelectiveRewindSpy,
       };
 
-      // Call the method without mode parameter
       const result = await agentSession.executeSelectiveRewind(messageIds);
 
-      // Verify the handler was called with correct arguments (mode should be undefined)
       expect(executeSelectiveRewindSpy).toHaveBeenCalledTimes(1);
       expect(executeSelectiveRewindSpy).toHaveBeenCalledWith(messageIds, undefined);
       expect(result).toEqual(expectedResult);
@@ -2155,9 +2032,6 @@ describe('AgentSession', () => {
     });
 
     it('cancels the in-flight recovery episode for genuine new input (undefined generation)', async () => {
-      // Genuine new user input supersedes any in-flight fallback/cooldown-retry:
-      // cancel() bumps the generation so the stale continuation aborts instead
-      // of replaying the old message alongside the new turn. (Codex P1.)
       const cancelSpy = mock(() => {});
       const clearSpy = mock(() => {});
       // biome-ignore lint: test mock access
@@ -2169,23 +2043,18 @@ describe('AgentSession', () => {
       (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
         startQueryAndEnqueue: mock(async () => {}),
       };
-      await agentSession.startQueryAndEnqueue('msg-id', 'content'); // undefined → genuine input
+      await agentSession.startQueryAndEnqueue('msg-id', 'content');
       expect(cancelSpy).toHaveBeenCalledTimes(1);
       expect(clearSpy).not.toHaveBeenCalled();
     });
 
     it('executeRateLimitAutoRetry suppresses the waiter drain when startQueryAndEnqueue throws (Codex P1)', async () => {
-      // The retry catch must NOT drain: returning false makes the watchdog
-      // schedule another startup attempt for this same episode, so the old
-      // prompt is still slated for replay — draining would complete the durable
-      // job and free the active-turn slot mid-retry. Every setIdle in the retry
-      // path is suppressed; the waiter is released only on supersession.
       const setIdleSpy = mock(async (_opts?: { suppressDeliveryWaiters?: boolean }) => {});
       agentSession.stateManager.setIdle = setIdleSpy;
       // biome-ignore lint: test mock access
       (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
-        isSuperseded: () => false, // episode still active → retry proceeds
-        clearPendingCooldown: () => {}, // startQueryAndEnqueue (generation provided) clears the timer
+        isSuperseded: () => false,
+        clearPendingCooldown: () => {},
       };
       // biome-ignore lint: test mock access
       (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
@@ -2202,7 +2071,6 @@ describe('AgentSession', () => {
         }
       ).executeRateLimitAutoRetry({ uuid: 'msg-1', content: 'hi' }, 7);
       expect(result).toBe(false);
-      // The catch's setIdle (and the try's) are both suppressed — no drain.
       expect(setIdleSpy).toHaveBeenCalled();
       for (const call of setIdleSpy.mock.calls) {
         expect(call[0]).toEqual({ suppressDeliveryWaiters: true });
@@ -2210,9 +2078,6 @@ describe('AgentSession', () => {
     });
 
     it('only clears the timer for a recovery re-enqueue (generation provided)', async () => {
-      // An internal recovery re-enqueue is the SAME episode — clear only the
-      // timer, don't bump the generation (which would self-abort the in-flight
-      // fallback). (Codex P1.)
       const cancelSpy = mock(() => {});
       const clearSpy = mock(() => {});
       // biome-ignore lint: test mock access
@@ -2224,7 +2089,7 @@ describe('AgentSession', () => {
       (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
         startQueryAndEnqueue: mock(async () => {}),
       };
-      await agentSession.startQueryAndEnqueue('msg-id', 'content', 7); // recovery
+      await agentSession.startQueryAndEnqueue('msg-id', 'content', 7);
       expect(clearSpy).toHaveBeenCalledTimes(1);
       expect(cancelSpy).not.toHaveBeenCalled();
     });
@@ -2497,7 +2362,6 @@ describe('AgentSession', () => {
         markApiSuccess: markApiSuccessSpy,
       };
 
-      // A success-result frame is the signal that resets the rate-limit episode.
       await agentSession.onMarkApiSuccess({ type: 'result', subtype: 'success' } as any);
 
       expect(markApiSuccessSpy).toHaveBeenCalled();
@@ -2513,8 +2377,6 @@ describe('AgentSession', () => {
       // biome-ignore lint: test mock access
       (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = { reset: resetSpy };
 
-      // A system:init frame must mark API success (circuit breaker) but NOT
-      // reset the fallback episode (would cause an A/B loop on repeated 429).
       await agentSession.onMarkApiSuccess({ type: 'system', subtype: 'init' } as any);
 
       expect(markApiSuccessSpy).toHaveBeenCalled();
@@ -2824,14 +2686,11 @@ describe('AgentSession', () => {
     });
 
     it('should create a session without mcpServers in config to avoid cyclic serialization errors', () => {
-      // Simulate what createSdkMcpServer returns - an object with a non-serializable instance
       const mockMcpServer = {
         type: 'sdk' as const,
         name: 'lobby-agent-tools',
-        // This instance property contains cyclic references
         instance: {
           connect: () => {},
-          // Create a cyclic reference
           self: null as unknown,
         },
       };
@@ -2858,19 +2717,14 @@ describe('AgentSession', () => {
 
       const session = AgentSession.createSessionFromInit(init, 'claude-sonnet-4-5-20250929');
 
-      // Verify the session was created
       expect(session.id).toBe('lobby:default');
       expect(session.type).toBe('lobby');
       expect(session.config.model).toBe('claude-sonnet-4-5-20250929');
 
-      // Most importantly, mcpServers should NOT be in the persisted config
-      // because it contains non-serializable objects
       expect(session.config.mcpServers).toBeUndefined();
 
-      // The config should be JSON-serializable without errors
       expect(() => JSON.stringify(session.config)).not.toThrow();
 
-      // Verify the serialized JSON doesn't contain mcpServers
       const serialized = JSON.stringify(session.config);
       expect(serialized).not.toContain('mcpServers');
     });
@@ -2907,10 +2761,8 @@ describe('AgentSession', () => {
       expect(session.type).toBe('room');
       expect(session.context?.roomId).toBe('test-room');
 
-      // Config should not contain mcpServers
       expect(session.config.mcpServers).toBeUndefined();
 
-      // Should be serializable
       expect(() => JSON.stringify(session.config)).not.toThrow();
     });
 
@@ -2983,7 +2835,6 @@ describe('AgentSession', () => {
 
       expect(session.config.toolGuards).toEqual(toolGuards);
 
-      // Config should be JSON-serializable
       const serialized = JSON.stringify(session.config);
       expect(serialized).toContain('toolGuards');
     });
@@ -2991,7 +2842,6 @@ describe('AgentSession', () => {
 
   describe('fromInit', () => {
     it('should merge mcpServers into session config at runtime for query options builder', () => {
-      // Create a mock cyclic MCP server instance
       const mockMcpServer = {
         type: 'sdk' as const,
         name: 'test-tools',
@@ -3009,7 +2859,6 @@ describe('AgentSession', () => {
         model: 'claude-sonnet-4-5-20250929',
       };
 
-      // Create a mock database that returns null for getSession (new session)
       const mockDb = {
         getSession: mock(() => null),
         createSession: mock(() => {}),
@@ -3034,13 +2883,10 @@ describe('AgentSession', () => {
         'claude-sonnet-4-5-20250929'
       );
 
-      // The runtime session should have mcpServers available for query options builder
       const sessionData = agentSession.getSessionData();
       expect(sessionData.config.mcpServers).toBeDefined();
       expect(sessionData.config.mcpServers!['test-tools']).toEqual(mockMcpServer);
 
-      // The database should have been called with a session that has NO mcpServers
-      // (because we don't persist non-serializable objects)
       const createSessionCall = (mockDb as unknown as { createSession: ReturnType<typeof mock> })
         .createSession.mock.calls[0];
       const persistedSession = createSessionCall[0] as Session;
@@ -3320,9 +3166,6 @@ describe('AgentSession', () => {
       expect(agentSession.getSessionData().type).toBe('room');
     });
   });
-  // ---------------------------------------------------------------------------
-  // awaitSdkSessionCaptured
-  // ---------------------------------------------------------------------------
 
   describe('awaitSdkSessionCaptured', () => {
     function makeAgentSessionWithCapturedId(
@@ -3398,8 +3241,6 @@ describe('AgentSession', () => {
 
       return {
         agentSession,
-        // `controls` may still be null if `on()` wasn't called (fast path hit),
-        // callers that need it should trigger the slow path first.
         controls: captured as unknown as ReturnType<typeof onListener>,
       };
     }
@@ -3423,9 +3264,7 @@ describe('AgentSession', () => {
 
       const waiter = agentSession.awaitSdkSessionCaptured(2000);
 
-      // Fire an unrelated session.updated event (different sessionId) — ignored.
       handler?.({ sessionId: 'other-session', session: { sdkSessionId: 'ignored' } });
-      // Fire a matching event → resolves.
       handler?.({
         sessionId: 'space:s1:task:t1',
         session: { sdkSessionId: 'sdk-just-captured' },
@@ -3433,7 +3272,6 @@ describe('AgentSession', () => {
 
       const id = await waiter;
       expect(id).toBe('sdk-just-captured');
-      // Listener must be torn down to avoid leaks.
       expect(unsubscribe).toHaveBeenCalledTimes(1);
     });
 
@@ -3447,7 +3285,6 @@ describe('AgentSession', () => {
       await expect(agentSession.awaitSdkSessionCaptured(50)).rejects.toThrow(
         /Timed out after 50ms/
       );
-      // Listener must be torn down on timeout too.
       expect(unsubscribe).toHaveBeenCalledTimes(1);
     });
   });
@@ -3500,16 +3337,12 @@ describe('AgentSession', () => {
         mockGetApiKey
       );
 
-      // Initially no system prompt
       expect(agentSession.getSessionData().config.systemPrompt).toBeUndefined();
 
-      // Set the runtime system prompt
       agentSession.setRuntimeSystemPrompt('You are the Room Agent.');
 
-      // In-memory config should reflect the new prompt
       expect(agentSession.getSessionData().config.systemPrompt).toBe('You are the Room Agent.');
 
-      // The DB update should NOT have been called (runtime-only, not persisted)
       const updateSessionCalls = (mockDb as unknown as { updateSession: ReturnType<typeof mock> })
         .updateSession.mock.calls;
       expect(updateSessionCalls.length).toBe(0);
@@ -3632,7 +3465,6 @@ describe('AgentSession', () => {
       expect(merged).toBeDefined();
       expect(merged?.['space-agent-tools']).toBe(newServer);
 
-      // Runtime-only: DB update should NOT be called
       const updateSessionCalls = (mockDb as unknown as { updateSession: ReturnType<typeof mock> })
         .updateSession.mock.calls;
       expect(updateSessionCalls.length).toBe(0);
@@ -3662,10 +3494,8 @@ describe('AgentSession', () => {
 
       const merged = agentSession.getSessionData().config.mcpServers;
       expect(merged).toBeDefined();
-      // Existing entries preserved
       expect(merged?.['task-agent']).toBe(existing['task-agent']);
       expect(merged?.['db-query']).toBe(existing['db-query']);
-      // New entry added
       expect(merged?.['space-agent-tools']).toBe(spaceAgent);
       expect(Object.keys(merged ?? {}).sort()).toEqual([
         'db-query',
@@ -3703,13 +3533,10 @@ describe('AgentSession', () => {
       agentSession.mergeRuntimeMcpServers({ 'db-query': replacementDbQuery });
 
       const merged = agentSession.getSessionData().config.mcpServers;
-      // Overlapping key was overwritten
       expect(merged?.['db-query']).toBe(replacementDbQuery);
       expect(merged?.['db-query']).not.toBe(originalDbQuery);
-      // Non-overlapping key preserved
       expect(merged?.['task-agent']).toBe(existing['task-agent']);
 
-      // Runtime-only: DB update should NOT be called
       const updateSessionCalls = (mockDb as unknown as { updateSession: ReturnType<typeof mock> })
         .updateSession.mock.calls;
       expect(updateSessionCalls.length).toBe(0);
@@ -3848,7 +3675,6 @@ describe('AgentSession', () => {
 
       const servers = agentSession.getSessionData().config.mcpServers;
       expect(servers?.['node-agent']).toBeUndefined();
-      // Other server must survive
       expect(servers?.['space-agent-tools']).toBe(existing['space-agent-tools']);
     });
 
@@ -3867,7 +3693,6 @@ describe('AgentSession', () => {
         mockGetApiKey
       );
 
-      // Should not throw
       agentSession.detachRuntimeMcpServer('node-agent');
 
       const servers = agentSession.getSessionData().config.mcpServers;
@@ -3875,7 +3700,7 @@ describe('AgentSession', () => {
     });
 
     it('should be a no-op when mcpServers is not defined', () => {
-      const mockSession = makeMockSession(); // no existing servers
+      const mockSession = makeMockSession();
       const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
 
       const agentSession = new AgentSession(
@@ -3886,7 +3711,6 @@ describe('AgentSession', () => {
         mockGetApiKey
       );
 
-      // Should not throw even with no mcpServers key at all
       expect(() => agentSession.detachRuntimeMcpServer('node-agent')).not.toThrow();
     });
 
@@ -3934,10 +3758,8 @@ describe('AgentSession', () => {
       agentSession.mergeRuntimeMcpServers({ 'node-agent': freshNodeAgent });
 
       const servers = agentSession.getSessionData().config.mcpServers;
-      // Fresh server replaces stale one
       expect(servers?.['node-agent']).toBe(freshNodeAgent);
       expect(servers?.['node-agent']).not.toBe(staleNodeAgent);
-      // Unrelated server is untouched
       expect(servers?.['space-agent-tools']).toBe(existing['space-agent-tools']);
     });
   });
@@ -4012,10 +3834,6 @@ describe('AgentSession', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // mcp.attach telemetry — Task #140 acceptance #9
-  // -------------------------------------------------------------------------
-
   describe('mcp.attach telemetry log format', () => {
     const makeMockSession = (
       overrides: Partial<Session> & { context?: Record<string, unknown> } = {}
@@ -4060,12 +3878,6 @@ describe('AgentSession', () => {
       return { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey };
     };
 
-    /**
-     * Capture mcp.attach log lines by monkey-patching the agentSession.logger.
-     * The structured payload is the second arg passed to logger.info, but the
-     * production code passes a single pre-formatted string `mcp.attach {...}`.
-     * We parse out the JSON tail.
-     */
     const captureLogs = (
       agentSession: AgentSession
     ): { entries: Array<Record<string, unknown>> } => {
@@ -4110,7 +3922,6 @@ describe('AgentSession', () => {
       expect(payload.event).toBe('mcp.attach');
       expect(payload.sessionId).toBe('space:worker:test');
       expect(payload.action).toBe('merge');
-      // Servers must be sorted for deterministic grep output
       expect(payload.servers).toEqual(['alpha', 'zeta']);
     });
 
@@ -4406,7 +4217,6 @@ describe('AgentSession', () => {
     });
 
     it('reconcileEffectiveMcpServers pushes the effective set to the live query, preserving runtime servers', () => {
-      // Runtime-injected server (e.g. space-agent-tools) lives in config.mcpServers.
       const runtimeServer: McpServerConfig = { command: 'runtime-cmd' };
       agentSession.session.config.mcpServers = { 'space-agent-tools': runtimeServer };
 
@@ -4419,23 +4229,16 @@ describe('AgentSession', () => {
 
       expect(setMcpServers).toHaveBeenCalledTimes(1);
       const pushed = setMcpServers.mock.calls[0][0] as Record<string, McpServerConfig>;
-      // Runtime server is preserved across reconciliation.
       expect(pushed['space-agent-tools']).toEqual(runtimeServer);
     });
 
     it('reconcileEffectiveMcpServers is a no-op when there is no live query', () => {
       agentSession.session.config.mcpServers = { 'space-agent-tools': { command: 'runtime-cmd' } };
       expect(agentSession.queryObject).toBeNull();
-      // Must not throw when there is no queryObject to push to.
       expect(() => agentSession.reconcileEffectiveMcpServers()).not.toThrow();
     });
   });
 
-  // Driving a real AgentSession against a real DB to cover the bridge wiring
-  // the pure-helper tests cannot: that reclaimTurnAlreadySucceeded clears the
-  // bare marker on 'redrive' and that driveDeliveryTurn does NOT silently
-  // complete (turn_terminated) over a crash-window marker. (Task #946, PR #2477
-  // review P1.)
   describe('driveDeliveryTurn — crash-window reclaim (task #946)', () => {
     let db: Database;
     let agentSession: AgentSession;
@@ -4450,11 +4253,6 @@ describe('AgentSession', () => {
       const session = createTestSession(sessionId);
       db.createSession(session);
       const repo = db.getSDKMessageRepo();
-      // Order matters for the success case: the kickoff is consumed FIRST
-      // (markDeliveryConsumedByUuid stamps its consumption watermark from the
-      // shared counter), THEN the terminal result is inserted (stamped from the
-      // same counter, so it sorts after consumption). hasTerminalResultAfter
-      // compares counter-to-counter.
       repo.saveUserMessage(
         sessionId,
         { type: 'user', uuid, message: { role: 'user', content: 'hi' } } as unknown as SDKMessage,
@@ -4493,16 +4291,10 @@ describe('AgentSession', () => {
     });
 
     it('a bare marker (no success result) is cleared and NOT silently completed', async () => {
-      // The crash window: consumed kickoff + bare marker, daemon exited before
-      // the producedResult/retry decision. reclaimTurnAlreadySucceeded must
-      // clear the marker and fall through (re-drive), not return turn_terminated.
       await setupDriverail({ marker: true, successResult: false });
       const repo = db.getSDKMessageRepo();
       expect(repo.hasDeliveryTurnEnd(sessionId, uuid)).toBe(true);
 
-      // The redrive falls through to ensureQueryStarted; mock it to throw so the
-      // outcome is predictable without a real provider. The marker clear happens
-      // BEFORE this call (in the reclaim short-circuit), so it is durable.
       (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
         ensureQueryStarted: mock(async () => {
           throw new Error('test: provider not started');
@@ -4516,22 +4308,16 @@ describe('AgentSession', () => {
       } catch (err) {
         threw = err instanceof Error && err.message === 'test: provider not started';
       }
-      // (a) NOT turn_terminated — it did not silently complete.
       expect(outcome).not.toEqual({ outcome: 'turn_terminated' });
       expect(threw).toBe(true);
-      // (b) the bare marker was cleared in the DB by reclaimTurnAlreadySucceeded.
       expect(repo.hasDeliveryTurnEnd(sessionId, uuid)).toBe(false);
     });
 
     it('a SUCCESS-terminated reclaim still completes (turn_terminated) without starting a query', async () => {
-      // Regression guard: a turn that genuinely succeeded completes at the
-      // reclaim short-circuit (before ensureQueryStarted — no provider needed).
       await setupDriverail({ marker: true, successResult: true });
       const repo = db.getSDKMessageRepo();
       expect(repo.hasTerminalResultAfter(sessionId, uuid)).toBe(true);
 
-      // ensureQueryStarted must NOT be reached; prove it by mocking it to throw —
-      // if the short-circuit works, the throw never happens.
       const ensure = mock(async () => {
         throw new Error('test: should not start a query on a terminated reclaim');
       });

@@ -1,21 +1,3 @@
-/**
- * Unit tests for WorkflowNodeCard
- *
- * Tests:
- * - Collapsed view: step number, agent name, gate icons
- * - Expanded view: name input, agent dropdown, gate selectors, instructions
- * - Agent dropdown excludes 'leader' (enforced by filterAgents in WorkflowEditor)
- * - Gate config forms: always/human/condition types
- * - Shell expression input shown only for 'condition' type
- * - Up/down reorder buttons disabled at boundaries
- * - Remove button fires onRemove
- * - Expand/collapse toggle
- * - OverrideModeSelector component
- * - extractOverrideValue and buildOverride helpers
- * - Single-agent system prompt field
- * - Multi-agent per-agent mode selectors for instructions and system prompt
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
@@ -210,7 +192,6 @@ describe('WorkflowNodeCard', () => {
       const { container } = render(
         <WorkflowNodeCard {...makeProps({ expanded: true, onUpdate })} />
       );
-      // The expanded view has a single custom prompt textarea.
       const textarea = container.querySelector(
         '[data-testid="single-agent-system-prompt"]'
       ) as HTMLTextAreaElement;
@@ -261,10 +242,6 @@ describe('WorkflowNodeCard', () => {
   });
 });
 
-// ============================================================================
-// Per-slot override indicators in collapsed header
-// ============================================================================
-
 describe('WorkflowNodeCard — collapsed header override indicators', () => {
   afterEach(() => cleanup());
 
@@ -310,7 +287,6 @@ describe('WorkflowNodeCard — collapsed header override indicators', () => {
     const { getAllByTestId } = render(
       <WorkflowNodeCard {...makeProps({ node, expanded: false })} />
     );
-    // Only the first slot has overrides
     expect(getAllByTestId('override-dot')).toHaveLength(1);
   });
 
@@ -352,9 +328,6 @@ describe('WorkflowNodeCard — collapsed header override indicators', () => {
     expect(getAllByTestId('override-dot')).toHaveLength(2);
   });
 });
-// ============================================================================
-// Per-slot override section expand/collapse in expanded card view
-// ============================================================================
 
 describe('WorkflowNodeCard — expanded view per-slot override section', () => {
   afterEach(() => cleanup());
@@ -447,18 +420,12 @@ describe('WorkflowNodeCard — expanded view per-slot override section', () => {
         target: { value: 'claude-opus-4-6' },
       });
     });
-    // model is no longer a property of WorkflowNodeAgent; updateAgentModel is a no-op
-    // onUpdate should not have been called (or if called, no model field on agents)
     if (onUpdate.mock.calls.length > 0) {
       const updated = onUpdate.mock.calls[0][0] as NodeDraft;
       expect((updated.agents?.[0] as unknown as Record<string, unknown>)['model']).toBeUndefined();
     }
   });
 });
-
-// ============================================================================
-// Multi-agent per-agent custom prompt
-// ============================================================================
 
 describe('WorkflowNodeCard — multi-agent per-agent custom prompt', () => {
   afterEach(() => cleanup());
@@ -474,7 +441,6 @@ describe('WorkflowNodeCard — multi-agent per-agent custom prompt', () => {
     const { getAllByTestId } = render(
       <WorkflowNodeCard {...makeProps({ node, expanded: true })} />
     );
-    // Two per-agent custom prompt inputs.
     const inputs = getAllByTestId('agent-instructions-input');
     expect(inputs.length).toBe(2);
   });
@@ -508,10 +474,6 @@ describe('WorkflowNodeCard — multi-agent per-agent custom prompt', () => {
     );
   });
 });
-
-// ============================================================================
-// Agent completion state
-// ============================================================================
 
 describe('WorkflowNodeCard — agent completion state', () => {
   afterEach(() => {
@@ -591,7 +553,6 @@ describe('WorkflowNodeCard — agent completion state', () => {
     const { getAllByTestId } = render(
       <WorkflowNodeCard {...makeProps({ node: makeMultiAgentStep(), nodeTaskStates: states })} />
     );
-    // One checkmark for coder, one spinner for reviewer
     expect(getAllByTestId('agent-status-check')).toHaveLength(1);
     expect(getAllByTestId('agent-status-spinner')).toHaveLength(1);
   });
@@ -611,15 +572,10 @@ describe('WorkflowNodeCard — agent completion state', () => {
     const { container } = render(
       <WorkflowNodeCard {...makeProps({ node: makeMultiAgentStep(), nodeTaskStates: states })} />
     );
-    // The outer border should include 'green'
     const outer = container.firstElementChild as HTMLElement;
     expect(outer.className).toContain('green');
   });
 });
-
-// ============================================================================
-// extractOverrideValue helper
-// ============================================================================
 
 describe('extractOverrideValue', () => {
   it('returns empty string for undefined', () => {
@@ -650,10 +606,6 @@ describe('extractOverrideValue', () => {
     expect(extractOverrideValue({ value: undefined as unknown as string })).toBe('');
   });
 });
-
-// ============================================================================
-// buildOverride helper
-// ============================================================================
 
 describe('buildOverride', () => {
   it('returns override object for non-empty value', () => {

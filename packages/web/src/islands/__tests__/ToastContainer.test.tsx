@@ -1,14 +1,8 @@
 // @ts-nocheck
-/**
- * Tests for ToastContainer Component Logic
- *
- * Tests pure logic without mock.module to avoid polluting other tests.
- */
 import { describe, it, expect } from 'vitest';
 
 import { signal } from '@preact/signals';
 
-// Toast type for testing
 interface Toast {
   id: string;
   type: 'success' | 'error' | 'warning' | 'info';
@@ -40,7 +34,6 @@ describe('ToastContainer Logic', () => {
         { id: 'toast-5', type: 'info', message: 'Message 5' },
       ]);
 
-      // Component slices to last 3
       const displayedToasts = toasts.value.slice(-3);
       expect(displayedToasts.length).toBe(3);
       expect(displayedToasts[0].id).toBe('toast-3');
@@ -118,7 +111,6 @@ describe('ToastContainer Logic', () => {
 
       expect(toasts.value.length).toBe(2);
 
-      // Remove first toast
       toasts.value = toasts.value.filter((t) => t.id !== 'toast-1');
       expect(toasts.value.length).toBe(1);
       expect(toasts.value[0].id).toBe('toast-2');
@@ -191,7 +183,6 @@ describe('ToastContainer Logic', () => {
         { id: 'unique-id-2', type: 'info', message: 'Message 2' },
       ]);
 
-      // Each toast has unique id for React key
       const ids = toasts.value.map((t) => t.id);
       const uniqueIds = new Set(ids);
       expect(uniqueIds.size).toBe(ids.length);
@@ -212,14 +203,12 @@ describe('ToastContainer Logic', () => {
 
   describe('Positioning', () => {
     it('should be positioned fixed at top-right', () => {
-      // Component uses: fixed top-4 right-4 z-50
       const expectedClasses = ['fixed', 'top-4', 'right-4', 'z-50'];
       expect(expectedClasses).toContain('fixed');
       expect(expectedClasses).toContain('z-50');
     });
 
     it('should stack toasts in a column', () => {
-      // Component uses: flex flex-col gap-3
       const expectedLayout = ['flex', 'flex-col', 'gap-3'];
       expect(expectedLayout).toContain('flex');
       expect(expectedLayout).toContain('flex-col');
@@ -228,13 +217,11 @@ describe('ToastContainer Logic', () => {
 
   describe('Pointer Events', () => {
     it('should have pointer-events-none on container', () => {
-      // Container has pointer-events-none to allow clicking through
       const containerClass = 'pointer-events-none';
       expect(containerClass).toBe('pointer-events-none');
     });
 
     it('should have pointer-events-auto on individual toasts', () => {
-      // Each toast wrapper has pointer-events-auto for interactivity
       const toastWrapperClass = 'pointer-events-auto';
       expect(toastWrapperClass).toBe('pointer-events-auto');
     });
@@ -274,7 +261,6 @@ describe('ToastContainer Logic', () => {
         { id: 'toast-2', type: 'error', message: 'Remove' },
       ]);
 
-      // Simulate dismiss
       const dismissId = 'toast-2';
       toasts.value = toasts.value.filter((t) => t.id !== dismissId);
 

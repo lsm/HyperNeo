@@ -161,8 +161,6 @@ describe('GoalDetailPanel', () => {
       makeGoal({ id: goalId, title: params.title ?? 'Updated goal' })
     );
     vi.clearAllMocks();
-    // Default: the linked schedule resolves as missing so the edit dialog's
-    // Save button enables (schedule prefill settles with an empty baseline).
     mockGetSchedule.mockResolvedValue(null);
   });
 
@@ -203,8 +201,6 @@ describe('GoalDetailPanel', () => {
 
     render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
 
-    // Status badge uses the foundation label (capitalized 'Active'); the
-    // recurring activity status stays lowercase 'active'.
     expect(screen.getByText('Active')).toBeTruthy();
     expect(screen.getByText('active')).toBeTruthy();
     expect(screen.getByText(formatGoalDate(now))).toBeTruthy();

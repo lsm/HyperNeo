@@ -1,12 +1,3 @@
-/**
- * Model RPC Handlers Tests
- *
- * Tests for model-related RPC handlers via WebSocket:
- * - session.model.get
- * - session.model.switch
- * - models.clearCache
- */
-
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 

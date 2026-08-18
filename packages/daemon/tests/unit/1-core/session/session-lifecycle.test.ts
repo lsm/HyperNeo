@@ -1,13 +1,5 @@
-/**
- * Session Lifecycle Tests
- *
- * Unit tests for session CRUD operations including creation,
- * updates, deletion, and title generation.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
-// Mock SDK type-guards at the top level
 mock.module('@hyperneo/shared/sdk/type-guards', () => ({
   isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
   isSDKUserMessage: (msg: { type: string; isReplay?: boolean }) =>
@@ -34,8 +26,6 @@ mock.module('@hyperneo/shared/sdk/type-guards', () => ({
     msg.type === 'system' && msg.subtype === 'commands_changed',
   isSDKThinkingTokensMessage: (msg: { type: string; subtype?: string }) =>
     msg.type === 'system' && msg.subtype === 'thinking_tokens',
-  // Mirrors packages/shared/src/sdk/type-guards.ts flattenSDKSlashCommands so a
-  // leaked mock keeps sdk-message-handler's commands_changed path working.
   flattenSDKSlashCommands: (commands: Array<{ name?: string; aliases?: string[] }>) => {
     const names = new Set<string>();
     const normalize = (n: string) => (n.startsWith('/') ? n.slice(1) : n);
@@ -66,12 +56,6 @@ mock.module('@hyperneo/shared/sdk/type-guards', () => ({
     msg.type !== 'stream_event' && msg.type !== 'api_retry',
 }));
 
-// Mock provider-service so generateTitleAndRenameBranch tests don't hit real credentials.
-// getProviderApiKey reads from process.env at call time so that:
-//   - This file's own tests (ANTHROPIC_API_KEY cleared by setup.ts) get undefined → fallback path.
-//   - session-lifecycle-sdk-title tests (ANTHROPIC_API_KEY='test-api-key' in beforeEach) get a
-//     truthy key and proceed to generateTitleWithSdk. All methods needed by that path are
-//     included here so that bun's module-cache sharing across files never causes a TypeError.
 mock.module('../../../../src/lib/provider-service', () => ({
   getProviderService: () => ({
     getDefaultProvider: async () => 'anthropic',
@@ -115,9 +99,6 @@ mock.module('../../../../src/lib/provider-service', () => ({
   mergeProviderEnvVars: (session: object) => session,
 }));
 
-// Deterministic model list for alias/provider tests. Set via setModelsCache in
-// beforeEach instead of mocking model-service so bun's module-cache sharing
-// across files does not leak a partial mock into other test suites.
 const mockKimiModels: ModelInfo[] = [
   {
     id: 'claude-sonnet-4-20250514',
@@ -215,13 +196,10 @@ describe('SessionLifecycle', () => {
   let createdSessions: Session[];
 
   beforeEach(() => {
-    // Seed a deterministic model catalog so alias/provider resolution tests do
-    // not depend on the full provider registry or live credentials.
     setModelsCache(new Map([['global', mockKimiModels]]));
 
     createdSessions = [];
 
-    // Database mocks
     mockDb = {
       createSession: mock((session: Session) => {
         createdSessions.push(session);
@@ -235,7 +213,6 @@ describe('SessionLifecycle', () => {
       })),
     } as unknown as Database;
 
-    // Worktree manager mocks
     mockWorktreeManager = {
       detectGitSupport: mock(async () => ({ isGitRepo: false, isBare: false })),
       createWorktree: mock(async () => null),
@@ -245,7 +222,6 @@ describe('SessionLifecycle', () => {
       getCurrentBranch: mock(async () => 'main'),
     } as unknown as WorktreeManager;
 
-    // Session cache mocks
     const mockAgentSession = {
       cleanup: mock(async () => {}),
       updateMetadata: mock(() => {}),
@@ -268,14 +244,12 @@ describe('SessionLifecycle', () => {
       getAsync: mock(async () => mockAgentSession),
     } as unknown as SessionCache;
 
-    // Event bus mocks
     mockInternalEventBus = {
       publish: mock(async () => {}),
       publishAsync: mock(() => {}),
       subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
     } as unknown as InternalEventBus<any>;
 
-    // Message hub mocks
     mockMessageHub = {
       event: mock(async () => {}),
       onRequest: mock((_method: string, _handler: Function) => () => {}),
@@ -283,14 +257,10 @@ describe('SessionLifecycle', () => {
       command: mock(async () => {}),
     } as unknown as MessageHub;
 
-    // Tools config manager mocks (no methods are called by SessionLifecycle
-    // post-M5; an empty stub is sufficient for type compatibility).
     mockToolsConfigManager = {} as unknown as ToolsConfigManager;
 
-    // Agent session factory
     mockAgentSessionFactory = mock(() => mockAgentSession);
 
-    // Config
     config = {
       defaultModel: 'claude-sonnet-4-20250514',
       maxTokens: 8192,
@@ -388,8 +358,6 @@ describe('SessionLifecycle', () => {
       );
     });
 
-    // --- Workspace path guard tests ---
-
     it('explicit workspacePath is used as-is and does NOT fall back to config.workspaceRoot', async () => {
       await lifecycle.create({ workspacePath: '/explicit/path' });
 
@@ -417,7 +385,6 @@ describe('SessionLifecycle', () => {
     });
 
     it('default (undefined sessionType) session without workspacePath creates unbound session', async () => {
-      // sessionType defaults to 'worker' per line 91 — should NOT throw
       await lifecycle.create({});
 
       expect(mockDb.createSession).toHaveBeenCalledWith(
@@ -434,7 +401,6 @@ describe('SessionLifecycle', () => {
         gitRoot: '/test/repo',
       });
 
-      // Create a new lifecycle with worktrees enabled
       const worktreeEnabledConfig = {
         ...config,
         disableWorktrees: false,
@@ -660,8 +626,6 @@ describe('SessionLifecycle', () => {
     });
 
     it('resolves the kimi-k3-256k alias to the catalog k3-256k ID without a [1m] suffix', async () => {
-      // The [1m] suffix marks the 1M tier and must never attach to the 256K K3
-      // variant during session creation.
       await lifecycle.create({
         config: {
           model: 'kimi-k3-256k',
@@ -683,7 +647,6 @@ describe('SessionLifecycle', () => {
         roomId: 'room-123',
       });
 
-      // roomId is stored in metadata
       expect(mockDb.createSession).toHaveBeenCalled();
     });
 
@@ -692,7 +655,6 @@ describe('SessionLifecycle', () => {
         createdBy: 'human',
       });
 
-      // createdBy is stored in metadata
       expect(mockDb.createSession).toHaveBeenCalled();
     });
   });
@@ -828,7 +790,6 @@ describe('SessionLifecycle', () => {
         workspacePath: '/test',
       });
 
-      // Should complete deletion despite cleanup failure
       await lifecycle.deleteResources('test-id', 'ui_session_delete');
       expect(mockDb.deleteSession).toHaveBeenCalledWith('test-id');
     });
@@ -847,7 +808,6 @@ describe('SessionLifecycle', () => {
         },
       });
 
-      // Should complete deletion despite worktree removal failure
       await lifecycle.deleteResources('test-id', 'ui_session_delete');
       expect(mockDb.deleteSession).toHaveBeenCalledWith('test-id');
     });
@@ -924,8 +884,6 @@ describe('SessionLifecycle', () => {
 
       await lifecycle.archiveResources('archive-id', 'ui_session_archive');
 
-      // Archive must never hit `deleteSession` — only `updateSession`
-      // gets a `status: 'archived'` payload.
       expect(mockDb.deleteSession).not.toHaveBeenCalled();
       expect(mockDb.updateSession).toHaveBeenCalled();
     });
@@ -1208,7 +1166,6 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
   let config: SessionLifecycleConfig;
 
   beforeEach(() => {
-    // Database mocks
     mockDb = {
       createSession: mock(() => {}),
       updateSession: mock(() => {}),
@@ -1220,7 +1177,6 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
       })),
     } as unknown as Database;
 
-    // Worktree manager mocks
     mockWorktreeManager = {
       detectGitSupport: mock(async () => ({ isGitRepo: false, isBare: false })),
       createWorktree: mock(async () => null),
@@ -1230,7 +1186,6 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
       getCurrentBranch: mock(async () => 'main'),
     } as unknown as WorktreeManager;
 
-    // Session cache mocks
     const mockAgentSession = {
       cleanup: mock(async () => {}),
       updateMetadata: mock(() => {}),
@@ -1253,14 +1208,12 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
       getAsync: mock(async () => mockAgentSession),
     } as unknown as SessionCache;
 
-    // Event bus mocks
     mockInternalEventBus = {
       publish: mock(async () => {}),
       publishAsync: mock(() => {}),
       subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
     } as unknown as InternalEventBus<any>;
 
-    // Message hub mocks
     mockMessageHub = {
       event: mock(async () => {}),
       onRequest: mock(() => () => {}),
@@ -1268,14 +1221,10 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
       command: mock(async () => {}),
     } as unknown as MessageHub;
 
-    // Tools config manager mocks (no methods are called by SessionLifecycle
-    // post-M5; an empty stub is sufficient for type compatibility).
     mockToolsConfigManager = {} as unknown as ToolsConfigManager;
 
-    // Agent session factory
     mockAgentSessionFactory = mock(() => mockAgentSession);
 
-    // Config
     config = {
       defaultModel: 'claude-sonnet-4-20250514',
       maxTokens: 8192,
@@ -1345,8 +1294,6 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
     (mockSessionCache.has as ReturnType<typeof mock>).mockReturnValue(true);
     (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(mockAgentSession);
 
-    // This test verifies the branch rename path is exercised
-    // The actual title generation requires provider service which is complex to mock
     const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'test message');
 
     expect(result).toBeDefined();
@@ -1452,7 +1399,6 @@ describe('SessionLifecycle - completeWorktreeChoice edge cases', () => {
       new Error('Not a git repo')
     );
 
-    // Should not throw
     await lifecycle.completeWorktreeChoice('test-id', 'direct');
   });
 
@@ -1461,7 +1407,6 @@ describe('SessionLifecycle - completeWorktreeChoice edge cases', () => {
 
     const result = await lifecycle.completeWorktreeChoice('test-id', 'worktree');
 
-    // Should still complete with active status
     expect(result.status).toBe('active');
   });
 });
@@ -1562,7 +1507,6 @@ describe('SessionLifecycle - session creation with worktree', () => {
       new Error('Worktree creation failed')
     );
 
-    // Should not throw
     const sessionId = await lifecycle.create({
       title: 'Test Session',
       workspacePath: '/default/workspace',
@@ -1716,7 +1660,6 @@ describe('SessionLifecycle - setWorkspace', () => {
   });
 
   it('creates a worktree when worktreeMode is worktree and worktrees enabled', async () => {
-    // Enable worktrees for this test
     const lifecycleWithWorktrees = new SessionLifecycle(
       mockDb,
       mockWorktreeManager,
@@ -1768,7 +1711,6 @@ describe('SessionLifecycle - setWorkspace', () => {
   });
 
   it('skips worktree creation when worktrees are globally disabled', async () => {
-    // config has disableWorktrees: true
     const agentSession = makeAgentSession();
     (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
 

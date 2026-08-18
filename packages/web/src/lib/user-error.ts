@@ -1,12 +1,3 @@
-/**
- * User-Facing Error Sanitization
- *
- * Maps raw internal error messages to human-readable strings that are
- * safe to display to end users. Prevents developer-facing hints like
- * "verbose: true", stack traces, or transport internals from leaking.
- */
-
-/** Patterns that indicate developer/internal error content */
 const INTERNAL_PATTERNS = [
   /verbose:\s*true/i,
   /set VERBOSE=true/i,
@@ -26,12 +17,10 @@ const INTERNAL_PATTERNS = [
   /\d{4,}ms/i,
 ];
 
-/** Check if an error message contains internal/developer content */
 function isInternalMessage(msg: string): boolean {
   return INTERNAL_PATTERNS.some((p) => p.test(msg));
 }
 
-/** Check if an error is an authentication/session-expiry error */
 export function isAuthError(error: unknown): boolean {
   if (!error) return false;
   const msg = error instanceof Error ? error.message : String(error);
@@ -47,7 +36,6 @@ export function isAuthError(error: unknown): boolean {
   );
 }
 
-/** Check if error is a network/transient issue (should retry) */
 export function isTransientError(error: unknown): boolean {
   if (!error) return true;
   const msg = error instanceof Error ? error.message : String(error);
@@ -65,12 +53,6 @@ export function isTransientError(error: unknown): boolean {
   );
 }
 
-/**
- * Sanitize any error into a user-friendly message.
- *
- * Strips developer-facing content and maps common error types
- * to readable strings.
- */
 export function sanitizeUserError(error: unknown): string {
   if (error == null) return 'Something went wrong.';
 
@@ -88,12 +70,10 @@ export function sanitizeUserError(error: unknown): string {
     }
   }
 
-  // If already human-friendly, pass through
   if (!isInternalMessage(msg)) {
     return msg || 'Something went wrong.';
   }
 
-  // Map common internal messages to user-friendly ones
   const lower = msg.toLowerCase();
 
   if (lower.includes('websocket') || lower.includes('not connected')) {
@@ -112,6 +92,5 @@ export function sanitizeUserError(error: unknown): string {
     return 'Could not send. Please try again.';
   }
 
-  // Generic fallback for any other internal message
   return 'Something went wrong. Please try again.';
 }

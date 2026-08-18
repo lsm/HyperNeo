@@ -1,23 +1,3 @@
-/**
- * Unit tests for WorkflowNode component.
- *
- * Tests:
- * - Renders step name and agent name
- * - Shows step number badge
- * - Start node shows START badge and green border, hides input port
- * - Non-start node shows input port
- * - Selected state applies ring
- * - Port mousedown events do not trigger drag (stopPropagation check)
- * - Port mousedown calls onPortMouseDown with correct args
- * - Dragging updates position accounting for viewport scale
- * - Drag with scale=2 halves the canvas-space delta
- * - Drag with scale=0.5 doubles the canvas-space delta
- * - Click calls onClick with stepId
- *
- * Note: window.dispatchEvent(new MouseEvent(...)) is used for window-level
- * mouse events because fireEvent(window, ...) does not work in happy-dom.
- */
-
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
@@ -27,9 +7,6 @@ import type { SpaceWorkerAgent } from '@hyperneo/shared';
 import type { AgentTaskState } from '../../WorkflowNodeCard';
 import type { Point } from '../types';
 
-// Default to non-mobile for every test — individual tests (see "mobile"
-// describe blocks) override this before rendering. This keeps matchMedia
-// defined in happy-dom, which otherwise returns undefined.
 function mockMatchMedia(isMobile: boolean) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
@@ -50,10 +27,6 @@ function mockMatchMedia(isMobile: boolean) {
 beforeEach(() => mockMatchMedia(false));
 afterEach(() => cleanup());
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
 function windowMouseMove(clientX: number, clientY: number) {
   window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX, clientY }));
 }
@@ -61,10 +34,6 @@ function windowMouseMove(clientX: number, clientY: number) {
 function windowMouseUp() {
   window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
 }
-
-// ============================================================================
-// Test fixtures
-// ============================================================================
 
 const AGENT_A: SpaceWorkerAgent = {
   id: 'agent-1',
@@ -112,10 +81,6 @@ function makeProps(overrides: Partial<WorkflowNodeProps> = {}): WorkflowNodeProp
     ...overrides,
   };
 }
-
-// ============================================================================
-// Rendering tests
-// ============================================================================
 
 describe('WorkflowNode rendering', () => {
   it('renders step name', () => {
@@ -202,10 +167,6 @@ describe('WorkflowNode rendering', () => {
   });
 });
 
-// ============================================================================
-// Port events
-// ============================================================================
-
 describe('WorkflowNode port events', () => {
   it('calls onPortMouseDown with input type when input port is pressed', () => {
     const onPortMouseDown = vi.fn();
@@ -237,20 +198,14 @@ describe('WorkflowNode port events', () => {
     const onPositionChange = vi.fn();
     const { getByTestId } = render(<WorkflowNode {...makeProps({ onPositionChange })} />);
 
-    // Press the output port then move mouse on window
     fireEvent.mouseDown(getByTestId('port-output'), { button: 0, clientX: 0, clientY: 0 });
     windowMouseMove(50, 50);
 
-    // Position should not change because the port stopPropagation prevented drag start
     expect(onPositionChange).not.toHaveBeenCalled();
 
     windowMouseUp();
   });
 });
-
-// ============================================================================
-// Click events
-// ============================================================================
 
 describe('WorkflowNode click', () => {
   it('calls onClick with stepId when card is clicked', () => {
@@ -265,9 +220,8 @@ describe('WorkflowNode click', () => {
     const { getByTestId } = render(<WorkflowNode {...makeProps({ onClick })} />);
     const node = getByTestId('workflow-node-step-local-1');
 
-    // Simulate drag: mousedown → move past threshold → mouseup → click
     fireEvent.mouseDown(node, { button: 0, clientX: 0, clientY: 0 });
-    windowMouseMove(20, 20); // well past 3px threshold
+    windowMouseMove(20, 20);
     windowMouseUp();
     fireEvent.click(node);
 
@@ -279,19 +233,14 @@ describe('WorkflowNode click', () => {
     const { getByTestId } = render(<WorkflowNode {...makeProps({ onClick })} />);
     const node = getByTestId('workflow-node-step-local-1');
 
-    // Mousedown then release without crossing threshold
     fireEvent.mouseDown(node, { button: 0, clientX: 0, clientY: 0 });
-    windowMouseMove(1, 1); // below 3px threshold — not a drag
+    windowMouseMove(1, 1);
     windowMouseUp();
     fireEvent.click(node);
 
     expect(onClick).toHaveBeenCalledWith('step-local-1');
   });
 });
-
-// ============================================================================
-// Multi-agent rendering tests
-// ============================================================================
 
 describe('WorkflowNode multi-agent rendering', () => {
   it('renders agent badges when step has agents array', () => {
@@ -306,9 +255,7 @@ describe('WorkflowNode multi-agent rendering', () => {
     const { getByTestId, queryByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
     const badges = getByTestId('agent-badges');
     expect(badges).toBeTruthy();
-    // agent-name element should not be present in multi-agent mode
     expect(queryByTestId('agent-name')).toBeNull();
-    // Canvas shows slot role names (not agent names) for compact display
     expect(badges.textContent).toContain('coder');
     expect(badges.textContent).toContain('reviewer');
   });
@@ -322,7 +269,6 @@ describe('WorkflowNode multi-agent rendering', () => {
   it('renders single agent name when agents array is empty', () => {
     const step = { ...STEP_DRAFT, agents: [] as { agentId: string; name: string }[] };
     const { getByTestId, queryByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
-    // Empty agents array = single-agent mode
     expect(getByTestId('agent-name')).toBeTruthy();
     expect(queryByTestId('agent-badges')).toBeNull();
   });
@@ -387,10 +333,6 @@ describe('WorkflowNode multi-agent rendering', () => {
   });
 });
 
-// ============================================================================
-// Drag-and-drop tests
-// ============================================================================
-
 describe('WorkflowNode drag-and-drop', () => {
   it('updates position on drag at scale=1', () => {
     const onPositionChange = vi.fn();
@@ -420,7 +362,6 @@ describe('WorkflowNode drag-and-drop', () => {
     });
     windowMouseMove(100, 60);
 
-    // canvas delta = screen delta / scale = 100/2=50, 60/2=30
     expect(onPositionChange).toHaveBeenCalledWith('step-local-1', { x: 50, y: 30 });
 
     windowMouseUp();
@@ -439,7 +380,6 @@ describe('WorkflowNode drag-and-drop', () => {
     });
     windowMouseMove(20, 10);
 
-    // canvas delta = screen delta / scale = 20/0.5=40, 10/0.5=20
     expect(onPositionChange).toHaveBeenCalledWith('step-local-1', { x: 40, y: 20 });
 
     windowMouseUp();
@@ -461,7 +401,6 @@ describe('WorkflowNode drag-and-drop', () => {
 
     windowMouseUp();
     windowMouseMove(50, 50);
-    // No additional calls after mouseup
     expect(onPositionChange).toHaveBeenCalledTimes(1);
   });
 
@@ -469,7 +408,6 @@ describe('WorkflowNode drag-and-drop', () => {
     const onPositionChange = vi.fn();
     const { getByTestId } = render(<WorkflowNode {...makeProps({ onPositionChange, scale: 1 })} />);
 
-    // Right-click (button=2)
     fireEvent.mouseDown(getByTestId('workflow-node-step-local-1'), {
       button: 2,
       clientX: 0,
@@ -518,7 +456,7 @@ describe('WorkflowNode drag-and-drop', () => {
       clientX: 0,
       clientY: 0,
     });
-    windowMouseMove(2, 1); // 2px — below the 3px threshold
+    windowMouseMove(2, 1);
     expect(onPositionChange).not.toHaveBeenCalled();
 
     windowMouseUp();
@@ -546,8 +484,6 @@ describe('WorkflowNode drag-and-drop', () => {
   });
 
   it('drag uses position prop at drag-start time (not stale closure)', () => {
-    // Simulate dynamic position updates: wrapper re-renders with new position
-    // between the mousedown and mousemove.
     const onPositionChange = vi.fn();
 
     function Wrapper() {
@@ -568,27 +504,20 @@ describe('WorkflowNode drag-and-drop', () => {
 
     const { getByTestId } = render(<Wrapper />);
 
-    // Start drag at (50,50) with mouse at screen (0,0)
     fireEvent.mouseDown(getByTestId('workflow-node-step-local-1'), {
       button: 0,
       clientX: 0,
       clientY: 0,
     });
-    // Move 20px in screen space — canvas delta = 20
     windowMouseMove(20, 10);
     expect(onPositionChange).toHaveBeenLastCalledWith('step-local-1', { x: 70, y: 60 });
 
-    // Move another 10px — still relative to drag start (0,0), so total delta = 30
     windowMouseMove(30, 20);
     expect(onPositionChange).toHaveBeenLastCalledWith('step-local-1', { x: 80, y: 70 });
 
     windowMouseUp();
   });
 });
-
-// ============================================================================
-// Agent completion state
-// ============================================================================
 
 describe('WorkflowNode — agent completion state', () => {
   const MULTI_STEP = {

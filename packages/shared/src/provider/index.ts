@@ -1,7 +1,3 @@
-/**
- * Multi-Provider Architecture
- */
-
 export type {
   Provider,
   ProviderCapabilities,

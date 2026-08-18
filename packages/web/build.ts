@@ -1,12 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Production build script with content-hash cache busting
- *
- * This script:
- * 1. Builds CSS with Tailwind
- * 2. Builds JavaScript with content-hash filenames
- * 3. Generates index.html with references to hashed files
- */
 
 import { $ } from 'bun';
 import { mkdirSync, writeFileSync } from 'fs';
@@ -16,16 +8,13 @@ const DIST_DIR = join(import.meta.dir, 'dist');
 
 console.log('🏗️  Building HyperNeo Web UI for production...\n');
 
-// Clean dist directory
 console.log('🧹 Cleaning dist directory...');
 await $`rm -rf ${DIST_DIR}`;
 mkdirSync(DIST_DIR, { recursive: true });
 
-// Build CSS
 console.log('🎨 Building CSS with Tailwind...');
 await $`tailwindcss --input src/styles.css --output ${join(DIST_DIR, 'styles.css')} --minify`;
 
-// Build JavaScript with content hashing
 console.log('📦 Building JavaScript with content hashing...');
 const buildResult = await Bun.build({
   entrypoints: ['./src/client.tsx'],
@@ -48,7 +37,6 @@ if (!buildResult.success) {
   process.exit(1);
 }
 
-// Extract the hashed filename for the main bundle
 const mainBundle = buildResult.outputs.find(
   (output) => output.path.includes('client') && output.path.endsWith('.js')
 );
@@ -61,7 +49,6 @@ if (!mainBundle) {
 const mainBundleName = mainBundle.path.split('/').pop();
 console.log(`✅ Main bundle: ${mainBundleName}`);
 
-// Generate index.html with hashed references
 console.log('📄 Generating index.html...');
 const indexHtml = `<!DOCTYPE html>
 <html lang="en">

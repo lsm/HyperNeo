@@ -1,21 +1,7 @@
-/**
- * Session Handlers Tests (API-dependent)
- *
- * Tests for session-related RPC handlers that require API access:
- * - message.send with real SDK
- * - models.list (requires SDK to fetch models)
- *
- * REQUIREMENTS:
- * - Requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN
- * - Makes real API calls (costs money, uses rate limits)
- * - Tests will FAIL if credentials are not available (no skip)
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 
-// Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
 describe('Session RPC Handlers (API-dependent)', () => {
@@ -35,9 +21,6 @@ describe('Session RPC Handlers (API-dependent)', () => {
     { timeout: 15000 }
   );
 
-  /**
-   * Create a WebSocket connection and wait for the first message
-   */
   function createWebSocketWithFirstMessage(baseUrl: string): {
     ws: WebSocket;
     firstMessagePromise: Promise<unknown>;
@@ -78,9 +61,6 @@ describe('Session RPC Handlers (API-dependent)', () => {
     return { ws, firstMessagePromise };
   }
 
-  /**
-   * Wait for WebSocket to be in a specific state
-   */
   async function waitForWebSocketState(ws: WebSocket, state: number): Promise<void> {
     const startTime = Date.now();
     while (ws.readyState !== state) {
@@ -91,9 +71,6 @@ describe('Session RPC Handlers (API-dependent)', () => {
     }
   }
 
-  /**
-   * Wait for WebSocket message
-   */
   async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const messageHandler = (event: MessageEvent) => {

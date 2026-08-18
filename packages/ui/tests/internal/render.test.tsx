@@ -101,7 +101,6 @@ describe('render', () => {
       defaultTag: 'div',
     });
     const { container } = tlRender(<div>{vnode}</div>);
-    // Fragment renders children inline, no extra wrapper
     expect(container.firstChild).not.toBeNull();
   });
 
@@ -188,11 +187,9 @@ describe('mergeProps', () => {
   it('chains two event handlers when merging two prop objects', () => {
     const handler1 = vi.fn();
     const handler2 = vi.fn();
-    // First merge: handler1 + handler2 → eventHandlers starts fresh, no existing result[key]
     const result = mergeProps({ onClick: handler1 }, { onClick: handler2 });
     const merged = result.onClick as (...args: unknown[]) => void;
     merged('event-arg');
-    // handler1 and handler2 both added to eventHandlers array, both called
     expect(handler1).toHaveBeenCalledWith('event-arg');
     expect(handler2).toHaveBeenCalledWith('event-arg');
   });
@@ -219,7 +216,6 @@ describe('mergeProps', () => {
     const h1 = vi.fn();
     const h2 = vi.fn();
     const h3 = vi.fn();
-    // Apply mergeProps in two steps to avoid the stack overflow in source
     const step1 = mergeProps({ onFocus: h1 }, { onFocus: h2 });
     const step2 = mergeProps(step1, { onFocus: h3 });
     (step2.onFocus as (...args: unknown[]) => void)();

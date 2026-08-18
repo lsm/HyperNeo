@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for TodoViewer Component
- *
- * TodoViewer displays todos with status indicators and progress tracking.
- */
 import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
@@ -31,7 +26,6 @@ describe('TodoViewer', () => {
   describe('Basic Rendering', () => {
     it('should render all todos', () => {
       const { container } = render(<TodoViewer todos={sampleTodos} />);
-      // Each todo item should be rendered
       expect(container.textContent).toContain('Task 1');
       expect(container.textContent).toContain('Task 2');
       expect(container.textContent).toContain('Task 3');
@@ -45,7 +39,6 @@ describe('TodoViewer', () => {
 
     it('should show completion ratio in header', () => {
       const { container } = render(<TodoViewer todos={sampleTodos} />);
-      // 1 completed out of 3 total
       expect(container.textContent).toContain('1/3');
     });
 
@@ -87,7 +80,6 @@ describe('TodoViewer', () => {
       const { container } = render(
         <TodoViewer todos={[{ content: 'Waiting task', status: 'pending', activeForm: '' }]} />
       );
-      // Pending badge has bg-gray-100 inside the todo item row
       expect(container.textContent).toContain('Pending');
     });
   });
@@ -148,7 +140,6 @@ describe('TodoViewer', () => {
           ]}
         />
       );
-      // The italic activeForm class should not contain the activeForm text for completed items
       expect(container.textContent).not.toContain('This should not show');
     });
 
@@ -197,7 +188,6 @@ describe('TodoViewer', () => {
       const { container } = render(
         <TodoViewer todos={[{ content: 'Pending', status: 'pending', activeForm: '' }]} />
       );
-      // Pending items have bg-white class
       const whiteBg = container.querySelector('.bg-white');
       expect(whiteBg).toBeTruthy();
     });
@@ -249,7 +239,6 @@ describe('TodoViewer', () => {
   describe('Edge Cases', () => {
     it('should handle empty todos array', () => {
       const { container } = render(<TodoViewer todos={[]} />);
-      // Should still render header
       expect(container.textContent).toContain('Task List');
       expect(container.textContent).toContain('0/0');
     });

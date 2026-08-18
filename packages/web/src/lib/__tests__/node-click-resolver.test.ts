@@ -74,8 +74,6 @@ describe('resolveNodeClick', () => {
   });
 
   it('opens a member-backed session matched by node ID, even when label differs from slot', () => {
-    // Regression for the Review-node bug: label is 'Code Reviewer' but the slot
-    // is 'reviewer'. Must resolve by nodeExecution.nodeId + slot name.
     const outcome = resolveNodeClick({
       ...baseArgs,
       nodeId: 'node-review',
@@ -104,8 +102,7 @@ describe('resolveNodeClick', () => {
   });
 
   describe('active node A + unstarted node B', () => {
-    // Two nodes; only node-1 (coder) is active. node-2 (reviewer) is unstarted.
-    const nodeExecutions = [nodeExec()]; // coder only
+    const nodeExecutions = [nodeExec()];
     const activityMembers = [member()];
 
     it('clicking unstarted node B activates only B (never opens A)', () => {
@@ -139,8 +136,6 @@ describe('resolveNodeClick', () => {
     });
 
     it('B never resolves to A even when an unrelated session is live', () => {
-      // Even if a stale/unrelated member for 'coder' exists, clicking node-2
-      // must not return coder's session.
       const outcome = resolveNodeClick({
         ...baseArgs,
         nodeId: 'node-2',
@@ -156,8 +151,6 @@ describe('resolveNodeClick', () => {
   });
 
   describe('two nodes reusing the same slot name, disambiguated by node ID', () => {
-    // Both node-1 and node-2 declare a 'reviewer' slot, each with its own
-    // session. Clicking must pick the session for the clicked node ID only.
     const nodeExecutions = [
       nodeExec({
         id: 'exec-r1',
@@ -202,9 +195,6 @@ describe('resolveNodeClick', () => {
 
   describe('stale activity member vs authoritative execution', () => {
     it('drops a stale member whose execution advanced to a replacement session', () => {
-      // The execution row (exec-1) now points at session-NEW, but the activity
-      // feed still carries a member for the old session-OLD under the same
-      // nodeExecutionId. The stale member must NOT appear as a second choice.
       const outcome = resolveNodeClick({
         ...baseArgs,
         nodeId: 'node-1',
@@ -240,9 +230,6 @@ describe('resolveNodeClick', () => {
     });
 
     it('rejects a member whose execution is detached/cancelled (tombstone)', () => {
-      // The execution is detached (agentSessionId null) — the authoritative
-      // nodeExecutions store maps exec-1 to NO live session. A lagging activity
-      // member still claims a session for exec-1 must NOT be offered as live.
       const outcome = resolveNodeClick({
         ...baseArgs,
         nodeId: 'node-1',
@@ -252,7 +239,7 @@ describe('resolveNodeClick', () => {
             id: 'exec-1',
             workflowNodeId: 'node-1',
             agentName: 'coder',
-            agentSessionId: null, // detached
+            agentSessionId: null,
           }),
         ],
         activityMembers: [
@@ -265,12 +252,11 @@ describe('resolveNodeClick', () => {
               nodeExecutionId: 'exec-1',
               nodeId: 'node-1',
               agentName: 'coder',
-              status: 'in_progress', // snapshot lags — not yet marked cancelled
+              status: 'in_progress',
             },
           }),
         ],
       });
-      // No live session: the unstarted slot is offered for activation.
       expect(outcome.type).toBe('activate_slot');
       if (outcome.type === 'activate_slot') {
         expect(outcome.nodeId).toBe('node-1');
@@ -280,7 +266,6 @@ describe('resolveNodeClick', () => {
 
   describe('spawned post-approval merger node', () => {
     it('opens the merger session once postApprovalSessionId is available', () => {
-      // Merger has no node_execution row; identity comes from the task.
       const outcome = resolveNodeClick({
         ...baseArgs,
         nodeId: 'node-merger',
@@ -313,7 +298,6 @@ describe('resolveNodeClick', () => {
     });
 
     it('does not open the merger session when clicking a different node', () => {
-      // The post-approval session must not leak onto an unrelated node click.
       const outcome = resolveNodeClick({
         ...baseArgs,
         nodeId: 'node-coder',
@@ -325,9 +309,6 @@ describe('resolveNodeClick', () => {
     });
 
     it('binds the merger session only to postApprovalNodeId (not every same-named node)', () => {
-      // Two nodes both declare the 'merger' slot. With postApprovalNodeId set,
-      // only the resolved merger node opens postApprovalSessionId; the other
-      // same-named node must NOT bind the singular merger session.
       const onMerger = resolveNodeClick({
         ...baseArgs,
         nodeId: 'node-merger',
@@ -347,8 +328,6 @@ describe('resolveNodeClick', () => {
         postApprovalTargetAgent: 'merger',
         postApprovalNodeId: 'node-merger',
       });
-      // The imposter node also declares 'merger' but is not the bound node —
-      // it must not open the merger session (it falls through to activate_slot).
       expect(onImposter.type).toBe('activate_slot');
       if (onImposter.type === 'activate_slot') {
         expect(onImposter.nodeId).toBe('node-merger-2');
@@ -356,10 +335,6 @@ describe('resolveNodeClick', () => {
     });
 
     it('shadows a stale same-agent execution with the singular merger session', () => {
-      // The merger agent previously ran as an ordinary node agent; after a
-      // daemon restart before approval, a stale idle node_execution lingers
-      // with the old agentSessionId. The singular postApprovalSessionId must
-      // shadow it so the click opens the merger, not the stale session.
       const outcome = resolveNodeClick({
         ...baseArgs,
         nodeId: 'node-merger',
@@ -384,10 +359,6 @@ describe('resolveNodeClick', () => {
     });
 
     it('shadow cleanup exact-matches the target slot (qa-one does not shadow qa_one)', () => {
-      // A node declares both 'qa-one' (the post-approval target) and 'qa_one'
-      // (a separate live session). The shadow cleanup must remove only the
-      // stale 'qa-one' execution — normalizing would also delete the live
-      // 'qa_one', dropping it from the choices.
       const outcome = resolveNodeClick({
         ...baseArgs,
         nodeId: 'node-x',
@@ -413,7 +384,6 @@ describe('resolveNodeClick', () => {
       expect(outcome.type).toBe('choose');
       if (outcome.type === 'choose') {
         const sessionIds = outcome.choices.map((c) => (c.kind === 'live' ? c.sessionId : null));
-        // The live qa_one session survives; the stale qa-one is shadowed.
         expect(sessionIds).toContain('session-live-qa-one');
         expect(sessionIds).toContain('session-merger');
         expect(sessionIds).not.toContain('session-stale-qa-one');
@@ -428,7 +398,7 @@ describe('resolveNodeClick', () => {
         nodeId: 'node-empty',
         nodeName: 'Sink',
         agentSlotNames: [],
-        nodeExecutions: [nodeExec()], // an unrelated live session exists
+        nodeExecutions: [nodeExec()],
         activityMembers: [member()],
       });
       expect(outcome).toEqual({ type: 'empty', nodeName: 'Sink' });
@@ -439,9 +409,6 @@ describe('resolveNodeClick', () => {
     const slots = ['architecture-reviewer', 'security-reviewer', 'correctness-reviewer'];
 
     it('offers live + unstarted slots as choices when a multi-agent node is mixed', () => {
-      // One slot live (security), two unstarted (architecture, correctness).
-      // The unstarted slots must be offered (as pending) so the user can
-      // activate them — not silently dropped by an open_session early return.
       const outcome = resolveNodeClick({
         ...baseArgs,
         nodeId: 'node-plan-review',
@@ -487,7 +454,6 @@ describe('resolveNodeClick', () => {
       });
       expect(outcome.type).toBe('choose');
       if (outcome.type === 'choose') {
-        // Two live + the unstarted correctness slot offered as pending.
         expect(outcome.choices).toHaveLength(3);
         const names = outcome.choices.map((c) => c.agentName);
         expect(names).toContain('architecture-reviewer');
@@ -497,8 +463,6 @@ describe('resolveNodeClick', () => {
     });
 
     it('treats distinct slot names that normalize the same (qa-one / qa_one) as separate slots', () => {
-      // 'qa-one' is live; 'qa_one' is unstarted. They must NOT be collapsed by
-      // normalization — 'qa_one' must still be offered as a pending choice.
       const outcome = resolveNodeClick({
         ...baseArgs,
         nodeId: 'node-qa',
@@ -530,7 +494,6 @@ describe('resolveNodeClick', () => {
       if (outcome.type === 'choose') {
         expect(outcome.choices.every((c) => c.kind === 'pending')).toBe(true);
         expect(outcome.choices).toHaveLength(3);
-        // Each pending choice carries the clicked node ID for activation routing.
         expect(
           outcome.choices.every((c) => c.kind === 'pending' && c.nodeId === 'node-plan-review')
         ).toBe(true);
@@ -540,8 +503,6 @@ describe('resolveNodeClick', () => {
 
   describe('identity safety', () => {
     it('skips members whose node ID is unknown (rollout-era nullable identity)', () => {
-      // A live member with no nodeExecution.nodeId must never be guessed to
-      // belong to the clicked node.
       const outcome = resolveNodeClick({
         ...baseArgs,
         nodeId: 'node-2',
@@ -577,7 +538,6 @@ describe('resolveNodeClick', () => {
     });
 
     it('scopes nodeExecutions to the task run only', () => {
-      // Same node ID in a different run must not match.
       const outcome = resolveNodeClick({
         ...baseArgs,
         nodeId: 'node-1',

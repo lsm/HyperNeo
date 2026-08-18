@@ -1,9 +1,3 @@
-/**
- * Tests for session-processing-phase.ts
- *
- * Verifies agent processing states and phases map to the expected tones.
- */
-
 import { describe, expect, it } from 'vitest';
 import {
   getAgentProcessingStateClasses,
@@ -80,10 +74,6 @@ describe('session-processing-phase', () => {
   });
 
   it('falls back to the processing config for an unrecognized persisted phase', () => {
-    // Persisted processingState JSON is only cast to the union, so an older or
-    // unknown phase can reach this code at runtime. It must not throw and must
-    // resolve to the generic 'processing' config (parity with the default case
-    // in getProcessingPhaseColor).
     const unknown = {
       status: 'processing',
       messageId: 'msg-1',
@@ -95,10 +85,6 @@ describe('session-processing-phase', () => {
   });
 
   it('falls back to the idle config for an unrecognized persisted status', () => {
-    // Symmetric guard to the phase fallback: an unrecognized persisted status is
-    // only filtered by the type at compile time. It must not throw and must
-    // resolve to the neutral 'idle' config so getAgentProcessingStateClasses
-    // does not NPE on `.tone`.
     const unknown = { status: 'schema-v9-running' } as unknown as Parameters<
       typeof getAgentProcessingStateConfig
     >[0];

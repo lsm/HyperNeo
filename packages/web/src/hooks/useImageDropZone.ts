@@ -1,28 +1,7 @@
-/**
- * useImageDropZone
- *
- * Drag-and-drop handlers + `isDragging` state for a file (image) drop target.
- * Extracted from MessageInput so the drop zone can be attached to a larger
- * container (e.g. the whole chat content column) instead of just the composer.
- *
- * Semantics match the original inline handlers:
- * - The overlay only activates for drags carrying files (`dataTransfer.types`
- *   includes `'Files'`) and only when `enabled` is true.
- * - `onDragLeave` only hides the overlay when the pointer leaves the zone
- *   entirely (`relatedTarget` is outside the zone), so moving between child
- *   elements inside the zone does not flicker it off.
- * - `onDrop` forwards the dropped files to `onFiles` when enabled.
- */
-
 import { useCallback, useState } from 'preact/hooks';
 
 export type FileDropHandler = (files: FileList) => void | Promise<void>;
 
-/**
- * A composer registers its file-drop handler upward (to the content column that
- * owns the drop zone) via this callback. Passing `null` clears the registration
- * (e.g. on unmount or while disabled).
- */
 export type RegisterFileDropTarget = (handler: FileDropHandler | null) => void;
 
 export interface DragHandlers {
@@ -66,9 +45,6 @@ export function useImageDropZone(
   const handleDragLeave = useCallback((e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Only hide overlay when leaving the drop zone entirely. Dragleave bubbles
-    // from descendants, so use relatedTarget containment rather than comparing
-    // target/currentTarget.
     const dropZone = e.currentTarget;
     const nextTarget = e.relatedTarget;
     if (!(dropZone instanceof Node) || !(nextTarget instanceof Node)) {

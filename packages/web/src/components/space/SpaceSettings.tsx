@@ -1,7 +1,3 @@
-/**
- * SpaceSettings - settings panel for a Space.
- */
-
 import type { ComponentChildren } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import type { Space, SpaceExportBundle, SpaceAutonomyLevel, SettingSource } from '@hyperneo/shared';
@@ -162,7 +158,6 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
           ? { settingSources: clearSettingSources ? null : settingSources }
           : {}),
       });
-      // Apply response directly because undefined fields can be dropped during JSON serialization.
       spaceStore.space.value = updated;
       toast.success('Space updated');
     } catch (err) {

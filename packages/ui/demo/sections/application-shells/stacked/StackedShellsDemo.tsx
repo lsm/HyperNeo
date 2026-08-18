@@ -30,9 +30,6 @@ const userNavigation = [
   { name: 'Sign out', href: '#' },
 ];
 
-/* -----------------------------------------------
-   Demo 1: Stacked nav with bottom border
-   ----------------------------------------------- */
 function StackedWithBottomBorder() {
   const [_open, setOpen] = useState(false);
 
@@ -41,7 +38,6 @@ function StackedWithBottomBorder() {
       <header class="bg-accent-600 pb-24 dark:bg-accent-800">
         <div class="mx-auto max-w-3xl px-4 sm:px-6 lg:max-w-7xl lg:px-8">
           <div class="relative flex items-center justify-center py-5 lg:justify-between">
-            {/* Logo */}
             <div class="absolute left-0 shrink-0 lg:static">
               <a href="#">
                 <span class="sr-only">Your Company</span>
@@ -53,7 +49,6 @@ function StackedWithBottomBorder() {
               </a>
             </div>
 
-            {/* Right section on desktop */}
             <div class="hidden lg:ml-4 lg:flex lg:items-center lg:pr-0.5">
               <button
                 type="button"
@@ -64,7 +59,6 @@ function StackedWithBottomBorder() {
                 <Bell aria-hidden="true" class="size-6" />
               </button>
 
-              {/* Profile dropdown */}
               <Menu as="div" class="relative ml-4 shrink-0">
                 <MenuButton class="relative flex max-w-xs items-center rounded-full bg-accent-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">
                   <span class="absolute -inset-1.5" />
@@ -94,7 +88,6 @@ function StackedWithBottomBorder() {
               </Menu>
             </div>
 
-            {/* Search */}
             <div class="min-w-0 flex-1 px-12 lg:hidden">
               <div class="mx-auto grid w-full max-w-xs grid-cols-1">
                 <input
@@ -110,7 +103,6 @@ function StackedWithBottomBorder() {
               </div>
             </div>
 
-            {/* Menu button */}
             <div class="absolute right-0 shrink-0 lg:hidden">
               <button
                 type="button"
@@ -287,9 +279,6 @@ function StackedWithBottomBorder() {
   );
 }
 
-/* -----------------------------------------------
-   Demo 2: Stacked with lighter page header
-   ----------------------------------------------- */
 function StackedWithLighterPageHeader() {
   return (
     <div class="min-h-full">
@@ -456,9 +445,6 @@ function StackedWithLighterPageHeader() {
   );
 }
 
-/* -----------------------------------------------
-   Demo 3: Branded nav with lighter page header
-   ----------------------------------------------- */
 const brandedNav = [
   { name: 'Dashboard', href: '#', current: true },
   { name: 'Team', href: '#', current: false },
@@ -623,9 +609,6 @@ function BrandedNavWithLighterPageHeader() {
   );
 }
 
-/* -----------------------------------------------
-   Demo 4: Two row navigation with overlap
-   ----------------------------------------------- */
 function TwoRowNavigationWithOverlap() {
   return (
     <div class="min-h-full">
@@ -782,9 +765,6 @@ function TwoRowNavigationWithOverlap() {
   );
 }
 
-/* -----------------------------------------------
-   Main export
-   ----------------------------------------------- */
 export function StackedShellsDemo() {
   return (
     <div class="flex flex-col gap-8">

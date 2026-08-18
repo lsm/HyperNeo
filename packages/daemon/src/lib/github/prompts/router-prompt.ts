@@ -1,15 +1,3 @@
-/**
- * Router Agent System Prompt and Schema
- *
- * Defines the prompt and structured output schema for the routing classification
- * agent that determines which room should handle incoming GitHub events.
- */
-
-/**
- * System prompt for the routing classification agent.
- * This agent has NO tools, NO filesystem access, NO network access.
- * It ONLY analyzes events and room candidates to make routing decisions.
- */
 export const ROUTER_AGENT_SYSTEM_PROMPT = `You are a routing classifier. Your job is to analyze GitHub events and determine the best room to handle them.
 
 You MUST respond with valid JSON matching the RoutingClassification schema.
@@ -48,9 +36,6 @@ When comparing events to rooms, consider:
 3. Room description and purpose
 4. Label patterns (if available)`;
 
-/**
- * Parsed routing classification result from AI analysis
- */
 export interface RoutingClassification {
   decision: 'route' | 'inbox' | 'reject';
   roomId: string | null;

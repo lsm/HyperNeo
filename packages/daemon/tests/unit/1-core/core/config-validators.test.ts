@@ -1,9 +1,3 @@
-/**
- * SDK Config Validators Tests
- *
- * Tests for configuration validators for SDK settings.
- */
-
 import { describe, test, expect } from 'bun:test';
 import {
   validateSystemPromptConfig,
@@ -18,10 +12,6 @@ import {
   validateBetasConfig,
   validateEnvConfig,
 } from '../../../../src/lib/config-validators';
-
-// ============================================================================
-// System Prompt Validation Tests
-// ============================================================================
 
 describe('validateSystemPromptConfig', () => {
   test('accepts valid string prompt', () => {
@@ -97,10 +87,6 @@ describe('validateSystemPromptConfig', () => {
   });
 });
 
-// ============================================================================
-// Tools Preset Validation Tests
-// ============================================================================
-
 describe('validateToolsPresetConfig', () => {
   test('accepts valid tool array', () => {
     const result = validateToolsPresetConfig(['Bash', 'Read', 'Write']);
@@ -157,10 +143,6 @@ describe('validateToolsPresetConfig', () => {
   });
 });
 
-// ============================================================================
-// Tools Config Validation Tests
-// ============================================================================
-
 describe('validateToolsConfig', () => {
   test('accepts valid tools config', () => {
     const result = validateToolsConfig({
@@ -200,10 +182,6 @@ describe('validateToolsConfig', () => {
     expect(result.error).toContain('Invalid tool name in disallowedTools');
   });
 });
-
-// ============================================================================
-// Agent Definition Validation Tests
-// ============================================================================
 
 describe('validateAgentDefinition', () => {
   test('accepts valid agent definition', () => {
@@ -328,10 +306,6 @@ describe('validateAgentDefinition', () => {
   });
 });
 
-// ============================================================================
-// Agents Config Validation Tests
-// ============================================================================
-
 describe('validateAgentsConfig', () => {
   test('accepts valid agents config', () => {
     const result = validateAgentsConfig({
@@ -363,10 +337,6 @@ describe('validateAgentsConfig', () => {
     expect(result.error).toContain('description is required');
   });
 });
-
-// ============================================================================
-// Sandbox Config Validation Tests
-// ============================================================================
 
 describe('validateSandboxConfig', () => {
   test('accepts valid sandbox config', () => {
@@ -478,10 +448,6 @@ describe('validateSandboxConfig', () => {
     expect(result.error).toContain('ignoreViolations.network must be an array');
   });
 });
-
-// ============================================================================
-// MCP Server Validation Tests
-// ============================================================================
 
 describe('validateMcpServerConfig', () => {
   test('accepts valid stdio MCP server', () => {
@@ -601,10 +567,6 @@ describe('validateMcpServerConfig', () => {
   });
 });
 
-// ============================================================================
-// MCP Servers Config Validation Tests
-// ============================================================================
-
 describe('validateMcpServersConfig', () => {
   test('accepts valid servers config', () => {
     const result = validateMcpServersConfig({
@@ -627,10 +589,6 @@ describe('validateMcpServersConfig', () => {
     expect(result.error).toContain('command is required');
   });
 });
-
-// ============================================================================
-// Output Format Validation Tests
-// ============================================================================
 
 describe('validateOutputFormat', () => {
   test('accepts valid JSON schema output format', () => {
@@ -685,10 +643,6 @@ describe('validateOutputFormat', () => {
   });
 });
 
-// ============================================================================
-// Beta Features Validation Tests
-// ============================================================================
-
 describe('validateBetasConfig', () => {
   test('accepts valid beta features', () => {
     const result = validateBetasConfig(['context-1m-2025-08-07']);
@@ -712,10 +666,6 @@ describe('validateBetasConfig', () => {
     expect(result.error).toContain('Betas must be an array');
   });
 });
-
-// ============================================================================
-// Environment Settings Validation Tests
-// ============================================================================
 
 describe('validateEnvConfig', () => {
   test('accepts valid env config', () => {

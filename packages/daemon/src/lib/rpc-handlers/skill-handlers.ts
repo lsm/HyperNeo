@@ -1,16 +1,3 @@
-/**
- * Skills RPC Handlers
- *
- * Exposes the application-level Skills registry via RPC:
- * - skill.list           — list all skills
- * - skill.get            — get a single skill by id
- * - skill.create         — add a new skill, emit skills.changed
- * - skill.update         — update a skill, emit skills.changed
- * - skill.delete         — remove a skill, emit skills.changed
- * - skill.setEnabled     — toggle enabled flag, emit skills.changed
- * - skill.installFromGit — install a skill from a git repository URL, emit skills.changed
- */
-
 import type { MessageHub } from '@hyperneo/shared';
 import type {
   AppSkill,
@@ -24,19 +11,11 @@ import { Logger } from '../logger';
 
 const log = new Logger('skill-handlers');
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function emitChanged(internalEventBus: InternalEventBus<DaemonInternalEventMap>): void {
   internalEventBus.publish('skills.changed', { sessionId: 'global' }).catch((err) => {
     log.warn('Failed to emit skills.changed:', err);
   });
 }
-
-// ---------------------------------------------------------------------------
-// Handler registration
-// ---------------------------------------------------------------------------
 
 export function registerSkillHandlers(
   messageHub: MessageHub,
@@ -44,13 +23,11 @@ export function registerSkillHandlers(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   workspaceRoot?: string
 ): void {
-  // skill.list — returns AppSkill[]
   messageHub.onRequest('skill.list', async () => {
     const skills = skillsManager.listSkills();
     return { skills } satisfies { skills: AppSkill[] };
   });
 
-  // skill.get — fetch a single skill by id
   messageHub.onRequest('skill.get', async (data) => {
     const { id } = data as { id: string };
 
@@ -62,7 +39,6 @@ export function registerSkillHandlers(
     return { skill } satisfies { skill: AppSkill | null };
   });
 
-  // skill.create — validates input via SkillsManager, creates skill, emits event
   messageHub.onRequest('skill.create', async (data) => {
     const { params } = data as { params: CreateSkillParams };
 
@@ -76,7 +52,6 @@ export function registerSkillHandlers(
     return { skill } satisfies { skill: AppSkill };
   });
 
-  // skill.update — updates skill, emits event, returns updated skill
   messageHub.onRequest('skill.update', async (data) => {
     const { id, params } = data as { id: string; params: UpdateSkillParams };
 
@@ -93,7 +68,6 @@ export function registerSkillHandlers(
     return { skill } satisfies { skill: AppSkill };
   });
 
-  // skill.delete — removes skill, emits event
   messageHub.onRequest('skill.delete', async (data) => {
     const { id } = data as { id: string };
 
@@ -111,7 +85,6 @@ export function registerSkillHandlers(
     return { success: true } satisfies { success: boolean };
   });
 
-  // skill.setEnabled — convenience toggle for the enabled field
   messageHub.onRequest('skill.setEnabled', async (data) => {
     const { id, enabled } = data as { id: string; enabled: boolean };
 
@@ -128,7 +101,6 @@ export function registerSkillHandlers(
     return { skill } satisfies { skill: AppSkill };
   });
 
-  // skill.installFromGit — fetch a SKILL.md from a git repo URL and register it
   messageHub.onRequest('skill.installFromGit', async (data) => {
     const { repoUrl, commandName } = data as InstallSkillFromGitParams;
 

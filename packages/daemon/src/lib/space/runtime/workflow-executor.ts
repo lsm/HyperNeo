@@ -1,27 +1,4 @@
-/**
- * WorkflowExecutor
- *
- * Manages workflow run state within a Space using a directed graph model.
- * Steps are nodes; transitions are edges with optional conditions.
- *
- * Responsibilities:
- * - Graph navigation (getCurrentStep, isComplete)
- * - Condition evaluation for transitions (always, human, condition, task_result)
- * - Timeout enforcement on condition-type evaluations
- *
- * In the agent-centric model, agents self-direct via send_message and by setting
- * `task.reportedStatus`. Workflow advancement is driven by agent-to-agent messaging
- * (channel routing), not by an explicit advance() call. This class provides
- * read-only graph navigation and condition evaluation utilities used by the
- * runtime and channel layer.
- */
-
 import type { SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Legacy condition types (removed from @hyperneo/shared, kept locally for
-// backward-compatible evaluateCondition API)
-// ---------------------------------------------------------------------------
 
 type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
 
@@ -32,68 +9,29 @@ interface WorkflowCondition {
   timeoutMs?: number;
 }
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
-/**
- * Context passed to condition evaluation.
- */
 export interface ConditionContext {
-  /** Absolute path to the workspace (cwd for condition-type expressions) */
   workspacePath: string;
-  /**
-   * Whether a human has explicitly approved advancement.
-   * Set externally (e.g. via RPC) into run.config.humanApproved before retry.
-   */
   humanApproved?: boolean;
-  /**
-   * Result string from the most recently completed task on the current node.
-   * Used by `task_result` conditions for prefix matching.
-   */
   taskResult?: string;
 }
 
-/** Result of a single condition evaluation attempt */
 export interface ConditionResult {
-  /** Whether the condition passed */
   passed: boolean;
-  /** Human-readable explanation when the condition did not pass */
   reason?: string;
 }
 
-// ---------------------------------------------------------------------------
-// Internal types
-// ---------------------------------------------------------------------------
-
-/**
- * Injectable command runner for condition-type evaluations.
- * The default uses Bun.spawn; tests inject a mock to avoid real subprocess calls.
- */
 export type CommandRunner = (
   args: string[],
   cwd: string,
   timeoutMs: number
 ) => Promise<{ exitCode: number | null; timedOut?: boolean; stderr?: string }>;
 
-// ---------------------------------------------------------------------------
-// Default timeout constants
-// ---------------------------------------------------------------------------
-
 const DEFAULT_CONDITION_TIMEOUT_MS = 60_000;
 const MAX_CONDITION_TIMEOUT_MS = 300_000;
-
-// ---------------------------------------------------------------------------
-// Default command runner (real Bun.spawn)
-// ---------------------------------------------------------------------------
 
 const defaultCommandRunner: CommandRunner = async (args, cwd, timeoutMs) => {
   const proc = Bun.spawn(args, {
     cwd,
-    // stdout is ignored — only the exit code matters for condition evaluation.
-    // stderr is piped so we can capture it for failure diagnostics.
-    // IMPORTANT: drain stderr concurrently with proc.exited to prevent pipe deadlock
-    // when the process writes more than ~64KB to stderr.
     stdout: 'ignore',
     stderr: 'pipe',
   });
@@ -121,10 +59,6 @@ const defaultCommandRunner: CommandRunner = async (args, cwd, timeoutMs) => {
   return { exitCode: proc.exitCode, stderr };
 };
 
-// ---------------------------------------------------------------------------
-// WorkflowExecutor
-// ---------------------------------------------------------------------------
-
 export class WorkflowExecutor {
   constructor(
     private workflow: SpaceWorkflow,
@@ -132,30 +66,10 @@ export class WorkflowExecutor {
     private commandRunner: CommandRunner = defaultCommandRunner
   ) {}
 
-  // -------------------------------------------------------------------------
-  // Navigation
-  // -------------------------------------------------------------------------
-
-  /**
-   * Returns true when the execution attempt has finished successfully or was cancelled.
-   */
   isComplete(): boolean {
     return this.run.status === 'done' || this.run.status === 'cancelled';
   }
 
-  // -------------------------------------------------------------------------
-  // Condition checks (single evaluation, no retry)
-  // -------------------------------------------------------------------------
-
-  /**
-   * Evaluates a single condition against the given context.
-   *
-   * Condition types:
-   *   always    — always passes
-   *   human     — passes when context.humanApproved is true
-   *   condition — runs the expression as a shell command; passes on exit code 0
-   *   task_result — passes when context.taskResult starts with condition.expression
-   */
   async evaluateCondition(
     condition: WorkflowCondition,
     context: ConditionContext
@@ -210,16 +124,6 @@ export class WorkflowExecutor {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Private helpers
-  // -------------------------------------------------------------------------
-
-  /**
-   * Executes a condition expression via the shell and returns whether it exited with code 0.
-   *
-   * The expression is passed to `sh -c` so that shell semantics (quoting, pipes,
-   * redirects, arguments with spaces) work as expected.
-   */
   private async runConditionExpression(
     expression: string,
     cwd: string,
@@ -254,11 +158,6 @@ export class WorkflowExecutor {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Module-level helpers
-// ---------------------------------------------------------------------------
-
-/** Clamps/resolves the condition timeout to the valid range. */
 function resolveTimeout(timeoutMs?: number): number {
   if (!timeoutMs || timeoutMs <= 0) return DEFAULT_CONDITION_TIMEOUT_MS;
   return Math.min(timeoutMs, MAX_CONDITION_TIMEOUT_MS);

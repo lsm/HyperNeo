@@ -1,14 +1,6 @@
-/**
- * Tests for SkillsRegistry, AddSkillDialog, and EditSkillDialog components.
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
 import type { AppSkill } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Mocks — must use vi.hoisted for proper hoisting
-// ---------------------------------------------------------------------------
 
 const {
   mockAddSkill,
@@ -45,7 +37,6 @@ const {
   };
 });
 
-// Mock skillsStore
 vi.mock('../../../lib/skills-store.ts', () => ({
   skillsStore: {
     addSkill: (...args: unknown[]) => mockAddSkill(...args),
@@ -56,7 +47,6 @@ vi.mock('../../../lib/skills-store.ts', () => ({
   },
 }));
 
-// Mock useSkills hook — returns plain values matching the new UseSkillsResult interface
 vi.mock('../../../hooks/useSkills.ts', () => ({
   useSkills: () => ({
     skills: mockSkillsSignal.value,
@@ -65,7 +55,6 @@ vi.mock('../../../hooks/useSkills.ts', () => ({
   }),
 }));
 
-// Mock toast
 vi.mock('../../../lib/toast.ts', () => ({
   toast: {
     error: (msg: string) => mockToastError(msg),
@@ -75,14 +64,12 @@ vi.mock('../../../lib/toast.ts', () => ({
   },
 }));
 
-// Mock connectionManager
 vi.mock('../../../lib/connection-manager.ts', () => ({
   connectionManager: {
     getHubIfConnected: () => mockGetHubIfConnected(),
   },
 }));
 
-// Mock Modal
 vi.mock('../../ui/Modal.tsx', () => ({
   Modal: ({
     isOpen,
@@ -106,7 +93,6 @@ vi.mock('../../ui/Modal.tsx', () => ({
     ) : null,
 }));
 
-// Mock ConfirmModal
 vi.mock('../../ui/ConfirmModal.tsx', () => ({
   ConfirmModal: ({
     isOpen,
@@ -139,7 +125,6 @@ vi.mock('../../ui/ConfirmModal.tsx', () => ({
     ) : null,
 }));
 
-// Mock SettingsSection
 vi.mock('../SettingsSection.tsx', () => ({
   SettingsSection: ({
     title,
@@ -173,7 +158,6 @@ vi.mock('../SettingsSection.tsx', () => ({
   ),
 }));
 
-// Mock Button
 vi.mock('../../ui/Button.tsx', () => ({
   Button: ({
     children,
@@ -205,14 +189,9 @@ vi.mock('../../ui/Button.tsx', () => ({
   ),
 }));
 
-// Import components after mocks
 import { SkillsRegistry } from '../SkillsRegistry.tsx';
 import { AddSkillDialog } from '../AddSkillDialog.tsx';
 import { EditSkillDialog } from '../EditSkillDialog.tsx';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeSkill(id: string, overrides: Partial<AppSkill> = {}): AppSkill {
   return {
@@ -229,10 +208,6 @@ function makeSkill(id: string, overrides: Partial<AppSkill> = {}): AppSkill {
     ...overrides,
   };
 }
-
-// ---------------------------------------------------------------------------
-// SkillsRegistry tests
-// ---------------------------------------------------------------------------
 
 describe('SkillsRegistry', () => {
   beforeEach(() => {
@@ -467,10 +442,6 @@ describe('SkillsRegistry', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// AddSkillDialog tests
-// ---------------------------------------------------------------------------
-
 describe('AddSkillDialog', () => {
   const onClose = vi.fn();
 
@@ -522,7 +493,6 @@ describe('AddSkillDialog', () => {
   it('should show validation error when display name is empty', async () => {
     render(<AddSkillDialog isOpen onClose={onClose} />);
 
-    // Click the primary submit button (not the modal title)
     fireEvent.click(screen.getByTestId('button-primary'));
 
     await waitFor(() => {
@@ -716,10 +686,6 @@ describe('AddSkillDialog', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// EditSkillDialog tests
-// ---------------------------------------------------------------------------
-
 describe('EditSkillDialog', () => {
   const onClose = vi.fn();
 
@@ -763,9 +729,7 @@ describe('EditSkillDialog', () => {
     const skill = makeSkill('1', { name: 'my-skill' });
     render(<EditSkillDialog skill={skill} isOpen onClose={onClose} />);
 
-    // Name should appear as static text
     expect(screen.getByText('my-skill')).toBeTruthy();
-    // And the "Name cannot be changed" note
     expect(screen.getByText('Name cannot be changed after creation')).toBeTruthy();
   });
 

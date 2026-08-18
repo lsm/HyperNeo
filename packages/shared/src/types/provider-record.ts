@@ -1,10 +1,3 @@
-/**
- * Provider record types for the unified providers table.
- *
- * Replaces the split between built-in providers (env-only) and custom endpoints
- * (JSON blob in global_settings) with a single persisted registry.
- */
-
 export interface ProviderRecord {
   id: string;
   providerId: string;

@@ -1,12 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Application State Management
- *
- * Tests the state management including:
- * - SDK message deduplication
- * - ApplicationState lifecycle
- * - Computed signals
- */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { signal } from '@preact/signals';
 import {
@@ -35,14 +27,12 @@ import type { Session, AuthStatus, HealthStatus } from '@hyperneo/shared';
 import type { SystemState } from '@hyperneo/shared';
 import type { Signal } from '@preact/signals';
 
-// Type for mock MessageHub used in tests
 interface MockHub {
   subscribe: ReturnType<typeof vi.fn>;
   unsubscribe: ReturnType<typeof vi.fn>;
   call: ReturnType<typeof vi.fn>;
 }
 
-// Mock globalStore
 vi.mock('../global-store', () => ({
   globalStore: {
     sessions: signal<Session[]>([]),
@@ -52,7 +42,6 @@ vi.mock('../global-store', () => ({
   },
 }));
 
-// Mock StateChannel class
 vi.mock('../state-channel', () => {
   return {
     StateChannel: class MockStateChannel {
@@ -65,10 +54,8 @@ vi.mock('../state-channel', () => {
   };
 });
 
-// Create mock UUID
 const createUUID = () => crypto.randomUUID();
 
-// Factory for SDK messages
 function createSDKMessage(
   overrides: Partial<SDKMessage & { uuid: string; timestamp: number }> = {}
 ): SDKMessage {
@@ -94,7 +81,6 @@ function createSDKMessage(
 
 describe('state', () => {
   beforeEach(() => {
-    // Reset globalStore mocks
     globalStore.sessions.value = [];
     globalStore.hasArchivedSessions.value = false;
     globalStore.systemState.value = null;
@@ -130,7 +116,6 @@ describe('state', () => {
       const result = mergeSdkMessagesWithDedup(existing, added);
 
       expect(result).toHaveLength(1);
-      // Should use the newer timestamp (from added)
       expect((result[0] as SDKMessage & { timestamp?: number }).timestamp).toBe(2000);
     });
 
@@ -158,7 +143,6 @@ describe('state', () => {
       );
 
       expect(result).toHaveLength(2);
-      // Message without timestamp should come first (timestamp defaults to 0)
       expect((result[0] as MsgWithTimestamp).timestamp).toBeFalsy();
     });
 
@@ -171,7 +155,6 @@ describe('state', () => {
     it('should handle messages without uuid', () => {
       const noUuid = { ...createSDKMessage(), uuid: undefined };
       const result = mergeSdkMessagesWithDedup([], [noUuid as unknown as SDKMessage]);
-      // Messages without UUID are not added to the map
       expect(result).toHaveLength(0);
     });
   });
@@ -251,7 +234,6 @@ describe('state', () => {
     it('should be writable', () => {
       connectionState.value = 'connected';
       expect(connectionState.value).toBe('connected');
-      // Reset
       connectionState.value = 'connecting';
     });
   });
@@ -441,7 +423,6 @@ describe('state', () => {
 
   describe('Agent State Signals', () => {
     it('should return default agent state when not set', () => {
-      // currentAgentState returns default when session channels aren't set
       expect(currentAgentState.value).toEqual({ status: 'idle' });
     });
 
@@ -466,7 +447,6 @@ describe('state', () => {
       };
       mockSessionId = signal<string | null>(null);
 
-      // Reset appState internal state
       appState.cleanup();
     });
 
@@ -481,7 +461,6 @@ describe('state', () => {
     it('should handle double initialization gracefully', async () => {
       await initializeApplicationState(mockHub, mockSessionId);
 
-      // Second initialization should not throw
       await expect(initializeApplicationState(mockHub, mockSessionId)).resolves.not.toThrow();
     });
 
@@ -489,12 +468,11 @@ describe('state', () => {
       await initializeApplicationState(mockHub, mockSessionId);
       appState.cleanup();
 
-      // Should be able to initialize again after cleanup
       await expect(initializeApplicationState(mockHub, mockSessionId)).resolves.not.toThrow();
     });
 
     it('should throw error when getting session channels without initialization', () => {
-      appState.cleanup(); // Ensure not initialized
+      appState.cleanup();
 
       expect(() => appState.getSessionChannels('test-session')).toThrow('State not initialized');
     });
@@ -524,7 +502,6 @@ describe('state', () => {
       const channels1 = appState.getSessionChannels('session-1');
       const channels2 = appState.getSessionChannels('session-2');
 
-      // Different session should get different channels
       expect(channels1).not.toBe(channels2);
     });
 
@@ -534,13 +511,10 @@ describe('state', () => {
       const channels1 = appState.getSessionChannels('session-1');
       const stopSpy = vi.spyOn(channels1 as { stop: () => Promise<void> }, 'stop');
 
-      // Switch to different session
       appState.getSessionChannels('session-2');
 
-      // Wait for async cleanup
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Previous session's channels should have been stopped
       expect(stopSpy).toHaveBeenCalled();
     });
 
@@ -550,9 +524,6 @@ describe('state', () => {
       appState.getSessionChannels('test-session');
 
       await appState.cleanupSessionChannels('test-session');
-
-      // After cleanup, getting channels again should create new ones
-      // (but this will still work since we're re-creating)
     });
 
     it('should ignore cleanupSessionChannels for non-active session', async () => {
@@ -560,10 +531,8 @@ describe('state', () => {
 
       appState.getSessionChannels('session-1');
 
-      // Try to cleanup a different session - should do nothing
       await appState.cleanupSessionChannels('session-2');
 
-      // session-1 should still be active
       const channels = appState.getSessionChannels('session-1');
       expect(channels).toBeDefined();
     });
@@ -582,7 +551,6 @@ describe('state', () => {
     it('should handle refreshAll without initialization gracefully', async () => {
       appState.cleanup();
 
-      // Should not throw when called without initialization
       await expect(appState.refreshAll()).resolves.not.toThrow();
     });
   });
@@ -614,59 +582,41 @@ describe('state', () => {
     it('should auto-load channels when session ID changes', async () => {
       await initializeApplicationState(mockHub, mockSessionId);
 
-      // Set session ID
       mockSessionId.value = 'test-session';
 
-      // Wait for debounce (150ms)
       vi.advanceTimersByTime(200);
-
-      // Channels should have been created
-      // (Note: we can't easily verify this without more complex mocking)
     });
 
     it('should debounce rapid session changes', async () => {
       await initializeApplicationState(mockHub, mockSessionId);
 
-      // Rapidly change session ID
       mockSessionId.value = 'session-1';
       vi.advanceTimersByTime(50);
       mockSessionId.value = 'session-2';
       vi.advanceTimersByTime(50);
       mockSessionId.value = 'session-3';
 
-      // Wait for debounce
       vi.advanceTimersByTime(200);
-
-      // Only the last session should be loaded
-      // (Debounce prevents creating channels for session-1 and session-2)
     });
 
     it('should cleanup previous session when switching via signal', async () => {
       await initializeApplicationState(mockHub, mockSessionId);
 
-      // Set initial session
       mockSessionId.value = 'session-1';
       vi.advanceTimersByTime(200);
 
-      // Switch to different session - triggers cleanup of session-1
       mockSessionId.value = 'session-2';
       vi.advanceTimersByTime(200);
-
-      // The cleanup path (lines 275-276) should have been executed
     });
 
     it('should not cleanup when session changes to null', async () => {
       await initializeApplicationState(mockHub, mockSessionId);
 
-      // Set initial session
       mockSessionId.value = 'session-1';
       vi.advanceTimersByTime(200);
 
-      // Clear session
       mockSessionId.value = null;
       vi.advanceTimersByTime(200);
-
-      // No cleanup for null session
     });
   });
 
@@ -704,10 +654,8 @@ describe('state', () => {
       await initializeApplicationState(mockHub, mockSessionId);
       mockSessionId.value = 'test-session';
 
-      // Access currentSession - this triggers the computed signal
       const session = currentSession.value;
 
-      // Since our mock StateChannel returns null for $, result is null
       expect(session).toBeNull();
     });
 
@@ -715,7 +663,6 @@ describe('state', () => {
       await initializeApplicationState(mockHub, mockSessionId);
       mockSessionId.value = 'test-session';
 
-      // Access currentContextInfo
       const contextInfo = currentContextInfo.value;
 
       expect(contextInfo).toBeNull();
@@ -724,22 +671,17 @@ describe('state', () => {
     it('should trigger currentSessionState computed when accessing channels', async () => {
       await initializeApplicationState(mockHub, mockSessionId);
 
-      // Set session ID to trigger the computed
       mockSessionId.value = 'test-session-for-computed';
 
-      // Explicitly get channels to ensure they exist
       const channels = appState.getSessionChannels('test-session-for-computed');
       expect(channels).toBeDefined();
       expect(channels.session).toBeDefined();
       expect(channels.session.$).toBeDefined();
 
-      // Access the computed signals - this forces evaluation of currentSessionState
-      // which includes lines 396-397 (getSessionChannels and accessing $.value)
       const session = currentSession.value;
       const agentState = currentAgentState.value;
       const contextInfo = currentContextInfo.value;
 
-      // Verify computed values are accessed (even if null due to mock)
       expect(session).toBeNull();
       expect(agentState).toEqual({ status: 'idle' });
       expect(contextInfo).toBeNull();

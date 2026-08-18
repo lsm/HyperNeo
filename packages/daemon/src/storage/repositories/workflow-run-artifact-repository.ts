@@ -1,14 +1,3 @@
-/**
- * Workflow Run Artifact Repository
- *
- * Persistence layer for typed artifacts produced by workflow node executions.
- * Artifacts are keyed by `(run_id, node_id, artifact_type, artifact_key)` and
- * support upsert semantics — writing the same key twice updates the data.
- *
- * Each write calls reactiveDb.notifyChange('workflow_run_artifacts') so that
- * LiveQuery subscriptions push updates to the frontend in real time.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import type { ReactiveDatabase } from '../reactive-database';
 import { Logger } from '../../lib/logger';
@@ -32,10 +21,6 @@ export class WorkflowRunArtifactRepository {
     private reactiveDb?: ReactiveDatabase
   ) {}
 
-  /**
-   * Upsert an artifact. On conflict (same run + node + type + key),
-   * updates data and updatedAt.
-   */
   upsert(params: {
     id: string;
     runId: string;
@@ -69,7 +54,6 @@ export class WorkflowRunArtifactRepository {
     return this.rowToRecord(row)!;
   }
 
-  /** List artifacts for a run, optionally filtered by nodeId and/or artifactType. */
   listByRun(
     runId: string,
     filters?: { nodeId?: string; artifactType?: string }
@@ -93,12 +77,6 @@ export class WorkflowRunArtifactRepository {
       .filter((r): r is WorkflowRunArtifactRecord => r !== null);
   }
 
-  /**
-   * List artifacts for many runs in a single round-trip. Artifacts are ordered
-   * by created_at ASC globally, so grouping by run_id preserves each run's
-   * within-run ordering (matching listByRun). Missing run ids contribute no
-   * rows. Used to collapse N+1 lookups in buildPreflightContext.
-   */
   listByRuns(runIds: string[]): WorkflowRunArtifactRecord[] {
     if (runIds.length === 0) return [];
     const placeholders = runIds.map(() => '?').join(', ');
@@ -112,7 +90,6 @@ export class WorkflowRunArtifactRepository {
       .filter((r): r is WorkflowRunArtifactRecord => r !== null);
   }
 
-  /** Delete all artifacts for a workflow run. Returns the number deleted. */
   deleteByRun(runId: string): number {
     const result = this.db
       .prepare('DELETE FROM workflow_run_artifacts WHERE run_id = ?')

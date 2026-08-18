@@ -1,13 +1,3 @@
-/**
- * Generic external_state validator unit tests (epic #2299; promoted from the
- * #2300 spike in P2 #2302).
- *
- * Drives the L3 validator with a STUB connector (no `gh` spawn) to prove its
- * decision matrix is correct and DOMAIN-AGNOSTIC: pass→allow, pending→
- * retryable_block, else→block, retryable op failure→retryable_block, terminal
- * op failure→block. The coding presets (presets.test.ts) layer on top of this.
- */
-
 import { beforeEach, describe, expect, test } from 'bun:test';
 import {
   clearConnectorRegistry,
@@ -74,8 +64,6 @@ describe('external_state validator', () => {
     const result = await validate(ctxWithData('https://x/y/pull/1'));
     expect(result.type).toBe('retryable_block');
     expect((result as { retryAfterMs?: number }).retryAfterMs).toBe(5_000);
-    // Tagged so a caller can tell predicate-pending apart from a connector
-    // failure (both surface as retryable_block).
     expect((result as { data?: Record<string, unknown> }).data?.externalStatePending).toBe(true);
   });
 
@@ -111,8 +99,6 @@ describe('external_state validator', () => {
     const result = await validate(ctxWithData('https://x/y/pull/1'));
     expect(result.type).toBe('retryable_block');
     expect((result as { retryAfterMs?: number }).retryAfterMs).toBe(42_000);
-    // A connector failure is NOT tagged as predicate-pending — so a timeout
-    // wrapper must not turn it into an allow.
     expect(
       (result as { data?: Record<string, unknown> }).data?.externalStatePending
     ).toBeUndefined();
@@ -158,10 +144,6 @@ describe('external_state validator', () => {
   });
 
   test('op validates its own params → block when a required input is missing', async () => {
-    // The L3 validator is DOMAIN-NEUTRAL: it passes the resolved params to the
-    // op and the OP decides whether they are sufficient. No field-name
-    // knowledge (e.g. no `prUrl`) lives in the validator itself — a missing
-    // required input surfaces as the op's own non-retryable failure → block.
     const op: ConnectorOp = async (opParams) =>
       opParams.subject
         ? { ok: true, data: { state: 'MERGED' } }
@@ -173,7 +155,6 @@ describe('external_state validator', () => {
       pass: { eq: ['state', 'MERGED'] },
       label: 'gate',
     });
-    // No `params` resolver → the op receives {} → fails closed.
     const result = await validate(ctxWithData(undefined));
     expect(result.type).toBe('block');
     expect((result as { reason: string }).reason).toContain('subject is required');

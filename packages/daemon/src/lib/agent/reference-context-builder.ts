@@ -1,46 +1,19 @@
-/**
- * Reference Context Builder
- *
- * Builds a markdown-formatted context block from resolved @ references.
- * The context block is prepended to user messages so the agent has full entity data
- * when processing mentions like @ref{task:t-42} or @ref{file:src/lib/utils.ts}.
- */
-
 import type { ResolvedReference } from '@hyperneo/shared';
 import type { MissionMetric, NeoTask, RoomGoal } from '@hyperneo/shared/types/neo';
 import { Logger } from '../logger';
 
 const log = new Logger('reference-context-builder');
 
-/** Maximum total byte size of the injected context block. */
 export const MAX_CONTEXT_BYTES = 200_000;
 
-/**
- * Truncation priority: references earlier in this list are kept first when the
- * 200 KB limit is reached.
- */
 const PRIORITY_ORDER: ReadonlyArray<ResolvedReference['type']> = ['task', 'goal', 'file', 'folder'];
 
-/**
- * Build a markdown context block from a map of resolved references.
- *
- * References are sorted by priority (task > goal > file > folder) and accumulated
- * until the 200 KB byte limit is reached. A warning is logged when truncation
- * occurs. Returns an empty string when the input map is empty or all references
- * produce no output.
- *
- * @param references - Map of @ref{…} token → resolved reference, as produced by
- *   `ReferenceResolver.resolveAllReferences`. Keys are arbitrary; only the values
- *   are formatted.
- */
 export function buildReferenceContext(references: Record<string, ResolvedReference>): string {
   const entries = Object.values(references);
   if (entries.length === 0) {
     return '';
   }
 
-  // Stable sort by priority (task > goal > file > folder).
-  // Unknown types (indexOf returns -1) are placed after 'folder'.
   const sorted = [...entries].sort((a, b) => {
     const pa = PRIORITY_ORDER.indexOf(a.type);
     const pb = PRIORITY_ORDER.indexOf(b.type);
@@ -81,20 +54,12 @@ export function buildReferenceContext(references: Record<string, ResolvedReferen
   return `## Referenced Entities\n\n${sections.join('\n')}`;
 }
 
-/**
- * Prepend a reference context block to a user message, separated by a horizontal rule.
- * Returns the original message unchanged when `context` is empty.
- */
 export function prependContextToMessage(userMessage: string, context: string): string {
   if (!context) {
     return userMessage;
   }
   return `${context}\n\n---\n\n${userMessage}`;
 }
-
-// ============================================================================
-// Per-type formatters
-// ============================================================================
 
 function formatReference(ref: ResolvedReference): string {
   switch (ref.type) {

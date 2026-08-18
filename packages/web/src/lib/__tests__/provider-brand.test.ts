@@ -85,10 +85,8 @@ describe('provider-brand', () => {
     });
 
     it('strips the Kimi brand prefix only for the dedicated Kimi provider', () => {
-      // Kimi group: brand word is redundant -> drop it
       expect(shortenModelName('Kimi K2.7', 'kimi')).toBe('K2.7');
       expect(shortenModelName('Kimi K2 Thinking', 'kimi')).toBe('K2 Thinking');
-      // OpenRouter is multi-vendor: "Kimi" disambiguates -> keep it
       expect(shortenModelName('MoonshotAI: Kimi K2.6', 'openrouter')).toBe('Kimi K2.6');
     });
 
@@ -109,7 +107,6 @@ describe('provider-brand', () => {
     });
 
     it('preserves a brand name riding inside another provider group', () => {
-      // "Claude" stays — not redundant under the Copilot group
       expect(shortenModelName('Claude Haiku 4.5', 'anthropic-copilot')).toBe('Claude Haiku 4.5');
     });
 

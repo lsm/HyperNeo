@@ -1,14 +1,3 @@
-/**
- * SpaceWorkflowRepository — `postApproval` round-trip tests.
- *
- * PR 1/5 of the task-agent-as-post-approval-executor refactor. See
- * `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
- * §1.2.
- *
- * Covers the acceptance criterion "Workflow CRUD round-trips preserve
- * `postApproval` field (save → load → assert equal)."
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { PostApprovalRoute } from '@hyperneo/shared';
@@ -131,7 +120,6 @@ describe('SpaceWorkflowRepository — postApproval', () => {
       postApproval: route,
     });
 
-    // Update a different field; omit postApproval entirely.
     const renamed = repo.updateWorkflow(wf.id, { name: 'Renamed' });
     expect(renamed?.name).toBe('Renamed');
     expect(renamed?.postApproval).toEqual(route);

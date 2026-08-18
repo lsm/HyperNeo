@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Unit tests for SpaceOverview.
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
@@ -143,7 +140,6 @@ describe('SpaceOverview', () => {
     ];
 
     const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-    // Stats strip: Active (open + in_progress = 2), Review (blocked = 1), Done (done = 1)
     expect(getByRole('button', { name: 'Active tasks: 2' })).toBeTruthy();
     expect(getByRole('button', { name: 'Review tasks: 1' })).toBeTruthy();
     expect(getByRole('button', { name: 'Done tasks: 1' })).toBeTruthy();
@@ -259,14 +255,12 @@ describe('SpaceOverview', () => {
 
     const { container, rerender } = render(<SpaceOverview spaceId="space-1" />);
 
-    // Active count should include the open task
     const getStatText = () =>
       Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
     let stats = getStatText();
     expect(stats.some((t) => t?.includes('Active') && t?.includes('1'))).toBe(true);
     expect(stats.some((t) => t?.includes('Review') && t?.includes('0'))).toBe(true);
 
-    // Add a blocked task
     mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'blocked')];
     rerender(<SpaceOverview spaceId="space-1" />);
 
@@ -378,7 +372,6 @@ describe('SpaceOverview', () => {
         (b) => b.textContent === 'Stop'
       )!;
       fireEvent.click(stopBtn);
-      // Find and click the confirm button in the dialog
       const confirmBtn = Array.from(document.body.querySelectorAll('button')).find(
         (b) => b.textContent === 'Stop Space'
       )!;
@@ -476,8 +469,6 @@ describe('SpaceOverview', () => {
     });
 
     it('Done count includes archived tasks to match the completed tab', () => {
-      // t4 (done) and t5 (archived) both count because the Completed tab now
-      // includes archived terminal tasks.
       const { container } = render(<SpaceOverview spaceId="space-1" />);
       const doneBtn = Array.from(container.querySelectorAll('button')).find((b) =>
         b.textContent?.includes('Done')

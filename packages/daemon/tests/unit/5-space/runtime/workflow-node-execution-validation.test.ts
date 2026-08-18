@@ -1,13 +1,3 @@
-/**
- * Unit tests for the shared stale-agent-reference validation used by the
- * node-activation paths (channel activation + restart recovery).
- *
- * Locks in:
- *   - a configured custom-agent id that no longer exists is reported;
- *   - built-in/worker slots that carry no agent id (null/empty) are preserved
- *     and never reported as missing.
- */
-
 import { describe, test, expect } from 'bun:test';
 import type { WorkflowNode } from '@hyperneo/shared';
 import {
@@ -55,8 +45,6 @@ describe('findMissingNodeAgentReferences', () => {
       { agentId: '', name: 'worker-empty' },
       { agentId: undefined, name: 'worker-undefined' },
     ]);
-    // None of these carry a reference, so none are "missing" — they are valid
-    // built-in/worker slots and must not be flagged or silently nulled.
     expect(findMissingNodeAgentReferences(node, () => false)).toEqual([]);
   });
 });

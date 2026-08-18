@@ -1,8 +1,3 @@
-/**
- * Tests for space-unread.ts — client-local unread tracking for space sessions
- * and tasks.
- */
-
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 const createMockLocalStorage = () => {
@@ -68,9 +63,7 @@ describe('space-unread', () => {
       const { markSpaceSessionRead, syncSpaceSessionSeen, getSpaceSessionUnreadCount } =
         await import('../space-unread.js');
       markSpaceSessionRead('s1', 50);
-      // Rewind deletes messages, dropping the live count to 30.
       syncSpaceSessionSeen([{ id: 's1', messageCount: 30 }]);
-      // New post-rewind messages read as unread against the lowered baseline.
       expect(getSpaceSessionUnreadCount('s1', 31)).toBe(1);
       expect(getSpaceSessionUnreadCount('s1', 49)).toBe(19);
     });
@@ -80,7 +73,6 @@ describe('space-unread', () => {
         await import('../space-unread.js');
       markSpaceSessionRead('s1', 50);
       syncSpaceSessionSeen([{ id: 's1', messageCount: 60 }]);
-      // Count grew normally — baseline unchanged, so only the delta is unread.
       expect(getSpaceSessionUnreadCount('s1', 60)).toBe(10);
     });
   });
@@ -94,9 +86,7 @@ describe('space-unread', () => {
     it('seeds tasks at their current updatedAt, treating them as read', async () => {
       const { seedSpaceTasksSeen, isSpaceTaskUnread } = await import('../space-unread.js');
       seedSpaceTasksSeen([{ id: 't1', updatedAt: 100 }]);
-      // Same updatedAt as the seed → not unread.
       expect(isSpaceTaskUnread('t1', 100)).toBe(false);
-      // A later update (e.g. agent activity) → unread.
       expect(isSpaceTaskUnread('t1', 150)).toBe(true);
     });
 
@@ -106,7 +96,6 @@ describe('space-unread', () => {
       );
       seedSpaceTasksSeen([{ id: 't1', updatedAt: 100 }]);
       markSpaceTaskRead('t1', 200);
-      // Re-seeding with an older updatedAt must not clobber the newer seen value.
       seedSpaceTasksSeen([{ id: 't1', updatedAt: 100 }]);
       expect(isSpaceTaskUnread('t1', 200)).toBe(false);
       expect(isSpaceTaskUnread('t1', 250)).toBe(true);

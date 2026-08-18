@@ -49,14 +49,11 @@ describe('QueuePreviewTray — inline cap + full-queue modal', () => {
 
     const modalList = document.body.querySelector('[data-testid="queued-modal-list"]');
     expect(modalList).toBeTruthy();
-    // All five rows render on one page (page size 10) — not just the inline 3.
     expect(modalList?.querySelectorAll('div.flex.min-h-8').length).toBe(5);
-    // Actions available in the modal.
     const removeButtons = modalList?.querySelectorAll('[data-testid="remove-queued-message"]');
     expect(removeButtons?.length).toBe(5);
     fireEvent.click(removeButtons![4]);
     expect(onRemove).toHaveBeenCalledWith(messages[4]);
-    // No pagination controls for a single page.
     expect(container.querySelector('[data-testid="queued-modal-page-label"]')).toBeNull();
   });
 
@@ -110,9 +107,7 @@ describe('QueuePreviewTray — inline cap + full-queue modal', () => {
         nextTurnMessages={makeMessages(4, 'next')}
       />
     );
-    // Both groups overflow their inline cap.
     expect(container.querySelectorAll('[data-testid="queued-show-all"]').length).toBe(2);
-    // Open the Steer modal — 12 items → 2 pages.
     fireEvent.click(container.querySelectorAll('[data-testid="queued-show-all"]')[0]);
     expect(
       document.body.querySelector('[data-testid="queued-modal-page-label"]')?.textContent
@@ -124,21 +119,15 @@ describe('QueuePreviewTray — review round 2 fixes', () => {
   afterEach(cleanup);
 
   it('does not reopen the modal when its queue refills after emptying', () => {
-    // Regression: removing every message of the open group left modalGroup
-    // set; a later message in that group silently re-blocked the chat with
-    // an auto-opened modal.
     const { container, rerender } = render(
       <QueuePreviewTray currentTurnMessages={[]} nextTurnMessages={makeMessages(5, 'next')} />
     );
     fireEvent.click(container.querySelector('[data-testid="queued-show-all"]')!);
     expect(document.body.querySelector('[data-testid="queued-modal-list"]')).toBeTruthy();
 
-    // Queue empties (all moved/removed) while the other group keeps the
-    // tray mounted.
     rerender(
       <QueuePreviewTray currentTurnMessages={makeMessages(2, 'steer')} nextTurnMessages={[]} />
     );
-    // The selection resets — a NEW next message must not auto-open the modal.
     rerender(
       <QueuePreviewTray
         currentTurnMessages={makeMessages(2, 'steer')}

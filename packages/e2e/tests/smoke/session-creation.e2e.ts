@@ -1,10 +1,3 @@
-/**
- * Smoke Test: Session Creation
- *
- * Quick test to verify basic session creation works.
- * Part of the smoke test suite (target: < 1 minute total).
- */
-
 import { test, expect } from '../../fixtures';
 import { createSessionViaUI, cleanupTestSession } from '../helpers/wait-helpers';
 
@@ -29,7 +22,6 @@ test.describe('Smoke: Session Creation', () => {
     sessionId = await createSessionViaUI(page);
     expect(sessionId).toBeTruthy();
 
-    // Verify session appears in sidebar
     await expect(page.locator(`[data-session-id="${sessionId}"]`).first()).toBeVisible();
   });
 });

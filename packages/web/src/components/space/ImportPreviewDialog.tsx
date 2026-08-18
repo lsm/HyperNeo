@@ -1,14 +1,3 @@
-/**
- * ImportPreviewDialog — modal shown after parsing a .hyperneo.json import file.
- *
- * Displays:
- * - List of agents to import, with conflict resolution per conflicting item
- * - List of workflows to import, with conflict resolution per conflicting item
- * - Validation errors / cross-reference warnings
- * - Summary: "Will create X agents and Y workflows"
- * - Confirm / Cancel actions
- */
-
 import { useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal.tsx';
 import type { SpaceExportBundle } from '@hyperneo/shared';
@@ -151,7 +140,6 @@ export function ImportPreviewDialog({
   const conflictAgents = preview.agents.filter((a) => a.action === 'conflict');
   const conflictWorkflows = preview.workflows.filter((w) => w.action === 'conflict');
 
-  // Count what will actually be created (not skipped)
   const willCreateAgents =
     newAgents + conflictAgents.filter((a) => getAgentStrategy(a.name) !== 'skip').length;
   const willCreateWorkflows =
@@ -177,7 +165,6 @@ export function ImportPreviewDialog({
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Import Preview" size="lg">
       <div class="space-y-5">
-        {/* Bundle info */}
         <div class="text-sm text-gray-400">
           Importing from <span class="text-gray-200 font-medium">{bundle.name}</span>
           {bundle.exportedFrom && (
@@ -185,7 +172,6 @@ export function ImportPreviewDialog({
           )}
         </div>
 
-        {/* Validation errors */}
         {hasValidationErrors && (
           <div class="rounded-lg border border-red-800 bg-red-950/40 p-3 space-y-1" role="alert">
             <p class="text-xs font-semibold text-red-400 mb-1">Validation errors</p>
@@ -197,7 +183,6 @@ export function ImportPreviewDialog({
           </div>
         )}
 
-        {/* Agents section */}
         {preview.agents.length > 0 && (
           <section>
             <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
@@ -216,7 +201,6 @@ export function ImportPreviewDialog({
           </section>
         )}
 
-        {/* Workflows section */}
         {preview.workflows.length > 0 && (
           <section>
             <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
@@ -235,7 +219,6 @@ export function ImportPreviewDialog({
           </section>
         )}
 
-        {/* Cross-reference warnings section */}
         {hasValidationErrors && (
           <div class="rounded-lg border border-yellow-800 bg-yellow-950/30 p-3">
             <p class="text-xs text-yellow-300">
@@ -245,7 +228,6 @@ export function ImportPreviewDialog({
           </div>
         )}
 
-        {/* Summary */}
         <div class="flex items-center justify-between pt-2 border-t border-dark-700">
           <p class="text-sm text-gray-400">
             Will import <span class="text-gray-100 font-medium">{willCreateAgents}</span>

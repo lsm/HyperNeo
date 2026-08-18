@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Skeleton Components
- */
 
 import { render } from '@testing-library/preact';
 import { describe, it, expect } from 'vitest';
@@ -83,7 +80,6 @@ describe('SkeletonMessage', () => {
     const { container } = render(<SkeletonMessage />);
     const skeletons = container.querySelectorAll('.skeleton');
 
-    // Should have circle avatar + title + text lines
     const circleSkeletons = Array.from(skeletons).filter((el) =>
       el.className.includes('rounded-full')
     );
@@ -100,7 +96,6 @@ describe('SkeletonMessage', () => {
     const { container } = render(<SkeletonMessage />);
     const skeletons = container.querySelectorAll('.skeleton');
 
-    // Avatar (1) + Title (1) + Text lines (2) = 4 total
     expect(skeletons.length).toBeGreaterThanOrEqual(3);
   });
 
@@ -120,14 +115,12 @@ describe('Skeleton Edge Cases', () => {
   it('should handle zero width', () => {
     const { container } = render(<Skeleton width={0} />);
     const skeleton = container.querySelector('.skeleton') as HTMLElement;
-    // Zero width is rendered as "0px" or empty string depending on implementation
     expect(skeleton?.style.width === '0px' || skeleton?.style.width === '').toBe(true);
   });
 
   it('should handle zero height', () => {
     const { container } = render(<Skeleton height={0} />);
     const skeleton = container.querySelector('.skeleton') as HTMLElement;
-    // Zero height is rendered as "0px" or empty string depending on implementation
     expect(skeleton?.style.height === '0px' || skeleton?.style.height === '').toBe(true);
   });
 

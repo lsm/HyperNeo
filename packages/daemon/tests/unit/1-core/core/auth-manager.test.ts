@@ -1,9 +1,3 @@
-/**
- * AuthManager Tests
- *
- * Tests authentication management via environment variables.
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { AuthManager } from '../../../../src/lib/auth-manager';
 
@@ -12,9 +6,7 @@ describe('AuthManager', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(() => {
-    // Save original environment
     originalEnv = { ...process.env };
-    // Clear auth-related env vars
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
@@ -24,7 +16,6 @@ describe('AuthManager', () => {
   });
 
   afterEach(() => {
-    // Restore original environment
     process.env = originalEnv;
   });
 
@@ -149,19 +140,16 @@ describe('AuthManager', () => {
 
   describe('constructor options', () => {
     it('should accept optional database parameter', () => {
-      // Should not throw
       const manager = new AuthManager(null as unknown);
       expect(manager).toBeDefined();
     });
 
     it('should accept optional config parameter', () => {
-      // Should not throw
       const manager = new AuthManager(null as unknown, null as unknown);
       expect(manager).toBeDefined();
     });
 
     it('should accept optional envPath parameter', () => {
-      // Should not throw
       const manager = new AuthManager(undefined, undefined, '/custom/path/.env');
       expect(manager).toBeDefined();
     });

@@ -1,12 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for the merged SessionInfoPanel.
- *
- * Covers: the background-task extraction helper, the metadata format helpers
- * (ported from the deleted SessionInfoModal), and the rendered merged panel —
- * the compact action toolbar (gated by features/readonly), the live sections,
- * the metadata sections, and the collapsed Internal region.
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/preact';
 
@@ -14,8 +6,6 @@ import { extractBackgroundTasks } from '../../hooks/useRunningToolUseIds.ts';
 import type { ChatMessage, Session } from '@hyperneo/shared';
 import { connectionState } from '../../lib/state';
 
-// useSessionRename commits through api-helpers.updateSession; stub it (and
-// keep the rest of the module real — other imports rely on it).
 const renameMocks = vi.hoisted(() => ({ updateSession: vi.fn() }));
 vi.mock('../../lib/api-helpers', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -211,7 +201,6 @@ describe('SessionInfoPanel', () => {
 
       const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
       expect(toolbar.querySelector('button[title="Tools"]')).toBeNull();
-      // Export/Reset remain available.
       expect(toolbar.querySelector('button[title="Export chat"]')).toBeTruthy();
     });
 
@@ -237,7 +226,6 @@ describe('SessionInfoPanel', () => {
         title: 'Renamed Title',
         metadata: { titleSetBy: 'user' },
       });
-      // Input is removed once the edit settles.
       expect(toolbar.querySelector('[data-testid="session-info-rename-input"]')).toBeNull();
     });
 
@@ -254,14 +242,11 @@ describe('SessionInfoPanel', () => {
       fireEvent.keyDown(input, { key: 'Escape' });
 
       expect(renameMocks.updateSession).not.toHaveBeenCalled();
-      // Escape cancels the edit without dismissing the whole panel.
       expect(container.querySelector('[data-testid="session-info-panel"]')).toBeTruthy();
       expect(container.querySelector('[data-testid="session-info-rename-input"]')).toBeNull();
     });
 
     it('commits an in-flight rename when the panel is closed mid-edit', () => {
-      // Closing the panel unmounts the input before blur fires — the edit
-      // must still settle, not silently drop (or leak a stale draft).
       renameMocks.updateSession.mockClear();
       const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
       openPanel(container);
@@ -272,7 +257,6 @@ describe('SessionInfoPanel', () => {
       ) as HTMLInputElement;
       fireEvent.input(input, { target: { value: 'Saved On Close' } });
 
-      // Toggle the trigger to close the panel while the edit is in flight.
       fireEvent.click(container.querySelector('button[title="Session info"]')!);
       expect(container.querySelector('[data-testid="session-info-panel"]')).toBeNull();
 
@@ -283,9 +267,6 @@ describe('SessionInfoPanel', () => {
     });
 
     it('commits an in-flight rename when an outside mousedown closes the panel', () => {
-      // A mousedown on a navigating control (another sidebar session) closes
-      // the panel AND may unmount this component on the following click —
-      // the commit must happen synchronously in the close path.
       renameMocks.updateSession.mockClear();
       const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
       openPanel(container);
@@ -305,9 +286,6 @@ describe('SessionInfoPanel', () => {
     });
 
     it('does not commit a stale draft when opening the panel after an external title change', () => {
-      // Auto-title generation can update the title before the panel is ever
-      // opened; the hook's draft still holds the old title, so the toggle's
-      // settle-commit must be a no-op when no edit is in flight.
       renameMocks.updateSession.mockClear();
       const session = createMockSession();
       const { container, rerender } = render(
@@ -320,7 +298,6 @@ describe('SessionInfoPanel', () => {
         />
       );
 
-      // Open and then close the panel without ever starting an edit.
       fireEvent.click(container.querySelector('button[title="Session info"]')!);
       fireEvent.click(container.querySelector('button[title="Session info"]')!);
 
@@ -328,8 +305,6 @@ describe('SessionInfoPanel', () => {
     });
 
     it('disables the rename action while an edit is in flight', () => {
-      // Re-clicking the pencil mid-edit would blur-commit the draft and then
-      // reopen the editor seeded from the stale title prop.
       renameMocks.updateSession.mockClear();
       const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
       openPanel(container);
@@ -378,7 +353,6 @@ describe('SessionInfoPanel', () => {
       openPanel(container);
 
       const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
-      // Tools opens a modal that fetches daemon config, so it must also disable.
       expect(toolbar.querySelector('button[title="Tools"]')?.disabled).toBe(true);
       expect(toolbar.querySelector('button[title="Export chat"]')?.disabled).toBe(true);
       expect(toolbar.querySelector('button[title="Reset agent"]')?.disabled).toBe(true);
@@ -405,12 +379,10 @@ describe('SessionInfoPanel', () => {
       expect(headers).toContain('Configuration');
       expect(headers).toContain('Usage');
 
-      // Model value from config renders in the panel.
       expect(container.textContent).toContain('sonnet');
     });
 
     it('shows only the action toolbar (no live/metadata sections) when features.sessionInfo is false', () => {
-      // Lobby-style session: actions must stay reachable, but session info is off.
       const { container } = render(
         <SessionInfoPanelButton
           {...defaultProps}

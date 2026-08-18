@@ -1,8 +1,4 @@
-// @vitest-environment happy-dom
 // @ts-nocheck
-/**
- * Tests for the Space Agent Overlay history integration
- */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   pushOverlayHistory,
@@ -47,7 +43,6 @@ describe('Overlay history', () => {
       configurable: true,
     });
 
-    // Reset signals
     spaceOverlaySessionIdSignal.value = null;
     spaceOverlayAgentNameSignal.value = null;
     spaceOverlayTaskContextSignal.value = null;
@@ -83,7 +78,7 @@ describe('Overlay history', () => {
       expect(mockHistory.pushState).toHaveBeenCalledWith(
         expect.objectContaining({ overlaySessionId: 'session-abc' }),
         '',
-        '/space/my-space' // URL does NOT change
+        '/space/my-space'
       );
       expect(spaceOverlaySessionIdSignal.value).toBe('session-abc');
       expect(spaceOverlayAgentNameSignal.value).toBe('Task Agent');
@@ -138,7 +133,7 @@ describe('Overlay history', () => {
     });
 
     it('should just clear signals when no overlay history entry exists', () => {
-      mockHistory.state = {}; // no overlaySessionId
+      mockHistory.state = {};
 
       closeOverlayHistory();
 
@@ -151,10 +146,9 @@ describe('Overlay history', () => {
 
   describe('popstate with overlay', () => {
     it('should close overlay signals when popstate removes overlay marker', () => {
-      // Simulate: overlay was opened (signal set), user presses back
       spaceOverlaySessionIdSignal.value = 'session-abc';
       spaceOverlayAgentNameSignal.value = 'Task Agent';
-      mockHistory.state = {}; // no overlay marker (user went back)
+      mockHistory.state = {};
 
       initializeRouter();
       window.dispatchEvent(new PopStateEvent('popstate', {}));

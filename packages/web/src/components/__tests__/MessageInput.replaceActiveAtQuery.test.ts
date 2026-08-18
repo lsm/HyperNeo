@@ -1,11 +1,3 @@
-/**
- * Unit tests for the replaceActiveAtQuery utility exported from MessageInput.
- *
- * This is a pure-function extraction of the handleReferenceInsert replacement
- * logic, making it straightforward to unit-test the @query → @ref{type:id}
- * substitution without spinning up the full MessageInput component.
- */
-
 import { describe, it, expect } from 'vitest';
 import { replaceActiveAtQuery } from '../MessageInput';
 
@@ -29,15 +21,12 @@ describe('replaceActiveAtQuery', () => {
   });
 
   it('only replaces the active (last) @query', () => {
-    // First @task-1 is already followed by a space so it is not "active".
-    // Only @fix at the end is the active query.
     expect(replaceActiveAtQuery('@ref{task:t-1}  @fix', 'task', 't-2')).toBe(
       '@ref{task:t-1}  @ref{task:t-2} '
     );
   });
 
   it('returns original content when there is no active @query', () => {
-    // Content ends with a space — no active @query
     expect(replaceActiveAtQuery('hello world ', 'task', 't-1')).toBe('hello world ');
   });
 

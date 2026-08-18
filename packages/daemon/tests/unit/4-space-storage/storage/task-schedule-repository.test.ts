@@ -1,19 +1,9 @@
-/**
- * TaskScheduleRepository unit tests
- *
- * Exercises all CRUD and query methods against an in-memory SQLite database
- * using the shared space-test-db helper (same schema as production after all
- * migrations).
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import type { CreateTaskScheduleParams } from '../../../../src/storage/repositories/task-schedule-repository';
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeCronParams(
   overrides: Partial<CreateTaskScheduleParams> = {}
@@ -42,8 +32,6 @@ function makeAtParams(overrides: Partial<CreateTaskScheduleParams> = {}): Create
   };
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 describe('TaskScheduleRepository', () => {
   let db: Database;
   let spaceRepo: SpaceRepository;
@@ -67,8 +55,6 @@ describe('TaskScheduleRepository', () => {
   afterEach(() => {
     db.close();
   });
-
-  // ─── create ───────────────────────────────────────────────────────────────
 
   describe('create', () => {
     it('creates a cron schedule with all fields populated', () => {
@@ -145,8 +131,6 @@ describe('TaskScheduleRepository', () => {
     });
   });
 
-  // ─── getById ──────────────────────────────────────────────────────────────
-
   describe('getById', () => {
     it('returns the schedule by ID', () => {
       const created = repo.create(makeCronParams({ spaceId }));
@@ -159,8 +143,6 @@ describe('TaskScheduleRepository', () => {
       expect(repo.getById('no-such-id')).toBeNull();
     });
   });
-
-  // ─── listBySpace ──────────────────────────────────────────────────────────
 
   describe('listBySpace', () => {
     it('lists all schedules for a space', () => {
@@ -201,14 +183,12 @@ describe('TaskScheduleRepository', () => {
     });
   });
 
-  // ─── listActiveDue ────────────────────────────────────────────────────────
-
   describe('listActiveDue', () => {
     it('returns schedules whose nextRunAt is in the past or now', () => {
       const now = Date.now();
       const s1 = repo.create(makeCronParams({ spaceId, nextRunAt: now - 1000 }));
       const s2 = repo.create(makeCronParams({ spaceId, nextRunAt: now - 1 }));
-      repo.create(makeCronParams({ spaceId, nextRunAt: now + 60_000 })); // future — not due
+      repo.create(makeCronParams({ spaceId, nextRunAt: now + 60_000 }));
 
       const due = repo.listActiveDue(now);
       const ids = due.map((s) => s.id);
@@ -234,9 +214,6 @@ describe('TaskScheduleRepository', () => {
     });
 
     it('excludes schedules that already have a pendingJobId linked', () => {
-      // Recovery scans iterate the due-list; once a schedule is reseeded its
-      // pending_job_id is non-null and it must drop out of subsequent pages so
-      // pagination advances through later rows instead of looping forever.
       const now = Date.now();
       const s1 = repo.create(makeCronParams({ spaceId, nextRunAt: now - 1000 }));
       const s2 = repo.create(makeCronParams({ spaceId, nextRunAt: now - 500 }));
@@ -247,13 +224,11 @@ describe('TaskScheduleRepository', () => {
     });
   });
 
-  // ─── listActiveWithPendingJob ──────────────────────────────────────────────
-
   describe('listActiveWithPendingJob', () => {
     it('returns active schedules that have a pendingJobId set', () => {
       const s1 = repo.create(makeCronParams({ spaceId }));
       repo.updatePendingJobId(s1.id, 'job-abc');
-      repo.create(makeCronParams({ spaceId })); // no pending job
+      repo.create(makeCronParams({ spaceId }));
 
       const withJob = repo.listActiveWithPendingJob();
       expect(withJob.length).toBe(1);
@@ -269,8 +244,6 @@ describe('TaskScheduleRepository', () => {
       expect(repo.listActiveWithPendingJob()).toHaveLength(0);
     });
   });
-
-  // ─── listActiveBySpace ─────────────────────────────────────────────────────
 
   describe('listActiveBySpace', () => {
     it('returns only active schedules for the given space', () => {
@@ -291,8 +264,6 @@ describe('TaskScheduleRepository', () => {
       expect(ids).toEqual([s1.id, s2.id].sort());
     });
   });
-
-  // ─── update ───────────────────────────────────────────────────────────────
 
   describe('update', () => {
     it('updates title and description', () => {
@@ -320,8 +291,6 @@ describe('TaskScheduleRepository', () => {
     });
   });
 
-  // ─── updatePendingJobId ───────────────────────────────────────────────────
-
   describe('updatePendingJobId', () => {
     it('sets a pendingJobId', () => {
       const s = repo.create(makeCronParams({ spaceId }));
@@ -336,8 +305,6 @@ describe('TaskScheduleRepository', () => {
       expect(repo.getById(s.id)!.pendingJobId).toBeNull();
     });
   });
-
-  // ─── updateStatus ─────────────────────────────────────────────────────────
 
   describe('updateStatus', () => {
     it('transitions active → paused', () => {
@@ -359,8 +326,6 @@ describe('TaskScheduleRepository', () => {
       expect(repo.getById(s.id)!.status).toBe('completed');
     });
   });
-
-  // ─── updateAfterFire ──────────────────────────────────────────────────────
 
   describe('updateAfterFire', () => {
     it('records fire state for a cron schedule (stays active)', () => {
@@ -400,8 +365,6 @@ describe('TaskScheduleRepository', () => {
       expect(updated.pendingJobId).toBeNull();
     });
   });
-
-  // ─── delete ───────────────────────────────────────────────────────────────
 
   describe('delete', () => {
     it('deletes an existing schedule and returns true', () => {

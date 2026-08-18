@@ -4,8 +4,6 @@ import type { ElementType } from '../../internal/types.ts';
 import { useId } from '../../internal/use-id.ts';
 import { useFieldContext, useFieldsetContext } from '../field/field.tsx';
 
-// --- Input ---
-
 interface InputProps {
   as?: ElementType;
   invalid?: boolean;
@@ -41,7 +39,6 @@ function InputFn({
     };
   }, [id, fieldCtx]);
 
-  // Compute combined invalid state: prop invalid OR any FieldError present
   const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
 
   const slot = {
@@ -80,8 +77,6 @@ function InputFn({
 InputFn.displayName = 'Input';
 export const Input = InputFn;
 
-// --- Textarea ---
-
 interface TextareaProps {
   as?: ElementType;
   invalid?: boolean;
@@ -117,7 +112,6 @@ function TextareaFn({
     };
   }, [id, fieldCtx]);
 
-  // Compute combined invalid state: prop invalid OR any FieldError present
   const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
 
   const slot = {
@@ -156,8 +150,6 @@ function TextareaFn({
 TextareaFn.displayName = 'Textarea';
 export const Textarea = TextareaFn;
 
-// --- Select ---
-
 interface SelectProps {
   as?: ElementType;
   invalid?: boolean;
@@ -193,7 +185,6 @@ function SelectFn({
     };
   }, [id, fieldCtx]);
 
-  // Compute combined invalid state: prop invalid OR any FieldError present
   const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
 
   const slot = {

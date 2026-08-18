@@ -1,11 +1,3 @@
-/**
- * Legacy Room task lifecycle RPC retirement tests.
- *
- * The Room task lifecycle is no longer an active product surface. The legacy
- * handlers remain in source only for preserved-data compatibility work and are
- * intentionally not registered on the daemon MessageHub.
- */
-
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 

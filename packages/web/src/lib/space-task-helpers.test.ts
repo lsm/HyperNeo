@@ -1,11 +1,3 @@
-/**
- * Tests for space-task-helpers.ts
- *
- * Covers `buildMarkDonePayload` — the shared payload both Mark Done call sites
- * (`PendingPostApprovalBanner` + `SpaceTaskPane` status dropdown) use so the
- * `approved → done` path clears post-approval fields consistently
- * (task #849, G4).
- */
 import type { SpaceTask, SpaceTaskStatus } from '@hyperneo/shared';
 import { describe, expect, it } from 'vitest';
 import { buildMarkDonePayload } from './space-task-helpers.js';
@@ -44,9 +36,6 @@ describe('buildMarkDonePayload', () => {
   });
 
   it('nulls post-approval fields even when the approved task carries a blocked reason', () => {
-    // Mirrors the PendingPostApprovalBanner "Mark done" path: the banner only
-    // renders when postApprovalBlockedReason is set, so this is the production
-    // shape the helper must handle.
     const task = makeTask({
       status: 'approved',
       postApprovalSessionId: 'sess-abc',

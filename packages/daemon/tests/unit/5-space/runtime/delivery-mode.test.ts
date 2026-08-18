@@ -16,18 +16,11 @@ describe('deliveryModeFromFailureReason', () => {
   });
 
   test('normalizes legacy immediate-prefixed rows to defer', () => {
-    // The prefix records how a PRE-upgrade dispatch was attempted, not an
-    // intent that survives the always-next-idle behavior — recovered rows
-    // must never inject mid-work regardless of their historical encoding.
     expect(deliveryModeFromFailureReason('deliveryMode:immediate; some failure')).toBe('defer');
     expect(deliveryModeFromFailureReason('deliveryMode:immediate;')).toBe('defer');
   });
 
   test('defaults to defer for null or undefined (in-flight / no encoded mode)', () => {
-    // An unmarked pending delivery must not replay as 'immediate' — that
-    // would steer an already-processing kickoff mid-turn. This also
-    // normalizes durable rows persisted by pre-upgrade code (whose reasons
-    // predate the deliveryMode: prefixes).
     expect(deliveryModeFromFailureReason(null)).toBe('defer');
     expect(deliveryModeFromFailureReason(undefined)).toBe('defer');
   });

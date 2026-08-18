@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * ThinkingBlock Component Tests
- *
- * Tests thinking block rendering with expand/collapse functionality
- */
 import { describe, it, expect } from 'vitest';
 
 import { render, fireEvent } from '@testing-library/preact';
@@ -33,7 +28,6 @@ describe('ThinkingBlock', () => {
     it('should have lightbulb icon', () => {
       const { container } = render(<ThinkingBlock content="Thinking..." />);
 
-      // Should have an SVG icon
       const svg = container.querySelector('svg');
       expect(svg).toBeTruthy();
     });
@@ -80,7 +74,6 @@ describe('ThinkingBlock', () => {
       const { container } = render(<ThinkingBlock content={content} estimatedTokens={1500} />);
 
       expect(container.textContent).toContain('1,500 tokens');
-      // Check that it's plural, not singular (should have "tokens" not "token" alone)
       expect(container.textContent).toMatch(/\btokens\b/);
       expect(container.textContent).not.toMatch(/\b1,500 token\b/);
     });
@@ -118,8 +111,6 @@ describe('ThinkingBlock', () => {
       const shortContent = 'Short content that fits in preview.';
       const { container } = render(<ThinkingBlock content={shortContent} />);
 
-      // No "Show more" button for short content (truncation detection via scrollHeight)
-      // In test environment, scrollHeight may not work, so we just verify content renders
       expect(container.textContent).toContain('Short content');
     });
 
@@ -128,20 +119,15 @@ describe('ThinkingBlock', () => {
         'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10';
       const { container } = render(<ThinkingBlock content={longContent} />);
 
-      // Content should be rendered (truncation detection uses useLayoutEffect/scrollHeight
-      // which may not trigger in test environment)
       expect(container.textContent).toContain('Line 1');
       expect(container.textContent).toContain('Line 10');
     });
 
     it('should have expand button structure when content triggers truncation', () => {
-      // Note: In a real browser, scrollHeight comparison triggers truncation
-      // In test environment, we just verify the component structure is correct
       const longContent =
         'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10';
       const { container } = render(<ThinkingBlock content={longContent} />);
 
-      // Verify content is rendered
       expect(container.textContent).toContain('Line 1');
       expect(container.querySelector('[data-testid="thinking-block"]')).toBeTruthy();
     });
@@ -151,14 +137,12 @@ describe('ThinkingBlock', () => {
         'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10';
       const { container } = render(<ThinkingBlock content={longContent} />);
 
-      // Verify all content is in the DOM
       expect(container.textContent).toContain('Line 1');
       expect(container.textContent).toContain('Line 5');
       expect(container.textContent).toContain('Line 10');
     });
 
     it('should toggle expand/collapse when button is clicked', () => {
-      // Mock scrollHeight to trigger truncation (PREVIEW_MAX_HEIGHT = 120)
       const originalScrollHeight = Object.getOwnPropertyDescriptor(
         HTMLElement.prototype,
         'scrollHeight'
@@ -166,7 +150,6 @@ describe('ThinkingBlock', () => {
       Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
         configurable: true,
         get() {
-          // Return large scrollHeight to trigger truncation
           return 500;
         },
       });
@@ -176,25 +159,19 @@ describe('ThinkingBlock', () => {
           'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10';
         const { container } = render(<ThinkingBlock content={longContent} />);
 
-        // Should show "Show more" button when truncated
         const showMoreButton = container.querySelector('button');
         expect(showMoreButton).toBeTruthy();
         expect(showMoreButton?.textContent).toContain('Show more');
 
-        // Click to expand using fireEvent
         fireEvent.click(showMoreButton as HTMLElement);
 
-        // Should now show "Show less"
         expect(container.textContent).toContain('Show less');
 
-        // Click again to collapse
         const showLessButton = container.querySelector('button');
         fireEvent.click(showLessButton as HTMLElement);
 
-        // Should show "Show more" again
         expect(container.textContent).toContain('Show more');
       } finally {
-        // Restore original scrollHeight
         if (originalScrollHeight) {
           Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight);
         }
@@ -208,9 +185,6 @@ describe('ThinkingBlock', () => {
         'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10';
       const { container } = render(<ThinkingBlock content={longContent} />);
 
-      // Note: Gradient overlay is conditional on needsTruncation state,
-      // which uses scrollHeight comparison that may not work in test env
-      // Just verify the thinking block renders correctly
       expect(container.querySelector('[data-testid="thinking-block"]')).toBeTruthy();
       expect(container.textContent).toContain('Line 1');
     });
@@ -220,7 +194,6 @@ describe('ThinkingBlock', () => {
         'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10';
       const { container } = render(<ThinkingBlock content={longContent} />);
 
-      // Verify the content container structure
       expect(container.querySelector('.border-t')).toBeTruthy();
       expect(container.querySelector('.bg-white, .dark\\:bg-gray-900')).toBeTruthy();
     });
@@ -230,7 +203,6 @@ describe('ThinkingBlock', () => {
     it('should have amber color scheme', () => {
       const { container } = render(<ThinkingBlock content="Thinking..." />);
 
-      // Amber background
       expect(container.querySelector('.bg-amber-50, .dark\\:bg-amber-900\\/20')).toBeTruthy();
     });
 
@@ -255,7 +227,6 @@ describe('ThinkingBlock', () => {
       const content = 'Step 1: First\nStep 2: Second\n  - Indented item';
       const { container } = render(<ThinkingBlock content={content} />);
 
-      // Content should be in a pre element with whitespace-pre-wrap
       const contentElement = container.querySelector('.whitespace-pre-wrap');
       expect(contentElement).toBeTruthy();
     });
@@ -270,11 +241,6 @@ describe('ThinkingBlock', () => {
 
   describe('Edge Cases', () => {
     it('should render nothing for empty content (Opus 4.7 omitted-thinking stub)', () => {
-      // Opus 4.7 with `thinking.display = 'omitted'` returns a thinking
-      // block whose `thinking` field is an empty string (plus a
-      // signature for multi-turn continuity). The card should not
-      // render in that case — otherwise users see a bogus
-      // "Thinking · 0 characters" card.
       const { container } = render(<ThinkingBlock content="" />);
 
       expect(container.querySelector('[data-testid="thinking-block"]')).toBeNull();
@@ -282,8 +248,6 @@ describe('ThinkingBlock', () => {
     });
 
     it('should render nothing for whitespace-only content', () => {
-      // JSX attribute strings don't interpret escape sequences — use an
-      // expression so the content is actual whitespace.
       const { container } = render(<ThinkingBlock content={'   \n\t  '} />);
 
       expect(container.querySelector('[data-testid="thinking-block"]')).toBeNull();
@@ -318,9 +282,7 @@ describe('ThinkingBlock', () => {
         'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10';
       const { container } = render(<ThinkingBlock content={longContent} />);
 
-      // Verify thinking block has proper structure
       expect(container.querySelector('[data-testid="thinking-block"]')).toBeTruthy();
-      // Content should be in a pre element for proper formatting
       expect(container.querySelector('pre')).toBeTruthy();
     });
 
@@ -328,7 +290,6 @@ describe('ThinkingBlock', () => {
       const content = 'Some thinking content';
       const { container } = render(<ThinkingBlock content={content} />);
 
-      // Should have header section with icon
       expect(container.querySelector('svg')).toBeTruthy();
       expect(container.textContent).toContain('Thinking');
     });

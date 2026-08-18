@@ -1,44 +1,3 @@
-/**
- * Unit tests for NodeExecutionManager
- *
- * Covers:
- *   Pure-function layer:
- *   1.  VALID_NODE_EXECUTION_TRANSITIONS — has all 6 statuses as keys
- *   2.  isValidNodeExecutionTransition: pending → in_progress — valid
- *   3.  isValidNodeExecutionTransition: pending → cancelled — valid
- *   4.  isValidNodeExecutionTransition: in_progress → done — valid
- *   5.  isValidNodeExecutionTransition: in_progress → blocked — valid
- *   6.  isValidNodeExecutionTransition: in_progress → cancelled — valid
- *   7.  isValidNodeExecutionTransition: done → in_progress — valid (reactivation)
- *   8.  isValidNodeExecutionTransition: blocked → in_progress — valid (retry)
- *   9.  isValidNodeExecutionTransition: blocked → cancelled — valid
- *   10. isValidNodeExecutionTransition: cancelled → in_progress — valid (retry)
- *   11. isValidNodeExecutionTransition: pending → done — invalid
- *   12. isValidNodeExecutionTransition: pending → blocked — invalid
- *   13. isNodeExecutionTerminal: done → true
- *   14. isNodeExecutionTerminal: cancelled → true
- *   15. isNodeExecutionTerminal: pending → false
- *   16. isNodeExecutionTerminal: in_progress → false
- *   17. isNodeExecutionTerminal: blocked → false
- *   18. TERMINAL_NODE_EXECUTION_STATUSES size=2
- *
- *   Manager (with real DB):
- *   19. setExecutionStatus: pending → in_progress persists and stamps startedAt
- *   20. setExecutionStatus: in_progress → done stamps completedAt
- *   21. setExecutionStatus: in_progress → blocked stamps completedAt
- *   22. setExecutionStatus: in_progress → cancelled stamps completedAt
- *   23. setExecutionStatus: done → in_progress (reactivation) clears completedAt
- *   24. setExecutionStatus: blocked → in_progress (retry)
- *   25. setExecutionStatus: throws on not-found execution
- *   26. setExecutionStatus: throws on invalid transition (pending → done)
- *   27. listByWorkflowRun: returns executions for correct run only
- *   28. listByNode: returns executions for specific node within run
- *   29. setAgentSessionId: updates session ID
- *   30. setAgentSessionId: clears session ID with null
- *   31. delete: removes execution by ID
- *   32. deleteByWorkflowRun: removes all executions for a run
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -51,13 +10,7 @@ import {
 } from '../../../../src/lib/space/managers/node-execution-manager.ts';
 import type { NodeExecutionStatus } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   runMigrations(db, () => {});
   db.exec('PRAGMA foreign_keys = OFF');
@@ -94,10 +47,6 @@ function seedExecution(
   return id;
 }
 
-// ---------------------------------------------------------------------------
-// Test state
-// ---------------------------------------------------------------------------
-
 let db: BunDatabase;
 let manager: NodeExecutionManager;
 
@@ -109,10 +58,6 @@ beforeEach(() => {
 afterEach(() => {
   db.close();
 });
-
-// ---------------------------------------------------------------------------
-// Pure function tests
-// ---------------------------------------------------------------------------
 
 describe('VALID_NODE_EXECUTION_TRANSITIONS', () => {
   test('1. has all 6 statuses as keys', () => {
@@ -211,10 +156,6 @@ describe('isNodeExecutionTerminal', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Manager tests
-// ---------------------------------------------------------------------------
-
 describe('NodeExecutionManager.setExecutionStatus', () => {
   test('19. pending → in_progress persists and stamps startedAt', async () => {
     const id = seedExecution(db, { status: 'pending' });
@@ -271,7 +212,6 @@ describe('NodeExecutionManager.setExecutionStatus', () => {
     expect(() => manager.setExecutionStatus(id, 'done')).toThrow(
       /Invalid node execution status transition/
     );
-    // Status must remain unchanged
     expect(manager.getById(id)?.status).toBe('pending');
   });
 });

@@ -1,8 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { validateSql } from '../../../../src/lib/db-query/sql-validator';
 
-// ============ Valid SELECT queries ============
-
 describe('validateSql — valid SELECT queries', () => {
   test('simple SELECT', () => {
     const result = validateSql('SELECT * FROM tasks');
@@ -158,8 +156,6 @@ describe('validateSql — valid SELECT queries', () => {
   });
 });
 
-// ============ Schema-qualified table names ============
-
 describe('validateSql — schema-qualified table names', () => {
   test('main.tasks extracts tasks as table ref', () => {
     const result = validateSql('SELECT * FROM main.tasks');
@@ -187,8 +183,6 @@ describe('validateSql — schema-qualified table names', () => {
     expect(result.tableRefs).toEqual(['tasks', 'rooms']);
   });
 });
-
-// ============ Rejected non-SELECT statements ============
 
 describe('validateSql — rejected statements', () => {
   const rejectedStatements = [
@@ -237,8 +231,6 @@ describe('validateSql — rejected statements', () => {
   });
 });
 
-// ============ Semicolons ============
-
 describe('validateSql — semicolons rejected', () => {
   test('rejects semicolon at end', () => {
     const result = validateSql('SELECT * FROM tasks;');
@@ -259,8 +251,6 @@ describe('validateSql — semicolons rejected', () => {
   });
 });
 
-// ============ NULL bytes ============
-
 describe('validateSql — NULL byte rejection', () => {
   test('rejects NULL byte in SELECT', () => {
     const result = validateSql('SELECT * FROM tasks\0; DROP TABLE tasks');
@@ -274,8 +264,6 @@ describe('validateSql — NULL byte rejection', () => {
     expect(result.error).toBe('NULL byte in SQL is not allowed');
   });
 });
-
-// ============ Comments ============
 
 describe('validateSql — comment stripping', () => {
   test('strips line comments', () => {
@@ -297,13 +285,10 @@ describe('validateSql — comment stripping', () => {
   });
 
   test('strips comments before rejection check', () => {
-    // A comment disguising a non-SELECT keyword
     const result = validateSql('-- INSERT INTO\nSELECT * FROM tasks');
     expect(result.valid).toBe(true);
   });
 });
-
-// ============ CTEs ============
 
 describe('validateSql — CTE handling', () => {
   test('simple CTE — CTE name excluded from tableRefs', () => {
@@ -376,8 +361,6 @@ describe('validateSql — CTE handling', () => {
   });
 });
 
-// ============ WITH RECURSIVE ============
-
 describe('validateSql — WITH RECURSIVE', () => {
   test('simple WITH RECURSIVE is accepted', () => {
     const result = validateSql(
@@ -414,8 +397,6 @@ describe('validateSql — WITH RECURSIVE', () => {
   });
 });
 
-// ============ Subqueries ============
-
 describe('validateSql — subqueries', () => {
   test('subquery in WHERE — table refs extracted', () => {
     const result = validateSql(
@@ -439,8 +420,6 @@ describe('validateSql — subqueries', () => {
     expect(result.tableRefs).toEqual(['rooms', 'sessions', 'tasks']);
   });
 });
-
-// ============ String literal edge cases ============
 
 describe('validateSql — string literal handling', () => {
   test('FROM/JOIN inside string literal not extracted as table ref', () => {
@@ -475,8 +454,6 @@ describe('validateSql — string literal handling', () => {
     expect(result.tableRefs).toEqual(['tasks']);
   });
 });
-
-// ============ Edge cases ============
 
 describe('validateSql — edge cases', () => {
   test('duplicate table refs — deduplicated', () => {
@@ -550,8 +527,6 @@ describe('validateSql — edge cases', () => {
   });
 });
 
-// ============ Quoted identifiers rejected ============
-
 describe('validateSql — quoted identifiers rejected', () => {
   test('rejects double-quoted table name', () => {
     const result = validateSql('SELECT * FROM "tasks"');
@@ -577,8 +552,6 @@ describe('validateSql — quoted identifiers rejected', () => {
   });
 });
 
-// ============ OFFSET rejected ============
-
 describe('validateSql — OFFSET rejected', () => {
   test('rejects OFFSET clause', () => {
     const result = validateSql('SELECT * FROM tasks LIMIT 10 OFFSET 20');
@@ -598,8 +571,6 @@ describe('validateSql — OFFSET rejected', () => {
   });
 });
 
-// ============ DISTINCT preserved ============
-
 describe('validateSql — DISTINCT queries', () => {
   test('accepts SELECT DISTINCT', () => {
     const result = validateSql('SELECT DISTINCT status FROM tasks');
@@ -614,12 +585,8 @@ describe('validateSql — DISTINCT queries', () => {
   });
 });
 
-// ============ CTE scope validation edge cases ============
-
 describe('validateSql — CTE scope interaction edge cases', () => {
   test('CTE outer SELECT references only CTE alias — tableRefs contains only inner table', () => {
-    // Critical for scope validation: the CTE alias must NOT appear in tableRefs
-    // so that scope validation only checks the inner table (tasks), not the alias.
     const result = validateSql(
       'WITH in_scope_data AS (SELECT * FROM tasks WHERE room_id = ?) SELECT * FROM in_scope_data'
     );
@@ -629,21 +596,15 @@ describe('validateSql — CTE scope interaction edge cases', () => {
   });
 
   test('CTE alias with same name as a real table — alias excluded, inner table extracted', () => {
-    // If a CTE is named 'tasks' but its body references 'goals', the alias 'tasks'
-    // should be excluded from tableRefs and only 'goals' should be returned.
-    // This prevents false positives/negatives in scope validation.
     const result = validateSql(
       'WITH tasks AS (SELECT * FROM goals WHERE room_id = ?) SELECT * FROM tasks'
     );
     expect(result.valid).toBe(true);
-    // Only 'goals' from the CTE body — the alias 'tasks' is excluded
     expect(result.tableRefs).toEqual(['goals']);
     expect(result.tableRefs).not.toContain('tasks');
   });
 
   test('multiple CTEs where outer SELECT only references CTE aliases — only inner tables extracted', () => {
-    // Outer SELECT references only t1 and t2 (CTE aliases), never real tables directly.
-    // tableRefs should contain only the real tables referenced inside the CTE bodies.
     const result = validateSql(
       'WITH t1 AS (SELECT id FROM tasks), t2 AS (SELECT id FROM goals) SELECT t1.id, t2.id FROM t1 JOIN t2 ON 1=1'
     );
@@ -655,8 +616,6 @@ describe('validateSql — CTE scope interaction edge cases', () => {
   });
 
   test('CTE body referencing another CTE — only original real table in tableRefs', () => {
-    // t1 body → tasks (real); t2 body → t1 (CTE alias, not real).
-    // tableRefs should only contain 'tasks', not 't1' or 't2'.
     const result = validateSql(
       'WITH t1 AS (SELECT * FROM tasks), t2 AS (SELECT * FROM t1 WHERE status = ?) SELECT COUNT(*) AS n FROM t2'
     );

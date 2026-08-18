@@ -1,16 +1,3 @@
-/**
- * SpaceMcpStore — per-space MCP enablement state with LiveQuery subscriptions.
- *
- * Subscribes to the `mcpEnablement.bySpace` named query which returns one row
- * per registry entry with the per-space override already applied. This drives
- * the space settings MCP panel without a separate RPC/polling loop.
- *
- * Signal: `entries` — Map<serverId, SpaceMcpEntry>
- *
- * Resolves the effective enabled state server-side (the SQL's COALESCE) so the
- * UI can render straight from the Map without re-computing overrides + globals.
- */
-
 import { signal } from '@preact/signals';
 import type { LiveQuerySnapshotEvent, LiveQueryDeltaEvent, SpaceMcpEntry } from '@hyperneo/shared';
 import { Logger } from '@hyperneo/shared';
@@ -19,7 +6,6 @@ import { connectionManager } from './connection-manager';
 const logger = new Logger('hyperneo:web:space-mcp-store');
 
 class SpaceMcpStore {
-  /** Per-space registry entries keyed by serverId, with resolved `enabled` state. */
   readonly entries = signal<Map<string, SpaceMcpEntry>>(new Map());
 
   readonly loading = signal<boolean>(false);
@@ -30,10 +16,6 @@ class SpaceMcpStore {
   private activeSubscriptionIds = new Set<string>();
   private subscribed = false;
 
-  /**
-   * Subscribe to the per-space MCP LiveQuery. Idempotent per spaceId;
-   * switching spaces automatically tears down the old subscription.
-   */
   async subscribe(spaceId: string): Promise<void> {
     if (this.subscribed && this.spaceId === spaceId) return;
 
@@ -168,8 +150,4 @@ class SpaceMcpStore {
   }
 }
 
-/**
- * Singleton store. Supports one active space at a time; re-calling subscribe()
- * with a different spaceId swaps the subscription automatically.
- */
 export const spaceMcpStore = new SpaceMcpStore();

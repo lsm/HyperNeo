@@ -1,17 +1,3 @@
-/**
- * RPC handlers for long-horizon agents.
- *
- * - spaceLongHorizonAgent.listBuiltInTemplates
- * - spaceLongHorizonAgent.list
- * - spaceLongHorizonAgent.create
- * - spaceLongHorizonAgent.update
- * - spaceLongHorizonAgent.delete
- * - spaceLongHorizonAgent.listReminders
- * - spaceLongHorizonAgent.listReminderCounts
- * - spaceLongHorizonAgent.createReminder
- * - spaceLongHorizonAgent.deleteReminder
- */
-
 import type {
   MessageHub,
   SpaceLongHorizonAgent,
@@ -219,7 +205,6 @@ export function setupSpaceLongHorizonAgentHandlers(
     if (!params.spaceId) throw new Error('spaceId is required');
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
-    // Seed coordinator for spaces that predate the long-horizon agents feature.
     repo.ensureCoordinator(params.spaceId);
     return { agents: repo.listBySpaceId(params.spaceId) };
   });
@@ -314,10 +299,6 @@ export function setupSpaceLongHorizonAgentHandlers(
     });
     if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
     if (params.provider === null) {
-      // Explicit provider-override clear: wake-time provider retention would
-      // otherwise restore the stale provider from the session config and make
-      // the clear a no-op. Drop the persisted provider so the next ensure
-      // re-resolves it.
       await runtimeService?.clearLongTermAgentSessionProvider(agent.spaceId, agent.id);
     }
     if (runtimeService) {
@@ -347,9 +328,6 @@ export function setupSpaceLongHorizonAgentHandlers(
     return { reminders: repo.listReminders(params.agentId) };
   });
 
-  // Batched active-reminder counts for the Agents tab. One round-trip returns
-  // { [agentId]: number } instead of the N per-agent `listReminders` calls the
-  // web client used to fan out on every tab visit.
   messageHub.onRequest('spaceLongHorizonAgent.listReminderCounts', async (data) => {
     const params = data as { agentIds: string[] };
     if (!Array.isArray(params.agentIds)) throw new Error('agentIds is required');
@@ -376,9 +354,6 @@ export function setupSpaceLongHorizonAgentHandlers(
     if (!params.agentId) throw new Error('agentId is required');
     if (!params.title) throw new Error('title is required');
     if (!params.triggerType) throw new Error('triggerType is required');
-    // Seed nextRunAt so the reminder-fire scanner can select the row — its
-    // due-query filters on `next_run_at IS NOT NULL`. Without this the column
-    // defaults to NULL and the reminder never fires.
     let nextRunAt: number | null = null;
     if (params.triggerType === 'at') {
       if (typeof params.runAt !== 'number') {

@@ -1,10 +1,3 @@
-/**
- * CodeGraph benchmark arm.
- *
- * Usage:
- *   bun scripts/benchmark/graph-tools/run-codegraph.ts
- */
-
 import {
   BENCHMARK_PROMPT_UNSEDED,
   runWithGlm,
@@ -14,10 +7,6 @@ import {
   BENCHMARK_MODEL,
 } from './benchmark-helpers';
 
-/**
- * CodeGraph-specific prompt that guides the agent to use the full
- * suite of graph tools instead of defaulting to search+node.
- */
 const CODEGRAPH_PROMPT =
   BENCHMARK_PROMPT_UNSEDED +
   `

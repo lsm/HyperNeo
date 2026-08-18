@@ -6,8 +6,6 @@ import type { ElementType } from '../../internal/types.ts';
 import { Features } from '../../internal/types.ts';
 import { useId } from '../../internal/use-id.ts';
 
-// --- Types ---
-
 interface TooltipState {
   open: boolean;
   show: () => void;
@@ -17,8 +15,6 @@ interface TooltipState {
   triggerId: string;
   panelId: string;
 }
-
-// --- Context ---
 
 const TooltipContext = createContext<TooltipState | null>(null);
 TooltipContext.displayName = 'TooltipContext';
@@ -30,8 +26,6 @@ function useTooltipContext(component: string): TooltipState {
   }
   return ctx;
 }
-
-// --- Tooltip (root) ---
 
 interface TooltipProps {
   as?: ElementType;
@@ -89,7 +83,6 @@ function TooltipFn({
     }
   }, [clearTimers, hideDelay]);
 
-  // Cleanup timers on unmount
   useEffect(() => {
     return () => {
       clearTimers();
@@ -123,8 +116,6 @@ function TooltipFn({
 
 TooltipFn.displayName = 'Tooltip';
 export const Tooltip = TooltipFn;
-
-// --- TooltipTrigger ---
 
 interface TooltipTriggerProps {
   as?: ElementType;
@@ -199,8 +190,6 @@ function TooltipTriggerFn({
 
 TooltipTriggerFn.displayName = 'TooltipTrigger';
 export const TooltipTrigger = TooltipTriggerFn;
-
-// --- TooltipPanel ---
 
 interface TooltipPanelProps {
   as?: ElementType;

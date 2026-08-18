@@ -1,24 +1,14 @@
 // @ts-nocheck
-/**
- * Tests for SessionListItem Component
- *
- * Tests the compact session list item with status indicators, double-click
- * rename, hover archive action, and archived status.
- */
 
 import type { AgentProcessingState, Session } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';
 import { act, cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Define signals after imports - use getters in vi.mock to defer evaluation
 let mockStatuses: ReturnType<
   typeof signal<Map<string, { processingState: AgentProcessingState; unreadCount: number }>>
 >;
 
-// The currentSessionIdSignal instance must exist during the import phase:
-// connection-manager reads it at module-eval time (reached transitively via
-// useSessionRename → session-store), before this file's body assigns anything.
 const signalMocks = vi.hoisted(() => ({ currentSessionId: null as unknown }));
 vi.mock('../../lib/signals.ts', async () => {
   const { signal } = await import('@preact/signals');
@@ -27,8 +17,6 @@ vi.mock('../../lib/signals.ts', async () => {
     get currentSessionIdSignal() {
       return signalMocks.currentSessionId;
     },
-    // connection-manager exposes this at module-eval time; a plain signal is
-    // enough for the import chain to resolve.
     slashCommandsSignal: signal<string[]>([]),
   };
 });
@@ -39,7 +27,6 @@ vi.mock('../../lib/session-status.ts', () => ({
   },
 }));
 
-// Inline-rename dependencies (used by useSessionRename via the hooks index).
 const renameMocks = vi.hoisted(() => ({
   updateSession: vi.fn(),
   globalStoreUpdate: vi.fn(),
@@ -55,12 +42,9 @@ vi.mock('../../lib/space-store', () => ({
 }));
 vi.mock('../../lib/toast', () => ({ toast: { error: renameMocks.toastError } }));
 
-// Initialize signals after mocks are set up
 mockStatuses = signal<Map<string, { processingState: AgentProcessingState; unreadCount: number }>>(
   new Map()
 );
-// currentSessionIdSignal's instance lives in signalMocks (created inside the
-// mock factory); expose it under the name tests mutate directly.
 const mockCurrentSessionId = signalMocks.currentSessionId as ReturnType<
   typeof signal<string | null>
 >;
@@ -130,7 +114,6 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // Should contain some time string (e.g., "just now", "1m ago", etc.)
       const text = container.textContent || '';
       expect(text.length).toBeGreaterThan(0);
     });
@@ -200,9 +183,6 @@ describe('SessionListItem', () => {
   });
 
   describe('Worktree Indicator', () => {
-    // The green worktree-branch icon was removed from the row — worktree is now
-    // the default new-chat mode, so the indicator was always-on noise. The
-    // branch name remains visible in the Session info panel.
     it('does not render a worktree indicator even when the session has a worktree', () => {
       const sessionWithWorktree = {
         ...mockSession,
@@ -315,7 +295,6 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // No status dot (labeled StatusDot exposes role="img") and no unread badge.
       expect(container.querySelector('[role="img"]')).toBeNull();
       expect(container.querySelector('.bg-blue-600')).toBeNull();
     });
@@ -329,7 +308,6 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // active lifecycle -> success (green) tone, static (no pulse)
       expect(container.querySelector('.bg-green-500')).toBeTruthy();
       expect(container.querySelector('.animate-pulse')).toBeNull();
     });
@@ -361,7 +339,6 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // thinking phase -> info (blue) tone
       expect(container.querySelector('.bg-blue-500')).toBeTruthy();
     });
 
@@ -377,7 +354,6 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // streaming phase -> success (green) tone
       expect(container.querySelector('.bg-green-500')).toBeTruthy();
     });
 
@@ -390,7 +366,6 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // queued -> progress (yellow) tone
       expect(container.querySelector('.bg-yellow-500')).toBeTruthy();
     });
 
@@ -403,12 +378,10 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // UnreadBadge uses bg-blue-600 and renders the numeric count.
       const badge = container.querySelector('.bg-blue-600');
       expect(badge).toBeTruthy();
       expect(badge?.textContent).toContain('3');
 
-      // Static — no pulse.
       expect(container.querySelector('.animate-pulse')).toBeNull();
     });
 
@@ -424,10 +397,8 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // Streaming dot (success/green) wins over the unread badge.
       expect(container.querySelector('.bg-green-500')).toBeTruthy();
       expect(container.querySelector('.animate-pulse')).toBeTruthy();
-      // No unread badge rendered while processing.
       expect(container.querySelector('.bg-blue-600')).toBeNull();
     });
 
@@ -440,16 +411,10 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // interrupted is "at rest" -> falls through to the static lifecycle dot.
       expect(container.querySelector('.animate-pulse')).toBeNull();
     });
 
     it('should fall through to the lifecycle dot for an unrecognized processing status', () => {
-      // Persisted processingState JSON is only cast to the union at the type
-      // level, so a legacy/unknown status can reach the indicator. It must not
-      // be treated as actively processing (which would pulse a misleading dot
-      // and suppress the badge/lifecycle dot) — it falls through to the at-rest
-      // path, matching the foundation's unknown-status → idle fallback.
       mockStatuses.value = new Map([
         [
           'session-1',
@@ -464,7 +429,6 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // No pulse; falls through to the static active lifecycle dot (green).
       expect(container.querySelector('.animate-pulse')).toBeNull();
       expect(container.querySelector('.bg-green-500')).toBeTruthy();
     });
@@ -532,7 +496,6 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // Rename is via double-click only; the hover pencil was removed.
       expect(container.querySelector('[data-testid="session-rename"]')).toBeNull();
     });
 
@@ -558,7 +521,6 @@ describe('SessionListItem', () => {
       expect(renameMocks.globalStoreUpdate).toHaveBeenCalledWith('session-1', {
         title: 'Renamed',
       });
-      // Edit mode exited — input replaced by the row again.
       expect(container.querySelector('input[data-testid="session-rename-input"]')).toBeNull();
     });
 
@@ -578,9 +540,7 @@ describe('SessionListItem', () => {
       });
 
       expect(renameMocks.updateSession).not.toHaveBeenCalled();
-      // Row is restored (no input).
       expect(container.querySelector('input[data-testid="session-rename-input"]')).toBeNull();
-      // Title is unchanged.
       expect(container.querySelector('h3')?.textContent).toBe('Test Session');
     });
 
@@ -590,7 +550,6 @@ describe('SessionListItem', () => {
         <SessionListItem session={archivedSession} onSessionClick={mockOnSessionClick} />
       );
 
-      // No row actions render for archived sessions.
       expect(container.querySelector('[data-testid="session-archive"]')).toBeNull();
     });
   });

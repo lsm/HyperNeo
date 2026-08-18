@@ -1,13 +1,3 @@
-/**
- * SpaceWorkerAgentList Component
- *
- * Displays persisted worker agent types configured for a Space.
- * - Agent cards: name, model, description preview
- * - "Create Worker Agent" button to open the editor
- * - Template drift badges and sync actions for seeded worker agents
- * - Delete confirmation; daemon blocks deletion when workflows reference the agent.
- */
-
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { Button } from '../ui/Button';
@@ -18,17 +8,10 @@ import { SpaceAgentPresetSyncDiffModal } from './SpaceAgentPresetSyncDiffModal';
 import { connectionManager } from '../../lib/connection-manager';
 import { toast } from '../../lib/toast';
 
-/** Two-signal drift state for one agent, mirrored from the drift report. */
 type AgentDriftState = {
   updateAvailable: boolean;
   customized: boolean;
   orphaned: boolean;
-  /**
-   * The row fingerprint observed when the drift report was fetched. Passed as
-   * the optimistic-concurrency `expectedRowHash` on the quick Apply / Re-attach
-   * path so a concurrent edit between fetch and confirm is rejected rather than
-   * silently overwritten (mirrors the diff-review path, which uses preview.rowHash).
-   */
   rowHash: string;
 };
 
@@ -222,20 +205,12 @@ export function SpaceWorkerAgentList() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [syncingAgent, setSyncingAgent] = useState<SpaceWorkerAgent | null>(null);
-  // rowHash captured when the quick-sync confirm modal opened (see openSyncConfirm).
   const [syncingRowHash, setSyncingRowHash] = useState<string | undefined>(undefined);
   const [diffAgent, setDiffAgent] = useState<SpaceWorkerAgent | null>(null);
 
-  // Drift detection: per-agent two-signal state (updateAvailable / customized).
-  // Empty until the first successful drift report fetch — agents absent from
-  // the map render without a badge or action (the safe default when the daemon
-  // hasn't responded yet).
   const [agentDrift, setAgentDrift] = useState<Map<string, AgentDriftState>>(new Map());
   const [syncingAgentId, setSyncingAgentId] = useState<string | null>(null);
 
-  // Re-fetch drift report whenever the agent set changes. We watch a
-  // concatenated key of (id, updatedAt) so the effect fires for adds,
-  // removes, and edits — but not for unrelated re-renders.
   const driftKey = agents
     .map((a) => `${a.id}:${a.updatedAt}`)
     .sort()
@@ -283,10 +258,6 @@ export function SpaceWorkerAgentList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- driftKey captures the list identity
   }, [spaceId, driftKey]);
 
-  // Clear drift state for an agent eagerly so the badges disappear before the
-  // next refresh cycle. The spaceAgent.updated event re-triggers the drift
-  // effect and reconciles authoritatively. Shared by the quick "Apply" confirm
-  // path and the diff modal's "Apply update".
   const clearDriftFor = (agentId: string) => {
     setAgentDrift((prev) => {
       if (!prev.has(agentId)) return prev;
@@ -296,11 +267,6 @@ export function SpaceWorkerAgentList() {
     });
   };
 
-  // Open the quick-sync confirm modal, snapshotting the drift rowHash at open
-  // time. Reading the mutable drift map at confirm time would be racy: a drift
-  // refresh during the open window (e.g. another client edited the agent) would
-  // supply the edited row's NEW hash, letting the guard accept and overwrite
-  // that unreviewed edit. The snapshot pins the state the user is acting on.
   const openSyncConfirm = (agent: SpaceWorkerAgent) => {
     setSyncingAgent(agent);
     setSyncingRowHash(agentDrift.get(agent.id)?.rowHash);
@@ -311,9 +277,6 @@ export function SpaceWorkerAgentList() {
     const agent = syncingAgent;
     setSyncingAgentId(agent.id);
     try {
-      // Pass the OPEN-TIME rowHash snapshot as the optimistic-concurrency guard
-      // so a concurrent edit since the modal opened is rejected instead of
-      // silently overwritten — same guard the diff-review path uses.
       await spaceStore.syncAgentFromTemplate(agent.id, syncingRowHash);
       clearDriftFor(agent.id);
       setSyncingAgent(null);
@@ -368,9 +331,6 @@ export function SpaceWorkerAgentList() {
     }
   };
 
-  // Workflow reference check removed: SpaceWorkflowSummary no longer includes
-  // node/agent details. The daemon still blocks deletion of in-use agents.
-
   const existingAgentNames = sortedAgents
     .filter((a) => a.id !== editingAgent?.id)
     .map((a) => a.name);
@@ -405,7 +365,6 @@ export function SpaceWorkerAgentList() {
         </Button>
       </div>
 
-      {/* Agent list or empty state */}
       {sortedAgents.length === 0 ? (
         <div class="flex flex-1 flex-col items-center justify-center py-12 text-center">
           <div class="w-10 h-10 rounded-full bg-dark-800 flex items-center justify-center mb-3">
@@ -445,7 +404,6 @@ export function SpaceWorkerAgentList() {
         </div>
       )}
 
-      {/* Editor Modal */}
       {editorOpen && (
         <SpaceAgentEditor
           agent={editingAgent}
@@ -487,7 +445,6 @@ export function SpaceWorkerAgentList() {
         />
       )}
 
-      {/* Delete confirmation: daemon blocks agents still referenced by workflows. */}
       {deletingAgent && (
         <ConfirmModal
           isOpen

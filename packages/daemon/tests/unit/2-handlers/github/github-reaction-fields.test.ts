@@ -4,10 +4,6 @@ import {
   reactionIdFrom,
 } from '../../../../src/lib/external-events/github/github-reaction-fields';
 
-// Characterization tests for the GitHub reaction-row field decoders. These
-// were previously inline in github-event-extension.ts with no direct unit
-// coverage; every branch is pinned here.
-
 describe('isPositiveReaction', () => {
   it('returns false for non-object rows', () => {
     expect(isPositiveReaction(null)).toBe(false);
@@ -82,8 +78,6 @@ describe('reactionIdFrom', () => {
   });
 
   it('coerces any typeof-number id via String() (including edge cases)', () => {
-    // The decoder checks `typeof id === 'number'`, so float ids stringify as
-    // written and NaN stringifies to 'NaN' — pinning the existing behavior.
     expect(reactionIdFrom({ id: 12.5 })).toBe('12.5');
     expect(reactionIdFrom({ id: Number.NaN })).toBe('NaN');
   });

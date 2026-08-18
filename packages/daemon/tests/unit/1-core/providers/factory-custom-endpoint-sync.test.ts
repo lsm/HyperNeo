@@ -1,12 +1,3 @@
-/**
- * Verifies that `syncCustomEndpointProviders` only tears down + rebuilds
- * providers whose effective config actually changed.
- *
- * Why this matters: `CustomEndpointProvider.shutdown()` stops embedded bridge
- * servers with forced-close semantics. Re-running every sync would drop
- * in-flight streams for endpoints the user never touched.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
 import {
@@ -93,8 +84,6 @@ describe('syncCustomEndpointProviders - diff skip', () => {
     await syncCustomEndpointProviders([baseConfig, other]);
     const lmFirst = getProviderRegistry().get('custom:lmstudio');
     const vllmFirst = getProviderRegistry().get('custom:vllm');
-    // Edit only `vllm`. `lmstudio` must keep the same instance — otherwise
-    // any in-flight stream against the LM Studio bridge would be cut.
     await syncCustomEndpointProviders([baseConfig, { ...other, name: 'vLLM (renamed)' }]);
     const lmSecond = getProviderRegistry().get('custom:lmstudio');
     const vllmSecond = getProviderRegistry().get('custom:vllm');

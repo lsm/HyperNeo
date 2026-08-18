@@ -1,15 +1,4 @@
 #!/usr/bin/env bun
-/**
- * E2E Matrix Runner - Coverage Test
- *
- * This is a bun test wrapper that runs a single Playwright E2E test
- * with an in-process server to collect server-side coverage.
- *
- * Usage: bun test --coverage tests/e2e-coverage/e2e-matrix-runner.coverage.ts
- *
- * Set TEST_NAME env var to specify which test to run:
- *   TEST_NAME=archive-menu-option bun test --coverage ...
- */
 
 import { beforeAll, afterAll, test, describe } from 'bun:test';
 import { spawn } from 'child_process';
@@ -18,57 +7,45 @@ import { Hono } from 'hono';
 import { serveStatic } from 'hono/bun';
 import { resolve } from 'path';
 
-// Import daemon components - these will be covered by bun --coverage
 import { createDaemonApp } from '@hyperneo/daemon/app';
 import { getConfig } from '@hyperneo/daemon/config';
 import { createWebSocketHandlers } from '@hyperneo/daemon/routes/setup-websocket';
 
-// Get test name from environment
 const TEST_NAME = process.env.TEST_NAME || 'archive-menu-option';
 
-// Test fixtures
 let server: ReturnType<typeof Bun.serve> | null = null;
 let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
 let serverPort: number;
 let baseUrl: string;
 
 describe(`E2E Matrix: ${TEST_NAME}`, () => {
-  /**
-   * Setup: Start in-process server
-   */
   beforeAll(async () => {
     serverPort = await findAvailablePort();
     baseUrl = `http://localhost:${serverPort}`;
     console.log(`\n🚀 Starting E2E coverage server on port ${serverPort}...`);
 
-    // Setup workspace
     const workspace = `/tmp/e2e-matrix-${TEST_NAME}-${Date.now()}`;
     await Bun.$`mkdir -p ${workspace}`;
 
-    // Configure
     process.env.HYPERNEO_WORKSPACE_PATH = workspace;
     const config = getConfig();
     config.port = serverPort;
     config.dbPath = `${workspace}/daemon.db`;
 
-    // Create daemon
     daemonContext = await createDaemonApp({ config, verbose: false, standalone: false });
     daemonContext.server.stop();
 
-    // Web dist path
     const distPath = resolve(import.meta.dir, '../../../web/dist');
     const distExists = await Bun.file(resolve(distPath, 'index.html')).exists();
     if (!distExists) {
       throw new Error('Web dist not found. Run: cd packages/web && bun run build');
     }
 
-    // WebSocket handlers
     const wsHandlers = createWebSocketHandlers(
       daemonContext.transport,
       daemonContext.sessionManager
     );
 
-    // Hono for static files
     const app = new Hono();
     app.use('/*', serveStatic({ root: distPath }));
     app.get('*', async (c) => {
@@ -76,7 +53,6 @@ describe(`E2E Matrix: ${TEST_NAME}`, () => {
       return c.html(html);
     });
 
-    // Start server
     server = Bun.serve({
       hostname: '127.0.0.1',
       port: serverPort,
@@ -91,7 +67,6 @@ describe(`E2E Matrix: ${TEST_NAME}`, () => {
       websocket: wsHandlers,
     });
 
-    // Wait for ready
     for (let i = 0; i < 50; i++) {
       try {
         const res = await fetch(baseUrl);
@@ -104,9 +79,6 @@ describe(`E2E Matrix: ${TEST_NAME}`, () => {
     console.log(`✅ Server ready at ${baseUrl}\n`);
   }, 60000);
 
-  /**
-   * Teardown: Cleanup
-   */
   afterAll(async () => {
     console.log('\n🛑 Cleanup...');
 
@@ -120,9 +92,6 @@ describe(`E2E Matrix: ${TEST_NAME}`, () => {
     console.log('✅ Done');
   }, 30000);
 
-  /**
-   * Run the Playwright test
-   */
   test(`runs ${TEST_NAME} E2E test`, async () => {
     const e2eDir = resolve(import.meta.dir, '../../../e2e');
     const testPath = await findTestFile(TEST_NAME, e2eDir);
@@ -153,10 +122,6 @@ describe(`E2E Matrix: ${TEST_NAME}`, () => {
     }
   }, 300000);
 });
-
-// =============================================================================
-// Helper Functions
-// =============================================================================
 
 async function findAvailablePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {

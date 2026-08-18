@@ -1,20 +1,9 @@
-/**
- * Space Slug Integration Tests
- *
- * Tests slug auto-generation, uniqueness, editable slug update,
- * lookup by slug, and migration backfill behavior.
- */
-
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { runMigration63 } from '../../../../src/storage/schema/migrations';
 import { slugify } from '../../../../src/lib/space/slug';
 
-/**
- * Create an in-memory database with the spaces table schema.
- * We create a minimal schema matching what SpaceRepository expects.
- */
 function createTestDb(): InstanceType<typeof Database> {
   const db = new Database(':memory:');
   db.exec(`
@@ -115,7 +104,6 @@ describe('SpaceRepository — slug operations', () => {
       slug: 'space-two',
     });
 
-    // Trying to set space2's slug to space1's slug should fail due to UNIQUE index
     expect(() => repo.updateSlug(space2.id, 'space-one')).toThrow();
   });
 
@@ -173,7 +161,6 @@ describe('slugify — collision handling with repository', () => {
 
 describe('Migration 61 — slug backfill', () => {
   test('adds slug column and backfills existing spaces', () => {
-    // Create a DB without the slug column (pre-migration state)
     const db = new Database(':memory:');
     db.exec(`
 			CREATE TABLE spaces (
@@ -195,7 +182,6 @@ describe('Migration 61 — slug backfill', () => {
 			)
 		`);
 
-    // Insert some spaces without slugs
     const now = Date.now();
     db.prepare(
       `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
@@ -204,10 +190,8 @@ describe('Migration 61 — slug backfill', () => {
       `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
     ).run('s2', '/tmp/ws-2', 'My Project', now, now);
 
-    // Run migration
     runMigration63(db);
 
-    // Verify slugs were backfilled
     const rows = db.prepare('SELECT id, slug FROM spaces ORDER BY id').all() as Array<{
       id: string;
       slug: string;
@@ -240,7 +224,6 @@ describe('Migration 61 — slug backfill', () => {
 			)
 		`);
 
-    // Insert spaces with the same name
     const now = Date.now();
     db.prepare(
       `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
@@ -249,10 +232,8 @@ describe('Migration 61 — slug backfill', () => {
       `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
     ).run('s2', '/tmp/ws-2', 'My Project', now, now);
 
-    // Run migration
     runMigration63(db);
 
-    // Verify collision was resolved
     const rows = db.prepare('SELECT id, slug FROM spaces ORDER BY id').all() as Array<{
       id: string;
       slug: string;
@@ -287,7 +268,6 @@ describe('Migration 61 — slug backfill', () => {
 
     runMigration63(db);
 
-    // Verify slug column has NOT NULL constraint
     const tableInfo = db.prepare('PRAGMA table_info(spaces)').all() as Array<{
       name: string;
       notnull: number;
@@ -296,7 +276,6 @@ describe('Migration 61 — slug backfill', () => {
     expect(slugCol).toBeDefined();
     expect(slugCol!.notnull).toBe(1);
 
-    // Verify inserting a NULL slug throws
     const now = Date.now();
     expect(() => {
       db.prepare(
@@ -327,7 +306,6 @@ describe('Migration 61 — slug backfill', () => {
 			)
 		`);
 
-    // Run twice — should not throw
     runMigration63(db);
     runMigration63(db);
   });

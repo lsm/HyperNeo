@@ -1,14 +1,3 @@
-/**
- * Database Migrations
- *
- * Migrations 1–13 handle incremental schema changes to core tables.
- * runMigrationRoomCleanup consolidates former migrations 25–36 (room feature
- * experiments that never shipped to production) into a single drop-and-recreate
- * cleanup. Migration 29 is the single consolidated migration for all Space system
- * tables — do not add separate Space migrations after it. CRITICAL: Preserve the
- * order of migrations.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
@@ -30,12 +19,6 @@ import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
 
-/**
- * Run all database migrations
- *
- * @param db - The database instance
- * @param createBackup - Function to call before running migrations (creates backup)
- */
 export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   ensureMigrationMarkersTable(db);
   seedHistoricalMigrationMarkers(db);
@@ -50,956 +33,397 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
     runMarkedMigration(db, key, migration, ensureBackup);
   };
 
-  // Migration 1: Add oauth_token_encrypted column if it doesn't exist
   run(migrationMarkerKey(1), () => runMigration1(db));
 
-  // Migration 2: Remove messages and tool_calls tables (replaced by sdk_messages)
   run(migrationMarkerKey(2), () => runMigration2(db));
 
-  // Migration 3: Add worktree columns to sessions table
   run(migrationMarkerKey(3), () => runMigration3(db));
 
-  // Migration 4: Add git_branch column for non-worktree git sessions
   run(migrationMarkerKey(4), () => runMigration4(db));
 
-  // Migration 5: Add sdk_session_id column for session resumption
   run(migrationMarkerKey(5), () => runMigration5(db));
 
-  // Migration 6: Add available_commands column for slash commands persistence
   run(migrationMarkerKey(6), () => runMigration6(db));
 
-  // Migration 7: Add processing_state column for agent state persistence
   run(migrationMarkerKey(7), () => runMigration7(db));
 
-  // Migration 8: Add archived_at column for archive session feature
   run(migrationMarkerKey(8), () => runMigration8(db));
 
-  // Migration 9: Update CHECK constraint to include 'archived' status
   run(migrationMarkerKey(9), () => runMigration9(db));
 
-  // Migration 10: Add send_status column to sdk_messages for query mode support
   run(migrationMarkerKey(10), () => runMigration10(db));
 
-  // Migration 11: Add sub-session columns for parent-child session relationships
   run(migrationMarkerKey(11), () => runMigration11(db));
 
-  // Migration 12: Ensure global_settings has autoScroll: true for existing databases
   run(migrationMarkerKey(12), () => runMigration12(db));
 
-  // Migration 13: Update CHECK constraint to include 'pending_worktree_choice' status
   run(migrationMarkerKey(13), () => runMigration13(db));
 
-  // Room cleanup: drop all room experiment tables and fix sessions schema if outdated
-  // (consolidates former migrations 25–36, which covered features never shipped to production)
   run('migration_room_cleanup', () => runMigrationRoomCleanup(db));
 
-  // Migration 14: Drop events table and unused session columns (labels, sub_session_order)
   run(migrationMarkerKey(14), () => runMigration14(db));
 
-  // Migration 15: Add 'failed' to send_status CHECK constraint in sdk_messages
   run(migrationMarkerKey(15), () => runMigration15(db));
 
-  // Migration 16: Replace 'escalated' with 'review' in tasks, remove 'hibernated' from session_groups,
-  // add config column to rooms table
   run(migrationMarkerKey(16), () => runMigration16(db));
 
-  // Migration 17: Fix goals table CHECK constraint and add goal_review_attempts column
   run(migrationMarkerKey(17), () => runMigration17(db));
 
-  // Migration 18: Add 'cancelled' to tasks status CHECK constraint
   run(migrationMarkerKey(18), () => runMigration18(db));
 
-  // Migration 19: Remove legacy mirrored session_group_messages table
   run(migrationMarkerKey(19), () => runMigration19(db));
 
-  // Migration 20: Add archived_at column to tasks table
   run(migrationMarkerKey(20), () => runMigration20(db));
 
-  // Migration 21: Backfill submittedForReview metadata for active awaiting_human groups
   run(migrationMarkerKey(21), () => runMigration21(db));
 
-  // Migration 22: Drop legacy session_groups.state column and index
   run(migrationMarkerKey(22), () => runMigration22(db));
 
-  // Migration 23: Add active_session column to tasks table
   run(migrationMarkerKey(23), () => runMigration23(db));
 
-  // Migration 24: Rename 'failed' task status to 'needs_attention' for better semantic clarity
   run(migrationMarkerKey(24), () => runMigration24(db));
 
-  // Migration 25: Add PR fields to tasks table
   run(migrationMarkerKey(25), () => runMigration25(db));
 
-  // Migration 26: Add input_draft column to tasks table for server-side draft persistence
   run(migrationMarkerKey(26), () => runMigration26(db));
 
-  // Migration 27: Add updated_at column to tasks table for sorting by most recently updated
   run(migrationMarkerKey(27), () => runMigration27(db));
 
-  // Migration 28: Add mission metadata columns to goals table, create mission_metric_history
-  // and mission_executions tables for Goal V2 / Mission System
   run(migrationMarkerKey(28), () => runMigration28(db));
 
-  // Migration 29: Create all Space system tables (fully consolidated schema).
-  // All space tables and columns — including role, provider, inject_workflow_context,
-  // start_step_id, current_step_id, and space_workflow_transitions — are created here
-  // in a single idempotent migration. (Note: M45 renames step→node columns/tables.)
   run(migrationMarkerKey(29), () => runMigration29(db));
 
-  // Migration 30: Add layout column to space_workflows for visual editor node positions.
   run(migrationMarkerKey(30), () => runMigration30(db));
 
-  // Migration 31: Add 'space_task_agent' to sessions type CHECK constraint.
   run(migrationMarkerKey(31), () => runMigration31(db));
 
-  // Migration 32: Add task_agent_session_id column to space_tasks.
   run(migrationMarkerKey(32), () => runMigration32(db));
 
-  // Migration 33: Add autonomy_level column to spaces table.
   run(migrationMarkerKey(33), () => runMigration33(db));
 
-  // Migration 34: Add goal_id column to space_tasks for goal/mission association.
   run(migrationMarkerKey(34), () => runMigration34(db));
 
-  // Migration 35: Add iteration tracking columns to space_workflow_runs.
   run(migrationMarkerKey(35), () => runMigration35(db));
 
-  // Migration 36: Add max_iterations column to space_workflows.
   run(migrationMarkerKey(36), () => runMigration36(db));
 
-  // Migration 37: Add goal_id column to space_workflow_runs for goal/mission association.
   run(migrationMarkerKey(37), () => runMigration37(db));
 
-  // Migration 38: Add is_cyclic column to space_workflow_transitions.
   run(migrationMarkerKey(38), () => runMigration38(db));
 
-  // Migration 39: Add 'archived' to status CHECK constraints on tasks and space_tasks.
   run(migrationMarkerKey(39), () => runMigration39(db));
 
-  // Migration 40: Flexible session groups — add task_id + status to space_session_groups,
-  // drop role CHECK constraint and add agent_id + status to space_session_group_members.
   run(migrationMarkerKey(40), () => runMigration40(db));
 
-  // Migration 41: Historical no-op. Kept for migration-number continuity.
   run(migrationMarkerKey(41), () => runMigration41(db));
 
-  // Migration 42: Clean up stale/zombie session groups and add partial unique index
-  // on session_groups(ref_id) WHERE completed_at IS NULL to prevent future duplicates.
   run(migrationMarkerKey(42), () => runMigration42(db));
 
-  // Migration 43: Drop legacy session_group_messages projection table.
   run(migrationMarkerKey(43), () => runMigration43(db));
 
-  // Migration 44: Rename sdk_messages send_status values to deferred/enqueued/consumed.
   run(migrationMarkerKey(44), () => runMigration44(db));
 
-  // Migration 45: Rename step-related columns and tables to node
-  // - space_workflow_steps -> space_workflow_nodes
-  // - start_step_id -> start_node_id in space_workflows
-  // - from_step_id -> from_node_id, to_step_id -> to_node_id in space_workflow_transitions
-  // - workflow_step_id -> workflow_node_id in space_tasks
-  // - current_step_id -> current_node_id in space_workflow_runs
-  // - current_step_id -> current_node_id in space_session_groups
   run(migrationMarkerKey(45), () => runMigration45(db));
 
-  // Migration 46: Add slot_role column to space_tasks
-  // Stores the WorkflowNodeAgent.role of the slot that spawned a task, enabling
-  // unambiguous slot lookup when the same agentId appears multiple times in a node.
   run(migrationMarkerKey(46), () => runMigration46(db));
 
-  // Migration 47: Add short_id columns to tasks and goals, create short_id_counters table.
-  // Enables human-readable scoped short IDs for tasks and goals (e.g. t:04062505:42).
-  // New columns are nullable — existing rows get NULL until short IDs are assigned.
   run(migrationMarkerKey(47), () => runMigration47(db));
 
-  // Migration 48: Replace global short_id unique indexes with room-scoped composite indexes.
-  // Migration 47 accidentally created single-column global indexes (unique across ALL rooms),
-  // causing UNIQUE constraint failures when two different rooms each create their first task.
-  // Short IDs are scoped to their parent room, so uniqueness must be (room_id, short_id).
   run(migrationMarkerKey(48), () => runMigration48(db));
 
-  // Migration 49: Add restrictions column to tasks and expand status CHECK constraint
-  // to include 'rate_limited' and 'usage_limited'. These new statuses let the runtime
-  // surface API limit state in the UI and enable auto-resume on tick.
   run(migrationMarkerKey(49), () => runMigration49(db));
 
-  // Migration 50: Create app_mcp_servers table for application-level MCP server registry.
-  // This table stores MCP server configurations that are available globally.
-  // Idempotent via CREATE TABLE IF NOT EXISTS.
   run(migrationMarkerKey(50), () => runMigration50(db));
 
-  // Migration 51: Rename space_tasks.slot_role -> agent_name and add completion_summary column.
-  // Part of the agent-centric refactor: "slot role" is replaced by a plain "agent name" that
-  // directly identifies the agent. completion_summary stores a brief human-readable summary
-  // written by the agent when a task reaches a terminal state.
   run(migrationMarkerKey(51), () => runMigration51(db));
 
-  // Migration 52: Create room_mcp_enablement table for per-room MCP enablement overrides.
   run(migrationMarkerKey(52), () => runMigration52(db));
 
-  // Migration 53: Add channels column to space_workflows for unified channel topology storage.
-  // Channels move from the config JSON blob to a dedicated TEXT column (JSON-serialized
-  // WorkflowChannel[]). Existing rows that have channels embedded in config are migrated
-  // in-place so no data is lost.
   run(migrationMarkerKey(53), () => runMigration53(db));
 
-  // Migration 54: Add unique partial index on space_tasks (workflow_run_id, workflow_node_id,
-  // agent_name) to enforce at-most-one task per agent slot per workflow node per run.
-  // Prevents duplicate tasks from concurrent ChannelRouter.activateNode() calls.
   run(migrationMarkerKey(54), () => runMigration54(db));
 
-  // Migration 55: Rename slot_role → agent_name on space_tasks.
-  // Aligns with "no role" naming convention from the agent-centric refactor.
-  // Uses a table rebuild pattern (SQLite does not support DROP COLUMN in all versions).
-  // Idempotent: checks for agent_name column before rebuilding.
   run(migrationMarkerKey(55), () => runMigration55(db));
 
-  // Migration 56: Expand assigned_agent CHECK constraint to include 'planner'.
-  // SQLite cannot ALTER a CHECK constraint directly, so we recreate the table.
   run(migrationMarkerKey(56), () => runMigration56(db));
 
-  // Migration 57: Create skills table for application-level Skills registry.
-  // Idempotent via CREATE TABLE IF NOT EXISTS.
   run(migrationMarkerKey(57), () => runMigration57(db));
 
-  // Migration 58: Create room_skill_overrides table for per-room skill enablement.
-  // Mirrors the room_mcp_enablement pattern (migration 52) but references skills(id).
-  // Idempotent via CREATE TABLE IF NOT EXISTS.
   run(migrationMarkerKey(58), () => runMigration58(db));
 
-  // Migration 59: Drop space_workflow_transitions table (replaced by channels).
-  // Idempotent via DROP TABLE IF EXISTS.
   run(migrationMarkerKey(59), () => runMigration59(db));
 
-  // Migration 60: Drop space_session_groups and space_session_group_members tables,
-  // and drop current_node_id column from space_workflow_runs.
-  // Session groups are replaced by direct space_tasks queries.
-  // currentNodeId is replaced by the agent-centric model where tasks track state.
   run(migrationMarkerKey(60), () => runMigration60(db));
 
-  // Migration 61: Add gate_data table, gates column to space_workflows,
-  // and failure_reason column to space_workflow_runs.
-  // Part of M1.1 — separated Channel + Gate types.
   run(migrationMarkerKey(61), () => runMigration61(db));
 
-  // Migration 62: Add task_number column to space_tasks for human-friendly numeric IDs.
-  // Scoped per space via UNIQUE(space_id, task_number). Backfills existing rows.
   run(migrationMarkerKey(62), () => runMigration62(db));
 
-  // Migration 63: Add slug column to spaces table for human-readable URL identifiers.
-  // Auto-generates slugs from existing space names and adds a UNIQUE index.
   run(migrationMarkerKey(63), () => runMigration63(db));
 
-  // Migration 64: Create space_worktrees table for persisting task ↔ git worktree mappings.
-  // One row per task; keyed by (space_id, task_id) with a per-space unique slug constraint.
   run(migrationMarkerKey(64), () => runMigration64(db));
 
-  // Migration 65: Add completed_at column to space_worktrees for TTL-based reaper.
-  // Worktrees are not removed on task completion; instead they are timestamped and
-  // removed by the reaper after a configurable TTL (default: 7 days).
   run(migrationMarkerKey(65), () => runMigration65(db));
 
-  // Migration 66: Add 'neo' to sessions type CHECK constraint and create neo_activity_log table.
-  // Neo is a global AI agent with its own session type and activity log for auditing.
   run(migrationMarkerKey(66), () => runMigration66(db));
 
-  // Migration 67: Add 'space_chat' to sessions type CHECK constraint.
   run(migrationMarkerKey(67), () => runMigration67(db));
-  // Migration 68: Add 'origin' column to sdk_messages for frontend display of message provenance.
-  // NULL (default) is treated as 'human' by the frontend. 'neo' marks Neo-injected messages.
   run(migrationMarkerKey(68), () => runMigration68(db));
-  // Migration 69: Per-channel cycle tracking table.
-  // Replaces the global iteration_count/max_iterations on space_workflow_runs.
   run(migrationMarkerKey(69), () => runMigration69(db));
-  // Migration 70: Backfill default_path for existing rooms where it is NULL.
-  // Sets default_path from allowed_paths[0].path, or '__NEEDS_WORKSPACE_PATH__' sentinel
-  // when allowed_paths is also empty. Sentinel is replaced at startup with config.workspaceRoot.
   run(migrationMarkerKey(70), () => runMigration70(db));
-  // Migration 71: Fix corrupted schedule values in goals table.
-  // Some rows may contain raw cron strings (e.g. "@daily") instead of the expected
-  // JSON object {"expression":"@daily","timezone":"UTC"}. This wraps bare strings
-  // into the proper CronSchedule shape.
   run(migrationMarkerKey(71), () => runMigration71(db));
-  // Migration 72: Add missing performance indexes for rooms, sessions, and goals tables.
-  // - rooms: index on (status, updated_at) for room.list ORDER BY updated_at DESC WHERE status='active'
-  // - sessions: index on (type) for listSessionsByType, findByRoomId
-  // - sessions: index on (status, last_active_at) for listSessions ORDER BY last_active_at DESC
   run(migrationMarkerKey(72), () => runMigration72(db));
-  // Migration 73: Update space_tasks and space_workflow_runs to use the new status schema.
-  //   - space_tasks: new status values ('open'|'in_progress'|'done'|'blocked'|'cancelled'|'archived'),
-  //     adds 'labels' column, removes deprecated columns.
-  //   - space_workflow_runs: new status values ('pending'|'in_progress'|'done'|'blocked'|'cancelled'),
-  //     adds 'started_at', removes deprecated columns.
-  //   - Maps old → new status values in existing rows.
   run(migrationMarkerKey(73), () => runMigration73(db));
 
-  // Migration 74: Remaining schema cleanup for end-node / workflow completion work.
-  //   - node_executions: new table for per-node execution tracking
-  //   - space_workflows: drop config (migrate tags out) and max_iterations
-  //   - space_workflow_nodes: drop order_index and agent_id
-  //   - space_agents: drop role, config, inject_workflow_context
-  //   - node config JSON: wrap string systemPrompt/instructions to {mode, value}
   run(migrationMarkerKey(74), () => runMigration74(db));
 
-  // Migration 75: Add UNIQUE constraint on node_executions for idempotent activation.
-  //   - Adds UNIQUE INDEX on (workflow_run_id, workflow_node_id, agent_name)
-  //   - Deduplicates any existing records before creating the index
   run(migrationMarkerKey(75), () => runMigration75(db));
 
-  // Migration 76: Add 'review' status to space_tasks CHECK constraint.
-  //   - In supervised mode, completed workflow tasks land in 'review' for human approval.
   run(migrationMarkerKey(76), () => runMigration76(db));
 
-  // Migration 77: Make sessions.workspace_path nullable for unbound sessions.
   run(migrationMarkerKey(77), () => runMigration77(db));
 
-  // Migration 78: Create workspace_history table for persisting recently-used workspace paths.
   run(migrationMarkerKey(78), () => runMigration78(db));
 
-  // Migration 79: Update node_executions for the new agent model.
-  //   - Add 'idle' status (replaces 'done') to the CHECK constraint.
-  //   - Add 'data TEXT' column for structured agent output.
   run(migrationMarkerKey(79), () => runMigration79(db));
 
-  // Migration 80: Consolidate space_agents.system_prompt + instructions → custom_prompt.
-  //   - Adds 'custom_prompt TEXT' column.
-  //   - Migrates data: combines system_prompt and instructions into a single field.
   run(migrationMarkerKey(80), () => runMigration80(db));
 
-  // Migration 81: Add preferred_workflow_id to space_tasks.
-  //   - Stores the caller-specified workflow template ID for standalone task attachment.
-  //   - When set, the runtime uses this workflow instead of heuristic auto-selection.
   run(migrationMarkerKey(81), () => runMigration81(db));
 
-  // Migration 82: Add approval audit trail columns to space_tasks.
-  //   - approval_source: who approved (human, neo_agent, space_agent, task_agent, node_agent, semi_auto)
-  //   - approval_reason: optional comment/reason for the approval
-  //   - approved_at: timestamp when approval occurred
   run(migrationMarkerKey(82), () => runMigration82(db));
 
-  // Migration 83: Add block_reason column to space_tasks.
-  //   Records *why* a task is blocked (agent_crashed, workflow_invalid, etc.).
   run(migrationMarkerKey(83), () => runMigration83(db));
 
-  // Migration 84: Workflow Run Artifacts.
-  //   - Creates workflow_run_artifacts table for typed node outputs (PRs, commits, etc.).
-  //   - Drops pr_url, pr_number, pr_created_at from space_tasks (replaced by artifacts).
   run(migrationMarkerKey(84), () => runMigration84(db));
 
-  // Migration 85: Add paused column to spaces.
-  //   Allows users to pause/resume space runtime execution without archiving.
   run(migrationMarkerKey(85), () => runMigration85(db));
 
-  // Migration 86: 5-level numeric autonomy.
-  //   - Converts spaces.autonomy_level from TEXT to INTEGER (1–5).
-  //   - Adds pending_action_index and pending_checkpoint_type to space_tasks.
-  //   - Migrates approval_source values to simplified 3-value type.
   run(migrationMarkerKey(86), () => runMigration86(db));
 
-  // Migration 87: Add stopped column to spaces.
-  //   Allows users to stop/start space runtime execution without archiving.
-  //   Stopped spaces have all active work killed and will not auto-start on daemon restart.
   run(migrationMarkerKey(87), () => runMigration87(db));
 
-  // Migration 88: Decouple `report_result` from canonical task status.
-  //   Adds `reported_status` and `reported_summary` columns to space_tasks
-  //   so the agent's report intent is recorded separately from the runtime's
-  //   final status decision (which goes through completion-actions review).
   run(migrationMarkerKey(88), () => runMigration88(db));
 
-  // Migration 89: Drop reserved writer keywords from persisted gates.
-  //   Existing space_workflows.gates rows may contain `writers: ['human']`
-  //   or `writers: ['reviewer']` from before the structural-semantics switch.
-  //   Rewrite those `approved` fields to `writers: []` so external-approval
-  //   gates keep working under the new authorization rules.
   run(migrationMarkerKey(89), () => runMigration89(db));
 
-  // Migration 90: Add template_name and template_hash to space_workflows for drift detection.
   run(migrationMarkerKey(90), () => runMigration90(db));
 
-  // Migration 91: Add instructions column to space_workflows.
-  //   Stores workflow-level instructions injected into every agent session.
   run(migrationMarkerKey(91), () => runMigration91(db));
 
-  // Migration 92: Persistent queue for Task Agent → node agent / Space Agent
-  //   messages. Enables queue-until-active delivery when a target session is
-  //   declared in the workflow but not yet active (e.g. reopen races, daemon
-  //   restarts, lazy node activation). The flush-on-activate hook in
-  //   TaskAgentManager drains pending rows when a sub-session comes online.
   run(migrationMarkerKey(92), () => runMigration92(db));
 
-  // Migration 93: Add sdk_origin_path column to sessions for cross-workspace/worktree resume.
-  //   Stores the resolved CWD used when the SDK session was first created, so that
-  //   the session file can be found even when the effective CWD changes between daemon
-  //   restarts (e.g. when a worktree is added/removed after the session was started).
   run(migrationMarkerKey(93), () => runMigration93(db));
 
-  // Migration 94: Backfill workflow template tracking and end-node completion actions
-  //   for workflows seeded by earlier code paths that silently dropped these fields.
-  //   Also removes orphan duplicate built-in workflow rows that have no active runs.
   run(migrationMarkerKey(94), () => runMigration94(db));
 
-  // Migration 95: Add completion_actions_fired_at column to space_workflow_runs.
-  //   Used as an idempotency marker so completion actions are not re-fired when
-  //   a workflow run is reopened (done → in_progress) and later completes again.
   run(migrationMarkerKey(95), () => runMigration95(db));
 
-  // Migration 96: Remove the legacy "Full-Cycle Coding Workflow" built-in template
-  //   now that it has been replaced by the Plan & Decompose workflow.
-  //   Only deletes rows with no active workflow runs so in-flight work is preserved.
   run(migrationMarkerKey(96), () => runMigration96(db));
 
-  // Migration 97: Delete orphan built-in workflow rows — rows whose `name` matches
-  //   a known built-in template but whose `template_name` column is NULL. These are
-  //   pre-template-tracking duplicates left over when a later seed created a fresh
-  //   row alongside the orphan. Any runs referencing an orphan workflow are deleted
-  //   first (M60 rebuilt space_workflow_runs without an ON DELETE CASCADE FK, so
-  //   the migration handles the cleanup explicitly).
   run(migrationMarkerKey(97), () => runMigration97(db));
 
-  // Migration 98: Create workflow_run_artifact_cache table for background-job-backed
-  //   caching of git-derived artifact data (gate artifacts, commits, per-file diffs).
-  //   Opening the TaskArtifactsPanel used to run three git subprocesses inline per RPC
-  //   call; those are now enqueued to the job queue and the cached result is served
-  //   synchronously from this table on subsequent opens.
   run(migrationMarkerKey(98), () => runMigration98(db));
 
-  // Migration 99: Tool-contract refactor for Task #39 — adds the
-  //   `space_workflows.completion_autonomy_level` column, three pending-completion
-  //   columns on `space_tasks`, and the `space_task_report_results` append-only
-  //   audit table used by the new `report_result` tool.
   run(migrationMarkerKey(99), () => runMigration99(db));
 
-  // Migration 100: MCP registry provenance — adds `source` and `source_path`
-  //   columns to `app_mcp_servers`. Backfills existing rows as 'builtin' (for
-  //   seeded names) or 'user' (everything else). Adds a partial unique index
-  //   on `(source_path, name)` WHERE source='imported' so the M2 import service
-  //   can upsert idempotently from `.mcp.json` scans.
   run(migrationMarkerKey(100), () => runMigration100(db));
 
-  // Migration 101: MCP M3 — create the unified `mcp_enablement` table used as
-  //   the single source of truth for per-scope (space/room/session) MCP server
-  //   overrides, and seed it from the legacy `room_mcp_enablement` table plus
-  //   existing `GlobalSettings.disabledMcpServers` and per-session
-  //   `config.tools.disabledMcpServers`. Legacy columns/table are left intact
-  //   for this milestone — M5 removes them.
   run(migrationMarkerKey(101), () => runMigration101(db));
 
-  // Migration 102: MCP M5 of `unify-mcp-config-model` — purge legacy MCP keys
-  //   from the `global_settings` JSON blob now that M101 has migrated the data
-  //   into `mcp_enablement`. The deleted keys (`disabledMcpServers`,
-  //   `mcpServerSettings`, `enabledMcpServers`, `enableAllProjectMcpServers`)
-  //   are superseded by the unified `app_mcp_servers` registry + the
-  //   `mcp_enablement` override table. Carries no schema changes — only data
-  //   cleanup. Runs strictly *after* M101 so the seed step still has the
-  //   legacy data to copy.
   run(migrationMarkerKey(102), () => runMigration102(db));
 
-  // Migration 103: PR 1/5 of the task-agent-as-post-approval-executor refactor
-  //   (docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md).
-  //   Schema-only — no runtime consumer yet.
-  //   Step 1: widen the `space_tasks.status` CHECK constraint to include the
-  //     new `'approved'` value.
-  //   Steps 2–4: add three nullable columns on `space_tasks`:
-  //     `post_approval_session_id`, `post_approval_started_at`,
-  //     `post_approval_blocked_reason`.
   run(migrationMarkerKey(103), () => runMigration103(db));
 
-  // Migration 104: PR 5/5 of the task-agent-as-post-approval-executor refactor.
-  //   Final cleanup — drops the completion-action schema fields. By this stage
-  //   PR 4/5 has already removed every runtime path that produced these
-  //   values, so the migration is mostly defensive.
-  //   Step 5: rewrite any live tasks paused at `pending_checkpoint_type =
-  //     'completion_action'` to `'task_completion'` and clear
-  //     `pending_action_index`.
-  //   Step 6: drop `space_tasks.pending_action_index` column.
-  //   Step 7: tighten the `pending_checkpoint_type` CHECK constraint from
-  //     `('completion_action', 'gate', 'task_completion')` to
-  //     `('gate', 'task_completion')`.
-  //   Step 8: drop `space_workflow_runs.completion_actions_fired_at`.
-  //   Step 9 (deferred per plan §4.4): `space_task_report_results` stays —
-  //     dropping it is gated on a writer audit and shipped in a later
-  //     cleanup migration.
   run(migrationMarkerKey(104), () => runMigration104(db));
 
-  // Migration 105: Add template_name and template_hash to space_agents for
-  //   preset-agent drift detection. Mirrors the workflow template-tracking
-  //   columns added in M90 so preset-seeded agents can detect when the source
-  //   definitions in seed-agents.ts have moved on, and the UI can offer a
-  //   one-click "Sync from template" action.
   run(migrationMarkerKey(105), () => runMigration105(db));
 
-  // Migration 106: Backfill template_name + template_hash on existing
-  //   space_agents rows that match a preset agent by name but predate M105.
-  //   Self-contained (frozen preset fingerprints inlined) — same pattern as
-  //   M94 for workflow templates.
   run(migrationMarkerKey(106), () => runMigration106(db));
 
-  // Migration 107: Drop the legacy `space_task_report_results` audit table.
-  //   M104's plan §4.4 step 9 deferred this drop pending a writer audit; the
-  //   audit is now complete (no remaining production code path writes to the
-  //   table — the `report_result` end-node tool, repository, and helpers were
-  //   all removed). Runs after every previous migration that may still
-  //   reference the table.
   run(migrationMarkerKey(107), () => runMigration107(db));
 
-  // Migration 108: Remove stale persisted Brave Search MCP rows from older
-  //   databases. The built-in registry no longer seeds this MCP server or its
-  //   wrapper skill, but users who ran older builds can still have rows in
-  //   app_mcp_servers, skills, and enablement override tables. Delete those
-  //   legacy rows so settings surfaces no longer display them.
   run(migrationMarkerKey(108), () => runMigration108(db));
 
-  // Migration 109: Durable Codex tool continuation recovery. Adds
-  //   `waiting_rebind` to node_executions and creates persistent tool_use →
-  //   execution mapping plus a per-execution continuation inbox.
   run(migrationMarkerKey(109), () => runMigration109(db));
 
-  // Migration 110: Limit pending-agent-message idempotency to live pending rows.
-  //   Historical delivered/failed/expired rows must not suppress legitimate resends.
   run(migrationMarkerKey(110), () => runMigration110(db));
 
-  // Migration 111: Space-level GitHub watched repositories and normalized PR events.
   run(migrationMarkerKey(111), () => runMigration111(db));
 
-  // Migration 112: Normalize Space GitHub dedupe keys after canonical repo casing change.
   run(migrationMarkerKey(112), () => runMigration112(db));
 
-  // Migration 113: Add SDK message indexes for large thread windows and replay lookups.
   run(migrationMarkerKey(113), () => runMigration113(db));
 
-  // Migration 114: Add 'draft' to space_tasks status CHECK constraint.
   run(migrationMarkerKey(114), () => runMigration114(db));
 
-  // Migration 115: Add task_agent_config column to spaces table.
-  //   Stores per-space Task Agent overrides (model and custom prompt) as JSON.
   run(migrationMarkerKey(115), () => runMigration115(db));
 
-  // Migration 116: Add thinking_level to space_agents for per-agent thinking overrides.
   run(migrationMarkerKey(116), () => runMigration116(db));
 
-  // Migration 117: Add disabled column to space_workflows.
-  //   When true, the workflow cannot be selected for new tasks.
   run(migrationMarkerKey(117), () => runMigration117(db));
 
-  // Migration 118: Add setting_sources column to space_agents.
-  //   Stores per-agent setting source overrides as JSON.
   run(migrationMarkerKey(118), () => runMigration118(db));
 
-  // Migration 119: Add setting_sources column to spaces.
-  //   Stores per-space default setting sources as JSON.
   run(migrationMarkerKey(119), () => runMigration119(db));
 
-  // Migration 120: Add created_by and created_by_session columns to space_tasks.
-  //   Tracks which agent and session created a task for audit trail.
   run(migrationMarkerKey(120), () => runMigration120(db));
 
-  // Migration 121: Create mcp_audit_log table.
-  //   General audit trail for MCP write operations (create_task, approve_task,
-  //   send_message with gate data, save_artifact, etc.).
   run(migrationMarkerKey(121), () => runMigration121(db));
 
-  // Migration 122: Replace task-thread projection with schema fix.
-  //   - Add derived columns to sdk_messages: is_renderable, is_terminal, parent_tool_use_id.
-  //     These are populated at write time so live-query handlers can read them
-  //     without re-parsing JSON or running expensive json_each filters.
-  //   - Add task_id column (+ index) to sdk_messages: stamped at INSERT time by
-  //     SDKMessageRepository from sessions.session_context.taskId. Replaces the
-  //     earlier task_session_map projection (which is dropped if present from a
-  //     prior dev run) with a single denormalised column on the message row, so
-  //     the live-query thread feeds can JOIN through sdk_messages.task_id directly
-  //     without maintaining a parallel lookup table.
-  //   - Backfill derived columns + task_id from the existing schema.
   run(migrationMarkerKey(122), () => runMigration122(db));
 
-  // Migration 123: Add external-event lifecycle tables for the External Event Bus.
-  //   space_external_events — source-level dedup + state machine.
-  //   space_external_event_deliveries — per-subscription delivery lifecycle.
   run(migrationMarkerKey(123), () => runMigration123(db));
 
-  // Migration 124: Simplify external-event schema.
-  //   - Remove pr_number, repo_owner, repo_name, branch, routed_task_id columns
-  //     from space_external_events (source-specific metadata now lives in payload_json).
-  //   - Simplify state machine: published → delivered | failed | ignored.
-  //     Remove 'routed', 'delivery_failed', 'ambiguous' states.
   run(migrationMarkerKey(124), () => runMigration124(db));
 
-  // Migration 125: Add task_schedules table for recurring/one-shot scheduled tasks.
-  //   task_schedules — stores template + trigger config + scheduling state.
-  //   Also adds created_by_task_schedule_id column to space_tasks.
   run(migrationMarkerKey(125), () => runMigration125(db));
 
-  // Migration 126: Drop the legacy json_extract function index
-  //   idx_sdk_messages_parent_tool. The column-based equivalent
-  //   idx_sdk_messages_parent_tool_use_id (added by migration 122) covers all
-  //   call sites — keeping both costs write throughput without buying lookup
-  //   speed.
   run(migrationMarkerKey(126), () => runMigration126(db));
 
-  // Migration 127: Add `handle` column to `space_workflows` for human-readable
-  // workflow identifiers (alternative to UUID). Unique per space.
   run(migrationMarkerKey(127), () => runMigration127(db));
 
-  // Migration 128: Add external-event extension configuration tables.
   run(migrationMarkerKey(128), () => runMigration128(db));
 
-  // Migration 129: Add per-space concurrent task execution limit.
   run(migrationMarkerKey(129), () => runMigration129(db));
 
-  // Migration 130: Add gate_open_state table for persisting gate-open cache across daemon restarts.
   run(migrationMarkerKey(130), () => runMigration130(db));
 
-  // Migration 131: Add Space-native goals and goal linkage on space_tasks/task_schedules.
   run(migrationMarkerKey(131), () => runMigration131(db));
 
-  // Migration 132: Add per-space persistent agent memory with FTS5 search.
   run(migrationMarkerKey(132), () => runMigration132(db));
 
-  // Migration 133: Add append-only Space goal event history.
   run(migrationMarkerKey(133), () => runMigration133(db));
 
-  // Migration 134: Add FTS5-backed message and Space task search.
   run(migrationMarkerKey(134), () => runMigration134(db));
 
-  // Migration 135: Add space-scoped pending message lookup index for actor registry.
   run(migrationMarkerKey(135), () => runMigration135(db));
 
-  // Migration 136: Add agent-memory embedding status and vector storage.
   run(migrationMarkerKey(136), () => runMigration136(db));
 
-  // Migration 137: Prune message search rows to current search retention policy.
   run(migrationMarkerKey(137), () => runMigration137(db));
 
-  // Migration 138: Add durable inbox for long-term Space agents.
   run(migrationMarkerKey(138), () => runMigration138(db));
 
-  // Migration 139: Add Forge MVP evolution storage.
   run(migrationMarkerKey(139), () => runMigration139(db));
 
-  // Migration 140: Add Space agent core memory table for consolidation.
   run(migrationMarkerKey(140), () => runMigration140(db));
 
-  // Migration 141: Rebuild message search FTS with detail=column and external content.
   run(migrationMarkerKey(141), () => runMigration141(db));
 
-  // Migration 142: Expand Forge evidence kinds and backfill MVP task evidence.
   run(migrationMarkerKey(142), () => runMigration142(db));
 
-  // Migration 143: Expand Forge evidence kinds for trace-derived process evidence.
   run(migrationMarkerKey(143), () => runMigration143(db));
 
-  // Migration 144: Add evergreen long-horizon Space agents, Coordinator default,
-  // and long-horizon Space agent management tables.
   run(migrationMarkerKey(144), () => runMigration144(db));
 
-  // Migration 145: Add per-task workflow model overrides.
   run(migrationMarkerKey(145), () => runMigration145(db));
 
-  // Migration 146: Expand Forge evidence kinds for structured daemon log capture.
   run(migrationMarkerKey(146), () => runMigration146(db));
 
-  // Migration 147: Add model and thinking_level columns to long-horizon agents.
   run(migrationMarkerKey(147), () => runMigration147(db));
 
-  // Migration 148: Add persisted handles to Space agents.
   run(migrationMarkerKey(148), () => runMigration148(db));
 
-  // Migration 149: Add encrypted provider credentials fallback table.
   run(migrationMarkerKey(149), () => runMigration149(db));
 
-  // Migration 150: Create providers table for unified provider registry.
   run(migrationMarkerKey(150), () => runMigration150(db));
 
-  // Migration 151: Consolidate agent event subscriptions into long-horizon table.
   run(migrationMarkerKey(151), () => runMigration151(db));
 
-  // Migration 152: Preserve provider and setting sources on long-horizon agents.
   run(migrationMarkerKey(152), () => runMigration152(db));
 
-  // Migration 153: Add workflow hook config and per-run hook state storage.
   run(migrationMarkerKey(153), () => runMigration153(db));
 
-  // Migration 154: Store GitHub webhook auto-registration state.
   run(migrationMarkerKey(154), () => runMigration154(db));
 
-  // Migration 155: Copy legacy ownership/automation rows into long-horizon tables.
   run(migrationMarkerKey(155), () => runMigration155(db));
 
-  // Migration 156: Persist ACP agent session ids.
   run(migrationMarkerKey(156), () => runMigration156(db));
 
-  // Migration 157: Archive worker sessions for terminal Space tasks.
   run(migrationMarkerKey(157), () => runMigration157(db));
 
-  // Migration 158: Clean stale active runtime rows for terminal Space work.
   run(migrationMarkerKey(158), () => runMigration158(db));
-  // Migration 159: Add friction_digest and verification_triage evidence kinds.
   run(migrationMarkerKey(159), () => runMigration159(db));
 
-  // Migration 160: Backfill friction_digest evidence kind for databases that already ran migration 159.
   run(migrationMarkerKey(160), () => runMigration160(db));
 
-  // Migration 161: Persist the active session error snapshot (sessions.last_error).
   run(migrationMarkerKey(161), () => runMigration161(db));
 
-  // Migration 162: Rename legacy `neokai_action` message type and `neokai_product`
-  // evolution-finding domain to their rebranded identifiers so persisted rows match
-  // the code after the HyperNeo rename.
   run(migrationMarkerKey(162), () => runMigration162(db));
 
-  // Migration 163: Normalize SDK message UUIDs and replacement relationships.
   let migration163Ran = false;
   run(migrationMarkerKey(163), () => {
     runMigration163(db);
     migration163Ran = true;
   });
 
-  // This reconciliation intentionally runs outside the one-shot marker. An older
-  // binary used after rollback leaves new rows at the column default (0), so the
-  // next upgrade catches up only those rows before normalized readers run.
   if (!migration163Ran) {
     reconcileSdkMessageReplacementProjection(db);
   }
 
-  // Migration 164: Index deliveries by (state, updated_at) for the GitHub health
-  // snapshot's countDeliveryLog recency-window lookup. Must be a separate
-  // migration (not folded into 123) because 123 is already on dev — existing
-  // databases skip it, so the index would never be created for them.
   run(migrationMarkerKey(164), () => runMigration164(db));
 
-  // Migration 165: Composite (state, updated_at) index for the GitHub health
-  // snapshot's countDeliveryLog recency-window lookup. Must be separate from 164
-  // because 164 already ran on dev (creating only the pending-delivery index) —
-  // existing databases skip the modified 164.
   run(migrationMarkerKey(165), () => runMigration165(db));
 
-  // Migration 166: Backfill freeform artifact_type values to the closed generic
-  // shape vocabulary (link/commit_set/check/metric/decision/note), and collapse
-  // per-round "note" (formerly "progress") rows to a single rolling-status row.
   run(migrationMarkerKey(166), () => runMigration166(db));
 
-  // Reconcile legacy artifact rows outside the one-shot marker, mirroring the
-  // migration-163 rollback reconciliation above. The artifact_type column stays
-  // unrestricted, so a database that already ran migration 166 can still have
-  // legacy rows written into it by an older binary used after a rollback; this
-  // catches them on every startup so the shape-based readers stay consistent.
-  // No-op (and cheap) once every row is on a known shape.
   migrateLegacyArtifactsToShapes(db);
 
-  // Migration 167: Add rate_limited/usage_limited to space_tasks.status CHECK and
-  // a restrictions column, so worker sessions paused on rate/usage caps can
-  // surface a distinct status with a resume-at timestamp. (Originally authored
-  // as M163 on this branch; renumbered three times — 164, 166, 167 — as dev
-  // shipped unrelated M163/M164/M165/M166 migrations.)
   run(migrationMarkerKey(167), () => runMigration167(db));
 
-  // Migration 168: Index node_executions(agent_session_id) so the runtime MCP
-  // self-heal rebind path (node-execution-repository getByAgentSessionId /
-  // listByAgentSessionId) stops doing a full table scan on every agent-session
-  // lookup. (The live-query task-scope nodeExecStmt already drives off
-  // idx_node_executions_run and is unaffected.)
   run(migrationMarkerKey(168), () => runMigration168(db));
 
-  // Migration 169: Add a VIRTUAL generated column message_subtype_norm =
-  // COALESCE(message_subtype,'') plus a (session_id, message_subtype_norm,
-  // parent_tool_use_id) index, so the chat-view subtype filters (the
-  // messages.bySession background-task sidecar and friends) become sargable
-  // instead of seeking to all top-level rows and filtering row-by-row. VIRTUAL
-  // makes the ALTER schema-only (no table rewrite) — critical for the 15GB
-  // production DB. New databases get both via createTables(); this brings
-  // existing databases up to parity. (Originally M168 on this branch;
-  // renumbered to M169 because dev shipped M168 for node_executions(agent_session_id) in #2343.)
   run(migrationMarkerKey(169), () => runMigration169(db));
 
-  // Migration 170: Backfill missing preset agents into existing Spaces.
-  //   seedPresetAgents() runs only at Space creation, so Spaces created before
-  //   a preset was added to PRESET_AGENTS (most recently "PR Merger") never
-  //   received the row — and a workflow template referencing that preset then
-  //   fails to sync. This migration walks every Space × live preset list and
-  //   INSERTs any preset row that is missing (matched by name, case-insensitive).
-  //   Idempotent; never modifies existing rows. Delegated to
-  //   m170-backfill-missing-preset-agents.ts so the loop body stays readable.
   run(migrationMarkerKey(170), () => runMigration170(db));
 
-  // Migration 171: backfill Post-Approval ↔ Review channels onto existing
-  // built-in merge-capable workflows (Coding / Research / Coding-with-QA) so
-  // the redesigned merger can report blockers to the Reviewer. Idempotent.
   run(migrationMarkerKey(171), () => runMigration171(db));
 
-  // Migration 172: Re-backfill template tracking on preset-named space_agents
-  //   rows that lost it after M106 ran (M106 is one-shot/marked). Rows are
-  //   re-orphaned when the editor clears tracking on a preset-field edit, or
-  //   were seeded without tracking; once orphaned they're invisible to drift
-  //   detection and their prompts silently go stale. Re-attaches ONLY rows
-  //   that already match the current preset; divergent rows are left as
-  //   orphans so drift forces a diff review before any overwrite. Idempotent /
-  //   no-op on already-tracked rows. See m172-backfill-orphaned-preset-agents.ts.
   run(migrationMarkerKey(172), () => runMigration172(db));
 
-  // Migration 173: Drop the redundant idx_sdk_messages_session (a strict
-  // prefix of idx_sdk_messages_session_timestamp_id) and the superseded
-  // idx_sdk_messages_uuid_status expression index (replaced by the column
-  // index idx_sdk_messages_session_uuid from M163; the uuid lookups now
-  // filter on the sdk_uuid column directly). New databases never receive
-  // either index — this brings existing ones to parity. Idempotent via
-  // DROP INDEX IF EXISTS. (Originally M170 on this branch; renumbered to
-  // M173 because dev shipped M170/M171/M172 for preset/template backfills.)
   run(migrationMarkerKey(173), () => runMigration173(db));
 
-  // Migration 174: Add a composite (space_id, status, updated_at, id) index on
-  // space_tasks to back the Tasks-view queries (listByStatus /
-  // listBySpaceAndStatus / listBySpace), which all filter by space_id (+ an
-  // optional status equality) and ORDER BY updated_at DESC, id DESC. The legacy
-  // single-column idx_space_tasks_status was dropped years ago and never
-  // replaced, so every render scanned all non-archived rows in the space and
-  // post-filtered on status. (Renumbered 168→169→172→174 as dev shipped
-  // intervening migrations in #2343/#2349/#2370/#2374/#2363/#2357.)
   run(migrationMarkerKey(174), () => runMigration174(db));
 
-  // Migration 175: index space_external_events by (space_id, source, ingested_at)
-  // for the GitHub health snapshot's per-event-type recency scan.
   run(migrationMarkerKey(175), () => runMigration175(db));
 
-  // Migration 176: Add space_tasks.post_approval_source_node_id — the durable
-  // source-node field the post-approval router reads (informational sourceNodeId
-  // + approval_authority token + sibling-quiesce source) instead of the (now
-  // atomically-cleared) pending_completion_submitted_by_node_id. Closes the
-  // post-approval crash window (task #851). Idempotent ADD COLUMN + scoped
-  // backfill; see runMigration176. (Renumbered from 171/172/174/175 — dev
-  // shipped those for other backfills + index drops.)
   run(migrationMarkerKey(176), () => runMigration176(db));
 
-  // Migration 177: Maintain sessions.visible_message_count so the
-  // space-sessions badge (spaceSessions.bySpace) reads a column instead of
-  // running a correlated COUNT(*) over sdk_messages for every session on every
-  // (150ms-debounced) re-evaluation. Adds the column and backfills it from the
-  // current visible totals; SDKMessageRepository maintains it thereafter.
-  // (Renumbered 169→170→171→175→176→177 as dev shipped intervening migrations.)
   run(migrationMarkerKey(177), () => runMigration177(db));
 
-  // Migration 178: Add conversation_turn_index (global, per-task) to
-  // sdk_messages and backfill it, so spaceTaskMessages.byTask.compact and the
-  // active roster can seek conversation turns instead of recomputing them via 6
-  // window-function passes over every task message (#2338). Stored (not
-  // generated — depends on sibling rows); backfilled once via temp table +
-  // UPDATE…FROM. Rewind-safe at runtime (inserts are append-only relative to
-  // survivors). New databases get the column + idx_sdk_messages_task_turn via
-  // createTables(); this brings existing databases up to parity. (Renumbered
-  // 171→174→175→176→178 as dev shipped intervening migrations.)
   run(migrationMarkerKey(178), () => runMigration178(db));
 
-  // Migration 179: Add `workflow_node_id` to pending_agent_messages so queued
-  //   human messages can be scoped to the exact node they were sent to. Without
-  //   it, the queue is keyed only by (workflow_run_id, target_agent_name), so
-  //   when two unstarted nodes reuse an agent slot name and both receive a
-  //   message before either spawns, whichever session starts first drains BOTH
-  //   rows. New DBs get the column via this ALTER (M92 creates the table);
-  //   idempotent on DBs that already have it. (Renumbered 173->175->176->179 as
-  //   dev shipped M176/M177/M178 in #2387/#2388/#2390.)
   run(migrationMarkerKey(179), () => runMigration179(db));
 
-  // Migration 180: Create `space_workflow_definition_versions` — the append-only history
-  // of immutable workflow-definition snapshots (RFC §4 Phase 1). Each row is a full,
-  // self-contained definition payload identified by a SHA-256 `version_hash`. The Phase-1
-  // read cutover resolves pinned runs through these rows (`getWorkflowForRun`); a startup
-  // backfill captures every existing head. No FK to
-  // space_workflows(id): pinned versions must survive deletion of the mutable head
-  // (orphan/tombstone policy). New databases get the table from createTables(); this
-  // brings existing databases to parity.
   run(migrationMarkerKey(180), () => runMigration180(db));
 
-  // Migration 181: Pin each new workflow run to an immutable definition version. Existing
-  // runs remain unpinned because the definition they originally executed cannot be inferred
-  // from the current mutable head. The composite FK makes every non-null pin resolvable.
   run(migrationMarkerKey(181), () => runMigration181(db));
 
-  // Migration 182: Partial unique index uq_message_delivery_active_turn on
-  // job_queue lane 'message_delivery' — the atomic "one active turn per
-  // session" guard + turn-vs-steer arbiter for message-delivery v2. See
-  // docs/features/message-delivery-v2.md §6. Idempotent (`CREATE INDEX IF NOT
-  // EXISTS`); no-op on tables that pre-date the lane (no rows ⇒ no conflict).
-  // (Renumbered 180→181→182: dev shipped M180 for space_workflow_definition_versions
-  // in #2412 and M181 for workflow-run definition pinning in #2425.)
   run(migrationMarkerKey(182), () => runMigration182(db));
 
-  // Migration 183: Widen sdk_messages.send_status for ACP delivery boundaries.
   run(migrationMarkerKey(183), () => runMigration183(db));
 
-  // Migration 184: Backfill Bash + Cron tools onto existing Reviewer preset rows
-  // (the reviewer lost the shell-less profile when the PR-process MCPs were
-  // removed). Re-stamps only unmodified seeds; customized rows are left for the
-  // drift/sync UI. (Renumbered 181→182→184: dev shipped M181 for workflow-run
-  // definition-version pinning, M182 for the message-delivery-v2 active-turn
-  // index, and M183 for the sdk_messages.send_status widen.)
   run(migrationMarkerKey(184), () => runMigration184(db));
 
-  // Migration 185: Persist workflow-run event subscriptions (PR 5 of the
-  //   external-event subscription refactor). Creates
-  //   `space_workflow_event_subscriptions` as the durable source of truth for
-  //   agent-registered `dynamic` subscriptions (static template interests are
-  //   re-materialized from the workflow definition, so they are not persisted),
-  //   so the in-memory TopicTrie's dynamic entries can be rebuilt from this
-  //   table on rehydrate instead of dropping ad-hoc dynamic subscriptions on
-  //   daemon restart. Idempotent; new databases get the same table from
-  //   createTables().
   run(migrationMarkerKey(185), () => runMigration185(db));
 
-  // Migration 186: Partial expression index idx_message_delivery_session_active
-  // for the activeDeliveryMessageUuids / hasActiveDeliveryJobs lookup (the
-  // "which sessions own an active durable job" hot path). Mirrored in
-  // createIndexes() for fresh DBs. (task #861, review P2.) Renumbered 185→186:
-  // dev shipped M185 for workflow-event-subscriptions.
   run(migrationMarkerKey(186), () => runMigration186(db));
 
-  // Migration 187: delivery_turn_end — durable delivery-turn completion markers
-  // for result-less terminal paths (query error / interrupt that persist no SDK
-  // `result` row). A stale re-claim consults this so it completes an
-  // already-ended consumed turn instead of re-driving it into an
-  // indefinitely-waiting query. Mirrored in the fresh-DB schema (index.ts).
-  // See Codex (PR #2463, P2 result-less terminal paths).
   run(migrationMarkerKey(187), () => runMigration187(db));
 
-  // Migration 188: sdk_messages.consumed_seq — a monotonic consumption sequence
-  // assigned at the consumed-flip, so the delivery re-claim boundary
-  // (`hasTerminalResultAfter`) can order a consumed message before a terminal
-  // result that lands in the same millisecond even when the message's original
-  // `rowid` predates it. Mirrored in the fresh-DB schema (index.ts).
-  // See Codex (PR #2463, P2).
   run(migrationMarkerKey(188), () => runMigration188(db));
 
-  // Migration 189: delivery_consumed_seq — a dedicated monotonic counter for the
-  // consumption watermark. MAX(rowid)+1 is not strictly monotonic across deletes
-  // (SQLite may reuse a deleted max rowid for a later insert, moving a terminal
-  // result behind the watermark). A singleton counter row is genuinely monotonic.
-  // Mirrored in the fresh-DB schema (index.ts). See Codex (PR #2463, P2).
   run(migrationMarkerKey(189), () => runMigration189(db));
 
-  // Migration 190: Remove the legacy workflow gate subsystem — drop the
-  // `gate_data` and `gate_open_state` tables and the `gates` column from
-  // `space_workflows`. Workflow progression is now enforced by MCP action hooks;
-  // gate storage is obsolete. Idempotent via existence guards. Renumbered from
-  // 187 (dev shipped M187–M189 for message-delivery-v2, #862).
   run(migrationMarkerKey(190), () => runMigration190(db));
 
-  // Migration 191: node_executions.last_activity_at — dedicated agent-activity
-  // signal (refreshed by tool calls / message delivery / commit pushes,
-  // independent of updated_at) so stall detection is not keyed off updated_at.
   run(migrationMarkerKey(191), () => runMigration191(db));
 
-  // Migration 192: Add `delivery_mode` to pending_agent_messages so a deferred
-  //   ("queue for next turn") human message that lands in the pending queue
-  //   (target not live yet) retains its mode when flushed after spawn — instead
-  //   of defaulting to immediate and steering the kickoff turn. NULL (legacy
-  //   rows + callers that don't pass it) behaves as before (immediate).
-  //   Idempotent ALTER TABLE ADD COLUMN; new DBs get it via this ALTER since
-  //   M92 creates the table.
   run(migrationMarkerKey(192), () => runMigration192(db));
 
-  // Migration 193: channel_cycle_events — rate-based dead-loop detection.
   run(migrationMarkerKey(193), () => runMigration193(db));
 
-  // Migration 194: Persist a dedicated job-claim heartbeat without overwriting
-  // the attempt's immutable started_at timestamp.
   run(migrationMarkerKey(194), () => runMigration194(db));
 }
 
@@ -1086,31 +510,14 @@ function hasCurrentBaselineSchema(db: BunDatabase): boolean {
   );
 }
 
-/**
- * Migration 94 — delegated to m94-backfill-workflow-templates.ts so the large
- * backfill block doesn't bloat this file. The behaviour is documented in that
- * module. Exported for direct invocation from tests.
- */
 export function runMigration94(db: BunDatabase): void {
   runMigration94External(db);
 }
 
-/**
- * Migration 96: Remove the legacy "Full-Cycle Coding Workflow" built-in template.
- *
- * The Full-Cycle workflow was replaced by the Plan & Decompose Workflow. Delete
- * its rows from `space_workflows` across all spaces — but only if the row has no
- * active runs, so any in-flight work keeps executing. Orphan rows without active
- * runs are safe to remove because the in-memory WorkflowExecutor holds a snapshot
- * of the workflow definition for the lifetime of each run.
- *
- * Idempotent: if no rows match (already removed or never seeded), this is a no-op.
- */
 export function runMigration96(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflows')) {
     return;
   }
-  // Guard against older schemas that may pre-date space_workflow_runs.
   const hasRunsTable = tableExists(db, 'space_workflow_runs');
 
   let stmt: string;
@@ -1135,41 +542,10 @@ export function runMigration96(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 97 — Delete orphan built-in workflow rows.
- *
- * Clears pre-template-tracking rows that match a known built-in workflow name
- * but have `template_name IS NULL`. These rows predate the template-tracking
- * columns (see migration 90) and were typically superseded by a fresh seed row
- * that already carries `template_name`. Leaving them in place breaks drift
- * detection and confuses the workflow list UI.
- *
- * Idempotent — running the migration twice deletes 0 rows on the second pass.
- *
- * Orphaned-run handling: the `space_workflow_runs.workflow_id` FK was dropped
- * in migration 60, so deleting a workflow does NOT cascade to its runs. To
- * avoid leaving dangling run rows we first delete any runs that reference an
- * orphan workflow. This is acceptable because orphan rows have not been used
- * for new seeding since template tracking shipped — any run referencing one
- * is stale.
- *
- * Complements migration 96 (which deletes Full-Cycle rows without active runs):
- * M96 targets rows by exact name; this migration targets pre-tracking orphans
- * across the built-in set (including legacy names like "Coding with QA
- * Workflow" and "Full-Cycle Coding Workflow" for users upgrading from older
- * databases).
- */
 export function runMigration97(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflows')) return;
-  // Guard on the template_name column existing — if migration 90 hasn't run
-  // yet (shouldn't happen in practice, but defensive) skip silently.
   if (!tableHasColumn(db, 'space_workflows', 'template_name')) return;
 
-  // Built-in workflow names at the time this migration was authored. Mirrors
-  // `getBuiltInWorkflows()` in built-in-workflows.ts, plus the two legacy
-  // names retired in PR #1539 so orphan rows on upgraded databases are also
-  // cleaned up. Kept inline — migrations must be self-contained and stable
-  // across future template changes.
   const BUILT_IN_NAMES = [
     'Coding Workflow',
     'Coding with QA Workflow',
@@ -1182,9 +558,6 @@ export function runMigration97(db: BunDatabase): void {
 
   const placeholders = BUILT_IN_NAMES.map(() => '?').join(', ');
 
-  // Clean up dangling runs first — there is no FK cascade from
-  // space_workflow_runs.workflow_id anymore (M60 rebuilt the table without
-  // it), so we do it explicitly to avoid leaving orphaned run rows.
   if (tableExists(db, 'space_workflow_runs')) {
     db.prepare(
       `DELETE FROM space_workflow_runs
@@ -1203,31 +576,20 @@ export function runMigration97(db: BunDatabase): void {
   ).run(...BUILT_IN_NAMES);
 }
 
-/**
- * Migration 1: Add oauth_token_encrypted column if it doesn't exist
- */
 function runMigration1(db: BunDatabase): void {
-  // First check if auth_config table exists (fresh database)
   if (!tableExists(db, 'auth_config')) {
     return;
   }
   try {
-    // Check if column exists by trying to query it
     db.prepare(`SELECT oauth_token_encrypted FROM auth_config LIMIT 1`).all();
   } catch {
-    // Column doesn't exist, add it
     db.exec(`ALTER TABLE auth_config ADD COLUMN oauth_token_encrypted TEXT`);
   }
 }
 
-/**
- * Migration 2: Remove messages and tool_calls tables (replaced by sdk_messages)
- */
 function runMigration2(db: BunDatabase): void {
   try {
-    // Check if messages table exists
     db.prepare(`SELECT 1 FROM messages LIMIT 1`).all();
-    // Table exists, drop it
     db.exec(`DROP TABLE IF EXISTS tool_calls`);
     db.exec(`DROP TABLE IF EXISTS messages`);
     db.exec(`DROP INDEX IF EXISTS idx_messages_session`);
@@ -1237,11 +599,7 @@ function runMigration2(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 3: Add worktree columns to sessions table
- */
 function runMigration3(db: BunDatabase): void {
-  // Skip if sessions table doesn't exist (fresh database)
   if (!tableExists(db, 'sessions')) {
     return;
   }
@@ -1255,11 +613,7 @@ function runMigration3(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 4: Add git_branch column for non-worktree git sessions
- */
 function runMigration4(db: BunDatabase): void {
-  // Skip if sessions table doesn't exist (fresh database)
   if (!tableExists(db, 'sessions')) {
     return;
   }
@@ -1270,11 +624,7 @@ function runMigration4(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 5: Add sdk_session_id column for session resumption
- */
 function runMigration5(db: BunDatabase): void {
-  // Skip if sessions table doesn't exist (fresh database)
   if (!tableExists(db, 'sessions')) {
     return;
   }
@@ -1285,11 +635,7 @@ function runMigration5(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 6: Add available_commands column for slash commands persistence
- */
 function runMigration6(db: BunDatabase): void {
-  // Skip if sessions table doesn't exist (fresh database)
   if (!tableExists(db, 'sessions')) {
     return;
   }
@@ -1300,11 +646,7 @@ function runMigration6(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 7: Add processing_state column for agent state persistence
- */
 function runMigration7(db: BunDatabase): void {
-  // Skip if sessions table doesn't exist (fresh database)
   if (!tableExists(db, 'sessions')) {
     return;
   }
@@ -1315,11 +657,7 @@ function runMigration7(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 8: Add archived_at column for archive session feature
- */
 function runMigration8(db: BunDatabase): void {
-  // Skip if sessions table doesn't exist (fresh database)
   if (!tableExists(db, 'sessions')) {
     return;
   }
@@ -1330,23 +668,11 @@ function runMigration8(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 9: Update CHECK constraint to include 'archived' status
- *
- * SQLite doesn't support ALTER COLUMN, so we need to recreate the table.
- *
- * CRITICAL: Must disable foreign_keys during table recreation!
- * With foreign_keys=ON, DROP TABLE cascades to child tables (sdk_messages),
- * which would delete all messages. This was a data-loss bug.
- */
 function runMigration9(db: BunDatabase): void {
-  // Skip if sessions table doesn't exist (fresh database)
   if (!tableExists(db, 'sessions')) {
     return;
   }
   try {
-    // Check if the CHECK constraint already includes 'archived'
-    // We do this by trying to insert a test row with status='archived'
     const testId = '__migration_test_archived_status__';
     db.prepare(
       `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at)
@@ -1370,18 +696,11 @@ function runMigration9(db: BunDatabase): void {
       null,
       null
     );
-    // If we got here, the constraint already includes 'archived', clean up and skip migration
     db.prepare(`DELETE FROM sessions WHERE id = ?`).run(testId);
   } catch {
-    // INSERT failed, which means CHECK constraint doesn't include 'archived'
-    // Need to recreate the table with updated constraint
-
-    // CRITICAL: Disable foreign keys during table recreation to prevent
-    // CASCADE delete from wiping sdk_messages when we DROP TABLE sessions
     db.exec('PRAGMA foreign_keys = OFF');
 
     try {
-      // SQLite table recreation pattern for modifying constraints
       db.exec(`
 				-- Create new table with updated CHECK constraint
 				CREATE TABLE sessions_new (
@@ -1418,19 +737,12 @@ function runMigration9(db: BunDatabase): void {
 				ALTER TABLE sessions_new RENAME TO sessions;
 			`);
     } finally {
-      // Re-enable foreign keys
       db.exec('PRAGMA foreign_keys = ON');
     }
   }
 }
 
-/**
- * Migration 10: Add send_status column to sdk_messages for query mode support
- *
- * send_status tracks whether a message has been saved, queued, or sent to SDK
- */
 function runMigration10(db: BunDatabase): void {
-  // Skip if sdk_messages table doesn't exist (fresh database)
   if (!tableExists(db, 'sdk_messages')) {
     return;
   }
@@ -1440,46 +752,27 @@ function runMigration10(db: BunDatabase): void {
     db.exec(
       `ALTER TABLE sdk_messages ADD COLUMN send_status TEXT DEFAULT 'sent' CHECK(send_status IN ('saved', 'queued', 'sent'))`
     );
-    // Add index for efficient status queries
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status ON sdk_messages(session_id, send_status)`
     );
   }
 }
 
-/**
- * Migration 11: Add sub-session columns for parent-child session relationships
- *
- * - parent_id: References parent session (null for root sessions)
- * - labels: JSON array of strings for categorization
- * - sub_session_order: Integer for ordering siblings in UI
- */
 function runMigration11(db: BunDatabase): void {
-  // Skip if sessions table doesn't exist (fresh database)
   if (!tableExists(db, 'sessions')) {
     return;
   }
   try {
     db.prepare(`SELECT parent_id FROM sessions LIMIT 1`).all();
   } catch {
-    // Note: SQLite doesn't support adding FK constraints via ALTER TABLE,
-    // but the application layer will enforce the constraint
     db.exec(`ALTER TABLE sessions ADD COLUMN parent_id TEXT`);
     db.exec(`ALTER TABLE sessions ADD COLUMN labels TEXT`);
     db.exec(`ALTER TABLE sessions ADD COLUMN sub_session_order INTEGER DEFAULT 0`);
-    // Add index for efficient parent lookups
     db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_id)`);
   }
 }
 
-/**
- * Migration 12: Ensure global_settings has autoScroll: true for existing databases
- *
- * Existing databases may have global_settings without the autoScroll field.
- * This migration ensures all existing settings have autoScroll: true as default.
- */
 export function runMigration12(db: BunDatabase): void {
-  // Skip if global_settings table doesn't exist (fresh database)
   if (!tableExists(db, 'global_settings')) {
     return;
   }
@@ -1498,7 +791,6 @@ export function runMigration12(db: BunDatabase): void {
 
     const settings = JSON.parse(row.settings) as Record<string, unknown>;
 
-    // Only update if autoScroll is not already set
     if (settings.autoScroll === undefined) {
       settings.autoScroll = true;
       db.exec(`
@@ -1513,23 +805,11 @@ export function runMigration12(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 13: Update CHECK constraint to include 'pending_worktree_choice' status
- *
- * SQLite doesn't support ALTER COLUMN, so we need to recreate the table.
- *
- * CRITICAL: Must disable foreign_keys during table recreation!
- * With foreign_keys=ON, DROP TABLE cascades to child tables (sdk_messages),
- * which would delete all messages. This was a data-loss bug.
- */
 function runMigration13(db: BunDatabase): void {
-  // Skip if sessions table doesn't exist (fresh database)
   if (!tableExists(db, 'sessions')) {
     return;
   }
   try {
-    // Check if the CHECK constraint already includes 'pending_worktree_choice'
-    // We do this by trying to insert a test row with status='pending_worktree_choice'
     const testId = '__migration_test_pending_worktree_choice_status__';
     db.prepare(
       `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at, parent_id)
@@ -1554,24 +834,14 @@ function runMigration13(db: BunDatabase): void {
       null,
       null
     );
-    // If we got here, the constraint already includes 'pending_worktree_choice', clean up and skip migration
     db.prepare(`DELETE FROM sessions WHERE id = ?`).run(testId);
   } catch {
-    // INSERT failed, which means CHECK constraint doesn't include 'pending_worktree_choice'
-    // Need to recreate the table with updated constraint
-    // Recreate table with updated CHECK constraint to include 'pending_worktree_choice'
-
-    // CRITICAL: Disable foreign keys during table recreation to prevent
-    // CASCADE delete from wiping sdk_messages when we DROP TABLE sessions
     db.exec('PRAGMA foreign_keys = OFF');
 
     try {
-      // Determine which optional columns exist before rebuild (they may or may not be present
-      // depending on which migrations ran before this one)
       const hasLabels = tableHasColumn(db, 'sessions', 'labels');
       const hasSubOrder = tableHasColumn(db, 'sessions', 'sub_session_order');
 
-      // SQLite table recreation pattern for modifying constraints
       db.exec(`
 				-- Create new table with updated CHECK constraint
 				CREATE TABLE sessions_new (
@@ -1609,8 +879,6 @@ function runMigration13(db: BunDatabase): void {
 				ALTER TABLE sessions_new RENAME TO sessions;
 			`);
 
-      // Re-add labels and sub_session_order if they existed in the old table
-      // (Migration 14 will drop them, but we preserve them here so M14 can do it cleanly)
       if (hasLabels) {
         db.exec(`ALTER TABLE sessions ADD COLUMN labels TEXT`);
       }
@@ -1618,20 +886,11 @@ function runMigration13(db: BunDatabase): void {
         db.exec(`ALTER TABLE sessions ADD COLUMN sub_session_order INTEGER DEFAULT 0`);
       }
     } finally {
-      // Re-enable foreign keys
       db.exec('PRAGMA foreign_keys = ON');
     }
   }
 }
 
-/**
- * Migration 14: Drop events table and unused session columns
- *
- * - events table was never used (EventBus handles events in-memory)
- * - labels and sub_session_order columns were added in Migration 11 but never used
- *
- * ALTER TABLE DROP COLUMN requires SQLite 3.35+; Bun ships SQLite 3.46+.
- */
 function runMigration14(db: BunDatabase): void {
   db.exec(`DROP TABLE IF EXISTS events`);
   db.exec(`DROP INDEX IF EXISTS idx_events_session`);
@@ -1645,25 +904,15 @@ function runMigration14(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 15: Add 'failed' to send_status CHECK constraint in sdk_messages
- *
- * Orphaned messages are now marked 'failed' instead of 'saved', so they appear
- * in the UI as undelivered rather than being silently re-dispatched on startup.
- *
- * Requires rebuilding the table because SQLite does not support modifying
- * existing CHECK constraints via ALTER TABLE.
- */
 function runMigration15(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) {
     return;
   }
-  // Check if the constraint already includes 'failed' by inspecting the schema SQL
   const tableInfo = db
     .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='sdk_messages'`)
     .get() as { sql: string } | null;
   if (tableInfo?.sql?.includes("'failed'")) {
-    return; // Already migrated
+    return;
   }
 
   db.exec(`PRAGMA foreign_keys = OFF`);
@@ -1692,21 +941,8 @@ function runMigration15(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 16: Replace 'escalated' with 'review' in tasks CHECK constraint,
- * remove 'hibernated' from session_groups CHECK constraint,
- * add config column to rooms table.
- *
- * - Tasks: 'escalated' → 'review' (existing escalated rows mapped to 'failed')
- * - Session groups: remove 'hibernated' (existing hibernated rows mapped to 'failed')
- * - Rooms: add config TEXT column for agent sub-agents and other room config
- */
 function runMigration16(db: BunDatabase): void {
-  // --- Tasks table: replace 'escalated' with 'review' ---
   if (tableExists(db, 'tasks')) {
-    // Inspect CHECK constraint text instead of probe INSERT.
-    // Probe inserts can fail due to FK constraints (tasks.room_id -> rooms.id)
-    // even when the status CHECK is already migrated.
     const tableInfo = db
       .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`)
       .get() as { sql: string } | null;
@@ -1717,12 +953,10 @@ function runMigration16(db: BunDatabase): void {
     if (needsTaskMigration) {
       db.exec('PRAGMA foreign_keys = OFF');
       try {
-        // Map any existing 'escalated' tasks to 'failed'
         db.exec(`PRAGMA ignore_check_constraints = 1`);
         db.exec(`UPDATE tasks SET status = 'failed' WHERE status = 'escalated'`);
         db.exec(`PRAGMA ignore_check_constraints = 0`);
 
-        // Drop leftover temp table from a previous crashed migration attempt
         db.exec(`DROP TABLE IF EXISTS tasks_new`);
 
         db.exec(`
@@ -1747,7 +981,6 @@ function runMigration16(db: BunDatabase): void {
 						FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
 					)
 				`);
-        // Build column list dynamically — old schemas may not have all columns
         const cols = [
           'id',
           'room_id',
@@ -1780,18 +1013,16 @@ function runMigration16(db: BunDatabase): void {
     }
   }
 
-  // --- Session groups table: remove 'hibernated' ---
   if (tableExists(db, 'session_groups')) {
     const testId = '__migration15_sg_test__';
     let needsGroupMigration = false;
     try {
-      // Try inserting 'hibernated' — if it succeeds, the constraint still allows it
       db.prepare(
         `INSERT INTO session_groups (id, group_type, ref_id, state, version, metadata, created_at)
 				 VALUES (?, 'task', 'test', 'hibernated', 0, '{}', 0)`
       ).run(testId);
       db.prepare(`DELETE FROM session_groups WHERE id = ?`).run(testId);
-      needsGroupMigration = true; // 'hibernated' is still allowed, need to remove it
+      needsGroupMigration = true;
     } catch {
       // 'hibernated' already not allowed — migration done
     }
@@ -1799,10 +1030,8 @@ function runMigration16(db: BunDatabase): void {
     if (needsGroupMigration) {
       db.exec('PRAGMA foreign_keys = OFF');
       try {
-        // Map any existing 'hibernated' groups to 'failed'
         db.exec(`UPDATE session_groups SET state = 'failed' WHERE state = 'hibernated'`);
 
-        // Drop leftover temp table from a previous crashed migration attempt
         db.exec(`DROP TABLE IF EXISTS session_groups_new`);
 
         db.exec(`
@@ -1833,36 +1062,16 @@ function runMigration16(db: BunDatabase): void {
     }
   }
 
-  // --- Rooms table: add config column ---
   if (tableExists(db, 'rooms') && !tableHasColumn(db, 'rooms', 'config')) {
     db.exec(`ALTER TABLE rooms ADD COLUMN config TEXT`);
   }
 }
 
-/**
- * Migration 17: Fix goals table CHECK constraint and add goal_review_attempts column
- *
- * The goals table was created with an old CHECK constraint:
- *   CHECK(status IN ('pending', 'in_progress', 'completed', 'blocked'))
- * The correct constraint (matching GoalStatus type) is:
- *   CHECK(status IN ('active', 'needs_human', 'completed', 'archived'))
- *
- * Also adds the goal_review_attempts column defined in the RoomGoal interface
- * but missing from the original table schema.
- *
- * Status mapping: pending → active, in_progress → active, blocked → needs_human
- *
- * CRITICAL: Must disable foreign_keys during table recreation to prevent
- * CASCADE delete from wiping related data when we DROP TABLE goals.
- */
 function runMigration17(db: BunDatabase): void {
   if (!tableExists(db, 'goals')) {
     return;
   }
 
-  // Check if migration is needed: try inserting a row with status='active'
-  // If it fails, the old CHECK constraint is in place and we need to recreate the table.
-  // Also check if goal_review_attempts column is already present.
   const testId = '__migration16_goals_test__';
   let needsConstraintFix = false;
   try {
@@ -1878,23 +1087,20 @@ function runMigration17(db: BunDatabase): void {
   const needsColumn = !tableHasColumn(db, 'goals', 'goal_review_attempts');
 
   if (!needsConstraintFix && !needsColumn) {
-    return; // Already up to date
+    return;
   }
 
   db.exec('PRAGMA foreign_keys = OFF');
   try {
     if (needsConstraintFix) {
-      // Map old status values to new ones before recreating the table
       db.exec(`PRAGMA ignore_check_constraints = 1`);
       db.exec(`UPDATE goals SET status = 'active' WHERE status IN ('pending', 'in_progress')`);
       db.exec(`UPDATE goals SET status = 'needs_human' WHERE status = 'blocked'`);
       db.exec(`PRAGMA ignore_check_constraints = 0`);
     }
 
-    // Drop leftover temp table from a previous crashed migration attempt
     db.exec(`DROP TABLE IF EXISTS goals_new`);
 
-    // Determine which optional columns exist so we can carry them over
     const hasGoalReviewAttempts = tableHasColumn(db, 'goals', 'goal_review_attempts');
     const hasPlanningAttempts = tableHasColumn(db, 'goals', 'planning_attempts');
 
@@ -1920,7 +1126,6 @@ function runMigration17(db: BunDatabase): void {
 			)
 		`);
 
-    // Build column list — only include goal_review_attempts if it existed before
     const cols = [
       'id',
       'room_id',
@@ -1954,22 +1159,11 @@ function runMigration17(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 18: Add 'cancelled' to tasks status CHECK constraint
- *
- * Cancelled tasks are intentionally stopped by the user — semantically distinct from failed.
- * Uses the same table-rebuild pattern required by SQLite's lack of ALTER CONSTRAINT support.
- */
 function runMigration18(db: BunDatabase): void {
   if (!tableExists(db, 'tasks')) {
     return;
   }
 
-  // Test if migration is needed by inspecting the CHECK constraint in the schema text.
-  // We use sqlite_master instead of a probe INSERT to avoid triggering a FK violation:
-  // tasks.room_id references rooms(id), and inserting with a fake room_id would fail
-  // when foreign_keys=ON (which the app enables at startup), spuriously triggering a
-  // full table-rebuild on every startup even for already-migrated databases.
   const tableInfo = db
     .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`)
     .get() as { sql: string } | null;
@@ -2035,9 +1229,6 @@ function runMigration18(db: BunDatabase): void {
   }
 }
 
-/**
- * Helper function to check if a table exists in the database
- */
 function tableExists(db: BunDatabase, tableName: string): boolean {
   const result = db
     .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
@@ -2045,9 +1236,6 @@ function tableExists(db: BunDatabase, tableName: string): boolean {
   return !!result;
 }
 
-/**
- * Helper to check whether a table has a specific column
- */
 function tableHasColumn(db: BunDatabase, tableName: string, columnName: string): boolean {
   const result = db
     .prepare(`SELECT name FROM pragma_table_info('${tableName}') WHERE name = ?`)
@@ -2255,37 +1443,16 @@ function statusCheckContains(db: BunDatabase, tableName: string, status: string)
   return match?.[1]?.includes(`'${status}'`) ?? false;
 }
 
-/**
- * Room cleanup migration (consolidates former migrations 25–36)
- *
- * Room features were never shipped to production, so all room-related tables are
- * dropped unconditionally — createTables() recreates them with the correct schema.
- *
- * For the sessions table (which contains real user data):
- * - Adds type/session_context columns if missing
- * - Rebuilds the table if the type CHECK constraint is outdated, mapping any
- *   dev-only type values to their production equivalents before the rebuild.
- */
 function runMigration19(db: BunDatabase): void {
   db.exec(`DROP TABLE IF EXISTS session_group_messages`);
   db.exec(`DROP INDEX IF EXISTS idx_sgmsg_group`);
 }
 
-/**
- * Migration 20: Add archived_at column to tasks table
- *
- * archived_at is orthogonal to status - a task can be completed+archived, failed+archived, etc.
- * This supports the worktree cleanup strategy where:
- * - completed/cancelled tasks cleanup worktree immediately
- * - failed tasks keep worktree for debugging
- * - archived tasks cleanup worktree when user explicitly archives
- */
 function runMigration20(db: BunDatabase): void {
   if (!tableExists(db, 'tasks')) {
     return;
   }
 
-  // Check if archived_at column already exists
   if (tableHasColumn(db, 'tasks', 'archived_at')) {
     return;
   }
@@ -2293,13 +1460,6 @@ function runMigration20(db: BunDatabase): void {
   db.exec(`ALTER TABLE tasks ADD COLUMN archived_at INTEGER`);
 }
 
-/**
- * Migration 21: Backfill submittedForReview metadata from legacy state column.
- *
- * For pre-existing databases, active groups may rely on `state='awaiting_human'`
- * without metadata.submittedForReview set. Runtime behavior now relies on metadata,
- * so this migration copies that semantic flag into metadata once.
- */
 function runMigration21(db: BunDatabase): void {
   if (!tableExists(db, 'session_groups')) {
     return;
@@ -2334,11 +1494,6 @@ function runMigration21(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 22: Drop legacy `session_groups.state` and its index.
- *
- * Routing semantics now rely on completed_at + metadata.submittedForReview.
- */
 function runMigration22(db: BunDatabase): void {
   db.exec(`DROP INDEX IF EXISTS idx_session_groups_state`);
 
@@ -2352,11 +1507,6 @@ function runMigration22(db: BunDatabase): void {
   db.exec(`ALTER TABLE session_groups DROP COLUMN state`);
 }
 
-/**
- * Migration 23: Add active_session column to tasks table.
- * Tracks which agent session is currently generating output ('worker' | 'leader' | null).
- * Allows the UI to show a "working" indicator even when the task status is 'review'.
- */
 function runMigration23(db: BunDatabase): void {
   if (!tableExists(db, 'tasks')) {
     return;
@@ -2367,18 +1517,11 @@ function runMigration23(db: BunDatabase): void {
   db.exec(`ALTER TABLE tasks ADD COLUMN active_session TEXT`);
 }
 
-/**
- * Migration 24: Rename 'failed' task status to 'needs_attention'.
- *
- * Uses the table-rebuild pattern required by SQLite's lack of ALTER CONSTRAINT support.
- * Also updates any existing task rows with status='failed' to 'needs_attention'.
- */
 function runMigration24(db: BunDatabase): void {
   if (!tableExists(db, 'tasks')) {
     return;
   }
 
-  // Check if migration is needed by inspecting the CHECK constraint.
   const tableInfo = db
     .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`)
     .get() as { sql: string } | null;
@@ -2418,7 +1561,6 @@ function runMigration24(db: BunDatabase): void {
 			)
 		`);
 
-    // Build column list dynamically for the INSERT SELECT (handles optional columns)
     const baseCols = [
       'id',
       'room_id',
@@ -2448,7 +1590,6 @@ function runMigration24(db: BunDatabase): void {
       if (tableHasColumn(db, 'tasks', col)) baseCols.push(col);
     }
 
-    // Rename 'failed' → 'needs_attention' during the copy using CASE expression
     const colsWithoutStatus = baseCols.join(', ');
     db.exec(`PRAGMA ignore_check_constraints = 1`);
     db.exec(`
@@ -2469,12 +1610,6 @@ function runMigration24(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 25: Add PR fields to tasks table.
- *
- * Adds pr_url, pr_number, pr_created_at as first-class columns so PR data
- * is no longer stored as a hack in current_step.
- */
 function runMigration25(db: BunDatabase): void {
   if (!tableExists(db, 'tasks')) {
     return;
@@ -2490,9 +1625,6 @@ function runMigration25(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 26: Add input_draft column to tasks table for server-side draft persistence
- */
 function runMigration26(db: BunDatabase): void {
   if (!tableExists(db, 'tasks')) {
     return;
@@ -2509,19 +1641,16 @@ function runMigration27(db: BunDatabase): void {
   }
   if (!tableHasColumn(db, 'tasks', 'updated_at')) {
     db.exec(`ALTER TABLE tasks ADD COLUMN updated_at INTEGER`);
-    // Backfill updated_at with the best available timestamp for existing rows
     db.exec(
       `UPDATE tasks SET updated_at = COALESCE(completed_at, started_at, created_at) WHERE updated_at IS NULL`
     );
   }
-  // Add composite index for listTasks() query: WHERE room_id = ? ORDER BY updated_at DESC
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
 }
 
 function runMigrationRoomCleanup(db: BunDatabase): void {
   db.exec(`PRAGMA foreign_keys = OFF`);
   try {
-    // Drop all old experiment and orchestration tables
     db.exec(`DROP TABLE IF EXISTS neo_context_messages`);
     db.exec(`DROP TABLE IF EXISTS neo_contexts`);
     db.exec(`DROP TABLE IF EXISTS neo_tasks`);
@@ -2540,14 +1669,8 @@ function runMigrationRoomCleanup(db: BunDatabase): void {
     db.exec(`DROP TABLE IF EXISTS rendered_prompts`);
     db.exec(`DROP TABLE IF EXISTS prompt_templates`);
 
-    // Room runtime tables (rooms, tasks, goals, session_groups, etc.) are now
-    // production tables with real data — do NOT drop them here.
-    // createTables() uses CREATE TABLE IF NOT EXISTS, so they will be created
-    // on first run and preserved on subsequent runs.
-
     if (!tableExists(db, 'sessions')) return;
 
-    // Ensure sessions has the new columns
     if (!tableHasColumn(db, 'sessions', 'type')) {
       db.exec(`ALTER TABLE sessions ADD COLUMN type TEXT DEFAULT 'worker'`);
     }
@@ -2555,7 +1678,6 @@ function runMigrationRoomCleanup(db: BunDatabase): void {
       db.exec(`ALTER TABLE sessions ADD COLUMN session_context TEXT`);
     }
 
-    // Test whether the type CHECK constraint already includes the final set of types
     const testId = '__migration_room_cleanup_test__';
     try {
       db.exec(
@@ -2563,17 +1685,15 @@ function runMigrationRoomCleanup(db: BunDatabase): void {
 				 VALUES ('${testId}', 'test', '/', datetime('now'), datetime('now'), 'active', '{}', '{}', 'planner')`
       );
       db.exec(`DELETE FROM sessions WHERE id = '${testId}'`);
-      return; // Constraint is already correct — nothing more to do
+      return;
     } catch {
       // Constraint is outdated — rebuild sessions below
     }
 
-    // Remap dev-only type values before the rebuild
     db.exec(`PRAGMA ignore_check_constraints = 1`);
     db.exec(`UPDATE sessions SET type = 'coder' WHERE type IN ('craft', 'room_self')`);
     db.exec(`UPDATE sessions SET type = 'leader' WHERE type IN ('lead', 'manager')`);
     db.exec(`PRAGMA ignore_check_constraints = 0`);
-    // Delete any remaining room-only session types (dev data, not present in production)
     db.exec(
       `DELETE FROM sessions WHERE type NOT IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby')`
     );
@@ -2617,32 +1737,13 @@ function runMigrationRoomCleanup(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 28: Add mission metadata columns to goals table and create
- * mission_metric_history and mission_executions tables.
- *
- * New columns on goals:
- * - mission_type, autonomy_level (with CHECK constraints)
- * - schedule (JSON), schedule_paused, next_run_at
- * - structured_metrics (JSON)
- * - max_consecutive_failures, max_planning_attempts, consecutive_failures
- *
- * New tables:
- * - mission_metric_history: metric data points per goal
- * - mission_executions: execution runs per goal (with partial unique index
- *   on (goal_id) WHERE status = 'running' for at-most-one-running invariant)
- *
- * Backfills existing goals: mission_type = 'one_shot', autonomy_level = 'supervised'
- */
 function runMigration28(db: BunDatabase): void {
-  // --- Add columns to goals table ---
   if (tableExists(db, 'goals')) {
     if (!tableHasColumn(db, 'goals', 'mission_type')) {
       db.exec(
         `ALTER TABLE goals ADD COLUMN mission_type TEXT NOT NULL DEFAULT 'one_shot'` +
           ` CHECK(mission_type IN ('one_shot', 'measurable', 'recurring'))`
       );
-      // Backfill existing rows (ALTER TABLE DEFAULT already handles it, but be explicit)
       db.exec(`UPDATE goals SET mission_type = 'one_shot' WHERE mission_type IS NULL`);
     }
     if (!tableHasColumn(db, 'goals', 'autonomy_level')) {
@@ -2670,9 +1771,6 @@ function runMigration28(db: BunDatabase): void {
     if (!tableHasColumn(db, 'goals', 'max_planning_attempts')) {
       db.exec(`ALTER TABLE goals ADD COLUMN max_planning_attempts INTEGER NOT NULL DEFAULT 0`);
     } else {
-      // Reset old default sentinel 5 → 0. Zero means "use room config" (no per-goal override).
-      // The prior migration used 5 as the column default, but that was never a meaningful
-      // user-set value; it caused all goals to appear as if they had an explicit override.
       db.exec(`UPDATE goals SET max_planning_attempts = 0 WHERE max_planning_attempts = 5`);
     }
     if (!tableHasColumn(db, 'goals', 'consecutive_failures')) {
@@ -2681,14 +1779,12 @@ function runMigration28(db: BunDatabase): void {
     if (!tableHasColumn(db, 'goals', 'replan_count')) {
       db.exec(`ALTER TABLE goals ADD COLUMN replan_count INTEGER NOT NULL DEFAULT 0`);
     }
-    // Composite index for efficient scheduler queries
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_goals_mission_scheduler` +
         ` ON goals(mission_type, schedule_paused, next_run_at)`
     );
   }
 
-  // --- Create mission_metric_history table ---
   db.exec(`
 		CREATE TABLE IF NOT EXISTS mission_metric_history (
 			id TEXT PRIMARY KEY,
@@ -2704,7 +1800,6 @@ function runMigration28(db: BunDatabase): void {
       ` ON mission_metric_history(goal_id, metric_name, recorded_at)`
   );
 
-  // --- Create mission_executions table ---
   db.exec(`
 		CREATE TABLE IF NOT EXISTS mission_executions (
 			id TEXT PRIMARY KEY,
@@ -2720,34 +1815,13 @@ function runMigration28(db: BunDatabase): void {
 			UNIQUE(goal_id, execution_number)
 		)
 	`);
-  // Partial unique index: at most one running execution per goal
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running` +
       ` ON mission_executions(goal_id) WHERE status = 'running'`
   );
 }
 
-/**
- * Migration 29: Create all Space system tables (fully consolidated schema)
- *
- * Creates the following tables in FK-safe order:
- * - spaces: workspace-first multi-agent container
- * - space_agents: worker agents per space (role/provider/inject_workflow_context included, no CHECK on role)
- * - space_workflows: workflow definitions per space (includes start_step_id)
- * - space_workflow_steps: ordered steps within a workflow
- * - space_workflow_transitions: directed edges between steps (graph navigation)
- * - space_workflow_runs: active/historical workflow executions (includes current_step_id)
- * - space_tasks: tasks with built-in custom_agent_id, workflow_run_id, workflow_step_id
- * - space_session_groups: named groups of related sessions (includes workflow_run_id, current_step_id, task_id)
- * - space_session_group_members: membership records with freeform role, agent_id, and status
- *
- * All tables are created with IF NOT EXISTS so the migration is idempotent.
- * CASCADE deletes propagate from spaces → all child tables.
- */
 function runMigration29(db: BunDatabase): void {
-  // -------------------------------------------------------------------------
-  // spaces
-  // -------------------------------------------------------------------------
   db.exec(`
 		CREATE TABLE IF NOT EXISTS spaces (
 			id TEXT PRIMARY KEY,
@@ -2767,12 +1841,7 @@ function runMigration29(db: BunDatabase): void {
 		)
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_spaces_status ON spaces(status)`);
-  // Note: workspace_path has a UNIQUE constraint which SQLite implements as an implicit
-  // unique index — no explicit CREATE INDEX needed.
 
-  // -------------------------------------------------------------------------
-  // space_agents
-  // -------------------------------------------------------------------------
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agents (
 			id TEXT PRIMARY KEY,
@@ -2795,9 +1864,6 @@ function runMigration29(db: BunDatabase): void {
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agents_space_id ON space_agents(space_id)`);
 
-  // -------------------------------------------------------------------------
-  // space_workflows
-  // -------------------------------------------------------------------------
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_workflows (
 			id TEXT PRIMARY KEY,
@@ -2814,9 +1880,6 @@ function runMigration29(db: BunDatabase): void {
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_workflows_space_id ON space_workflows(space_id)`);
 
-  // -------------------------------------------------------------------------
-  // space_workflow_steps
-  // -------------------------------------------------------------------------
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_workflow_steps (
 			id TEXT PRIMARY KEY,
@@ -2838,14 +1901,6 @@ function runMigration29(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_space_workflow_steps_order ON space_workflow_steps(workflow_id, order_index)`
   );
 
-  // -------------------------------------------------------------------------
-  // space_workflow_definition_versions
-  //
-  // Append-only history of immutable workflow-definition snapshots (RFC §4 Phase 1).
-  // Populated on definition writes; the Phase-1 read cutover resolves pinned runs through
-  // these rows. No FK to space_workflows(id) — pinned versions must survive deletion of
-  // the mutable head (orphan/tombstone policy).
-  // -------------------------------------------------------------------------
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
 			workflow_id TEXT NOT NULL,
@@ -2863,9 +1918,6 @@ function runMigration29(db: BunDatabase): void {
 		ON space_workflow_definition_versions(space_id)
 	`);
 
-  // -------------------------------------------------------------------------
-  // space_workflow_transitions (directed edges between steps)
-  // -------------------------------------------------------------------------
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_workflow_transitions (
 			id TEXT PRIMARY KEY,
@@ -2890,9 +1942,6 @@ function runMigration29(db: BunDatabase): void {
     );
   }
 
-  // -------------------------------------------------------------------------
-  // space_workflow_runs  (must be before space_tasks — FK dependency)
-  // -------------------------------------------------------------------------
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_workflow_runs (
 			id TEXT PRIMARY KEY,
@@ -2922,9 +1971,6 @@ function runMigration29(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_status ON space_workflow_runs(status)`
   );
 
-  // -------------------------------------------------------------------------
-  // space_tasks
-  // -------------------------------------------------------------------------
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_tasks (
 			id TEXT PRIMARY KEY,
@@ -2970,7 +2016,6 @@ function runMigration29(db: BunDatabase): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
   );
-  // Existing databases created by early Space previews may be missing this column.
   if (!tableHasColumn(db, 'space_tasks', 'custom_agent_id')) {
     db.exec(`ALTER TABLE space_tasks ADD COLUMN custom_agent_id TEXT`);
   }
@@ -2984,13 +2029,7 @@ function runMigration29(db: BunDatabase): void {
       `CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_step_id ON space_tasks(workflow_step_id)`
     );
   }
-  // Note: idx_space_tasks_task_agent_session_id is created by migration 32,
-  // which first adds the column via ALTER TABLE for existing databases.
-  // Note: goal_id column is added by migration 34 (ALTER TABLE for existing DBs).
 
-  // -------------------------------------------------------------------------
-  // space_session_groups
-  // -------------------------------------------------------------------------
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_session_groups (
 			id TEXT PRIMARY KEY,
@@ -3009,9 +2048,6 @@ function runMigration29(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_space_session_groups_space_id ON space_session_groups(space_id)`
   );
 
-  // -------------------------------------------------------------------------
-  // space_session_group_members
-  // -------------------------------------------------------------------------
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_session_group_members (
 			id TEXT PRIMARY KEY,
@@ -3034,28 +2070,8 @@ function runMigration29(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_space_session_group_members_session_id ON space_session_group_members(session_id)`
   );
 
-  // -------------------------------------------------------------------------
-  // Idempotent column upgrades for existing databases
-  //
-  // The CREATE TABLE statements above include the final column set, so fresh
-  // databases need nothing more. For databases that were created by an earlier
-  // version of this migration (before all columns were consolidated), we add
-  // any missing columns here.
-  // -------------------------------------------------------------------------
-
-  // space_agents: role/provider/inject_workflow_context (added by early Space previews)
-  //
-  // These idempotent upgrades live in the original Space schema migration, which
-  // is re-run on every daemon startup. Later migrations (M74/M80) intentionally
-  // remove `role` and `inject_workflow_context` and consolidate legacy
-  // `system_prompt`/`instructions` into `custom_prompt`. Re-adding the removed
-  // columns to an already-modern schema would cause M74 to rebuild the table on
-  // every restart; before this guard, that rebuild dropped `custom_prompt` and
-  // M80 repopulated it from stale `system_prompt`, silently downgrading preset
-  // agent prompts. Only apply the legacy column upgrades to pre-M80 schemas.
   const spaceAgentsHaveCustomPrompt = tableHasColumn(db, 'space_agents', 'custom_prompt');
   if (!spaceAgentsHaveCustomPrompt) {
-    // space_agents: role (added in former migration 30)
     try {
       db.prepare(`SELECT role FROM space_agents LIMIT 1`).all();
     } catch {
@@ -3063,7 +2079,6 @@ function runMigration29(db: BunDatabase): void {
     }
   }
 
-  // space_agents: provider (added in former migration 30; still part of the current schema)
   try {
     db.prepare(`SELECT provider FROM space_agents LIMIT 1`).all();
   } catch {
@@ -3071,7 +2086,6 @@ function runMigration29(db: BunDatabase): void {
   }
 
   if (!spaceAgentsHaveCustomPrompt) {
-    // space_agents: inject_workflow_context (added in former migration 33)
     try {
       db.prepare(`SELECT inject_workflow_context FROM space_agents LIMIT 1`).all();
     } catch {
@@ -3081,26 +2095,18 @@ function runMigration29(db: BunDatabase): void {
     }
   }
 
-  // space_workflows: start_step_id (added in former migration 32)
   try {
     db.prepare(`SELECT start_step_id FROM space_workflows LIMIT 1`).all();
   } catch {
     db.exec(`ALTER TABLE space_workflows ADD COLUMN start_step_id TEXT`);
   }
 
-  // space_workflow_runs: current_step_id (added in former migration 32)
   try {
     db.prepare(`SELECT current_step_id FROM space_workflow_runs LIMIT 1`).all();
   } catch {
     db.exec(`ALTER TABLE space_workflow_runs ADD COLUMN current_step_id TEXT`);
   }
 
-  // space_workflow_transitions table (added in former migration 32) — CREATE TABLE
-  // is already above with IF NOT EXISTS, so this is handled automatically.
-
-  // Former migration 31 removed a CHECK constraint on space_agents.role that was
-  // introduced by the old migration 30. On databases where that ALTER TABLE ran,
-  // the constraint may still be present. Rebuild the table to remove it.
   const agentSchema = db
     .prepare<{ sql: string }, []>(
       `SELECT sql FROM sqlite_master WHERE type='table' AND name='space_agents'`
@@ -3127,8 +2133,6 @@ function runMigration29(db: BunDatabase): void {
 				)
 			`);
 
-      // Copy all columns that existed before, filling inject_workflow_context with
-      // the default for rows that pre-date that column.
       db.exec(`
 				INSERT INTO space_agents_new
 					(id, space_id, name, description, model, tools, system_prompt, config,
@@ -3146,10 +2150,6 @@ function runMigration29(db: BunDatabase): void {
     })();
   }
 
-  // -------------------------------------------------------------------------
-  // Add 'spaces_global' to sessions type CHECK constraint
-  // -------------------------------------------------------------------------
-  // SQLite doesn't support ALTER CHECK, so we recreate the table.
   if (tableExists(db, 'sessions')) {
     try {
       const testId = '__migration_test_spaces_global_type__';
@@ -3213,12 +2213,6 @@ function runMigration29(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 30: Add `layout` column to `space_workflows` for visual editor node positions.
- *
- * Stores node positions as JSON (`Record<stepId, {x, y}>`). Nullable — existing
- * workflows without layout data return NULL from the DB (mapped to undefined in code).
- */
 function runMigration30(db: BunDatabase): void {
   try {
     db.prepare(`SELECT layout FROM space_workflows LIMIT 1`).all();
@@ -3227,13 +2221,6 @@ function runMigration30(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 31: Add 'space_task_agent' to sessions type CHECK constraint.
- *
- * SQLite doesn't support ALTER CHECK, so we use the probe-insert + table-recreate
- * pattern: attempt to insert a row with type='space_task_agent'; if the constraint
- * rejects it, recreate the sessions table with the expanded CHECK list.
- */
 function runMigration31(db: BunDatabase): void {
   if (!tableExists(db, 'sessions')) return;
 
@@ -3298,12 +2285,6 @@ function runMigration31(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 32: Add `task_agent_session_id` column to `space_tasks`.
- *
- * Stores the ID of the Task Agent session associated with this task. Nullable —
- * tasks without a Task Agent return NULL (mapped to undefined in code).
- */
 function runMigration32(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
   try {
@@ -3316,15 +2297,6 @@ function runMigration32(db: BunDatabase): void {
   );
 }
 
-/**
- * Migration 33: Add `autonomy_level` column to `spaces`.
- *
- * Controls how much the Space Agent can act autonomously:
- * - 'supervised' (default): notifies human of all judgment calls, waits for approval.
- * - 'semi_autonomous': retries/reassigns tasks autonomously; escalates after one failed retry.
- *
- * Default is 'supervised' so all existing spaces remain supervised after migration.
- */
 function runMigration33(db: BunDatabase): void {
   if (!tableExists(db, 'spaces')) return;
   try {
@@ -3334,12 +2306,6 @@ function runMigration33(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 34: Add goal_id column to space_tasks.
- *
- * Links space tasks to goals/missions for cross-workflow-run querying.
- * Nullable — existing tasks will have goal_id as NULL.
- */
 function runMigration34(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
   try {
@@ -3350,12 +2316,6 @@ function runMigration34(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_id ON space_tasks(goal_id)`);
 }
 
-/**
- * Migration 35: Add iteration tracking columns to `space_workflow_runs`.
- *
- * - `iteration_count`: how many times the run has looped back (default 0).
- * - `max_iterations`: safety cap before escalating to needs_attention (default 5).
- */
 function runMigration35(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflow_runs')) return;
   try {
@@ -3372,12 +2332,6 @@ function runMigration35(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 36: Add `max_iterations` column to `space_workflows`.
- *
- * Template-level default for the maximum number of cyclic iterations.
- * Nullable — workflows without cyclic transitions don't need a cap.
- */
 function runMigration36(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflows')) return;
   try {
@@ -3387,9 +2341,6 @@ function runMigration36(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 37: Add goal_id column to space_workflow_runs for goal/mission association.
- */
 function runMigration37(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflow_runs')) return;
   try {
@@ -3402,15 +2353,6 @@ function runMigration37(db: BunDatabase): void {
   );
 }
 
-/**
- * Migration 38: Add `is_cyclic` column to `space_workflow_transitions`.
- *
- * When a transition is marked as cyclic, following it increments `iterationCount`
- * on the workflow run. This enables explicit cycle detection for iterative workflows
- * without relying on heuristics that would misfire on DAG merge paths.
- *
- * Nullable INTEGER (SQLite boolean): 0 = not cyclic, 1 = cyclic, NULL = not cyclic.
- */
 function runMigration38(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflow_transitions')) return;
   try {
@@ -3420,17 +2362,7 @@ function runMigration38(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 39: Add 'archived' to the status CHECK constraint on `tasks` and `space_tasks`.
- *
- * Uses the SQLite table-rebuild pattern (same as migration 18) because SQLite does not
- * support ALTER TABLE … ALTER CONSTRAINT.
- *
- * After the rebuild, backfills any rows where `archived_at IS NOT NULL` to
- * `status = 'archived'` so the status column becomes the canonical source of truth.
- */
 function runMigration39(db: BunDatabase): void {
-  // --- tasks table ---
   if (tableExists(db, 'tasks')) {
     const tableInfo = db
       .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`)
@@ -3519,13 +2451,11 @@ function runMigration39(db: BunDatabase): void {
       }
     }
 
-    // Backfill: set status = 'archived' for rows with archived_at IS NOT NULL
     db.exec(
       `UPDATE tasks SET status = 'archived' WHERE archived_at IS NOT NULL AND status != 'archived'`
     );
   }
 
-  // --- space_tasks table ---
   if (tableExists(db, 'space_tasks')) {
     const tableInfo = db
       .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='space_tasks'`)
@@ -3632,35 +2562,13 @@ function runMigration39(db: BunDatabase): void {
       }
     }
 
-    // Backfill: set status = 'archived' for rows with archived_at IS NOT NULL
     db.exec(
       `UPDATE space_tasks SET status = 'archived' WHERE archived_at IS NOT NULL AND status != 'archived'`
     );
   }
 }
 
-/**
- * Migration 40: Flexible session groups.
- *
- * space_session_groups:
- *   - Add `task_id TEXT` (nullable) — links group to SpaceTask
- *   - Add `status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','completed','failed'))`
- *   - Add index on space_session_groups(task_id)
- *
- * space_session_group_members:
- *   - Drop the CHECK constraint on `role` so it accepts any freeform string
- *   - Add `agent_id TEXT` (nullable) — references SpaceWorkerAgent config
- *   - Add `status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','completed','failed'))`
- *
- * SQLite cannot drop CHECK constraints via ALTER TABLE, so space_session_group_members
- * uses the recreate-table pattern (same as migrations 18 and 39).
- * ALTER TABLE ADD COLUMN is used for the two new space_session_groups columns because
- * no constraint change is needed there.
- */
 function runMigration40(db: BunDatabase): void {
-  // -------------------------------------------------------------------------
-  // space_session_groups — add task_id and status via ALTER TABLE (idempotent)
-  // -------------------------------------------------------------------------
   if (tableExists(db, 'space_session_groups')) {
     if (!tableHasColumn(db, 'space_session_groups', 'task_id')) {
       db.exec(`ALTER TABLE space_session_groups ADD COLUMN task_id TEXT`);
@@ -3675,12 +2583,6 @@ function runMigration40(db: BunDatabase): void {
     );
   }
 
-  // -------------------------------------------------------------------------
-  // space_session_group_members — recreate table to drop role CHECK constraint
-  // and add agent_id + status columns.
-  //
-  // Idempotency guard: if agent_id already exists the migration has already run.
-  // -------------------------------------------------------------------------
   if (
     tableExists(db, 'space_session_group_members') &&
     !tableHasColumn(db, 'space_session_group_members', 'agent_id')
@@ -3704,7 +2606,6 @@ function runMigration40(db: BunDatabase): void {
 				)
 			`);
 
-      // Copy existing columns; agent_id and status get their defaults
       const cols = ['id', 'group_id', 'session_id', 'role', 'order_index', 'created_at'];
       const selectCols = cols.join(', ');
       db.exec(
@@ -3724,32 +2625,10 @@ function runMigration40(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 41: Historical no-op.
- *
- * Kept for migration-number continuity. The former session_group_messages
- * projection table path was removed; canonical timeline data now comes from
- * sdk_messages + task_group_events.
- */
 function runMigration41(_db: BunDatabase): void {
   // No-op.
 }
 
-/**
- * Migration 42: Clean up stale/zombie session groups and enforce uniqueness.
- *
- * Step 1: Mark active groups as completed when their task is in a terminal state
- *         (completed, cancelled, archived, needs_attention). These are zombie groups
- *         that were never cleaned up when the task finished.
- *
- * Step 2: For tasks that still have multiple active groups after step 1, keep the
- *         one with the highest rowid (the true insert order tiebreaker), and mark all
- *         others as completed. Uses rowid instead of created_at to avoid failures when
- *         two groups share an identical millisecond timestamp.
- *
- * Step 3: Add a partial unique index on session_groups(ref_id) WHERE completed_at IS NULL,
- *         scoped to task/task_pair group types, to enforce DB-level uniqueness.
- */
 function runMigration42(db: BunDatabase): void {
   if (!tableExists(db, 'session_groups') || !tableExists(db, 'tasks')) {
     return;
@@ -3757,8 +2636,6 @@ function runMigration42(db: BunDatabase): void {
 
   const now = Date.now();
 
-  // Step 1: Complete groups whose tasks are already in a terminal state.
-  // Includes 'needs_attention' (the renamed 'failed' status from migration 24).
   db.prepare(
     `UPDATE session_groups
 		 SET completed_at = ?, version = version + 1
@@ -3770,8 +2647,6 @@ function runMigration42(db: BunDatabase): void {
 		   )`
   ).run(now);
 
-  // Step 2: For tasks with multiple active groups, keep the one with the highest rowid
-  // (true insert order, no timestamp tie risk) and complete all others.
   const duplicateTasks = db
     .prepare(
       `SELECT ref_id, MAX(rowid) AS max_rowid
@@ -3790,32 +2665,17 @@ function runMigration42(db: BunDatabase): void {
     ).run(now, ref_id, max_rowid);
   }
 
-  // Step 3: Add partial unique index — only one active task/task_pair group per ref_id.
-  // Scoped to task/task_pair so future group types with different semantics can share
-  // ref_id values without violating this constraint.
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_active_ref
 		 ON session_groups(ref_id) WHERE completed_at IS NULL AND (group_type = 'task' OR group_type = 'task_pair')`
   );
 }
 
-/**
- * Migration 43: Drop legacy session_group_messages projection table.
- *
- * The canonical group timeline now comes from sdk_messages + task_group_events.
- * Keeping this mirror table risks drift and confusion after daemon restarts.
- */
 function runMigration43(db: BunDatabase): void {
   db.exec(`DROP INDEX IF EXISTS idx_sgm_group`);
   db.exec(`DROP TABLE IF EXISTS session_group_messages`);
 }
 
-/**
- * Migration 44: Rename sdk_messages.send_status values.
- *
- * Old values: saved, queued, sent, failed
- * New values: deferred, enqueued, consumed, failed
- */
 function runMigration44(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) {
     return;
@@ -3829,7 +2689,6 @@ function runMigration44(db: BunDatabase): void {
     return;
   }
 
-  // Already migrated
   if (tableInfo.sql.includes("'deferred'") && tableInfo.sql.includes("'consumed'")) {
     return;
   }
@@ -3873,35 +2732,14 @@ function runMigration44(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 45: Rename step-related columns and tables to node
- *
- * Renames:
- * - space_workflow_steps -> space_workflow_nodes
- * - space_workflows.start_step_id -> start_node_id
- * - space_workflow_transitions.from_step_id -> from_node_id
- * - space_workflow_transitions.to_step_id -> to_node_id
- * - space_tasks.workflow_step_id -> workflow_node_id
- * - space_workflow_runs.current_step_id -> current_node_id
- * - space_session_groups.current_step_id -> current_node_id
- *
- * Uses create-copy-drop-rename pattern for SQLite compatibility.
- */
 function runMigration45(db: BunDatabase): void {
-  // Skip if space_workflow_steps was already renamed to space_workflow_nodes,
-  // or if the spaces feature was never enabled on this DB.
-  // Also skip if space_workflow_nodes already exists (migration was already applied).
   if (!tableExists(db, 'space_workflow_steps') || tableExists(db, 'space_workflow_nodes')) {
     return;
   }
 
-  // Issue PRAGMA before BEGIN so it takes effect (SQLite ignores PRAGMA inside a transaction)
   db.exec(`PRAGMA foreign_keys = OFF`);
   db.exec(`BEGIN`);
   try {
-    // -------------------------------------------------------------------------
-    // 1. Rename space_workflow_steps -> space_workflow_nodes
-    // -------------------------------------------------------------------------
     db.exec(`DROP TABLE IF EXISTS space_workflow_nodes_new`);
     db.exec(`
 				CREATE TABLE space_workflow_nodes_new (
@@ -3931,10 +2769,6 @@ function runMigration45(db: BunDatabase): void {
       `CREATE INDEX IF NOT EXISTS idx_space_workflow_nodes_order ON space_workflow_nodes(workflow_id, order_index)`
     );
 
-    // -------------------------------------------------------------------------
-    // 2. Rename space_workflows.start_step_id -> start_node_id
-    // Also preserve columns added by M30 (layout) and M36 (max_iterations)
-    // -------------------------------------------------------------------------
     if (tableHasColumn(db, 'space_workflows', 'start_step_id')) {
       db.exec(`DROP TABLE IF EXISTS space_workflows_new`);
       db.exec(`
@@ -3964,11 +2798,6 @@ function runMigration45(db: BunDatabase): void {
       );
     }
 
-    // -------------------------------------------------------------------------
-    // 3. Rename space_workflow_transitions.from_step_id -> from_node_id
-    //                          and space_workflow_transitions.to_step_id -> to_node_id
-    // Also preserve is_cyclic column added by M38
-    // -------------------------------------------------------------------------
     if (tableHasColumn(db, 'space_workflow_transitions', 'from_step_id')) {
       db.exec(`DROP TABLE IF EXISTS space_workflow_transitions_new`);
       db.exec(`
@@ -4002,10 +2831,6 @@ function runMigration45(db: BunDatabase): void {
       );
     }
 
-    // -------------------------------------------------------------------------
-    // 4. Rename space_workflow_runs.current_step_id -> current_node_id
-    // Also preserve columns added by M35 (iteration_count, max_iterations) and M37 (goal_id)
-    // -------------------------------------------------------------------------
     if (tableHasColumn(db, 'space_workflow_runs', 'current_step_id')) {
       db.exec(`DROP TABLE IF EXISTS space_workflow_runs_new`);
       db.exec(`
@@ -4051,10 +2876,6 @@ function runMigration45(db: BunDatabase): void {
       );
     }
 
-    // -------------------------------------------------------------------------
-    // 5. Rename space_tasks.workflow_step_id -> workflow_node_id
-    // Also preserves goal_id column added by M34
-    // -------------------------------------------------------------------------
     if (tableHasColumn(db, 'space_tasks', 'workflow_step_id')) {
       db.exec(`DROP TABLE IF EXISTS space_tasks_new`);
       db.exec(`
@@ -4126,10 +2947,6 @@ function runMigration45(db: BunDatabase): void {
       );
     }
 
-    // -------------------------------------------------------------------------
-    // 6. Rename space_session_groups.current_step_id -> current_node_id
-    // Also preserves status column added by M40
-    // -------------------------------------------------------------------------
     if (tableHasColumn(db, 'space_session_groups', 'current_step_id')) {
       db.exec(`DROP TABLE IF EXISTS space_session_groups_new`);
       db.exec(`
@@ -4172,40 +2989,13 @@ function runMigration45(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 46: Add slot_role column to space_tasks.
- *
- * Stores the `WorkflowNodeAgent.role` of the specific agent slot that spawned a task.
- * This allows `spawn_node_agent` to unambiguously identify the correct slot even when
- * the same `agentId` appears multiple times in a node with different slot roles and overrides.
- *
- * Existing rows get NULL for slot_role (backward compatible — the old lookup-by-agentId
- * path handles the null case by falling back to the first matching slot).
- */
 function runMigration46(db: BunDatabase): void {
   if (!tableHasColumn(db, 'space_tasks', 'slot_role')) {
     db.exec(`ALTER TABLE space_tasks ADD COLUMN slot_role TEXT`);
   }
 }
 
-/**
- * Migration 47: Add short_id columns to tasks and goals; create short_id_counters table.
- *
- * - `tasks.short_id TEXT` — nullable, unique within room (partial composite index).
- * - `goals.short_id TEXT` — nullable, unique within room (partial composite index).
- * - `short_id_counters` — per-(entity_type, scope_id) monotonic counter used by the
- *   ShortIdAllocator service when assigning short IDs to new or existing records.
- *
- * Idempotent: ALTER TABLE is guarded by tableHasColumn(); CREATE TABLE/INDEX use IF NOT EXISTS.
- *
- * NOTE: The original migration 47 accidentally created single-column global indexes
- * (idx_tasks_short_id, idx_goals_short_id) instead of room-scoped composite indexes.
- * Migration 48 corrects this on already-deployed DBs.
- */
 export function runMigration47(db: BunDatabase): void {
-  // On existing DBs, ALTER TABLE adds the column; on fresh DBs the column is already
-  // present in the CREATE TABLE statement in createTables(), so tableHasColumn() guards
-  // prevent a duplicate-column error.
   if (tableExists(db, 'tasks') && !tableHasColumn(db, 'tasks', 'short_id')) {
     db.exec(`ALTER TABLE tasks ADD COLUMN short_id TEXT`);
   }
@@ -4213,9 +3003,6 @@ export function runMigration47(db: BunDatabase): void {
     db.exec(`ALTER TABLE goals ADD COLUMN short_id TEXT`);
   }
 
-  // Partial unique indexes — scoped to (room_id, short_id) so different rooms can each
-  // have their own t-1, t-2, ... sequence without global uniqueness collisions.
-  // Also created by createTables() via IF NOT EXISTS.
   if (tableExists(db, 'tasks')) {
     db.exec(
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
@@ -4227,7 +3014,6 @@ export function runMigration47(db: BunDatabase): void {
     );
   }
 
-  // Counter table — also created by createTables() for fresh DBs; IF NOT EXISTS is idempotent.
   db.exec(`
 		CREATE TABLE IF NOT EXISTS short_id_counters (
 			entity_type TEXT NOT NULL,
@@ -4238,65 +3024,28 @@ export function runMigration47(db: BunDatabase): void {
 	`);
 }
 
-/**
- * Migration 48: Replace global short_id unique indexes with room-scoped composite indexes.
- *
- * Migration 47 accidentally created single-column indexes:
- *   CREATE UNIQUE INDEX idx_tasks_short_id ON tasks(short_id)
- *   CREATE UNIQUE INDEX idx_goals_short_id ON goals(short_id)
- *
- * These are global: two tasks in different rooms both getting short_id='t-1' would violate
- * the constraint. Short IDs are scoped to their parent room, so the correct constraint is:
- *   (room_id, short_id) must be unique, not just (short_id).
- *
- * This migration drops the old global indexes (if they exist) and creates correct room-scoped
- * composite indexes. Idempotent via DROP IF EXISTS + CREATE IF NOT EXISTS.
- */
 export function runMigration48(db: BunDatabase): void {
   if (tableExists(db, 'tasks')) {
-    // Drop old global index if present (created by old migration 47 code)
     db.exec(`DROP INDEX IF EXISTS idx_tasks_short_id`);
-    // Create correct room-scoped composite index
     db.exec(
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
     );
   }
   if (tableExists(db, 'goals')) {
-    // Drop old global index if present
     db.exec(`DROP INDEX IF EXISTS idx_goals_short_id`);
-    // Create correct room-scoped composite index
     db.exec(
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_room_short_id ON goals(room_id, short_id) WHERE short_id IS NOT NULL`
     );
   }
 }
 
-/**
- * Migration 49: Add restrictions column to tasks; expand status CHECK constraint.
- *
- * - `tasks.restrictions TEXT` — nullable JSON blob storing TaskRestriction data when a
- *   task is paused due to an API rate or usage limit. Cleared when the task resumes.
- *
- * - Status CHECK constraint gains two new values:
- *   - `rate_limited`  — task paused because of an HTTP 429 rate limit
- *   - `usage_limited` — task paused because of a daily/weekly usage cap with no fallback
- *
- * SQLite does not support ALTER TABLE to modify a CHECK constraint, so the new values
- * are added by recreating the tasks table with DROP/INSERT SELECT/RENAME. This is
- * idempotent: if the column or the new status values already exist the migration is a no-op.
- */
 export function runMigration49(db: BunDatabase): void {
   if (!tableExists(db, 'tasks')) return;
 
-  // Add the restrictions column if absent (new databases already have it via createTables).
   if (!tableHasColumn(db, 'tasks', 'restrictions')) {
     db.exec(`ALTER TABLE tasks ADD COLUMN restrictions TEXT`);
   }
 
-  // Expand the status CHECK constraint to include the two new values.
-  // SQLite cannot ALTER a CHECK constraint directly, so we recreate the table.
-  // Guard: if the constraint already includes 'rate_limited' (detectable via sqlite_master),
-  // skip the rebuild to avoid unnecessary work on already-migrated databases.
   const schemaSql = (
     db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`).get() as
       | { sql: string }
@@ -4304,11 +3053,9 @@ export function runMigration49(db: BunDatabase): void {
   )?.sql;
 
   if (schemaSql && schemaSql.includes('rate_limited')) {
-    // Already migrated — constraint already contains new statuses.
     return;
   }
 
-  // Recreate with expanded CHECK constraint.
   db.exec(`DROP TABLE IF EXISTS tasks_migration49_new`);
   db.exec(`
 		CREATE TABLE tasks_migration49_new (
@@ -4344,14 +3091,9 @@ export function runMigration49(db: BunDatabase): void {
 			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
 		)
 	`);
-  // Build INSERT SELECT dynamically: only select columns that exist in the old table,
-  // falling back to NULL for optional columns that may be absent in old-schema DBs.
-  // This makes the migration safe against DBs created by migrations 16–48 that lacked
-  // optional columns (e.g. created_by_task_id, archived_at, pr_url, short_id, etc.).
   const oldColumns = new Set(
     (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((r) => r.name)
   );
-  // All columns present in tasks_migration49_new, in order.
   const allNewColumns = [
     'id',
     'room_id',
@@ -4387,7 +3129,6 @@ export function runMigration49(db: BunDatabase): void {
   db.exec(`DROP TABLE tasks`);
   db.exec(`ALTER TABLE tasks_migration49_new RENAME TO tasks`);
 
-  // Restore indexes (IF NOT EXISTS is idempotent).
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
@@ -4396,21 +3137,6 @@ export function runMigration49(db: BunDatabase): void {
   );
 }
 
-/**
- * Migration 51: Rename space_tasks.slot_role → agent_name; add completion_summary column.
- *
- * As part of the agent-centric collaboration refactor:
- * - `slot_role` is renamed to `agent_name` — the field now stores the plain agent name
- *   that identifies which agent spawned this task, rather than a workflow-slot role label.
- * - `completion_summary TEXT` is added — a brief human-readable summary written by the agent
- *   when a task reaches a terminal state (completed/needs_attention/cancelled).
- *
- * Renaming requires a full table recreate (SQLite has limited ALTER TABLE support).
- * The INSERT SELECT maps slot_role → agent_name and sets completion_summary to NULL for
- * existing rows (backward compatible).
- *
- * Idempotent: guarded by tableHasColumn() checks.
- */
 export function runMigration51(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
 
@@ -4419,14 +3145,9 @@ export function runMigration51(db: BunDatabase): void {
   const hasCompletionSummary = tableHasColumn(db, 'space_tasks', 'completion_summary');
 
   if (!hasSlotRole && hasAgentName && hasCompletionSummary) {
-    // Already fully migrated — nothing to do.
     return;
   }
 
-  // Post-M73 guard: if task_type column is absent, M73 has already rebuilt space_tasks
-  // with the new schema (removing task_type, agent_name, slot_role, etc.) and new status
-  // values. M51's table rebuild would fail because it uses the old CHECK constraint
-  // (which rejects 'open', 'done', 'blocked'). Return early — M51 is superseded by M73.
   if (!tableHasColumn(db, 'space_tasks', 'task_type')) {
     return;
   }
@@ -4436,7 +3157,6 @@ export function runMigration51(db: BunDatabase): void {
     db.exec(`BEGIN`);
 
     if (hasSlotRole) {
-      // Recreate the table, mapping slot_role → agent_name and adding completion_summary.
       db.exec(`DROP TABLE IF EXISTS space_tasks_m51_new`);
       db.exec(`
 				CREATE TABLE space_tasks_m51_new (
@@ -4482,8 +3202,6 @@ export function runMigration51(db: BunDatabase): void {
 				)
 			`);
 
-      // Build the INSERT SELECT dynamically to handle optional columns that may be absent
-      // on databases created by very early migrations before certain ALTER TABLE additions.
       const existingCols = new Set(
         (db.prepare(`PRAGMA table_info(space_tasks)`).all() as Array<{ name: string }>).map(
           (r) => r.name
@@ -4531,7 +3249,6 @@ export function runMigration51(db: BunDatabase): void {
       db.exec(`DROP TABLE space_tasks`);
       db.exec(`ALTER TABLE space_tasks_m51_new RENAME TO space_tasks`);
 
-      // Restore indexes.
       db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_status ON space_tasks(status)`);
       db.exec(
@@ -4548,8 +3265,6 @@ export function runMigration51(db: BunDatabase): void {
         `CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
       );
     } else if (!hasCompletionSummary) {
-      // agent_name already exists (partial migration or fresh DB scenario);
-      // just add the missing completion_summary column.
       db.exec(`ALTER TABLE space_tasks ADD COLUMN completion_summary TEXT`);
     }
 
@@ -4562,11 +3277,6 @@ export function runMigration51(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 50: Create app_mcp_servers table for application-level MCP server registry.
- * This table stores MCP server configurations that are available globally to any room or session.
- * Idempotent via CREATE TABLE IF NOT EXISTS.
- */
 export function runMigration50(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS app_mcp_servers (
@@ -4586,13 +3296,6 @@ export function runMigration50(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 52: Create room_mcp_enablement table for per-room MCP enablement overrides.
- *
- * Stores which registry servers are explicitly enabled/disabled per room.
- * ON DELETE CASCADE on both FKs ensures orphaned rows are removed when a room or
- * app_mcp_servers entry is deleted.
- */
 export function runMigration52(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS room_mcp_enablement (
@@ -4604,24 +3307,10 @@ export function runMigration52(db: BunDatabase): void {
   `);
 }
 
-/**
-
- * Migration 53: Add channels column to space_workflows.
- *
- * Channels move out of the config JSON blob into a dedicated TEXT column that stores a
- * JSON-serialized WorkflowChannel[] array. This makes the channel topology a first-class
- * column rather than a nested JSON field, simplifying repository reads/writes.
- *
- * For existing rows, channels are extracted from the config JSON and written to the new
- * column so that no data is lost. The config JSON is updated in-place with channels removed.
- *
- * Idempotent via tableHasColumn guard.
- */
 export function runMigration53(db: BunDatabase): void {
   if (!tableHasColumn(db, 'space_workflows', 'channels')) {
     db.exec(`ALTER TABLE space_workflows ADD COLUMN channels TEXT`);
 
-    // Migrate existing rows: pull channels out of config JSON into the new column.
     const rows = db
       .prepare(`SELECT id, config FROM space_workflows WHERE config IS NOT NULL`)
       .all() as Array<{ id: string; config: string }>;
@@ -4648,35 +3337,7 @@ export function runMigration53(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 54: Add unique partial index on space_tasks for lazy node activation.
- *
- * Enforces at-most-one in-flight task per (workflow_run_id, workflow_node_id, agent_name)
- * tuple, preventing duplicate tasks when multiple concurrent ChannelRouter.activateNode()
- * calls race to activate the same node.
- *
- * The partial WHERE clause restricts the uniqueness guarantee to "active" statuses only:
- * pending, in_progress, review, rate_limited, usage_limited.
- *
- * Excluded statuses and rationale:
- * - completed / cancelled / needs_attention / archived: terminal statuses excluded so
- *   cyclic workflows can re-activate a node after tasks finish, and failed activations
- *   can be retried.
- * - draft: intentionally excluded because ChannelRouter never creates draft tasks and
- *   draft is reserved for externally-managed tasks not yet ready to run. Two draft
- *   tasks for the same slot may coexist; external callers own their uniqueness.
- *
- * The NULL exclusions preserve backward-compat with legacy tasks that predate the
- * channel/slot system (agentId-shorthand tasks with NULL workflow_node_id or agent_name).
- *
- * Idempotent via CREATE UNIQUE INDEX IF NOT EXISTS.
- */
 export function runMigration54(db: BunDatabase): void {
-  // Guard: only create the index when the required columns exist.
-  // `workflow_node_id` may still be named `workflow_step_id` on DBs whose migration 39
-  // rebuild ran after migration 45's rename (an uncommon but valid test-fixture path).
-  // `agent_name` was added by migration 51 (renamed from slot_role added by migration 46);
-  // guard prevents failure on older DB states.
   if (
     !tableExists(db, 'space_tasks') ||
     !tableHasColumn(db, 'space_tasks', 'workflow_node_id') ||
@@ -4694,47 +3355,27 @@ export function runMigration54(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 55: Rename slot_role → agent_name on space_tasks.
- *
- * Aligns with the "no role" naming convention from the agent-centric refactor.
- * Note: completion_summary was already added and slot_role → agent_name was already renamed
- * by Migration 51 (which runs before this migration). This migration is kept for recovery:
- * if a prior migration left the table in a partially migrated state (e.g. crash between
- * M51's table rebuild and index recreation), this migration's idempotency check will detect
- * a pre-existing agent_name column and skip, or rebuild to restore indexes.
- *
- * Uses a table rebuild pattern because SQLite does not support DROP COLUMN on all versions.
- * Idempotent: checks for agent_name column before rebuilding.
- */
 export function runMigration55(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) {
     return;
   }
 
-  // Idempotency check: if agent_name already exists, migration is done
   try {
     db.prepare(`SELECT agent_name FROM space_tasks LIMIT 1`).all();
-    return; // already migrated
+    return;
   } catch {
     // agent_name doesn't exist — proceed with migration (unless M71 already cleaned up)
   }
 
-  // Post-M71 guard: if task_type column is absent, M71 has already removed the columns
-  // that this migration operates on. Nothing to do.
   if (!tableHasColumn(db, 'space_tasks', 'task_type')) {
     return;
   }
 
-  // Issue PRAGMA before BEGIN so it takes effect (SQLite ignores PRAGMA inside a transaction)
   db.exec(`PRAGMA foreign_keys = OFF`);
   db.exec(`BEGIN`);
   try {
-    // Crash-recovery guard: drop leftover temp table if a previous run crashed mid-migration
     db.exec(`DROP TABLE IF EXISTS space_tasks_new`);
 
-    // Rebuild the table with agent_name instead of slot_role.
-    // completion_summary already exists (added by M51) and is preserved via SELECT.
     db.exec(`
 			CREATE TABLE space_tasks_new (
 				id TEXT PRIMARY KEY,
@@ -4806,7 +3447,6 @@ export function runMigration55(db: BunDatabase): void {
     db.exec(`PRAGMA foreign_keys = ON`);
   }
 
-  // Recreate all indexes that existed on space_tasks (dropped by DROP TABLE above)
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_status ON space_tasks(status)`);
   db.exec(
@@ -4822,7 +3462,6 @@ export function runMigration55(db: BunDatabase): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
   );
-  // Recreate the unique index from M54, now on agent_name instead of slot_role.
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS uq_space_tasks_run_node_agent
     ON space_tasks (workflow_run_id, workflow_node_id, agent_name)
@@ -4833,21 +3472,9 @@ export function runMigration55(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 56: Expand assigned_agent CHECK constraint to include 'planner'.
- *
- * The tasks table CHECK constraint on assigned_agent was previously:
- *   CHECK(assigned_agent IN ('coder', 'general'))
- *
- * We now also allow 'planner' so that goal_review tasks can be assigned to the
- * Planner/Leader agent.
- *
- * SQLite cannot ALTER a CHECK constraint directly, so we recreate the table.
- */
 export function runMigration56(db: BunDatabase): void {
   if (!tableExists(db, 'tasks')) return;
 
-  // Guard: if the constraint already includes 'planner', skip the rebuild.
   const schemaSql = (
     db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`).get() as
       | { sql: string }
@@ -4858,7 +3485,6 @@ export function runMigration56(db: BunDatabase): void {
     return;
   }
 
-  // Recreate with expanded CHECK constraint.
   db.exec(`DROP TABLE IF EXISTS tasks_migration56_new`);
   db.exec(`
 		CREATE TABLE tasks_migration56_new (
@@ -4896,7 +3522,6 @@ export function runMigration56(db: BunDatabase): void {
 		)
 	`);
 
-  // Build INSERT SELECT dynamically: only select columns that exist in the old table.
   const oldColumns = new Set(
     (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>).map((r) => r.name)
   );
@@ -4934,7 +3559,6 @@ export function runMigration56(db: BunDatabase): void {
   db.exec(`DROP TABLE tasks`);
   db.exec(`ALTER TABLE tasks_migration56_new RENAME TO tasks`);
 
-  // Restore indexes (dropped by DROP TABLE). Matches the set created by migration 49.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
@@ -4943,11 +3567,6 @@ export function runMigration56(db: BunDatabase): void {
   );
 }
 
-/**
- * Migration 57: Create skills table for application-level Skills registry.
- * Skills are available globally to any room or session that enables them.
- * Idempotent via CREATE TABLE IF NOT EXISTS.
- */
 export function runMigration57(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS skills (
@@ -4965,11 +3584,6 @@ export function runMigration57(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 58: Create room_skill_overrides table for per-room skill enablement.
- * Mirrors the room_mcp_enablement pattern (migration 52) but references skills(id).
- * Idempotent via CREATE TABLE IF NOT EXISTS.
- */
 export function runMigration58(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS room_skill_overrides (
@@ -4981,40 +3595,19 @@ export function runMigration58(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 59: Drop space_workflow_transitions table (replaced by channels).
- * Transitions have been removed in favor of the channel-based topology.
- * Idempotent via DROP TABLE IF EXISTS.
- */
 export function runMigration59(db: BunDatabase): void {
   db.exec(`DROP TABLE IF EXISTS space_workflow_transitions`);
 }
 
-/**
- * Migration 60: Drop space_session_groups and space_session_group_members tables,
- * and drop current_node_id column from space_workflow_runs.
- *
- * Session groups are replaced by direct space_tasks queries:
- *   task.taskAgentSessionId = the session ID of the sub-session
- *   task.agentName           = the role/name of the agent
- *   task.workflowNodeId      = used to filter to the same node
- *
- * currentNodeId is replaced by the agent-centric model where tasks track state.
- */
 export function runMigration62(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
 
-  // Check if column already exists (idempotent guard)
   const cols = db.prepare('PRAGMA table_info(space_tasks)').all() as Array<{ name: string }>;
   if (cols.some((c) => c.name === 'task_number')) return;
 
-  // SQLite cannot ALTER a column to NOT NULL, so we:
-  // 1. Add nullable column and backfill existing rows
-  // 2. Rebuild table with NOT NULL constraint via rename pattern
   db.exec(`PRAGMA foreign_keys = OFF`);
   db.exec(`BEGIN`);
   try {
-    // Step 1: Add nullable column and backfill
     db.exec(`ALTER TABLE space_tasks ADD COLUMN task_number INTEGER`);
 
     const spaces = db.prepare(`SELECT DISTINCT space_id FROM space_tasks`).all() as Array<{
@@ -5031,7 +3624,6 @@ export function runMigration62(db: BunDatabase): void {
       }
     }
 
-    // Step 2: Rebuild table with NOT NULL on task_number
     db.exec(`DROP TABLE IF EXISTS space_tasks_m61_new`);
     db.exec(`
 			CREATE TABLE space_tasks_m61_new (
@@ -5093,7 +3685,6 @@ export function runMigration62(db: BunDatabase): void {
     db.exec(`DROP TABLE space_tasks`);
     db.exec(`ALTER TABLE space_tasks_m61_new RENAME TO space_tasks`);
 
-    // Recreate all indexes (dropped with the old table)
     db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_status ON space_tasks(status)`);
     db.exec(
@@ -5131,25 +3722,16 @@ export function runMigration62(db: BunDatabase): void {
 }
 
 export function runMigration60(db: BunDatabase): void {
-  // Disable FK enforcement before any DDL so that:
-  // - DROP TABLE space_workflow_runs does NOT fire ON DELETE SET NULL on space_tasks.workflow_run_id
-  // - The table rebuild completes atomically without cascading side-effects
-  // This matches the pattern used by M44, M45, M51, M55, etc.
   db.exec(`PRAGMA foreign_keys = OFF`);
   db.exec(`BEGIN`);
   try {
-    // Drop member table first (FK constraint order)
     db.exec(`DROP TABLE IF EXISTS space_session_group_members`);
     db.exec(`DROP TABLE IF EXISTS space_session_groups`);
 
-    // Drop indexes that may exist on those tables
-    // (SQLite drops indexes with the table, but be explicit for safety)
     db.exec(`DROP INDEX IF EXISTS idx_space_session_groups_task_id`);
     db.exec(`DROP INDEX IF EXISTS idx_space_session_group_members_group`);
     db.exec(`DROP INDEX IF EXISTS idx_space_session_group_members_session`);
 
-    // Drop current_node_id from space_workflow_runs using table rebuild (SQLite compatibility)
-    // Check if column exists first — idempotent guard.
     if (tableExists(db, 'space_workflow_runs')) {
       const runTableInfo = db.prepare('PRAGMA table_info(space_workflow_runs)').all() as Array<{
         name: string;
@@ -5203,19 +3785,7 @@ export function runMigration60(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 61: Add gate_data table, gates column to space_workflows,
- * and failure_reason column to space_workflow_runs.
- *
- * Part of M1.1 — separated Channel + Gate types.
- *
- * - `gate_data`: Persistent data store for gates, keyed by `(run_id, gate_id)`.
- *   Stores JSON data that gate conditions evaluate against at runtime.
- * - `gates` column on `space_workflows`: JSON array of Gate definitions.
- * - `failure_reason` column on `space_workflow_runs`: Enum-like TEXT for run failure reasons.
- */
 function runMigration61(db: BunDatabase): void {
-  // Check all 3 schema additions for idempotency
   const hasGatesCol = db
     .prepare(
       "SELECT COUNT(*) as count FROM pragma_table_info('space_workflows') WHERE name = 'gates'"
@@ -5245,7 +3815,6 @@ function runMigration61(db: BunDatabase): void {
 
   db.exec(`BEGIN TRANSACTION`);
   try {
-    // 1. Create gate_data table
     db.exec(`
 			CREATE TABLE IF NOT EXISTS gate_data (
 				run_id TEXT NOT NULL,
@@ -5258,13 +3827,10 @@ function runMigration61(db: BunDatabase): void {
 		`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_gate_data_run ON gate_data(run_id)`);
 
-    // 2. Add gates column to space_workflows (if not already present)
     if (!hasGatesCol || hasGatesCol.count === 0) {
       db.exec(`ALTER TABLE space_workflows ADD COLUMN gates TEXT`);
     }
 
-    // 3. Add failure_reason column to space_workflow_runs (if not already present)
-    // CHECK constraint restricts values to the WorkflowRunFailureReason union.
     if (!hasFailureReasonCol || hasFailureReasonCol.count === 0) {
       db.exec(
         `ALTER TABLE space_workflow_runs ADD COLUMN failure_reason TEXT CHECK(failure_reason IN ('humanRejected', 'maxIterationsReached', 'nodeTimeout', 'agentCrash'))`
@@ -5278,37 +3844,24 @@ function runMigration61(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 63: Add slug column to spaces table.
- *
- * - Adds nullable `slug TEXT` column (required for ALTER TABLE ADD COLUMN in SQLite)
- * - Backfills existing spaces with slugs derived from their name
- * - Rebuilds table with `slug TEXT NOT NULL` to enforce the constraint
- * - Adds UNIQUE index on slug
- */
 export function runMigration63(db: BunDatabase): void {
   if (!tableExists(db, 'spaces')) return;
 
-  // Check if slug column already exists (idempotent guard)
   const tableInfo = db.prepare('PRAGMA table_info(spaces)').all() as Array<{
     name: string;
     notnull: number;
   }>;
   const slugCol = tableInfo.find((col) => col.name === 'slug');
-  if (slugCol && slugCol.notnull === 1) return; // Already migrated with NOT NULL
+  if (slugCol && slugCol.notnull === 1) return;
 
   db.exec(`PRAGMA foreign_keys = OFF`);
   db.exec(`BEGIN`);
 
   try {
-    // Step 1: Add nullable slug column if it doesn't exist yet
     if (!slugCol) {
       db.exec(`ALTER TABLE spaces ADD COLUMN slug TEXT`);
     }
 
-    // Step 2: Backfill slugs only for rows that don't have one yet.
-    // Use WHERE slug IS NULL so we don't overwrite slugs that were already set
-    // (e.g., if a space was created between a partial migration run and this fix).
     const existingSlugs = db
       .prepare('SELECT slug FROM spaces WHERE slug IS NOT NULL')
       .all() as Array<{ slug: string }>;
@@ -5333,8 +3886,6 @@ export function runMigration63(db: BunDatabase): void {
       updateStmt.run(slug, row.id);
     }
 
-    // Step 3: Table rebuild to enforce NOT NULL on slug
-    // SQLite does not support ALTER COLUMN, so we recreate the table.
     db.exec(`DROP TABLE IF EXISTS spaces_m63_new`);
     db.exec(`
 			CREATE TABLE spaces_m63_new (
@@ -5370,7 +3921,6 @@ export function runMigration63(db: BunDatabase): void {
     db.exec(`DROP TABLE spaces`);
     db.exec(`ALTER TABLE spaces_m63_new RENAME TO spaces`);
 
-    // Step 4: Recreate indexes
     db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_spaces_status ON spaces(status)`);
 
@@ -5383,11 +3933,6 @@ export function runMigration63(db: BunDatabase): void {
   }
 }
 
-/**
- * Inline slugify for migration — avoids importing from slug.ts which may change.
- * Mirrors the same rules: lowercase, replace non-alphanumeric with hyphens,
- * collapse, strip, truncate to 60 chars.
- */
 function generateBaseMigrationSlug(input: string): string {
   const fallback = 'unnamed-space';
   if (!input || !input.trim()) return fallback;
@@ -5411,22 +3956,6 @@ function generateBaseMigrationSlug(input: string): string {
   return slug;
 }
 
-/**
- * Migration 64: Create space_worktrees table.
- *
- * Persists the mapping between space tasks and the git worktrees created for them.
- * Schema:
- *   id          - UUID primary key
- *   space_id    - owning space
- *   task_id     - the task this worktree was created for
- *   slug        - human-readable folder/branch slug (unique per space)
- *   path        - absolute filesystem path to the worktree directory
- *   created_at  - Unix epoch ms
- *
- * Constraints:
- *   UNIQUE(space_id, task_id)  — one worktree per task
- *   UNIQUE(space_id, slug)     — no two tasks share the same slug within a space
- */
 function runMigration64(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_worktrees (
@@ -5445,50 +3974,15 @@ function runMigration64(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_worktrees_space_id ON space_worktrees(space_id)`);
 }
 
-/**
- * Migration 65: Add completed_at to space_worktrees.
- *
- * Adds a nullable `completed_at` INTEGER column so the TTL-based reaper can
- * identify worktrees whose tasks have finished and remove them after 7 days.
- * NULL = task still active; non-NULL = Unix epoch ms when the task completed.
- */
 function runMigration65(db: BunDatabase): void {
   try {
     db.prepare(`SELECT completed_at FROM space_worktrees LIMIT 1`).all();
   } catch {
-    // Column doesn't exist yet — add it
     db.exec(`ALTER TABLE space_worktrees ADD COLUMN completed_at INTEGER`);
   }
 }
 
-/**
- * Migration 66: Add 'neo' to sessions type CHECK constraint and create neo_activity_log table.
- *
- * Two changes:
- * 1. Expands the sessions.type CHECK constraint to include 'neo'.
- *    Uses the probe-insert + table-recreate pattern (SQLite doesn't support ALTER CHECK).
- * 2. Creates the neo_activity_log table for auditing Neo agent actions.
- *    Idempotent via CREATE TABLE IF NOT EXISTS.
- *
- * neo_activity_log schema:
- *   id          - UUID primary key
- *   tool_name   - name of the Neo tool invoked
- *   input       - JSON-serialized tool input
- *   output      - JSON-serialized tool output
- *   status      - 'success' | 'error' | 'cancelled'
- *   error       - error message if status='error'
- *   target_type - type of entity the action targeted (e.g. 'room', 'space', 'skill')
- *   target_id   - ID of the targeted entity
- *   undoable    - 1 if the action can be undone, 0 otherwise
- *   undo_data   - JSON blob needed to reverse the action
- *   created_at  - ISO 8601 timestamp (default: current UTC time)
- */
 export function runMigration66(db: BunDatabase): void {
-  // Skip the entire migration if Neo support has already been removed by M131
-  // (or the table was created fresh at the M131 tip without 'neo' in the CHECK).
-  // Re-running the legacy probe-and-rebuild here would rebuild `sessions` with a
-  // stale CHECK that rejects post-M66 types like 'space_chat', crashing startup
-  // on any DB created or upgraded under the M131 schema.
   if (tableExists(db, 'sessions')) {
     const sessionsSql = tableCreateSql(db, 'sessions');
     if (sessionsSql && !sessionsSql.includes("'neo'")) {
@@ -5496,7 +3990,6 @@ export function runMigration66(db: BunDatabase): void {
     }
   }
 
-  // --- Part 1: Expand sessions.type CHECK constraint to include 'neo' ---
   if (tableExists(db, 'sessions')) {
     try {
       const testId = '__migration_test_neo_type__';
@@ -5559,7 +4052,6 @@ export function runMigration66(db: BunDatabase): void {
     }
   }
 
-  // --- Part 2: Create neo_activity_log table ---
   db.exec(`
 		CREATE TABLE IF NOT EXISTS neo_activity_log (
 			id          TEXT PRIMARY KEY,
@@ -5580,13 +4072,6 @@ export function runMigration66(db: BunDatabase): void {
   );
 }
 
-/**
- * Migration 67: Add 'space_chat' to sessions type CHECK constraint.
- *
- * Uses the same probe-insert + table-recreate pattern as Migration 31.
- * Attempts to insert a row with type='space_chat'; if the constraint rejects it,
- * recreates the sessions table with the expanded CHECK list (including 'neo' from M66).
- */
 function runMigration67(db: BunDatabase): void {
   if (!tableExists(db, 'sessions')) return;
 
@@ -5651,23 +4136,6 @@ function runMigration67(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 68: Add 'origin' column to sdk_messages.
- *
- * This is an app-level metadata column alongside the opaque sdk_message blob.
- * It is NOT part of the SDK message format — room/space agents do not see it.
- * NULL (default) is treated as 'human' by the frontend.
- * 'neo' marks messages injected by the Neo global AI agent.
- * 'system' marks messages injected by the daemon system internally.
- */
-/**
- * Migration 69: Per-channel cycle tracking.
- *
- * Creates a `channel_cycles` table that tracks how many times each backward
- * (cyclic) channel has been traversed in a workflow run. This replaces the
- * global `iteration_count` / `max_iterations` columns on `space_workflow_runs`
- * (which are left in place as dead columns to avoid expensive table recreation).
- */
 export function runMigration69(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflow_runs')) return;
   if (tableExists(db, 'channel_cycles')) return;
@@ -5689,7 +4157,6 @@ export function runMigration68(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) {
     return;
   }
-  // Use PRAGMA table_info() to check for the column — consistent with the rest of the codebase
   const columns = db.prepare(`PRAGMA table_info(sdk_messages)`).all() as Array<{ name: string }>;
   const hasOrigin = columns.some((col) => col.name === 'origin');
   if (!hasOrigin) {
@@ -5699,22 +4166,9 @@ export function runMigration68(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 70: Backfill default_path for existing rooms where it is NULL.
- *
- * For each room with default_path IS NULL:
- *   - Parses the allowed_paths JSON column and sets default_path to the first entry's `path`.
- *   - If allowed_paths is also null/empty, sets default_path to the sentinel value
- *     '__NEEDS_WORKSPACE_PATH__'. This sentinel is replaced at startup in app.ts using
- *     config.workspaceRoot, so rooms get a real path as soon as the daemon boots.
- *
- * Idempotency: if no rooms have default_path IS NULL, the function returns early.
- */
 export function runMigration70(db: BunDatabase): void {
   if (!tableExists(db, 'rooms')) return;
 
-  // Ensure the default_path and allowed_paths columns exist — they were added in the base schema
-  // but older DBs created before these columns were part of the schema may lack them.
   const roomColumns = db.prepare(`PRAGMA table_info(rooms)`).all() as Array<{ name: string }>;
   const hasDefaultPath = roomColumns.some((col) => col.name === 'default_path');
   if (!hasDefaultPath) {
@@ -5725,7 +4179,6 @@ export function runMigration70(db: BunDatabase): void {
     db.exec(`ALTER TABLE rooms ADD COLUMN allowed_paths TEXT DEFAULT '[]'`);
   }
 
-  // Check if any rooms still need backfill — idempotency guard
   const nullCount = (
     db.prepare(`SELECT COUNT(*) as cnt FROM rooms WHERE default_path IS NULL`).get() as {
       cnt: number;
@@ -5733,7 +4186,6 @@ export function runMigration70(db: BunDatabase): void {
   ).cnt;
   if (nullCount === 0) return;
 
-  // Fetch all rooms that need backfill
   const rows = db
     .prepare(`SELECT id, allowed_paths FROM rooms WHERE default_path IS NULL`)
     .all() as Array<{ id: string; allowed_paths: string | null }>;
@@ -5754,20 +4206,9 @@ export function runMigration70(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 71: Fix corrupted schedule values in goals table.
- *
- * Some rows may contain raw cron strings (e.g. "@daily", "0 9 * * *") instead
- * of the expected JSON object {"expression":"@daily","timezone":"UTC"}.
- * This migration detects such rows and wraps bare strings into the proper
- * CronSchedule shape.
- *
- * Idempotency: if no rows have non-JSON schedule values, the function returns early.
- */
 export function runMigration71(db: BunDatabase): void {
   if (!tableExists(db, 'goals')) return;
 
-  // Check if the schedule column exists (older DBs may not have it)
   const goalColumns = db.prepare(`PRAGMA table_info(goals)`).all() as Array<{ name: string }>;
   const hasSchedule = goalColumns.some((col) => col.name === 'schedule');
   if (!hasSchedule) return;
@@ -5783,116 +4224,51 @@ export function runMigration71(db: BunDatabase): void {
   for (const row of rows) {
     try {
       const parsed = JSON.parse(row.schedule);
-      // If it parses and is an object with expression field, it's already correct
       if (typeof parsed === 'object' && parsed !== null && typeof parsed.expression === 'string') {
         continue;
       }
-      // If it parses but is a bare string (somehow valid JSON string), wrap it
       if (typeof parsed === 'string') {
         const fixedVal = JSON.stringify({ expression: parsed, timezone: 'UTC' });
         update.run(fixedVal, row.id);
       }
     } catch {
-      // JSON parse failed — this is a raw cron string like "@daily"
       const fixedVal = JSON.stringify({ expression: row.schedule, timezone: 'UTC' });
       update.run(fixedVal, row.id);
     }
   }
 }
 
-/**
- * Migration 72: Add missing performance indexes.
- *
- * These indexes optimize the most common query patterns:
- * - room.list: SELECT * FROM rooms WHERE status = 'active' ORDER BY updated_at DESC
- * - listSessions: SELECT * FROM sessions WHERE status != 'archived' ORDER BY last_active_at DESC
- * - listSessionsByType: SELECT * FROM sessions WHERE type = ? ORDER BY last_active_at DESC
- * - findByRoomId: SELECT * FROM sessions WHERE type = 'room' AND json_extract(session_context, '$.roomId') = ?
- *
- * Idempotent: CREATE INDEX IF NOT EXISTS ensures safe re-runs.
- * Guards: tableHasColumn checks handle test-contrived partial schemas (e.g.,
- * migration-42 tests that create rooms without a status column) as well as
- * fresh in-memory databases where tables may not yet exist.
- */
 export function runMigration72(db: BunDatabase): void {
   if (tableExists(db, 'rooms') && tableHasColumn(db, 'rooms', 'status')) {
-    // Rooms: composite index for listRooms ORDER BY updated_at DESC WHERE status = 'active'
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_rooms_status_updated ON rooms(status, updated_at DESC)`
     );
   }
 
   if (tableExists(db, 'sessions') && tableHasColumn(db, 'sessions', 'type')) {
-    // Sessions: index on type for listSessionsByType, findByRoomId
     db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_type ON sessions(type)`);
   }
 
   if (tableExists(db, 'sessions') && tableHasColumn(db, 'sessions', 'status')) {
-    // Sessions: composite index for listSessions ORDER BY last_active_at DESC WHERE status != 'archived'
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_sessions_status_last_active ON sessions(status, last_active_at DESC)`
     );
   }
 }
 
-/**
- * Migration 73: Update space_tasks and space_workflow_runs to the new schema design.
- *
- * ### space_tasks
- *
- * Status changes (old → new):
- *   draft / pending           → open
- *   review / needs_attention /
- *     rate_limited / usage_limited → blocked
- *   completed                → done
- *   cancelled / archived / in_progress → unchanged
- *
- * Column changes:
- *   ADDED:   labels TEXT NOT NULL DEFAULT '[]'
- *   REMOVED: task_type, assigned_agent, custom_agent_id, agent_name,
- *            completion_summary, workflow_node_id, goal_id, progress,
- *            current_step, error, input_draft
- *   UPDATED: status CHECK constraint, DEFAULT 'open'
- *
- * ### space_workflow_runs
- *
- * Status changes:
- *   completed     → done
- *   needs_attention → blocked
- *   others          → unchanged
- *
- * Column changes:
- *   ADDED:   started_at INTEGER
- *   REMOVED: config, iteration_count, max_iterations, goal_id
- *   UPDATED: status CHECK constraint
- *
- * Idempotency: inspects the CHECK constraint and expected columns instead of
- * probe-inserting fake rows, so foreign key enforcement cannot trigger a
- * spurious rebuild on already-migrated databases.
- */
 function runMigration73(db: BunDatabase): void {
-  // ---- space_tasks ----
   if (tableExists(db, 'space_tasks')) {
-    // Idempotency: inspect the CHECK constraint instead of probe-inserting a
-    // fake row. With foreign_keys=ON, a probe using a non-existent space_id
-    // fails even on already-migrated schemas, which would trigger a destructive
-    // rebuild on every startup.
     const needsTasksUpdate =
       !statusCheckContains(db, 'space_tasks', 'open') ||
       !tableHasColumn(db, 'space_tasks', 'labels') ||
       tableHasColumn(db, 'space_tasks', 'task_type');
 
     if (needsTasksUpdate) {
-      // pr_url/pr_number/pr_created_at may already be removed by M84.
-      // Conditionally include them so this rebuild works on re-run.
       const hasPrCols = tableHasColumn(db, 'space_tasks', 'pr_url');
 
       db.exec('PRAGMA foreign_keys = OFF');
       db.exec('BEGIN');
       try {
-        // Rebuild with new schema (adds labels, removes deprecated columns).
-        // Status mapping is done inline via CASE WHEN to avoid running UPDATE
-        // against the old CHECK constraint (which does not allow the new values).
         db.exec(`
 					CREATE TABLE space_tasks_m71_new (
 						id TEXT PRIMARY KEY,
@@ -5929,8 +4305,6 @@ function runMigration73(db: BunDatabase): void {
 					)
 				`);
 
-        // Use CASE WHEN to map old status values inline so we never write
-        // an old→new value into the still-constrained old table.
         const prInsertCols = hasPrCols ? ', pr_url, pr_number, pr_created_at' : '';
         const prSelectCols = hasPrCols ? ', pr_url, pr_number, pr_created_at' : '';
         db.exec(`
@@ -5977,10 +4351,7 @@ function runMigration73(db: BunDatabase): void {
     }
   }
 
-  // ---- space_workflow_runs ----
   if (tableExists(db, 'space_workflow_runs')) {
-    // Idempotency: inspect schema text instead of probe-inserting a fake row,
-    // for the same foreign-key reason as the space_tasks check above.
     const needsRunsUpdate =
       !statusCheckContains(db, 'space_workflow_runs', 'done') ||
       !tableHasColumn(db, 'space_workflow_runs', 'started_at') ||
@@ -6008,8 +4379,6 @@ function runMigration73(db: BunDatabase): void {
 					)
 				`);
 
-        // Use CASE WHEN to map old status values inline to avoid writing
-        // new values into the still-constrained old table.
         db.exec(`
 					INSERT INTO space_workflow_runs_m71_new
 					  (id, space_id, workflow_id, title, description, status, failure_reason,
@@ -6044,51 +4413,16 @@ function runMigration73(db: BunDatabase): void {
     }
   }
 
-  // ---- space_workflows: add end_node_id ----
   if (tableExists(db, 'space_workflows') && !tableHasColumn(db, 'space_workflows', 'end_node_id')) {
     db.exec(`ALTER TABLE space_workflows ADD COLUMN end_node_id TEXT`);
   }
 
-  // ---- space_agents: add instructions ----
   if (tableExists(db, 'space_agents') && !tableHasColumn(db, 'space_agents', 'instructions')) {
     db.exec(`ALTER TABLE space_agents ADD COLUMN instructions TEXT`);
   }
 }
 
-/**
- * Migration 74: Remaining schema cleanup for end-node / workflow completion.
- *
- * ### node_executions (new table)
- *
- * Creates a dedicated table for tracking per-node agent execution state within
- * a workflow run. Separates workflow-internal state from user-facing space_tasks.
- *
- * ### space_workflows
- *
- * Drops `config` JSON blob (tags extracted to dedicated `tags` column) and
- * `max_iterations` column (no longer used by the runtime).
- *
- * ### space_workflow_nodes
- *
- * Drops `order_index` (node ordering is not significant in the graph model)
- * and `agent_id` (legacy single-agent shorthand; always use agents[] in config).
- *
- * ### space_agents
- *
- * Drops `role` (removed from type system), `config` (toolConfig, deprecated),
- * and `inject_workflow_context` (no longer used).
- *
- * ### Node config JSON migration
- *
- * Transforms WorkflowNodeAgent entries inside space_workflow_nodes.config:
- * plain string `systemPrompt` / `instructions` → `{ mode: 'override', value }`.
- * Guards: null/empty string → skip; already an object with `mode` → skip.
- *
- * Idempotency: each sub-migration checks for the presence of the column(s)
- * being dropped before proceeding.
- */
 export function runMigration74(db: BunDatabase): void {
-  // ---- node_executions: new table ----
   if (!tableExists(db, 'node_executions')) {
     try {
       db.exec('BEGIN');
@@ -6124,9 +4458,7 @@ export function runMigration74(db: BunDatabase): void {
     }
   }
 
-  // ---- space_workflows: drop config and max_iterations, add tags ----
   if (tableExists(db, 'space_workflows') && tableHasColumn(db, 'space_workflows', 'config')) {
-    // Pre-extract tags from config JSON before dropping the column.
     const wfRows = db.prepare(`SELECT id, config FROM space_workflows`).all() as Array<{
       id: string;
       config: string | null;
@@ -6184,7 +4516,6 @@ export function runMigration74(db: BunDatabase): void {
         `CREATE INDEX IF NOT EXISTS idx_space_workflows_space_id ON space_workflows(space_id)`
       );
 
-      // Apply extracted tags
       const updateTags = db.prepare(`UPDATE space_workflows SET tags = ? WHERE id = ?`);
       for (const [id, tags] of tagsMap) {
         updateTags.run(tags, id);
@@ -6199,7 +4530,6 @@ export function runMigration74(db: BunDatabase): void {
     }
   }
 
-  // ---- space_workflow_nodes: drop order_index and agent_id ----
   if (
     tableExists(db, 'space_workflow_nodes') &&
     tableHasColumn(db, 'space_workflow_nodes', 'order_index')
@@ -6243,7 +4573,6 @@ export function runMigration74(db: BunDatabase): void {
     }
   }
 
-  // ---- space_agents: drop role, config, inject_workflow_context ----
   if (tableExists(db, 'space_agents') && tableHasColumn(db, 'space_agents', 'role')) {
     db.exec('PRAGMA foreign_keys = OFF');
     db.exec('BEGIN');
@@ -6288,9 +4617,6 @@ export function runMigration74(db: BunDatabase): void {
     }
   }
 
-  // ---- Node config JSON migration ----
-  // Transform WorkflowNodeAgent entries in space_workflow_nodes.config:
-  // plain string systemPrompt/instructions → { mode: 'override', value: existingString }
   if (tableExists(db, 'space_workflow_nodes')) {
     const nodeRows = db
       .prepare(`SELECT id, config FROM space_workflow_nodes WHERE config IS NOT NULL`)
@@ -6311,19 +4637,15 @@ export function runMigration74(db: BunDatabase): void {
 
       let changed = false;
       for (const agent of agents as Array<Record<string, unknown>>) {
-        // Wrap string systemPrompt → { mode: 'override', value }
         if (typeof agent.systemPrompt === 'string' && agent.systemPrompt) {
           agent.systemPrompt = { mode: 'override', value: agent.systemPrompt };
           changed = true;
         }
-        // typeof agent.systemPrompt === 'object' → already migrated, skip
 
-        // Wrap string instructions → { mode: 'override', value }
         if (typeof agent.instructions === 'string' && agent.instructions) {
           agent.instructions = { mode: 'override', value: agent.instructions };
           changed = true;
         }
-        // typeof agent.instructions === 'object' → already migrated, skip
       }
 
       if (changed) {
@@ -6333,22 +4655,10 @@ export function runMigration74(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 75: Add UNIQUE constraint on node_executions.
- *
- * Adds a UNIQUE INDEX on (workflow_run_id, workflow_node_id, agent_name) to
- * prevent duplicate records from concurrent activateNode() calls. Uses
- * INSERT OR IGNORE in NodeExecutionRepository.createOrIgnore() for idempotent
- * activation.
- *
- * Before creating the unique index, deduplicates any existing records by
- * keeping only the earliest record (by created_at) for each unique key.
- */
 function runMigration75(db: BunDatabase): void {
   if (!tableExists(db, 'node_executions')) return;
 
   db.transaction(() => {
-    // Deduplicate existing records: keep the earliest by rowid for each unique key.
     db.prepare(`
 			DELETE FROM node_executions
 			WHERE rowid NOT IN (
@@ -6358,7 +4668,6 @@ function runMigration75(db: BunDatabase): void {
 			)
 		`).run();
 
-    // Create the unique index. Idempotent — IF NOT EXISTS skips if already present.
     db.exec(`
 			CREATE UNIQUE INDEX IF NOT EXISTS idx_node_executions_unique_agent
 			ON node_executions(workflow_run_id, workflow_node_id, agent_name)
@@ -6366,26 +4675,13 @@ function runMigration75(db: BunDatabase): void {
   })();
 }
 
-/**
- * Migration 76: Add 'review' status to space_tasks CHECK constraint.
- *
- * In supervised mode, completed workflow tasks land in 'review' for human
- * approval before transitioning to 'done'. This requires the CHECK constraint
- * on the status column to allow the 'review' value.
- *
- * SQLite does not support ALTER CHECK CONSTRAINT, so the table is rebuilt.
- */
 function runMigration76(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
 
-  // Idempotency: inspect schema text instead of probe-inserting a fake task.
-  // The probe used to fail on already-migrated databases when foreign_keys=ON
-  // because it referenced a non-existent space_id.
   const needsUpdate = !statusCheckContains(db, 'space_tasks', 'review');
 
   if (!needsUpdate) return;
 
-  // pr_url/pr_number/pr_created_at may already be removed by M84.
   const hasPrCols = tableHasColumn(db, 'space_tasks', 'pr_url');
 
   db.exec('PRAGMA foreign_keys = OFF');
@@ -6461,12 +4757,6 @@ function runMigration76(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 77: Make sessions.workspace_path nullable.
- *
- * Enables unbound sessions that do not have an initial workspace binding.
- * SQLite does not support dropping NOT NULL directly, so this rebuilds the table.
- */
 function runMigration77(db: BunDatabase): void {
   if (!tableExists(db, 'sessions')) return;
 
@@ -6520,12 +4810,6 @@ function runMigration77(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 78: Create workspace_history table.
- *
- * Persists recently-used workspace paths with usage metadata so the frontend
- * can show a backend-backed history list across devices/profiles.
- */
 export function runMigration78(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE IF NOT EXISTS workspace_history (
@@ -6537,23 +4821,9 @@ export function runMigration78(db: BunDatabase): void {
 	`);
 }
 
-/**
- * Migration 79: Update node_executions for the new agent model.
- *
- * Changes:
- * 1. Add 'idle' status to the CHECK constraint (replaces 'done').
- *    'done' is kept in the constraint for backward compatibility with any
- *    existing rows; new code only writes 'idle'.
- * 2. Add `data TEXT` column for structured agent output from `save()`.
- *
- * SQLite does not support ALTER CHECK CONSTRAINT, so a table rebuild is used.
- */
 function runMigration79(db: BunDatabase): void {
   if (!tableExists(db, 'node_executions')) return;
 
-  // Idempotency: check if 'idle' status is already accepted and data column exists.
-  // Use schema inspection instead of a probe insert so foreign_keys=ON cannot
-  // mistake a fake workflow_run_id for a missing CHECK value.
   const needsStatusUpdate =
     !tableHasColumn(db, 'node_executions', 'data') ||
     !statusCheckContains(db, 'node_executions', 'idle');
@@ -6604,7 +4874,6 @@ function runMigration79(db: BunDatabase): void {
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_node_executions_node ON node_executions(workflow_run_id, workflow_node_id)`
     );
-    // Re-create the unique index added in migration 75.
     db.exec(
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_node_executions_unique_slot
 			   ON node_executions(workflow_run_id, workflow_node_id, agent_name)`
@@ -6618,19 +4887,6 @@ function runMigration79(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 80: Consolidate space_agents system_prompt + instructions → custom_prompt.
- *
- * Adds a single `custom_prompt TEXT` column and populates it by merging the two
- * legacy columns:
- *   - Both non-empty: `system_prompt + '\n\n' + instructions`
- *   - Only system_prompt: `system_prompt`
- *   - Only instructions: `instructions`
- *   - Neither: NULL
- *
- * The old columns are kept for now to avoid a lossy table-rebuild migration.
- * They are no longer read by the application after this migration.
- */
 function runMigration80(db: BunDatabase): void {
   if (!tableExists(db, 'space_agents')) return;
   if (tableHasColumn(db, 'space_agents', 'custom_prompt')) return;
@@ -6652,17 +4908,6 @@ function runMigration80(db: BunDatabase): void {
 	`);
 }
 
-/**
- * Migration 81: Add preferred_workflow_id column to space_tasks.
- *
- * Stores the caller-specified workflow template ID for standalone task workflow
- * attachment. When set via `create_standalone_task({ workflow_id })`, the
- * SpaceRuntime uses this workflow instead of the heuristic auto-selection.
- *
- * The column is nullable with no foreign key — workflows can be deleted
- * independently of tasks, and the runtime falls back gracefully when the
- * referenced workflow no longer exists.
- */
 function runMigration81(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
   if (tableHasColumn(db, 'space_tasks', 'preferred_workflow_id')) return;
@@ -6686,17 +4931,7 @@ function runMigration83(db: BunDatabase): void {
   db.exec(`ALTER TABLE space_tasks ADD COLUMN block_reason TEXT`);
 }
 
-/**
- * Migration 84: Workflow Run Artifacts + drop pr_* from space_tasks.
- *
- * Creates `workflow_run_artifacts` — a general-purpose typed artifact store
- * for workflow node outputs (PRs, commits, test results, etc.).
- *
- * Removes `pr_url`, `pr_number`, `pr_created_at` from `space_tasks` since
- * PR metadata is now tracked as artifacts on the workflow run, not on the task.
- */
 function runMigration84(db: BunDatabase): void {
-  // 1. Create workflow_run_artifacts table
   db.exec(`
 		CREATE TABLE IF NOT EXISTS workflow_run_artifacts (
 			id TEXT PRIMARY KEY NOT NULL,
@@ -6714,7 +4949,6 @@ function runMigration84(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_wra_run_id ON workflow_run_artifacts(run_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_wra_run_node ON workflow_run_artifacts(run_id, node_id)`);
 
-  // 2. Drop pr_* columns from space_tasks (SQLite requires table rebuild)
   if (!tableExists(db, 'space_tasks')) return;
   if (!tableHasColumn(db, 'space_tasks', 'pr_url')) return;
 
@@ -6789,39 +5023,15 @@ function runMigration84(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 85: Add paused column to spaces table.
- *
- * Allows users to pause/resume space runtime execution without archiving.
- * Paused spaces skip task scheduling and workflow processing in the tick loop.
- * Default: 0 (not paused).
- */
 function runMigration85(db: BunDatabase): void {
   if (!tableExists(db, 'spaces')) return;
   if (tableHasColumn(db, 'spaces', 'paused')) return;
   db.exec(`ALTER TABLE spaces ADD COLUMN paused INTEGER NOT NULL DEFAULT 0`);
 }
 
-/**
- * Migration 86: 5-level numeric autonomy.
- *
- * 1. Rebuild `spaces` table: `autonomy_level` TEXT → INTEGER (1–5).
- *    Maps 'supervised' → 1, 'semi_autonomous' → 3.
- * 2. Add `pending_action_index` and `pending_checkpoint_type` to `space_tasks`.
- * 3. Migrate `approval_source` values: collapse agent sub-types → 'agent',
- *    'semi_auto' → 'auto_policy'.
- *
- * IMPORTANT — idempotency design:
- * Parts 1 (spaces rebuild) and 2+3 (space_tasks columns) are checked independently.
- * An older version of this migration only did Part 1; databases upgraded from that
- * version already have INTEGER autonomy_level but may be missing pending_checkpoint_type.
- * Using a single early-return on the spaces check would silently skip Parts 2+3 for
- * those databases. Instead: skip Part 1 if already done, but always run Parts 2+3.
- */
 export function runMigration86(db: BunDatabase): void {
   if (!tableExists(db, 'spaces')) return;
 
-  // ── Part 1: Rebuild spaces with numeric autonomy_level (if still needed) ──
   let spacesAlreadyNumeric = false;
   try {
     const row = db.prepare(`SELECT typeof(autonomy_level) as t FROM spaces LIMIT 1`).get() as
@@ -6885,10 +5095,6 @@ export function runMigration86(db: BunDatabase): void {
     }
   }
 
-  // ── Parts 2+3: space_tasks columns and approval_source migration ──
-  // These run independently from Part 1 so databases where the spaces rebuild
-  // already ran but task columns did not are caught up. Do not re-add
-  // pending_action_index after M104 has removed the completion_action schema.
   if (tableExists(db, 'space_tasks')) {
     const taskSql = tableCreateSql(db, 'space_tasks') ?? '';
     const completionActionAlreadyRemoved =
@@ -6906,7 +5112,6 @@ export function runMigration86(db: BunDatabase): void {
       );
     }
 
-    // ── 3. Migrate approval_source values ──
     db.exec(`
 			UPDATE space_tasks SET approval_source = 'agent'
 			WHERE approval_source IN ('neo_agent', 'space_agent', 'task_agent', 'node_agent')
@@ -6918,30 +5123,12 @@ export function runMigration86(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 87: Add stopped column to spaces table.
- *
- * Allows users to stop/start space runtime execution without archiving.
- * Stopped spaces have all active work killed on stop and will not auto-start
- * on daemon restart. Default: 0 (not stopped).
- */
 function runMigration87(db: BunDatabase): void {
   if (!tableExists(db, 'spaces')) return;
   if (tableHasColumn(db, 'spaces', 'stopped')) return;
   db.exec(`ALTER TABLE spaces ADD COLUMN stopped INTEGER NOT NULL DEFAULT 0`);
 }
 
-/**
- * Migration 88: Decouple `report_result` from canonical task status.
- *
- * Adds `reported_status` (TEXT NULL) and `reported_summary` (TEXT NULL) columns to
- * `space_tasks`. These record the end-node agent's claimed outcome separately from
- * `space_tasks.status`, which is the runtime's final decision after passing through
- * the completion-actions review gate (see `SpaceRuntime.resolveCompletionWithActions`).
- *
- * `reported_status` constrained to the same values as `TaskResultStatusSchema`:
- * `'done' | 'blocked' | 'cancelled'`.
- */
 function runMigration88(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
 
@@ -6956,20 +5143,6 @@ function runMigration88(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 89: Strip reserved writer keywords from persisted gates.
- *
- * Pre-PR #1505 the gate system used magic writer strings (`'human'`,
- * `'reviewer'`) to mark external-approval fields. PR #1505 switched to
- * structural semantics: `writers: []` means "external-only" (RPC or
- * auto-approval via `requiredLevel`). Existing DBs may still contain the
- * old keywords inside `space_workflows.gates` and would silently lose
- * their human-approval behavior.
- *
- * For each gate field whose `name === 'approved'`, drop the legacy
- * keywords from `writers`. If only legacy keywords were present, the
- * resulting `writers: []` correctly preserves external-only semantics.
- */
 export function runMigration89(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflows')) return;
   if (!tableHasColumn(db, 'space_workflows', 'gates')) return;
@@ -7021,17 +5194,6 @@ export function runMigration89(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 90: Add template tracking columns to space_workflows.
- *
- * - template_name TEXT — the stable name of the built-in template this workflow
- *   was created from or last synced to (e.g. "Fullstack QA Loop").
- *   NULL for user-created workflows not based on any template.
- *
- * - template_hash TEXT — SHA-256 hex hash of the template's canonical content
- *   fingerprint at the time of creation or last sync. Used for drift detection.
- *   NULL when template_name is NULL.
- */
 function runMigration90(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflows')) return;
 
@@ -7043,12 +5205,6 @@ function runMigration90(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 91: Add instructions column to space_workflows.
- *
- * - instructions TEXT — workflow-level instructions injected into every agent session
- *   in this workflow. NULL for workflows with no explicit instructions.
- */
 function runMigration91(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflows')) return;
 
@@ -7057,20 +5213,6 @@ function runMigration91(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 92: Create the `pending_agent_messages` table.
- *
- * Persistent, ordered queue for messages the Task Agent sends to peer agents
- * (node agents or the Space Agent) when the target session isn't active yet.
- * Queued rows are drained by `flushPendingMessagesForTarget()` the moment a
- * sub-session activates, by rehydration paths after daemon restart, and by a
- * periodic sweep. Rows carry bounded retry (`attempts <= max_attempts`) and
- * an `expires_at` TTL so stale entries are dropped instead of replayed forever.
- *
- * Observability: queued/delivered events are emitted on InternalEventBus<DaemonInternalEventMap>
- * (`space.pendingMessage.queued` / `space.pendingMessage.delivered`) so the UI
- * and tests can observe the queue without polling.
- */
 export function runMigration92(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflow_runs')) return;
   if (tableExists(db, 'pending_agent_messages')) return;
@@ -7116,13 +5258,6 @@ export function runMigration92(db: BunDatabase): void {
   );
 }
 
-/**
- * Migration 93: Add sdk_origin_path column to sessions for cross-workspace/worktree resume.
- *
- * Stores the resolved CWD used when the SDK session was first created, enabling
- * the daemon to locate the SDK session file even when the effective CWD changes
- * between daemon restarts (e.g. when a worktree is added/removed).
- */
 export function runMigration93(db: BunDatabase): void {
   if (!tableExists(db, 'sessions')) return;
   try {
@@ -7132,17 +5267,6 @@ export function runMigration93(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 95: Add completion_actions_fired_at column to space_workflow_runs.
- *
- * Used as an idempotency marker so that end-node `completionActions` on a
- * workflow run are fired at most once per physical completion. When a run is
- * reopened from `done` or `cancelled` back to `in_progress` (because a peer
- * agent sent a follow-up message, a gate was re-evaluated, or a user resumed
- * the task), and subsequently completes again, the runtime uses this marker
- * to skip re-firing its completion actions. The marker is never cleared on
- * reopen — once fired, always fired.
- */
 export function runMigration95(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflow_runs')) return;
   if (!tableHasColumn(db, 'space_workflow_runs', 'completion_actions_fired_at')) {
@@ -7152,26 +5276,6 @@ export function runMigration95(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 98: Create `workflow_run_artifact_cache` table.
- *
- * Caches the JSON result of the expensive git subprocess calls that power the
- * TaskArtifactsPanel (merge-base probing, `git diff HEAD --numstat`, `git log
- * --numstat`, and per-file diffs). Rows are keyed by
- * `(run_id, task_id, cache_key)`; each cache_key encodes the RPC shape
- * ("gateArtifacts", "commits", "fileDiff:<path>", "commitFileDiff:<sha>:<path>").
- *
- * Writes come from background job handlers in
- * `packages/daemon/src/lib/job-handlers/space-workflow-run-artifact.handler.ts`
- * and from the RPC layer as a warm-cache optimisation. The handler emits a
- * `space.artifactCache.updated` InternalEventBus<DaemonInternalEventMap> event after each upsert so the
- * frontend TaskArtifactsPanel can refetch from the cache without polling.
- *
- * `status` tracks whether the current row is fresh data ('ok'), a best-effort
- * placeholder while a sync is in flight ('syncing'), or a failure from the
- * last sync attempt ('error'). `synced_at` is the wall-clock time the git
- * command finished, used by consumers to decide whether to re-enqueue a sync.
- */
 export function runMigration98(db: BunDatabase): void {
   if (tableExists(db, 'workflow_run_artifact_cache')) return;
 
@@ -7200,45 +5304,7 @@ export function runMigration98(db: BunDatabase): void {
   );
 }
 
-/**
- * Migration 99 — Tool-contract refactor for Task #39.
- *
- * Adds:
- *   1. `space_workflows.completion_autonomy_level` (INTEGER, NOT NULL) — the
- *      minimum autonomy level at which `approve_task` (agent self-close) is
- *      registered on end-node agents.
- *   2. `space_tasks.pending_completion_submitted_by_node_id` (TEXT, nullable)
- *      `space_tasks.pending_completion_submitted_at` (INTEGER, nullable)
- *      `space_tasks.pending_completion_reason` (TEXT, nullable)
- *      Populated when an end-node agent calls `submit_for_approval`; cleared on
- *      approve or reject.
- *   3. `space_task_report_results` table — append-only audit of each
- *      `report_result` call. Does NOT replace `space_tasks.reported_summary`
- *      (which the UI caches as the latest); it adds history.
- *
- * Backfill policy for the new NOT NULL column on `space_workflows`:
- *   - Rows whose `name` matches a built-in template get a per-template level:
- *       Coding Workflow               → 3
- *       Research Workflow             → 2
- *       Review-Only Workflow          → 2
- *       Coding with QA Workflow       → 4
- *       Plan & Decompose Workflow     → 3
- *   - Any other row (user-created) gets level 3 as a reasonable default.
- *   These are picked to reflect the risk profile of each workflow's
- *   terminal action — merging a PR (Coding) is higher-risk than posting a
- *   review (Review-Only); Coding with QA's end step runs `gh pr merge`
- *   itself, so it requires the highest autonomy (4).
- *
- * SQLite does not allow an `ADD COLUMN ... NOT NULL` on a table that already
- * has rows without also supplying a DEFAULT. We add the column with
- * `NOT NULL DEFAULT 3`, then `UPDATE` per-name to apply the per-template
- * overrides. The default remains on the column (SQLite can't drop a default
- * without rebuilding the table); future inserts from the runtime layer will
- * always supply an explicit value, so the default only matters for any future
- * migration that inserts a row without specifying this column.
- */
 export function runMigration99(db: BunDatabase): void {
-  // 1. space_workflows.completion_autonomy_level ---------------------------
   if (
     tableExists(db, 'space_workflows') &&
     !tableHasColumn(db, 'space_workflows', 'completion_autonomy_level')
@@ -7246,8 +5312,6 @@ export function runMigration99(db: BunDatabase): void {
     db.exec(
       `ALTER TABLE space_workflows ADD COLUMN completion_autonomy_level INTEGER NOT NULL DEFAULT 3`
     );
-    // Per-template backfill — override the default for built-in workflows
-    // whose risk profile differs from the generic default of 3.
     const perTemplateLevels: Array<[string, number]> = [
       ['Coding Workflow', 3],
       ['Research Workflow', 2],
@@ -7263,7 +5327,6 @@ export function runMigration99(db: BunDatabase): void {
     }
   }
 
-  // 2. space_tasks pending_completion_* columns ----------------------------
   if (tableExists(db, 'space_tasks')) {
     if (!tableHasColumn(db, 'space_tasks', 'pending_completion_submitted_by_node_id')) {
       db.exec(
@@ -7280,10 +5343,6 @@ export function runMigration99(db: BunDatabase): void {
     }
   }
 
-  // 3. space_task_report_results table -------------------------------------
-  // Only create if the parent tables exist; otherwise this is a very fresh
-  // DB that pre-dates the Space system, and the table will be (re)created
-  // automatically once spaces tables come online via earlier migrations.
   if (tableExists(db, 'space_tasks') && tableExists(db, 'spaces')) {
     db.exec(`
 			CREATE TABLE IF NOT EXISTS space_task_report_results (
@@ -7307,12 +5366,6 @@ export function runMigration99(db: BunDatabase): void {
     );
   }
 
-  // 4. Widen `pending_checkpoint_type` CHECK constraint ---------------------
-  // Migration 86 added this column with CHECK(... IN ('completion_action', 'gate')).
-  // Task #39's new `submit_for_approval` tool writes 'task_completion', which
-  // the old constraint blocks at SQLite level. SQLite cannot ALTER a CHECK
-  // constraint, so rebuild the table with the widened enum. Detection: if the
-  // raw CREATE TABLE sql lacks 'task_completion' we need to rebuild.
   if (tableExists(db, 'space_tasks')) {
     const master = db
       .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='space_tasks'`)
@@ -7323,13 +5376,6 @@ export function runMigration99(db: BunDatabase): void {
       !currentSql.includes("'task_completion'") &&
       tableHasColumn(db, 'space_tasks', 'pending_checkpoint_type')
     ) {
-      // Build the INSERT/SELECT column list from the intersection of the
-      // full post-M98 schema and the columns the existing table actually
-      // has. This makes the rebuild safe when M98 is invoked against an
-      // older/minimal schema (e.g. isolated migration tests that construct
-      // a bare-bones space_tasks and then call runMigration98 directly).
-      // In production every prior migration has already run so the source
-      // table has all of these columns and the list is exhaustive.
       const fullColumnList = [
         'id',
         'space_id',
@@ -7371,10 +5417,6 @@ export function runMigration99(db: BunDatabase): void {
       const copyColumns = fullColumnList.filter((c) => existingColumns.has(c));
       const copyColsSql = copyColumns.join(', ');
 
-      // Capture existing non-autoindex DDL so we can re-create exactly the
-      // indexes the table had — no more, no less. Some earlier migrations
-      // intentionally dropped indexes (e.g. M71 removed idx_space_tasks_status
-      // when its column semantics changed); we must not silently re-add them.
       const existingIndexDdl = (
         db
           .prepare(
@@ -7436,9 +5478,6 @@ export function runMigration99(db: BunDatabase): void {
         );
         db.exec(`DROP TABLE space_tasks`);
         db.exec(`ALTER TABLE space_tasks_m98_new RENAME TO space_tasks`);
-        // Re-create exactly the indexes that existed before the rebuild.
-        // Using IF NOT EXISTS on each so a DDL that happens to use the
-        // non-IF-EXISTS form still applies cleanly.
         for (const ddl of existingIndexDdl) {
           const normalized = ddl.replace(
             /^CREATE (UNIQUE )?INDEX /i,
@@ -7457,48 +5496,14 @@ export function runMigration99(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 100: Add `source` and `source_path` columns to `app_mcp_servers`.
- *
- * Part of the MCP config unification work (docs/plans/unify-mcp-config-model).
- * Introduces provenance tracking so the registry can distinguish:
- *   - `builtin`  — seeded by `seedDefaultMcpEntries` on daemon startup.
- *   - `user`     — created via the MCP Servers UI / `mcp.registry.create` RPC.
- *   - `imported` — discovered by `McpImportService` scanning workspace and
- *                  user-level `.mcp.json` files. `source_path` records the
- *                  absolute path of the originating file so the import service
- *                  can upsert/prune rows keyed by `(source_path, name)`.
- *
- * Backfill policy:
- *   - Rows matching a known seed name are tagged `source='builtin'`. The seed
- *     list is inlined to avoid rewriting history as new builtins are added —
- *     subsequent seed runs upsert them with `source='builtin'`.
- *   - All remaining rows are tagged `source='user'`, matching the M2 scope
- *     note: before this migration every row was either seeded or user-authored.
- *
- * Imported rows get a partial unique index on `(source_path, name)` so the
- * import service can upsert idempotently and reject the same server being
- * imported twice from the same file. Imported rows still share the existing
- * global `name UNIQUE` constraint — two `.mcp.json` files can't both import a
- * server with the same name; the second is rejected at service level.
- *
- * Idempotent via `tableHasColumn` guards and `CREATE INDEX IF NOT EXISTS`.
- */
 export function runMigration100(db: BunDatabase): void {
   if (!tableExists(db, 'app_mcp_servers')) {
-    // Very fresh DB — `createTables` will create the table with the new
-    // columns already present, so this migration has nothing to do.
     return;
   }
 
-  // 1. Add `source` column. SQLite can't enforce NOT NULL on ALTER with no
-  //    default, so we add it nullable, backfill, then rely on application-
-  //    level validation (the repo requires `source` on writes).
   if (!tableHasColumn(db, 'app_mcp_servers', 'source')) {
     db.exec(`ALTER TABLE app_mcp_servers ADD COLUMN source TEXT`);
 
-    // Backfill: rows with a seeded name → 'builtin'; everything else → 'user'.
-    // Kept in sync with `seed-defaults.ts` at time of writing.
     const builtinSeedNames = ['fetch-mcp', 'chrome-devtools'];
     const placeholders = builtinSeedNames.map(() => '?').join(', ');
     db.prepare(
@@ -7508,14 +5513,10 @@ export function runMigration100(db: BunDatabase): void {
     db.exec(`UPDATE app_mcp_servers SET source = 'user' WHERE source IS NULL`);
   }
 
-  // 2. Add `source_path` column. NULL for `builtin`/`user`; absolute path for `imported`.
   if (!tableHasColumn(db, 'app_mcp_servers', 'source_path')) {
     db.exec(`ALTER TABLE app_mcp_servers ADD COLUMN source_path TEXT`);
   }
 
-  // 3. Partial unique index on `(source_path, name)` WHERE source = 'imported'.
-  //    Enables idempotent upserts from the import service: re-scanning the same
-  //    `.mcp.json` finds the existing row instead of creating a duplicate.
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_app_mcp_servers_import
 		 ON app_mcp_servers(source_path, name)
@@ -7523,40 +5524,7 @@ export function runMigration100(db: BunDatabase): void {
   );
 }
 
-/**
- * Migration 101 — MCP M3: Generalize per-scope MCP enablement.
- *
- * Goal: replace the room-only `room_mcp_enablement` table and the ad-hoc
- * `GlobalSettings.disabledMcpServers` / `SessionConfig.disabledMcpServers`
- * lists with a single table whose rows each encode one explicit override at a
- * specific scope (space / room / session). Missing rows mean "inherit" — the
- * most specific scope with an override wins, otherwise the registry default
- * is used.
- *
- * Steps:
- *   1. Create `mcp_enablement` with UNIQUE (scope_type, scope_id, server_id).
- *   2. Copy existing `room_mcp_enablement` rows as scope_type='room'.
- *   3. Seed scope_type='space', enabled=0 rows from
- *      `global_settings.disabledMcpServers` (string[] of server names) for
- *      every active space, resolving server name → server id via
- *      `app_mcp_servers`.
- *   4. Seed scope_type='session', enabled=0 rows from each session's
- *      `config.tools.disabledMcpServers` list. The legacy session config field
- *      is left untouched (M5 will drop it).
- *
- * The migration is fully idempotent:
- *   - Table creation uses IF NOT EXISTS.
- *   - All INSERTs use INSERT OR IGNORE so re-running after a partial run, or
- *     running on a DB where overrides were already applied, is a no-op.
- *   - Legacy `room_mcp_enablement` / `GlobalSettings.disabledMcpServers` /
- *     `SessionConfig.disabledMcpServers` are preserved for this milestone so
- *     rollback remains trivial. M5 will purge them.
- */
 export function runMigration101(db: BunDatabase): void {
-  // 1. Create the unified table -------------------------------------------
-  // Schema matches docs/plans/unify-mcp-config-model/00-overview.md exactly:
-  // composite PRIMARY KEY on (server_id, scope_type, scope_id). No surrogate
-  // id / timestamps — callers identify rows by their natural key.
   db.exec(`
 		CREATE TABLE IF NOT EXISTS mcp_enablement (
 			server_id  TEXT NOT NULL REFERENCES app_mcp_servers(id) ON DELETE CASCADE,
@@ -7571,7 +5539,6 @@ export function runMigration101(db: BunDatabase): void {
   );
   db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_enablement_server ON mcp_enablement(server_id)`);
 
-  // 2. Copy `room_mcp_enablement` rows as scope='room' --------------------
   if (tableExists(db, 'room_mcp_enablement')) {
     const rows = db
       .prepare(`SELECT room_id, server_id, enabled FROM room_mcp_enablement`)
@@ -7586,11 +5553,6 @@ export function runMigration101(db: BunDatabase): void {
     }
   }
 
-  // 3. Seed scope='space' rows from GlobalSettings.disabledMcpServers ------
-  // The legacy global list stores server *names*; resolve each to a server id
-  // via the app_mcp_servers registry. Names with no matching registry entry
-  // are silently skipped — the legacy list predates the registry so orphaned
-  // names are expected.
   if (
     tableExists(db, 'global_settings') &&
     tableExists(db, 'spaces') &&
@@ -7635,7 +5597,6 @@ export function runMigration101(db: BunDatabase): void {
     }
   }
 
-  // 4. Seed scope='session' rows from each session's disabledMcpServers ----
   if (tableExists(db, 'sessions') && tableExists(db, 'app_mcp_servers')) {
     const sessionRows = db.prepare(`SELECT id, config FROM sessions`).all() as Array<{
       id: string;
@@ -7675,28 +5636,6 @@ export function runMigration101(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 102 — M5 of `unify-mcp-config-model`: strip legacy MCP keys from
- * the `global_settings` JSON blob.
- *
- * The keys removed here were the previous-generation MCP toggling surface:
- *   - `disabledMcpServers` (string[])           → enablement now lives in
- *   - `mcpServerSettings`  (allowed/defaultOn)  → `app_mcp_servers` +
- *   - `enabledMcpServers`  (string[])              `mcp_enablement` rows
- *   - `enableAllProjectMcpServers` (boolean)
- *
- * The corresponding TypeScript fields were dropped in M5 (see
- * `packages/shared/src/types/settings.ts`). On the next read after this
- * migration the JSON-shape settings won't carry these keys back in.
- *
- * Order matters: this runs *after* M101, which seeds the new
- * `mcp_enablement` table from these same legacy keys. If we stripped them
- * first, M101 would have nothing to seed from on a pre-M3 DB.
- *
- * No schema changes; failures are logged-and-swallowed to match the rest of
- * the JSON-blob migrations (autoScroll, etc.) — a malformed row should not
- * prevent the daemon from starting.
- */
 export function runMigration102(db: BunDatabase): void {
   if (!tableExists(db, 'global_settings')) {
     return;
@@ -7732,63 +5671,20 @@ export function runMigration102(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 103 — PR 1/5 of the task-agent-as-post-approval-executor refactor.
- *
- * See `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
- * (§1.3 status, §4.4 migration). Schema-only — no runtime consumer reads the
- * `'approved'` value or the three new columns in this PR. PR 2 wires them up.
- *
- * Changes:
- *   1. Widen the `space_tasks.status` CHECK constraint so `'approved'` is a
- *      legal status value alongside the existing
- *      `open | in_progress | review | done | blocked | cancelled | archived`.
- *      SQLite cannot ALTER a CHECK constraint in place, so the full
- *      table-rebuild pattern used by M99 is reused here.
- *   2. Add `space_tasks.post_approval_session_id TEXT NULL`.
- *   3. Add `space_tasks.post_approval_started_at INTEGER NULL`.
- *   4. Add `space_tasks.post_approval_blocked_reason TEXT NULL`.
- *   5. Add `space_workflows.post_approval TEXT NULL` — stores the optional
- *      `PostApprovalRoute` as a JSON blob so workflow CRUD round-trips preserve
- *      the new field. Shape: `{"targetAgent": "...", "instructions": "..."}`.
- *
- * No backfill: at migration time all existing rows have statuses that do not
- * include `'approved'`, and the three new columns are nullable.
- *
- * Idempotent: re-running is a no-op — the rebuild is skipped when the current
- * CREATE TABLE SQL already advertises `'approved'`, and each ADD COLUMN is
- * guarded by `tableHasColumn`.
- */
 export function runMigration103(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) {
-    // No `space_tasks` yet — nothing to rebuild. In the full
-    // `runMigrations` pipeline M29 creates this table long before M103
-    // runs, so this branch only fires when `runMigration103` is invoked
-    // standalone on a DB that has not had M29 applied (tests / dev
-    // tooling). Skipping here is safe: once M29 creates the table any
-    // later M103 invocation will enter the rebuild path below.
     return;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Step 1: rebuild `space_tasks` to widen the `status` CHECK constraint.
-  // ─────────────────────────────────────────────────────────────────────────
   const master = db
     .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='space_tasks'`)
     .get() as { sql?: string } | undefined;
   const currentSql = master?.sql ?? '';
 
-  // Detection: rebuild needed if the CHECK clause does not already include
-  // `'approved'`. We match on the substring so the migration is robust to
-  // whitespace / ordering differences between older and newer table rebuilds.
   const hasApprovedInCheck =
     currentSql.includes('status IN (') && /status\s+IN\s*\([^)]*'approved'/.test(currentSql);
 
   if (currentSql && !hasApprovedInCheck) {
-    // Rebuild from the live schema, changing only the status CHECK. Some
-    // upgraded databases can already contain columns from later migrations
-    // such as custom_agent_id, goal_id, or slot_role, and their indexes must
-    // keep working after this rebuild.
     const newTableSql = widenSpaceTasksApprovedStatusCheck(
       replaceCreateTableName(currentSql, 'space_tasks_m103_new')
     );
@@ -7815,9 +5711,6 @@ export function runMigration103(db: BunDatabase): void {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Steps 2–4: add the three post-approval columns. Nullable, no backfill.
-  // ─────────────────────────────────────────────────────────────────────────
   if (!tableHasColumn(db, 'space_tasks', 'post_approval_session_id')) {
     db.exec(`ALTER TABLE space_tasks ADD COLUMN post_approval_session_id TEXT DEFAULT NULL`);
   }
@@ -7828,15 +5721,6 @@ export function runMigration103(db: BunDatabase): void {
     db.exec(`ALTER TABLE space_tasks ADD COLUMN post_approval_blocked_reason TEXT DEFAULT NULL`);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Step 5: add `space_workflows.post_approval` JSON column.
-  //
-  // Stores the optional `PostApprovalRoute` object as a JSON string. NULL
-  // (the default) means the workflow has no post-approval route configured.
-  // Guarded so re-runs are no-ops, and skipped when the parent table does
-  // not yet exist (very fresh DB — the later seeders will pick up the new
-  // column once migration 29 has created the table).
-  // ─────────────────────────────────────────────────────────────────────────
   if (
     tableExists(db, 'space_workflows') &&
     !tableHasColumn(db, 'space_workflows', 'post_approval')
@@ -7845,32 +5729,7 @@ export function runMigration103(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 104 — PR 5/5 of the task-agent-as-post-approval-executor refactor.
- *
- * Drops the completion-action schema fields. PR 4/5 already removed every
- * runtime path that wrote `pending_checkpoint_type='completion_action'`, but
- * we defensively rewrite any leftover rows to `'task_completion'` before
- * tightening the CHECK constraint. We then drop two now-unused columns:
- *   - `space_tasks.pending_action_index`
- *   - `space_workflow_runs.completion_actions_fired_at`
- *
- * The optional drop of the legacy `space_task_report_results` table (plan
- * §4.4 step 9) is intentionally deferred to a later migration — that step is
- * gated on auditing whether any writer paths still reach the table. Splitting
- * the audit out of this migration keeps M104 small and easy to roll forward.
- *
- * SQLite cannot drop columns or alter CHECK constraints in place, so the
- * migration uses the table-rebuild pattern (mirrors M99/M103). It is
- * idempotent: re-running it on a DB that has already been migrated is a no-op
- * because the rebuild detection checks the live CHECK clause.
- */
 export function runMigration104(db: BunDatabase): void {
-  // ─────────────────────────────────────────────────────────────────────────
-  // Step 5: rewrite any live tasks paused at 'completion_action' to
-  // 'task_completion'. Clear `pending_action_index` because the field is
-  // about to be dropped and would otherwise survive in the rebuilt table.
-  // ─────────────────────────────────────────────────────────────────────────
   if (tableExists(db, 'space_tasks')) {
     const hasCheckpointType = tableHasColumn(db, 'space_tasks', 'pending_checkpoint_type');
     const hasActionIndex = tableHasColumn(db, 'space_tasks', 'pending_action_index');
@@ -7890,10 +5749,6 @@ export function runMigration104(db: BunDatabase): void {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Steps 6 + 7: rebuild `space_tasks` to drop `pending_action_index` and
-  // tighten the `pending_checkpoint_type` CHECK constraint.
-  // ─────────────────────────────────────────────────────────────────────────
   if (tableExists(db, 'space_tasks')) {
     const master = db
       .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='space_tasks'`)
@@ -7907,9 +5762,6 @@ export function runMigration104(db: BunDatabase): void {
     const needsRebuild = !!currentSql && (hasLegacyCheckpointCheck || hasActionIndexCol);
 
     if (needsRebuild) {
-      // Rebuild from the live schema, dropping only pending_action_index
-      // and tightening pending_checkpoint_type. This preserves optional
-      // columns that may exist on real upgraded databases.
       const newTableSql = tightenPendingCheckpointTypeCheck(
         createTableSqlWithoutColumn(
           replaceCreateTableName(currentSql, 'space_tasks_m104_new'),
@@ -7942,11 +5794,6 @@ export function runMigration104(db: BunDatabase): void {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Step 8: drop `completion_actions_fired_at` from `space_workflow_runs`.
-  // SQLite has supported `ALTER TABLE … DROP COLUMN` since 3.35; Bun ships a
-  // new-enough SQLite. Guarded so re-runs are no-ops.
-  // ─────────────────────────────────────────────────────────────────────────
   if (
     tableExists(db, 'space_workflow_runs') &&
     tableHasColumn(db, 'space_workflow_runs', 'completion_actions_fired_at')
@@ -7955,18 +5802,6 @@ export function runMigration104(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 105: Add `template_name` and `template_hash` columns to
- * `space_agents` for preset-agent drift detection. Mirrors the workflow
- * template-tracking columns added in M90 — preset-seeded agents now carry
- * these fields so the daemon can detect when the source preset definition
- * has changed and the UI can surface a "Sync from template" action.
- *
- * Both columns are nullable: user-created agents always have NULL for both,
- * which is the marker the drift-detection RPC uses to ignore them.
- *
- * Idempotent: re-running on a DB that already has the columns is a no-op.
- */
 export function runMigration105(db: BunDatabase): void {
   if (!tableExists(db, 'space_agents')) return;
 
@@ -7978,71 +5813,24 @@ export function runMigration105(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 106 — delegated to m106-backfill-agent-templates.ts so the
- * frozen preset definitions don't bloat this file. Runs strictly *after*
- * M105 so the columns exist. The behaviour is documented in that module.
- * Exported for direct invocation from tests.
- */
 export function runMigration106(db: BunDatabase): void {
   runMigration106External(db);
 }
 
-/**
- * Migration 170 — delegated to m170-backfill-missing-preset-agents.ts so the
- * spaces × presets insertion loop stays readable. The behaviour is documented
- * in that module. Exported for direct invocation from tests.
- */
 export function runMigration170(db: BunDatabase): void {
   runMigration170External(db);
 }
 
-/**
- * Migration 172 — delegated to m172-backfill-orphaned-preset-agents.ts. A
- * second-pass backfill that re-attaches template tracking on preset-named
- * `space_agents` rows orphaned after M106 ran (M106 is one-shot/marked, so it
- * can no longer catch rows re-orphaned by edits or seeded without tracking).
- * Unlike M106, it re-attaches ONLY rows matching the current preset and leaves
- * divergent rows as orphans (so drift forces a diff review before overwrite).
- * Documented in that module. Exported for tests.
- */
 export function runMigration172(db: BunDatabase): void {
   runMigration172External(db);
 }
 
-/**
- * Migration 179: Add `workflow_node_id` to `pending_agent_messages`.
- *
- * The pending-message queue was keyed only by `(workflow_run_id,
- * target_agent_name)`. When two unstarted nodes reuse an agent slot name and
- * both receive a human message before either session spawns, the queue holds
- * two indistinguishable rows; whichever session starts first drains BOTH,
- * receiving the other node's message. `workflow_node_id` lets the drain filter
- * to the exact node the message was sent to.
- *
- * Idempotent: guarded on the column. New databases get the column here too
- * (M92 creates the table without it).
- */
 export function runMigration179(db: BunDatabase): void {
   if (!tableExists(db, 'pending_agent_messages')) return;
   if (tableHasColumn(db, 'pending_agent_messages', 'workflow_node_id')) return;
   db.exec(`ALTER TABLE pending_agent_messages ADD COLUMN workflow_node_id TEXT`);
 }
 
-/**
- * Migration 182: Partial unique index enforcing "one active turn per session"
- * on job_queue lane 'message_delivery' (message-delivery v2). The index is the
- * atomic role arbiter: a `role='turn'` insert either succeeds or hits this
- * constraint, in which case `deliverMessage` inserts the message as `role=
- * 'steer'` instead. Steers (`role='steer'`) are excluded from the index so they
- * coexist with the active turn. A parked/blocked turn-job (pending/processing)
- * still counts as active, so a message arriving during sdk_resume_choice
- * correctly becomes a steer, not a competing turn. See
- * docs/features/message-delivery-v2.md §6. Idempotent (`CREATE ... IF NOT
- * EXISTS`); no-op on tables that pre-date the lane (no rows ⇒ no conflict).
- * (Renumbered 180→181→182: dev shipped M180 for space_workflow_definition_versions
- * in #2412 and M181 for workflow-run definition pinning in #2425.)
- */
 export function runMigration182(db: BunDatabase): void {
   if (!tableExists(db, 'job_queue')) return;
   db.exec(`
@@ -8054,10 +5842,6 @@ export function runMigration182(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 183: Add the ACP submitted delivery state while preserving the
- * complete sdk_messages schema and dependent SQLite objects.
- */
 export function runMigration183(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
   const tableSql = tableCreateSql(db, 'sdk_messages');
@@ -8107,38 +5891,12 @@ export function runMigration183(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 107: Drop the legacy `space_task_report_results` table.
- *
- * Background: the `report_result` end-node tool (Task #39) wrote append-only
- * audit rows here. The tool has since been removed in favour of
- * `task.reportedStatus` plus `save_artifact({ append: true })`. M104's plan
- * §4.4 step 9 deferred dropping the table pending a writer audit; that audit
- * is now complete and no production code path still references the table —
- * the repository, helpers, and tests have all been deleted alongside this
- * migration.
- *
- * Idempotent: `DROP TABLE IF EXISTS` and `DROP INDEX IF EXISTS` make this a
- * safe no-op on databases that have already been migrated or that never had
- * the table.
- */
 export function runMigration107(db: BunDatabase): void {
   db.exec(`DROP INDEX IF EXISTS idx_space_task_report_results_task`);
   db.exec(`DROP INDEX IF EXISTS idx_space_task_report_results_space`);
   db.exec(`DROP TABLE IF EXISTS space_task_report_results`);
 }
 
-/**
- * Migration 108: Remove stale Brave Search MCP registry data.
- *
- * Earlier builds seeded an application MCP server and a built-in skill for a
- * Brave-backed web search integration. Those seed definitions have been
- * removed, but existing SQLite databases can still contain the rows and their
- * per-room/space/session overrides. This migration removes only the known
- * legacy identifiers and rows whose MCP command/config explicitly points at
- * the removed package/API key, while leaving unrelated user-created MCP
- * servers intact.
- */
 export function runMigration108(db: BunDatabase): void {
   const legacyServerNames = ['brave-search', 'web-search-brave'];
   const legacySkillNames = ['web-search-mcp', 'builtin-web-search-mcp'];
@@ -8299,13 +6057,6 @@ export function runMigration108(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 109: Durable Codex tool continuation recovery.
- *
- * Adds a recoverable `waiting_rebind` node execution state and creates durable
- * bridge tables used to map `tool_use_id` values back to workflow executions
- * after session timeout/restart races.
- */
 export function runMigration109(db: BunDatabase): void {
   if (
     tableExists(db, 'node_executions') &&
@@ -8418,14 +6169,6 @@ export function runMigration109(db: BunDatabase): void {
   );
 }
 
-/**
- * Migration 110: Limit pending-agent-message idempotency to live pending rows.
- *
- * The original M92 unique index covered every historical row with an
- * idempotency key, including delivered/failed/expired messages. Runtime retry
- * dedupe only needs to collapse currently pending rows; terminal history must
- * not suppress a legitimate later resend with the same message text.
- */
 export function runMigration110(db: BunDatabase): void {
   if (!tableExists(db, 'pending_agent_messages')) return;
 
@@ -8537,9 +6280,6 @@ export function runMigration113(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
 		ON sdk_messages(session_id, timestamp DESC, id DESC)`);
-  // NOTE: idx_sdk_messages_parent_tool (json_extract function index) was
-  // removed from here in migration 126. The column-based
-  // idx_sdk_messages_parent_tool_use_id added by migration 122 replaces it.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status
 		ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
 }
@@ -8547,28 +6287,20 @@ export function runMigration113(db: BunDatabase): void {
 export function runMigration114(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
 
-  // Add 'draft' to the status CHECK constraint.
-  // SQLite doesn't support ALTER TABLE ... ALTER CONSTRAINT, so we recreate the table.
-  // We derive the new DDL from the live schema so all existing constraints
-  // (FOREIGN KEYs, CHECKs on other columns) are preserved automatically.
   const master = db
     .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='space_tasks'`)
     .get() as { sql?: string } | undefined;
   const currentSql = master?.sql ?? '';
   if (!currentSql) return;
 
-  // Already has 'draft' in the CHECK? Idempotent — skip.
   if (statusCheckContains(db, 'space_tasks', 'draft')) return;
 
-  // Build new DDL: rename table + widen status CHECK to include 'draft'.
   const newTableSql = addDraftToStatusCheck(
     replaceCreateTableName(currentSql, 'space_tasks_m114_new')
   );
   const copyColumns = tableColumnNames(db, 'space_tasks').map(quoteSqlIdent).join(', ');
   const existingIndexDdl = capturedIndexDdl(db, 'space_tasks');
 
-  // CRITICAL: Disable foreign keys during table recreation to prevent
-  // CASCADE deletes from wiping child rows when we DROP TABLE space_tasks.
   db.exec('PRAGMA foreign_keys = OFF');
   db.exec('BEGIN');
   try {
@@ -8589,10 +6321,6 @@ export function runMigration114(db: BunDatabase): void {
   }
 }
 
-/**
- * Adds 'draft' to the status CHECK constraint in a CREATE TABLE statement.
- * The new table keeps all other constraints (FKs, CHECKs) untouched.
- */
 function addDraftToStatusCheck(createSql: string): string {
   let matched = false;
   const result = createSql.replace(
@@ -8602,7 +6330,6 @@ function addDraftToStatusCheck(createSql: string): string {
       if (values.includes("'draft'")) {
         return match;
       }
-      // Insert 'draft' as the first value
       return `CHECK(status IN ('draft', ${values.trim()}))`;
     }
   );
@@ -8612,27 +6339,15 @@ function addDraftToStatusCheck(createSql: string): string {
   return result;
 }
 
-/**
- * Migration 115: Add `task_agent_config` column to `spaces` table.
- *
- * Stores per-space Task Agent overrides (model and custom prompt) as JSON.
- * Nullable — null means no overrides (use code defaults).
- */
 export function runMigration115(db: BunDatabase): void {
   if (!tableExists(db, 'spaces')) return;
 
-  // Idempotent: skip if column already exists.
   const columns = tableColumnNames(db, 'spaces');
   if (columns.includes('task_agent_config')) return;
 
   db.exec(`ALTER TABLE spaces ADD COLUMN task_agent_config TEXT DEFAULT NULL`);
 }
 
-/**
- * Migration 116: Add `thinking_level` column to `space_agents` table.
- *
- * Nullable — null means use the app default unless a workflow node slot overrides it.
- */
 export function runMigration116(db: BunDatabase): void {
   if (!tableExists(db, 'space_agents')) return;
 
@@ -8642,13 +6357,6 @@ export function runMigration116(db: BunDatabase): void {
   db.exec(`ALTER TABLE space_agents ADD COLUMN thinking_level TEXT DEFAULT NULL`);
 }
 
-/**
- * Migration 117: Add `disabled` column to `space_workflows` table.
- *
- * When true (1), the workflow cannot be selected for new tasks.
- * Existing workflow runs continue unaffected.
- * Default 0 (enabled) so all existing workflows remain selectable.
- */
 export function runMigration117(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflows')) return;
 
@@ -8658,45 +6366,7 @@ export function runMigration117(db: BunDatabase): void {
   db.exec(`ALTER TABLE space_workflows ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`);
 }
 
-/**
- * Migration 122: Replace the task-thread projection-table approach with a schema
- * fix.
- *
- * Two parallel concerns:
- *
- * 1. Derived columns on `sdk_messages`. The live-query handlers used to compute
- *    `is_renderable`, `is_terminal`, and `parent_tool_use_id` inline via
- *    `json_extract` / `json_each` on every read. Materialising them at write
- *    time keeps the live-query SQL flat and lets a plain B-tree index serve
- *    `parent_tool_use_id` lookups instead of a function index.
- *
- * 2. `task_id` column on `sdk_messages`. Mapping a `space_task` to its
- *    contributing sessions used to require a five-CTE join (target_task →
- *    orchestration → node_executions → space_agents → all_sessions), and a
- *    short-lived denormalised `task_session_map` table tried to short-circuit
- *    it. Stamping `task_id` directly on each persisted SDK message turns the
- *    primary read path (`get all messages for a task`) into a simple indexed
- *    `WHERE task_id = ?` lookup and makes the lookup table unnecessary.
- *
- *    The session already knows its task: `sessions.session_context` carries
- *    `taskId` for both the Task Agent (`type = 'space_task_agent'`) and node
- *    agent (`type = 'worker'`) sub-sessions — set by `task-agent.ts` and
- *    `custom-agent.ts` at session creation. The backfill mines that JSON to
- *    populate task_id for existing rows.
- *
- *    Display-time metadata (kind, role, label, node_execution_id) is derived at
- *    query time by joining `sessions` (for `type` → kind) and `node_executions`
- *    (for `agent_name`, `workflow_node_id`) when needed — there is no
- *    denormalised cache.
- *
- * The migration is idempotent end-to-end:
- * - column adds check `tableColumnNames`
- * - the backfill recomputes derived columns regardless of prior state (the work
- *   is deterministic from `sdk_message` JSON / `sessions.session_context`)
- * - DROP IF EXISTS makes the lookup-table cleanup safe to re-run.
- */
 export function runMigration122(db: BunDatabase): void {
-  // Step 1: add derived columns to sdk_messages.
   if (tableExists(db, 'sdk_messages')) {
     const columns = tableColumnNames(db, 'sdk_messages');
     const addedRenderable = !columns.includes('is_renderable');
@@ -8717,24 +6387,6 @@ export function runMigration122(db: BunDatabase): void {
       db.exec(`ALTER TABLE sdk_messages ADD COLUMN task_id TEXT`);
     }
 
-    // Backfill derived columns. The WHERE clause only targets rows whose
-    // derived values are genuinely stale, so the migration converges after
-    // the first successful run instead of rewriting most of the table on
-    // every startup.
-    //
-    // is_terminal mirrors message_type = 'result'.
-    // is_renderable encodes the same predicate the compact-feed used to
-    //   apply at read time:
-    //     - user rows whose content array contains any tool_result block
-    //       render as null in the compact feed → is_renderable = 0
-    //     - assistant rows with no tool_use, no non-empty text, and no
-    //       non-empty thinking blocks have nothing to display → 0
-    //     - everything else → 1 (the column DEFAULT)
-    //
-    // All json_* calls are guarded by `json_valid(sdk_message)` so a single
-    // malformed historical row can't abort the migration. Invalid JSON
-    // rows fall through to safe defaults: is_renderable = 1 (preserves the
-    // column DEFAULT and keeps the row visible), parent_tool_use_id NULL.
     db.exec(`
 			UPDATE sdk_messages
 			SET
@@ -8825,9 +6477,6 @@ export function runMigration122(db: BunDatabase): void {
 				)
 		`);
 
-    // Plain B-tree index — supersedes the json_extract function index
-    // (idx_sdk_messages_parent_tool) for parent-tool lookups by reading the
-    // new column directly.
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id ON sdk_messages(session_id, parent_tool_use_id)`
     );
@@ -8835,22 +6484,6 @@ export function runMigration122(db: BunDatabase): void {
       `CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`
     );
 
-    // Step 2: backfill `sdk_messages.task_id` from the writing session's
-    // `session_context.taskId`. Both the Task Agent and node-agent sub-sessions
-    // stamp this at creation, so a JOIN on `sessions` covers every Space
-    // session that ever produced messages. Sessions without a task context
-    // (worker sessions outside the Space system, lobby/neo, etc.) get NULL —
-    // the column is nullable on purpose.
-    //
-    // Runs whenever rows with `task_id IS NULL` remain for an allowed session
-    // type, so an interrupted migration is repaired on next boot. We restrict
-    // the scan to rows whose session is an allowed type (space_task_agent,
-    // worker) AND actually carries a taskId in context — this avoids re-
-    // scanning permanently-NULL rows from ordinary non-Space worker sessions
-    // on every startup.
-    //
-    // `json_valid(s.session_context)` guards against malformed JSON the same
-    // way the sdk_message backfill does.
     if (tableExists(db, 'sessions')) {
       db.exec(`
 				UPDATE sdk_messages
@@ -8876,35 +6509,17 @@ export function runMigration122(db: BunDatabase): void {
 			`);
     }
 
-    // Must match the fresh-schema bootstrap in schema/index.ts:
-    // `CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id, timestamp)`.
-    // Upgraded databases create this index here; fresh databases create it in
-    // createIndexes(). Both use IF NOT EXISTS, so the first one wins. Keeping
-    // the column list identical ensures upgraded and fresh databases have the
-    // same index shape.
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id, timestamp)`
     );
-    // Covers the `DISTINCT session_id` dedup in the contributing_sessions CTE.
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session ON sdk_messages(task_id, session_id)`
     );
   }
 
-  // Step 3: drop the legacy `task_session_map` lookup table. It was a
-  // denormalised cache of data that already exists on `sessions` +
-  // `node_executions`; with `sdk_messages.task_id` populated the read path
-  // no longer needs it. Idempotent — early development DBs that never created
-  // the table skip cleanly.
   db.exec(`DROP TABLE IF EXISTS task_session_map`);
 }
 
-/**
- * Migration 118: Add `setting_sources` column to `space_agents` table.
- *
- * Stores per-agent setting source overrides as JSON (e.g. ["user","project"]).
- * Nullable — null means inherit from Space or global default.
- */
 export function runMigration118(db: BunDatabase): void {
   if (!tableExists(db, 'space_agents')) return;
 
@@ -8914,12 +6529,6 @@ export function runMigration118(db: BunDatabase): void {
   db.exec(`ALTER TABLE space_agents ADD COLUMN setting_sources TEXT DEFAULT NULL`);
 }
 
-/**
- * Migration 119: Add `setting_sources` column to `spaces` table.
- *
- * Stores per-space default setting sources as JSON (e.g. ["user","project"]).
- * Nullable — null means inherit from global default.
- */
 export function runMigration119(db: BunDatabase): void {
   if (!tableExists(db, 'spaces')) return;
 
@@ -8929,14 +6538,6 @@ export function runMigration119(db: BunDatabase): void {
   db.exec(`ALTER TABLE spaces ADD COLUMN setting_sources TEXT DEFAULT NULL`);
 }
 
-/**
- * Migration 120: Add `created_by` and `created_by_session` columns to `space_tasks` table.
- *
- * Tracks which agent and session created a task for audit trail.
- * - `created_by`: agent name (e.g. 'space-agent', 'coder', 'task-agent')
- * - `created_by_session`: session ID of the creator
- * Both are nullable — existing rows get NULL.
- */
 export function runMigration120(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
 
@@ -8949,14 +6550,6 @@ export function runMigration120(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 121: Create `mcp_audit_log` table.
- *
- * General audit trail for MCP write operations. Each entry records:
- * - timestamp, agent_name, session_id, tool_name
- * - params_summary: JSON summary of the tool call parameters
- * - space_id, task_id, workflow_run_id: optional context
- */
 export function runMigration121(db: BunDatabase): void {
   if (!tableExists(db, 'mcp_audit_log')) {
     db.exec(`
@@ -8985,24 +6578,6 @@ export function runMigration121(db: BunDatabase): void {
   );
 }
 
-/**
- * Migration 123: Add external-event lifecycle tables for the External Event Bus.
- *
- * space_external_events
- *   - One row per (space_id, source, dedupe_key) — the canonical source event.
- *   - State machine: published → routed → delivered | failed | ignored | ambiguous
- *   - Terminal states (delivered, failed, ignored, ambiguous) short-circuit
- *     duplicate source observations.
- *   - Retryable states (published, routed, delivery_failed) re-emit so delivery
- *     can retry.
- *
- * space_external_event_deliveries
- *   - Per-subscription delivery rows keyed by (event_id, delivery_key).
- *   - Terminal delivery states: delivered, failed.
- *   - The router advances the source event to terminal delivered only when
- *     every expected delivery is delivered.
- *   - A single terminal failed delivery keeps the source event failed forever.
- */
 export function runMigration123(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_events (
@@ -9075,32 +6650,7 @@ export function runMigration123(db: BunDatabase): void {
 	`);
 }
 
-/**
- * Migration 124: Simplify external-event schema.
- *
- * The event pipeline is now intentionally agnostic to task-system concerns.
- * Source-specific metadata (PR number, repo owner, branch) lives in the opaque
- * payload_json column. The state machine is simplified from 7 states to 4.
- *
- * Changes to space_external_events:
- *   - DROP pr_number, repo_owner, repo_name, branch, routed_task_id columns.
- *   - Backfill legacy columns (pr_number, repo_owner, repo_name, branch,
- *     routed_task_id) into payload_json so subscribers retain source-specific
- *     metadata and historical routing data is preserved for forensic purposes.
- *   - Migrate existing rows: 'routed' → 'published', 'delivery_failed' → 'published',
- *     'ambiguous' → 'ignored'.
- *   - Update CHECK constraint to ('published', 'delivered', 'failed', 'ignored').
- *
- * Note: SQLite does not support DROP COLUMN directly. We recreate the table.
- * The rewrite is wrapped in a transaction with foreign keys disabled to prevent
- * the child table (space_external_event_deliveries) from being cascade-deleted.
- */
 export function runMigration124(db: BunDatabase): void {
-  // Crash-recovery: if a prior interrupted rewrite left the temp table
-  // behind, recover the data before proceeding. Two cases:
-  //   1. Old table missing, _new exists → rename _new to canonical.
-  //   2. Both exist (e.g. runMigration123 recreated an empty old table)
-  //      → drop the empty old table, rename _new to canonical.
   const hasOldTable = db
     .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='space_external_events'`)
     .get();
@@ -9111,8 +6661,6 @@ export function runMigration124(db: BunDatabase): void {
     if (!hasOldTable) {
       db.exec(`ALTER TABLE space_external_events_new RENAME TO space_external_events`);
     } else {
-      // Both exist: the old table may be empty (recreated by M123).
-      // Check row counts to decide which has the real data.
       const oldCount = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events`).get() as {
         n: number;
       };
@@ -9123,47 +6671,29 @@ export function runMigration124(db: BunDatabase): void {
         db.exec(`DROP TABLE space_external_events`);
         db.exec(`ALTER TABLE space_external_events_new RENAME TO space_external_events`);
       } else if (oldCount.n > 0 && newCount.n > 0) {
-        // Both have data — this should not happen, but preserve the
-        // canonical table and drop the temp table to avoid confusion.
         db.exec(`DROP TABLE space_external_events_new`);
       }
     }
   }
 
-  // Check if the old schema still exists (has pr_number column).
   const hasOldSchema = db
     .prepare(`SELECT 1 FROM pragma_table_info('space_external_events') WHERE name = 'pr_number'`)
     .get();
   if (!hasOldSchema) {
-    // Already migrated or fresh database with new schema.
     return;
   }
 
-  // Clean up any leftover temp table from a previous interrupted migration.
   db.exec(`DROP TABLE IF EXISTS space_external_events_new`);
 
-  // Capture the original foreign_keys setting so we can restore it after
-  // the migration. This avoids side effects on callers that intentionally
-  // disabled FK checks on the same connection.
   const originalFk = db.prepare(`PRAGMA foreign_keys`).get() as
     | { foreign_keys: number }
     | undefined;
   const fkWasOn = originalFk ? originalFk.foreign_keys === 1 : true;
 
-  // Disable foreign keys before dropping the parent table so the child
-  // table (space_external_event_deliveries) is not cascade-deleted.
   db.exec(`PRAGMA foreign_keys = OFF`);
 
   try {
     db.transaction(() => {
-      // 1. Backfill legacy columns into payload_json so subscribers retain
-      //    source-specific metadata after the columns are dropped.
-      //    Guard against malformed JSON: coerce invalid payloads to '{}' first.
-      //    Also coerce valid non-object roots (arrays, strings, numbers) to '{}'
-      //    so json_set can write object keys. json_type returns 'object' for '{}'.
-      //    Prefer existing payload values over legacy columns (payload was
-      //    already normalized by the ingestion pipeline; legacy columns may
-      //    contain padded/case-variant strings).
       db.exec(`
 				UPDATE space_external_events
 				SET payload_json = '{}'
@@ -9187,9 +6717,6 @@ export function runMigration124(db: BunDatabase): void {
 				   OR NULLIF(branch, '') IS NOT NULL)
 			`);
 
-      // 2. Preserve routed_task_id in payload for forensic/audit purposes.
-      //    The event pipeline is task-agnostic, but retaining the value aids
-      //    historical debugging and prevents data loss during upgrade.
       db.exec(`
 				UPDATE space_external_events
 				SET payload_json = json_set(
@@ -9201,7 +6728,6 @@ export function runMigration124(db: BunDatabase): void {
 				  AND routed_task_id IS NOT NULL
 			`);
 
-      // 3. Migrate state values.
       db.exec(`
 				UPDATE space_external_events
 				SET state = CASE state
@@ -9213,7 +6739,6 @@ export function runMigration124(db: BunDatabase): void {
 				WHERE state IN ('routed', 'delivery_failed', 'ambiguous')
 			`);
 
-      // 3. Recreate table without task-specific columns.
       db.exec(`
 				CREATE TABLE space_external_events_new (
 					id TEXT PRIMARY KEY,
@@ -9236,7 +6761,6 @@ export function runMigration124(db: BunDatabase): void {
 				)
 			`);
 
-      // 4. Copy data from old table to new table.
       db.exec(`
 				INSERT INTO space_external_events_new (
 					id, space_id, source, topic, dedupe_key,
@@ -9252,11 +6776,9 @@ export function runMigration124(db: BunDatabase): void {
 				FROM space_external_events
 			`);
 
-      // 5. Drop old table and rename new one.
       db.exec(`DROP TABLE space_external_events`);
       db.exec(`ALTER TABLE space_external_events_new RENAME TO space_external_events`);
 
-      // 6. Recreate indexes.
       db.exec(`
 				CREATE INDEX IF NOT EXISTS idx_space_external_events_lookup
 				ON space_external_events(space_id, source, dedupe_key)
@@ -9267,24 +6789,10 @@ export function runMigration124(db: BunDatabase): void {
 			`);
     })();
   } finally {
-    // Restore the original foreign_keys setting instead of unconditionally
-    // enabling it, to avoid side effects on callers that managed FK state.
     db.exec(`PRAGMA foreign_keys = ${fkWasOn ? 'ON' : 'OFF'}`);
   }
 }
 
-/**
- * Migration 125: Add `task_schedules` table for recurring/one-shot scheduled tasks.
- *
- * task_schedules
- *   - Stores template fields (title, description, priority, etc.) + trigger config.
- *   - triggerType: 'cron' for recurring (cronExpression), 'at' for one-shot (runAt).
- *   - pendingJobId: O(1) lookup of the pending job in job_queue for cancel/pause.
- *   - Status machine: active → paused → active (or completed for one-shot).
- *
- * Also adds created_by_task_schedule_id column to space_tasks so spawned tasks
- * can be linked back to their schedule.
- */
 export function runMigration125(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE IF NOT EXISTS task_schedules (
@@ -9326,42 +6834,16 @@ export function runMigration125(db: BunDatabase): void {
 		WHERE status = 'active'
 	`);
 
-  // Add created_by_task_schedule_id column to space_tasks (nullable, no FK).
   const columns = db.prepare(`PRAGMA table_info(space_tasks)`).all() as { name: string }[];
   if (columns.length > 0 && !columns.some((c) => c.name === 'created_by_task_schedule_id')) {
     db.exec(`ALTER TABLE space_tasks ADD COLUMN created_by_task_schedule_id TEXT DEFAULT NULL`);
   }
 }
 
-/**
- * Migration 126: Drop the legacy `idx_sdk_messages_parent_tool` function index.
- *
- * That index — `(session_id, json_extract(sdk_message, '$.parent_tool_use_id'))` —
- * was created before `parent_tool_use_id` was materialised as a column. All
- * call sites now use the column directly and the planner picks
- * `idx_sdk_messages_parent_tool_use_id (session_id, parent_tool_use_id)`,
- * making the JSON-extract index dead weight on every INSERT/UPDATE.
- *
- * Idempotent via `DROP INDEX IF EXISTS` — databases that never created it
- * (older dev branches, fresh installs after this migration) are unaffected.
- */
 export function runMigration126(db: BunDatabase): void {
   db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_parent_tool`);
 }
 
-/**
- * Migration 127: Add `handle` column to `space_workflows` for human-readable
- * workflow identifiers (alternative to UUID). Unique per space.
- *
- * The handle is auto-generated from the workflow name at creation time
- * (slugify: lowercase, hyphens, truncate). Collision handling appends
- * -2, -3, etc. for duplicate names in the same space.
- *
- * Backfills `handle` for any row that still has `handle = NULL` — including
- * rows that were missed by a mid-upgrade crash. The backfill is safe to run
- * repeatedly: rows with a non-null handle are untouched (the SELECT filters
- * them out), so existing handles are always preserved across restarts.
- */
 export function runMigration127(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflows')) return;
 
@@ -9377,11 +6859,6 @@ export function runMigration127(db: BunDatabase): void {
 		WHERE handle IS NOT NULL
 	`);
 
-  // Always backfill any remaining NULL-handle rows. This makes the migration
-  // resumable: if a previous boot crashed between the ALTER TABLE and the
-  // backfill loop, subsequent boots pick up where it left off. A NULL handle
-  // is treated as "not yet generated" rather than an explicit user choice.
-  // Group by space_id so collision resolution is scoped per space.
   interface WorkflowRow {
     id: string;
     space_id: string;
@@ -9392,10 +6869,6 @@ export function runMigration127(db: BunDatabase): void {
     .all() as WorkflowRow[];
   if (rows.length === 0) return;
 
-  // Seed the dedup set with every handle that is already non-NULL in the DB.
-  // Without this, a partial-upgrade state where one row already has handle='foo'
-  // would cause a collision when the backfill tries to assign the same slug to
-  // another row, aborting via the unique-index constraint.
   interface ExistingHandleRow {
     space_id: string;
     handle: string;
@@ -9420,16 +6893,6 @@ export function runMigration127(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 128: Add external-event extension configuration tables.
- *
- * external_event_source_configs stores global source enablement, capabilities,
- * secrets references, and source-level settings.
- *
- * space_external_event_source_configs stores per-space source enablement and
- * settings, with a cascading FK to spaces so deleting a space removes its
- * extension configuration.
- */
 export function runMigration128(db: BunDatabase): void {
   const hadLegacyGlobalConfigTable = tableExists(db, 'external_event_source_configs');
 
@@ -9492,12 +6955,6 @@ export function runMigration128(db: BunDatabase): void {
   ).run(JSON.stringify({ webhooks: true, polling: false, rpcConfig: true }), now, now);
 }
 
-/**
- * Migration 129: Add per-space concurrent task execution limit.
- *
- * Backfills from legacy config.maxConcurrentTasks when present and valid, otherwise
- * defaults to 1. This preserves legacy SpaceConfig-based limits during upgrade.
- */
 export function runMigration129(db: BunDatabase): void {
   if (!tableExists(db, 'spaces')) return;
   if (tableHasColumn(db, 'spaces', 'max_concurrent_tasks')) return;
@@ -9513,17 +6970,6 @@ export function runMigration129(db: BunDatabase): void {
 	`);
 }
 
-/**
- * Migration 130: Add `gate_open_state` table.
- *
- * Persists the gate-open cache so that already-opened gates skip re-evaluation
- * even after a daemon restart. Each row records the `workflow.updatedAt` timestamp
- * at the time the gate was cached open — if the workflow definition changes
- * (different `updatedAt`), the cache entry is stale and the gate is re-evaluated.
- *
- * Foreign key to `space_workflow_runs(id)` with `ON DELETE CASCADE` ensures rows
- * are cleaned up when the run itself is deleted.
- */
 export function runMigration130(db: BunDatabase): void {
   if (tableExists(db, 'gate_open_state')) return;
 
@@ -9548,7 +6994,6 @@ export function runMigration131(db: BunDatabase): void {
   migrateNeoSessions(db);
   migrateNeoMessageOrigins(db);
 
-  // ── Space-native goals ───────────────────────────────────────────────────
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_goals (
 			id TEXT PRIMARY KEY,
@@ -9605,9 +7050,6 @@ export function runMigration131(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 134: Add FTS5-backed message and Space task search.
- */
 export function runMigration136(db: BunDatabase): void {
   if (!tableExists(db, 'space_agent_memory')) return;
   ensureAgentMemoryNamedPrimaryKey(db);
@@ -10048,13 +7490,6 @@ function migrateNeoSessions(db: BunDatabase): void {
     db.exec('PRAGMA foreign_keys = ON');
   }
 }
-
-/**
- * Migration 133: Add append-only Space goal event history.
- *
- * Stores lifecycle and state-change events for Space goals so agents and
- * humans can inspect why the current rolling goal state changed.
- */
 
 export function runMigration142(db: BunDatabase): void {
   widenEvolutionEvidenceKinds(db);
@@ -10594,9 +8029,6 @@ function createAgentMemoryTables(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 135: Add space-scoped pending message lookup index for actor registry.
- */
 export function runMigration135(db: BunDatabase): void {
   if (!tableExists(db, 'pending_agent_messages')) return;
 
@@ -10606,13 +8038,6 @@ export function runMigration135(db: BunDatabase): void {
   );
 }
 
-/**
- * Migration 138: Add durable inbox for long-term Space agents.
- *
- * Workflow-node pending messages are scoped to a workflow run. Long-term Space
- * agents are space-scoped and can receive DMs from ad-hoc sessions or workers,
- * so they need a separate inbox that can wake/replay their stable session.
- */
 export function runMigration139(db: BunDatabase): void {
   createEvolutionTables(db);
   if (tableExists(db, 'goal_automation_cursors')) {
@@ -10875,20 +8300,11 @@ function migrateNeoMessageOrigins(db: BunDatabase): void {
   }
 }
 
-/**
- * Generate a handle that is guaranteed to pass validateSlug.
- * Progressively shortens the base on each iteration so collision
- * suffixes never push the result over the max length.
- */
 function generateValidHandle(name: string, existingHandles: string[]): string {
   const maxLen = 60;
   let base = slugify(name, existingHandles);
-  // If the initial slugify result is already valid, we're done.
   if (validateSlug(base) === null) return base;
 
-  // Collision suffixing pushed the handle over the max length.
-  // Progressively shorten the base and re-run collision resolution
-  // until a valid handle is produced.
   for (let len = maxLen; len > 0; len--) {
     const truncated = base.slice(0, len);
     const cleaned = truncated.replace(/-+$/, '');
@@ -10898,14 +8314,9 @@ function generateValidHandle(name: string, existingHandles: string[]): string {
       return candidate;
     }
   }
-  // Absolute fallback — should never reach here in practice
   return 'agent';
 }
 
-/**
- * Migration 147 — Add model and thinking_level columns to space_long_horizon_agents.
- * Idempotent: uses ADD COLUMN IF NOT EXISTS (SQLite 3.37+) or swallows duplicate-column errors.
- */
 function runMigration147(db: BunDatabase): void {
   if (!tableExists(db, 'space_long_horizon_agents')) return;
   for (const stmt of [
@@ -10920,9 +8331,6 @@ function runMigration147(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 148 — Add persisted handles to space_agents.
- */
 export function runMigration148(db: BunDatabase): void {
   if (!tableExists(db, 'space_agents')) return;
   if (!tableHasColumn(db, 'space_agents', 'handle')) {
@@ -10958,9 +8366,6 @@ export function runMigration148(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 149 — Add encrypted provider credentials fallback table.
- */
 export function runMigration149(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS provider_credentials (
@@ -10973,9 +8378,6 @@ export function runMigration149(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 150 — Create providers table for unified provider registry.
- */
 function runMigration150(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS providers (
@@ -11000,9 +8402,6 @@ function runMigration150(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_sort_order ON providers(sort_order)`);
 }
 
-/**
- * Migration 151 — Consolidate legacy agent event subscriptions.
- */
 export function runMigration151(db: BunDatabase): void {
   const hasLegacy = db
     .prepare(
@@ -11091,9 +8490,6 @@ export function runMigration151(db: BunDatabase): void {
   db.exec(`DROP TABLE IF EXISTS space_agent_event_subscriptions`);
 }
 
-/**
- * Migration 152 — Preserve provider and setting source policy on long-horizon agents.
- */
 function runMigration152(db: BunDatabase): void {
   if (!tableExists(db, 'space_long_horizon_agents')) return;
   if (!tableHasColumn(db, 'space_long_horizon_agents', 'provider')) {
@@ -11122,9 +8518,6 @@ export function runMigration154(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 155 — Copy legacy long-horizon ownership/automation data.
- */
 export function runMigration155(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS migration_markers (
@@ -11286,12 +8679,6 @@ export function runMigration158(db: BunDatabase): void {
   );
 }
 
-/**
- * Migration 159: Widen evolution_evidence.kind CHECK to include friction_digest and verification_triage.
- *
- * Introduced after migration 146 was already shipped; this migration safely
- * widens the CHECK constraint for existing databases without re-running 146.
- */
 export function runMigration159(db: BunDatabase): void {
   widenEvolutionEvidenceKinds(db);
 }
@@ -11300,18 +8687,6 @@ export function runMigration160(db: BunDatabase): void {
   widenEvolutionEvidenceKinds(db);
 }
 
-/**
- * Migration 161: Add `sessions.last_error` for persisting the active session
- * error snapshot.
- *
- * The structured session error (ErrorManager → StateProjectionService
- * `errorCache`) was previously in-memory only and therefore invisible to the
- * DB-backed activity LiveQuery. Persisting it as a small JSON snapshot
- * ({ category, message, providerId }) lets the Space task thread surface a
- * re-authenticate affordance (PROVIDER_AUTH_ERROR) reactively through the
- * existing activity subscription, without forcing the user into the chat
- * container. Cleared on `session.errorClear`, mirroring the in-memory cache.
- */
 export function runMigration161(db: BunDatabase): void {
   if (!tableExists(db, 'sessions')) return;
   if (!tableHasColumn(db, 'sessions', 'last_error')) {
@@ -11319,30 +8694,11 @@ export function runMigration161(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 162: Rewrite persisted rows that reference the pre-rebrand
- * `neokai_*` identifiers so they match the renamed code.
- *
- * - `sdk_messages.message_type = 'neokai_action'` → `'hyperneo_action'`. Without
- *   this, legacy action messages would slip past the `type !== 'hyperneo_action'`
- *   filter and be mis-processed as SDK messages.
- * - The action-message discriminator also lives inside the `sdk_message` JSON
- *   blob as `$.type`. `_getSDKMessagesImpl` returns that parsed type and the
- *   frontend only recognises `'hyperneo_action'`, so the JSON field is rewritten
- *   too — otherwise upgraded action prompts render as unknown SDK messages and
- *   can no longer be resolved.
- * - `evolution_episodes.findings_json` may embed `"domain":"neokai_product"`; the
- *   REPLACE re-tags those findings so they continue to surface in the product
- *   category.
- *
- * Idempotent: all statements are no-ops once no legacy rows remain.
- */
 export function runMigration162(db: BunDatabase): void {
   if (tableExists(db, 'sdk_messages')) {
     db.prepare(
       `UPDATE sdk_messages SET message_type = 'hyperneo_action' WHERE message_type = 'neokai_action'`
     ).run();
-    // Rewrite the JSON discriminator inside the blob (not just the column).
     if (tableHasColumn(db, 'sdk_messages', 'sdk_message')) {
       db.prepare(
         `UPDATE sdk_messages
@@ -11363,23 +8719,9 @@ export function runMigration162(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 167: Add `rate_limited` / `usage_limited` to `space_tasks.status`
- * CHECK constraint, and add a nullable `restrictions` column.
- *
- * Worker sessions paused on a rate/usage cap (chain exhausted) now surface a
- * distinct task status with a resume-at timestamp (`restrictions` JSON) instead
- * of failing. SQLite cannot ALTER a CHECK constraint, so the table is rebuilt
- * from its live DDL (which is current — later rebuilds re-synced it after the
- * ALTER-added columns). The `restrictions` column is injected into the new DDL
- * so the column copy (which references the pre-restriction column set) leaves
- * it NULL for existing rows. Idempotent.
- */
 export function runMigration167(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
 
-  // Already widened → only backfill the restrictions column if a partial run
-  // left it missing.
   if (statusCheckContains(db, 'space_tasks', 'rate_limited')) {
     if (!tableHasColumn(db, 'space_tasks', 'restrictions')) {
       db.exec(`ALTER TABLE space_tasks ADD COLUMN restrictions TEXT`);
@@ -11390,17 +8732,12 @@ export function runMigration167(db: BunDatabase): void {
   const currentSql = tableCreateSql(db, 'space_tasks');
 
   if (currentSql && currentSql.includes('status IN (')) {
-    // Rebuild from the live schema, changing only the status CHECK (and adding
-    // the restrictions column). Mirrors M103's guard: real space_tasks tables
-    // created by the pipeline have the CHECK, so the rebuild runs there.
     const newTableSql = addRateUsageStatusAndRestrictions(
       replaceCreateTableName(currentSql, 'space_tasks_m167_new')
     );
     const copyColumns = tableColumnNames(db, 'space_tasks').map(quoteSqlIdent).join(', ');
     const existingIndexDdl = capturedIndexDdl(db, 'space_tasks');
 
-    // CRITICAL: Disable foreign keys during table recreation to prevent CASCADE
-    // deletes from wiping child rows when we DROP TABLE space_tasks.
     db.exec('PRAGMA foreign_keys = OFF');
     db.exec('BEGIN');
     try {
@@ -11421,21 +8758,11 @@ export function runMigration167(db: BunDatabase): void {
     }
   }
 
-  // Always add the restrictions column if still absent (covers the rebuild path
-  // above AND sentinel/test schemas whose space_tasks has no status CHECK —
-  // there is nothing to widen there, so we skip the rebuild rather than throw,
-  // but the column is still cheap to add). Idempotent.
   if (!tableHasColumn(db, 'space_tasks', 'restrictions')) {
     db.exec(`ALTER TABLE space_tasks ADD COLUMN restrictions TEXT`);
   }
 }
 
-/**
- * Widens the `status` CHECK to include `rate_limited` / `usage_limited` and
- * injects a nullable `restrictions TEXT` column before the first FOREIGN KEY
- * (or before the closing paren if there are none). Preserves every other
- * constraint. Throws if the status CHECK is not found.
- */
 function addRateUsageStatusAndRestrictions(createSql: string): string {
   let statusMatched = false;
   let result = createSql.replace(
@@ -11456,23 +8783,12 @@ function addRateUsageStatusAndRestrictions(createSql: string): string {
     if (/\bFOREIGN\s+KEY\b/i.test(result)) {
       result = result.replace(/\bFOREIGN\s+KEY\b/i, 'restrictions TEXT,\n\t\t\t\t\t\tFOREIGN KEY');
     } else {
-      // No FOREIGN KEY clause: the final `)` closes the column list, so the
-      // preceding column has no trailing comma. Inject a comma before the new
-      // column or the resulting CREATE TABLE is invalid (`lastcol restrictions
-      // TEXT)`).
       result = result.replace(/\)\s*$/, ',\n\t\t\t\t\t\trestrictions TEXT\n\t\t\t\t\t)');
     }
   }
   return result;
 }
 
-/**
- * Migration 163: Materialize SDK UUIDs and replacement relationships.
- *
- * Replacement metadata remains in sdk_message for wire compatibility, while
- * indexed relational data becomes the durable source for query-time lookups.
- * Keeping the target as an SDK UUID supports out-of-order message persistence.
- */
 export function runMigration163(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
 
@@ -11518,53 +8834,13 @@ export function runMigration163(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 166: Backfill the freeform `artifact_type` column to the closed
- * generic shape vocabulary (link/commit_set/check/metric/decision/note), and
- * collapse per-round "note" rows (formerly "progress", which had devolved into
- * an append log) to a single rolling-status row per (run, node).
- *
- * `result` was overloaded in the old model, so the mapping is data-aware: a
- * `result` carrying a URL becomes a `link`; any other `result` becomes a
- * `decision`. `pr` → `link` (kind:pr), `review` → `decision` (kind:review),
- * `progress` → `note`. Unknown legacy types become `note` with the original
- * type preserved under `data._legacyType` so nothing is silently lost.
- *
- * Idempotent: re-running is a no-op once every row is on a known shape. The
- * note collapse only deletes when more than one note row exists per (run, node).
- */
 export function runMigration166(db: BunDatabase): void {
-  // The marker-wrapped one-shot backfill. The actual work lives in
-  // migrateLegacyArtifactsToShapes, which is also called outside the marker
-  // (see runMigrations) to catch legacy rows an older binary may write after
-  // this migration already ran (rollback scenario).
   migrateLegacyArtifactsToShapes(db);
 }
 
-/**
- * Reconcile legacy freeform `artifact_type` rows onto the closed generic shape
- * vocabulary. Idempotent and safe to run on every startup.
- *
- * For each non-shape row it computes a target (shape, key, data):
- *   - `progress` → `note` key 'current'      (the append-log bloat collapses to
- *                                              a single rolling-status row per
- *                                              run+node — the only shape that
- *                                              collapses)
- *   - `pr`       → `link` kind:pr (url normalized)
- *   - `review`   → `decision` kind:review
- *   - `result`   → `link` when URL-only, else `decision` (preserves summaries)
- *   - unknown    → `note` tagged `_legacyType`, distinct key (original key or
- *                  the original type) so different unknown types are preserved
- *
- * Targets are deduplicated by (run, node, shape, key) — keeping the most recent
- * — BEFORE any write, so two legacy rows that map to the same key (e.g. `review`
- * and a URL-less `result` both becoming `decision` '') cannot violate the
- * UNIQUE constraint. Losers are deleted first, then survivors updated.
- */
 export function migrateLegacyArtifactsToShapes(db: BunDatabase): void {
   if (!tableExists(db, 'workflow_run_artifacts')) return;
 
-  // Fast path: nothing to do when no legacy rows remain.
   const legacyCount = (
     db
       .prepare(
@@ -11592,7 +8868,7 @@ export function migrateLegacyArtifactsToShapes(db: BunDatabase): void {
     type: string;
     key: string;
     data: string;
-    changed: boolean; // true when the row is legacy and needs an UPDATE
+    changed: boolean;
     createdAt: number;
     updatedAt: number;
   }
@@ -11607,8 +8883,6 @@ export function migrateLegacyArtifactsToShapes(db: BunDatabase): void {
   const plans: Plan[] = [];
   for (const row of rows) {
     if (isArtifactShape(row.artifact_type)) {
-      // Already a shape — include it in dedup (unchanged) so a legacy row that
-      // maps onto its key is resolved against it.
       plans.push({
         id: row.id,
         runId: row.run_id,
@@ -11637,7 +8911,6 @@ export function migrateLegacyArtifactsToShapes(db: BunDatabase): void {
     let newKey: string;
     let newData: Record<string, unknown>;
     if (!shape) {
-      // Unknown freeform type → note, distinct key so it isn't collapsed.
       newType = 'note';
       newKey = originalKey || originalType;
       newData = { ...data, _legacyType: originalType };
@@ -11656,8 +8929,6 @@ export function migrateLegacyArtifactsToShapes(db: BunDatabase): void {
       } else if (shape === 'decision' && originalType === 'review' && !data.kind) {
         newData = { ...data, kind: 'review' };
       }
-      // `progress` collapses to the single rolling 'current' note; every other
-      // legacy type keeps its existing key (or a derived one when empty).
       if (originalType === 'progress') {
         newKey = 'current';
       } else {
@@ -11678,9 +8949,6 @@ export function migrateLegacyArtifactsToShapes(db: BunDatabase): void {
     });
   }
 
-  // Dedupe by (run, node, type, key): keep the most recently updated (then
-  // created, then id) per group; the rest are deleted so the subsequent UPDATE
-  // of survivors cannot hit the UNIQUE constraint.
   const winnerById = new Map<string, Plan>();
   const loserIds: string[] = [];
   for (const plan of plans) {
@@ -11780,9 +9048,6 @@ export function reconcileSdkMessageReplacementProjection(db: BunDatabase): void 
   `);
 }
 
-/**
- * Migration 164: Partial index for pending external-event deliveries (from dev).
- */
 export function runMigration164(db: BunDatabase): void {
   if (!tableExists(db, 'space_external_event_deliveries')) return;
   db.exec(`
@@ -11792,12 +9057,6 @@ export function runMigration164(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 165: Composite (state, updated_at) index for the GitHub health
- * snapshot's countDeliveryLog recency-window lookup. Separate from 164 because
- * 164 already ran on dev (creating only the pending-delivery index) — existing
- * databases would skip the modified 164 and never receive this index.
- */
 export function runMigration165(db: BunDatabase): void {
   if (!tableExists(db, 'space_external_event_deliveries')) return;
   db.exec(`
@@ -11806,23 +9065,7 @@ export function runMigration165(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 168: Index node_executions(agent_session_id).
- *
- * Serves the node-execution-repository hot path (`getByAgentSessionId` /
- * `listByAgentSessionId`), which the runtime MCP self-heal rebind reads on every
- * reconnect. `WHERE agent_session_id = ?` was a full table scan; this index turns
- * it into `SEARCH ... USING INDEX idx_node_executions_agent_session`.
- *
- * Note: `buildTaskScopeFilter`'s nodeExecStmt (live-query-handlers) also filters
- * on agent_session_id, but EXPLAIN shows it drives off the space_tasks primary
- * key and the pre-existing idx_node_executions_run (workflow_run_id), so it is
- * already covered and is not what this index serves.
- */
 export function runMigration168(db: BunDatabase): void {
-  // Guard on the column (not just the table): historical-marker seeding tests
-  // boot a sentinel node_executions with a minimal column set, and older shapes
-  // never carried agent_session_id. Nothing to index in either case.
   if (!tableHasColumn(db, 'node_executions', 'agent_session_id')) return;
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_node_executions_agent_session
@@ -11830,33 +9073,9 @@ export function runMigration168(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 169: Add the `message_subtype_norm` VIRTUAL generated column and a
- * `(session_id, message_subtype_norm, parent_tool_use_id)` index.
- *
- * ~78% of `sdk_messages` rows have `message_subtype IS NULL`, so the chat-view
- * subtype filters wrap the column as `COALESCE(message_subtype,'') = …`, which
- * is non-sargable and forces the `(session_id, parent_tool_use_id)` index to
- * seek to every top-level row before filtering — a 2.35s stall on the 167k-row
- * coder session (see issue #2330). The generated column makes those filters
- * sargable against the new composite index.
- *
- * `VIRTUAL` (not `STORED`) keeps the `ALTER TABLE` schema-only — no table
- * rewrite, so it is safe on the 15GB production DB. SQLite 3.51 (bun:sqlite's
- * bundled version) supports indexing VIRTUAL generated columns. New databases
- * already get both the column and index from `createTables()`; this migration
- * brings existing databases to parity. Idempotent.
- *
- * (Originally M168 on this branch; renumbered to M169 because dev shipped M168
- * for node_executions(agent_session_id) in #2343.)
- */
 export function runMigration169(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
 
-  // Generated columns are hidden from `pragma_table_info` (the shared
-  // tableHasColumn helper), so check via `pragma_table_xinfo` instead —
-  // otherwise the guard misses the column and a second run errors with
-  // "duplicate column name".
   const hasNormColumn = !!db
     .prepare(
       `SELECT name FROM pragma_table_xinfo('sdk_messages') WHERE name = 'message_subtype_norm'`
@@ -11875,52 +9094,14 @@ export function runMigration169(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 173: Drop two redundant `sdk_messages` indexes.
- *
- * - `idx_sdk_messages_session (session_id, timestamp)` is a strict prefix of
- *   `idx_sdk_messages_session_timestamp_id (session_id, timestamp DESC, id DESC)`,
- *   so every query the 2-column index served is served at least as well by the
- *   3-column index. Maintaining the extra B-tree forced an update on every
- *   insert into the multi-million-row table for no query benefit.
- * - `idx_sdk_messages_uuid_status (session_id, send_status, json_extract uuid)`
- *   — the expression index added in M113 — is superseded by the column index
- *   `idx_sdk_messages_session_uuid (session_id, sdk_uuid)` from M163. The three
- *   uuid lookups now filter on the `sdk_uuid` column directly, so the
- *   expression index is dead weight (and slower, parsing JSON per row).
- *
- * New databases never receive either index (createIndexes no longer creates
- * them); this brings existing databases to parity. Idempotent.
- */
 export function runMigration173(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
   db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_session`);
   db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_uuid_status`);
 }
 
-/**
- * Migration 174: Add a composite index on space_tasks(space_id, status,
- * updated_at DESC, id DESC).
- *
- * The Tasks view renders through listByStatus / listBySpaceAndStatus /
- * listBySpace, which all filter by space_id (plus an optional status equality)
- * and ORDER BY updated_at DESC, id DESC. The old single-column
- * idx_space_tasks_status was dropped and never re-added, so every render
- * scanned all non-archived rows in the space and post-filtered on status. This
- * composite index covers the equality-prefix + sort shape of those queries
- * directly, and the (space_id, status) prefix also helps listBySpace's
- * `status != 'archived'` scan within a space.
- *
- * Idempotent and safe to re-run across the table-rebuild migrations (M98/M103/
- * M167), which preserve it via capturedIndexDdl since every referenced column
- * survives the rebuild.
- */
 export function runMigration174(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
-  // Sentinel/mock schemas (e.g. the baseline-schema sentinels in
-  // migration-markers-runner) carry a stub space_tasks with only a few columns.
-  // Skip silently when any indexed column is absent rather than throwing — a
-  // real space_tasks always has all four.
   const required = ['space_id', 'status', 'updated_at', 'id'];
   if (required.some((col) => !tableHasColumn(db, 'space_tasks', col))) return;
   db.exec(
@@ -11928,19 +9109,6 @@ export function runMigration174(db: BunDatabase): void {
   );
 }
 
-/**
- * Migration 175: index space_external_events by (space_id, source, ingested_at).
- *
- * The GitHub health snapshot's per-event-type recency scan
- * (ExternalEventStore.listEventCountsByTopic) filters on exactly these three
- * columns once per minute per open panel. The pre-existing indexes cover only
- * (space_id, source, dedupe_key) and (state, updated_at) — neither includes
- * ingested_at — so without this index the scan reads every historical row for
- * the space/source to apply the recency cutoff. External events have no
- * retention cleanup, so the table grows unboundedly and that per-minute scan
- * would grow with it. The index turns the cutoff into a range seek within the
- * (space_id, source) prefix.
- */
 export function runMigration175(db: BunDatabase): void {
   if (!tableExists(db, 'space_external_events')) return;
   db.exec(
@@ -11949,40 +9117,6 @@ export function runMigration175(db: BunDatabase): void {
   );
 }
 
-/**
- * Migration 176 — decouple the post-approval router's source node from the
- * pending-completion fields (task #851).
- *
- * `setTaskStatus` clears the four pending-completion fields atomically in the
- * same UPDATE that commits `approved` (closing the crash window where a task
- * could be observed `approved` with stale pending state). The router's
- * `sourceNodeId` (logging + the no-route audit write), the `approval_authority`
- * template token, and the sibling-quiesce source previously read
- * `pending_completion_submitted_by_node_id` — which is now null by the time the
- * router runs. This migration adds a dedicated durable column,
- * `space_tasks.post_approval_source_node_id`, that those reads use instead. It
- * survives into `approved` (cleared on leaving `approved`, on review-abort, and
- * on reactivation), which also makes the router crash-safe for reconciliation
- * retries.
- *
- * Backfill: a database upgraded mid-flight may contain a task in an in-flight
- * approval attempt whose submitting node lives only in
- * `pending_completion_submitted_by_node_id`. Once approved, the atomic clear
- * nulls that field — so we copy it into the new column for IN-FLIGHT rows only:
- * `review` (awaiting human approval), `approved` (dispatch in progress /
- * crash-stranded), or the transient `approve_task` state (`in_progress` with
- * `reported_status='done'`, awaiting the tick that advances it to `approved`).
- * Terminal rows (`done`/`cancelled`/`archived`) and plain `in_progress` rows
- * are excluded: the no-route branch leaves the pending field populated on
- * `done` as an audit write (copying it would seed a stale durable source), and
- * a plain `in_progress` task cannot reach `approved` without a fresh
- * submit/approve that re-stamps the source.
- *
- * Idempotent — ADD COLUMN guarded by `tableHasColumn`, backfill guarded on the
- * columns and copy-once (`post_approval_source_node_id IS NULL`). Fresh
- * databases get the column from this migration too (the base `CREATE TABLE`
- * predates it, and `runMigrations` runs every step on a new DB).
- */
 export function runMigration176(db: BunDatabase): void {
   if (
     tableExists(db, 'space_tasks') &&
@@ -12005,21 +9139,6 @@ export function runMigration176(db: BunDatabase): void {
          AND (status IN ('review', 'approved')${completionSignalledInProgress})`
     );
   }
-  // Clear the four pending-completion fields on crash-stranded `approved` rows
-  // (data-consistency cleanup). Pre-#851 a review → approved transition left
-  // these set (the router/finally cleared them later); a crash between the
-  // commit and the cleanup parked the task in `approved` with pending state —
-  // the very shape #851 eliminates for new approvals. The runtime treats
-  // `approved` as already-resolved and won't clean it up (and an
-  // `approved → done` via `mark_complete` doesn't clear pending fields either),
-  // so without this step the migration only preserves the source while leaving
-  // the pending fields set, violating this PR's own invariant — "never observed
-  // in `approved` with any pending-completion field set" — on upgraded DBs
-  // until the next reconciler tick re-dispatches. The source was already copied
-  // to `postApprovalSourceNodeId` above, so nulling
-  // `pendingCompletionSubmittedByNodeId` here is safe. Scoped to `approved`
-  // only: `review` rows legitimately carry pending state, and a transient
-  // `in_progress` + `reported_status='done'` row self-clears on its next tick.
   if (tableHasColumn(db, 'space_tasks', 'pending_checkpoint_type')) {
     db.exec(
       `UPDATE space_tasks
@@ -12036,24 +9155,6 @@ export function runMigration176(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 177: Add `sessions.visible_message_count` and backfill it.
- *
- * The space-sessions sidebar badge (spaceSessions.bySpace) used to compute a
- * correlated COUNT(*) over sdk_messages for every session in a space on every
- * (150ms-debounced) re-evaluation — ~92ms warm for dev-neokai, scaling with
- * sessions × messages-per-session. This migration introduces a maintained
- * counter on sessions that the query reads directly instead.
- *
- * The backfill predicate mirrors the former subquery exactly: top-level rows
- * (parent_tool_use_id IS NULL), non-deferred user rows
- * (send_status IN ('consumed', 'failed')), and non-hidden subtypes (the
- * HIDDEN_SYSTEM_SUBTYPES set plus 'thinking_tokens'). SDKMessageRepository
- * maintains the same predicate incrementally after this.
- *
- * Idempotent: re-running just recomputes the same totals. (Renumbered
- * 169→170→171→175→176→177 as dev shipped intervening migrations.)
- */
 export function runMigration177(db: BunDatabase): void {
   if (!tableExists(db, 'sessions')) return;
   if (!tableHasColumn(db, 'sessions', 'visible_message_count')) {
@@ -12078,32 +9179,13 @@ export function runMigration177(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 178: Add `conversation_turn_index` (global, per-task) to
- * `sdk_messages` and backfill it (#2338). Lets spaceTaskMessages.byTask.compact
- * and the active roster seek conversation turns instead of recomputing them via
- * 6 window-function passes over every task message.
- */
 export function runMigration178(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
 
-  // conversation_turn_index: global, per-task conversation-turn number (#2338).
-  // Stored (not generated) because it depends on other rows (the running count
-  // of anchors), so it must be backfilled — unlike the VIRTUAL message_subtype_norm.
   if (!tableHasColumn(db, 'sdk_messages', 'conversation_turn_index')) {
     db.exec(`ALTER TABLE sdk_messages ADD COLUMN conversation_turn_index INTEGER`);
   }
 
-  // Backfill via a temp table + UPDATE … FROM (SQLite >= 3.33; bun:sqlite 3.51).
-  // Turn NUMBERS are global per task (so the recent-M-turn cap is one window
-  // across sessions), but turn MEMBERSHIP is per-session — mirrors the insert
-  // rule in SDKMessageRepository.resolveConversationTurnIndex (#2338):
-  //   - anchors (a consumed/failed renderable user message) get the task-wide
-  //     running count of anchors (global monotonic turn number);
-  //   - non-anchor rows inherit their OWN session's most recent anchor's turn
-  //     (carry-forward via a partitioned MAX window), so interleaved sessions
-  //     don't have one session's response inherit another session's turn.
-  // Pre-first-anchor rows are turn 0; rows with no task_id stay NULL.
   db.exec(`DROP TABLE IF EXISTS _m178_turn_backfill`);
   db.exec(`
     CREATE TEMP TABLE _m178_turn_backfill AS
@@ -12158,24 +9240,12 @@ export function runMigration178(db: BunDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
     ON sdk_messages(task_id, conversation_turn_index)
   `);
-  // Per-session turn-inheritance seek: MAX(conversation_turn_index) WHERE
-  // task_id = ? AND session_id = ? — used on every non-anchor insert (#2338).
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
     ON sdk_messages(task_id, session_id, conversation_turn_index)
   `);
 }
 
-/**
- * Migration 180: Create `space_workflow_definition_versions` — the append-only history
- * of immutable workflow-definition snapshots (RFC §4 Phase 1).
- *
- * Each row is a full, self-contained definition payload identified by a SHA-256
- * `version_hash` (see `computeDefinitionVersion`). Populated on definition writes; the
- * Phase-1 read cutover resolves pinned runs through these rows. There is intentionally NO
- * FK to `space_workflows(id)` — pinned versions must survive deletion of the mutable head
- * (orphan/tombstone policy); a cascade would erase the rows a pinned run depends on.
- */
 export function runMigration180(db: BunDatabase): void {
   if (tableExists(db, 'space_workflow_definition_versions')) return;
   db.exec(`
@@ -12196,18 +9266,9 @@ export function runMigration180(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 181: add a nullable creation-time definition pin to workflow runs.
- *
- * SQLite cannot add a composite foreign key with ALTER TABLE, so the run table is rebuilt.
- * Existing runs deliberately keep a NULL pin: assigning the current definition head would
- * falsely claim that it was the version they originally executed.
- */
 export function runMigration181(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflow_runs')) return;
   if (tableHasColumn(db, 'space_workflow_runs', 'definition_version')) return;
-  // Historical-marker tests and damaged/partial databases can expose only a sentinel table.
-  // Do not attempt a destructive rebuild unless the M71 run schema is fully present.
   const requiredColumns = [
     'space_id',
     'workflow_id',
@@ -12267,13 +9328,6 @@ export function runMigration181(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 184 — Backfill Bash + Cron tools onto existing Reviewer preset rows.
- *
- * Delegated to m184-backfill-reviewer-bash-tools.ts so the loop body stays
- * readable. See the module doc there for the safety model (only unmodified
- * seed rows are re-stamped; customized rows are left to drift/sync).
- */
 export function runMigration184(db: BunDatabase): void {
   runMigration184External(db);
 }
@@ -12282,16 +9336,6 @@ export function runMigration185(db: BunDatabase): void {
   runMigration185External(db);
 }
 
-/**
- * Migration 186: Partial expression index `idx_message_delivery_session_active`
- * on the job_queue `message_delivery` lane — covers the activeDeliveryMessageUuids
- * / hasActiveDeliveryJobs lookup (run on each idle transition + a 60s timer +
- * startup + turn-end). Without it the query scans the whole lane doing
- * json_extract per row; this index turns it into a seek by sessionId.
- * Idempotent (`CREATE INDEX IF NOT EXISTS`); no-op on tables that pre-date the
- * lane. (task #861, review P2.) Mirrored in createIndexes() for fresh DBs.
- * Renumbered 185→186: dev shipped M185 for workflow-event-subscriptions.
- */
 export function runMigration186(db: BunDatabase): void {
   if (!tableExists(db, 'job_queue')) return;
   db.exec(`
@@ -12301,17 +9345,6 @@ export function runMigration186(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 187: durable delivery-turn completion markers.
- *
- * The `delivery_turn_end` table records when a delivery-driven turn ended via a
- * result-less terminal path (query-level error, interrupt) that persists no SDK
- * `result` row. The delivery bridge (`hasTurnTerminated`) ORs a lookup here
- * against the SDK-result-row check, so a stale re-claim of a `consumed` turn
- * recognizes it already ended and completes instead of re-driving it into an
- * indefinitely-waiting query. Idempotent (`CREATE TABLE IF NOT EXISTS`); no-op
- * on tables that pre-date the lane.
- */
 export function runMigration187(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS delivery_turn_end (
@@ -12327,41 +9360,15 @@ export function runMigration187(db: BunDatabase): void {
   `);
 }
 
-/**
- * Migration 188: sdk_messages.consumed_seq — a monotonic consumption sequence.
- *
- * `rowid` reflects INSERTION order only. A message queued during turn A and
- * consumed (promoted) as turn B keeps its original rowid, so a terminal result
- * of A persisted in the same millisecond as B's consumption would sort AFTER the
- * message by rowid, corrupting the delivery re-claim boundary. Assigning a
- * monotonic sequence at the consumed-flip lets `hasTerminalResultAfter` order by
- * (consumed_seq) instead of (timestamp, rowid). `ALTER TABLE ADD COLUMN` (no
- * table rebuild; rows already consumed are backfilled as NULL — the query treats
- * NULL as "no consumption recorded", i.e. an un-consumed message).
- */
 export function runMigration188(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
   if (!tableHasColumn(db, 'sdk_messages', 'consumed_seq')) {
     db.exec(`ALTER TABLE sdk_messages ADD COLUMN consumed_seq INTEGER`);
   }
-  // MAX(consumed_seq) on the consumed-flip hot path must be an index scan, not
-  // a full-table pass. Idempotent (IF NOT EXISTS). See Codex (PR #2463, P2).
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_consumed_seq
       ON sdk_messages(consumed_seq)`);
 }
 
-/**
- * Migration 189: a dedicated monotonic counter for the consumption watermark.
- *
- * `MAX(rowid)+1` (migration 188's approach) is not strictly monotonic across
- * deletes — SQLite may reuse a deleted max rowid for a later insert, which would
- * place a terminal result's rowid BELOW a prior watermark and make
- * `hasTerminalResultAfter` miss the completed turn. A singleton counter row
- * (`delivery_consumed_seq`) is genuinely monotonic and independent of rowid
- * reuse. Backfills existing NULL `consumed_seq` rows to 0 (treated as
- * "unknown/live" by hasTerminalResultAfter, never matching a result) so a
- * migrated in-flight job is not pre-completed. Idempotent.
- */
 export function runMigration189(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS delivery_consumed_seq (
@@ -12374,17 +9381,6 @@ export function runMigration189(db: BunDatabase): void {
     `);
 }
 
-/**
- * Migration 190: Remove the legacy workflow gate subsystem.
- *
- * Workflow progression is enforced by MCP action hooks; gate entities, gate
- * data, and gate-open caching are obsolete. This drops:
- *   - `gate_data` table (per-run gate runtime data)
- *   - `gate_open_state` table (persisted gate-open cache)
- *   - `space_workflows.gates` column (JSON gate definitions)
- *
- * Idempotent via existence guards (DROP TABLE IF EXISTS / column check).
- */
 export function runMigration190(db: BunDatabase): void {
   db.exec(`DROP TABLE IF EXISTS gate_open_state`);
   db.exec(`DROP TABLE IF EXISTS gate_data`);
@@ -12393,28 +9389,6 @@ export function runMigration190(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 191: node_executions.last_activity_at — a dedicated agent-activity
- * signal.
- *
- * `updated_at` advances only on runtime state-writes (status / session / data
- * transitions) and so freezes while an agent is plainly working (pushing
- * commits, exchanging messages, making tool calls) but no state transition
- * occurs. That makes it unreliable as a liveness/activity signal, yet the
- * runtime stall-detector and UI activity displays consume it as one — leading
- * to misfires (active agents killed, or genuinely-stuck ones missed).
- *
- * `last_activity_at` is refreshed independently of `updated_at` by real agent
- * work (SDK tool events, peer-message delivery, PR commit push) via
- * `NodeExecutionRepository.touchLastActivity`, which intentionally does NOT
- * bump `updated_at`. The stall-detector now keys off this column instead.
- *
- * Idempotent `ALTER TABLE ADD COLUMN` (no table rebuild). Existing rows are
- * backfilled NULL; the detector treats NULL via its existing fallback chain, so
- * pre-migration in-flight executions are not misclassified. Fresh DBs get the
- * column here too (M74 creates the table without it; all migrations run on a
- * fresh DB). (task #943.)
- */
 export function runMigration191(db: BunDatabase): void {
   if (!tableExists(db, 'node_executions')) return;
   if (!tableHasColumn(db, 'node_executions', 'last_activity_at')) {
@@ -12422,16 +9396,6 @@ export function runMigration191(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 192: pending_agent_messages.delivery_mode — preserves a deferred
- * ("queue for next turn") human message's delivery mode across the pending
- * queue. When such a message targets an agent with no live session yet it is
- * enqueued; `flushPendingMessagesForTarget` later replays it. Without this
- * column the flush passes an undefined mode, defaulting to immediate, so a
- * message the user queued for the next turn instead steers the kickoff turn
- * if the spawned session is already processing. NULL (legacy rows + callers
- * that don't pass a mode) keeps the prior immediate behavior. (task #949.)
- */
 export function runMigration192(db: BunDatabase): void {
   if (!tableExists(db, 'pending_agent_messages')) return;
   if (!tableHasColumn(db, 'pending_agent_messages', 'delivery_mode')) {
@@ -12439,32 +9403,9 @@ export function runMigration192(db: BunDatabase): void {
   }
 }
 
-/**
- * Migration 193: Rate-based dead-loop detection for cyclic workflow channels.
- *
- * Creates a `channel_cycle_events` table storing one timestamped row per
- * traversal of a cyclic (backward) channel. Dead-loop detection counts these
- * rows over a rolling time window (default >15 traversals per 5 minutes) so it
- * catches a runaway tight ping-pong between two agents while never blocking a
- * genuine extended review that is spread out over hours.
- *
- * The legacy `channel_cycles` lifetime counter (migration 69) is retained for
- * observability but is no longer a blocking gate; it must not false-trip on
- * long reviews. This new table is the primary dead-loop signal.
- *
- * Backward-compatible with in-flight runs: existing runs simply have an empty
- * event history (count 0), so any run previously blocked by the lifetime cap
- * becomes unblocked — which is correct, since those were overwhelmingly
- * legitimate extended reviews (see PR #2473 / task #942).
- */
 export function runMigration193(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflow_runs')) return;
 
-  // Create the table and its window index independently and idempotently. If
-  // the daemon exited after the CREATE TABLE but before the CREATE INDEX (and
-  // before the migration marker was written), re-running must still create the
-  // index — otherwise rate checks and pruning would scan the full cross-run
-  // event table indefinitely. IF NOT EXISTS makes both safe to re-run.
   db.exec(`
 		CREATE TABLE IF NOT EXISTS channel_cycle_events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -12480,10 +9421,6 @@ export function runMigration193(db: BunDatabase): void {
 	`);
 }
 
-/**
- * Migration 194: Add a dedicated lease heartbeat for processing job claims.
- * Existing in-flight rows intentionally retain NULL and fall back to started_at.
- */
 export function runMigration194(db: BunDatabase): void {
   if (!tableExists(db, 'job_queue')) return;
   if (!tableHasColumn(db, 'job_queue', 'heartbeat_at')) {

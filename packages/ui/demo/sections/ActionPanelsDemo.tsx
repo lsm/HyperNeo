@@ -2,30 +2,23 @@ import { useState } from 'preact/hooks';
 import { Button, Input, Switch } from '../../src/mod.ts';
 import { Check, CreditCard } from 'lucide-preact';
 
-// Card styling
 const cardClass =
   'bg-white shadow-sm sm:rounded-lg dark:bg-gray-800/50 dark:shadow-none dark:outline dark:-outline-offset-1 dark:outline-white/10';
 
-// Primary button styling
 const primaryBtnClass =
   'inline-flex items-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 dark:focus-visible:outline-indigo-500';
 
-// Secondary button styling
 const secondaryBtnClass =
   'inline-flex items-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:bg-gray-700 dark:text-white dark:shadow-none dark:ring-gray-600 dark:hover:bg-gray-600';
 
-// Link styling
 const linkClass =
   'text-sm font-semibold text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300';
 
-// Input styling
 const inputClass =
   'block w-full rounded-md border-0 py-2 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm dark:bg-gray-800 dark:text-white dark:ring-gray-600 dark:placeholder:text-gray-500';
 
-// Well styling
 const wellClass = 'rounded-lg bg-gray-100 p-4 dark:bg-gray-800/50';
 
-// Toggle switch component
 function Toggle({ defaultChecked = false }: { defaultChecked?: boolean }) {
   return (
     <Switch
@@ -42,7 +35,6 @@ function Toggle({ defaultChecked = false }: { defaultChecked?: boolean }) {
   );
 }
 
-// Example 1: Simple panel
 function Example1() {
   return (
     <div class={`${cardClass} p-4`}>
@@ -59,7 +51,6 @@ function Example1() {
   );
 }
 
-// Example 2: With link
 function Example2() {
   return (
     <div class={`${cardClass} p-4`}>
@@ -77,7 +68,6 @@ function Example2() {
   );
 }
 
-// Example 3: With button on right
 function Example3() {
   return (
     <div class={`${cardClass} p-4`}>
@@ -96,7 +86,6 @@ function Example3() {
   );
 }
 
-// Example 4: With button at top-right
 function Example4() {
   return (
     <div class={`${cardClass} p-0 sm:p-4`}>
@@ -113,7 +102,6 @@ function Example4() {
   );
 }
 
-// Example 5: With toggle
 function Example5() {
   return (
     <div class={`${cardClass} p-4`}>
@@ -130,7 +118,6 @@ function Example5() {
   );
 }
 
-// Example 6: With input
 function Example6() {
   const [email, setEmail] = useState('alex@company.com');
 
@@ -153,7 +140,6 @@ function Example6() {
   );
 }
 
-// Example 7: Simple well
 function Example7() {
   return (
     <div class={wellClass}>
@@ -172,7 +158,6 @@ function Example7() {
   );
 }
 
-// Example 8: With well
 function Example8() {
   return (
     <div class={`${cardClass} p-4`}>

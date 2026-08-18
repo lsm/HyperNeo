@@ -1,6 +1,3 @@
-/**
- * Tests for reference types and REFERENCE_PATTERN regex
- */
 import { describe, it, expect } from 'bun:test';
 import {
   REFERENCE_PATTERN,
@@ -76,7 +73,6 @@ describe('ReferenceMetadata', () => {
         status: 'in_progress',
       },
     };
-    // Must round-trip through JSON without loss
     const serialized = JSON.stringify(meta);
     const parsed = JSON.parse(serialized) as ReferenceMetadata;
     expect(parsed['@ref{task:t-42}'].type).toBe('task');

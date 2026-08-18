@@ -1,13 +1,5 @@
 // @ts-nocheck
-/**
- * Tests for Connection Manager Logic
- *
- * Tests pure logic without mock.module to avoid polluting other tests.
- * IMPORTANT: Bun's mock.module() persists across test files, so we test
- * the underlying logic without using module mocks.
- */
 
-// Type definitions for testing
 interface MockHub {
   isConnected: () => boolean;
   call: (method: string, data?: unknown) => Promise<unknown>;
@@ -17,7 +9,6 @@ interface MockTransport {
   isReady: () => boolean;
 }
 
-// Create a simulated ConnectionManager for testing logic
 class TestableConnectionManager {
   private hub: MockHub | null = null;
   private transport: MockTransport | null = null;
@@ -93,7 +84,6 @@ class TestableConnectionManager {
   }
 }
 
-// Error classes for testing
 class ConnectionNotReadyError extends Error {
   constructor(message: string) {
     super(message);
@@ -156,7 +146,7 @@ describe('ConnectionManager Logic', () => {
       const manager = createManager(false, false);
       try {
         manager.getHubOrThrow();
-        expect(true).toBe(false); // Should not reach
+        expect(true).toBe(false);
       } catch (err) {
         expect(err).toBeInstanceOf(ConnectionNotReadyError);
         expect((err as Error).message).toContain('not connected');
@@ -221,13 +211,10 @@ describe('ConnectionManager Logic', () => {
         called = true;
       });
 
-      // Unsubscribe before connection
       unsub();
 
-      // Simulate connection
       manager.setConnected(true);
 
-      // The callback should NOT be called because we unsubscribed
       expect(called).toBe(false);
     });
 
@@ -239,13 +226,10 @@ describe('ConnectionManager Logic', () => {
         called = true;
       });
 
-      // Should not be called yet
       expect(called).toBe(false);
 
-      // Trigger connection
       manager.setConnected(true);
 
-      // Now it should be called
       expect(called).toBe(true);
     });
   });
@@ -274,10 +258,8 @@ describe('ConnectionManager Logic', () => {
 
       await manager.disconnect();
 
-      // Simulate reconnection attempt
       manager.setConnected(true);
 
-      // Handler should not be called after disconnect
       expect(handlerCalled).toBe(false);
     });
 
@@ -314,7 +296,7 @@ describe('ConnectionManager - Non-blocking behavior', () => {
     const elapsed = Date.now() - start;
 
     expect(hub).toBeNull();
-    expect(elapsed).toBeLessThan(10); // Should be nearly instant
+    expect(elapsed).toBeLessThan(10);
   });
 
   it('getHubOrThrow should not block even if connection is in progress', () => {
@@ -328,7 +310,7 @@ describe('ConnectionManager - Non-blocking behavior', () => {
     }
     const elapsed = Date.now() - start;
 
-    expect(elapsed).toBeLessThan(10); // Should be nearly instant
+    expect(elapsed).toBeLessThan(10);
   });
 });
 
@@ -344,9 +326,7 @@ describe('ConnectionManager - Page Visibility Handling Logic', () => {
 
       handlers.push(visibilityHandler);
 
-      // Simulate visibility change
       expect(handlers.length).toBe(1);
-      // Verify handler can update visibility state
       visibilityHandler();
       expect(typeof isVisible).toBe('boolean');
     });
@@ -358,7 +338,6 @@ describe('ConnectionManager - Page Visibility Handling Logic', () => {
       handlers.push(handler);
       expect(handlers.length).toBe(1);
 
-      // Simulate disconnect cleanup
       handlers.length = 0;
       expect(handlers.length).toBe(0);
     });
@@ -368,7 +347,6 @@ describe('ConnectionManager - Page Visibility Handling Logic', () => {
     it('should detect page hidden state', () => {
       const state = { isHidden: false };
 
-      // Simulate page becoming hidden
       const handleVisibilityChange = (hidden: boolean) => {
         state.isHidden = hidden;
       };
@@ -382,7 +360,6 @@ describe('ConnectionManager - Page Visibility Handling Logic', () => {
     it('should reset reconnect state when page becomes visible', () => {
       const reconnectState = { attempts: 3, lastError: 'timeout' };
 
-      // Simulate page becoming visible - reset state
       const resetReconnectState = () => {
         reconnectState.attempts = 0;
         reconnectState.lastError = '';
@@ -682,14 +659,11 @@ describe('ConnectionManager - getHub Connection Racing', () => {
       return connectionPromise;
     };
 
-    // Start two concurrent getHub calls
     const promise1 = getHub();
     const promise2 = getHub();
 
-    // Should only call connect once (both calls reuse the same promise)
     expect(connectCalls).toBe(1);
 
-    // Resolve and verify
     resolveConnection?.();
     const result1 = await promise1;
     const result2 = await promise2;
@@ -725,12 +699,10 @@ describe('ConnectionManager - getHub Connection Racing', () => {
       return connectionPromise;
     };
 
-    // First attempt should fail
     await expect(getHub()).rejects.toThrow('Connection failed');
     expect(connectAttempts).toBe(1);
     expect(connectionPromise).toBeNull();
 
-    // Second attempt should be allowed (not blocked by cached promise)
     await expect(getHub()).rejects.toThrow('Connection failed');
     expect(connectAttempts).toBe(2);
   });
@@ -804,13 +776,12 @@ describe('ConnectionManager - Reconnect Method', () => {
           return;
         }
       }
-      // Clear state for fresh connection
     };
 
     await reconnect();
 
     expect(mockTransport.resetReconnectState).toHaveBeenCalled();
-    expect(mockTransport.forceReconnect).not.toHaveBeenCalled(); // Not ready
+    expect(mockTransport.forceReconnect).not.toHaveBeenCalled();
   });
 
   it('should call forceReconnect when transport is ready', async () => {

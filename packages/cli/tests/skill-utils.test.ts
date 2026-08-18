@@ -1,7 +1,3 @@
-/**
- * Tests for skill-utils.ts — syncBuiltinSkillsFromDir and ensureBuiltinSkills.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -23,7 +19,6 @@ describe('syncBuiltinSkillsFromDir', () => {
   });
 
   test('copies files from source to destination preserving directory structure', async () => {
-    // Create source structure
     await mkdir(join(srcDir, 'playwright'), { recursive: true });
     await mkdir(join(srcDir, 'playwright', 'scripts'), { recursive: true });
     await writeFile(join(srcDir, 'playwright', 'SKILL.md'), '# Playwright Skill');
@@ -54,15 +49,12 @@ describe('syncBuiltinSkillsFromDir', () => {
     await mkdir(join(srcDir, 'playwright'), { recursive: true });
     await writeFile(join(srcDir, 'playwright', 'SKILL.md'), '# New Content');
 
-    // Pre-existing destination file with user edits
     await mkdir(join(destDir, 'playwright'), { recursive: true });
     await writeFile(join(destDir, 'playwright', 'SKILL.md'), '# User Edits');
 
     const count = await syncBuiltinSkillsFromDir(srcDir, destDir);
 
-    // count should be 0 — nothing was written
     expect(count).toBe(0);
-    // User's file must not be overwritten
     const content = await readFile(join(destDir, 'playwright', 'SKILL.md'), 'utf-8');
     expect(content).toBe('# User Edits');
   });

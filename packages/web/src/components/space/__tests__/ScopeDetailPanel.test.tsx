@@ -225,7 +225,6 @@ function makeProposal(overrides: Partial<TaskProposal> = {}): TaskProposal {
   };
 }
 
-/** Full RPC surface the scope detail (and its tabs) drives, keyed by the panel's scope.get. */
 function setupRequests(scope = makeScope()) {
   const evidence = [makeEvidence()];
   const snapshot = makeSnapshot();
@@ -395,17 +394,14 @@ describe('ScopeDetailPanel', () => {
     await screen.findByRole('heading', { name: 'Review quality scope' });
     fireEvent.click(screen.getByLabelText('Enable count-based episode drafts'));
 
-    // Switch scope before the 300ms debounce fires
     rerender(<ScopeDetailPanel spaceId="space-1" scopeId="scope-2" />);
     await waitFor(() => expect(screen.getByText('Loading…')).toBeTruthy());
     resolveScope2({ scope: makeScope({ id: 'scope-2', name: 'Second scope' }) });
     await screen.findByRole('heading', { name: 'Second scope' });
 
-    // Advance timers so any stale debounce would fire
     vi.useFakeTimers();
     try {
       vi.advanceTimersByTime(500);
-      // No update should have been sent for the old scope
       expect(mockRequest).not.toHaveBeenCalledWith(
         'evolution.scope.update',
         expect.objectContaining({ id: 'scope-1' })
@@ -448,18 +444,15 @@ describe('ScopeDetailPanel', () => {
       fireEvent.click(screen.getByLabelText('Enable count-based episode drafts'));
       await vi.advanceTimersByTimeAsync(300);
 
-      // Save request is now in-flight
       expect(
         (screen.getByLabelText('Enable count-based episode drafts') as HTMLInputElement).disabled
       ).toBe(true);
 
-      // Switch scope before the update resolves
       rerender(<ScopeDetailPanel spaceId="space-1" scopeId="scope-2" />);
       await waitFor(() => expect(screen.getByText('Loading…')).toBeTruthy());
       resolveScope2({ scope: makeScope({ id: 'scope-2', name: 'Second scope' }) });
       await screen.findByRole('heading', { name: 'Second scope' });
 
-      // Resolve the stale update
       resolveUpdate({ scope: makeScope({ id: 'scope-1' }) });
       await waitFor(() =>
         expect(

@@ -1,11 +1,3 @@
-/**
- * ScheduleService unit tests
- *
- * Exercises the centralized schedule lifecycle behavior shared by both the
- * RPC handlers and the agent-facing MCP tools: validation, atomic
- * create+enqueue, edit-time consistency, pause/resume, and delete.
- */
-
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
@@ -79,7 +71,6 @@ describe('ScheduleService', () => {
       expect(schedule.nextRunAt).not.toBeNull();
       expect(schedule.pendingJobId).not.toBeNull();
 
-      // The job actually exists and points back at the schedule.
       const job = jobQueue.getJob(schedule.pendingJobId as string);
       expect(job).not.toBeNull();
       expect(job?.queue).toBe('taskSchedule.fire');
@@ -144,7 +135,6 @@ describe('ScheduleService', () => {
           spaceId,
           title: 'Bad trigger',
           // biome-ignore lint/suspicious/noExplicitAny: deliberately bypassing TS to simulate
-          // a malformed RPC payload.
           triggerType: 'webhook' as any,
         })
       ).toThrow(/Unsupported triggerType/);
@@ -179,7 +169,6 @@ describe('ScheduleService', () => {
         /title must be a non-empty string/
       );
 
-      // Schedule's title is unchanged after the rejected updates.
       const after = scheduleRepo.getById(schedule.id);
       expect(after?.title).toBe('Cron');
     });
@@ -254,12 +243,10 @@ describe('ScheduleService', () => {
       });
       const oldJobId = schedule.pendingJobId as string;
 
-      // Bogus IANA timezone. croner should refuse and getNextRunAt returns null.
       expect(() => service.updateSchedule(schedule.id, { timezone: 'Not/A_Real_Zone' })).toThrow(
         /Could not compute next run/
       );
 
-      // Schedule and original job must be untouched on failure.
       const after = scheduleRepo.getById(schedule.id);
       expect(after?.pendingJobId).toBe(oldJobId);
       expect(after?.timezone).toBe('UTC');
@@ -294,7 +281,6 @@ describe('ScheduleService', () => {
       });
       const oldJobId = schedule.pendingJobId as string;
 
-      // Wrap jobQueue.enqueue to throw on the first reschedule call.
       const breakingService = new ScheduleService({
         db: db as never,
         scheduleRepo,
@@ -312,12 +298,10 @@ describe('ScheduleService', () => {
         breakingService.updateSchedule(schedule.id, { cronExpression: '0 10 * * *' })
       ).toThrow('synthetic enqueue failure');
 
-      // Schedule must still be active with the original pending job intact.
       const after = scheduleRepo.getById(schedule.id);
       expect(after?.status).toBe('active');
       expect(after?.pendingJobId).toBe(oldJobId);
       expect(jobQueue.getJob(oldJobId)).not.toBeNull();
-      // And the cronExpression update was also rolled back.
       expect(after?.cronExpression).toBe('0 9 * * *');
     });
   });
@@ -348,8 +332,6 @@ describe('ScheduleService', () => {
       });
       const originalJobId = schedule.pendingJobId as string;
 
-      // Simulate a concurrent fire: the DB row now has a new pending job,
-      // but we inject a stale read so pauseSchedule sees the old value.
       const newJob = jobQueue.enqueue({
         queue: 'taskSchedule.fire',
         payload: { scheduleId: schedule.id },
@@ -363,7 +345,6 @@ describe('ScheduleService', () => {
             return (id: string) => {
               const fresh = target.getById(id);
               if (!fresh) return fresh;
-              // Return stale pendingJobId so the CAS precondition fails.
               return { ...fresh, pendingJobId: originalJobId };
             };
           }
@@ -378,10 +359,7 @@ describe('ScheduleService', () => {
         spaceRepo,
       });
 
-      // Pause should detect the CAS miss and leave the schedule untouched.
       const result = casService.pauseSchedule(schedule.id);
-      // The service returns the stale read (test artifact of the Proxy),
-      // but the DB row must remain active with the new pending job.
       const dbState = scheduleRepo.getById(schedule.id);
       expect(dbState?.status).toBe('active');
       expect(dbState?.pendingJobId).toBe(newJob.id);
@@ -405,7 +383,6 @@ describe('ScheduleService', () => {
     });
 
     it('resume of an already-passed `at` schedule transitions to completed (no job)', () => {
-      // Create with a future runAt to satisfy validation.
       const future = Date.now() + 60_000;
       const schedule = service.createSchedule({
         spaceId,
@@ -415,7 +392,6 @@ describe('ScheduleService', () => {
       });
       service.pauseSchedule(schedule.id);
 
-      // Move runAt into the past directly via the repo (bypassing validation).
       scheduleRepo.update(schedule.id, { runAt: Date.now() - 60_000 });
 
       const resumed = service.resumeSchedule(schedule.id);
@@ -432,11 +408,9 @@ describe('ScheduleService', () => {
       });
       service.pauseSchedule(schedule.id);
 
-      // Corrupt the timezone directly via the repo so getNextRunAt can't compute.
       scheduleRepo.update(schedule.id, { timezone: 'Not/A_Real_Zone' });
 
       expect(() => service.resumeSchedule(schedule.id)).toThrow(/Cannot resume cron schedule/);
-      // Schedule remains paused — operator can fix and retry.
       const after = scheduleRepo.getById(schedule.id);
       expect(after?.status).toBe('paused');
       expect(after?.pendingJobId).toBeNull();
@@ -467,8 +441,6 @@ describe('ScheduleService', () => {
       });
       const originalJobId = schedule.pendingJobId as string;
 
-      // Simulate a concurrent fire: the DB row now has a new pending job,
-      // but we inject a stale read so deleteSchedule sees the old value.
       const newJob = jobQueue.enqueue({
         queue: 'taskSchedule.fire',
         payload: { scheduleId: schedule.id },
@@ -482,7 +454,6 @@ describe('ScheduleService', () => {
             return (id: string) => {
               const fresh = target.getById(id);
               if (!fresh) return fresh;
-              // Return stale pendingJobId so the CAS precondition fails.
               return { ...fresh, pendingJobId: originalJobId };
             };
           }
@@ -497,17 +468,13 @@ describe('ScheduleService', () => {
         spaceRepo,
       });
 
-      // Delete should detect the CAS miss and return false.
       const ok = casService.deleteSchedule(schedule.id);
       expect(ok).toBe(false);
 
-      // Schedule still exists with the new pending job intact.
       const after = scheduleRepo.getById(schedule.id);
       expect(after).not.toBeNull();
       expect(after?.pendingJobId).toBe(newJob.id);
       expect(jobQueue.getJob(newJob.id)).not.toBeNull();
-      // The stale original job was deleted (expected — it was the observed
-      // pending job at the time deleteSchedule read the schedule).
       expect(jobQueue.getJob(originalJobId)).toBeNull();
     });
   });
@@ -522,7 +489,6 @@ describe('ScheduleService', () => {
         timezone: 'UTC',
       });
 
-      // Simulate the fire-handler's space-paused branch clearing pending linkage.
       scheduleRepo.updatePendingJobId(schedule.id, null);
 
       const recovered = service.recoverSchedulesForSpace(spaceId);
@@ -561,11 +527,10 @@ describe('ScheduleService', () => {
         runAt: future,
       });
       scheduleRepo.updatePendingJobId(schedule.id, null);
-      // Move runAt into the past directly via the repo (bypass validation).
       scheduleRepo.update(schedule.id, { runAt: Date.now() - 60_000 });
 
       const recovered = service.recoverSchedulesForSpace(spaceId);
-      expect(recovered).toBe(0); // expired schedule wasn't re-enqueued
+      expect(recovered).toBe(0);
 
       const after = scheduleRepo.getById(schedule.id);
       expect(after?.status).toBe('completed');
@@ -584,7 +549,6 @@ describe('ScheduleService', () => {
       const recovered = service.recoverSchedulesForSpace(spaceId);
       expect(recovered).toBe(0);
 
-      // Existing linkage untouched.
       const after = scheduleRepo.getById(schedule.id);
       expect(after?.pendingJobId).toBe(originalJobId);
     });
@@ -598,14 +562,13 @@ describe('ScheduleService', () => {
         timezone: 'UTC',
       });
       scheduleRepo.updatePendingJobId(schedule.id, null);
-      // Corrupt timezone so getNextRunAt returns null.
       scheduleRepo.update(schedule.id, { timezone: 'Not/A_Real_Zone' });
 
       const recovered = service.recoverSchedulesForSpace(spaceId);
       expect(recovered).toBe(0);
 
       const after = scheduleRepo.getById(schedule.id);
-      expect(after?.status).toBe('active'); // not terminally completed
+      expect(after?.status).toBe('active');
       expect(after?.pendingJobId).toBeNull();
     });
 
@@ -618,9 +581,6 @@ describe('ScheduleService', () => {
       });
       scheduleRepo.updatePendingJobId(schedule.id, null);
 
-      // Simulate a concurrent pause: the snapshot says active+no-pending,
-      // but by the time the recovery loop reaches this schedule it has been
-      // paused. The reseed must not override the operator's pause.
       scheduleRepo.updateStatus(schedule.id, 'paused');
 
       const recovered = service.recoverSchedulesForSpace(spaceId);

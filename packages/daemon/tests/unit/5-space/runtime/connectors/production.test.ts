@@ -1,15 +1,3 @@
-/**
- * Production connector wiring tests (epic #2299, P1 #2301).
- *
- * Locks in the L2 contract the engine now depends on:
- *   - the github connector is registered in production,
- *   - its auth surface matches the legacy `GITHUB_LOOKUP_ENV_KEYS` (so script-hook
- *     credential injection is behavior-identical pre/post connectors),
- *   - built-in validators declare their connector deps through the registry
- *     (no hardcoded `'github'` in the engine), and
- *   - the legacy fallback admits `'github'` when the connectors layer is off.
- */
-
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import type { Connector } from '../../../../../src/lib/space/runtime/connectors/connector';
 import {
@@ -28,12 +16,6 @@ import {
 import { validateWorkflowHooks } from '../../../../../src/lib/space/workflow-hook-validation';
 import type { WorkflowHook, WorkflowNodeInput } from '@hyperneo/shared';
 
-/**
- * Snapshot/restore the global connector registry around each test so this file
- * is robust to other test files in the shard mutating (or clearing) it. The
- * registry is a module-level Map; snapshotting the production state and
- * restoring it in afterEach avoids fragile manual re-seed ordering.
- */
 function snapshotRegistry(): Connector[] {
   return getRegisteredConnectorIds()
     .map((id) => getConnector(id))
@@ -42,7 +24,6 @@ function snapshotRegistry(): Connector[] {
 
 let registrySnapshot: Connector[] = [];
 
-/** The exact surface the legacy `GITHUB_LOOKUP_ENV_KEYS` injected. */
 const EXPECTED_GITHUB_SANDBOX_ENV_KEYS = [
   'GH_TOKEN',
   'GITHUB_TOKEN',
@@ -76,9 +57,6 @@ function scriptHook(externalLookups: string[]): WorkflowHook {
 
 describe('production connector wiring', () => {
   beforeAll(() => {
-    // Reset BOTH module-level maps (connector registry + built-in deps) for a
-    // clean slate, then re-seed production state — models the symmetric
-    // clearConnectorRegistry()/clearBuiltInConnectorDeps() test contract.
     clearConnectorRegistry();
     clearBuiltInConnectorDeps();
     registerProductionConnectors();
@@ -107,7 +85,6 @@ describe('production connector wiring', () => {
   test('built-in github presets declare their connector dependency via the registry', () => {
     expect(getBuiltInConnectorDeps('pr_ready')).toEqual([GITHUB_CONNECTOR_ID]);
     expect(getBuiltInConnectorDeps('pr_merged')).toEqual([GITHUB_CONNECTOR_ID]);
-    // Other built-ins carry no external-state dependency.
     expect(getBuiltInConnectorDeps('pr_open')).toEqual([]);
     expect(getBuiltInConnectorDeps('artifact_exists')).toEqual([]);
   });
@@ -123,8 +100,6 @@ describe('production connector wiring', () => {
     process.env.HYPERNEO_WORKFLOW_CONNECTORS = '0';
     try {
       clearConnectorRegistry();
-      // With the layer off + registry empty, the legacy literal still admits
-      // 'github' so a rollback never breaks existing workflows.
       expect(validateWorkflowHooks([scriptHook(['github'])], nodes)).toEqual([]);
       const errors = validateWorkflowHooks([scriptHook(['gitlab'])], nodes).join('\n');
       expect(errors).toContain('"gitlab" is not a registered connector');

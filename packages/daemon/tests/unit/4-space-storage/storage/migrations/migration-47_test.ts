@@ -1,12 +1,3 @@
-/**
- * Migration 47 Tests
- *
- * Migration 47 adds short_id support:
- * - tasks.short_id TEXT (nullable, unique where not null)
- * - goals.short_id TEXT (nullable, unique where not null)
- * - short_id_counters table (entity_type, scope_id) PRIMARY KEY
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -43,9 +34,6 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
   let testDir: string;
   let db: BunDatabase;
 
-  // runMigrations replays the full migration chain on a fresh on-disk DB per
-  // test, which legitimately takes a few seconds and intermittently exceeded
-  // the 5s default under CI load (flaky timeout — see migration-94_test.ts).
   const HOOK_TIMEOUT_MS = 30_000;
 
   beforeEach(() => {
@@ -69,8 +57,6 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
       // ignore
     }
   }, HOOK_TIMEOUT_MS);
-
-  // ── Fresh DB (createTables path) ────────────────────────────────────────────
 
   test('fresh DB has short_id column on tasks', () => {
     runMigrations(db, () => {});
@@ -100,19 +86,13 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
     runMigrations(db, () => {});
     createTables(db);
 
-    // New room-scoped indexes (created by migration 47 + 48)
     expect(indexExists(db, 'idx_tasks_room_short_id')).toBe(true);
     expect(indexExists(db, 'idx_goals_room_short_id')).toBe(true);
-    // Old global indexes must NOT exist (dropped by migration 48)
     expect(indexExists(db, 'idx_tasks_short_id')).toBe(false);
     expect(indexExists(db, 'idx_goals_short_id')).toBe(false);
   });
 
-  // ── Existing DB (ALTER TABLE migration path) ────────────────────────────────
-
   test('existing DB without short_id gets columns added by migration', () => {
-    // Simulate an existing database that pre-dates migration 47:
-    // create rooms/tasks/goals tables WITHOUT the short_id column.
     db.exec(`
 			CREATE TABLE rooms (
 				id TEXT PRIMARY KEY,
@@ -147,7 +127,6 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
 			)
 		`);
 
-    // Seed data before migration
     db.exec(`INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('r1', 'Room', 1, 1)`);
     db.exec(
       `INSERT INTO tasks (id, room_id, title, description, status, priority, created_at, updated_at) VALUES ('t1', 'r1', 'Task', '', 'pending', 'normal', 1, 1)`
@@ -156,26 +135,19 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
       `INSERT INTO goals (id, room_id, title, description, status, created_at, updated_at) VALUES ('g1', 'r1', 'Goal', '', 'active', 1, 1)`
     );
 
-    // Columns should NOT exist before migration
     expect(columnExists(db, 'tasks', 'short_id')).toBe(false);
     expect(columnExists(db, 'goals', 'short_id')).toBe(false);
 
-    // Run only migration 47 directly — simulates upgrading an existing DB where all
-    // prior migrations have already been applied and only this new migration runs.
     runMigration47(db);
 
-    // Columns should now exist
     expect(columnExists(db, 'tasks', 'short_id')).toBe(true);
     expect(columnExists(db, 'goals', 'short_id')).toBe(true);
 
-    // Room-scoped composite indexes should exist (created by migration 47 with new names)
     expect(indexExists(db, 'idx_tasks_room_short_id')).toBe(true);
     expect(indexExists(db, 'idx_goals_room_short_id')).toBe(true);
 
-    // Counter table should exist
     expect(tableExists(db, 'short_id_counters')).toBe(true);
 
-    // Existing data should be intact with NULL short_id
     const task = db.prepare(`SELECT title, short_id FROM tasks WHERE id='t1'`).get() as {
       title: string;
       short_id: string | null;
@@ -191,8 +163,6 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
     expect(goal.short_id).toBeNull();
   });
 
-  // ── Counter table behavior ──────────────────────────────────────────────────
-
   test('short_id_counters table enforces composite PRIMARY KEY', () => {
     runMigrations(db, () => {});
     createTables(db);
@@ -201,29 +171,24 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
       `INSERT INTO short_id_counters (entity_type, scope_id, counter) VALUES ('task', 'room-1', 1)`
     );
 
-    // Duplicate (entity_type, scope_id) should fail
     expect(() => {
       db.exec(
         `INSERT INTO short_id_counters (entity_type, scope_id, counter) VALUES ('task', 'room-1', 2)`
       );
     }).toThrow();
 
-    // Different scope_id should succeed
     expect(() => {
       db.exec(
         `INSERT INTO short_id_counters (entity_type, scope_id, counter) VALUES ('task', 'room-2', 1)`
       );
     }).not.toThrow();
 
-    // Different entity_type should succeed
     expect(() => {
       db.exec(
         `INSERT INTO short_id_counters (entity_type, scope_id, counter) VALUES ('goal', 'room-1', 1)`
       );
     }).not.toThrow();
   });
-
-  // ── Partial unique index semantics — tasks ──────────────────────────────────
 
   test('tasks short_id unique index allows multiple NULLs', () => {
     runMigrations(db, () => {});
@@ -233,7 +198,6 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
       `INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-uuid-1', 'Test Room', 1000, 1000)`
     );
 
-    // Insert two tasks without short_id — multiple NULLs should be allowed
     db.exec(`
 			INSERT INTO tasks (id, room_id, title, description, status, priority, created_at, updated_at)
 			VALUES
@@ -278,13 +242,11 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
 				('room-uuid-2', 'Room 2', 1000, 1000)
 		`);
 
-    // Room 1, task with short_id='t-1'
     db.exec(`
 			INSERT INTO tasks (id, room_id, title, description, status, priority, created_at, updated_at, short_id)
 			VALUES ('task-uuid-1', 'room-uuid-1', 'Task 1', '', 'pending', 'normal', 1000, 1000, 't-1')
 		`);
 
-    // Room 2, task also with short_id='t-1' — must NOT throw (different room)
     expect(() => {
       db.exec(`
 				INSERT INTO tasks (id, room_id, title, description, status, priority, created_at, updated_at, short_id)
@@ -292,8 +254,6 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
 			`);
     }).not.toThrow();
   });
-
-  // ── Partial unique index semantics — goals ──────────────────────────────────
 
   test('goals short_id unique index allows multiple NULLs', () => {
     runMigrations(db, () => {});
@@ -303,7 +263,6 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
       `INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-uuid-1', 'Test Room', 1000, 1000)`
     );
 
-    // Insert two goals without short_id — multiple NULLs should be allowed
     db.exec(`
 			INSERT INTO goals (id, room_id, title, description, status, created_at, updated_at)
 			VALUES
@@ -353,7 +312,6 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
 			VALUES ('goal-uuid-1', 'room-uuid-1', 'Goal 1', '', 'active', 1000, 1000, 'g-1')
 		`);
 
-    // Room 2, goal also with short_id='g-1' — must NOT throw (different room)
     expect(() => {
       db.exec(`
 				INSERT INTO goals (id, room_id, title, description, status, created_at, updated_at, short_id)
@@ -361,8 +319,6 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
 			`);
     }).not.toThrow();
   });
-
-  // ── Idempotency ─────────────────────────────────────────────────────────────
 
   test('migration is idempotent — running runMigrations twice does not throw', () => {
     runMigrations(db, () => {});

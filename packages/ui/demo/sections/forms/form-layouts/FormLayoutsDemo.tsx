@@ -9,11 +9,9 @@ const addonClass = 'flex items-center justify-center px-3 text-text-tertiary';
 export function FormLayoutsDemo() {
   return (
     <div class="space-y-12">
-      {/* Stacked form with icon-only inputs */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">Stacked form with leading icons</h3>
         <div class="bg-surface-0 border border-surface-border rounded-xl p-6 space-y-6">
-          {/* Username with prefix icon */}
           <div>
             <label for="username" class="block text-sm font-medium text-text-primary mb-2">
               Username
@@ -26,7 +24,6 @@ export function FormLayoutsDemo() {
             </InputGroup>
           </div>
 
-          {/* Email with icon */}
           <div>
             <label for="email" class="block text-sm font-medium text-text-primary mb-2">
               Email
@@ -39,7 +36,6 @@ export function FormLayoutsDemo() {
             </InputGroup>
           </div>
 
-          {/* Phone with icon */}
           <div>
             <label for="phone" class="block text-sm font-medium text-text-primary mb-2">
               Phone
@@ -52,7 +48,6 @@ export function FormLayoutsDemo() {
             </InputGroup>
           </div>
 
-          {/* Password with icon */}
           <div>
             <label for="password" class="block text-sm font-medium text-text-primary mb-2">
               Password
@@ -72,14 +67,12 @@ export function FormLayoutsDemo() {
         </div>
       </div>
 
-      {/* Two-column form layout with icons */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">
           Two-column form with icon inputs
         </h3>
         <div class="bg-surface-0 border border-surface-border rounded-xl p-6">
           <div class="grid grid-cols-1 gap-x-6 gap-y-6 sm:grid-cols-2">
-            {/* First name */}
             <div>
               <label for="first-name" class="block text-sm font-medium text-text-primary mb-2">
                 First name
@@ -92,7 +85,6 @@ export function FormLayoutsDemo() {
               </InputGroup>
             </div>
 
-            {/* Last name */}
             <div>
               <label for="last-name" class="block text-sm font-medium text-text-primary mb-2">
                 Last name
@@ -105,7 +97,6 @@ export function FormLayoutsDemo() {
               </InputGroup>
             </div>
 
-            {/* Email */}
             <div class="sm:col-span-2">
               <label for="email-2" class="block text-sm font-medium text-text-primary mb-2">
                 Email address
@@ -123,7 +114,6 @@ export function FormLayoutsDemo() {
               </InputGroup>
             </div>
 
-            {/* Phone */}
             <div>
               <label for="phone-2" class="block text-sm font-medium text-text-primary mb-2">
                 Phone
@@ -136,7 +126,6 @@ export function FormLayoutsDemo() {
               </InputGroup>
             </div>
 
-            {/* Appointment date */}
             <div>
               <label for="appointment" class="block text-sm font-medium text-text-primary mb-2">
                 Appointment date
@@ -149,7 +138,6 @@ export function FormLayoutsDemo() {
               </InputGroup>
             </div>
 
-            {/* Street address */}
             <div class="sm:col-span-2">
               <label for="street" class="block text-sm font-medium text-text-primary mb-2">
                 Street address
@@ -165,12 +153,10 @@ export function FormLayoutsDemo() {
         </div>
       </div>
 
-      {/* Form with photo upload icon */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">Form with photo upload</h3>
         <div class="bg-surface-0 border border-surface-border rounded-xl p-6">
           <div class="space-y-6">
-            {/* Profile photo */}
             <div>
               <label class="block text-sm font-medium text-text-primary mb-2">Profile photo</label>
               <div class="mt-2 flex items-center gap-x-3">
@@ -186,7 +172,6 @@ export function FormLayoutsDemo() {
               </div>
             </div>
 
-            {/* Cover photo */}
             <div>
               <label class="block text-sm font-medium text-text-primary mb-2">Cover photo</label>
               <div class="mt-2 flex justify-center rounded-lg border border-dashed border-surface-border px-6 py-10">

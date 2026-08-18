@@ -1,14 +1,3 @@
-/**
- * Durable recovery state for Codex Anthropic bridge tool continuations.
- *
- * The bridge's live generator map is necessarily process-local, but the
- * ownership relationship between an Anthropic `tool_use.id` and a workflow node
- * execution must survive daemon restarts. This repository stores that mapping
- * plus an inbox for late `tool_result` continuation requests so the runtime can
- * deterministically re-drive or fail-forward the execution instead of leaving a
- * run permanently blocked.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 

@@ -1,22 +1,3 @@
-/**
- * Migration 170 Tests — Backfill missing preset agents into existing Spaces.
- *
- * seedPresetAgents() runs only at Space creation, so a Space created before a
- * preset was added to PRESET_AGENTS never received that preset's `space_agents`
- * row. M170 walks every Space × the live preset list and INSERTs any preset row
- * that is missing (matched by name).
- *
- * Covers:
- *   - Space with no agents → every preset inserted with canonical values
- *   - Space missing a single preset (e.g. "QA") → only it is inserted
- *   - Inserted row matches what seedPresetAgents would have written
- *     (templateName/templateHash/fields) and is readable by the production repo
- *   - Idempotency: re-running inserts nothing
- *   - User-customized same-named row (template_name NULL) → left untouched
- *   - Multiple spaces backfilled independently
- *   - Empty DB / no spaces → safe no-op
- */
-
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -39,7 +20,6 @@ interface AgentRow {
 }
 
 const PRESETS = getPresetAgentTemplates();
-/** A single preset used to exercise the "missing one preset" scenarios. */
 const CANONICAL_PRESET = PRESETS[0];
 
 function insertSpace(db: BunDatabase, id: string): void {
@@ -117,8 +97,6 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
     const templateDb = new BunDatabase(templateDbPath);
     try {
       templateDb.exec('PRAGMA foreign_keys = ON');
-      // Build the full schema once. M170 runs here too, but with no Spaces it
-      // is a no-op; the per-test invocation below calls the function directly.
       runMigrations(templateDb, () => {});
     } finally {
       templateDb.close();
@@ -172,8 +150,6 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
       expect(row.template_name).toBe(preset.name);
       expect(row.template_hash).toBe(computeAgentTemplateHash(preset));
       expect(row.description).toBe(preset.description);
-      // tools column preserves the preset's definition order (only the
-      // fingerprint/hash sorts); must match seedPresetAgents output verbatim.
       expect(JSON.parse(row.tools ?? '[]')).toEqual(preset.tools);
       expect(row.custom_prompt).toBe(preset.customPrompt);
     }
@@ -181,7 +157,6 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
 
   test('Space missing only one preset → only it is inserted', () => {
     insertSpace(db, 'sp-1');
-    // All presets except CANONICAL_PRESET already exist, template-stamped.
     const existingPresets = PRESETS.filter((p) => p !== CANONICAL_PRESET);
     for (const preset of existingPresets) {
       insertAgent(db, {
@@ -196,18 +171,16 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
 
     runMigration170(db);
 
-    // The missing preset is now present with canonical values.
     const backfilled = readAgentByName(db, 'sp-1', CANONICAL_PRESET.name)!;
     expect(backfilled).toBeDefined();
     expect(backfilled.template_name).toBe(CANONICAL_PRESET.name);
     expect(backfilled.template_hash).toBe(computeAgentTemplateHash(CANONICAL_PRESET));
     expect(backfilled.handle).toBe(CANONICAL_PRESET.handle);
 
-    // No duplicates: exactly PRESETS.length rows, and the pre-existing are intact.
     expect(countAgents(db, 'sp-1')).toBe(PRESETS.length);
     for (const preset of existingPresets) {
       const row = readAgentByName(db, 'sp-1', preset.name)!;
-      expect(row.id).toBe(`existing-${preset.handle}`); // original row, not replaced
+      expect(row.id).toBe(`existing-${preset.handle}`);
       expect(row.template_hash).toBe(computeAgentTemplateHash(preset));
     }
   });
@@ -221,7 +194,6 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
     const agents = repo.getBySpaceId('sp-1');
     const backfilled = agents.find((a) => a.name === CANONICAL_PRESET.name)!;
     expect(backfilled).toBeDefined();
-    // Same fields seedPresetAgents stamps via the manager/repo create path.
     expect(backfilled.templateName).toBe(CANONICAL_PRESET.name);
     expect(backfilled.templateHash).toBe(computeAgentTemplateHash(CANONICAL_PRESET));
     expect(backfilled.handle).toBe(CANONICAL_PRESET.handle);
@@ -259,10 +231,6 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
 
   test('user-customized same-named row (template_name NULL) is left untouched', () => {
     insertSpace(db, 'sp-1');
-    // All presets except CANONICAL_PRESET are present and template-stamped.
-    // CANONICAL_PRESET exists too, but as a USER-customized row (its own tools,
-    // template_name NULL). M170 must NOT insert a duplicate CANONICAL_PRESET and
-    // must NOT touch the user's row.
     for (const preset of PRESETS.filter((p) => p !== CANONICAL_PRESET)) {
       insertAgent(db, {
         id: `existing-${preset.handle}`,
@@ -278,7 +246,7 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
       spaceId: 'sp-1',
       name: CANONICAL_PRESET.name,
       handle: CANONICAL_PRESET.handle,
-      tools: ['Read', 'Bash', 'Write'], // user-customized tool set
+      tools: ['Read', 'Bash', 'Write'],
       customPrompt: 'my own custom prompt',
       templateName: null,
       templateHash: null,
@@ -286,10 +254,9 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
 
     runMigration170(db);
 
-    // Exactly one row per preset name — no duplicate CANONICAL_PRESET inserted.
     expect(countAgents(db, 'sp-1')).toBe(PRESETS.length);
     const row = readAgentByName(db, 'sp-1', CANONICAL_PRESET.name)!;
-    expect(row.id).toBe('user-agent'); // original user row, not replaced
+    expect(row.id).toBe('user-agent');
     expect(row.template_name).toBeNull();
     expect(row.template_hash).toBeNull();
     expect(JSON.parse(row.tools ?? '[]')).toEqual(['Read', 'Bash', 'Write']);
@@ -299,7 +266,6 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
   test('multiple Spaces are backfilled independently', () => {
     insertSpace(db, 'sp-1');
     insertSpace(db, 'sp-2');
-    // sp-1 already has every preset; sp-2 has none.
     for (const preset of PRESETS) {
       insertAgent(db, {
         id: `sp1-${preset.handle}`,
@@ -313,8 +279,8 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
 
     runMigration170(db);
 
-    expect(countAgents(db, 'sp-1')).toBe(PRESETS.length); // unchanged
-    expect(countAgents(db, 'sp-2')).toBe(PRESETS.length); // fully backfilled
+    expect(countAgents(db, 'sp-1')).toBe(PRESETS.length);
+    expect(countAgents(db, 'sp-2')).toBe(PRESETS.length);
     expect(readAgentByName(db, 'sp-2', CANONICAL_PRESET.name)!.template_name).toBe(
       CANONICAL_PRESET.name
     );

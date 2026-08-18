@@ -1,8 +1,6 @@
 import { render } from '../../internal/render.ts';
 import type { ElementType } from '../../internal/types.ts';
 
-// --- Skeleton ---
-
 interface SkeletonProps {
   as?: ElementType;
   animation?: 'pulse' | 'wave' | 'none';

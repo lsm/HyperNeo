@@ -1,29 +1,9 @@
-/**
- * Migration 60 Tests
- *
- * Migration 60:
- * - Drops space_session_groups table
- * - Drops space_session_group_members table
- * - Rebuilds space_workflow_runs without the current_node_id column
- *
- * Covers:
- * - space_session_groups does NOT exist after M60
- * - space_session_group_members does NOT exist after M60
- * - space_workflow_runs does NOT have current_node_id after M60
- * - space_workflow_runs still has required columns: id, space_id, workflow_id, status, start_node_id (via workflow_id)
- * - Idempotency: running runMigration60 twice does not error
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { runMigration60 } from '../../../../../src/storage/schema/migrations.ts';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function tableExists(db: BunDatabase, name: string): boolean {
   return !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(name);
@@ -33,10 +13,6 @@ function columnExists(db: BunDatabase, table: string, column: string): boolean {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   return rows.some((r) => r.name === column);
 }
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 describe('Migration 60: Drop session group tables and remove current_node_id', () => {
   let testDir: string;
@@ -63,10 +39,6 @@ describe('Migration 60: Drop session group tables and remove current_node_id', (
     }
   });
 
-  // -------------------------------------------------------------------------
-  // Tables dropped by M59
-  // -------------------------------------------------------------------------
-
   test('space_session_groups table does NOT exist after full migration', () => {
     runMigrations(db, () => {});
     expect(tableExists(db, 'space_session_groups')).toBe(false);
@@ -77,10 +49,6 @@ describe('Migration 60: Drop session group tables and remove current_node_id', (
     expect(tableExists(db, 'space_session_group_members')).toBe(false);
   });
 
-  // -------------------------------------------------------------------------
-  // space_workflow_runs column removal
-  // -------------------------------------------------------------------------
-
   test('space_workflow_runs does NOT have current_node_id after full migration', () => {
     runMigrations(db, () => {});
     expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(false);
@@ -89,37 +57,23 @@ describe('Migration 60: Drop session group tables and remove current_node_id', (
   test('space_workflow_runs still has required columns after M60', () => {
     runMigrations(db, () => {});
 
-    // Verify required columns are preserved on space_workflow_runs
     for (const col of ['id', 'space_id', 'workflow_id', 'status']) {
       expect(columnExists(db, 'space_workflow_runs', col)).toBe(true);
     }
-    // start_node_id lives on space_workflows, not space_workflow_runs
     expect(columnExists(db, 'space_workflows', 'start_node_id')).toBe(true);
 
-    // Confirm current_node_id is gone
     expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(false);
   });
 
-  // -------------------------------------------------------------------------
-  // Idempotency
-  // -------------------------------------------------------------------------
-
   test('runMigration60 is idempotent — running twice does not error', () => {
     runMigrations(db, () => {});
-    // Run the M59 function a second time — should be a no-op.
     expect(() => runMigration60(db)).not.toThrow();
-    // Tables should still be absent.
     expect(tableExists(db, 'space_session_groups')).toBe(false);
     expect(tableExists(db, 'space_session_group_members')).toBe(false);
     expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(false);
   });
 
-  // -------------------------------------------------------------------------
-  // Data preserved in space_workflow_runs
-  // -------------------------------------------------------------------------
-
   test('existing workflow run rows are preserved after M60 drops current_node_id', () => {
-    // Pre-seed with a workflow run before running migrations
     db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY, workspace_path TEXT NOT NULL UNIQUE,
@@ -169,12 +123,8 @@ describe('Migration 60: Drop session group tables and remove current_node_id', (
       `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, iteration_count, max_iterations, goal_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run('run-1', 'sp-1', 'wf-1', 'Test Run', 'in_progress', 3, 10, 'goal-abc', now, now);
 
-    // Run all migrations
     runMigrations(db, () => {});
 
-    // Row should still exist with correct values.
-    // Note: iteration_count, max_iterations, goal_id are removed by Migration 72 —
-    // only the columns that survive all migrations are checked here.
     const row = db
       .prepare(
         `SELECT id, space_id, workflow_id, title, status FROM space_workflow_runs WHERE id = 'run-1'`

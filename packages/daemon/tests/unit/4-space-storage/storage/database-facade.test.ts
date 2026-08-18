@@ -1,18 +1,8 @@
-/**
- * Tests for Database Facade (storage/index.ts)
- *
- * Tests the Database facade class that composes all repositories:
- * - Session operations
- * - Settings operations
- * - Inbox item operations
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { Session } from '@hyperneo/shared';
 
-// Factory function to create a test session
 function createTestSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 'test-session-id',
@@ -43,8 +33,6 @@ describe('Database Facade', () => {
   let dbPath: string;
 
   beforeEach(async () => {
-    // Create a temporary database file
-    // Use process.env.TMPDIR to support custom temp directory setups
     const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
     dbPath = `${tmpBase}/test-db-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
     db = new Database(dbPath);
@@ -53,11 +41,9 @@ describe('Database Facade', () => {
   });
 
   afterEach(() => {
-    // Clean up
     if (db) {
       db.close();
     }
-    // Remove the temporary database file
     try {
       require('fs').unlinkSync(dbPath);
     } catch {
@@ -71,7 +57,6 @@ describe('Database Facade', () => {
     });
 
     it('initializes repositories', async () => {
-      // Database should be initialized
       expect(db).toBeDefined();
     });
   });

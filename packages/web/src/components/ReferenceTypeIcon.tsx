@@ -3,14 +3,9 @@ import type { ReferenceType } from '@hyperneo/shared';
 
 export interface ReferenceTypeIconProps {
   type: ReferenceType;
-  /** Tailwind classes for size and color, e.g. "w-3.5 h-3.5 text-indigo-400 shrink-0" */
   className?: string;
 }
 
-/**
- * Shared SVG icon for a reference type.
- * Used by both MentionToken and ReferenceAutocomplete.
- */
 export default function ReferenceTypeIcon({ type, className }: ReferenceTypeIconProps) {
   if (type === 'task') {
     return (
@@ -66,7 +61,6 @@ export default function ReferenceTypeIcon({ type, className }: ReferenceTypeIcon
       </svg>
     );
   }
-  // file
   return (
     <svg
       class={cn('shrink-0', className)}

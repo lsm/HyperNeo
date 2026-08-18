@@ -1,10 +1,3 @@
-/**
- * Tool Access and Sub-Session Features Unit Tests
- *
- * Verifies tool access per preset agent and that sub-session features are
- * correctly applied to worker agent init configs.
- */
-
 import { describe, it, expect } from 'bun:test';
 import {
   PRESET_AGENT_TOOLS,
@@ -17,10 +10,6 @@ import {
   type CustomAgentConfig,
 } from '../../../../src/lib/space/agents/custom-agent';
 import type { SpaceWorkerAgent, Space, SpaceTask } from '@hyperneo/shared';
-
-// ============================================================================
-// Test fixtures
-// ============================================================================
 
 function makeAgent(overrides?: Partial<SpaceWorkerAgent>): SpaceWorkerAgent {
   return {
@@ -76,10 +65,6 @@ function makeConfig(tools?: string[]): CustomAgentConfig {
   };
 }
 
-// ============================================================================
-// Tool access per preset agent
-// ============================================================================
-
 describe('PRESET_AGENT_TOOLS', () => {
   it('coder has an empty permissive profile (inherits all SDK built-ins)', () => {
     const tools = PRESET_AGENT_TOOLS.coder;
@@ -113,8 +98,6 @@ describe('PRESET_AGENT_TOOLS', () => {
     expect(tools).toContain('CronCreate');
     expect(tools).toContain('CronDelete');
     expect(tools).toContain('CronList');
-    // The Reviewer keeps Bash for read-only GitHub inspection and posting
-    // reviews via the gh CLI, so it is restrained — not shell-less.
     expect(tools).not.toContain('Write');
     expect(tools).not.toContain('Edit');
   });
@@ -139,10 +122,6 @@ describe('PRESET_AGENT_TOOLS', () => {
   });
 });
 
-// ============================================================================
-// Sub-session features
-// ============================================================================
-
 describe('SUB_SESSION_FEATURES', () => {
   it('disables all UI features for sub-session agents', () => {
     expect(SUB_SESSION_FEATURES).toEqual({
@@ -154,10 +133,6 @@ describe('SUB_SESSION_FEATURES', () => {
     });
   });
 });
-
-// ============================================================================
-// expandPrompt — append-only composition
-// ============================================================================
 
 describe('expandPrompt', () => {
   it('returns base when no expansion is provided', () => {
@@ -239,10 +214,6 @@ describe('expandPrompt', () => {
   });
 });
 
-// ============================================================================
-// createCustomAgentInit applies sub-session features
-// ============================================================================
-
 describe('createCustomAgentInit — sub-session features', () => {
   it('applies SUB_SESSION_FEATURES for agent with tools', () => {
     const init = createCustomAgentInit(makeConfig(PRESET_AGENT_TOOLS.coder));
@@ -266,12 +237,7 @@ describe('createCustomAgentInit — sub-session features', () => {
     expect(init.sdkToolsPreset).toBeUndefined();
     expect(init.allowedTools).toEqual(['Task', 'TaskOutput', 'TaskStop']);
     expect(init.agent).toBeUndefined();
-    // The Reviewer dispatches exploration (Task) to the non-delegating
-    // `general-purpose` sub-agent installed by createCustomAgentInit.
     expect(init.agents?.['general-purpose']).toBeDefined();
-    // The Reviewer keeps Bash for read-only GitHub inspection and gh-CLI review
-    // posting — Bash is NOT denied. Only the mutation tools are denied, so it
-    // cannot modify the code under review.
     expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
     expect(init.disallowedTools).not.toContain('Bash');
   });
@@ -334,10 +300,6 @@ describe('createCustomAgentInit — sub-session features', () => {
     }
   });
 });
-
-// ============================================================================
-// SlotOverrides interface
-// ============================================================================
 
 describe('SlotOverrides interface', () => {
   it('accepts customPrompt as string', () => {

@@ -1,15 +1,3 @@
-/**
- * ReferenceResolver Unit Tests
- *
- * Tests for the reference parsing and file/folder resolution logic.
- * Covers:
- *   - extractReferences: pattern matching, deduplication, invalid formats
- *   - resolveReference (file): happy path, missing file, binary, large file truncation
- *   - resolveReference (folder): happy path, missing folder, large directory limit
- *   - Path traversal prevention (../, absolute paths, empty path, symlinks outside workspace)
- *   - task/goal references return null (stubs pending Task 3.1)
- */
-
 import { describe, expect, it, test, beforeEach, afterEach, mock } from 'bun:test';
 import { mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -22,10 +10,6 @@ import type {
   SpaceTaskRepoLike,
 } from '../../../src/lib/agent/reference-resolver';
 import type { ResolvedFileReference, ResolvedFolderReference } from '@hyperneo/shared';
-
-// ────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ────────────────────────────────────────────────────────────────────────────
 
 async function createWorkspace(): Promise<string> {
   const dir = join(
@@ -52,10 +36,6 @@ function assertFolderResult(
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Tests
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('ReferenceResolver', () => {
   let workspace: string;
   let resolver: ReferenceResolver;
@@ -70,10 +50,6 @@ describe('ReferenceResolver', () => {
   afterEach(async () => {
     await rm(workspace, { recursive: true, force: true });
   });
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // extractReferences
-  // ──────────────────────────────────────────────────────────────────────────
 
   describe('extractReferences', () => {
     it('parses a file reference', () => {
@@ -129,9 +105,9 @@ describe('ReferenceResolver', () => {
     });
 
     it('does not match partial or malformed patterns', () => {
-      expect(resolver.extractReferences('@ref{file}')).toHaveLength(0); // no id
-      expect(resolver.extractReferences('@ref{:id}')).toHaveLength(0); // empty type
-      expect(resolver.extractReferences('ref{file:a.ts}')).toHaveLength(0); // no @
+      expect(resolver.extractReferences('@ref{file}')).toHaveLength(0);
+      expect(resolver.extractReferences('@ref{:id}')).toHaveLength(0);
+      expect(resolver.extractReferences('ref{file:a.ts}')).toHaveLength(0);
     });
 
     it('preserves displayText as the full @ref{} string', () => {
@@ -139,10 +115,6 @@ describe('ReferenceResolver', () => {
       expect(m.displayText).toBe('@ref{file:path/to/file.ts}');
     });
   });
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // resolveReference — file
-  // ──────────────────────────────────────────────────────────────────────────
 
   describe('resolveReference — file', () => {
     it('resolves a text file to its content and metadata', async () => {
@@ -205,7 +177,6 @@ describe('ReferenceResolver', () => {
     });
 
     it('marks binary files with binary:true and null content', async () => {
-      // Write a file with null bytes (binary signature)
       const binaryContent = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]);
       await writeFile(join(workspace, 'image.png'), binaryContent);
 
@@ -220,9 +191,8 @@ describe('ReferenceResolver', () => {
     });
 
     it('truncates large text files at a line boundary', async () => {
-      // Build a file > 50KB: many lines of 100 bytes each
-      const lineContent = 'x'.repeat(99) + '\n'; // 100 bytes per line
-      const totalLines = 600; // ~60KB total
+      const lineContent = 'x'.repeat(99) + '\n';
+      const totalLines = 600;
       await writeFile(join(workspace, 'big.txt'), lineContent.repeat(totalLines));
 
       const result = await resolver.resolveReference(
@@ -293,10 +263,6 @@ describe('ReferenceResolver', () => {
       expect(result).not.toBeNull();
     });
   });
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // resolveReference — folder
-  // ──────────────────────────────────────────────────────────────────────────
 
   describe('resolveReference — folder', () => {
     it('resolves a folder to its file listing', async () => {
@@ -387,10 +353,6 @@ describe('ReferenceResolver', () => {
     });
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // Path traversal prevention
-  // ──────────────────────────────────────────────────────────────────────────
-
   describe('path traversal prevention', () => {
     it('rejects empty file path', async () => {
       const result = await resolver.resolveReference(
@@ -468,7 +430,6 @@ describe('ReferenceResolver', () => {
       try {
         await symlink('/etc/hosts', linkPath);
       } catch {
-        // /etc/hosts not available in this environment — skip
         return;
       }
 
@@ -503,10 +464,6 @@ describe('ReferenceResolver', () => {
     });
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // Task / goal references (stubs)
-  // ──────────────────────────────────────────────────────────────────────────
-
   describe('task and goal references without injected repos', () => {
     it('returns null for task references when no repo injected', async () => {
       const result = await resolver.resolveReference(
@@ -524,10 +481,6 @@ describe('ReferenceResolver', () => {
       expect(result).toBeNull();
     });
   });
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // resolveAllReferences
-  // ──────────────────────────────────────────────────────────────────────────
 
   describe('resolveAllReferences', () => {
     it('resolves all valid references in a text', async () => {
@@ -567,10 +520,6 @@ describe('ReferenceResolver', () => {
     });
   });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// Mock helpers for task / goal tests — no SQLite, no repositories
-// ────────────────────────────────────────────────────────────────────────────
 
 const ROOM_ID = 'room-abc';
 const OTHER_ROOM_ID = 'room-xyz';
@@ -635,10 +584,6 @@ function mockGoalRepo(returnValue?: ReturnType<typeof makeGoal>): GoalRepoLike {
 function mockSpaceTaskRepo(returnValue?: ReturnType<typeof makeSpaceTask>): SpaceTaskRepoLike {
   return { getTask: mock(() => returnValue ?? null) };
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Room task resolution
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('ReferenceResolver — room task resolution', () => {
   test('resolves a room task by shortId', async () => {
@@ -705,10 +650,6 @@ describe('ReferenceResolver — room task resolution', () => {
   });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// Space task resolution
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('ReferenceResolver — space task resolution', () => {
   test('resolves a space task by st-<uuid> reference', async () => {
     const task = makeSpaceTask({ id: 'uuid-aaa', title: 'Deploy service' });
@@ -771,10 +712,6 @@ describe('ReferenceResolver — space task resolution', () => {
     expect(result).toBeNull();
   });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// Goal resolution
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('ReferenceResolver — goal resolution', () => {
   test('resolves a goal by shortId', async () => {
@@ -843,10 +780,6 @@ describe('ReferenceResolver — goal resolution', () => {
     expect(result).toBeNull();
   });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// resolveAllReferences with task/goal mocks
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('ReferenceResolver.resolveAllReferences — task/goal', () => {
   test('resolves task and goal references together', async () => {

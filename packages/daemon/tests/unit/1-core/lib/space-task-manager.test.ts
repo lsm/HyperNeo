@@ -1,9 +1,3 @@
-/**
- * SpaceTaskManager Tests
- *
- * Tests task lifecycle, status transitions, and dependency validation.
- */
-
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
@@ -89,7 +83,6 @@ describe('SpaceTaskManager', () => {
     });
 
     it('returns null for task in another space', async () => {
-      // Create another space and its manager
       const otherSpace = spaceRepo.createSpace({
         workspacePath: '/workspace/other',
         slug: 'other-space',
@@ -98,7 +91,6 @@ describe('SpaceTaskManager', () => {
       const otherManager = new SpaceTaskManager(db as any, otherSpace.id);
       const otherTask = await otherManager.createTask({ title: 'T', description: '' });
 
-      // Task from other space is not visible
       expect(await manager.getTask(otherTask.id)).toBeNull();
     });
   });
@@ -222,8 +214,6 @@ describe('SpaceTaskManager', () => {
 
     it('throws for invalid transition', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
-      // open → approved is invalid: approval must flow through in_progress or
-      // review → approved. (open → archived was made valid in G1, task #849.)
       await expect(manager.setTaskStatus(task.id, 'approved')).rejects.toThrow(
         'Invalid status transition'
       );
@@ -386,17 +376,12 @@ describe('SpaceTaskManager', () => {
         description: '',
         dependsOn: [t1.id],
       });
-      // Runtime pauses t2 (rate/usage-limited is runtime-set, not a user
-      // transition) and cancels t1, then calls cancelDependentTasks.
       await manager.setTaskStatus(t2.id, 'in_progress');
       db.prepare(`UPDATE space_tasks SET status = 'usage_limited' WHERE id = ?`).run(t2.id);
       db.prepare(`UPDATE space_tasks SET status = 'cancelled' WHERE id = ?`).run(t1.id);
 
       await manager.cancelDependentTasks(t1.id);
 
-      // A paused dependent must be cancelled with its prerequisite, otherwise
-      // recoverRateLimitedTasks would later restore it to in_progress despite
-      // the cancelled dependency.
       expect((await manager.getTask(t2.id))!.status).toBe('cancelled');
     });
   });
@@ -411,13 +396,10 @@ describe('SpaceTaskManager', () => {
       });
       await manager.setTaskStatus(t1.id, 'in_progress');
       await manager.setTaskStatus(t2.id, 'in_progress');
-      // Runtime-set paused status (not a user transition) — write directly.
       db.prepare(`UPDATE space_tasks SET status = 'rate_limited' WHERE id = ?`).run(t2.id);
 
       await manager.blockDependentTasks(t1.id);
 
-      // A paused dependent must be blocked (not left to auto-resume) when its
-      // prerequisite fails.
       const t2after = await manager.getTask(t2.id);
       expect(t2after!.status).toBe('blocked');
       expect(t2after!.blockReason).toBe('dependency_failed');
@@ -456,9 +438,6 @@ describe('SpaceTaskManager', () => {
     });
 
     it('archives a task in open status and sets both status and archivedAt', async () => {
-      // G1 (task #849): open → archived is now valid — a queued task can be
-      // shelved directly without first cancelling or waiting for the runtime
-      // to flip it to in_progress.
       const task = await manager.createTask({ title: 'T', description: '' });
       expect(task.status).toBe('open');
       const archived = await manager.archiveTask(task.id);
@@ -553,7 +532,6 @@ describe('SpaceTaskManager', () => {
       await manager.startTask(task.id);
       await manager.completeTask(task.id, 'previous result');
 
-      // Verify fields are set before retry
       const completed = await manager.getTask(task.id);
       expect(completed!.result).toBe('previous result');
 
@@ -597,7 +575,6 @@ describe('SpaceTaskManager', () => {
       const task = await manager.createTask({ title: 'T', description: '' });
 
       const reassigned = await manager.reassignTask(task.id, 'custom-agent-123');
-      // reassignTask is currently a no-op (agent fields removed), returns task unchanged
       expect(reassigned.id).toBe(task.id);
     });
 
@@ -660,12 +637,10 @@ describe('SpaceTaskManager', () => {
       await manager.startTask(task.id);
       await manager.completeTask(task.id, 'done');
 
-      // Verify done state
       const completed = await manager.getTask(task.id);
       expect(completed!.status).toBe('done');
       expect(completed!.result).toBe('done');
 
-      // Reactivate — should succeed without any cleanup blocking it
       const reactivated = await manager.setTaskStatus(task.id, 'in_progress');
       expect(reactivated.status).toBe('in_progress');
       expect(reactivated.result).toBeNull();
@@ -707,8 +682,6 @@ describe('SpaceTaskManager', () => {
     });
 
     it('blocked allows restart, review, completion, cancellation, and archival', () => {
-      // G2 (task #849): blocked → done mirrors the cancelled → done recovery
-      // affordance for a parked-but-complete task.
       expect(VALID_SPACE_TASK_TRANSITIONS.blocked).toEqual([
         'open',
         'in_progress',
@@ -724,7 +697,6 @@ describe('SpaceTaskManager', () => {
     });
 
     it('open allows in_progress, blocked, review, done, cancelled, and archived', () => {
-      // G1 (task #849): open → archived lets a queued task be shelved directly.
       expect(VALID_SPACE_TASK_TRANSITIONS.open).toEqual([
         'in_progress',
         'blocked',
@@ -736,9 +708,6 @@ describe('SpaceTaskManager', () => {
     });
 
     it('in_progress allows open, review, approved, done, blocked, and cancelled', () => {
-      // `approved` was added in PR 2/5 of the task-agent-as-post-approval
-      // executor refactor; end-node `approve_task` transitions `in_progress →
-      // approved` so the post-approval router can dispatch.
       expect(VALID_SPACE_TASK_TRANSITIONS.in_progress).toEqual([
         'open',
         'review',
@@ -798,8 +767,6 @@ describe('SpaceTaskManager', () => {
     });
 
     it('allows transition from open -> archived (G1)', async () => {
-      // G1 (task #849): open → archived is now valid — a queued task can be
-      // shelved directly without first cancelling or flipping to in_progress.
       const task = await manager.createTask({ title: 'T', description: '' });
       const archived = await manager.setTaskStatus(task.id, 'archived');
       expect(archived.status).toBe('archived');
@@ -881,8 +848,6 @@ describe('SpaceTaskManager', () => {
 
   describe('cycle detection', () => {
     it('rejects self-dependency on create', async () => {
-      // Can't test self-dep on create since the task ID doesn't exist yet;
-      // test via updateTask instead
       const t = await manager.createTask({ title: 'T', description: '' });
       await expect(manager.updateTask(t.id, { dependsOn: [t.id] })).rejects.toThrow(
         'cannot depend on itself'
@@ -893,7 +858,6 @@ describe('SpaceTaskManager', () => {
       const a = await manager.createTask({ title: 'A', description: '' });
       const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
 
-      // Try to make A depend on B — creates A→B→A cycle
       await expect(manager.updateTask(a.id, { dependsOn: [b.id] })).rejects.toThrow(
         'circular dependency'
       );
@@ -955,7 +919,7 @@ describe('SpaceTaskManager', () => {
       const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
 
       await manager.startTask(a.id);
-      await manager.startTask(b.id); // B is in_progress when A fails
+      await manager.startTask(b.id);
       await manager.failTask(a.id, 'crashed', 'agent_crashed');
 
       const cascaded = await manager.blockDependentTasks(a.id);
@@ -966,17 +930,12 @@ describe('SpaceTaskManager', () => {
     });
 
     it('does NOT block open tasks waiting on the failed dependency', async () => {
-      // Regression: a daemon restart cascades blocked status from a stalled
-      // in_progress task to all dependents. Open tasks waiting on the dep
-      // must remain `open` so the runtime can pick them up once the
-      // dependency eventually completes (manual retry, etc.).
       const a = await manager.createTask({ title: 'A', description: '' });
       const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
 
       await manager.startTask(a.id);
       await manager.failTask(a.id, 'crashed', 'agent_crashed');
 
-      // B is still `open` (never started)
       const cascaded = await manager.blockDependentTasks(a.id);
       expect(cascaded).toHaveLength(0);
       const bAfter = (await manager.getTask(b.id))!;
@@ -989,7 +948,6 @@ describe('SpaceTaskManager', () => {
       const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
       const c = await manager.createTask({ title: 'C', description: '', dependsOn: [b.id] });
 
-      // All three are in_progress when A fails.
       await manager.startTask(a.id);
       await manager.startTask(b.id);
       await manager.startTask(c.id);
@@ -1011,7 +969,6 @@ describe('SpaceTaskManager', () => {
       const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
       const c = await manager.createTask({ title: 'C', description: '', dependsOn: [a.id] });
 
-      // Complete C (done); leave B in `open` before A fails.
       await manager.startTask(c.id);
       await manager.completeTask(c.id, 'done');
 
@@ -1019,7 +976,6 @@ describe('SpaceTaskManager', () => {
       await manager.failTask(a.id, 'crashed');
 
       const cascaded = await manager.blockDependentTasks(a.id);
-      // Neither B (open) nor C (done) should be affected.
       expect(cascaded).toHaveLength(0);
       expect((await manager.getTask(b.id))!.status).toBe('open');
       expect((await manager.getTask(c.id))!.status).toBe('done');
@@ -1028,20 +984,17 @@ describe('SpaceTaskManager', () => {
     it('does not double-block in diamond dependency graph', async () => {
       const a = await manager.createTask({ title: 'A', description: '' });
       const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
-      // D depends on both A (direct) and B (indirect via A)
       const d = await manager.createTask({
         title: 'D',
         description: '',
         dependsOn: [a.id, b.id],
       });
 
-      // Both B and D are in_progress when A fails.
       await manager.startTask(a.id);
       await manager.startTask(b.id);
       await manager.startTask(d.id);
       await manager.failTask(a.id, 'crashed');
 
-      // Should not throw; both B and D should end up blocked
       const cascaded = await manager.blockDependentTasks(a.id);
       expect(cascaded.map((t) => t.id)).toContain(b.id);
       expect(cascaded.map((t) => t.id)).toContain(d.id);
@@ -1070,7 +1023,6 @@ describe('SpaceTaskManager', () => {
       });
       await manager.startTask(cInProgress.id);
 
-      // Cancel the parent.
       await manager.startTask(a.id);
       await manager.setTaskStatus(a.id, 'cancelled');
 
@@ -1115,32 +1067,23 @@ describe('SpaceTaskManager', () => {
     });
 
     it('traverses through already-cancelled intermediates to reach open descendants', async () => {
-      // Regression: A → B → C, with B already cancelled and C still open.
-      // Calling cancelDependentTasks(A) must walk through B to cancel C,
-      // otherwise C is left stranded with an unmet dependency on B.
       const a = await manager.createTask({ title: 'A', description: '' });
       const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
       const c = await manager.createTask({ title: 'C', description: '', dependsOn: [b.id] });
 
-      // B was cancelled before A.
       await manager.startTask(b.id);
       await manager.setTaskStatus(b.id, 'cancelled');
 
-      // A is now cancelled; the cascade must reach C through the cancelled B.
       await manager.startTask(a.id);
       await manager.setTaskStatus(a.id, 'cancelled');
 
       const cascaded = await manager.cancelDependentTasks(a.id);
-      // Only C transitions (B was already cancelled and is just a waypoint).
       expect(cascaded.map((t) => t.id)).toContain(c.id);
       expect((await manager.getTask(c.id))!.status).toBe('cancelled');
       expect((await manager.getTask(b.id))!.status).toBe('cancelled');
     });
 
     it('does not cascade through done/review/approved/blocked intermediates', async () => {
-      // Regression for over-propagation: if A is retried→cancelled, B (deps:[A])
-      // is already `done`, and C (deps:[B]) is still `open`, cancelling A must
-      // NOT cancel C — B is a satisfied dependency for C.
       const a = await manager.createTask({ title: 'A', description: '' });
       const bDone = await manager.createTask({
         title: 'B-done',
@@ -1153,25 +1096,19 @@ describe('SpaceTaskManager', () => {
         dependsOn: [bDone.id],
       });
 
-      // B finished successfully.
       await manager.startTask(bDone.id);
       await manager.completeTask(bDone.id, 'ok');
 
-      // A is now cancelled (e.g., retried then aborted).
       await manager.startTask(a.id);
       await manager.setTaskStatus(a.id, 'cancelled');
 
       const cascaded = await manager.cancelDependentTasks(a.id);
-      // Neither B (done) nor C (downstream of done) should be cancelled.
       expect(cascaded).toHaveLength(0);
       expect((await manager.getTask(bDone.id))!.status).toBe('done');
       expect((await manager.getTask(cOpen.id))!.status).toBe('open');
     });
 
     it('does not cascade through a blocked intermediate', async () => {
-      // Same shape as above but B is `blocked` (transient/retryable). Its
-      // downstream C must still not be cancelled — once B is unblocked C
-      // becomes runnable again.
       const a = await manager.createTask({ title: 'A', description: '' });
       const bBlocked = await manager.createTask({
         title: 'B-blocked',
@@ -1239,9 +1176,6 @@ describe('SpaceTaskManager', () => {
     });
 
     it('concurrent createTask assigns unique taskNumbers', async () => {
-      // Fire 20 async createTask calls concurrently via Promise.all.
-      // The db.transaction() in the repository serialises the SELECT MAX + INSERT,
-      // so each task should get a unique, monotonically increasing taskNumber.
       const results = await Promise.all(
         Array.from({ length: 20 }, (_, i) =>
           manager.createTask({ title: `Concurrent ${i}`, description: '' })
@@ -1256,14 +1190,6 @@ describe('SpaceTaskManager', () => {
     });
   });
 
-  // ─── submitTaskForReview ────────────────────────────────────────────────
-  //
-  // Single entry point for the agent `submit_for_approval` tool, the Task Agent
-  // self-submit path, and the UI "Submit for Review" RPC. The contract: any task
-  // landing in `review` MUST carry the pending-completion fields so
-  // `PendingTaskCompletionBanner` renders and approvals route through
-  // `PostApprovalRouter`. These tests pin that atomic write contract end-to-end
-  // against a real SQLite database.
   describe('submitTaskForReview', () => {
     it('transitions in_progress→review and stamps pending-completion fields atomically', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
@@ -1278,17 +1204,11 @@ describe('SpaceTaskManager', () => {
       expect(reviewing.pendingCheckpointType).toBe('task_completion');
       expect(reviewing.pendingCompletionSubmittedByNodeId).toBe('node-A');
       expect(reviewing.pendingCompletionReason).toBe('ready for human review');
-      // The durable source node is stamped in the same UPDATE so the
-      // post-approval router/dispatch can resolve it after the pending fields
-      // are atomically cleared on entering `approved` (task #851).
       expect(reviewing.postApprovalSourceNodeId).toBe('node-A');
       expect(typeof reviewing.pendingCompletionSubmittedAt).toBe('number');
     });
 
     it('accepts null submittedByNodeId for Task Agent / UI submissions', async () => {
-      // Task Agent self-submit and UI "Submit for Review" both pass null —
-      // no waiting end-node session to resume. The PostApprovalRouter
-      // distinguishes these cases via `pendingCompletionSubmittedByNodeId`.
       const task = await manager.createTask({ title: 'T', description: '' });
       await manager.startTask(task.id);
 
@@ -1330,12 +1250,10 @@ describe('SpaceTaskManager', () => {
       const task = await manager.createTask({ title: 'T', description: '' });
       await manager.startTask(task.id);
 
-      // Simulate handleGatePendingApproval: put task in review with gate checkpoint
       await manager.submitTaskForReview(task.id, {
         submittedByNodeId: null,
         reason: null,
       });
-      // Directly update to simulate gate pending state
       const repo: any = (manager as any).taskRepo;
       repo.updateTask(task.id, {
         status: 'review',
@@ -1349,17 +1267,12 @@ describe('SpaceTaskManager', () => {
         })
       ).rejects.toThrow(/Cannot re-submit task in 'review' with pendingCheckpointType 'gate'/);
 
-      // Confirm gate checkpoint was not overwritten
       const after = await manager.getTask(task.id);
       expect(after?.status).toBe('review');
       expect(after?.pendingCheckpointType).toBe('gate');
     });
 
     it('rejects illegal source statuses before any pending-* fields get written', async () => {
-      // `done → review` is not in VALID_SPACE_TASK_TRANSITIONS — the helper
-      // must surface the transition error from `setTaskStatus` *before*
-      // touching the pending-completion columns. Otherwise a banner would
-      // render on top of an already-completed task.
       const task = await manager.createTask({ title: 'T', description: '' });
       await manager.startTask(task.id);
       await manager.completeTask(task.id, 'done');
@@ -1371,7 +1284,6 @@ describe('SpaceTaskManager', () => {
         })
       ).rejects.toThrow(/Invalid status transition/);
 
-      // Confirm no partial write — task is still `done` with no pending fields.
       const after = await manager.getTask(task.id);
       expect(after?.status).toBe('done');
       expect(after?.pendingCheckpointType).toBeFalsy();
@@ -1396,8 +1308,6 @@ describe('SpaceTaskManager', () => {
 
     it('transitions open→review and stamps pending-completion fields', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
-      // Task stays in `open` — e.g. a review-only workflow where the
-      // reviewer node activates before the task ever hits `in_progress`.
 
       const reviewing = await manager.submitTaskForReview(task.id, {
         submittedByNodeId: null,
@@ -1411,20 +1321,9 @@ describe('SpaceTaskManager', () => {
     });
 
     it('writes status and pending-completion fields in a single UPDATE (atomicity)', async () => {
-      // Atomicity regression guard. The earlier two-step implementation
-      // (setTaskStatus + follow-up updateTask) exposed a window where
-      // `status='review'` was visible without `pendingCheckpointType` set —
-      // the exact banner-less state this PR was supposed to eliminate. We
-      // pin the contract by spying on the underlying repository: on a
-      // successful submit, exactly ONE write must reach the DB and that
-      // write must carry both the status flip and the pending-* fields
-      // together.
       const task = await manager.createTask({ title: 'T', description: '' });
       await manager.startTask(task.id);
 
-      // Wrap the live repo's `updateTask` so we can count calls without
-      // breaking real DB writes. (Using bun:sqlite directly keeps the
-      // downstream pendingCheckpointType read in this test honest.)
       // biome-ignore lint/suspicious/noExplicitAny: spy needs to reach into private repo
       const repo: any = (manager as any).taskRepo;
       const originalUpdate = repo.updateTask.bind(repo);
@@ -1443,11 +1342,9 @@ describe('SpaceTaskManager', () => {
         expect(result.status).toBe('review');
         expect(result.pendingCheckpointType).toBe('task_completion');
 
-        // Exactly one repo.updateTask call — no two-write race window.
         expect(calls).toHaveLength(1);
         const onlyCall = calls[0];
         expect(onlyCall.id).toBe(task.id);
-        // Both the status flip AND the pending-* fields ride the same UPDATE.
         expect(onlyCall.params.status).toBe('review');
         expect(onlyCall.params.pendingCheckpointType).toBe('task_completion');
         expect(onlyCall.params.pendingCompletionSubmittedByNodeId).toBe('node-A');
@@ -1459,22 +1356,7 @@ describe('SpaceTaskManager', () => {
     });
   });
 
-  // ─── Exit-status cleanup (review-out, approved-out) ─────────────────────
-  //
-  // Counterpart to the entry-side `submitTaskForReview` atomic write. The
-  // `setTaskStatus` helper now nulls the pending-completion fields on any
-  // transition out of `review`, and nulls the post-approval tracking
-  // fields on any transition out of `approved`, in the SAME SQL UPDATE
-  // that flips the status. These tests pin that contract end-to-end so:
-  //   - UI generic transitions (Reopen/Archive a `review` task, Mark
-  //     Done/Reopen/Archive an `approved` task) get the cleanup for free —
-  //     no banner-on-non-review state, no stale post-approval fields on
-  //     terminal tasks.
-  //   - The agent-tool simplifications (`mark_complete` no longer does a
-  //     follow-up `updateTask`) stay correct.
   describe('exit-status cleanup', () => {
-    // --- review-exit -----------------------------------------------------
-
     it('clears pending-* fields on review → in_progress (Reopen)', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
       await manager.startTask(task.id);
@@ -1489,9 +1371,6 @@ describe('SpaceTaskManager', () => {
       expect(reopened.pendingCompletionSubmittedByNodeId).toBeNull();
       expect(reopened.pendingCompletionSubmittedAt).toBeNull();
       expect(reopened.pendingCompletionReason).toBeNull();
-      // Aborting the review attempt also clears the durable source node — it
-      // was stamped for THIS attempt, so a stale submitter must not survive to
-      // be read by a later dispatch (task #851).
       expect(reopened.postApprovalSourceNodeId).toBeNull();
     });
 
@@ -1563,7 +1442,6 @@ describe('SpaceTaskManager', () => {
         expect(calls).toHaveLength(1);
         const onlyCall = calls[0];
         expect(onlyCall.params.status).toBe('in_progress');
-        // Cleanup rides the same UPDATE — no separate write.
         expect(onlyCall.params.pendingCheckpointType).toBeNull();
         expect(onlyCall.params.pendingCompletionSubmittedByNodeId).toBeNull();
         expect(onlyCall.params.pendingCompletionSubmittedAt).toBeNull();
@@ -1572,8 +1450,6 @@ describe('SpaceTaskManager', () => {
         repo.updateTask = originalUpdate;
       }
     });
-
-    // --- approved-exit ---------------------------------------------------
 
     it('clears post-approval-* fields on approved → done (mark_complete)', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
@@ -1626,11 +1502,6 @@ describe('SpaceTaskManager', () => {
     });
 
     it('writes status flip and post-approval-* cleanup in a single UPDATE on approved → done (atomicity)', async () => {
-      // Atomicity regression guard for the centralised "exit approved"
-      // cleanup. The earlier two-step `mark_complete` implementation
-      // (setTaskStatus → updateTask) exposed a window where status='done'
-      // was visible alongside stale post-approval fields. This test pins
-      // the contract that the new single-UPDATE form holds.
       const task = await manager.createTask({ title: 'T', description: '' });
       await manager.startTask(task.id);
       await manager.setTaskStatus(task.id, 'approved', { approvalSource: 'agent' });
@@ -1654,7 +1525,6 @@ describe('SpaceTaskManager', () => {
         expect(calls).toHaveLength(1);
         const onlyCall = calls[0];
         expect(onlyCall.params.status).toBe('done');
-        // All three post-approval-* fields cleared in the same UPDATE.
         expect(onlyCall.params.postApprovalSessionId).toBeNull();
         expect(onlyCall.params.postApprovalStartedAt).toBeNull();
         expect(onlyCall.params.postApprovalBlockedReason).toBeNull();
@@ -1663,14 +1533,7 @@ describe('SpaceTaskManager', () => {
       }
     });
 
-    // --- guard: same-status writes don't trigger the cleanup -------------
-
     it('does not clear pending-* fields on same-status writes (review → review noop guard)', async () => {
-      // `setTaskStatus` rejects same-status writes (no entry in the
-      // transition table). The cleanup branch keys off `task.status !==
-      // newStatus`, so even if a future caller tries to flip review→review
-      // it would never reach the cleanup. Pinned defensively so this stays
-      // safe even if the transition table is widened.
       const task = await manager.createTask({ title: 'T', description: '' });
       await manager.startTask(task.id);
       await manager.submitTaskForReview(task.id, {
@@ -1682,7 +1545,6 @@ describe('SpaceTaskManager', () => {
         'Invalid status transition'
       );
 
-      // Pending fields untouched.
       const after = await manager.getTask(task.id);
       expect(after?.pendingCheckpointType).toBe('task_completion');
       expect(after?.pendingCompletionReason).toBe('r');

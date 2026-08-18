@@ -1,15 +1,3 @@
-/**
- * ModalDialogsDemo.tsx
- *
- * 6 modal dialog examples ported from Tailwind Application UI v4 reference:
- * 1. Centered with single action
- * 2. Centered with wide buttons
- * 3. Simple alert
- * 4. Simple with dismiss button
- * 5. Simple with gray footer
- * 6. Simple with left-aligned buttons
- */
-
 import { useState } from 'preact/hooks';
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '../../../src/mod.ts';
 import { AlertTriangle, Check, X } from 'lucide-preact';

@@ -116,8 +116,6 @@ export async function cleanupSuspiciousProcesses(options?: {
             // Process group may have already exited.
           }
         });
-  // Quick emptiness check without shelling out to ps â avoids
-  // unnecessary load on idle daemons with no tracked roots.
   const quickResult = options?.getRootPids
     ? options.getRootPids()
     : { live: [] as number[], exited: [] as number[] };
@@ -125,10 +123,8 @@ export async function cleanupSuspiciousProcesses(options?: {
   const quickExited = [...quickResult.exited];
   if (quickLive.length === 0 && quickExited.length === 0) return 0;
 
-  // Only shell out to ps if there are tracked roots to process.
   const snapshots = await lister();
 
-  // Re-fetch with snapshot for accurate identity verification.
   const rootResult = options?.getRootPids
     ? options.getRootPids(snapshots)
     : { live: [] as number[], exited: [] as number[] };
@@ -136,9 +132,6 @@ export async function cleanupSuspiciousProcesses(options?: {
   const exitedRoots = new Set(rootResult.exited);
   if (liveRoots.size === 0 && exitedRoots.size === 0) return 0;
   const ownedPids = collectDescendantPids(snapshots, liveRoots, exitedRoots);
-  // Set of PIDs present in the current snapshot â used to detect PID reuse.
-  // An exited root whose PGID appears in this set has been reused by an
-  // unrelated process; group-signaling it would kill non-daemon processes.
   const snapshotPids = new Set<number>();
   for (const snap of snapshots) snapshotPids.add(snap.pid);
   let killed = 0;
@@ -152,10 +145,6 @@ export async function cleanupSuspiciousProcesses(options?: {
     if (!threshold) continue;
 
     try {
-      // Signal the process group first (reaches tool grandchildren
-      // that the parent may not have forwarded signals to).
-      // The PGID must be attributable to the daemon tree (owned or a
-      // tracked root) but NOT a live root (would kill the active session).
       if (
         typeof snapshot.pgid === 'number' &&
         Number.isFinite(snapshot.pgid) &&
@@ -173,8 +162,6 @@ export async function cleanupSuspiciousProcesses(options?: {
       try {
         killer(snapshot.pid, 'SIGTERM');
       } catch (error: unknown) {
-        // ESRCH after group kill means the process was already terminated —
-        // count it as a successful cleanup rather than a failure.
         if (
           !(
             error &&
@@ -225,16 +212,12 @@ export function collectDescendantPids(
   const owned = new Set<number>();
   const queue: number[] = [];
 
-  // Live roots that exist in the snapshot — traverse normally (parent-child + PGID).
   for (const pid of liveRootPids) {
     if (snapshotPids.has(pid)) {
       queue.push(pid);
     }
   }
 
-  // Exited roots: discover orphaned children via PGID only.
-  // If an exited root PID appears in the snapshot it was reused by an unrelated
-  // process — skip it to avoid cross-process kills.
   const effectiveExited = exitedRootPids ?? new Set<number>();
   for (const pid of effectiveExited) {
     if (snapshotPids.has(pid)) continue;

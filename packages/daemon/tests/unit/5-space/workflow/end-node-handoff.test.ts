@@ -1,25 +1,3 @@
-/**
- * End-node handoff prompt tests
- *
- * Verifies that every built-in workflow's end-node `customPrompt` agrees with
- * the post-approval routing contract:
- *
- *   - The stable Coding / Coding-with-QA / Research workflows route the
- *     post-approval merge back to the implementer (coder / research) slot via
- *     a node-level `postApproval: { targetAgent: 'coder'|'research',
- *     instructions: <merge template> }`. There is no dedicated merger agent.
- *
- *   - The merge template is `CODER_OWNED_MERGE_INSTRUCTIONS` (the implementer
- *     merges via `gh pr merge` after verifying current-head approval).
- *
- *   - Review-Only intentionally does NOT declare `postApproval` (no PR to
- *     merge).
- *
- * These tests protect against silent regressions where someone edits an end-
- * node prompt and accidentally removes the runtime-owned post-approval handoff,
- * adds a `gh pr merge` back into QA, or drops one of the `postApproval` routes.
- */
-
 import { describe, test, expect } from 'bun:test';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
@@ -32,16 +10,6 @@ import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/space/workfl
 import { interpolatePostApprovalTemplate } from '../../../../src/lib/space/workflows/post-approval-template.ts';
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve an end node's single-agent prompt string.
- * Throws with a loud message if the workflow shape is wrong (no end node,
- * more than one agent on the end node) — prevents silent test passes when
- * a workflow restructuring breaks invariants this test file depends on.
- */
 function endNodePrompt(wf: SpaceWorkflow): string {
   const endNode = wf.nodes.find((n) => n.id === wf.endNodeId);
   if (!endNode) {
@@ -61,28 +29,18 @@ function endNodePrompt(wf: SpaceWorkflow): string {
 }
 
 function postApprovalRoute(wf: SpaceWorkflow) {
-  // Approval is a task-level event: the route lives on whichever node declares
-  // it (the implementer / Coding or Research node for the coder-owned
-  // workflows), and the router fans out to it regardless of which node
-  // submitted.
   return wf.nodes.find((node) => node.postApproval)?.postApproval;
 }
 
-/** Workflows whose implementer node declares a coder-owned merge route. */
 const IMPLEMENTER_ROUTED_WORKFLOWS: Array<[string, SpaceWorkflow, string]> = [
   ['CODING_WORKFLOW', CODING_WORKFLOW, 'coder'],
   ['CODING_WITH_QA_WORKFLOW', CODING_WITH_QA_WORKFLOW, 'coder'],
   ['RESEARCH_WORKFLOW', RESEARCH_WORKFLOW, 'research'],
 ];
 
-/** Workflows that MUST NOT declare any post-approval route. */
 const NO_POST_APPROVAL_WORKFLOWS: Array<[string, SpaceWorkflow]> = [
   ['REVIEW_ONLY_WORKFLOW', REVIEW_ONLY_WORKFLOW],
 ];
-
-// ---------------------------------------------------------------------------
-// postApproval presence
-// ---------------------------------------------------------------------------
 
 describe('Post-approval route declarations', () => {
   test('stable Coding routes post-approval to its coder slot', () => {
@@ -101,13 +59,10 @@ describe('Post-approval route declarations', () => {
     });
   });
 
-  // No workflow carries the dedicated Post-Approval merger node anymore.
   for (const [label, wf] of IMPLEMENTER_ROUTED_WORKFLOWS) {
     test(`${label} routes post-approval to a real implementer slot (no merger node)`, () => {
       const route = postApprovalRoute(wf);
       expect(route).toBeDefined();
-      // Coder-owned merge instructions (the implementer merges via gh pr merge
-      // after verifying current-head approval).
       expect(route!.instructions).toBe(CODER_OWNED_MERGE_INSTRUCTIONS);
       expect(wf.nodes.map((node) => node.name)).not.toContain('Post-Approval');
       expect(wf.nodes.flatMap((node) => node.agents).some((agent) => agent.name === 'merger')).toBe(
@@ -127,9 +82,6 @@ describe('Post-approval route declarations', () => {
     });
   }
 
-  // The implementer's post-approval blocker reports must be deliverable to the
-  // approval authority over the workflow's channel topology — otherwise
-  // ChannelResolver.canSend rejects the send and the approved task stalls.
   test('Coding implementer can reach the Review approval authority', () => {
     const resolver = new ChannelResolver(CODING_WORKFLOW.channels ?? []);
     expect(resolver.canSend('Coding', 'Review')).toBe(true);
@@ -146,19 +98,10 @@ describe('Post-approval route declarations', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// End-node prompt — runtime-owned post-approval data handoff
-// ---------------------------------------------------------------------------
-
 describe('End-node prompts save runtime post-approval data before approve_task', () => {
   for (const [label, wf] of IMPLEMENTER_ROUTED_WORKFLOWS) {
     test(`${label} end-node prompt instructs the agent to record the PR and not relay to the task-agent`, () => {
       const prompt = endNodePrompt(wf);
-      // Every PR-producing workflow must instruct its end-node agent to record
-      // the PR (a link artifact) so post-approval dispatch can resolve it. The
-      // stable behavioral prompts phrase this as prose ("save the PR link
-      // artifact"), the merger-era prompts as `save_artifact({...})` — accept
-      // either.
       expect(prompt).toMatch(/save_artifact|save the PR link/);
       expect(prompt).toContain('approve_task');
       expect(prompt).not.toContain('target: "task-agent"');
@@ -166,10 +109,6 @@ describe('End-node prompts save runtime post-approval data before approve_task',
 
     test(`${label} end-node prompt places the record-PR step BEFORE the final approve_task call`, () => {
       const prompt = endNodePrompt(wf);
-      // The end node must record the PR before the final approve_task — the
-      // approval fires PostApprovalRouter.route, which reads the PR URL the end
-      // node just stashed. Anchor on the "save the PR link"/save_artifact
-      // instruction and the (last) approve_task occurrence.
       const signalIdx = Math.max(
         prompt.lastIndexOf('save_artifact('),
         prompt.lastIndexOf('save the PR link')
@@ -182,8 +121,6 @@ describe('End-node prompts save runtime post-approval data before approve_task',
 
     test(`${label} end-node prompt instructs the agent NOT to merge itself`, () => {
       const prompt = endNodePrompt(wf);
-      // The end-node agent (Reviewer / QA) is the approval authority, not the
-      // merger — it must be told explicitly not to merge.
       const mentionsSelfMergeWarning =
         prompt.includes('Do NOT attempt to merge the PR yourself') ||
         prompt.includes('Do NOT run `gh pr merge`') ||
@@ -198,10 +135,6 @@ describe('End-node prompts save runtime post-approval data before approve_task',
     expect(prompt).toContain('all review threads are resolved');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Merge template (implementer-owned, bash-based)
-// ---------------------------------------------------------------------------
 
 describe('Implementer merge template (verify current-head approval, then gh pr merge)', () => {
   test('verifies CI, threads, and current-head approval before merging', () => {
@@ -221,8 +154,6 @@ describe('Implementer merge template (verify current-head approval, then gh pr m
   });
 
   test('does not instruct a raw unbounded merge poll', () => {
-    // Step 2b must not poll `--json state` alone (it can't see a failed
-    // merge-group check, which leaves the PR OPEN) nor loop forever.
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('mergeStateStatus');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).not.toMatch(/--json state --jq \.state/);
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toMatch(/~10 attempts|up to ~10/);
@@ -263,8 +194,6 @@ describe('Implementer merge template (verify current-head approval, then gh pr m
   });
 
   test('preserved: root-repo sync uses {{workspace_path_sh}}, branch-agnostic $BASE', () => {
-    // `{{workspace_path_sh}}` renders as a single-quote-escaped shell literal
-    // (the derived token), so the template line must NOT wrap it in quotes.
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('SPACE_WS={{workspace_path_sh}}');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toMatch(/git -C "\$SPACE_WS" pull --ff-only/);
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('--jq .baseRefName');
@@ -272,10 +201,6 @@ describe('Implementer merge template (verify current-head approval, then gh pr m
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('space-checkout-ahead');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Legacy merge instructions removed from QA end node
-// ---------------------------------------------------------------------------
 
 describe('Merge/worktree instructions removed from QA end node', () => {
   test('CODING_WITH_QA_WORKFLOW QA prompt does NOT embed gh pr merge', () => {

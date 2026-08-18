@@ -1,33 +1,3 @@
-/**
- * ReferenceResolver — Core service for parsing and resolving @ references
- *
- * Handles extracting @ref{} mentions from text and resolving them to their
- * full entity data. Implements file, folder, task, and goal resolvers.
- *
- * Path validation enforced for file/folder references:
- *   - Empty paths are rejected
- *   - Paths containing `..` are rejected
- *   - Absolute paths (starting with `/`) are rejected
- *   - Symlinks that resolve outside the workspace are rejected
- *
- * Security note — TOCTOU:
- *   There is an inherent time-of-check/time-of-use gap between `checkSymlink()`
- *   (which calls `realpath`) and the subsequent `FileManager.readFile()` /
- *   `listDirectory()`. An attacker with write access to the workspace could swap a
- *   symlink in that window. In practice this is low-severity for a chat application
- *   where the user owns the workspace. The defense-in-depth is:
- *   1. `checkSymlink` rejects symlinks pointing outside the workspace at check time.
- *   2. `FileManager.validatePath()` re-checks path containment via
- *      `normalize(join(workspacePath, path))` at use time, which handles non-symlink
- *      traversal but does NOT re-resolve symlinks.
- *   3. The race window is extremely narrow (microseconds).
- *
- * Usage:
- *   const resolver = new ReferenceResolver();
- *   const mentions = resolver.extractReferences('@ref{file:src/utils.ts}');
- *   const resolved = await resolver.resolveAllReferences(text, { workspacePath });
- */
-
 import { join, normalize, relative, isAbsolute } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { FileManager } from '../file-manager.ts';
@@ -47,51 +17,31 @@ import { Logger } from '../logger.ts';
 
 const log = new Logger('reference-resolver');
 
-/** Max file content size (50KB) before truncation at line boundary */
 const MAX_FILE_SIZE = 50 * 1024;
 
-/** Max number of directory entries returned for folder references */
 const MAX_FOLDER_ENTRIES = 200;
 
-/** Reference prefixes */
 const ROOM_TASK_PREFIX = 't-';
 const SPACE_TASK_PREFIX = 'st-';
 
-/**
- * Minimal structural interface for TaskRepository — only the method(s) used here.
- * Using a structural interface (not importing the class) avoids pulling in SQLite.
- */
 export interface TaskRepoLike {
   getTaskByShortId(roomId: string, shortId: string): NeoTask | null;
 }
 
-/**
- * Minimal structural interface for GoalRepository — only the method(s) used here.
- */
 export interface GoalRepoLike {
   getGoalByShortId(roomId: string, shortId: string): RoomGoal | null;
 }
 
-/**
- * Minimal structural interface for SpaceTaskRepository — only the method(s) used here.
- */
 export interface SpaceTaskRepoLike {
   getTask(id: string): SpaceTask | null;
 }
 
-/** Optional repository dependencies injected at construction time. */
 export interface ReferenceResolverDeps {
   taskRepo?: TaskRepoLike;
   goalRepo?: GoalRepoLike;
   spaceTaskRepo?: SpaceTaskRepoLike;
 }
 
-/**
- * Context for resolving references — provides session-scoped information.
- * File/folder resolution only requires workspacePath.
- * Task resolution uses roomId (room tasks) or spaceId (space tasks).
- * Goal resolution uses roomId.
- */
 export interface ResolutionContext {
   roomId?: string;
   spaceId?: string;
@@ -108,15 +58,9 @@ export class ReferenceResolver {
     this.goalRepo = deps.goalRepo;
     this.spaceTaskRepo = deps.spaceTaskRepo;
   }
-  /**
-   * Extract all @ref{} mentions from a text string.
-   * Returns deduplicated mentions in order of appearance.
-   */
   extractReferences(text: string): ReferenceMention[] {
     const mentions: ReferenceMention[] = [];
     const seen = new Set<string>();
-    // REFERENCE_PATTERN has the g flag but we construct a fresh instance to
-    // avoid shared lastIndex state if REFERENCE_PATTERN is reused elsewhere.
     const pattern = new RegExp(REFERENCE_PATTERN.source, 'g');
     let match: RegExpExecArray | null;
 
@@ -140,10 +84,6 @@ export class ReferenceResolver {
     return mentions;
   }
 
-  /**
-   * Resolve a single reference mention to its full data.
-   * Returns null if the reference cannot be resolved (not found, invalid path, etc.)
-   */
   async resolveReference(
     mention: ReferenceMention,
     context: ResolutionContext
@@ -165,11 +105,6 @@ export class ReferenceResolver {
     }
   }
 
-  /**
-   * Extract and resolve all @ref{} mentions in a text string.
-   * Partial failures are swallowed — failed resolutions are excluded from results.
-   * Returns a map from the full @ref{} string to its resolved data.
-   */
   async resolveAllReferences(
     text: string,
     context: ResolutionContext
@@ -191,52 +126,29 @@ export class ReferenceResolver {
     return result;
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Path validation
-  // ────────────────────────────────────────────────────────────────────────────
-
-  /**
-   * Pre-validate a file path before passing to FileManager.
-   * Throws with a descriptive error for security violations.
-   */
   private validatePath(filePath: string): void {
-    // Reject empty paths
     if (filePath === '' || filePath.trim() === '') {
       throw new Error('Path must not be empty');
     }
 
-    // Reject absolute paths
     if (isAbsolute(filePath)) {
       throw new Error(`Absolute paths are not allowed: ${filePath}`);
     }
 
-    // Reject any path component that is `..`
-    // Split on both POSIX and Windows separators for safety
     const segments = filePath.split(/[/\\]/);
     if (segments.includes('..')) {
       throw new Error(`Path traversal detected: ${filePath}`);
     }
   }
 
-  /**
-   * Verify that a resolved absolute path (after symlink expansion) stays
-   * within the workspace root. Throws if a symlink escapes the workspace.
-   *
-   * No-ops when the path does not exist (lets FileManager produce the
-   * appropriate "file not found" error).
-   *
-   * Note: This check has a TOCTOU window — see module-level security note.
-   */
   private async checkSymlink(absolutePath: string, workspacePath: string): Promise<void> {
     let resolvedPath: string;
     try {
       resolvedPath = await realpath(absolutePath);
     } catch {
-      // Path doesn't exist — let FileManager produce the canonical error
       return;
     }
 
-    // Resolve workspace symlinks too (e.g. macOS /tmp → /private/tmp)
     let resolvedWorkspace: string;
     try {
       resolvedWorkspace = await realpath(workspacePath);
@@ -246,21 +158,15 @@ export class ReferenceResolver {
 
     const rel = relative(resolvedWorkspace, resolvedPath);
 
-    // rel starts with '..' → resolvedPath is outside the workspace
     if (rel.startsWith('..') || isAbsolute(rel)) {
       throw new Error(`Symlink points outside workspace: ${absolutePath} → ${resolvedPath}`);
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // File resolver
-  // ────────────────────────────────────────────────────────────────────────────
-
   private async resolveFile(
     path: string,
     context: ResolutionContext
   ): Promise<ResolvedFileReference | null> {
-    // 1. Pre-validate path
     try {
       this.validatePath(path);
     } catch (err) {
@@ -268,7 +174,6 @@ export class ReferenceResolver {
       return null;
     }
 
-    // 2. Symlink check (see TOCTOU note in module header)
     const absolutePath = normalize(join(context.workspacePath, path));
     try {
       await this.checkSymlink(absolutePath, context.workspacePath);
@@ -277,7 +182,6 @@ export class ReferenceResolver {
       return null;
     }
 
-    // 3. Read file content as UTF-8 to detect binary and check size
     const fm = new FileManager(context.workspacePath);
     let utfResult: { path: string; content: string; encoding: string; size: number; mtime: string };
 
@@ -297,7 +201,6 @@ export class ReferenceResolver {
       return null;
     }
 
-    // 4. Detect binary content (null byte heuristic)
     const isBinary = utfResult.content.includes('\x00');
 
     if (isBinary) {
@@ -315,7 +218,6 @@ export class ReferenceResolver {
       };
     }
 
-    // 5. UTF-8 text: truncate at line boundary if needed
     const oversized = utfResult.size > MAX_FILE_SIZE;
     const content = oversized
       ? this.truncateAtLineBoundary(utfResult.content, MAX_FILE_SIZE)
@@ -335,10 +237,6 @@ export class ReferenceResolver {
     };
   }
 
-  /**
-   * Truncate text content at the last newline boundary before maxBytes.
-   * Counts bytes (not characters) to respect multi-byte UTF-8 characters.
-   */
   private truncateAtLineBoundary(content: string, maxBytes: number): string {
     if (Buffer.byteLength(content, 'utf-8') <= maxBytes) {
       return content;
@@ -349,34 +247,25 @@ export class ReferenceResolver {
     let lastValidLineIndex = 0;
 
     for (let i = 0; i < lines.length; i++) {
-      // +1 for the newline character (except possibly the last line)
       const lineBytes = Buffer.byteLength(lines[i], 'utf-8') + 1;
       if (byteCount + lineBytes > maxBytes) break;
       byteCount += lineBytes;
       lastValidLineIndex = i + 1;
     }
 
-    // If no lines fit, return the first line truncated at byte limit
     if (lastValidLineIndex === 0) {
       const firstLine = lines[0];
       return Buffer.from(firstLine, 'utf-8').slice(0, maxBytes).toString('utf-8');
     }
 
     const joined = lines.slice(0, lastValidLineIndex).join('\n');
-    // Restore the trailing newline that was part of each included line
-    // (split('\n') removes newlines; we add it back when we truncated mid-file)
     return lastValidLineIndex < lines.length ? joined + '\n' : joined;
   }
-
-  // ────────────────────────────────────────────────────────────────────────────
-  // Folder resolver
-  // ────────────────────────────────────────────────────────────────────────────
 
   private async resolveFolder(
     path: string,
     context: ResolutionContext
   ): Promise<ResolvedFolderReference | null> {
-    // 1. Pre-validate path
     try {
       this.validatePath(path);
     } catch (err) {
@@ -384,7 +273,6 @@ export class ReferenceResolver {
       return null;
     }
 
-    // 2. Symlink check (see TOCTOU note in module header)
     const absolutePath = normalize(join(context.workspacePath, path));
     try {
       await this.checkSymlink(absolutePath, context.workspacePath);
@@ -393,7 +281,6 @@ export class ReferenceResolver {
       return null;
     }
 
-    // 3. List directory
     const fm = new FileManager(context.workspacePath);
     let files: Awaited<ReturnType<FileManager['listDirectory']>>;
 
@@ -429,10 +316,6 @@ export class ReferenceResolver {
     };
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Task resolver
-  // ────────────────────────────────────────────────────────────────────────────
-
   private resolveTask(id: string, context: ResolutionContext): ResolvedTaskReference | null {
     if (id.startsWith(SPACE_TASK_PREFIX)) {
       return this.resolveSpaceTask(id, context);
@@ -463,7 +346,6 @@ export class ReferenceResolver {
       log.warn(`Room task not found: "${shortId}" in room "${context.roomId}"`);
       return null;
     }
-    // Defensive cross-room check in case the repo isn't scoped
     if (task.roomId !== context.roomId) {
       log.warn(
         `Cross-room reference rejected: task "${shortId}" belongs to room "${task.roomId}", not "${context.roomId}"`
@@ -482,7 +364,6 @@ export class ReferenceResolver {
       log.warn('Cannot resolve space task: SpaceTaskRepository not injected');
       return null;
     }
-    // id is "st-<uuid>"; strip the prefix to get the UUID
     const uuid = id.slice(SPACE_TASK_PREFIX.length);
     const task = this.spaceTaskRepo.getTask(uuid);
     if (!task) {
@@ -498,10 +379,6 @@ export class ReferenceResolver {
     return { type: 'task', id: task.id, data: task };
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Goal resolver
-  // ────────────────────────────────────────────────────────────────────────────
-
   private resolveGoal(shortId: string, context: ResolutionContext): ResolvedGoalReference | null {
     if (!context.roomId) {
       log.warn(`Cannot resolve goal "${shortId}": session has no room context`);
@@ -516,7 +393,6 @@ export class ReferenceResolver {
       log.warn(`Goal not found: "${shortId}" in room "${context.roomId}"`);
       return null;
     }
-    // Defensive cross-room check in case the repo isn't scoped
     if (goal.roomId !== context.roomId) {
       log.warn(
         `Cross-room reference rejected: goal "${shortId}" belongs to room "${goal.roomId}", not "${context.roomId}"`
@@ -525,10 +401,6 @@ export class ReferenceResolver {
     }
     return { type: 'goal', id: goal.id, data: goal };
   }
-
-  // ────────────────────────────────────────────────────────────────────────────
-  // Helpers
-  // ────────────────────────────────────────────────────────────────────────────
 
   private isValidReferenceType(type: string): type is ReferenceType {
     return type === 'task' || type === 'goal' || type === 'file' || type === 'folder';

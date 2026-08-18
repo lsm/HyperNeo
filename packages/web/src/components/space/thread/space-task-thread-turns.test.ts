@@ -3,8 +3,6 @@ import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { buildAgentTurns, isUserRow } from './space-task-thread-turns';
 import type { ParsedThreadRow } from './space-task-thread-events';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 function makeAssistantTextMessage(uuid: string, text: string): SDKMessage {
   return {
     type: 'assistant',
@@ -64,8 +62,6 @@ function makeResultRow(
   return makeRow(id, label, makeResultMessage(id, subtype));
 }
 
-// ── buildAgentTurns ───────────────────────────────────────────────────────────
-
 describe('buildAgentTurns', () => {
   it('returns empty array for no rows', () => {
     expect(buildAgentTurns([])).toEqual([]);
@@ -105,8 +101,6 @@ describe('buildAgentTurns', () => {
   });
 
   it('splits the same agent into separate blocks across exec cycles', () => {
-    // Reviewer running three review iterations within a single session: each
-    // init→result cycle should land in its own block.
     const rows = [
       makeRow('a1', 'Reviewer Agent'),
       makeResultRow('r1', 'Reviewer Agent'),
@@ -139,17 +133,12 @@ describe('buildAgentTurns', () => {
   });
 
   it('treats agent label whitespace and casing as equivalent', () => {
-    const rows = [
-      makeRow('1', 'Task Agent'),
-      makeRow('2', 'task   agent'), // different casing + extra whitespace
-    ];
+    const rows = [makeRow('1', 'Task Agent'), makeRow('2', 'task   agent')];
     const blocks = buildAgentTurns(rows);
     expect(blocks).toHaveLength(1);
     expect(blocks[0].rows).toHaveLength(2);
   });
 });
-
-// ── isUserRow ─────────────────────────────────────────────────────────────────
 
 describe('isUserRow', () => {
   it('returns true for a user message', () => {

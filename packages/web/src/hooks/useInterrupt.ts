@@ -1,10 +1,3 @@
-/**
- * useInterrupt Hook
- *
- * Handles agent interrupt functionality.
- * Extracted from MessageInput.tsx for better separation of concerns.
- */
-
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
@@ -18,13 +11,9 @@ export interface UseInterruptResult {
   handleInterrupt: () => Promise<void>;
 }
 
-/**
- * Hook for managing agent interruption
- */
 export function useInterrupt({ sessionId }: UseInterruptOptions): UseInterruptResult {
   const [interrupting, setInterrupting] = useState(false);
 
-  // Reset interrupting state on session change
   useEffect(() => {
     setInterrupting(false);
   }, [sessionId]);

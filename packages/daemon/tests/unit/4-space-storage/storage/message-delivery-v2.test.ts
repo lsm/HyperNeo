@@ -1,16 +1,3 @@
-/**
- * Message Delivery v2 — conformance harness.
- *
- * Each test is a case lifted from the 28 phase-1 review rounds that the new
- * design must pass BY CONSTRUCTION (one durable job_queue claim, atomic role,
- * reclaimStale redelivery). Cases that become "untestable by design" under v2
- * (in-memory-vs-store disagreement: consumed-then-clear races, ledger/send_status
- * drift) are noted in comments — they cannot be expressed because there is no
- * second source of truth to diverge.
- *
- * See docs/features/message-delivery-v2.md §13.
- */
-
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
@@ -77,7 +64,6 @@ function setupRepo(): { db: Database; repo: JobQueueRepository } {
       send_status TEXT
     );
   `);
-  // The atomic role arbiter — the v2 substrate.
   runMigration182(db as unknown as Parameters<typeof runMigration182>[0]);
   return { db, repo: new JobQueueRepository(db as never) };
 }
@@ -127,13 +113,10 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
     });
 
     it('a second turn is rejected by the index — not by a check-then-insert', () => {
-      // Pre-insert a pending turn so the next turn insert hits the UNIQUE guard.
       repo.enqueue({
         queue: MESSAGE_DELIVERY,
         payload: { sessionId: SESSION, messageUuid: 'existing', role: 'turn', origin: 'chat' },
       });
-      // Calling deliverMessage with an explicit role:'turn' bypasses the arbiter
-      // and surfaces the raw UNIQUE error — proving the index is the guard.
       expect(() =>
         deliverMessage(repo, SESSION, 'competing', { origin: 'chat', role: 'turn' })
       ).toThrow();
@@ -142,8 +125,8 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
     it('a completed/failed turn frees the slot for a new turn', () => {
       deliverMessage(repo, SESSION, 'turn-1', { origin: 'chat' });
       const job = jobsFor(repo, SESSION)[0];
-      repo.dequeue(MESSAGE_DELIVERY, 1)[0]; // claim
-      repo.complete(job.id, { ok: true }); // turn finished → slot freed
+      repo.dequeue(MESSAGE_DELIVERY, 1)[0];
+      repo.complete(job.id, { ok: true });
       deliverMessage(repo, SESSION, 'turn-2', { origin: 'chat' });
       const turns = jobsFor(repo, SESSION).filter(
         (j) => (j.payload as { role: string }).role === 'turn'
@@ -152,14 +135,10 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
     });
 
     it('is idempotent per UUID — a second deliverMessage for the same UUID is a no-op', () => {
-      // The reset path can persist + deliver the same UUID twice (the replacement
-      // session is created before the old one is cleaned up). Without the
-      // getActiveDeliveryRole guard, the second call would insert a steer for the
-      // UUID the first inserted as a turn → the prompt reaches the SDK twice.
       const role1 = deliverMessage(repo, SESSION, 'dup', { origin: 'chat' });
       const role2 = deliverMessage(repo, SESSION, 'dup', { origin: 'chat' });
       expect(role1).toBe('turn');
-      expect(role2).toBe('turn'); // returns the existing role, no second insert
+      expect(role2).toBe('turn');
       const dup = jobsFor(repo, SESSION).filter(
         (j) => (j.payload as { messageUuid: string }).messageUuid === 'dup'
       );
@@ -168,10 +147,8 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
 
     it('idempotency returns the existing steer role, not a fresh insert', () => {
       deliverMessage(repo, SESSION, 'turn', { origin: 'chat' });
-      // 'steer-uuid' becomes a steer because a turn is active.
       const role1 = deliverMessage(repo, SESSION, 'steer-uuid', { origin: 'chat' });
       expect(role1).toBe('steer');
-      // A second call for the same steer UUID must return 'steer', not insert again.
       const role2 = deliverMessage(repo, SESSION, 'steer-uuid', { origin: 'chat' });
       expect(role2).toBe('steer');
       const steers = jobsFor(repo, SESSION).filter(
@@ -191,9 +168,6 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
 
   describe('deliverAndMarkQueued — role arbitration', () => {
     it('classifies as a turn when no active turn exists (idle session)', async () => {
-      // The legacy-owned-turn guard was removed (task #861 item 7): under v2
-      // every turn is a durable turn job, so a 'processing' session always has
-      // an active v2 turn row and the index is the sole role arbiter.
       const { repo } = setupRepo();
       await deliverAndMarkQueued({
         jobQueue: repo,
@@ -220,7 +194,6 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
           runAt: now,
         });
       }
-      // Force every documented sort key to tie; rowid must preserve insertion order.
       db.prepare(`UPDATE job_queue SET priority = 0, run_at = ?, created_at = ?`).run(now, now);
       const claimed = repo.dequeueExempt(MESSAGE_DELIVERY, { path: '$.role', equals: 'steer' }, 3);
       expect(claimed.map((j) => j.payload.messageUuid)).toEqual(['first', 'second', 'third']);
@@ -228,7 +201,6 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
 
     it('orders same-priority/run_at jobs by created_at ASC', () => {
       const now = Date.now();
-      // Enqueue three jobs with identical priority + runAt but distinct created_at.
       for (const uuid of ['first', 'second', 'third']) {
         repo.enqueue({
           queue: MESSAGE_DELIVERY,
@@ -248,7 +220,7 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   describe('requeue — park a blocked turn (§8: runAt, no retry bump)', () => {
     it('returns a processing job to pending with runAt without touching retry_count', () => {
       deliverMessage(repo, SESSION, 'parked', { origin: 'chat' });
-      const [job] = repo.dequeue(MESSAGE_DELIVERY, 1); // claim → processing
+      const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
       const retryAt = Date.now() + 5_000;
       repo.requeue(job.id, retryAt);
       const after = repo.getJob(job.id);
@@ -270,7 +242,6 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
     it('returns a long-processing job to pending (the durable redelivery)', () => {
       deliverMessage(repo, SESSION, 'crashed', { origin: 'chat' });
       const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
-      // Simulate a daemon crash: the job is `processing` with a stale started_at.
       const staleStartedAt = Date.now() - 10 * 60 * 1000;
       db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
         staleStartedAt,
@@ -282,12 +253,10 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       const after = repo.getJob(job.id);
       expect(after?.status).toBe('pending');
       expect(after?.startedAt).toBeNull();
-      // And it can be claimed again (redelivered) with a fresh claim token.
       const [reclaimedJob] = repo.dequeue(MESSAGE_DELIVERY, 1);
       expect(reclaimedJob.claimToken).not.toBe(job.claimToken);
       expect(repo.isClaimCurrent(job.id, job.claimToken)).toBe(false);
       expect(repo.isClaimCurrent(reclaimedJob.id, reclaimedJob.claimToken)).toBe(true);
-      // The predecessor cannot heartbeat or requeue the replacement attempt.
       expect(repo.heartbeat(job.id, job.claimToken)).toBe(false);
       expect(repo.requeue(job.id, Date.now(), job.claimToken)).toBeNull();
     });
@@ -299,8 +268,6 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       const first = repo.dequeue(MESSAGE_DELIVERY, 1);
       expect(first).toHaveLength(1);
       expect(first[0].status).toBe('processing');
-      // The atomic dequeue transaction moved it pending→processing, so a second
-      // dequeue finds nothing — the message cannot be double-delivered.
       expect(repo.dequeue(MESSAGE_DELIVERY, 1)).toHaveLength(0);
     });
 
@@ -315,9 +282,9 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   describe('requeueAs — atomic promote (no second job)', () => {
     it('converts a processing steer to a pending turn in place', () => {
       deliverMessage(repo, SESSION, 'turn-anchor', { origin: 'chat' });
-      deliverMessage(repo, SESSION, 'the-steer', { origin: 'chat' }); // → steer
+      deliverMessage(repo, SESSION, 'the-steer', { origin: 'chat' });
       const [turn] = repo.dequeue(MESSAGE_DELIVERY, 1);
-      repo.complete(turn.id, { ok: true }); // free the active-turn slot
+      repo.complete(turn.id, { ok: true });
       const [steer] = repo.dequeue(MESSAGE_DELIVERY, 1);
       expect((steer.payload as { role: string }).role).toBe('steer');
       const before = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 50 }).length;
@@ -326,8 +293,7 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(after?.status).toBe('pending');
       expect((after?.payload as { role: string }).role).toBe('turn');
       expect(after?.runAt).toBe(123);
-      expect(after?.retryCount).toBe(0); // no retry bump
-      // Same job count — converted in place, no second job.
+      expect(after?.retryCount).toBe(0);
       expect(repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 50 }).length).toBe(before);
     });
 
@@ -369,19 +335,15 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   describe('activeDeliveryMessageUuids — legacy-replay guard', () => {
     it('lists UUIDs with an active (pending/processing) v2 job; empty when none', () => {
       expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set());
-      deliverMessage(repo, SESSION, 'msg-a', { origin: 'chat' }); // pending turn
-      deliverMessage(repo, SESSION, 'msg-b', { origin: 'chat' }); // pending steer
+      deliverMessage(repo, SESSION, 'msg-a', { origin: 'chat' });
+      deliverMessage(repo, SESSION, 'msg-b', { origin: 'chat' });
       expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['msg-a', 'msg-b']));
-      // Completed jobs drop out.
       const [turn] = repo.dequeue(MESSAGE_DELIVERY, 1);
       repo.complete(turn.id, { ok: true });
       expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['msg-b']));
     });
 
     it('includes batchUuids members of an active batched turn (batch-aware)', () => {
-      // A queue-flush batch turn carries its members in the payload; without
-      // the batch-aware union the reconciler/legacy replays would re-enqueue
-      // the members individually and duplicate the batched prompt.
       repo.enqueue({
         queue: MESSAGE_DELIVERY,
         payload: {
@@ -449,8 +411,6 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
           batchUuids: ['kickoff', 'admitted-a', 'over-budget-tail', 'user-deferred-tail'],
         },
       });
-      // Pending tail → recorded for lifecycle settlement; user-deferred tail →
-      // NOT recorded (cancellation must not fail the user's queued message).
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, sdk_uuid, send_status)
          VALUES ('m1', ?, 'over-budget-tail', 'enqueued'),
@@ -459,17 +419,11 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(
         repo.narrowActiveDeliveryBatchUuids(SESSION, 'kickoff', ['kickoff', 'admitted-a'])
       ).toBe(true);
-      // Every payload consumer (ACP acceptance consume, dead-letter, active
-      // lookups) now sees exactly what was fed — the tail is no longer
-      // batch-owned, consumed, or failed with the batch.
       expect(repo.getActiveDeliveryBatchUuids(SESSION, 'kickoff')).toEqual([
         'kickoff',
         'admitted-a',
       ]);
       expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['kickoff', 'admitted-a']));
-      // The settleable dropped tail stays durably recorded so lifecycle
-      // cancellation can still settle it (archive/reset must not leave it a
-      // hidden orphan) — the user-deferred one is excluded.
       const job = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 10 })[0];
       expect((job.payload as { droppedBatchUuids?: string[] }).droppedBatchUuids).toEqual([
         'over-budget-tail',
@@ -479,14 +433,10 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
         expect.arrayContaining(['kickoff', 'admitted-a', 'over-budget-tail'])
       );
       expect(cancelled).not.toContain('user-deferred-tail');
-      // No active job → no narrowing (the job settled).
       expect(repo.narrowActiveDeliveryBatchUuids(SESSION, 'kickoff', ['kickoff'])).toBe(false);
     });
 
     it('getActiveDeliveryRole recognizes a batch member (promote dedup)', () => {
-      // A member of a pending batch owns no job row of its own — the general
-      // idempotency guard must still see it, or a promote (Move to Steer)
-      // inserts an individual steer on top of the combined prompt.
       repo.enqueue({
         queue: MESSAGE_DELIVERY,
         payload: {
@@ -504,11 +454,8 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
     });
 
     it('deliverBatchAndMarkQueued returns false when ANY member already owns an active job', async () => {
-      // The oldest queued UUID owns a surviving steer job (startup/replay) —
-      // batching only the unowned tail would reorder the queue behind it, so
-      // the whole batch must fall back to per-message delivery.
       deliverMessage(repo, SESSION, 'turn-anchor', { origin: 'chat' });
-      deliverMessage(repo, SESSION, 'uuid-old', { origin: 'chat' }); // → steer
+      deliverMessage(repo, SESSION, 'uuid-old', { origin: 'chat' });
       const batched = await deliverBatchAndMarkQueued({
         jobQueue: repo,
         sessionId: SESSION,
@@ -516,7 +463,6 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
         origin: 'recovery',
       });
       expect(batched).toBe(false);
-      // Nothing new was enqueued by the batch attempt.
       const uuids = repo
         .listJobs({ queue: MESSAGE_DELIVERY, limit: 50 })
         .map((j) => (j.payload as { messageUuid: string }).messageUuid);
@@ -527,9 +473,8 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   describe('isProcessingDelivery — terminal-idle turn-end marker gate', () => {
     it('true only for a job currently processing; false when pending or absent', () => {
       deliverMessage(repo, SESSION, 'proc', { origin: 'chat' });
-      const [job] = repo.dequeue(MESSAGE_DELIVERY, 1); // → processing
+      const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
       expect(repo.isProcessingDelivery(SESSION, 'proc')).toBe(true);
-      // Requeue to pending (graceful shutdown) → no longer processing.
       repo.requeue(job.id, Date.now(), job.claimToken);
       expect(repo.isProcessingDelivery(SESSION, 'proc')).toBe(false);
       expect(repo.isProcessingDelivery(SESSION, 'absent')).toBe(false);
@@ -537,13 +482,9 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   });
 });
 
-// ── Handler-level conformance ──────────────────────────────────────────────
-// The session is mocked; the job_queue + index are real.
-
 class MockSession implements MessageDeliverySession {
   driveResult: DriveTurnOutcome = { outcome: 'completed' };
   feedResult: FeedSteerOutcome = { outcome: 'consumed' };
-  /** Per-UUID override — the mock stands in for the bridge's in-lock check. */
   driveOutcomeByUuid?: Record<string, DriveTurnOutcome>;
   shouldThrow = false;
   driveCalls = 0;
@@ -554,7 +495,6 @@ class MockSession implements MessageDeliverySession {
   lastParentToolUseId?: string | null;
   lastAlreadyConsumed = false;
   lastBatchUuids?: string[];
-  /** Toggle for the human-gate-open park exemption (Codex #11). */
   waitingForInput = false;
 
   async driveDeliveryTurn(
@@ -606,11 +546,8 @@ function turnJob(repo: JobQueueRepository, uuid: string): Job {
 }
 
 function steerJob(repo: JobQueueRepository, uuid: string): Job {
-  // A turn existed when the steer was enqueued (forcing role:'steer'), but it
-  // ended before the steer was claimed — the promote condition. Claim + complete
-  // the anchor turn so the slot is free when the steer is processed.
   deliverMessage(repo, SESSION, `${uuid}-turn-anchor`, { origin: 'chat' });
-  deliverMessage(repo, SESSION, uuid, { origin: 'chat' }); // → steer
+  deliverMessage(repo, SESSION, uuid, { origin: 'chat' });
   const [turn] = repo.dequeue(MESSAGE_DELIVERY, 1);
   repo.complete(turn.id, { ok: true });
   const [steer] = repo.dequeue(MESSAGE_DELIVERY, 1);
@@ -696,14 +633,10 @@ describe('message-delivery v2 — handler (conformance)', () => {
         if (uuid === 'deferred-member') {
           return { content: 'deferred', sendStatus: 'deferred' };
         }
-        return null; // deleted-member: content gone
+        return null;
       },
     });
     await handler(job);
-    // Only the kickoff remains usable in the handler-side estimate — plain
-    // single content. The RAW payload batchUuids still hand off to the bridge
-    // (it revalidates under the session lock before feeding), so the bridge —
-    // not this snapshot — decides the admitted set.
     expect(session.lastContent).toBe('only one left');
     expect(session.lastBatchUuids).toEqual(['kickoff', 'deleted-member', 'deferred-member']);
   });
@@ -719,7 +652,6 @@ describe('message-delivery v2 — handler (conformance)', () => {
     });
     const result = await handler(job);
     expect(result).toMatchObject({ parked: 'sdk_resume_choice', retryAt: 12345 });
-    // The job is back to pending (parked), NOT completed.
     expect(repo.getJob(job.id)?.status).toBe('pending');
     expect(repo.getJob(job.id)?.runAt).toBe(12345);
   });
@@ -734,8 +666,6 @@ describe('message-delivery v2 — handler (conformance)', () => {
       getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
     });
     await expect(handler(job)).rejects.toThrow('turn exploded');
-    // The processor would then fail() → backoff. The job stays processing here
-    // (the processor owns the fail()).
     expect(repo.getJob(job.id)?.status).toBe('processing');
   });
 
@@ -764,8 +694,6 @@ describe('message-delivery v2 — handler (conformance)', () => {
     });
     const result = await handler(job);
     expect(result).toMatchObject({ outcome: 'superseded', promoted: 'turn' });
-    // The SAME job was converted to a pending turn IN PLACE (requeueAs) — no
-    // second job, so no crash-window double-deliver.
     const after = repo.getJob(job.id);
     expect(after?.status).toBe('pending');
     expect((after?.payload as { role: string }).role).toBe('turn');
@@ -800,8 +728,6 @@ describe('message-delivery v2 — handler (conformance)', () => {
   });
 });
 
-// ── Status-aware delivery (§8: #2592 consumed-kickoff, #2597 defer, #3742616723 archive) ─
-
 describe('handler — status-aware delivery (§8)', () => {
   let db: Database;
   let repo: JobQueueRepository;
@@ -822,14 +748,10 @@ describe('handler — status-aware delivery (§8)', () => {
     const result = await handler(job);
     expect(result).toEqual({ outcome: 'completed' });
     expect(session.driveCalls).toBe(1);
-    expect(session.lastAlreadyConsumed).toBe(true); // ← the guard: no re-feed
+    expect(session.lastAlreadyConsumed).toBe(true);
   });
 
   it('a consumed turn whose turn already terminated is completed, not re-driven', async () => {
-    // The zombie-reclaim shape: the message was consumed but its turn produced a
-    // terminal result AFTER it (error/interrupt). The bridge (mocked here)
-    // detects this under the per-session lock and returns turn_terminated;
-    // the handler completes the job so the active-turn slot is freed.
     const session = new MockSession();
     session.driveResult = { outcome: 'turn_terminated' };
     const metrics = new DeliveryMetrics();
@@ -842,24 +764,15 @@ describe('handler — status-aware delivery (§8)', () => {
     });
     const result = await handler(job);
     expect(result).toEqual({ outcome: 'completed', skipped: 'turn_terminated' });
-    expect(session.driveCalls).toBe(1); // bridge consulted; it declined to re-drive
+    expect(session.driveCalls).toBe(1);
     expect(session.settleCalls).toEqual(['msg-terminated']);
-    // Observable: the zombie self-heal is counted as a reclaim skip so the
-    // diagnostics RPC can flag a rising turn_terminated rate.
     expect(metrics.snapshot().reclaimSkips.turn_terminated).toBe(1);
   });
 
   it('end-to-end: stale reclaimed consumed-turn with terminal result unblocks a parked steer', async () => {
-    // The exact stuck-session shape: a turn was delivered + consumed, its job
-    // went stale (processing past the reclaim window), and a new message arrived
-    // while the zombie still held the active-turn slot → inserted as a steer.
-    // Recovery: reclaimStale → the re-claimed turn completes (turn_terminated) →
-    // the freed slot lets the parked steer promote into a real turn and drive.
     const session = new MockSession();
-    session.feedResult = { outcome: 'promote' }; // steer sees no active turn once freed
+    session.feedResult = { outcome: 'promote' };
     const statuses: Record<string, string> = { 'zombie-turn': 'consumed' };
-    // The bridge (mocked here) detects the zombie's terminated turn in-lock and
-    // declines to re-drive it; the promoted message drives normally.
     session.driveOutcomeByUuid = { 'zombie-turn': { outcome: 'turn_terminated' } };
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
@@ -870,9 +783,8 @@ describe('handler — status-aware delivery (§8)', () => {
       }),
     });
 
-    // 1) A turn was delivered + consumed, but its job went stale.
-    deliverMessage(repo, SESSION, 'zombie-turn', { origin: 'chat' }); // role turn
-    const [zombie] = repo.dequeue(MESSAGE_DELIVERY, 1); // claimed → processing
+    deliverMessage(repo, SESSION, 'zombie-turn', { origin: 'chat' });
+    const [zombie] = repo.dequeue(MESSAGE_DELIVERY, 1);
     const staleLease = Date.now() - 10 * 60 * 1000;
     db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
       staleLease,
@@ -880,48 +792,39 @@ describe('handler — status-aware delivery (§8)', () => {
       zombie.id
     );
 
-    // 2) A new message arrives while the zombie still occupies the slot → steer.
     deliverMessage(repo, SESSION, 'new-msg', { origin: 'chat' });
     const steerRow = repo
       .listJobs({ queue: MESSAGE_DELIVERY, limit: 50 })
       .find((j) => (j.payload as { messageUuid: string }).messageUuid === 'new-msg');
     expect((steerRow?.payload as { role: string }).role).toBe('steer');
 
-    // 3) reclaimStale resets the zombie to pending (the durable redelivery seam).
     expect(repo.reclaimStale(Date.now() - 5 * 60 * 1000)).toHaveLength(1);
 
-    // 4) Re-claim + handle the zombie: turn_terminated → completed, no re-drive.
     const [reclaimed] = repo.dequeue(MESSAGE_DELIVERY, 1);
     expect((reclaimed.payload as { role: string }).role).toBe('turn');
     const zombieResult = await handler(reclaimed);
     expect(zombieResult).toEqual({ outcome: 'completed', skipped: 'turn_terminated' });
-    expect(session.driveCalls).toBe(1); // bridge consulted; declined to re-drive
+    expect(session.driveCalls).toBe(1);
     expect(session.settleCalls).toContain('zombie-turn');
-    repo.complete(reclaimed.id, { ok: true }); // what the processor does on return → slot freed
+    repo.complete(reclaimed.id, { ok: true });
 
-    // 5) The parked steer is now unblocked: sees no active turn → promotes in place.
     const [steer] = repo.dequeue(MESSAGE_DELIVERY, 1);
     expect((steer.payload as { role: string }).role).toBe('steer');
     const steerResult = await handler(steer);
     expect(steerResult).toMatchObject({ outcome: 'superseded', promoted: 'turn' });
     expect(repo.getJob(steer.id)?.status).toBe('pending');
     expect((repo.getJob(steer.id)?.payload as { role: string }).role).toBe('turn');
-    // The zombie no longer owns the active-turn slot; the promoted message does.
     const active = repo.activeDeliveryMessageUuids(SESSION);
     expect(active.has('zombie-turn')).toBe(false);
     expect(active.has('new-msg')).toBe(true);
 
-    // 6) The promoted turn is claimable and drives normally — the message delivers.
     const [promoted] = repo.dequeue(MESSAGE_DELIVERY, 1);
     const promotedResult = await handler(promoted);
     expect(promotedResult).toEqual({ outcome: 'completed' });
-    expect(session.driveCalls).toBe(2); // zombie (declined) + promoted (driven)
+    expect(session.driveCalls).toBe(2);
   });
 
   it('records reclaim-skip counters via the injected metrics sink (review P2.2a)', async () => {
-    // The handler accepts an injectable DeliveryMetrics so a test can assert the
-    // reclaim-skip wiring (alreadyConsumed / alreadySubmitted / noContent) at the
-    // handler level, not just the singleton.
     const session = new MockSession();
     const metrics = new DeliveryMetrics();
     const job = turnJob(repo, 'msg-consumed-m');
@@ -933,7 +836,7 @@ describe('handler — status-aware delivery (§8)', () => {
     });
     await handler(job);
     expect(metrics.snapshot().reclaimSkips.alreadyConsumed).toBe(1);
-    expect(metrics.snapshot().feedsObserved).toBe(0); // consumed → no feed, not counted here
+    expect(metrics.snapshot().feedsObserved).toBe(0);
   });
 
   it('a submitted row re-claimed records alreadySubmitted + skips (review P2.2a)', async () => {
@@ -952,10 +855,6 @@ describe('handler — status-aware delivery (§8)', () => {
   });
 
   it('a submitted ACP STEER keeps parking until accepted (not skip-completed)', async () => {
-    // onSent fired (≡ onSubmitted → row `submitted`) but acceptance is async.
-    // Skip-completing would strand the row as `submitted` with no job; instead
-    // the handler re-parks (bounded by MAX_STEER_PARKS) until the row flips to
-    // `consumed` (accepted) or the budget exhausts. A submitted TURN still skips.
     const session = new MockSession();
     const job = steerJob(repo, 'msg-submitted-steer');
     const handler = createMessageDeliveryHandler({
@@ -967,9 +866,9 @@ describe('handler — status-aware delivery (§8)', () => {
     const result = await handler(job);
     expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
     const after = repo.getJob(job.id);
-    expect(after?.status).toBe('pending'); // re-parked, not completed
+    expect(after?.status).toBe('pending');
     expect(after?.runAt ?? 0).toBeGreaterThan(before);
-    expect(session.feedCalls).toBe(0); // not re-fed
+    expect(session.feedCalls).toBe(0);
   });
 
   it('deferred message is skipped, not force-fed into the turn (#2597)', async () => {
@@ -1041,17 +940,11 @@ describe('handler — status-aware delivery (§8)', () => {
     const result = await handler(job);
     expect(result).toMatchObject({ parked: 'turn_blocked' });
     const after = repo.getJob(job.id);
-    expect(after?.status).toBe('pending'); // parked, not completed
-    // Delayed runAt (not Date.now()) — this is what breaks the every-poll hot loop.
+    expect(after?.status).toBe('pending');
     expect(after?.runAt ?? 0).toBeGreaterThan(before);
   });
 
   it('an ACP steer awaiting acceptance is PARKED (kept alive), not auto-completed', async () => {
-    // ACP's consume boundary is acceptance (markMessageAccepted), which fires
-    // async from the runner — so the bridge reports awaiting-acceptance instead
-    // of consumed. The handler must park (keep the job alive) rather than
-    // auto-completing at submission, or the row strands if acceptance never
-    // comes. See feedDeliverySteer / message-delivery.handler.
     const session = new MockSession();
     session.feedResult = { outcome: 'awaiting_acceptance' };
     const job = steerJob(repo, 'msg-acp-accept');
@@ -1064,7 +957,7 @@ describe('handler — status-aware delivery (§8)', () => {
     const result = await handler(job);
     expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
     const after = repo.getJob(job.id);
-    expect(after?.status).toBe('pending'); // parked (alive), not completed
+    expect(after?.status).toBe('pending');
     expect(after?.runAt ?? 0).toBeGreaterThan(before);
     expect(session.feedCalls).toBe(1);
   });
@@ -1100,8 +993,6 @@ describe('handler — status-aware delivery (§8)', () => {
   });
 });
 
-// ── Repo: exempt dequeue + shutdown requeue (#2587 / #2593) ─────────────────
-
 describe('repo — exempt dequeue + requeueAllProcessing (#2587/#2593)', () => {
   let db: Database;
   let repo: JobQueueRepository;
@@ -1113,20 +1004,17 @@ describe('repo — exempt dequeue + requeueAllProcessing (#2587/#2593)', () => {
 
   it('dequeue(exclude) claims turns but leaves steers; dequeueExempt claims steers', () => {
     const steerSpec = { path: '$.role', equals: 'steer' };
-    deliverMessage(repo, SESSION, 'turn-1', { origin: 'chat' }); // turn
-    deliverMessage(repo, SESSION, 'steer-1', { origin: 'chat' }); // steer
-    // Capped dequeue excludes steers → claims only the turn.
+    deliverMessage(repo, SESSION, 'turn-1', { origin: 'chat' });
+    deliverMessage(repo, SESSION, 'steer-1', { origin: 'chat' });
     const capped = repo.dequeue(MESSAGE_DELIVERY, 10, steerSpec);
     expect(capped).toHaveLength(1);
     expect((capped[0].payload as { role: string }).role).toBe('turn');
-    // Exempt dequeue claims the steer that was left behind.
     const exempt = repo.dequeueExempt(MESSAGE_DELIVERY, steerSpec, 10);
     expect(exempt).toHaveLength(1);
     expect((exempt[0].payload as { role: string }).role).toBe('steer');
   });
 
   it('dequeue(exclude) is a no-op filter for lanes without an exempt spec', () => {
-    // No exclude → claims everything (backward compatible).
     deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
     deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
     const claimed = repo.dequeue(MESSAGE_DELIVERY, 10);
@@ -1137,10 +1025,8 @@ describe('repo — exempt dequeue + requeueAllProcessing (#2587/#2593)', () => {
     deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
     deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
     deliverMessage(repo, 'other-session', 'c', { origin: 'chat' });
-    repo.dequeue(MESSAGE_DELIVERY, 10); // claim all → processing
+    repo.dequeue(MESSAGE_DELIVERY, 10);
     const runAt = Date.now();
-    // Returns the re-enqueued IDs (count = length) so the shutdown path can
-    // spread the restart herd with the stale-reclaim jitter.
     const requeued = repo.requeueAllProcessing(MESSAGE_DELIVERY, runAt);
     expect(requeued).toHaveLength(3);
     const all = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 50 });
@@ -1150,12 +1036,12 @@ describe('repo — exempt dequeue + requeueAllProcessing (#2587/#2593)', () => {
   });
 
   it('cancelForSession deletes pending+processing jobs for the session, leaves others (#3672)', () => {
-    deliverMessage(repo, SESSION, 'a', { origin: 'chat' }); // turn (pending)
-    deliverMessage(repo, SESSION, 'b', { origin: 'chat' }); // steer (pending)
-    deliverMessage(repo, 'other-session', 'c', { origin: 'chat' }); // other session
-    repo.dequeue(MESSAGE_DELIVERY, 1); // claim the turn 'a' → processing
+    deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
+    deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
+    deliverMessage(repo, 'other-session', 'c', { origin: 'chat' });
+    repo.dequeue(MESSAGE_DELIVERY, 1);
     const n = repo.cancelForSession(SESSION);
-    expect(n).toBe(2); // 'a' (processing) + 'b' (pending)
+    expect(n).toBe(2);
     const remaining = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 10 });
     expect(remaining).toHaveLength(1);
     expect((remaining[0].payload as { sessionId: string }).sessionId).toBe('other-session');
@@ -1170,8 +1056,6 @@ describe('repo — exempt dequeue + requeueAllProcessing (#2587/#2593)', () => {
     expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set());
   });
 });
-
-// ── Processor: exempt pass + dead-letter hook (#2587 / #2595) ───────────────
 
 describe('processor — exempt pass + onDead (#2587/#2595)', () => {
   let db: Database;
@@ -1194,17 +1078,15 @@ describe('processor — exempt pass + onDead (#2587/#2595)', () => {
       async (job) => {
         const role = (job.payload as { role: string }).role;
         ran.push(role);
-        if (role === 'turn') await turnBlocked; // hold the one capped slot
+        if (role === 'turn') await turnBlocked;
         return { ok: true };
       },
       { exemptJobs: { path: '$.role', equals: 'steer' } }
     );
 
-    deliverMessage(repo, SESSION, 't', { origin: 'chat' }); // turn
-    deliverMessage(repo, SESSION, 's', { origin: 'chat' }); // steer (turn active)
+    deliverMessage(repo, SESSION, 't', { origin: 'chat' });
+    deliverMessage(repo, SESSION, 's', { origin: 'chat' });
     await processor.tick();
-    // Both handlers were invoked during tick: the turn holds the sole capped
-    // slot, yet the steer STILL ran via the exempt pass — the #2587 headline.
     expect(ran).toEqual(['turn', 'steer']);
     releaseTurn();
     await processor.stop();
@@ -1226,7 +1108,7 @@ describe('processor — exempt pass + onDead (#2587/#2595)', () => {
       maxRetries: 0,
     });
     await processor.tick();
-    await new Promise((r) => setTimeout(r, 5)); // let the fire-and-forget fail + onDead fire
+    await new Promise((r) => setTimeout(r, 5));
     expect(dead).toHaveLength(1);
     expect(dead[0].status).toBe('dead');
     await processor.stop();
@@ -1242,7 +1124,7 @@ describe('delivery consumption signal (long-horizon delivered = consumed)', () =
     });
     expect(resolved).toBe(false);
     signalDeliveryConsumed('sess', 'consume-1');
-    await Promise.resolve(); // flush the resolution microtask
+    await Promise.resolve();
     expect(resolved).toBe(true);
   });
 
@@ -1253,7 +1135,7 @@ describe('delivery consumption signal (long-horizon delivered = consumed)', () =
       resolved = true;
     });
     handle.cancel();
-    signalDeliveryConsumed('sess', 'consume-2'); // no waiter left — must not resolve
+    signalDeliveryConsumed('sess', 'consume-2');
     await Promise.resolve();
     expect(resolved).toBe(false);
   });
@@ -1278,10 +1160,6 @@ describe('delivery consumption signal (long-horizon delivered = consumed)', () =
   });
 
   it('a waiter for (sess-A, uuid-X) stays PENDING when sess-B signals the same UUID (cross-session scoping)', async () => {
-    // Guards the r23 scoping fix: the registry is keyed by (session, UUID), not
-    // UUID alone, so a multi-target delivery fanning the same MessageRecord out
-    // to several agents can't let one session's consumption signal resolve
-    // another session's waiter.
     let aResolved = false;
     let bResolved = false;
     void waitForDeliveryConsumption('sess-A', 'shared-uuid').promise.then(() => {
@@ -1291,13 +1169,12 @@ describe('delivery consumption signal (long-horizon delivered = consumed)', () =
       bResolved = true;
     });
 
-    signalDeliveryConsumed('sess-B', 'shared-uuid'); // only sess-B's waiter resolves
+    signalDeliveryConsumed('sess-B', 'shared-uuid');
     await Promise.resolve();
 
     expect(bResolved).toBe(true);
-    expect(aResolved).toBe(false); // sess-A's waiter is untouched
+    expect(aResolved).toBe(false);
 
-    // sess-A's waiter still resolves on ITS OWN signal.
     signalDeliveryConsumed('sess-A', 'shared-uuid');
     await Promise.resolve();
     expect(aResolved).toBe(true);
@@ -1305,11 +1182,6 @@ describe('delivery consumption signal (long-horizon delivered = consumed)', () =
 });
 
 describe('drainDeliveryWaitersOnTerminalSDKMessage (handleSDKMessage-catch gating)', () => {
-  // Covers both runners' handleSDKMessage catch blocks (Claude query-runner +
-  // ACP acp-query-runner), which both route through this helper. A non-terminal
-  // message throw must NOT free the active-turn slot mid-turn; only the final
-  // `result` does. (Codex P1.)
-
   it('calls setIdle (drains) when the throwing message is the final result', async () => {
     const setIdle = mock(async () => {});
     await drainDeliveryWaitersOnTerminalSDKMessage({ setIdle }, { type: 'result' } as SDKMessage);
@@ -1364,7 +1236,7 @@ describe('awaitDeliveryConsumption — terminalize a fresh job on timeout (no-st
       })
     ).rejects.toThrow('not consumed within timeout');
     expect(deliver).toHaveBeenCalledTimes(1);
-    expect(terminalize).toHaveBeenCalledTimes(1); // terminalized so a retry won't duplicate
+    expect(terminalize).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT call terminalizeOnTimeout when consumption is signalled in time', async () => {
@@ -1402,13 +1274,10 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
 
     let current = steerJob(repo, 'msg-park-bound');
 
-    // Park exactly MAX_STEER_PARKS times — each returns {parked} and re-queues
-    // (bumping __parkCount) without burning the retry budget. Re-claim each
-    // iteration (the park sets run_at into the future; reset it to re-claim).
     for (let i = 0; i < MAX_STEER_PARKS; i++) {
       const result = await handler(current);
       expect(result).toMatchObject({ parked: 'turn_blocked' });
-      expect(repo.getJob(current.id)?.retryCount).toBe(0); // parking is not a retry
+      expect(repo.getJob(current.id)?.retryCount).toBe(0);
       db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
       const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
       expect(next).toBeTruthy();
@@ -1416,17 +1285,10 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
     }
     expect(repo.getParkCount(current.id)).toBeGreaterThanOrEqual(MAX_STEER_PARKS);
 
-    // The next attempt exceeds the budget → the handler throws so the processor
-    // dead-letters the job (→ message flipped to `failed` with a Retry affordance).
     await expect(handler(current)).rejects.toThrow(/parked past its budget/);
   });
 
   it('ACP awaiting-acceptance parks up to the budget, then dead-letters', async () => {
-    // Bounded by the acceptance-sized budget (MAX_ACP_STEER_PARKS, covering
-    // ACP's 12min acceptance window at the 5s park cadence — NOT the generic
-    // turn-blocked bound, which would dead-letter a still-executing request):
-    // an ACP steer whose acceptance never comes must surface as `failed` (Retry
-    // affordance) instead of parking silently forever or stranding the row.
     expect(MAX_ACP_STEER_PARKS * MESSAGE_DELIVERY_PARK_MS).toBeGreaterThanOrEqual(
       ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS
     );
@@ -1442,7 +1304,7 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
     for (let i = 0; i < MAX_ACP_STEER_PARKS; i++) {
       const result = await handler(current);
       expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
-      expect(repo.getJob(current.id)?.retryCount).toBe(0); // parking is not a retry
+      expect(repo.getJob(current.id)?.retryCount).toBe(0);
       db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
       const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
       expect(next).toBeTruthy();
@@ -1453,10 +1315,6 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
   });
 
   it('a persisted-submitted ACP steer parks to the same acceptance-sized budget, then dead-letters', async () => {
-    // Companion of the awaiting_acceptance test above: the re-run path where
-    // the row is already `submitted` (onSent fired) uses the same
-    // MAX_ACP_STEER_PARKS bound — covering ACP's acceptance window, not the
-    // generic turn-blocked budget.
     const session = new MockSession();
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
@@ -1468,7 +1326,7 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
     for (let i = 0; i < MAX_ACP_STEER_PARKS; i++) {
       const result = await handler(current);
       expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
-      expect(session.feedCalls).toBe(0); // never re-fed
+      expect(session.feedCalls).toBe(0);
       db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
       const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
       current = next!;
@@ -1478,9 +1336,6 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
   });
 
   it('a steer parked behind an OPEN human gate keeps parking past the budget (Codex #11)', async () => {
-    // An unanswered sdk_resume_choice (waiting_for_input) is a legitimately
-    // blocked turn, not abandonment — the steer must not be dead-lettered while
-    // the gate is open, no matter how many parks have elapsed.
     const session = new MockSession();
     session.feedResult = { outcome: 'park' };
     session.waitingForInput = true;
@@ -1491,11 +1346,6 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
     });
 
     let current = steerJob(repo, 'msg-gate-open');
-    // Park well past the budget — every attempt still parks (no dead-letter),
-    // and the gate-open requeue does NOT charge the park budget (plain requeue,
-    // not requeueParked), so the count stays 0 for a fresh window once the gate
-    // resolves (a long-open choice must not dead-letter the first post-
-    // resolution pass).
     for (let i = 0; i < MAX_STEER_PARKS + 5; i++) {
       const result = await handler(current);
       expect(result).toMatchObject({ parked: 'turn_blocked_gate_open' });
@@ -1506,8 +1356,6 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
       expect(next).toBeTruthy();
       current = next!;
     }
-    // Once the gate resolves, the bound applies again from a clean count → the
-    // steer gets its full park budget before dead-lettering.
     session.waitingForInput = false;
     for (let i = 0; i < MAX_STEER_PARKS; i++) {
       const result = await handler(current);

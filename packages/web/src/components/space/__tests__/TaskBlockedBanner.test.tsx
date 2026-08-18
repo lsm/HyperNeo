@@ -1,27 +1,8 @@
-/**
- * Unit tests for TaskBlockedBanner
- *
- * Tests:
- * - Renders fallback amber banner when blockReason is null
- * - Renders a minimal "reply via composer" hint for human_input_requested (full question renders in the thread)
- * - Renders execution_failed banner with Reopen and Cancel buttons
- * - Renders agent_crashed banner with Reopen and Cancel buttons
- * - Renders dependency_failed banner (informational)
- * - Renders workflow_invalid banner (informational)
- * - Reopen and Cancel buttons call onStatusTransition
- * - Shows result text when present
- * - Banner always shows even without result text
- */
-
 import { describe, it, expect, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/preact';
 import type { SpaceTask } from '@hyperneo/shared';
 
 import { TaskBlockedBanner } from '../TaskBlockedBanner';
-
-// ============================================================================
-// Helpers
-// ============================================================================
 
 function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
   return {
@@ -48,10 +29,6 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
   } as SpaceTask;
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 describe('TaskBlockedBanner', () => {
   afterEach(() => {
     cleanup();
@@ -60,9 +37,6 @@ describe('TaskBlockedBanner', () => {
   it('renders fallback amber banner when blockReason is null', () => {
     const { getByTestId } = render(<TaskBlockedBanner task={makeTask()} spaceId="space-1" />);
     const banner = getByTestId('task-blocked-banner');
-    // Tone is exposed via data-tone rather than a border class — the banner
-    // composes the InlineStatusBanner primitive, so assertions target that
-    // attribute instead of the legacy hand-rolled class string.
     expect(banner.getAttribute('data-tone')).toBe('amber');
     expect(banner.textContent).toContain('Blocked');
     expect(getByTestId('task-blocked-reopen-btn')).toBeTruthy();
@@ -70,9 +44,6 @@ describe('TaskBlockedBanner', () => {
   });
 
   it('renders a minimal "reply via composer" hint for human_input_requested', () => {
-    // The full question renders in the thread; this banner is a safety net
-    // that points the user to the composer in case the thread message is
-    // missing. It must NOT duplicate the full question text.
     const task = makeTask({
       blockReason: 'human_input_requested',
       result: 'What color scheme do you prefer?',
@@ -83,7 +54,6 @@ describe('TaskBlockedBanner', () => {
     expect(banner.textContent).toContain('composer');
     expect(getByTestId('task-blocked-reopen-btn')).toBeTruthy();
     expect(getByTestId('task-blocked-cancel-btn')).toBeTruthy();
-    // Deliberately not rendering task.result inside the banner.
     expect(banner.textContent).not.toContain('What color scheme');
   });
 

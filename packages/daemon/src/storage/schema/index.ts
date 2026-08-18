@@ -1,19 +1,9 @@
-/**
- * Database Schema Management
- *
- * Responsibilities:
- * - Table definitions for all tables
- * - Index creation
- * - Default value initialization
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { createWorkflowEventSubscriptionTables } from './workflow-event-subscriptions';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
-// Re-export migrations
 // knip-ignore-next-line
 export { runMigrations } from './migrations';
 // knip-ignore-next-line
@@ -137,11 +127,7 @@ export { runMigration174 } from './migrations';
 // knip-ignore-next-line
 export { runMigration186 } from './migrations';
 
-/**
- * Create all database tables and initialize defaults
- */
 export function createTables(db: BunDatabase): void {
-  // Sessions table
   db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -176,10 +162,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Messages and tool_calls tables removed - we now only use sdk_messages table
-  // This provides a cleaner design with single source of truth
-
-  // Authentication configuration table (stores current auth method and credentials)
   db.exec(`
       CREATE TABLE IF NOT EXISTS auth_config (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -191,17 +173,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // OAuth state table removed - web-based OAuth flow is no longer supported
-  // Authentication is now handled via environment variables only
-
-  // SDK Messages table (stores full SDK messages with all metadata).
-  //
-  // `task_id` is denormalised from the writing session's
-  // `session_context.taskId` at INSERT time. It supports task-scoped
-  // activity feeds without a separate map table. Nullable (most non-Space
-  // sessions are not task-bound) and intentionally has no FK — task
-  // lifecycle is managed independently and we don't want a task delete
-  // to cascade-blow-away historic messages.
   db.exec(`
       CREATE TABLE IF NOT EXISTS sdk_messages (
         id TEXT PRIMARY KEY,
@@ -267,7 +238,6 @@ export function createTables(db: BunDatabase): void {
       ON sdk_message_replacements(task_id, target_uuid)
     `);
 
-  // Initialize auth_config with default values if not exists
   db.exec(`
       INSERT OR IGNORE INTO auth_config (id, auth_method, updated_at)
       VALUES (1, 'none', datetime('now'))
@@ -283,7 +253,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Global tools configuration table
   db.exec(`
       CREATE TABLE IF NOT EXISTS global_tools_config (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -292,13 +261,11 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Initialize global_tools_config with default values if not exists
   db.exec(`
       INSERT OR IGNORE INTO global_tools_config (id, config, updated_at)
       VALUES (1, '${JSON.stringify(DEFAULT_GLOBAL_TOOLS_CONFIG)}', datetime('now'))
     `);
 
-  // Global settings table
   db.exec(`
       CREATE TABLE IF NOT EXISTS global_settings (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -307,13 +274,11 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Initialize global_settings with default values if not exists
   db.exec(`
       INSERT OR IGNORE INTO global_settings (id, settings, updated_at)
       VALUES (1, '${JSON.stringify(DEFAULT_GLOBAL_SETTINGS)}', datetime('now'))
     `);
 
-  // Providers table - unified provider registry
   db.exec(`
       CREATE TABLE IF NOT EXISTS providers (
         id TEXT PRIMARY KEY,
@@ -336,9 +301,6 @@ export function createTables(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_provider_id ON providers(provider_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_sort_order ON providers(sort_order)`);
 
-  // Room tables - self-aware architecture foundation
-
-  // Rooms table - conceptual workspaces
   db.exec(`
       CREATE TABLE IF NOT EXISTS rooms (
         id TEXT PRIMARY KEY,
@@ -357,7 +319,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Tasks table - task management
   db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
@@ -390,7 +351,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Goals table
   db.exec(`
       CREATE TABLE IF NOT EXISTS goals (
         id TEXT PRIMARY KEY,
@@ -426,9 +386,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Space-native long-horizon goals. These intentionally do not couple to
-  // the legacy room `goals` / mission execution tables above: goal state lives
-  // here, concrete execution happens through linked `space_tasks` rows.
   db.exec(`
       CREATE TABLE IF NOT EXISTS space_goals (
         id TEXT PRIMARY KEY,
@@ -483,7 +440,6 @@ export function createTables(db: BunDatabase): void {
 	      )
 	    `);
 
-  // Short ID counters — per-(entity_type, scope_id) monotonic counter for short ID allocation
   db.exec(`
       CREATE TABLE IF NOT EXISTS short_id_counters (
         entity_type TEXT NOT NULL,
@@ -493,8 +449,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Partial unique indexes for short_id on tasks and goals — scoped to room so that
-  // different rooms can each have their own t-1, t-2, ... sequence without collision.
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
   );
@@ -502,7 +456,6 @@ export function createTables(db: BunDatabase): void {
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_room_short_id ON goals(room_id, short_id) WHERE short_id IS NOT NULL`
   );
 
-  // Mission metric history table
   db.exec(`
       CREATE TABLE IF NOT EXISTS mission_metric_history (
         id TEXT PRIMARY KEY,
@@ -514,7 +467,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Mission executions table
   db.exec(`
       CREATE TABLE IF NOT EXISTS mission_executions (
         id TEXT PRIMARY KEY,
@@ -531,9 +483,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // GitHub integration tables
-
-  // Room GitHub mappings - maps repositories to rooms
   db.exec(`
       CREATE TABLE IF NOT EXISTS room_github_mappings (
         id TEXT PRIMARY KEY,
@@ -546,7 +495,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Space-level watched GitHub repositories and PR activity events
   db.exec(`
       CREATE TABLE IF NOT EXISTS space_github_watched_repos (
         id TEXT PRIMARY KEY,
@@ -604,7 +552,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Inbox items - GitHub events awaiting routing
   db.exec(`
       CREATE TABLE IF NOT EXISTS inbox_items (
         id TEXT PRIMARY KEY,
@@ -627,8 +574,6 @@ export function createTables(db: BunDatabase): void {
         FOREIGN KEY (routed_to_room_id) REFERENCES rooms(id) ON DELETE SET NULL
       )
     `);
-
-  // Room Runtime tables — session groups for multi-agent collaboration
 
   db.exec(`
       CREATE TABLE IF NOT EXISTS session_groups (
@@ -662,11 +607,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // task_session_map has been removed. Task-scoped lookups now read
-  // `sdk_messages.task_id` directly (see migration 122 + the column
-  // declared in `sdk_messages` above). This bootstrap path no longer
-  // needs to know about the legacy table at all.
-
   db.exec(`
       CREATE TABLE IF NOT EXISTS app_mcp_servers (
         id TEXT PRIMARY KEY,
@@ -686,16 +626,12 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Partial unique index on (source_path, name) for imported rows — enables
-  // idempotent upserts from McpImportService without a pre-check round trip.
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_app_mcp_servers_import
 		 ON app_mcp_servers(source_path, name)
 		 WHERE source = 'imported' AND source_path IS NOT NULL`
   );
 
-  // Per-room MCP enablement overrides (legacy — superseded by `mcp_enablement`
-  // with scope_type='room'. Kept here until M5 purges it.)
   db.exec(`
       CREATE TABLE IF NOT EXISTS room_mcp_enablement (
         room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -705,10 +641,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Generalized MCP enablement overrides — one row per explicit override at a
-  // specific scope (space / room / session). Missing rows inherit from the
-  // next most-specific scope, falling back to the registry default. Added in
-  // M3 (Migration 100); supersedes `room_mcp_enablement`, which is dropped in M5.
   db.exec(`
       CREATE TABLE IF NOT EXISTS mcp_enablement (
         server_id  TEXT NOT NULL REFERENCES app_mcp_servers(id) ON DELETE CASCADE,
@@ -723,7 +655,6 @@ export function createTables(db: BunDatabase): void {
   );
   db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_enablement_server ON mcp_enablement(server_id)`);
 
-  // Application-level Skills registry
   db.exec(`
       CREATE TABLE IF NOT EXISTS skills (
         id TEXT PRIMARY KEY,
@@ -739,7 +670,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Per-room skill enablement overrides
   db.exec(`
       CREATE TABLE IF NOT EXISTS room_skill_overrides (
         skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
@@ -769,11 +699,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-  // Durable delivery-turn completion markers (message-delivery v2). Written when
-  // a delivery-driven turn ends via a result-less terminal path (query error,
-  // interrupt) that persists no SDK `result` row, so a stale re-claim can
-  // recognize the consumed turn ended instead of re-driving it into an
-  // indefinitely-waiting query. See message-delivery-v2.md + Codex (PR #2463).
   db.exec(`
       CREATE TABLE IF NOT EXISTS delivery_turn_end (
         session_id TEXT NOT NULL,
@@ -786,11 +711,6 @@ export function createTables(db: BunDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_delivery_turn_end_session
       ON delivery_turn_end(session_id)
   `);
-  // Monotonic consumption-watermark counter for message-delivery v2. A singleton
-  // row holding the next sequence; consumed_seq is drawn from it at consume time
-  // so it is genuinely monotonic and independent of SQLite rowid reuse (a
-  // deleted max rowid can be reused by a later insert, which would break
-  // MAX(rowid)+1). See message-delivery-v2.md + Codex (PR #2463, P2).
   db.exec(`
       CREATE TABLE IF NOT EXISTS delivery_consumed_seq (
         singleton INTEGER PRIMARY KEY DEFAULT 1,
@@ -801,7 +721,6 @@ export function createTables(db: BunDatabase): void {
       INSERT OR IGNORE INTO delivery_consumed_seq (singleton, next_seq) VALUES (1, 1)
     `);
 
-  // Workspace history — persists recently-used workspace paths
   db.exec(`
       CREATE TABLE IF NOT EXISTS workspace_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -811,9 +730,6 @@ export function createTables(db: BunDatabase): void {
       )
 	    `);
 
-  // Durable Codex tool continuation recovery state. The full space schema is
-  // migration-owned, so these tables avoid foreign keys here and are also
-  // created by migration 109 for existing databases.
   db.exec(`
 	      CREATE TABLE IF NOT EXISTS tool_continuation_recovery (
 	        tool_use_id TEXT PRIMARY KEY,
@@ -852,7 +768,6 @@ export function createTables(db: BunDatabase): void {
   createLongHorizonAgentTables(db);
   createWorkflowEventSubscriptionTables(db);
 
-  // Create indexes
   createIndexes(db);
 }
 
@@ -978,65 +893,30 @@ function createAgentMemoryTables(db: BunDatabase): void {
 	`);
 }
 
-/**
- * Create database indexes for performance
- */
 function createIndexes(db: BunDatabase): void {
-  // idx_sdk_messages_session (session_id, timestamp) was dropped in migration
-  // 173 — a strict prefix of idx_sdk_messages_session_timestamp_id below.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
       ON sdk_messages(session_id, timestamp DESC, id DESC)`);
-  // Plain B-tree index over the materialised parent_tool_use_id column.
-  // The earlier json_extract function index (idx_sdk_messages_parent_tool)
-  // was dropped in migration 126 — all callers now use the column directly.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id
       ON sdk_messages(session_id, parent_tool_use_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal
       ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`);
-  // idx_sdk_messages_uuid_status (session_id, send_status, json_extract uuid)
-  // was dropped in migration 173 — superseded by idx_sdk_messages_session_uuid
-  // (session_id, sdk_uuid); the uuid lookups now filter on the sdk_uuid column.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
       ON sdk_messages(message_type, message_subtype)`);
-  // Makes the chat-view subtype filters sargable: the messages.bySession
-  // background-task sidecar and friends constrain (session_id, subtype, parent_tool_use_id),
-  // and ~78% of rows have message_subtype NULL, so filtering on the raw column
-  // forces a non-sargable COALESCE. message_subtype_norm is the NULL-coalesced
-  // generated column; this composite turns those filters into index seeks.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_subtype_parent
       ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
       ON sdk_messages(session_id, send_status)`);
-  // Consumption watermark — MAX(consumed_seq) on the consumed-flip hot path
-  // must be an index scan, not a full-table pass. See Codex (PR #2463, P2).
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_consumed_seq
       ON sdk_messages(consumed_seq)`);
-  // Task-scoped feeds and activity views read directly from this column.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id
       ON sdk_messages(task_id, timestamp)`);
-  // Covers the `SELECT DISTINCT session_id WHERE task_id = ?` dedup in the
-  // SPACE_TASK_ACTIVITY_BY_TASK_SQL `contributing_sessions` CTE — turns it
-  // into an index-only scan rather than walking the (task_id, timestamp)
-  // index and dropping the timestamp column.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session
       ON sdk_messages(task_id, session_id)`);
-  // Backs the conversation-turn recent-window seek (#2338):
-  // `MAX(conversation_turn_index) WHERE task_id = ?` and the
-  // `conversation_turn_index >= max - (M-1)` range scan.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
       ON sdk_messages(task_id, conversation_turn_index)`);
-  // Backs the per-session turn-inheritance seek (#2338):
-  // `MAX(conversation_turn_index) WHERE task_id = ? AND session_id = ?` — used
-  // on every non-anchor insert. Without the turn column here SQLite walks other
-  // sessions' newer turns in idx_sdk_messages_task_turn, putting a growing scan
-  // back on the streaming hot path.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
       ON sdk_messages(task_id, session_id, conversation_turn_index)`);
 
-  // Legacy `task_session_map` indexes no longer exist — see the
-  // `sdk_messages.task_id` column above for the replacement.
-
-  // Agent memory indexes
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_space ON space_agent_memory(space_id)`
   );
@@ -1053,7 +933,6 @@ function createIndexes(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_space_agent_core_memory_rank ON space_agent_core_memory(space_id, rank)`
   );
 
-  // Room indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
@@ -1085,7 +964,6 @@ function createIndexes(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_space_goal_events_source_task ON space_goal_events(source_task_id, created_at DESC)`
   );
 
-  // GitHub integration indexes
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_room_github_mappings_room ON room_github_mappings(room_id)`
   );
@@ -1102,28 +980,17 @@ function createIndexes(db: BunDatabase): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_inbox_items_repository ON inbox_items(repository, issue_number)`
   );
-  // Room Runtime indexes
   db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_ref ON session_groups(ref_id)`);
-  // Partial unique index: at most one active group per task ref_id at the DB level.
-  // Scoped to task/task_pair group types only — other future group types may share
-  // ref_id values without violating this constraint.
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_active_ref
 		 ON session_groups(ref_id) WHERE completed_at IS NULL AND (group_type = 'task' OR group_type = 'task_pair')`
   );
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sgm_session ON session_group_members(session_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tge_group ON task_group_events(group_id, id)`);
-  // Job queue indexes
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`
   );
   db.exec(`CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status)`);
-  // message_delivery v2: atomic "one active turn per session" guard + turn-vs-steer
-  // arbiter. MUST exist on fresh DBs too — migrations run BEFORE createTables() (see
-  // database-core.ts), so migration 182 early-returns (no job_queue yet) on a fresh
-  // install and would otherwise leave this index absent, letting every turn insert
-  // succeed (no steers). createIndexes is the fresh-schema path; migration 182 covers
-  // existing-DB upgrades. `IF NOT EXISTS` makes both idempotent. See message-delivery-v2.md §6.
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS uq_message_delivery_active_turn
       ON job_queue (queue, json_extract(payload, '$.sessionId'))
@@ -1131,17 +998,11 @@ function createIndexes(db: BunDatabase): void {
         AND json_extract(payload, '$.role') = 'turn'
         AND status IN ('pending', 'processing')
   `);
-  // Covering index for activeDeliveryMessageUuids / hasActiveDeliveryJobs — the
-  // "which sessions own an active durable job" lookup, run on each idle
-  // transition + a 60s timer + startup + turn-end. Without it the query scans
-  // the whole message_delivery lane doing json_extract per row; this partial
-  // expression index turns it into a seek by sessionId. (task #861, review P2.)
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_message_delivery_session_active
       ON job_queue (json_extract(payload, '$.sessionId'))
       WHERE queue = 'message_delivery' AND status IN ('pending', 'processing')
   `);
-  // Workspace history index — supports ORDER BY last_used_at DESC in list()
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_workspace_history_last_used_at ON workspace_history(last_used_at DESC)`
   );

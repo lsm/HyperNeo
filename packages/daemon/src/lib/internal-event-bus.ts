@@ -1,57 +1,20 @@
-/**
- * InternalEventBus — Semantic daemon messaging primitive (v1)
- *
- * First-class facade for typed internal events with explicit await-vs-fire-and-forget
- * semantics. Daemon/domain code publishes and subscribes through this facade.
- *
- * Semantics
- * ---------
- * • `publish(...)`  – awaits every local internal handler and returns/throws
- *   structured handler failures.  Use when the caller must know whether all
- *   subscribers succeeded.
- * • `publishAsync(...)` – explicit fire-and-forget.  Returns immediately;
- *   handler failures are silently swallowed.
- *
- * Design constraints (v1)
- * -----------------------
- * • Wraps existing lower-level infrastructure where practical — the registry is
- *   kept in-process and does not migrate existing callers.
- * • No persistence / no replay.
- * • Subscriber names are required for diagnostics.
- *
- * Future direction
- * ----------------
- * See docs/plans/internal-event-command-query-architecture.md for the full
- * internal-event / command / query architecture plan.
- */
-
 import type { GlobalSettings } from '@hyperneo/shared';
 import type { ExternalEventPublishedPayload } from './external-events/external-event-service';
 
 export interface HandlerFailure {
-  /** Subscriber name that registered the failing handler. */
   subscriberName: string;
 
-  /** Event name being handled when the failure occurred. */
   event: string;
 
-  /** The raw Error (or Error-like) thrown by the handler. */
   error: Error;
 }
 
 export interface PublishResult {
-  /** Number of handlers that completed successfully. */
   delivered: number;
 
-  /** Structured failures from handlers that threw or rejected. */
   failures: HandlerFailure[];
 }
 
-/**
- * Thrown by `publish(...)` when one or more handlers fail.
- * The `result` field contains the full breakdown so callers can decide
- * whether to abort, partially retry, or continue.
- */
 export class InternalEventBusPublishError extends Error {
   constructor(
     public readonly event: string,
@@ -65,34 +28,16 @@ export class InternalEventBusPublishError extends Error {
   }
 }
 
-/**
- * Generic constraint for event-map entries.
- * All events must be plain objects so we can safely read `sessionId` for
- * scoped routing.
- */
 export interface InternalEventPayload {
-  /** Session-scoped routing key. Use `'global'` for app-wide events. */
   sessionId?: string;
-  /** Namespace-scoped routing key used by newer space/runtime events. */
   namespaceId?: string;
 
   [key: string]: unknown;
 }
 
-/**
- * Subscription options.
- */
 export interface SubscribeOptions {
-  /**
-   * Human-readable subscriber identifier used in diagnostics and
-   * `HandlerFailure.subscriberName`.  Required.
-   */
   subscriberName: string;
 
-  /**
-   * When provided, the handler only receives events whose payload carries
-   * the matching `sessionId`/`namespaceId`.  Omit for a global subscription.
-   */
   sessionId?: string;
   namespaceId?: string;
 }
@@ -106,23 +51,9 @@ interface RegisteredHandler {
 
 const GLOBAL_SESSION_KEY = '__global__';
 
-/**
- * InternalEventBus
- *
- * @template TEventMap — map of dot-separated event names to payload shapes.
- */
 export class InternalEventBus<TEventMap extends object = Record<string, InternalEventPayload>> {
-  // event → sessionId → handlers
   private handlers = new Map<string, Map<string, Set<RegisteredHandler>>>();
 
-  /**
-   * Subscribe to an event.
-   *
-   * @param event     — typed event name
-   * @param handler   — callback invoked when the event is published
-   * @param options   — must include `subscriberName`; optional `sessionId` filter
-   * @returns unsubscribe function
-   */
   subscribe<K extends keyof TEventMap & string>(
     event: K,
     handler: InternalEventHandler<TEventMap[K] & InternalEventPayload>,
@@ -171,17 +102,6 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
     };
   }
 
-  /**
-   * Publish an event and **await** every local internal handler.
-   *
-   * All matching handlers are executed concurrently.  If any handler throws,
-   * the error is captured in a structured `HandlerFailure`, every other
-   * handler still runs, and the method finally throws
-   * `InternalEventBusPublishError` containing the full `PublishResult`.
-   *
-   * When **all** handlers succeed the returned `PublishResult` contains
-   * `failures: []` and is never thrown.
-   */
   async publish<K extends keyof TEventMap & string>(
     event: K,
     data: TEventMap[K] & InternalEventPayload
@@ -199,14 +119,11 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
 
     const targets: RegisteredHandler[] = [];
 
-    // Session-scoped handlers
     const scoped = sessionMap.get(sessionId);
     if (scoped) {
       for (const h of scoped) targets.push(h);
     }
 
-    // Global handlers — only add when sessionId is not the global sentinel
-    // to prevent double-delivery of the same handler set.
     if (sessionId !== GLOBAL_SESSION_KEY) {
       const global = sessionMap.get(GLOBAL_SESSION_KEY);
       if (global) {
@@ -218,7 +135,6 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
       return { delivered: 0, failures: [] };
     }
 
-    // Run every handler concurrently; collect failures individually.
     await Promise.all(
       targets.map(async (registered) => {
         try {
@@ -244,20 +160,10 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
     return result;
   }
 
-  /**
-   * Fire-and-forget publish.
-   *
-   * Schedules handlers asynchronously but returns immediately.
-   * Handler failures are silently swallowed; they are never thrown
-   * and the caller cannot await them.
-   */
   publishAsync<K extends keyof TEventMap & string>(
     event: K,
     data: TEventMap[K] & InternalEventPayload
   ): void {
-    // Defer to the next microtask so that synchronous handlers do not
-    // run on the caller's stack and `publishAsync` truly returns
-    // immediately.
     queueMicrotask(() => {
       this.publish(event, data).catch(() => {
         // Swallow — publishAsync is explicit fire-and-forget.
@@ -265,24 +171,14 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
     });
   }
 
-  /**
-   * Remove every handler for the given event (all sessions).
-   */
   off<K extends keyof TEventMap & string>(event: K): void {
     this.handlers.delete(event);
   }
 
-  /**
-   * Remove all handlers for every event.
-   */
   clear(): void {
     this.handlers.clear();
   }
 
-  /**
-   * Return the total number of registered handlers for an event
-   * across all session scopes.
-   */
   getHandlerCount<K extends keyof TEventMap & string>(event: K): number {
     const sessionMap = this.handlers.get(event);
     if (!sessionMap) return 0;
@@ -293,9 +189,6 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
     return total;
   }
 
-  /**
-   * Return the number of registered handlers for a specific session scope.
-   */
   getHandlerCountForSession<K extends keyof TEventMap & string>(
     event: K,
     sessionId: string
@@ -305,9 +198,6 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
     return sessionMap.get(sessionId)?.size ?? 0;
   }
 
-  /**
-   * Return the number of registered handlers for a specific namespace scope.
-   */
   getHandlerCountForNamespace<K extends keyof TEventMap & string>(
     event: K,
     namespaceId: string
@@ -316,61 +206,26 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
   }
 }
 
-/**
- * Convenience factory that produces an InternalEventBus typed with the
- * caller's event map.
- *
- * This is the entry point most daemon code should use:
- *
- *   import { createInternalEventBus } from '@hyperneo/daemon/lib/internal-event-bus';
- *   const bus = createInternalEventBus<MyEventMap>();
- */
 export function createInternalEventBus<
   TEventMap extends object = Record<string, InternalEventPayload>,
 >(): InternalEventBus<TEventMap> {
   return new InternalEventBus<TEventMap>();
 }
 
-// ---------------------------------------------------------------------------
-// Event contracts — canonical payloads for InternalEventBus events.
-// Keep each domain's events in a separate interface and intersect them here.
-//
-// Naming convention: dot-separated, lower camelCase per segment, fact/state-
-// change wording. See docs/plans/internal-event-command-query-architecture.md.
-// ---------------------------------------------------------------------------
-
-/**
- * Payload for `settings.updated` — emitted when global settings are updated
- * via `settings.global.update`, `settings.global.save`, or after a successful
- * `.mcp.json` import refresh. Subscribers (e.g. StateProjectionService) re-broadcast
- * the latest settings to clients on the global settings channel.
- *
- * Always carries `sessionId: 'global'` — settings are application-wide.
- */
 export interface SettingsUpdatedEvent {
   sessionId?: string;
   namespaceId?: string;
   settings: GlobalSettings;
 }
 
-/**
- * Settings domain events.
- */
 export interface SettingsEvents {
   'settings.updated': SettingsUpdatedEvent;
 }
 
-/**
- * External event domain events.
- */
 export interface ExternalEventEvents {
   'externalEvent.published': ExternalEventPublishedPayload;
 }
 
-/**
- * Session domain events.
- * These events drive StateProjectionService cache updates.
- */
 export interface SessionEvents {
   'sdk.toolUse.created': {
     sessionId: string;
@@ -394,41 +249,19 @@ export interface SessionEvents {
   'commands.updated': { sessionId: string; commands: string[] };
   'session.error': { sessionId: string; error: string; details?: unknown };
   'session.errorClear': { sessionId: string };
-  /**
-   * A session has paused after rate/usage-limit exhaustion with no fallback
-   * left (chain exhausted). Listeners (e.g. the Space runtime) surface a paused
-   * task status with a resume-at timestamp. Emitted by RateLimitWatchdog.
-   */
   'session.rate_limit_pause': {
     sessionId: string;
-    /** 'rate_limit' (transient) or 'usage_limit' (daily/weekly cap). */
     kind: 'rate_limit' | 'usage_limit';
-    /** Epoch-ms when the limit is expected to reset, if known. */
     resetAt?: number;
-    /** Short reason string (the cooldown decision reason). */
     reason: string;
   };
-  /**
-   * A previously rate-limited session has resumed (cooldown fired, user
-   * cancelled/retried, or the API call succeeded). Listeners clear any paused
-   * task status. Emitted by RateLimitWatchdog.
-   */
   'session.rate_limit_resume': { sessionId: string };
 }
 
-/**
- * API connection events.
- */
 export interface ApiConnectionEvents {
   'api.connection': { sessionId: string } & import('@hyperneo/shared').ApiConnectionState;
 }
 
-// ---------------------------------------------------------------------------
-// Space runtime events — migrated from NotificationSink to InternalEventBus in M6.
-// Naming: dot-separated, lower camelCase per segment, fact/state-change wording.
-// ---------------------------------------------------------------------------
-
-/** A task has transitioned to `blocked` and requires judgment. */
 export interface SpaceTaskBlockedEvent {
   sessionId: string;
   spaceId: string;
@@ -437,12 +270,6 @@ export interface SpaceTaskBlockedEvent {
   timestamp: string;
 }
 
-/**
- * A task has been unblocked and is resuming.
- *
- * Reserved: defined in the event map for forward compatibility, but not yet
- * emitted by any publisher. Will be wired when the runtime adds an unblock path.
- */
 export interface SpaceTaskUnblockedEvent {
   sessionId: string;
   spaceId: string;
@@ -451,13 +278,6 @@ export interface SpaceTaskUnblockedEvent {
   timestamp: string;
 }
 
-/**
- * A task has reached a terminal state (completed, failed, or cancelled).
- *
- * Reserved: defined in the event map for forward compatibility, but not yet
- * emitted by any publisher. The runtime currently emits `workflowRun.completed`
- * for terminal runs rather than per-task completion events.
- */
 export interface SpaceTaskCompletedEvent {
   sessionId: string;
   spaceId: string;
@@ -466,13 +286,6 @@ export interface SpaceTaskCompletedEvent {
   timestamp: string;
 }
 
-/**
- * A task has failed with an unrecoverable error.
- *
- * Reserved: defined in the event map for forward compatibility, but not yet
- * emitted by any publisher. Task failures are currently surfaced via
- * `space.task.blocked` with the failure reason.
- */
 export interface SpaceTaskFailedEvent {
   sessionId: string;
   spaceId: string;
@@ -481,7 +294,6 @@ export interface SpaceTaskFailedEvent {
   timestamp: string;
 }
 
-/** A Task Agent session crashed unexpectedly. */
 export interface SpaceAgentCrashedEvent {
   sessionId: string;
   spaceId: string;
@@ -489,13 +301,6 @@ export interface SpaceAgentCrashedEvent {
   timestamp: string;
 }
 
-/**
- * A crashed agent has been recovered (e.g. after retry).
- *
- * Reserved: defined in the event map for forward compatibility, but not yet
- * emitted by any publisher. Recovery is currently silent; agents are retried
- * without emitting a dedicated recovery event.
- */
 export interface SpaceAgentRecoveredEvent {
   sessionId: string;
   spaceId: string;
@@ -503,7 +308,6 @@ export interface SpaceAgentRecoveredEvent {
   timestamp: string;
 }
 
-/** A workflow execution attempt has finished. */
 export interface SpaceWorkflowRunCompletedEvent {
   sessionId: string;
   spaceId: string;
@@ -513,7 +317,6 @@ export interface SpaceWorkflowRunCompletedEvent {
   timestamp: string;
 }
 
-/** A workflow run has failed with an unrecoverable error. */
 export interface SpaceWorkflowRunFailedEvent {
   sessionId: string;
   spaceId: string;
@@ -522,7 +325,6 @@ export interface SpaceWorkflowRunFailedEvent {
   timestamp: string;
 }
 
-/** A workflow run has transitioned to `blocked`. */
 export interface SpaceWorkflowRunBlockedEvent {
   sessionId: string;
   spaceId: string;
@@ -531,7 +333,6 @@ export interface SpaceWorkflowRunBlockedEvent {
   timestamp: string;
 }
 
-/** A finished or waiting workflow run has been reopened back to `in_progress`. */
 export interface SpaceWorkflowRunReopenedEvent {
   sessionId?: string;
   namespaceId?: string;
@@ -543,34 +344,21 @@ export interface SpaceWorkflowRunReopenedEvent {
   timestamp: string;
 }
 
-/**
- * A cyclic channel between two agents has tripped the rate-based dead-loop
- * detector — too many messages within a short rolling window. The send that
- * would have exceeded the threshold was blocked. Emitted so the human sees the
- * block in the UI rather than the send failing silently.
- */
 export interface SpaceWorkflowRunDeadLoopEvent {
   sessionId?: string;
   namespaceId?: string;
   spaceId: string;
   runId: string;
-  /** Sending agent name. */
   fromAgent: string;
-  /** Receiving agent name (or node name for fan-out). */
   toTarget: string;
-  /** Index of the cyclic channel in the workflow's `channels` array. */
   channelIndex: number;
-  /** Traversals recorded within the rolling window at the time of the trip. */
   recentCount: number;
-  /** Max traversals permitted within the window (the threshold that was met). */
   threshold: number;
-  /** Window length in milliseconds. */
   windowMs: number;
   reason: string;
   timestamp: string;
 }
 
-/** A blocked execution is being automatically retried by the runtime. */
 export interface SpaceWorkflowRunRetryEvent {
   sessionId: string;
   spaceId: string;
@@ -582,7 +370,6 @@ export interface SpaceWorkflowRunRetryEvent {
   timestamp: string;
 }
 
-/** A blocked workflow run has exhausted automatic retries and needs attention. */
 export interface SpaceWorkflowRunNeedsAttentionEvent {
   sessionId: string;
   spaceId: string;
@@ -593,7 +380,6 @@ export interface SpaceWorkflowRunNeedsAttentionEvent {
   timestamp: string;
 }
 
-/** A task has paused at a completion action that requires approval. */
 export interface SpaceTaskAwaitingApprovalEvent {
   sessionId: string;
   spaceId: string;
@@ -608,7 +394,6 @@ export interface SpaceTaskAwaitingApprovalEvent {
   timestamp: string;
 }
 
-/** A task has been running longer than the configured timeout threshold. */
 export interface SpaceTaskTimeoutEvent {
   sessionId: string;
   spaceId: string;
@@ -617,9 +402,6 @@ export interface SpaceTaskTimeoutEvent {
   timestamp: string;
 }
 
-/**
- * Space domain events — migrated from NotificationSink to InternalEventBus in M6.
- */
 export interface SpaceEvents {
   'space.task.blocked': SpaceTaskBlockedEvent;
   'space.task.unblocked': SpaceTaskUnblockedEvent;
@@ -638,17 +420,6 @@ export interface SpaceEvents {
   'space.task.timeout': SpaceTaskTimeoutEvent;
 }
 
-/**
- * Canonical daemon internal event map.
- *
- * Each domain should own its slice; this type is the intersection of all
- * domain event maps so the bus can be typed with the full surface.
- *
- * This map is the canonical event surface for daemon application/domain code.
- * The permissive payload entry keeps the remaining long-tail event names routable
- * through InternalEventBus while narrower domain slices document payloads for
- * active subscribers.
- */
 type InternalEventBusPayload = { sessionId?: string; namespaceId?: string } & Record<
   string,
   unknown
@@ -764,13 +535,6 @@ interface ClientForwardingEvents {
   'providers.changed': { sessionId: string };
 }
 
-/**
- * Full-surface event map for daemon application code.
- *
- * The permissive index signature keeps long-tail event names routable through
- * InternalEventBus while narrower domain slices document typed payloads for active
- * subscribers.
- */
 export type DaemonInternalEventMap = Record<string, InternalEventBusPayload> &
   AgentControlEvents &
   ClientForwardingEvents &
@@ -780,11 +544,6 @@ export type DaemonInternalEventMap = Record<string, InternalEventBusPayload> &
   ApiConnectionEvents &
   SpaceEvents;
 
-/**
- * Convenience factory typed with the canonical daemon internal event map.
- * Prefer this over the bare `createInternalEventBus` factory inside daemon
- * application/domain code so all migrated events share one typed surface.
- */
 export function createDaemonInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
   return new InternalEventBus<DaemonInternalEventMap>();
 }

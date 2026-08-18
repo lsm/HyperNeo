@@ -30,11 +30,8 @@ class RAFQueue {
   }
 }
 
-// The toast store is module-level. We must clean it up between tests by
-// dismissing all toasts via the hook.
 function ToastResetter() {
   const { toasts, dismiss } = useToast();
-  // Dismiss all immediately on mount
   for (const t of toasts) {
     dismiss(t.id);
   }
@@ -42,7 +39,6 @@ function ToastResetter() {
 }
 
 afterEach(async () => {
-  // Dismiss any lingering toasts from the module-level store
   await act(async () => {
     render(<ToastResetter />);
   });
@@ -52,10 +48,6 @@ afterEach(async () => {
   const portalRoot = document.getElementById('headlessui-portal-root');
   if (portalRoot) portalRoot.remove();
 });
-
-// -------------------------
-// useToast hook
-// -------------------------
 
 describe('useToast hook', () => {
   it('toast() creates a toast and returns its id', async () => {
@@ -149,15 +141,10 @@ describe('useToast hook', () => {
     await act(async () => {
       fireEvent.click(screen.getByText('UpdateFixed'));
     });
-    // Should still be 1 (replaced, not added)
     expect(screen.getByTestId('count').textContent).toBe('1');
     expect(screen.getByTestId('title').textContent).toBe('v2');
   });
 });
-
-// -------------------------
-// Toast component
-// -------------------------
 
 describe('Toast component', () => {
   it('renders with role="status" when show=true', async () => {
@@ -178,7 +165,6 @@ describe('Toast component', () => {
       </Toast>
     );
     await act(async () => {});
-    // When show=false, Transition unmounts content
     expect(screen.queryByTestId('inner')).toBeNull();
   });
 
@@ -195,11 +181,9 @@ describe('Toast component', () => {
     await act(async () => {});
     expect(screen.queryByTestId('inner')).not.toBeNull();
 
-    // Advance past auto-dismiss timer
     await act(async () => {
       vi.advanceTimersByTime(1000);
     });
-    // Flush the RAF that runLeave() schedules
     await act(async () => {
       raf.flush();
     });
@@ -239,7 +223,6 @@ describe('Toast component', () => {
         </Toast>
       );
     });
-    // Flush leave RAF
     await act(async () => {
       raf.flush();
     });
@@ -258,22 +241,15 @@ describe('Toast component', () => {
       </Toast>
     );
     await act(async () => {});
-    // Advance past auto-dismiss timer
     await act(async () => {
       vi.advanceTimersByTime(100);
     });
-    // Flush leave RAF — afterLeave() is called inside the RAF callback
-    // (waitForTransition is immediate with no CSS transitions)
     await act(async () => {
       raf.flush();
     });
     expect(afterLeave).toHaveBeenCalled();
   });
 });
-
-// -------------------------
-// ToastTitle
-// -------------------------
 
 describe('ToastTitle', () => {
   it('throws when used outside Toast', () => {
@@ -313,10 +289,6 @@ describe('ToastTitle', () => {
   });
 });
 
-// -------------------------
-// ToastDescription
-// -------------------------
-
 describe('ToastDescription', () => {
   it('throws when used outside Toast', () => {
     expect(() => {
@@ -354,10 +326,6 @@ describe('ToastDescription', () => {
     expect(desc?.tagName.toLowerCase()).toBe('span');
   });
 });
-
-// -------------------------
-// ToastAction
-// -------------------------
 
 describe('ToastAction', () => {
   it('throws when used outside Toast', () => {
@@ -408,7 +376,6 @@ describe('ToastAction', () => {
     await act(async () => {
       fireEvent.mouseLeave(action);
     });
-    // No error thrown
     expect(action).not.toBeNull();
   });
 
@@ -447,15 +414,10 @@ describe('ToastAction', () => {
   });
 });
 
-// -------------------------
-// Toaster component
-// -------------------------
-
 describe('Toaster', () => {
   it('renders in portal (outside component tree container)', async () => {
     render(<Toaster />);
     await act(async () => {});
-    // Portal mounts inside portal root
     const portalRoot = document.getElementById('headlessui-portal-root');
     expect(portalRoot).not.toBeNull();
   });
@@ -503,7 +465,6 @@ describe('Toaster', () => {
     });
     await act(async () => {});
 
-    // The toast title should now be in the document
     expect(document.body.textContent).toContain('Managed Toast');
   });
 
@@ -540,7 +501,6 @@ describe('Toaster', () => {
       </Toaster>
     );
     await act(async () => {});
-    // Custom children are rendered inside the portal
     expect(document.querySelector('[data-testid="custom-child"]')).not.toBeNull();
   });
 
@@ -558,8 +518,6 @@ describe('Toaster', () => {
   });
 
   it('removes managed toast from store after leave transition (afterLeave callback)', async () => {
-    // This test covers Toaster's afterLeave: () => dismiss(item.id) callback (line 339)
-    // which is called when a managed toast finishes its leave transition.
     const raf = new RAFQueue();
     raf.install();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -578,30 +536,22 @@ describe('Toaster', () => {
     render(<ToasterAndAdder />);
     await act(async () => {});
 
-    // Add a managed toast
     await act(async () => {
       fireEvent.click(screen.getByText('Add'));
     });
     await act(async () => {});
     expect(screen.getByTestId('count').textContent).toBe('1');
 
-    // Toast auto-dismisses after duration → Transition starts leave
     await act(async () => {
       vi.advanceTimersByTime(200);
     });
-    // Flush the RAF for the leave transition
     await act(async () => {
       raf.flush();
     });
-    // afterLeave calls dismiss(item.id), removing from store
     await act(async () => {});
     expect(screen.getByTestId('count').textContent).toBe('0');
   });
 });
-
-// -------------------------
-// Toast variant
-// -------------------------
 
 describe('Toast variant', () => {
   it('renders with data-variant="info" by default', async () => {
@@ -687,10 +637,6 @@ describe('Toast variant', () => {
   });
 });
 
-// -------------------------
-// ToastProgress
-// -------------------------
-
 describe('ToastProgress', () => {
   it('throws when used outside Toast', () => {
     expect(() => {
@@ -754,7 +700,6 @@ describe('ToastProgress', () => {
       </Toast>
     );
     await act(async () => {});
-    // ToastProgress reads progress from context, which is undefined when showProgress is false
     const progress = screen.queryByTestId('progress');
     expect(progress).toBeNull();
   });
@@ -793,7 +738,6 @@ describe('ToastProgress', () => {
 
     const toast = document.querySelector('[role="status"]');
     expect(toast).not.toBeNull();
-    // ToastProgress is rendered as a child of Toast when showProgress is true
     expect(toast?.querySelector('[data-progress]')).not.toBeNull();
   });
 
@@ -830,14 +774,9 @@ describe('ToastProgress', () => {
 
     const toast = document.querySelector('[role="status"]');
     expect(toast).not.toBeNull();
-    // ToastProgress should not be rendered when showProgress is false
     expect(toast?.querySelector('[data-progress]')).toBeNull();
   });
 });
-
-// -------------------------
-// Toast icon slot (via Toaster)
-// -------------------------
 
 describe('Toast icon slot', () => {
   it('renders managed toast with icon via useToast', async () => {
@@ -910,10 +849,6 @@ describe('Toast icon slot', () => {
     expect(icon).toBeNull();
   });
 });
-
-// -------------------------
-// Backward compatibility
-// -------------------------
 
 describe('Toast backward compatibility', () => {
   it('Toast without variant prop works as before', async () => {

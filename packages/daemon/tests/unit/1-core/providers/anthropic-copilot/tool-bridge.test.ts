@@ -1,7 +1,3 @@
-/**
- * Tests for anthropic-copilot/tool-bridge.ts
- */
-
 import { describe, expect, it } from 'bun:test';
 import type { ServerResponse } from 'node:http';
 import {
@@ -10,10 +6,6 @@ import {
 } from '../../../../../src/lib/providers/anthropic-copilot/tool-bridge';
 import type { AnthropicTool } from '../../../../../src/lib/providers/anthropic-copilot/types';
 import { AnthropicStreamWriter } from '../../../../../src/lib/providers/anthropic-copilot/sse';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeRes(): { written: string[]; ended: boolean; res: ServerResponse } {
   const written: string[] = [];
@@ -30,10 +22,6 @@ function makeRes(): { written: string[]; ended: boolean; res: ServerResponse } {
   } as unknown as ServerResponse;
   return { written, ended, res };
 }
-
-// ---------------------------------------------------------------------------
-// ToolBridgeRegistry
-// ---------------------------------------------------------------------------
 
 describe('ToolBridgeRegistry', () => {
   it('resolveToolResult returns false for unknown id', () => {
@@ -82,15 +70,11 @@ describe('ToolBridgeRegistry', () => {
     const p1 = reg.emitToolUseAndWait('tc_1', 'bash', {});
     void p1.catch(() => {});
 
-    // rejectAll fires before the queueMicrotask flush runs
     reg.rejectAll(new Error('disconnect'));
 
     const writtenBefore = written.length;
-    // Allow the already-queued microtask to run
     await Promise.resolve();
-    // No additional writes should have occurred after rejectAll
     expect(written.length).toBe(writtenBefore);
-    // pendingEmissions must be cleared so future flushes are no-ops
     expect(
       (reg as unknown as Record<string, unknown>)['pendingEmissions'] as unknown[]
     ).toHaveLength(0);
@@ -102,12 +86,9 @@ describe('ToolBridgeRegistry', () => {
     const { res } = makeRes();
     writer.start(res, 'model');
     reg.setActiveResponse(writer, res);
-    // Both calls buffer — microtask batching means neither clears the active
-    // response synchronously, so a single setActiveResponse is sufficient.
     const p1 = reg.emitToolUseAndWait('tc_1', 'bash', {});
     const p2 = reg.emitToolUseAndWait('tc_2', 'read', {});
 
-    // Attach catch handlers before rejectAll to prevent unhandled-rejection throws in Bun.
     void p1.catch(() => {});
     void p2.catch(() => {});
     reg.rejectAll(new Error('session closed'));
@@ -130,7 +111,6 @@ describe('ToolBridgeRegistry', () => {
     });
 
     const promise = reg.emitToolUseAndWait('tc_x', 'myTool', {});
-    // onToolUseEmitted fires inside the microtask flush — await a tick first.
     await Promise.resolve();
     expect(emittedIds).toEqual(['tc_x']);
 
@@ -150,30 +130,24 @@ describe('ToolBridgeRegistry', () => {
       emittedIds = ids;
     });
 
-    // Simulate two parallel tool handlers calling emitToolUseAndWait concurrently.
     const p1 = reg.emitToolUseAndWait('tc_1', 'bash', { cmd: 'ls' });
     const p2 = reg.emitToolUseAndWait('tc_2', 'read_file', { path: '/tmp' });
 
-    // Before microtask flush: both are pending, no SSE written yet.
     expect(reg.hasPending()).toBe(true);
     expect(reg.pendingIds()).toContain('tc_1');
     expect(reg.pendingIds()).toContain('tc_2');
     expect(emittedIds).toBeNull();
 
-    // Allow microtask flush to run.
     await Promise.resolve();
 
-    // After flush: onToolUseEmitted fired with all tool call IDs.
     expect(emittedIds).toEqual(['tc_1', 'tc_2']);
 
-    // Both tool_use blocks were written to the same response.
     const output = written.join('');
     expect(output).toContain('"tc_1"');
     expect(output).toContain('"tc_2"');
     expect(output).toContain('"bash"');
     expect(output).toContain('"read_file"');
 
-    // Resolve both tool handlers.
     expect(reg.resolveToolResult('tc_1', 'result1')).toBe(true);
     expect(reg.resolveToolResult('tc_2', 'result2')).toBe(true);
 
@@ -201,10 +175,6 @@ describe('ToolBridgeRegistry', () => {
     await promise;
   });
 });
-
-// ---------------------------------------------------------------------------
-// mapAnthropicToolsToSdkTools
-// ---------------------------------------------------------------------------
 
 describe('mapAnthropicToolsToSdkTools', () => {
   it('creates one SDK tool per Anthropic tool', () => {

@@ -1,10 +1,3 @@
-/**
- * useSessionActions Hook
- *
- * Manages session action handlers: delete, archive, reset, export.
- * Extracted from ChatContainer.tsx for better separation of concerns.
- */
-
 import { useState, useCallback } from 'preact/hooks';
 import type { Session, ArchiveSessionResponse } from '@hyperneo/shared';
 import { connectionManager } from '../lib/connection-manager';
@@ -26,13 +19,11 @@ export interface UseSessionActionsOptions {
 }
 
 export interface UseSessionActionsResult {
-  // State
   archiving: boolean;
   deleting: boolean;
   resettingAgent: boolean;
   archiveConfirmDialog: ArchiveConfirmState | null;
 
-  // Actions
   handleDeleteSession: () => Promise<void>;
   handleArchiveClick: () => Promise<void>;
   handleConfirmArchive: () => Promise<void>;
@@ -41,9 +32,6 @@ export interface UseSessionActionsResult {
   handleExportChat: () => Promise<void>;
 }
 
-/**
- * Hook for managing session actions
- */
 export function useSessionActions({
   sessionId,
   session,

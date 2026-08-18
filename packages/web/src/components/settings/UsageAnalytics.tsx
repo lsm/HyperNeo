@@ -66,7 +66,7 @@ function DailyChart({ dailyCosts }: { dailyCosts: DailyCost[] }) {
     <div class="flex items-end gap-1 h-24">
       {dailyCosts.map((day) => {
         const height = maxDailyCost > 0 ? (day.cost / maxDailyCost) * 100 : 0;
-        const dateLabel = day.date.slice(5); // MM-DD
+        const dateLabel = day.date.slice(5);
         return (
           <div key={day.date} class="flex-1 flex flex-col items-center gap-1">
             <div class="w-full flex items-end justify-center" style={{ height: '80px' }}>
@@ -103,7 +103,6 @@ export function UsageAnalytics() {
     }
   }, []);
 
-  // Fetch on mount
   useEffect(() => {
     fetchUsage();
   }, [fetchUsage]);

@@ -1,7 +1,3 @@
-/**
- * WorkflowRunArtifactRepository Tests
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
@@ -82,7 +78,6 @@ describe('WorkflowRunArtifactRepository', () => {
         data: { number: 1, state: 'merged' },
       });
 
-      // Must return the original row's id, not the new UUID
       expect(second.id).toBe('art-1');
       expect(second.createdAt).toBe(first.createdAt);
       expect(second.updatedAt).toBeGreaterThanOrEqual(first.updatedAt);
@@ -226,7 +221,6 @@ describe('WorkflowRunArtifactRepository', () => {
 
   describe('corrupted JSON handling', () => {
     it('skips rows with invalid JSON data', () => {
-      // Insert a row with corrupted JSON directly via SQL
       (db as any)
         .prepare(
           `INSERT INTO workflow_run_artifacts (id, run_id, node_id, artifact_type, artifact_key, data, created_at, updated_at)

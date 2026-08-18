@@ -1,8 +1,3 @@
-/**
- * Tests for the shared task-filter predicates used by the Action tab and
- * the sidebar Tasks badge in `SpaceDetailPanel`.
- */
-
 import type { SpaceTask, SpaceTaskStatus } from '@hyperneo/shared';
 import { describe, expect, it } from 'vitest';
 import { isActionRequired, isActiveTask } from '../task-filters';
@@ -86,16 +81,6 @@ describe('isActionRequired and isActiveTask are mutually exclusive', () => {
   });
 });
 
-/**
- * Regression test for the bug where the sidebar "Active" tab and the
- * main-pane Tasks "Active" tab disagreed about whether `approved` tasks
- * belong in Active. The fixture covers every `SpaceTaskStatus` and asserts
- * the predicate's output over a heterogeneous list. The companion check
- * that the tasks-view's `TAB_PREDICATES.active` resolves to the same
- * function lives in `SpaceTasks.test.tsx` (where the necessary signal /
- * store mocks are already configured), keeping this file focused on the
- * pure-function predicate behaviour.
- */
 describe('Active filter — fixture coverage', () => {
   type Row = { id: string; status: SpaceTaskStatus };
 
@@ -121,9 +106,6 @@ describe('Active filter — fixture coverage', () => {
   });
 
   it('every status is covered by exactly one of action / active / completed / archived (no orphan)', () => {
-    // Mirrors the 4-tab partition in SpaceTasks. `review` and `blocked`
-    // land in action; `open`/`in_progress`/`approved` land in active;
-    // `done`/`cancelled` land in completed; `archived` lands in archived.
     const completedStatuses: SpaceTaskStatus[] = ['done', 'cancelled'];
     const archivedStatuses: SpaceTaskStatus[] = ['archived'];
 

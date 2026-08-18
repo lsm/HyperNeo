@@ -1,14 +1,8 @@
 // @ts-nocheck
-/**
- * Tests for Status Actions Utility
- *
- * Tests action extraction from SDK messages for status indicator display.
- */
 
 import { getCurrentAction } from '../status-actions';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
-// Helper to create mock SDK messages
 function createToolProgressMessage(toolName: string, elapsedTime: number): SDKMessage {
   return {
     type: 'tool_progress',
@@ -140,8 +134,6 @@ describe('getCurrentAction', () => {
     });
 
     it('should handle tool names containing known tool as substring', () => {
-      // Tool name contains 'Read' as a substring but is not an exact match
-      // This tests the partial matching loop in getActionForTool (line 82)
       const message = createToolProgressMessage('mcp__custom__Read_and_parse', 0.5);
       const result = getCurrentAction(message, true);
       expect(result).toBe('Reading files...');
@@ -164,7 +156,6 @@ describe('getCurrentAction', () => {
     it('should handle unknown tools', () => {
       const message = createAssistantMessage('UnknownTool');
       const result = getCurrentAction(message, true);
-      // Falls back to phase action or fallback
       expect(result).toBeDefined();
     });
   });
@@ -223,7 +214,7 @@ describe('getCurrentAction', () => {
     });
 
     it('should return "Streaming (Xs)..." with duration', () => {
-      const startedAt = Date.now() - 5000; // 5 seconds ago
+      const startedAt = Date.now() - 5000;
       const result = getCurrentAction(null, true, {
         streamingPhase: 'streaming',
         streamingStartedAt: startedAt,
@@ -243,7 +234,7 @@ describe('getCurrentAction', () => {
     it('should return a fallback action when no specific action found', () => {
       const result = getCurrentAction(null, true);
       expect(result).toBeDefined();
-      expect(result).toMatch(/\.\.\.$/); // Should end with ...
+      expect(result).toMatch(/\.\.\.$/);
     });
 
     it('should rotate through fallback actions', () => {
@@ -252,7 +243,6 @@ describe('getCurrentAction', () => {
         const result = getCurrentAction(null, true);
         if (result) actions.add(result);
       }
-      // Should have multiple different actions
       expect(actions.size).toBeGreaterThan(1);
     });
   });
@@ -311,13 +301,11 @@ describe('Edge cases for branch coverage', () => {
     it('should fall through to fallback for completely unknown tool in tool_progress', () => {
       const message = createToolProgressMessage('CompletelyUnknownTool', 0.5);
       const result = getCurrentAction(message, true);
-      // No match in TOOL_ACTION_MAP or MCP parsing, falls through to fallback
       expect(result).toBeDefined();
       expect(result).toMatch(/\.\.\.$/);
     });
 
     it('should fall through for tool_progress with non-MCP unknown tool', () => {
-      // This tool name won't match any key in TOOL_ACTION_MAP and doesn't start with mcp__
       const message = createToolProgressMessage('ZzzUnknown', 0.5);
       const result = getCurrentAction(message, true);
       expect(result).toBeDefined();
@@ -333,7 +321,6 @@ describe('Edge cases for branch coverage', () => {
         },
       } as unknown as SDKMessage;
       const result = getCurrentAction(message, true);
-      // Falls through to fallback since tool is not in map
       expect(result).toBeDefined();
       expect(result).toMatch(/\.\.\.$/);
     });
@@ -379,7 +366,6 @@ describe('Edge cases for branch coverage', () => {
         name: 'CompletelyUnknownStreamTool',
       });
       const result = getCurrentAction(message, true);
-      // Unknown tool, falls through to fallback
       expect(result).toBeDefined();
     });
 
@@ -417,7 +403,7 @@ describe('Edge cases for branch coverage', () => {
 
   describe('streaming phase with zero duration', () => {
     it('should return "Streaming..." when duration is exactly 0', () => {
-      const startedAt = Date.now(); // Just started, 0s
+      const startedAt = Date.now();
       const result = getCurrentAction(null, true, {
         streamingPhase: 'streaming',
         streamingStartedAt: startedAt,
@@ -441,8 +427,6 @@ describe('Edge cases for branch coverage', () => {
     it('should return null for mcp__ tool with less than 3 parts', () => {
       const message = createToolProgressMessage('mcp__onlytwosegments', 0.5);
       const result = getCurrentAction(message, true);
-      // mcp__onlytwosegments splits to ['mcp', 'onlytwosegments'] which is length 2
-      // parts.length >= 3 fails, so returns null from getActionFromToolName
       expect(result).toBeDefined();
     });
   });

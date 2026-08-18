@@ -1,29 +1,3 @@
-/**
- * Pending Agent Message Repository
- *
- * Persistent FIFO queue for Task Agent → peer agent (node agent or Space Agent)
- * messages that could not be delivered immediately because the target session
- * was not yet active. Rows are drained on target activation, during rehydration
- * after daemon restart, and by a periodic sweep.
- *
- * Design goals:
- *   - Ordered delivery per `(workflow_run_id, target_agent_name)` via `created_at`
- *   - Idempotency: pending `(workflow_run_id, target_agent_name, idempotency_key)`
- *     rows are de-duped; terminal historical rows do not suppress later resends
- *   - Bounded retries: each failed delivery increments `attempts` and records
- *     `last_error`; once `attempts >= max_attempts`, the row is moved to
- *     `status = 'failed'` and no longer drained
- *   - TTL: `expires_at` is checked on drain; expired rows move to `status = 'expired'`
- *   - Observability: callers emit `space.pendingMessage.queued` /
- *     `space.pendingMessage.delivered` events — the repo itself is silent
- *
- * Lifecycle statuses:
- *   pending   — queued, awaiting delivery
- *   delivered — delivered once; drained from future sweeps
- *   expired   — never delivered within TTL; kept as a historical record
- *   failed    — exceeded `max_attempts`; kept as a historical record
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database';
@@ -31,13 +5,9 @@ import type { ReactiveDatabase } from '../reactive-database';
 export type PendingMessageTargetKind = 'node_agent' | 'space_agent';
 export type PendingMessageStatus = 'pending' | 'delivered' | 'expired' | 'failed';
 
-/** Default TTL for a queued message when the caller doesn't pass `expiresAt`. */
-export const DEFAULT_PENDING_MESSAGE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-/** Default retention window before pending rows are considered too stale to deliver. */
-export const DEFAULT_PENDING_MESSAGE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-/** Default maximum pending rows kept per `(workflow_run_id, target_agent_name)`. */
+export const DEFAULT_PENDING_MESSAGE_TTL_MS = 10 * 60 * 1000;
+export const DEFAULT_PENDING_MESSAGE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const DEFAULT_PENDING_MESSAGE_MAX_PER_TARGET = 50;
-/** Default retry cap for delivery attempts. */
 export const DEFAULT_PENDING_MESSAGE_MAX_ATTEMPTS = 5;
 
 export interface PendingAgentMessageRecord {
@@ -60,52 +30,27 @@ export interface PendingAgentMessageRecord {
   deliveredSessionId: string | null;
   expiresAt: number;
   createdAt: number;
-  /**
-   * Delivery mode persisted with the row so `flushPendingMessagesForTarget`
-   * replays a deferred ("queue for next turn") human message with `'defer'`
-   * instead of defaulting to immediate and steering the kickoff turn. `null`
-   * for legacy rows and callers that don't pass it (immediate, the prior
-   * behavior).
-   */
   deliveryMode: 'immediate' | 'defer' | null;
 }
 
 export interface EnqueuePendingMessageInput {
   workflowRunId: string;
   spaceId: string;
-  /** Main task ID the Task Agent is orchestrating (optional — null for Space Agent escalations not tied to a specific task). */
   taskId?: string | null;
-  /** Source agent slot name (defaults to `'task-agent'`). */
   sourceAgentName?: string;
   targetKind: PendingMessageTargetKind;
   targetAgentName: string;
   message: string;
-  /**
-   * Persisted workflow node ID the message was sent to. Scopes the queue drain
-   * so two unstarted nodes reusing an agent slot name don't cross-receive.
-   * Null for callers that don't know the node (e.g. agent→agent routing).
-   */
   workflowNodeId?: string | null;
-  /** Optional idempotency key. If set and a row already exists with the same `(workflowRunId, targetAgentName, idempotencyKey)`, the existing row is returned. */
   idempotencyKey?: string | null;
-  /** Optional TTL in ms from now; defaults to DEFAULT_PENDING_MESSAGE_TTL_MS. */
   ttlMs?: number;
-  /** Optional absolute expiry in ms — takes precedence over ttlMs. */
   expiresAt?: number;
-  /** Optional max attempts cap (defaults to DEFAULT_PENDING_MESSAGE_MAX_ATTEMPTS). */
   maxAttempts?: number;
-  /**
-   * Optional delivery mode persisted with the row and replayed on flush. Pass
-   * `'defer'` for a "queue for next turn" human message so the spawned session
-   * defers it (instead of steering the kickoff). Omitted/`'immediate'` keeps
-   * the prior behavior.
-   */
   deliveryMode?: 'immediate' | 'defer';
 }
 
 export interface EnqueueResult {
   record: PendingAgentMessageRecord;
-  /** True when this was a pre-existing row matched by idempotency key; false when a new row was inserted. */
   deduped: boolean;
 }
 
@@ -123,22 +68,10 @@ export class PendingAgentMessageRepository {
     private readonly reactiveDb?: ReactiveDatabase
   ) {}
 
-  /**
-   * Notify LiveQuery consumers that pending_agent_messages changed. This
-   * repository writes via raw SQL (bypassing the reactive proxy), so without
-   * these notifications task timelines (which surface queued human messages)
-   * go stale until an unrelated watched-table write.
-   */
   private notify(): void {
     this.reactiveDb?.notifyChange('pending_agent_messages');
   }
 
-  /**
-   * Insert a new pending message, or return the existing pending row if the
-   * `(workflowRunId, targetAgentName, idempotencyKey)` tuple already exists
-   * (when `idempotencyKey` is set). Delivered/failed/expired rows are historical
-   * and do not suppress legitimate later resends with the same message text.
-   */
   enqueue(input: EnqueuePendingMessageInput): EnqueueResult {
     const idempotencyKey = input.idempotencyKey ?? null;
 
@@ -197,7 +130,6 @@ export class PendingAgentMessageRepository {
     return { record, deduped: false };
   }
 
-  /** Fetch a single row by primary key. */
   getById(id: string): PendingAgentMessageRecord | null {
     const row = this.db
       .prepare('SELECT * FROM pending_agent_messages WHERE id = ?')
@@ -205,7 +137,6 @@ export class PendingAgentMessageRepository {
     return row ? rowToRecord(row) : null;
   }
 
-  /** Find a pending row by its idempotency tuple. Returns null if none matches or if `idempotencyKey` is empty. */
   findByIdempotencyKey(
     workflowRunId: string,
     targetAgentName: string,
@@ -223,20 +154,11 @@ export class PendingAgentMessageRepository {
     return row ? rowToRecord(row) : null;
   }
 
-  /**
-   * List pending (still-deliverable) rows for a specific target in a run, oldest first.
-   * Expired rows are NOT filtered here — callers use `expireStale()` first (or check
-   * `expiresAt` before delivery) to move expired rows to `status = 'expired'`.
-   */
   listPendingForTarget(
     workflowRunId: string,
     targetAgentName: string,
     workflowNodeId?: string | null
   ): PendingAgentMessageRecord[] {
-    // When a node ID is given, scope to that node so two unstarted nodes
-    // reusing an agent slot name don't drain each other's queued messages.
-    // Rows without a node ID (older callers / agent→agent) are returned for
-    // every node only when no node filter is supplied.
     const rows =
       workflowNodeId === undefined || workflowNodeId === null
         ? (this.db
@@ -257,7 +179,6 @@ export class PendingAgentMessageRepository {
     return rows.map(rowToRecord);
   }
 
-  /** List all pending rows for a run, oldest first. Used by periodic sweepers. */
   listPendingForRun(workflowRunId: string): PendingAgentMessageRecord[] {
     const rows = this.db
       .prepare(
@@ -269,7 +190,6 @@ export class PendingAgentMessageRepository {
     return rows.map(rowToRecord);
   }
 
-  /** List rows for a run by status, oldest first. Used by repair/escalation paths. */
   listByRunAndStatus(
     workflowRunId: string,
     status: PendingMessageStatus
@@ -284,7 +204,6 @@ export class PendingAgentMessageRepository {
     return rows.map(rowToRecord);
   }
 
-  /** List pending rows for a space, oldest first. Used by space-scoped actor registry lookups. */
   listPendingForSpace(spaceId: string): PendingAgentMessageRecord[] {
     const rows = this.db
       .prepare(
@@ -296,7 +215,6 @@ export class PendingAgentMessageRepository {
     return rows.map(rowToRecord);
   }
 
-  /** List all pending rows across every run, oldest first. Used by the global sweeper. */
   listAllPending(): PendingAgentMessageRecord[] {
     const rows = this.db
       .prepare(
@@ -308,10 +226,6 @@ export class PendingAgentMessageRepository {
     return rows.map(rowToRecord);
   }
 
-  /**
-   * Mark a row as successfully delivered.
-   * Records the session ID the message was delivered to and stamps `delivered_at`.
-   */
   markDelivered(id: string, sessionId: string): void {
     const now = Date.now();
     this.db
@@ -328,27 +242,11 @@ export class PendingAgentMessageRepository {
     this.notify();
   }
 
-  /**
-   * Rewrite a pending row's target scope to the bare agent name + resolved node
-   * id. Used by the queued-handoff sweep to normalize legacy compound / null-
-   * scoped rows (emitted by the previous router, e.g. actor-registry
-   * "<nodeId>/<agent>" with no workflowNodeId) into the pinned bare form the
-   * flush drains — so they aren't stranded when the compound drain alias is gone.
-   */
   rescopeTarget(id: string, targetAgentName: string, workflowNodeId: string): void {
-    // Atomic check-then-act: if a bare retry row the new router inserted already
-    // occupies the new (run, target, idempotency_key) — sender retried the same
-    // message after upgrade — rescoping this legacy compound row into that tuple
-    // would violate idx_pending_agent_messages_idem and fail every sweep tick.
-    // Drop the superseded legacy row instead; otherwise rewrite it in place.
     const tx = this.db.transaction(() => {
       const row = this.getById(id);
       if (!row || row.status !== 'pending') return;
       if (row.idempotencyKey != null) {
-        // The unique index (idx_pending_agent_messages_idem_pending) and enqueue
-        // dedup only cover status = 'pending', so a failed/expired historical
-        // row with the same key is NOT a real conflict — restrict the check to
-        // pending rows or we'd silently drop the only retryable handoff.
         const conflict = this.db
           .prepare(
             `SELECT 1 FROM pending_agent_messages
@@ -374,11 +272,6 @@ export class PendingAgentMessageRepository {
     this.notify();
   }
 
-  /**
-   * Record a failed delivery attempt.
-   * Increments `attempts`; if the new count reaches `max_attempts`, the row
-   * status is set to `'failed'` so it is no longer drained.
-   */
   markAttemptFailed(id: string, error: string): PendingAgentMessageRecord | null {
     const now = Date.now();
     this.db
@@ -398,7 +291,6 @@ export class PendingAgentMessageRepository {
     return this.getById(id);
   }
 
-  /** Mark a pending row as failed without consuming additional retry ticks. */
   markFailed(id: string, error: string): PendingAgentMessageRecord | null {
     const now = Date.now();
     this.db
@@ -414,11 +306,6 @@ export class PendingAgentMessageRepository {
     return this.getById(id);
   }
 
-  /**
-   * Sweep expired rows in a run — any pending row with `expires_at <= now`
-   * is moved to `status = 'expired'`. Returns the number of rows updated.
-   * Pass `runId = null` to sweep across all runs.
-   */
   expireStale(runId: string | null = null): number {
     const now = Date.now();
     const stmt =
@@ -438,11 +325,6 @@ export class PendingAgentMessageRepository {
     return result.changes;
   }
 
-  /**
-   * Enforce queue retention so pending rows cannot grow without bound.
-   * Rows older than `retentionMs` or beyond `maxPerTarget` for their
-   * `(workflow_run_id, target_agent_name)` queue are moved to `expired`.
-   */
   enforceRetention(options: PendingMessageRetentionOptions = {}): number {
     const runId = options.runId ?? null;
     const now = options.now ?? Date.now();
@@ -530,13 +412,6 @@ export class PendingAgentMessageRepository {
     return changes;
   }
 
-  /**
-   * Delete all terminal (expired, failed, delivered) rows for a run.
-   * Pending rows are preserved so in-flight delivery can proceed.
-   *
-   * Used by task recovery to clear stale expired/failed handoffs that would
-   * otherwise re-block the run on the next tick.
-   */
   clearTerminalForRun(workflowRunId: string): number {
     const result = this.db
       .prepare(
@@ -548,10 +423,6 @@ export class PendingAgentMessageRepository {
     return result.changes;
   }
 
-  /**
-   * Delete all rows for a run regardless of status. Used when a workflow run is
-   * deleted (FK also cascades, but this gives callers an explicit path).
-   */
   deleteByRun(workflowRunId: string): number {
     const result = this.db
       .prepare('DELETE FROM pending_agent_messages WHERE workflow_run_id = ?')
@@ -560,7 +431,6 @@ export class PendingAgentMessageRepository {
     return result.changes;
   }
 
-  /** Test helper / diagnostics: list all rows for a run regardless of status. */
   listAllForRun(workflowRunId: string): PendingAgentMessageRecord[] {
     const rows = this.db
       .prepare(
@@ -572,10 +442,6 @@ export class PendingAgentMessageRepository {
     return rows.map(rowToRecord);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Internal
-// ---------------------------------------------------------------------------
 
 interface PendingMessageRow {
   id: string;

@@ -1,10 +1,3 @@
-/**
- * Interrupt RPC Handlers Tests
- *
- * Tests for client interrupt functionality via WebSocket:
- * - client.interrupt
- */
-
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 

@@ -1,55 +1,3 @@
-/**
- * Shared "merge the PR" post-approval instructions template.
- *
- * Delivered to the PR Merger post-approval session by `PostApprovalRouter`
- * when a workflow declares `postApproval.targetAgent = 'merger'`. Template
- * tokens follow the §1.6 grammar evaluated by
- * `post-approval-template.ts:interpolatePostApprovalTemplate`. Recognised tokens:
- *
- *   - `{{pr_url}}`             — signalled by the end node via
- *                              `send_message(task-agent, …, data:{ pr_url })`.
- *   - `{{approval_source}}`    — `'human' | 'agent'` (from `SpaceApprovalSource`).
- *   - `{{workspace_path}}`     — absolute path of the Space checkout (for step 4).
- *   - `{{approval_authority}}` — NAME of the node that approved this task (the
- *                              re-approval authority the Merger reports blockers
- *                              to and waits on): "Review" for Coding/Research,
- *                              "QA" for the Fullstack QA Loop.
- *
- * ## The merge is a deterministic GATE, not prompt instructions (task #866)
- *
- * The merge is performed by the `merge_pr` MCP tool, which deterministically
- * verifies — in code, not in the model's reasoning — that the current PR head is
- * covered by a real GitHub approval before it merges, bound to that head via
- * `--match-head-commit`. Raw `gh pr merge` / merge-API calls are BLOCKED on this
- * slot by a declarative Bash guard (defense-in-depth — it catches the direct and
- * common wrapped forms). The authoritative enforcement is `merge_pr` itself: the
- * Merger must merge through it, and the gate cannot be satisfied by a head that
- * lacks a real current-head approval, regardless of model reasoning.
- *
- * This replaces the previous prompt-only "verify the approval covers the current
- * head" step, which the model reasoned around on task #857: it saw the only
- * approval covered the old head `5f5be646` while the current head was
- * `e7be0167`, inferred that `approval_source: human` overrode the current-head
- * requirement, and merged anyway. `approval_source` is Space TASK-approval
- * provenance only — it records how the task reached `approved`; it is NOT
- * evidence that the current PR head was reviewed and must NEVER be treated as a
- * merge authorization. Do not duplicate or second-guess the gate: when
- * `merge_pr` returns blockers, relay them — do not attempt a raw merge or argue
- * that the task approval should let the merge through.
- *
- * If `merge_pr` returns blockers, the Merger captures them and reports them to
- * the approval authority over the ungated `Post-Approval → Review/QA` channel;
- * the authority re-checks, coordinates the coder (a fix-push changes the head),
- * re-approves the new head on GitHub, and signals the Merger to continue. The
- * Merger then re-calls `merge_pr` (it re-validates the current head from
- * scratch). Cycle-cap exhaustion or an unresolvable blocker escalates to
- * space-agent via the `merge_blocked` artifact + message. The
- * `Post-Approval ↔ Review/QA` channels are added to the built-in workflows in
- * `built-in-workflows.ts`.
- *
- * The runtime appends the universal `mark_complete` instruction in
- * `PostApprovalRouter`; keep this workflow data focused on PR-specific work.
- */
 export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   'The task has been approved. Your job is to merge PR {{pr_url}}.',
   '',
@@ -211,36 +159,6 @@ export const PR_MERGE_POST_APPROVAL_INSTRUCTIONS: string = [
   '                     data: { url: <merged_pr_url>, merged_at, approval_source: "{{approval_source}}" } })',
 ].join('\n');
 
-/**
- * Coder-owned variant of {@link PR_MERGE_POST_APPROVAL_INSTRUCTIONS}.
- *
- * The stable `Coding` and `Coding with QA` workflows collapse the post-approval
- * merger into the original Coder: `postApproval.targetAgent = 'coder'` reuses
- * the Coder's live session (the implementer) to run the audited merge. The
- * merger instructions above CANNOT be reused here — they frame the recipient as
- * a restricted Merger that "must never push commits" and, on any blocker,
- * reports it and waits for "the implementation author" to fix it. When the
- * recipient IS the implementation author, that is circular: the only session
- * permitted to fix a conflict/rebase blocker is the one the instructions just
- * told to wait, so the task stalls.
- *
- * This template keeps `merge_pr` as the authoritative gate (safety is unchanged
- * — `merge_pr` still requires a current-head GitHub approval before merging, so
- * a fix-push the Coder makes only merges after the approval authority
- * re-approves the new head) but lets the Coder FIX fixable blockers itself:
- *
- *   - Fixable (DIRTY conflict, BEHIND rebase, UNSTABLE CI failing because of
- *     the code, a review thread the Coder can resolve by replying): the Coder
- *     fixes, pushes, asks {{approval_authority}} to re-approve the CURRENT head,
- *     and re-runs `merge_pr`.
- *   - Administrative (permissions, ruleset, merge queue, stale approval the
- *     Coder cannot self-approve): report to {{approval_authority}} and wait, as
- *     the merger does.
- *
- * Same template tokens as the merger instructions; `{{approval_authority}}` is
- * "Review" for `Coding` and "QA" for `Coding with QA`. The runtime still
- * appends the universal `mark_complete` instruction.
- */
 export const CODER_OWNED_MERGE_INSTRUCTIONS: string = [
   'The task has been approved. You are the Coder who implemented PR {{pr_url}}; now finish it by merging that PR.',
   '',

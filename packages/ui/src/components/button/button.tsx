@@ -3,12 +3,9 @@ import { CloseContext } from '../../hooks/use-close.ts';
 import { render } from '../../internal/render.ts';
 import type { ElementType } from '../../internal/types.ts';
 
-// InputDeviceCapabilities is not in lib.dom.d.ts yet
 interface FocusEventWithCapabilities extends FocusEvent {
   sourceCapabilities?: { firesTouchEvents: boolean };
 }
-
-// --- Button ---
 
 interface ButtonProps {
   as?: ElementType;
@@ -54,7 +51,6 @@ function ButtonFn({
       setActive(false);
     },
     onFocus: (e: FocusEventWithCapabilities) => {
-      // Only track focus for keyboard navigation
       if (e.sourceCapabilities?.firesTouchEvents === true) {
         return;
       }
@@ -79,8 +75,6 @@ function ButtonFn({
 
 ButtonFn.displayName = 'Button';
 export const Button = ButtonFn;
-
-// --- CloseButton ---
 
 interface CloseButtonProps {
   as?: ElementType;
@@ -142,8 +136,6 @@ function CloseButtonFn({ as: Tag = 'button', children, ...rest }: CloseButtonPro
 CloseButtonFn.displayName = 'CloseButton';
 export const CloseButton = CloseButtonFn;
 
-// --- DataInteractive ---
-
 interface DataInteractiveProps {
   as?: ElementType;
   children?: unknown;
@@ -192,8 +184,6 @@ function DataInteractiveFn({ as: Tag = 'div', children, ...rest }: DataInteracti
 
 DataInteractiveFn.displayName = 'DataInteractive';
 export const DataInteractive = DataInteractiveFn;
-
-// --- ButtonGroup ---
 
 interface ButtonGroupProps {
   as?: ElementType;

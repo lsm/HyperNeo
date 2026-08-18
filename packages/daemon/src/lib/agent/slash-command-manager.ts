@@ -1,15 +1,3 @@
-/**
- * SlashCommandManager - Manages slash command caching
- *
- * Extracted from AgentSession to reduce complexity.
- * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
- *
- * Handles:
- * - Fetching slash commands from SDK
- * - Caching and persisting to database
- * - Combining SDK commands with built-in commands
- */
-
 import type { Session } from '@hyperneo/shared';
 import type { QueryLike } from './query-like';
 import { flattenSDKSlashCommands, type SlashCommand } from '@hyperneo/shared/sdk';
@@ -18,23 +6,15 @@ import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';
 import { getBuiltInCommandNames } from '../built-in-commands';
 
-/**
- * Context interface - what SlashCommandManager needs from AgentSession
- * Using interface instead of importing AgentSession to avoid circular deps
- */
 export interface SlashCommandManagerContext {
   readonly session: Session;
   readonly db: Database;
   readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   readonly logger: Logger;
 
-  // Query state
   readonly queryObject: QueryLike | null;
 }
 
-/**
- * Manages slash command fetching and caching
- */
 export class SlashCommandManager {
   private slashCommands: string[] = [];
   private commandsFetchedFromSDK = false;
@@ -42,9 +22,6 @@ export class SlashCommandManager {
   private commandsChangedSinceInit = false;
 
   constructor(private ctx: SlashCommandManagerContext) {
-    // Restore from session if available — validate it's a real array, not a
-    // corrupted string (old sessions may have "merge-session" stored as a
-    // JSON-encoded string rather than a JSON-encoded array).
     const stored = ctx.session.availableCommands;
     if (Array.isArray(stored) && stored.length > 0) {
       this.slashCommands = stored;
@@ -52,17 +29,10 @@ export class SlashCommandManager {
     }
   }
 
-  /**
-   * Get available slash commands
-   */
   async getSlashCommands(): Promise<string[]> {
     const { logger, queryObject } = this.ctx;
 
-    // Return cached commands if available
     if (this.slashCommands.length > 0) {
-      // Fire-and-forget: refresh from SDK in background. DB-restored commands are
-      // a stale-session fallback only; system:init / supportedCommands must still
-      // reconcile live custom skills when the SDK is available.
       if (!this.commandsFetchedFromSDK && !this.commandsRestoredFromDb && queryObject) {
         this.fetchAndCache().catch((e) => {
           logger.warn('Background refresh of slash commands failed:', e);
@@ -71,10 +41,8 @@ export class SlashCommandManager {
       return this.slashCommands;
     }
 
-    // Try to fetch from SDK
     await this.fetchAndCache();
 
-    // Fallback to built-in commands
     if (this.slashCommands.length === 0) {
       this.slashCommands = getBuiltInCommandNames();
     }
@@ -82,11 +50,6 @@ export class SlashCommandManager {
     return this.slashCommands;
   }
 
-  /**
-   * Update commands from the SDK system init message.
-   * This is the most reliable source — fires immediately on every query start
-   * and contains all built-in commands plus custom skills.
-   */
   async updateFromInit(sdkCommands: string[]): Promise<void> {
     if (this.commandsFetchedFromSDK && !this.commandsChangedSinceInit) return;
 
@@ -129,9 +92,6 @@ export class SlashCommandManager {
     });
   }
 
-  /**
-   * Fetch and cache slash commands from SDK
-   */
   async fetchAndCache(): Promise<void> {
     const { session, db, internalEventBus, logger, queryObject } = this.ctx;
 
@@ -147,9 +107,7 @@ export class SlashCommandManager {
       const commands = await queryObject.supportedCommands();
       const commandNames = flattenSDKSlashCommands(commands as SlashCommand[]);
 
-      // Add SDK built-in commands
       const sdkBuiltInCommands = ['clear', 'help'];
-      // Add HyperNeo built-in commands
       const kaiBuiltInCommands = getBuiltInCommandNames();
       const allCommands = [
         ...new Set([...commandNames, ...sdkBuiltInCommands, ...kaiBuiltInCommands]),
@@ -158,11 +116,9 @@ export class SlashCommandManager {
       this.slashCommands = allCommands;
       this.commandsFetchedFromSDK = true;
 
-      // Save to database
       session.availableCommands = this.slashCommands;
       db.updateSession(session.id, { availableCommands: this.slashCommands });
 
-      // Emit event
       await internalEventBus.publish('commands.updated', {
         sessionId: session.id,
         commands: this.slashCommands,

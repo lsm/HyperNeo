@@ -1,12 +1,3 @@
-/**
- * Filter Configuration Manager
- *
- * Manages GitHub filter configurations with support for:
- * - Global filter config (applies to all repositories)
- * - Repository-specific overrides
- * - In-memory caching with TTL for performance
- */
-
 import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import type {
   GitHubFilterConfig,
@@ -18,17 +9,11 @@ import { Logger } from '../logger';
 
 const log = new Logger('github-filter-config');
 
-/**
- * Cache entry for filter configurations
- */
 interface ConfigCacheEntry {
   config: GitHubFilterConfig;
   cachedAt: number;
 }
 
-/**
- * Default filter configuration
- */
 const DEFAULT_FILTER_CONFIG: GitHubFilterConfig = {
   repositories: [],
   authors: {
@@ -44,17 +29,11 @@ const DEFAULT_FILTER_CONFIG: GitHubFilterConfig = {
   },
 };
 
-/**
- * Filter Configuration Manager
- *
- * Manages filter configs with global defaults and repository-specific overrides.
- */
 export class FilterConfigManager {
   private db: BunDatabase;
   private cache: Map<string, ConfigCacheEntry> = new Map();
   private cacheTtl: number;
 
-  // Default TTL is 1 minute
   private static readonly DEFAULT_CACHE_TTL = 60 * 1000;
 
   constructor(db: BunDatabase, options?: { cacheTtl?: number }) {
@@ -64,9 +43,6 @@ export class FilterConfigManager {
     log.debug('FilterConfigManager initialized', { cacheTtl: this.cacheTtl });
   }
 
-  /**
-   * Initialize the filter config table if it doesn't exist
-   */
   private initializeTable(): void {
     this.db
       .prepare(
@@ -80,7 +56,6 @@ export class FilterConfigManager {
       )
       .run();
 
-    // Create index on repository for fast lookups
     this.db
       .prepare(
         `CREATE INDEX IF NOT EXISTS idx_github_filter_configs_repository
@@ -89,12 +64,7 @@ export class FilterConfigManager {
       .run();
   }
 
-  /**
-   * Get the effective filter config for a repository
-   * Returns repository-specific config if exists, otherwise global config
-   */
   getFilterForRepository(repository: string): GitHubFilterConfig {
-    // Check cache first
     const cacheKey = `repo:${repository}`;
     const cached = this.cache.get(cacheKey);
     if (cached && Date.now() - cached.cachedAt < this.cacheTtl) {
@@ -102,22 +72,17 @@ export class FilterConfigManager {
       return cached.config;
     }
 
-    // Look for repository-specific config
     const repoConfig = this.getRepositoryConfig(repository);
     if (repoConfig) {
       this.cache.set(cacheKey, { config: repoConfig, cachedAt: Date.now() });
       return repoConfig;
     }
 
-    // Fall back to global config
     const globalConfig = this.getGlobalFilter();
     this.cache.set(cacheKey, { config: globalConfig, cachedAt: Date.now() });
     return globalConfig;
   }
 
-  /**
-   * Get the global filter configuration
-   */
   getGlobalFilter(): GitHubFilterConfig {
     const cacheKey = 'global';
     const cached = this.cache.get(cacheKey);
@@ -136,19 +101,14 @@ export class FilterConfigManager {
       return config;
     }
 
-    // Return default if no global config set
     this.cache.set(cacheKey, { config: DEFAULT_FILTER_CONFIG, cachedAt: Date.now() });
     return DEFAULT_FILTER_CONFIG;
   }
 
-  /**
-   * Set the global filter configuration
-   */
   setGlobalFilter(config: GitHubFilterConfig): void {
     const now = Date.now();
     const configJson = JSON.stringify(config);
 
-    // Use UPSERT pattern
     const stmt = this.db.prepare(
       `INSERT INTO github_filter_configs (id, repository, config, created_at, updated_at)
        VALUES ('global', NULL, ?, ?, ?)
@@ -157,19 +117,13 @@ export class FilterConfigManager {
 
     stmt.run(configJson, now, now, configJson, now);
 
-    // Invalidate cache
     this.cache.delete('global');
     this.invalidateRepoCaches();
 
     log.info('Global filter config updated');
   }
 
-  /**
-   * Set a repository-specific filter configuration
-   * This overrides the global config for this repository
-   */
   setRepositoryFilter(repository: string, config: Partial<GitHubFilterConfig>): void {
-    // Merge with global config
     const globalConfig = this.getGlobalFilter();
     const mergedConfig: GitHubFilterConfig = {
       repositories: config.repositories ?? globalConfig.repositories,
@@ -190,21 +144,15 @@ export class FilterConfigManager {
 
     stmt.run(id, repository, configJson, now, now, configJson, now);
 
-    // Invalidate cache for this repository
     this.cache.delete(`repo:${repository}`);
 
     log.info('Repository filter config set', { repository });
   }
 
-  /**
-   * Clear a repository-specific filter configuration
-   * The repository will fall back to the global config
-   */
   clearRepositoryFilter(repository: string): void {
     const stmt = this.db.prepare(`DELETE FROM github_filter_configs WHERE repository = ?`);
     const result = stmt.run(repository);
 
-    // Invalidate cache
     this.cache.delete(`repo:${repository}`);
 
     if (result.changes > 0) {
@@ -212,9 +160,6 @@ export class FilterConfigManager {
     }
   }
 
-  /**
-   * List all repository-specific filter configurations
-   */
   listRepositoryFilters(): Array<{ repository: string; config: GitHubFilterConfig }> {
     const stmt = this.db.prepare(
       `SELECT repository, config FROM github_filter_configs WHERE repository IS NOT NULL`
@@ -227,9 +172,6 @@ export class FilterConfigManager {
     }));
   }
 
-  /**
-   * Update specific parts of the global filter
-   */
   updateGlobalFilter(updates: {
     repositories?: string[];
     authors?: Partial<GitHubAuthorFilter>;
@@ -248,18 +190,12 @@ export class FilterConfigManager {
     this.setGlobalFilter(updated);
   }
 
-  /**
-   * Add repositories to the global filter
-   */
   addRepositories(repositories: string[]): void {
     const current = this.getGlobalFilter();
     const newRepos = new Set([...current.repositories, ...repositories]);
     this.updateGlobalFilter({ repositories: Array.from(newRepos) });
   }
 
-  /**
-   * Remove repositories from the global filter
-   */
   removeRepositories(repositories: string[]): void {
     const current = this.getGlobalFilter();
     const removeSet = new Set(repositories);
@@ -267,17 +203,11 @@ export class FilterConfigManager {
     this.updateGlobalFilter({ repositories: filtered });
   }
 
-  /**
-   * Clear all caches
-   */
   clearCache(): void {
     this.cache.clear();
     log.debug('Filter config cache cleared');
   }
 
-  /**
-   * Get a repository-specific config from the database
-   */
   private getRepositoryConfig(repository: string): GitHubFilterConfig | null {
     const stmt = this.db.prepare(`SELECT config FROM github_filter_configs WHERE repository = ?`);
     const row = stmt.get(repository) as Record<string, unknown> | undefined;
@@ -286,9 +216,6 @@ export class FilterConfigManager {
     return JSON.parse(row.config as string) as GitHubFilterConfig;
   }
 
-  /**
-   * Invalidate all repository caches (called when global config changes)
-   */
   private invalidateRepoCaches(): void {
     for (const key of this.cache.keys()) {
       if (key.startsWith('repo:')) {
@@ -298,9 +225,6 @@ export class FilterConfigManager {
   }
 }
 
-/**
- * Create a FilterConfigManager instance
- */
 export function createFilterConfigManager(
   db: BunDatabase,
   options?: { cacheTtl?: number }

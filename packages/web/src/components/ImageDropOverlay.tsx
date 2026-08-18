@@ -1,14 +1,3 @@
-/**
- * ImageDropOverlay
- *
- * Full-cover "Drop images here" overlay shown while a file drag is in progress
- * over a drop zone. Presentational only — visibility is controlled by the
- * caller (rendered conditionally on `isDragging`). Markup extracted from
- * MessageInput so it can be reused across drop zones (composer + content column).
- *
- * `pointer-events-none` keeps it from intercepting the drag/drop events that
- * the underlying container handles.
- */
 export function ImageDropOverlay() {
   return (
     <div class="absolute inset-0 z-50 flex items-center justify-center bg-dark-900/90 backdrop-blur-sm border-2 border-dashed border-blue-500 rounded-2xl pointer-events-none">

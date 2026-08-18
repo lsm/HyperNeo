@@ -1,14 +1,3 @@
-/**
- * Deterministic bridge-local token estimator for Anthropic-compatible
- * count_tokens requests.
- *
- * Some upstream providers do not expose a bridge-callable token count endpoint.
- * This estimator is intentionally conservative and stable: it accounts for the
- * same request surfaces the SDK sends to /count_tokens (system text, messages,
- * tool calls/results, and tool schemas) so context growth is visible before an
- * upstream response returns authoritative usage.
- */
-
 import type {
   AnthropicContentBlock,
   AnthropicContentBlockToolResult,

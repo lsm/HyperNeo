@@ -1,7 +1,3 @@
-/**
- * Unit tests for export-import-utils.ts
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { downloadBundle } from '../export-import-utils.ts';
 import type { SpaceExportBundle } from '@hyperneo/shared';
@@ -31,7 +27,6 @@ describe('downloadBundle', () => {
       .mockReturnValue('blob:http://localhost/test');
     revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockReturnValue(undefined);
 
-    // Intercept createElement to capture the anchor
     const origCreate = document.createElement.bind(document);
     vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
       const el = origCreate(tag);

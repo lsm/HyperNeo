@@ -2,9 +2,6 @@ import type { Database as BunDatabase } from '../sqlite-compat';
 import type { AgentMemoryEntry, AgentMemorySearchResult } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 
-// Wire shapes live in @hyperneo/shared so the web client and daemon share one
-// source of truth. Re-exported here so existing daemon imports
-// (`import { AgentMemoryEntry } from '.../agent-memory-repository'`) keep working.
 export type { AgentMemoryEntry, AgentMemorySearchResult };
 
 export interface AgentMemoryCoreEntry extends AgentMemoryEntry {
@@ -100,9 +97,6 @@ export class AgentMemoryRepository {
     const now = Date.now();
     const embeddingToken = crypto.randomUUID();
 
-    // On conflict (existing row): preserve `tags` when caller did not supply them
-    // and never overwrite `created_by_session` so provenance stays with the
-    // original author.
     const row = this.db
       .prepare(
         `INSERT INTO space_agent_memory
@@ -137,12 +131,6 @@ export class AgentMemoryRepository {
     return rowToEntry(row);
   }
 
-  /**
-   * Atomically create a new memory. Unlike write() (which upserts on
-   * (spaceId, key)), this fails when a memory with the same key already exists,
-   * so a create can never silently overwrite an existing entry. Used by the
-   * management UI's "New Memory" flow; agent-authored writes still use write().
-   */
   create(params: {
     spaceId: string;
     key: string;
@@ -470,10 +458,6 @@ export class AgentMemoryRepository {
     const vectorRows = await this.searchVector(spaceId, query, poolLimit);
     const rows = mergeRankedRows(ftsRows, vectorRows).slice(offset, offset + limit);
 
-    // `recordAccess` defaults to true: an agent recalling a memory via
-    // `search()` is a genuine access that should refresh its core-ranking /
-    // staleness telemetry. Management reads (`list` with a query) pass
-    // `recordAccess: false` so browsing the panel never mutates telemetry.
     if (options?.recordAccess !== false && rows.length > 0) {
       const now = Date.now();
       const bump = this.db.prepare(
@@ -867,9 +851,6 @@ function normalizeTags(tags: string[]): string[] {
   for (const raw of tags) {
     const tag = raw.trim();
     if (!tag) continue;
-    // Tags are rendered verbatim into agent prompts via `tags.join(', ')`, so a
-    // single oversized tag would balloon the prompt past the memory-content cap.
-    // Bound per-tag length here to keep the prompt-size budget enforceable.
     if (tag.length > MEMORY_TAG_MAX_LENGTH) {
       throw new Error(`Memory tags must be ${MEMORY_TAG_MAX_LENGTH} characters or fewer.`);
     }
@@ -905,11 +886,7 @@ function buildFtsQuery(query: string): string | null {
     .trim()
     .toLowerCase()
     .split(/\s+/)
-    // Preserve hyphens, dots, slashes, and colons so paths, URLs, and
-    // dashed identifiers (e.g. `src/lib/main.ts`, `pre-commit`) remain
-    // intact for trigram matching.
     .map((term) => term.replace(/[^\p{L}\p{N}_./:-]/gu, ''))
-    // Trigram FTS cannot match terms shorter than three chars.
     .filter((term) => term.length >= 3);
   if (terms.length === 0) return null;
   return terms.map((term) => `"${term.replace(/"/g, '""')}"`).join(' ');

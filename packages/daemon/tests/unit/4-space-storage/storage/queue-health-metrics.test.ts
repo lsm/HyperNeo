@@ -1,11 +1,3 @@
-/**
- * ExternalEventQueueMetrics unit tests.
- *
- * Pure in-memory counter behavior — no DB. Covers enqueue attribution, flush,
- * skip counters, terminal-outcome recording, and failure categorization in the
- * snapshot.
- */
-
 import { describe, expect, test } from 'bun:test';
 import {
   ExternalEventQueueMetrics,
@@ -144,7 +136,6 @@ describe('ExternalEventQueueMetrics — snapshot', () => {
     expect(snapshot.counters.delivered).toBe(1);
     expect(snapshot.gauges.queueDepth).toBe(4);
     expect(snapshot.gauges.inFlight).toBe(1);
-    // Each terminal failure lands in exactly one category.
     expect(snapshot.failuresByCategory).toEqual({
       ttl_expired: 0,
       cap_eviction: 1,
@@ -159,7 +150,6 @@ describe('ExternalEventQueueMetrics — snapshot', () => {
 describe('ExternalEventQueueMetrics — failure-reason cardinality cap', () => {
   test('folds distinct reasons beyond the cap into __other__; category stays exact', () => {
     const metrics = new ExternalEventQueueMetrics(1000);
-    // 70 distinct per-session-style reasons, all categorizing as 'other'.
     for (let i = 0; i < 70; i++) {
       metrics.recordDeliveryTerminal({
         eventId: `e${i}`,
@@ -168,7 +158,6 @@ describe('ExternalEventQueueMetrics — failure-reason cardinality cap', () => {
         reason: `Sub-session not found: session-${i}`,
       });
     }
-    // An already-seen reason still increments even after the cap is reached.
     metrics.recordDeliveryTerminal({
       eventId: 'e0-again',
       deliveryKey: 'd0-again',
@@ -178,17 +167,12 @@ describe('ExternalEventQueueMetrics — failure-reason cardinality cap', () => {
 
     const counters = metrics.getCounters();
     const retainedKeys = Object.keys(counters.finalFailuresByReason);
-    // 64 retained distinct reasons + 1 overflow bucket.
     expect(retainedKeys.length).toBe(65);
     expect(retainedKeys).toContain('__other__');
-    // 6 reasons (session-64..session-69) folded into __other__.
     expect(counters.finalFailuresByReason['__other__']).toBe(6);
-    // The repeated session-0 reason counted toward its retained key (now 2).
     expect(counters.finalFailuresByReason['Sub-session not found: session-0']).toBe(2);
-    // Sum of retained reasons always equals the true terminal-failure total.
     const total = Object.values(counters.finalFailuresByReason).reduce((s, v) => s + v, 0);
     expect(total).toBe(71);
-    // Category is tracked directly and stays exact regardless of the cap.
     const snapshot = metrics.snapshot(EMPTY_GAUGES);
     expect(snapshot.failuresByCategory.other).toBe(71);
   });
@@ -209,16 +193,13 @@ describe('ExternalEventQueueMetrics — failure-reason cardinality cap', () => {
     });
 
     const counters = metrics.getCounters();
-    // `__proto__` must be a real own property, not swallowed by the prototype setter.
     expect(Object.prototype.hasOwnProperty.call(counters.finalFailuresByReason, '__proto__')).toBe(
       true
     );
     expect(counters.finalFailuresByReason['__proto__']).toBe(1);
     expect(counters.finalFailuresByReason['normal-reason']).toBe(1);
-    // Sum stays consistent with the exact category total.
     const total = Object.values(counters.finalFailuresByReason).reduce((s, v) => s + v, 0);
     expect(total).toBe(2);
-    // The helper is shared by enqueueBySource/enqueueByTargetState — verify too.
     metrics.recordEnqueue('__proto__', 'run=in_progress;node=pending');
     const counters2 = metrics.getCounters();
     expect(Object.prototype.hasOwnProperty.call(counters2.enqueueBySource, '__proto__')).toBe(true);
@@ -245,17 +226,11 @@ describe('categorizeFailureReason', () => {
     ['long-horizon agent unavailable', 'retry_exhausted'],
     ['long-horizon event delivery unavailable', 'retry_exhausted'],
     ['retry_exhausted; some arbitrary thrown error message', 'retry_exhausted'],
-    // Defer-prefixed activation/delivery reasons (SpaceRuntime parks deferred
-    // deliveries with these) must categorize by their stripped payload, not
-    // fall through to injection_error via the deliveryMode: prefix.
     ['deliveryMode:defer; node_execution_not_active', 'retry_exhausted'],
     ['deliveryMode:defer; node_execution_pending', 'retry_exhausted'],
     ['deliveryMode:defer; activation_failed; spawn failed', 'retry_exhausted'],
     ['deliveryMode:immediate; node_execution_not_active', 'retry_exhausted'],
     ['deliveryMode:immediate; inject failed', 'injection_error'],
-    // blocked_run_gate_not_opened is event-level (markEventFailed) and never
-    // reaches the delivery hook, so it cannot appear in finalFailuresByReason;
-    // if it ever did, it would fall through to `other`.
     ['blocked_run_gate_not_opened', 'other'],
     ['something_unexpected', 'other'],
   ])('categorizes %s -> %s', (reason, expected) => {
@@ -275,7 +250,6 @@ describe('computeQueueAgeStats', () => {
     expect(stats!.minMs).toBe(100);
     expect(stats!.maxMs).toBe(500);
     expect(stats!.avgMs).toBe(300);
-    // p95 nearest-rank of 5 values -> ceil(0.95*5)-1 = 4th index (500).
     expect(stats!.p95Ms).toBe(500);
   });
 });

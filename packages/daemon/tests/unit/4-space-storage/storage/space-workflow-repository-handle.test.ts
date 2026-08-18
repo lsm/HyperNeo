@@ -1,10 +1,3 @@
-/**
- * SpaceWorkflowRepository — `handle` round-trip tests.
- *
- * Covers handle CRUD: create with handle, update handle, getWorkflowByHandle,
- * getHandlesForSpace, and partial unique index enforcement.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';

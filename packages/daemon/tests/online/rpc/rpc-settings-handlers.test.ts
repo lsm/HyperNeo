@@ -1,21 +1,3 @@
-/**
- * Settings RPC Handlers Tests
- *
- * Tests the settings RPC handlers via WebSocket:
- * - settings.global.get / update / save
- * - settings.mcp.listFromSources
- * - settings.session.get / update
- * - settings.fileOnly.read
- * - Global settings applied to new sessions
- *
- * NOTE: The legacy `settings.mcp.toggle`, `settings.mcp.getDisabled`,
- * `settings.mcp.setDisabled`, and `settings.mcp.updateServerSettings`
- * RPCs were removed in M5 of `unify-mcp-config-model`. The
- * `GlobalSettings.disabledMcpServers` and `mcpServerSettings` fields were
- * dropped at the same time. MCP server enablement now lives on the unified
- * `app_mcp_servers` registry + per-room `mcp_enablement` overrides.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import type { GlobalSettings } from '@hyperneo/shared';
@@ -358,9 +340,6 @@ describe('Settings RPC Handlers', () => {
       ]);
 
       const settings = await getGlobalSettings();
-      // Note: each update is independent — only the final write of each
-      // field is observable. This test asserts no errors and that the
-      // daemon converges on a consistent state, not a specific ordering.
       expect(['claude-opus-4-5-20251101', undefined]).toContain(
         settings.model as string | undefined
       );

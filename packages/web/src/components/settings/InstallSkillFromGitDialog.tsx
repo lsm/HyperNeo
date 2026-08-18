@@ -1,11 +1,3 @@
-/**
- * InstallSkillFromGitDialog Component
- *
- * Modal dialog for installing a skill from a GitHub tree/blob URL or
- * a raw content URL. Downloads the skill directory and registers it as
- * a built-in skill in the application-level registry.
- */
-
 import { useState } from 'preact/hooks';
 import { skillsStore } from '../../lib/skills-store';
 import { toast } from '../../lib/toast';
@@ -13,17 +5,11 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
 
-/**
- * Derive a default commandName slug from the last non-empty path segment
- * of a URL. E.g. `.../skills/.curated/playwright` → `playwright`.
- * Returns an empty string if the URL is not parseable.
- */
 function deriveCommandName(url: string): string {
   try {
     const u = new URL(url.trim());
     const segments = u.pathname.split('/').filter(Boolean);
     const last = segments[segments.length - 1] ?? '';
-    // Keep only chars that are valid slug chars; strip leading/trailing hyphens
     return last
       .toLowerCase()
       .replace(/[^a-z0-9-]/g, '-')
@@ -121,7 +107,6 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
           ) or a raw file URL. HyperNeo will download the skill directory and register it.
         </p>
 
-        {/* Repository URL */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1">
             URL <span class="text-red-400">*</span>
@@ -141,7 +126,6 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
           {errors.repoUrl && <p class="text-xs text-red-400 mt-1">{errors.repoUrl}</p>}
         </div>
 
-        {/* Skill name (command name) */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1">
             Skill name <span class="text-red-400">*</span>

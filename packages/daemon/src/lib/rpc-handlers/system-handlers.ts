@@ -1,7 +1,3 @@
-/**
- * System RPC Handlers
- */
-
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +10,6 @@ import type { HealthStatus, DaemonConfig } from '@hyperneo/shared';
 const SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
 
 function getSDKVersion(): string {
-  // Strategy 1: resolve via import.meta.resolve
   try {
     const sdkModulePath = import.meta.resolve?.(SDK_PACKAGE);
     if (sdkModulePath) {
@@ -32,7 +27,6 @@ function getSDKVersion(): string {
     // fallback to next strategy
   }
 
-  // Strategy 2: walk up from current file to find node_modules
   try {
     let currentDir = dirname(fileURLToPath(import.meta.url));
     for (let i = 0; i < 10; i++) {
@@ -96,14 +90,9 @@ export function setupSystemHandlers(
     return response;
   });
 
-  // Echo handler for testing WebSocket pub/sub flow
-  // 1. Receives a message
-  // 2. Publishes an event with the message
-  // 3. Returns the message
   messageHub.onRequest('test.echo', async (data: { message: string }) => {
     const echoMessage = data.message || 'echo';
 
-    // Publish event to all subscribers of 'test.echo' on 'global' session
     messageHub.event('test.echo', { echo: echoMessage }, { channel: 'global' });
 
     return { echoed: echoMessage };

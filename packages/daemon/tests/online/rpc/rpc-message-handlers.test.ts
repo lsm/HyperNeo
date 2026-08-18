@@ -1,17 +1,3 @@
-/**
- * Message RPC Handlers Tests
- *
- * Tests message-related RPC operations via WebSocket:
- * - session.export (markdown and JSON formats)
- * - message.sdkMessages (pagination)
- * - message.count
- * - message.send error handling
- *
- * MODES:
- * - Dev Proxy (default in CI): Set HYPERNEO_USE_DEV_PROXY=1 for mocked responses
- * - Real API: Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,7 +5,6 @@ import { join } from 'node:path';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
 
-// Tests that send messages to mock SDK need longer timeout on CI
 const TIMEOUT = 15000;
 const IS_DEV_PROXY = process.env.HYPERNEO_USE_DEV_PROXY === '1';
 
@@ -43,11 +28,9 @@ describe('Message RPC Handlers', () => {
     })) as { sessionId: string };
     daemon.trackSession(sessionId);
 
-    // Send a message — mock SDK will respond with assistant text + result
     await sendMessage(daemon, sessionId, 'Hello, world!');
     await waitForIdle(daemon, sessionId);
 
-    // Wait for SDK messages to be persisted (handles race on slow CI)
     await waitForSdkMessages(daemon, sessionId, { minCount: 2 });
 
     return sessionId;
@@ -124,8 +107,6 @@ describe('Message RPC Handlers', () => {
     test(
       'should export session as markdown by default',
       async () => {
-        // Pass title at creation so auto-title generation is skipped,
-        // avoiding a race where the async title job overwrites our title.
         const sessionId = await createSessionWithMessages('Test Export Session');
 
         const result = (await daemon.messageHub.request('session.export', {
@@ -186,7 +167,6 @@ describe('Message RPC Handlers', () => {
           format: 'markdown',
         })) as { markdown: string };
 
-        // Should have assistant section with content
         expect(result.markdown).toContain('## Assistant');
       },
       TIMEOUT

@@ -1,11 +1,3 @@
-/**
- * ModelSwitchHandler Tests
- *
- * Tests model switching logic for AgentSession.
- * Note: Tests that require model validation are skipped since model-service
- * functions cannot be easily mocked in ESM modules.
- */
-
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
   ModelSwitchHandler,
@@ -32,7 +24,6 @@ import {
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { setModelsCache, clearModelsCache } from '../../../../src/lib/model-service';
 
-// Test model data for the models cache
 const TEST_MODELS: ModelInfo[] = [
   {
     id: 'default',
@@ -78,7 +69,6 @@ const TEST_MODELS: ModelInfo[] = [
     releaseDate: '2026-01-01',
     available: true,
   },
-  // Kimi K3 — catalog ID carries the documented [1m] suffix.
   {
     id: 'kimi-k3[1m]',
     name: 'Kimi K3',
@@ -92,7 +82,6 @@ const TEST_MODELS: ModelInfo[] = [
     providerAliases: ['k3', 'kimi-k3', 'k3[1m]', 'kimi-k3[1m]'],
     providerAliasPrefixes: ['moonshot-k3'],
   },
-  // Kimi K3 256K-capped variant — must never carry the [1m] suffix.
   {
     id: 'k3-256k',
     name: 'Kimi K3 (256K)',
@@ -105,12 +94,6 @@ const TEST_MODELS: ModelInfo[] = [
     available: true,
     providerAliases: ['kimi-k3-256k'],
   },
-  // Copilot models — intentionally share IDs with standard Anthropic models.
-  // isValidModel/getModelInfo now filter by provider, so 'claude-opus-4.6' under
-  // 'anthropic-copilot' and 'claude-opus-4.6' under 'anthropic' are distinct entries.
-  // There is no Anthropic entry for 'claude-sonnet-4.6' here because the cross-provider
-  // tests that start on 'anthropic' switch *to* 'anthropic-copilot' and only need the
-  // copilot entry to resolve. Callers that stay on 'anthropic' use 'default'/'opus'/etc.
   {
     id: 'claude-opus-4.6',
     name: 'Claude Opus 4.6 (Copilot)',
@@ -123,10 +106,6 @@ const TEST_MODELS: ModelInfo[] = [
     available: true,
   },
   {
-    // 'claude-sonnet-4.6' registered only under 'anthropic-copilot' in this fixture.
-    // isValidModel('claude-sonnet-4.6', 'global', 'anthropic-copilot') → found.
-    // isValidModel('claude-sonnet-4.6', 'global', 'anthropic')         → not found
-    //   (tests that need an anthropic sonnet use 'default' which resolves to 'default').
     id: 'claude-sonnet-4.6',
     name: 'Claude Sonnet 4.6 (Copilot)',
     alias: 'copilot-anthropic-sonnet',
@@ -161,17 +140,12 @@ describe('ModelSwitchHandler', () => {
   let restartSpy: ReturnType<typeof mock>;
 
   beforeEach(async () => {
-    // Initialize providers for model validation
     resetProviderRegistry();
     resetProviderFactory();
     clearModelsCache();
     const registry = initializeProviders();
-    // Anthropic Copilot is registered lazily; wait for it so provider-routing
-    // tests that reference 'anthropic-copilot' are deterministic.
     await waitForOptionalProviderRegistration(registry);
 
-    // Pre-populate the models cache with test models
-    // This allows model validation to work without requiring API calls
     const cache = new Map<string, ModelInfo[]>();
     cache.set('global', TEST_MODELS);
     setModelsCache(cache);
@@ -201,7 +175,6 @@ describe('ModelSwitchHandler', () => {
       },
     };
 
-    // Create mocks
     publishSpy = mock(async () => {});
     emitSpy = mock(async () => {});
     mockInternalEventBus = {
@@ -291,7 +264,7 @@ describe('ModelSwitchHandler', () => {
       handler = createHandler();
       const modelInfo = handler.getCurrentModel();
       expect(modelInfo.id).toBe('default');
-      expect(modelInfo.info).toBeNull(); // Info is fetched async
+      expect(modelInfo.info).toBeNull();
     });
 
     it('should reflect session config model', () => {
@@ -340,8 +313,6 @@ describe('ModelSwitchHandler', () => {
   });
 
   describe('switchModel', () => {
-    // Use a valid model that's different from 'default'
-    // 'opus' is a distinct model that will trigger actual switching
     const VALID_MODEL = 'opus';
 
     describe('when query not started', () => {
@@ -361,7 +332,6 @@ describe('ModelSwitchHandler', () => {
       });
 
       it('should pass only serializable config fields (no closures or cyclic refs)', async () => {
-        // Simulate a room agent session config with runtime-only non-serializable fields
         const mockCallback = () => {};
         const liveObj = { handler: mockCallback };
         (mockSession.config as Record<string, unknown>)['mcpServers'] = { 'room-tools': liveObj };
@@ -370,10 +340,8 @@ describe('ModelSwitchHandler', () => {
         const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
         expect(result.success).toBe(true);
-        // The spy should have been called with only plain serializable fields
         const callArg = updateSessionSpy.mock.calls[0][1] as { config: Record<string, unknown> };
         expect(callArg.config).toHaveProperty('model', 'opus');
-        // mcpServers must NOT be in the persisted config — it's a runtime-only field
         expect(callArg.config).not.toHaveProperty('mcpServers');
       });
 
@@ -430,15 +398,11 @@ describe('ModelSwitchHandler', () => {
 
     describe('when transport not ready', () => {
       it('should restart query when queryObject exists even if transport not ready', async () => {
-        // When queryObject exists but firstMessageReceived is false, we still need to
-        // restart because the SDK subprocess is already running with the old model.
-        // Without restart, the new model would not take effect.
         handler = createHandler({ firstMessageReceived: false });
         const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
         expect(result.success).toBe(true);
         expect(updateSessionSpy).toHaveBeenCalled();
-        // Restart IS called because queryObject exists - the new model must take effect
         expect(restartSpy).toHaveBeenCalled();
       });
 
@@ -495,15 +459,12 @@ describe('ModelSwitchHandler', () => {
 
         expect(result.success).toBe(false);
         expect(result.error).toContain('Invalid model');
-        expect(result.model).toBe('default'); // Returns current model
+        expect(result.model).toBe('default');
       });
 
       it('should return success with message when already using model', async () => {
-        // No query running for simpler test
         handler = createHandler({ queryObject: null });
-        // Switch to haiku first
         await handler.switchModel('haiku', 'anthropic');
-        // Then try to switch to haiku again
         const result = await handler.switchModel('haiku', 'anthropic');
 
         expect(result.success).toBe(true);
@@ -513,7 +474,6 @@ describe('ModelSwitchHandler', () => {
 
     describe('error handling', () => {
       it('should handle errors and call error manager', async () => {
-        // Make restart throw
         restartSpy.mockRejectedValue(new Error('Restart failed'));
         handler = createHandler();
 
@@ -525,11 +485,6 @@ describe('ModelSwitchHandler', () => {
       });
 
       it('rollback restores the literal stored provider, not the guard inference (P1)', async () => {
-        // Provider-less legacy session on a contested model (Copilot's
-        // gemini-3.1-pro-preview): the guard infers 'anthropic' via the catch-all
-        // so the switch can proceed, but a FAILED switch must roll back to the
-        // literal undefined — persisting the inference would permanently reroute
-        // the session to the Anthropic API.
         mockSession.config.model = 'gemini-3.1-pro-preview';
         (mockSession.config as Record<string, unknown>).provider = undefined;
         restartSpy.mockRejectedValue(new Error('Restart failed'));
@@ -540,7 +495,6 @@ describe('ModelSwitchHandler', () => {
         expect(result.success).toBe(false);
         expect(mockSession.config.model).toBe('gemini-3.1-pro-preview');
         expect(mockSession.config.provider).toBeUndefined();
-        // The persisted rollback config must also carry the literal undefined.
         const rollbackCall = updateSessionSpy.mock.calls.at(-1);
         expect(rollbackCall?.[1]).toEqual(
           expect.objectContaining({
@@ -553,7 +507,6 @@ describe('ModelSwitchHandler', () => {
       });
 
       it('should return error when session has no provider and no model to infer from', async () => {
-        // No provider AND no model that could infer one — the guard still throws.
         (mockSession.config as Record<string, unknown>).provider = undefined;
         (mockSession.config as Record<string, unknown>).model = undefined;
         handler = createHandler({ queryObject: null });
@@ -565,9 +518,6 @@ describe('ModelSwitchHandler', () => {
       });
 
       it('infers provider from the stored model when provider is empty (Task #768)', async () => {
-        // Long-horizon/worker agent session: model is set but provider was never
-        // stored. Previously this was hard-blocked with "Session has no provider
-        // configured"; the guard now infers the provider from the model.
         mockSession.config.model = 'glm-5';
         (mockSession.config as Record<string, unknown>).provider = undefined;
         handler = createHandler({ queryObject: null });
@@ -579,8 +529,6 @@ describe('ModelSwitchHandler', () => {
       });
 
       it('switches a kimi session whose provider was never stored, even to the same model (Task #768 regression)', async () => {
-        // Reproduces the original bug report: an LH agent with model='kimi-...' and a
-        // blank provider could not switch models — not even kimi → kimi.
         mockSession.config.model = 'kimi-k3[1m]';
         (mockSession.config as Record<string, unknown>).provider = undefined;
         handler = createHandler({ queryObject: null });
@@ -595,9 +543,7 @@ describe('ModelSwitchHandler', () => {
 
     describe('context tracker update', () => {
       it('should update context tracker model', async () => {
-        // Set query to null so we don't need restart
         handler = createHandler({ queryObject: null });
-        // Use haiku to ensure we're switching to a different model
         await handler.switchModel('haiku', 'anthropic');
 
         expect(setModelTrackerSpy).toHaveBeenCalled();
@@ -606,14 +552,6 @@ describe('ModelSwitchHandler', () => {
   });
 
   describe('provider routing', () => {
-    /**
-     * Same-provider switch: copilot opus -> copilot sonnet (explicit provider)
-     *
-     * When a session is on anthropic-copilot and the caller explicitly passes
-     * 'anthropic-copilot' as the provider, the switch stays within that provider.
-     * Both copilot-opus and copilot-sonnet share canonical IDs with Anthropic models;
-     * explicit provider routing (dev approach) means there is no ambiguity.
-     */
     describe('same-provider switch (copilot opus to copilot sonnet)', () => {
       beforeEach(() => {
         mockSession.config.model = 'claude-opus-4.6';
@@ -642,24 +580,15 @@ describe('ModelSwitchHandler', () => {
       });
 
       it('already on copilot-opus via alias; no-op expected', async () => {
-        // copilot-anthropic-opus resolves to claude-opus-4.6 which is the current model.
-        // Provider also matches, so the handler takes the "already using" early-return path.
         handler = createHandler({ queryObject: null });
         const result = await handler.switchModel('copilot-anthropic-opus', 'anthropic-copilot');
 
         expect(result.success).toBe(true);
         expect(result.error).toContain('Already using');
-        // No-op: must not write to DB or restart query
         expect(updateSessionSpy).not.toHaveBeenCalled();
       });
     });
 
-    /**
-     * Cross-provider switch: anthropic -> copilot (explicit provider)
-     *
-     * Caller explicitly requests 'anthropic-copilot'; session was on 'anthropic'.
-     * The explicit provider arg always wins.
-     */
     describe('cross-provider switch (anthropic to copilot, explicit provider)', () => {
       beforeEach(() => {
         mockSession.config.model = 'default';
@@ -691,11 +620,6 @@ describe('ModelSwitchHandler', () => {
       });
     });
 
-    /**
-     * Cross-provider switch: GLM -> anthropic (explicit provider)
-     *
-     * Caller passes 'anthropic' explicitly when switching from GLM to an Anthropic model.
-     */
     describe('cross-provider switch (glm to anthropic, explicit provider)', () => {
       it('switches from glm to anthropic when explicit provider given', async () => {
         mockSession.config.model = 'glm-5';

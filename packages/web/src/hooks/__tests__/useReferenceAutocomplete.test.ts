@@ -1,10 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for useReferenceAutocomplete Hook
- *
- * Tests @ reference detection, RPC search with debouncing,
- * keyboard navigation, and multiple @ support.
- */
 
 import { renderHook, act } from '@testing-library/preact';
 import {
@@ -12,10 +6,6 @@ import {
   extractActiveAtQuery,
   insertReferenceMention,
 } from '../useReferenceAutocomplete.ts';
-
-// --------------------------------------------------------------------------
-// Mocks
-// --------------------------------------------------------------------------
 
 const mockActiveSessionId = vi.hoisted(() => ({ value: 'session-123' }));
 
@@ -34,10 +24,6 @@ vi.mock('../../lib/connection-manager.ts', () => ({
   },
 }));
 
-// --------------------------------------------------------------------------
-// Helpers
-// --------------------------------------------------------------------------
-
 const makeResults = (count = 3) =>
   Array.from({ length: count }, (_, i) => ({
     type: 'task' as const,
@@ -46,10 +32,6 @@ const makeResults = (count = 3) =>
     displayText: `Task ${i}`,
     subtitle: 'open',
   }));
-
-// --------------------------------------------------------------------------
-// extractActiveAtQuery unit tests
-// --------------------------------------------------------------------------
 
 describe('extractActiveAtQuery', () => {
   it('returns null when no @ present', () => {
@@ -73,7 +55,6 @@ describe('extractActiveAtQuery', () => {
   });
 
   it('returns query for last @ when multiple in text', () => {
-    // @done is completed (followed by space), @new is active
     expect(extractActiveAtQuery('@done fix @new')).toBe('new');
   });
 
@@ -82,12 +63,10 @@ describe('extractActiveAtQuery', () => {
   });
 
   it('handles @ embedded in word (not word-start) — should not trigger', () => {
-    // email@example.com — @ is not at word start (preceded by non-space)
     expect(extractActiveAtQuery('email@example.com')).toBeNull();
   });
 
   it('handles multiple @ with only last active', () => {
-    // First @ is completed (space after query), second @ is active
     expect(extractActiveAtQuery('Fix @ref{task:t-1} and @ne')).toBe('ne');
   });
 
@@ -95,10 +74,6 @@ describe('extractActiveAtQuery', () => {
     expect(extractActiveAtQuery('hello @')).toBe('');
   });
 });
-
-// --------------------------------------------------------------------------
-// insertReferenceMention unit tests
-// --------------------------------------------------------------------------
 
 describe('insertReferenceMention', () => {
   it('replaces @query at end of content with @ref token', () => {
@@ -139,15 +114,10 @@ describe('insertReferenceMention', () => {
 
   it('returns unchanged content when suffix does not match', () => {
     const mention = { type: 'task' as const, id: 't-1', displayText: 'Task' };
-    // content ends with @query but query string doesn't match (different text)
     const result = insertReferenceMention('hello @world', 'xyz', mention);
     expect(result).toBe('hello @world');
   });
 });
-
-// --------------------------------------------------------------------------
-// useReferenceAutocomplete hook tests
-// --------------------------------------------------------------------------
 
 describe('useReferenceAutocomplete', () => {
   beforeEach(() => {
@@ -161,10 +131,6 @@ describe('useReferenceAutocomplete', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
-
-  // -----------------------------------------------------------------------
-  // Initialization
-  // -----------------------------------------------------------------------
 
   describe('initialization', () => {
     it('initializes with autocomplete hidden', () => {
@@ -188,10 +154,6 @@ describe('useReferenceAutocomplete', () => {
       expect(typeof result.current.close).toBe('function');
     });
   });
-
-  // -----------------------------------------------------------------------
-  // Detection
-  // -----------------------------------------------------------------------
 
   describe('@ detection', () => {
     it('triggers search when @ is typed at start', async () => {
@@ -248,10 +210,6 @@ describe('useReferenceAutocomplete', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // Debouncing
-  // -----------------------------------------------------------------------
-
   describe('debouncing', () => {
     it('does not call RPC before debounce delay', async () => {
       renderHook(() => useReferenceAutocomplete({ content: '@foo', onSelect: vi.fn() }));
@@ -289,7 +247,6 @@ describe('useReferenceAutocomplete', () => {
         vi.advanceTimersByTime(300);
       });
 
-      // Only called once (for the final value)
       expect(mockRequest).toHaveBeenCalledTimes(1);
       expect(mockRequest).toHaveBeenCalledWith('reference.search', {
         sessionId: 'session-123',
@@ -297,10 +254,6 @@ describe('useReferenceAutocomplete', () => {
       });
     });
   });
-
-  // -----------------------------------------------------------------------
-  // Results
-  // -----------------------------------------------------------------------
 
   describe('results handling', () => {
     it('shows results after successful search', async () => {
@@ -385,10 +338,6 @@ describe('useReferenceAutocomplete', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // handleSelect
-  // -----------------------------------------------------------------------
-
   describe('handleSelect', () => {
     it('calls onSelect with ReferenceMention and closes autocomplete', async () => {
       const results = makeResults(2);
@@ -415,10 +364,6 @@ describe('useReferenceAutocomplete', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // close
-  // -----------------------------------------------------------------------
-
   describe('close', () => {
     it('closes autocomplete and resets results and selectedIndex', async () => {
       mockRequest.mockResolvedValue({ results: makeResults(3) });
@@ -435,7 +380,6 @@ describe('useReferenceAutocomplete', () => {
       expect(result.current.showAutocomplete).toBe(true);
       expect(result.current.results).toHaveLength(3);
 
-      // Navigate to second item so selectedIndex > 0
       const e = new KeyboardEvent('keydown', { key: 'ArrowDown' });
       Object.defineProperty(e, 'preventDefault', { value: vi.fn() });
       act(() => {
@@ -452,10 +396,6 @@ describe('useReferenceAutocomplete', () => {
       expect(result.current.selectedIndex).toBe(0);
     });
   });
-
-  // -----------------------------------------------------------------------
-  // handleKeyDown
-  // -----------------------------------------------------------------------
 
   describe('handleKeyDown', () => {
     it('returns false when autocomplete is hidden', () => {
@@ -513,7 +453,6 @@ describe('useReferenceAutocomplete', () => {
         await Promise.resolve();
       });
 
-      // Move to index 2 first
       const down1 = new KeyboardEvent('keydown', { key: 'ArrowDown' });
       Object.defineProperty(down1, 'preventDefault', { value: vi.fn() });
       const down2 = new KeyboardEvent('keydown', { key: 'ArrowDown' });
@@ -549,7 +488,6 @@ describe('useReferenceAutocomplete', () => {
         await Promise.resolve();
       });
 
-      // Navigate to last item (index 2)
       for (let i = 0; i < 2; i++) {
         const e = new KeyboardEvent('keydown', { key: 'ArrowDown' });
         Object.defineProperty(e, 'preventDefault', { value: vi.fn() });
@@ -682,7 +620,6 @@ describe('useReferenceAutocomplete', () => {
       expect(result.current.showAutocomplete).toBe(true);
       expect(result.current.results).toHaveLength(3);
 
-      // Navigate to second item so selectedIndex > 0
       const down = new KeyboardEvent('keydown', { key: 'ArrowDown' });
       Object.defineProperty(down, 'preventDefault', { value: vi.fn() });
       act(() => {
@@ -705,10 +642,6 @@ describe('useReferenceAutocomplete', () => {
       expect(preventDefault).toHaveBeenCalled();
     });
   });
-
-  // -----------------------------------------------------------------------
-  // Multiple @ support
-  // -----------------------------------------------------------------------
 
   describe('multiple @ in same message', () => {
     it('triggers on last active @ when earlier ones are completed', async () => {
@@ -752,10 +685,6 @@ describe('useReferenceAutocomplete', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // In-progress search cancellation
-  // -----------------------------------------------------------------------
-
   describe('stale response cancellation', () => {
     it('ignores response from superseded search', async () => {
       let resolveFirst!: (v: unknown) => void;
@@ -763,7 +692,6 @@ describe('useReferenceAutocomplete', () => {
         resolveFirst = res;
       });
 
-      // First call stalls; second resolves immediately
       mockRequest.mockReturnValueOnce(firstPromise).mockResolvedValue({ results: makeResults(2) });
 
       const { result, rerender } = renderHook(
@@ -771,27 +699,22 @@ describe('useReferenceAutocomplete', () => {
         { initialProps: { content: '@fo' } }
       );
 
-      // Trigger first debounce
       await act(async () => {
         vi.advanceTimersByTime(300);
       });
 
-      // Change content before first resolves
       rerender({ content: '@foo' });
 
-      // Trigger second debounce
       await act(async () => {
         vi.advanceTimersByTime(300);
         await Promise.resolve();
       });
 
-      // Now resolve first (stale) response
       await act(async () => {
-        resolveFirst({ results: makeResults(5) }); // stale, more results
+        resolveFirst({ results: makeResults(5) });
         await Promise.resolve();
       });
 
-      // Should show second response's results (2), not stale (5)
       expect(result.current.results).toHaveLength(2);
     });
   });

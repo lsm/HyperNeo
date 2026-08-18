@@ -1,74 +1,21 @@
-/**
- * Post-approval validator
- *
- * PR 1/5 of the task-agent-as-post-approval-executor refactor. See
- * `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
- * §1.5.
- *
- * A workflow node's optional `postApproval` route declares which agent should
- * act on that node's approval signal. The route's `targetAgent` must resolve to
- * either:
- *   - the literal string `'task-agent'` (the orchestration Task Agent), or
- *   - the `name` of any `WorkflowNodeAgent` declared in the workflow's nodes.
- *
- * Any other value is invalid — typically the result of stale config after a
- * node rename or deletion. This validator is called from:
- *   - `SpaceWorkflowManager.createWorkflow` / `.updateWorkflow` — hard-reject on
- *     an invalid route (surfaced as `WorkflowValidationError`).
- *   - `SpaceWorkflowManager.getWorkflow` — log a warning and disable the route
- *     for the returned workflow, so a stale persisted config cannot break
- *     runtime load.
- *
- * The PostApprovalRouter reads node-level routes first, then falls back to the
- * legacy workflow-level route for older persisted workflows.
- */
-
 import type { PostApprovalRoute, WorkflowNode, WorkflowNodeInput } from '@hyperneo/shared';
 
-/**
- * Literal target name for the legacy Task Agent target.
- * Retained for backward compatibility with persisted workflows that declared
- * `targetAgent: 'task-agent'`. New workflows should target a concrete node
- * agent name instead. The PostApprovalRouter will attempt a node-agent spawn
- * for this target, which will fail gracefully if no agent named 'task-agent'
- * exists in the workflow.
- */
 export const POST_APPROVAL_TASK_AGENT_TARGET = 'task-agent';
 
-/**
- * Input shape accepted by the validator. Both the persisted `WorkflowNode`
- * shape and the create-time `WorkflowNodeInput` shape are supported so the
- * validator can be called from both the `create` and `update` code paths of
- * `SpaceWorkflowManager` without re-normalising.
- */
 export interface PostApprovalValidationInput {
-  /** Optional route to validate. Missing or `undefined` means "no route" → valid. */
   postApproval?: PostApprovalRoute;
-  /** Workflow nodes — used to collect eligible node-agent target names. */
   nodes: Array<WorkflowNode | WorkflowNodeInput>;
 }
 
 export interface PostApprovalRoutesValidationInput {
-  /** Legacy workflow-level route. Missing or `undefined` means no legacy route. */
   workflowPostApproval?: PostApprovalRoute;
-  /** Workflow nodes carrying optional node-level routes. */
   nodes: Array<WorkflowNode | WorkflowNodeInput>;
 }
 
-/** Discriminated result — cheaper than throwing in hot paths. */
 export type PostApprovalValidationResult =
   | { ok: true }
   | { ok: false; error: string; eligibleTargets: string[] };
 
-/**
- * Collect the set of legal `targetAgent` strings for a workflow, in stable
- * iteration order:
- *   1. `'task-agent'` (the virtual Task Agent node), always eligible.
- *   2. Every `WorkflowNodeAgent.name` in document order.
- *
- * Exported because the error reporter (`SpaceWorkflowManager`) and the load-
- * time warning path may want to surface the list to the user/LLM.
- */
 export function collectEligiblePostApprovalTargets(
   nodes: Array<WorkflowNode | WorkflowNodeInput>
 ): string[] {
@@ -86,21 +33,6 @@ export function collectEligiblePostApprovalTargets(
   return targets;
 }
 
-/**
- * Validate a workflow's `postApproval` route against its node graph.
- *
- *   - `route === undefined` → valid (post-approval is optional).
- *   - `route.targetAgent === 'task-agent'` → valid (legacy backward compat).
- *   - `route.targetAgent` matches some `nodes[*].agents[*].name` → valid.
- *   - Any other `targetAgent` → invalid; the error message lists every
- *     eligible target so the caller can surface a helpful repair hint.
- *
- * This does NOT validate `route.instructions` — an empty string is a legal
- * no-op template. Template syntax (`{{identifier}}`) is checked lazily at
- * interpolation time by `post-approval-template.ts`; we do not pre-validate it
- * here because unknown tokens are a runtime concern (the runtime context is
- * not known until an approval signal actually fires).
- */
 export function validatePostApproval(
   input: PostApprovalValidationInput
 ): PostApprovalValidationResult {
@@ -135,13 +67,6 @@ export function validatePostApproval(
   };
 }
 
-/**
- * Validate every post-approval route declared by a workflow.
- *
- * Node-level routes are the canonical model. The legacy workflow-level route is
- * still accepted for old persisted rows and import paths, so callers can use
- * this helper to validate both shapes against the same eligible target set.
- */
 export function validatePostApprovalRoutes(
   input: PostApprovalRoutesValidationInput
 ): PostApprovalValidationResult {

@@ -1,26 +1,3 @@
-/**
- * End-node tool handlers.
- *
- * Factory for the two "terminal" MCP tool handlers exposed to end-node agents:
- *   - approve_task        — Agent self-close. Gated by space.autonomyLevel >=
- *                           workflow.completionAutonomyLevel.
- *   - submit_for_approval — Request human sign-off. Always available.
- *
- * These were previously inline closures inside
- * `SpaceTaskAgentManager.buildNodeAgentMcpServer`. Extracting them here lets
- * them be unit-tested directly (see `end-node-handlers.test.ts`) and keeps the
- * manager focused on orchestration.
- *
- * Contract notes:
- *   - Both handlers return a `ToolResult` (never throw).
- *   - `onApproveTask` re-checks autonomy at call time as defense-in-depth;
- *     tool registration already gates the surface, but a racing autonomy-level
- *     downgrade between registration and invocation would otherwise slip
- *     through.
- *   - `onSubmitForApproval` sets `status='review'` plus pending-completion
- *     fields so the UI banner can route a human to approve/reject.
- */
-
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
@@ -39,34 +16,15 @@ import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 
 const log = new Logger('end-node-handlers');
 
-/**
- * Dependencies for building end-node handlers. All fields are required EXCEPT
- * `internalEventBus` — when absent the handlers still succeed, they just do not emit
- * lifecycle events (used in unit tests).
- */
 export interface EndNodeHandlerDeps {
-  /** Task being finalized. */
   taskId: string;
-  /** Space the task belongs to. Needed for autonomy lookup + event payloads. */
   spaceId: string;
-  /** Workflow the task was executed under. Needed for completionAutonomyLevel. */
   workflow: SpaceWorkflow | null;
-  /** Workflow node ID of the calling agent — stored for pending fields. */
   workflowNodeId: string;
-  /** Agent name calling the tool — for logging. */
   agentName: string;
-  /** Task repository. */
   taskRepo: SpaceTaskRepository;
-  /**
-   * Task manager bound to `spaceId`. Used by `submit_for_approval` so the
-   * agent path and the UI "Submit for Review" RPC share `submitTaskForReview`,
-   * which runs the centralised transition validator before stamping the
-   * pending-completion fields.
-   */
   taskManager: Pick<SpaceTaskManager, 'submitTaskForReview'>;
-  /** Space manager — used to look up current autonomy level for approve_task. */
   spaceManager: Pick<SpaceManager, 'getSpace'>;
-  /** Optional hub for emitting `space.task.updated` events after state changes. */
   internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
 }
 
@@ -75,63 +33,25 @@ export interface EndNodeHandlers {
   onSubmitForApproval: (args: SubmitForApprovalInput) => Promise<ToolResult>;
 }
 
-/**
- * Standalone factory for the `mark_complete` handler (PR 2/5). Separate from
- * `createEndNodeHandlers` because `mark_complete` is mirrored onto
- * post-approval sub-sessions — which are NOT necessarily end-node sessions —
- * and also onto the orchestration Task Agent's MCP surface directly.
- *
- * Transitions the task `approved → done` via `SpaceTaskManager.setTaskStatus`
- * (so the centralised transition validator runs), clears the post-approval
- * tracking fields, and emits a `space.task.updated` InternalEventBus<DaemonInternalEventMap> event.
- */
 export interface MarkCompleteHandlerDeps {
   taskId: string;
   spaceId: string;
-  /** Task repository — used to read the current status before transitioning. */
   taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
-  /** Optional summary captured from the latest result artifact for this task's workflow run. */
   resolveResultArtifactSummary?: (task: SpaceTask) => string | null;
-  /** Session invoking mark_complete; must match the routed post-approval session. */
   callerSessionId?: string;
-  /** Whether this workflow declares a dispatchable post-approval route. */
   requiresPostApprovalOwner?: boolean;
-  /** Task manager — used to transition and update the task atomically. */
   taskManager: Pick<SpaceTaskManager, 'setTaskStatus' | 'updateTask'>;
-  /** Optional hub for emitting `space.task.updated` events. */
   internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
-  /** Optional goal service for processing terminal goal-task side effects. */
   goalService?: Pick<SpaceGoalService, 'getGoal' | 'updateGoal' | 'handleTaskTerminal'>;
-  /**
-   * Optional merge-completion gate. When provided, `mark_complete` fails closed
-   * until GitHub reports the task's PR merged (the coder owns the merge — there
-   * is no `merge_pr` gate anymore). The gate decides whether a missing `pr_url`
-   * passes for non-PR workflows or blocks for workflows that require a PR. The
-   * task stays `approved` on a block and the caller may retry after the merge.
-   */
   assertPrMerged?: (task: SpaceTask) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
-/**
- * Dependencies for the merge-completion gate factory.
- */
 export interface PrMergedGateDeps {
-  /** Resolve the task's PR URL (e.g. via the workflow run's primary link). */
   resolvePrUrl: (task: SpaceTask) => string;
-  /** Block when no PR URL resolves. Use for workflows whose completion requires a PR. */
   requirePrUrl?: boolean;
-  /** Query GitHub for the PR's state. Throws on lookup failure (fail closed). */
   getPrState: (prUrl: string) => Promise<string>;
 }
 
-/**
- * Merge-completion gate factory. Returns a `mark_complete` gate that fails
- * closed until GitHub reports the task's PR MERGED. Mirrors the `pr_merged`
- * validator's semantics (`state == MERGED` passes; `OPEN` is a retryable
- * "not yet merged" block; anything else — CLOSED-without-merge or lookup
- * failure — is a terminal block). The task stays `approved` on a block so the
- * implementer can merge and retry.
- */
 export function createPrMergedGate(
   deps: PrMergedGateDeps
 ): (task: SpaceTask) => Promise<{ ok: true } | { ok: false; error: string }> {
@@ -179,11 +99,6 @@ export function createPrMergedGate(
   };
 }
 
-/**
- * Create a bound `mark_complete` handler. See the type-level doc on the
- * `mark_complete` tool registration in `task-agent-tools.ts` /
- * `node-agent-tools.ts` for the wider contract.
- */
 export function createMarkCompleteHandler(
   deps: MarkCompleteHandlerDeps
 ): (args: MarkCompleteInput) => Promise<ToolResult> {
@@ -252,13 +167,6 @@ export function createMarkCompleteHandler(
       });
     }
 
-    // Merge-completion gate: the coder owns the merge in the stable coding /
-    // research workflows, so the task must NOT flip to `done` while the run's
-    // PR is still open — otherwise a coder that abandons a conflicted merge or
-    // mistakes a merge-queue enqueue for completion would close the task with
-    // the PR unmerged. Fails closed until GitHub reports the PR MERGED. The
-    // closure resolves the pr_url itself and skips non-PR runs, so a bare
-    // `approved → done` (no PR) is unaffected.
     if (assertPrMerged) {
       const gate = await assertPrMerged(task);
       if (!gate.ok) {
@@ -291,10 +199,6 @@ export function createMarkCompleteHandler(
     }
 
     try {
-      // Single atomic write: status flip + post-approval-* cleanup. The
-      // "exit approved" branch in `SpaceTaskManager.setTaskStatus` nulls
-      // `postApprovalSessionId`, `postApprovalStartedAt`, and
-      // `postApprovalBlockedReason` in the same UPDATE.
       const artifactSummary = normalizeMeaningfulTaskResult(resolveResultArtifactSummary?.(task));
       const reportedSummary = normalizeMeaningfulTaskResult(task.reportedSummary);
       const existingResult = normalizeMeaningfulTaskResult(task.result);
@@ -338,11 +242,6 @@ export function createMarkCompleteHandler(
   };
 }
 
-/**
- * Create the two end-node tool handlers bound to a specific task/workflow/
- * agent context. The returned handlers are pure closures — repeated calls
- * with the same `deps` return independent instances.
- */
 export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers {
   const {
     taskId,
@@ -367,9 +266,6 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
   };
 
   return {
-    // -------------------------------------------------------------------
-    // approve_task — self-close. Re-checks autonomy at call time.
-    // -------------------------------------------------------------------
     onApproveTask: async (_args: ApproveTaskInput) => {
       const space = await spaceManager.getSpace(spaceId);
       const currentLevel = space?.autonomyLevel ?? 1;
@@ -387,12 +283,6 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
       try {
         const updated = taskRepo.updateTask(taskId, {
           reportedStatus: 'done',
-          // Preserve the approving node as the DURABLE completion source so
-          // post-approval routing resolves against this terminal node instead
-          // of falling back to the workflow end node. The router/dispatch read
-          // this field (not the pending-completion fields, which are atomically
-          // cleared on entering `approved` — task #851) for sourceNodeId +
-          // approval_authority + sibling-quiesce source.
           pendingCheckpointType: null,
           pendingCompletionSubmittedByNodeId: workflowNodeId,
           pendingCompletionSubmittedAt: null,
@@ -414,14 +304,6 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
       }
     },
 
-    // -------------------------------------------------------------------
-    // submit_for_approval — human sign-off. Always available to end nodes.
-    //
-    // Delegates to `SpaceTaskManager.submitTaskForReview` — the same helper
-    // used by the UI "Submit for Review" RPC and the Task Agent's
-    // `submit_for_approval` tool — so all three callers write identical
-    // fields and the resulting `review` task is always banner-eligible.
-    // -------------------------------------------------------------------
     onSubmitForApproval: async (args: SubmitForApprovalInput) => {
       const task = taskRepo.getTask(taskId);
       if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });

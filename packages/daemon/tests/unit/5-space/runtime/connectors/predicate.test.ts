@@ -1,12 +1,3 @@
-/**
- * Predicate evaluator unit tests (epic #2299; promoted from the #2300 spike
- * in P2 #2302).
- *
- * The predicate language is DOMAIN-AGNOSTIC; these tests prove the evaluator
- * is correct on generic shapes (the codex/pr cases in presets.test.ts then
- * rely on it).
- */
-
 import { describe, expect, test } from 'bun:test';
 import {
   evaluatePredicate,
@@ -30,12 +21,9 @@ describe('predicate.getPath', () => {
   });
 
   test('does not walk the prototype chain (__proto__, constructor)', () => {
-    // Without the hasOwnProperty guard, `__proto__`/`constructor` resolve to
-    // inherited values, making `present: '__proto__'` a tautology.
     expect(getPath({}, '__proto__')).toBeUndefined();
     expect(getPath({}, 'constructor')).toBeUndefined();
     expect(getPath({}, 'toString')).toBeUndefined();
-    // A real own property named state still resolves.
     expect(getPath({ state: 'OPEN' }, 'state')).toBe('OPEN');
   });
 
@@ -73,7 +61,6 @@ describe('predicate leaf operators', () => {
   test('gte numeric and lexicographic ISO', () => {
     expect(evaluatePredicate({ gte: ['n', 5] }, { n: 5 })).toBe(true);
     expect(evaluatePredicate({ gte: ['n', 5] }, { n: 4 })).toBe(false);
-    // ISO-8601 UTC strings compare lexicographically.
     expect(
       evaluatePredicate(
         { gte: ['createdAt', '2026-08-02T12:00:00Z'] },

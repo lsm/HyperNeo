@@ -1,18 +1,3 @@
-/**
- * Space Agent RPC Handlers
- *
- * RPC handlers for Space agent CRUD operations:
- * - spaceAgent.listBuiltInTemplates - List built-in agent templates from seeding source
- * - spaceAgent.create           - Create an agent in a Space
- * - spaceAgent.list             - List all agents in a Space
- * - spaceAgent.get              - Get a single agent by ID
- * - spaceAgent.update           - Update an agent's fields
- * - spaceAgent.delete           - Delete an agent (error if referenced by workflows)
- * - spaceAgent.getDriftReport   - Compare preset-tracked agents to live preset definitions
- * - spaceAgent.previewTemplateSync - Preview the per-field diff a sync would apply (no write)
- * - spaceAgent.syncFromTemplate - Reset a preset-tracked agent to the current preset definition
- */
-
 import type {
   MessageHub,
   Session,
@@ -173,12 +158,10 @@ export function setupSpaceAgentHandlers(
     clearLongTermAgentSessionProvider(spaceId: string, agentId: string): Promise<void>;
   }
 ): void {
-  // spaceAgent.listBuiltInTemplates — return built-in templates from seeding source
   messageHub.onRequest('spaceAgent.listBuiltInTemplates', async (data) => {
     const params = data as { spaceId: string };
     if (!params.spaceId) throw new Error('spaceId is required');
 
-    // Keep validation consistent with spaceWorkflow.listBuiltInTemplates.
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
 
@@ -190,7 +173,6 @@ export function setupSpaceAgentHandlers(
     };
   });
 
-  // spaceAgent.create — create a new agent within a Space
   messageHub.onRequest('spaceAgent.create', async (data) => {
     const params = data as {
       spaceId: string;
@@ -304,7 +286,6 @@ export function setupSpaceAgentHandlers(
     return { agent: result.value };
   });
 
-  // spaceAgent.list — list all agents for a Space
   messageHub.onRequest('spaceAgent.list', async (data) => {
     const params = data as { spaceId: string };
     if (!params.spaceId) throw new Error('spaceId is required');
@@ -313,7 +294,6 @@ export function setupSpaceAgentHandlers(
     return { agents };
   });
 
-  // spaceAgent.get — get a single agent by ID
   messageHub.onRequest('spaceAgent.get', async (data) => {
     const params = data as { id: string };
     if (!params.id) throw new Error('id is required');
@@ -324,7 +304,6 @@ export function setupSpaceAgentHandlers(
     return { agent };
   });
 
-  // spaceAgent.update — update an existing agent
   messageHub.onRequest('spaceAgent.update', async (data) => {
     const params = data as {
       id: string;
@@ -361,10 +340,6 @@ export function setupSpaceAgentHandlers(
     if (!result.ok) throw new Error(result.error);
 
     if (updateFields.provider === null && runtimeService) {
-      // Explicit provider-override clear: wake-time provider retention would
-      // otherwise restore the stale provider from the session config and make
-      // the clear a no-op. Drop the persisted provider so the next ensure
-      // re-resolves it.
       await runtimeService.clearLongTermAgentSessionProvider(result.value.spaceId, result.value.id);
     }
 
@@ -381,15 +356,10 @@ export function setupSpaceAgentHandlers(
     return { agent: result.value };
   });
 
-  // spaceAgent.getDriftReport — list preset-tracked agents and whether each
-  // has drifted from the source preset definition in code.
   messageHub.onRequest('spaceAgent.getDriftReport', async (data) => {
     const params = data as { spaceId: string };
     if (!params.spaceId) throw new Error('spaceId is required');
 
-    // Validate space ownership for consistency with the rest of the
-    // spaceAgent.* handlers — keeps unauthenticated drift queries from
-    // leaking the existence of preset-tracked agents.
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
 
@@ -397,10 +367,6 @@ export function setupSpaceAgentHandlers(
     return { report };
   });
 
-  // spaceAgent.previewTemplateSync — compute the per-field before/after diff
-  // that syncFromTemplate would apply for a single preset-tracked agent,
-  // WITHOUT writing. Powers the "Show diff" affordance before a reset.
-  // Same validation + cross-space guard as syncFromTemplate.
   messageHub.onRequest('spaceAgent.previewTemplateSync', async (data) => {
     const params = data as { spaceId: string; agentId: string };
     if (!params.spaceId) throw new Error('spaceId is required');
@@ -409,9 +375,6 @@ export function setupSpaceAgentHandlers(
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
 
-    // Defensive: verify the agent belongs to this space — same cross-space
-    // guard as syncFromTemplate prevents one space from probing another
-    // space's agent via a forged spaceId.
     const existing = spaceAgentManager.getById(params.agentId);
     if (!existing) throw new Error(`Agent not found: ${params.agentId}`);
     if (existing.spaceId !== params.spaceId) {
@@ -424,10 +387,6 @@ export function setupSpaceAgentHandlers(
     return { preview: result.value };
   });
 
-  // spaceAgent.syncFromTemplate — reset a preset-tracked agent to the
-  // current preset definition (description, tools, customPrompt) and
-  // re-stamp its template_hash. Throws if the agent has no template_name
-  // or the named preset no longer exists in code.
   messageHub.onRequest('spaceAgent.syncFromTemplate', async (data) => {
     const params = data as { spaceId: string; agentId: string; expectedRowHash?: string };
     if (!params.spaceId) throw new Error('spaceId is required');
@@ -436,10 +395,6 @@ export function setupSpaceAgentHandlers(
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
 
-    // Defensive: verify the agent actually belongs to this space before
-    // running the sync. SpaceAgentManager.syncFromTemplate operates on the
-    // agent ID alone, so this check prevents one space from rewriting
-    // another space's agent via a forged spaceId.
     const existing = spaceAgentManager.getById(params.agentId);
     if (!existing) throw new Error(`Agent not found: ${params.agentId}`);
     if (existing.spaceId !== params.spaceId) {
@@ -462,15 +417,10 @@ export function setupSpaceAgentHandlers(
     return { agent: result.value };
   });
 
-  // spaceAgent.delete — delete an agent (blocked if referenced by workflows)
   messageHub.onRequest('spaceAgent.delete', async (data) => {
     const params = data as { id: string };
     if (!params.id) throw new Error('id is required');
 
-    // Pre-fetch to capture spaceId for the event payload.
-    // SpaceAgentManager.delete() also calls getById internally; the two reads
-    // are synchronous SQLite operations and the pre-fetch ensures we always
-    // have the spaceId for event routing even after the row is removed.
     const existing = spaceAgentManager.getById(params.id);
     if (!existing) throw new Error(`Agent not found: ${params.id}`);
 
@@ -481,8 +431,6 @@ export function setupSpaceAgentHandlers(
     }
     void runtimeService;
 
-    // Await the event so subscribers (e.g. StateManager) see it before the
-    // handler returns — consistent with how room.delete emits room.deleted.
     await internalEventBus
       .publish('spaceAgent.deleted', {
         sessionId: `space:${existing.spaceId}`,

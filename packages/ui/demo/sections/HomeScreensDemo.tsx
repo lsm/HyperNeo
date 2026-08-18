@@ -30,9 +30,6 @@ import {
   X,
 } from 'lucide-preact';
 
-// ==========================
-// Example 1: Sidebar Layout (Cashflow Dashboard)
-// ==========================
 function HomeScreensSidebar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -252,7 +249,6 @@ function HomeScreensSidebar() {
 
       <main>
         <div class="relative isolate overflow-hidden pt-16">
-          {/* Secondary navigation */}
           <header class="pt-6 pb-4 sm:pb-6">
             <div class="mx-auto flex max-w-7xl flex-wrap items-center gap-6 px-4 sm:flex-nowrap sm:px-6 lg:px-8">
               <h1 class="text-base/7 font-semibold text-gray-900 dark:text-white">Cashflow</h1>
@@ -281,7 +277,6 @@ function HomeScreensSidebar() {
             </div>
           </header>
 
-          {/* Stats */}
           <div class="border-b border-b-gray-900/10 lg:border-t lg:border-t-gray-900/5 dark:border-b-white/10 dark:lg:border-t-white/5">
             <dl class="mx-auto grid max-w-7xl grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 lg:px-2 xl:px-0">
               {stats.map((stat, statIdx) => (
@@ -332,7 +327,6 @@ function HomeScreensSidebar() {
         </div>
 
         <div class="space-y-16 py-16 xl:space-y-20">
-          {/* Recent activity table */}
           <div>
             <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
               <h2 class="mx-auto max-w-2xl text-base font-semibold text-gray-900 lg:mx-0 lg:max-w-none dark:text-white">
@@ -436,7 +430,6 @@ function HomeScreensSidebar() {
             </div>
           </div>
 
-          {/* Recent client list */}
           <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div class="mx-auto max-w-2xl lg:mx-0 lg:max-w-none">
               <div class="flex items-center justify-between">
@@ -536,9 +529,6 @@ function HomeScreensSidebar() {
   );
 }
 
-// ==========================
-// Example 2: Stacked Layout (Deployments Dashboard)
-// ==========================
 function HomeScreensStacked() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -777,7 +767,6 @@ function HomeScreensStacked() {
                 </div>
               </TransitionChild>
 
-              {/* Sidebar component */}
               <div class="relative flex grow flex-col gap-y-5 overflow-y-auto bg-gray-50 px-6 dark:bg-gray-900 dark:ring dark:ring-white/10 dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:bg-black/10">
                 <div class="relative flex h-16 shrink-0 items-center">
                   <img
@@ -881,7 +870,6 @@ function HomeScreensStacked() {
         </Transition>
       </Dialog>
 
-      {/* Static sidebar for desktop */}
       <div class="hidden xl:fixed xl:inset-y-0 xl:z-50 xl:flex xl:w-72 xl:flex-col dark:bg-gray-900">
         <div class="flex grow flex-col gap-y-5 overflow-y-auto bg-gray-50 px-6 ring-1 ring-gray-200 dark:bg-black/10 dark:ring-white/5">
           <div class="flex h-16 shrink-0 items-center">
@@ -986,7 +974,6 @@ function HomeScreensStacked() {
       </div>
 
       <div class="xl:pl-72">
-        {/* Sticky search header */}
         <div class="sticky top-0 z-40 flex h-16 shrink-0 items-center gap-x-6 border-b border-gray-200 bg-white px-4 shadow-xs sm:px-6 lg:px-8 dark:border-white/5 dark:bg-gray-900 dark:shadow-none">
           <button
             type="button"
@@ -1017,7 +1004,6 @@ function HomeScreensStacked() {
           <header class="flex items-center justify-between border-b border-gray-200 px-4 py-4 sm:px-6 sm:py-6 lg:px-8 dark:border-white/5">
             <h1 class="text-base/7 font-semibold text-gray-900 dark:text-white">Deployments</h1>
 
-            {/* Sort dropdown */}
             <Menu as="div" class="relative">
               <MenuButton class="flex items-center gap-x-1 text-sm/6 font-medium text-gray-900 dark:text-white">
                 Sort by
@@ -1055,7 +1041,6 @@ function HomeScreensStacked() {
             </Menu>
           </header>
 
-          {/* Deployment list */}
           <ul role="list" class="divide-y divide-gray-100 dark:divide-white/5">
             {deployments.map((deployment) => (
               <li
@@ -1107,7 +1092,6 @@ function HomeScreensStacked() {
           </ul>
         </main>
 
-        {/* Activity feed */}
         <aside class="bg-gray-50 lg:fixed lg:top-16 lg:right-0 lg:bottom-0 lg:w-96 lg:overflow-y-auto lg:border-l lg:border-gray-200 dark:bg-black/10 dark:lg:border-white/5">
           <header class="flex items-center justify-between border-b border-gray-200 px-4 py-4 sm:px-6 sm:py-6 lg:px-8 dark:border-white/5">
             <h2 class="text-base/7 font-semibold text-gray-900 dark:text-white">Activity feed</h2>

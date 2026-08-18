@@ -1,12 +1,3 @@
-/**
- * LiveQuery RPC Handlers
- *
- * Defines the server-side named-query registry for the liveQuery.subscribe /
- * liveQuery.unsubscribe RPC protocol.  Clients send a query name + parameters;
- * the daemon resolves it to a pre-registered SQL template and row mapper.
- * Clients never send raw SQL.
- */
-
 import type {
   LiveQueryDeltaEvent,
   LiveQuerySnapshotEvent,
@@ -31,58 +22,17 @@ import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import { Logger } from '../logger';
 import { mapActiveTurnEntryRow } from './activity-preview';
 
-// Facade re-export (activity-preview extraction): `buildActiveTurnSummariesFromRows`
-// was exported from this module before the extraction and is consumed via dynamic
-// import by tests. Re-exported so the public surface is unchanged.
 export { buildActiveTurnSummariesFromRows } from './activity-preview';
 
-// ============================================================================
-// Named-query registry types
-// ============================================================================
-
 export interface NamedQuery {
-  /** Parameterised SQL that will be executed by LiveQueryEngine */
   sql: string;
-  /** Number of positional parameters the SQL expects */
   paramCount: number;
-  /**
-   * Optional debounce for table-change reevaluation. Use only for expensive
-   * feeds fed by high-frequency writes, where latest-state delivery matters
-   * more than one event per row mutation.
-   */
   debounceMs?: number;
-  /**
-   * Optional row transformer applied after every query execution.
-   * Must return a plain object whose keys match the frontend TypeScript types.
-   */
   mapRow?: (row: Record<string, unknown>) => Record<string, unknown>;
-  /**
-   * Optional hook to extract metadata from raw query results (before mapRow).
-   * Called once per query evaluation; result is attached to snapshot/delta events.
-   *
-   * The bound query parameters are forwarded as a second argument so handlers
-   * that need to run a sidecar prepared statement (e.g., `spaceTaskMessages.
-   * byTask.compact`'s active-turn aggregation) can reuse the same param values
-   * the live query was subscribed with — they aren't otherwise visible to
-   * `mapResult`.
-   */
   mapResult?: (
     rawRows: Record<string, unknown>[],
     params: ReadonlyArray<unknown>
   ) => Record<string, unknown> | undefined;
-  /**
-   * Optional scope filter builder. Called once per subscribe RPC with the
-   * subscription's params; returns a `(scope) => boolean` closure that
-   * decides whether a scoped table-change event is relevant to this
-   * particular subscription.
-   *
-   * When the closure returns `false`, re-evaluation is skipped entirely.
-   * When no closure is provided (or the event has no scope), the query is
-   * re-evaluated as usual (backward-compatible fallback).
-   *
-   * @param params  The positional parameters the live query was subscribed with.
-   * @param db      The raw Bun SQLite database for membership lookups.
-   */
   buildScopeFilter?: (
     params: ReadonlyArray<unknown>,
     db: BunDatabase
@@ -95,15 +45,6 @@ const DEBOUNCE_SESSION_LIST_MS = 150;
 const DEBOUNCE_SPACE_SESSIONS_MS = 150;
 const DEBOUNCE_SPACE_TASK_FEEDS_MS = 250;
 
-// ============================================================================
-// Row mappers
-// ============================================================================
-
-/**
- * Map canonical task timeline rows into the SessionGroupMessage shape expected by the web client.
- * For SDK rows, inject `_taskMeta` directly into JSON content so TaskConversationRenderer can
- * render role/session context without relying on runtime mirroring.
- */
 function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string, unknown> {
   const sourceType = row.sourceType;
   const groupId = String(row.groupId ?? '');
@@ -122,10 +63,6 @@ function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string,
   if (sourceType === 'sdk') {
     try {
       const parsed = JSON.parse(content) as Record<string, unknown>;
-      // turnId is the user message's own ID — every non-user row inherits the
-      // most recent user-row id within its session, so all rows belonging to
-      // the same turn share a stable, content-derived turn key. Rows that
-      // precede any user message in their session fall back to their own id.
       const turnId = turnUserMessageId ?? String(id);
       const enriched = {
         ...parsed,
@@ -153,10 +90,6 @@ function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string,
   };
 }
 
-/**
- * Map a raw SQLite row from `spaceTaskMessages.byTask` into a web-friendly
- * message envelope that preserves agent/task attribution.
- */
 function parseProjectionRef(value: unknown): Record<string, unknown> | null {
   if (typeof value !== 'string' || value.length === 0) return null;
   try {
@@ -198,9 +131,6 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
     row.kind === 'github' ? 'github' : row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
   const taskId = String(row.taskId ?? '');
   const taskTitle = String(row.taskTitle ?? '');
-  // Insertion order (sdk_messages.rowid) — emitted by the compact feed so the
-  // client can tiebreak same-millisecond rows deterministically instead of by
-  // the random UUID id (#2338). Absent for the legacy full feed and github rows.
   const insOrder = typeof row.insOrder === 'number' ? row.insOrder : null;
   const messageType = String(row.messageType ?? 'status');
   const createdAt = Number(row.createdAt ?? Date.now());
@@ -210,13 +140,8 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
   const turnUserMessageId =
     typeof row.turnUserMessageId === 'string' ? row.turnUserMessageId : null;
   const origin = typeof row.origin === 'string' ? row.origin : null;
-  // Task #862: pass through the full user-message delivery lifecycle
-  // (queued / processing / retrying / delivered / failed) computed SQL-side.
   const deliveryState =
     messageType === 'user' && typeof row.deliveryState === 'string' ? row.deliveryState : null;
-  // Optional backward-compat field from older compact-query variants.
-  // Current compact SQL no longer emits this, but keep tolerant parsing so
-  // historical rows/tests and alternate query variants remain safe.
   const sessionMessageCount =
     typeof row.sessionMessageCount === 'number' && Number.isFinite(row.sessionMessageCount)
       ? Number(row.sessionMessageCount)
@@ -234,12 +159,6 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 
   try {
     const parsed = JSON.parse(content) as Record<string, unknown>;
-    // turnId = the id of the user-message that started this turn. SQL emits
-    // `turnUserMessageId` per row by carrying forward the most recent user-row
-    // id within the session via a window function. Rows that precede any
-    // user message in their session fall back to their own id, giving every
-    // row a stable, content-derived turn key without depending on
-    // session-group iteration metadata.
     const turnId = turnUserMessageId ?? String(id);
     content = JSON.stringify({
       ...parsed,
@@ -285,10 +204,6 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
   return mapped;
 }
 
-// ============================================================================
-// SQL definitions
-// ============================================================================
-
 const MCP_SERVERS_GLOBAL_SQL = `
 SELECT
   id,
@@ -307,18 +222,7 @@ FROM app_mcp_servers
 ORDER BY name, id ASC
 `.trim();
 
-/**
- * Map a raw SQLite row from the `app_mcp_servers` table to the AppMcpServer
- * shape expected by the frontend.
- *
- * JSON blob columns: `args`, `env`, `headers`.
- * Boolean coercion: `enabled` — SQLite stores 0/1; convert to JS boolean.
- * snake_case mapping: `source_type` → `sourceType` (handled via AS alias in SQL).
- */
 function mapMcpServerRow(row: Record<string, unknown>): Record<string, unknown> {
-  // Mirror the repository's rowToServer logic: omit optional fields entirely when the
-  // SQLite column is NULL rather than spreading null into the AppMcpServer object.
-  // This keeps the LiveQuery path type-consistent with the RPC handler path.
   return {
     id: row.id,
     name: row.name,
@@ -353,13 +257,6 @@ FROM skills
 ORDER BY built_in DESC, created_at ASC, id ASC
 `.trim();
 
-/**
- * Map a raw SQLite row from the `skills` table to the AppSkill shape expected
- * by the frontend.
- *
- * JSON blob column: `config` — parsed to JS object; omitted when NULL.
- * Boolean coercion: `enabled`, `builtIn` — SQLite stores 0/1; convert to JS boolean.
- */
 function mapSkillRow(row: Record<string, unknown>): Record<string, unknown> {
   return {
     id: row.id,
@@ -375,15 +272,6 @@ function mapSkillRow(row: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-/**
- * SQL for `mcpEnablement.bySpace`. Returns a row per registry entry, with the
- * per-space override (if any) applied. Columns match SpaceMcpEntry so the
- * frontend can use the LiveQuery result without a separate RPC roundtrip.
- *
- * `overridden` is 1 when the entry has an explicit `mcp_enablement` row for
- * this (space, server) pair, else 0. `enabled` is the effective state:
- * override if present, else the registry's global `enabled` flag.
- */
 const MCP_ENABLEMENT_BY_SPACE_SQL = `
 SELECT
   ams.id                                                       AS serverId,
@@ -439,20 +327,13 @@ function mapSpaceTaskActivityRow(row: Record<string, unknown>): Record<string, u
     typeof row.role === 'string' ? row.role : kind === 'task_agent' ? 'task-agent' : kind;
   const rawLabel = typeof row.label === 'string' ? row.label : rawRole;
 
-  // Rate-limit cooldown details. Only present when the session's
-  // processing_state.status is 'rate_limit_cooldown'; the three sibling fields
-  // are extracted from the same JSON column. Surface as a single object so the
-  // renderer can hand them straight to RateLimitCooldownBanner.
   const rateLimitCooldown =
     row.processingStatus === 'rate_limit_cooldown'
       ? buildRateLimitCooldown(row.retryCount, row.maxRetries, row.retryAt)
       : null;
 
-  // Persisted structured session error snapshot (see StateProjectionService).
   const sessionError = parseSessionError(row.sessionError);
 
-  // Strip the raw extracted keys so the member shape stays clean — the grouped
-  // objects above are the canonical surface.
   const {
     retryCount: _retryCount,
     maxRetries: _maxRetries,
@@ -475,9 +356,6 @@ function mapSpaceTaskActivityRow(row: Record<string, unknown>): Record<string, u
             agentName: row.agentName,
             status: row.executionStatus,
             result: row.executionResult ?? null,
-            // True only for the post-approval worker the task's pointer
-            // currently selects — lets the composer disambiguate when repeated
-            // approvals produced multiple execution-less workers.
             isCurrentPostApproval: row.isCurrentPostApproval === 1,
           }
         : null,
@@ -492,14 +370,6 @@ function mapSpaceTaskActivityRow(row: Record<string, unknown>): Record<string, u
   };
 }
 
-/**
- * Build the `rateLimitCooldown` object from the raw JSON-extracted values.
- * Returns null unless all three fields are present and parse to finite numbers
- * — a partial snapshot (e.g. missing retryAt) can't drive the countdown UI and
- * would only confuse the renderer. `json_extract` yields SQL NULL (→ JS null)
- * for absent JSON keys, so an explicit null guard is required: `Number(null)`
- * coerces to 0 which is otherwise indistinguishable from a real zero.
- */
 function buildRateLimitCooldown(
   retryCount: unknown,
   maxRetries: unknown,
@@ -512,18 +382,12 @@ function buildRateLimitCooldown(
   return { retryCount: rc, maxRetries: mr, retryAt: at };
 }
 
-/** Coerce a `json_extract` result to a finite number, or null if absent/invalid. */
 function toFiniteNumber(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
 
-/**
- * Parse the persisted `sessions.last_error` JSON snapshot into the member's
- * `sessionError` object. Returns null for missing/unparseable rows so the
- * renderer treats "no error" and "malformed error" identically.
- */
 function parseSessionError(value: unknown): {
   category: string;
   message: string;
@@ -547,12 +411,6 @@ function parseSessionError(value: unknown): {
   }
 }
 
-/**
- * Node executions by workflow run — returns all node execution records
- * for a given workflow run, ordered by creation time ascending.
- *
- * Used by the frontend to show per-node execution status in the workflow canvas.
- */
 const NODE_EXECUTIONS_BY_RUN_SQL = `
 SELECT
   id,
@@ -983,25 +841,6 @@ UNION ALL SELECT * FROM artifact_rows
 ORDER BY createdAt ASC, id ASC
 `.trim();
 
-/**
- * Curated task milestone timeline.
- *
- * Emits one row per human-meaningful milestone, with REAL content extracted at
- * the source (instruction / answer text, artifact summary, CI summary), plus a
- * unified-indicator `tone`. Sources:
- *   - lifecycle (space_tasks)        → creation + status transitions
- *   - sdk_messages                   → human instructions, agent answers, api retries
- *   - workflow_run_artifacts         → PR / result / progress / review anchors
- *   - space_external_events           → GitHub CI / PR activity
- *
- * Dropped entirely (raw plumbing): agent handoffs, thinking, hooks, per-turn
- * "Agent turn finished" result rows. Consecutive retries are collapsed and
- * consecutive duplicates are deduped by the renderer; the SQL just emits the
- * curated, content-rich rows in ascending time order.
- *
- * Column order for every branch (UNION ALL contract):
- *   id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt
- */
 const TASK_MILESTONES_BY_TASK_SQL = `
 WITH target_task AS (
   SELECT * FROM space_tasks WHERE id = ?
@@ -1477,7 +1316,6 @@ function mapArtifactRow(row: Record<string, unknown>): Record<string, unknown> {
   return { ...row, data };
 }
 
-/** Coerce a raw task-milestone row into the `TaskMilestoneRow` contract. */
 function mapTaskMilestoneRow(row: Record<string, unknown>): Record<string, unknown> {
   return {
     id: String(row.id ?? ''),
@@ -1493,13 +1331,6 @@ function mapTaskMilestoneRow(row: Record<string, unknown>): Record<string, unkno
   };
 }
 
-/**
- * Canonical task timeline query (no projection table):
- * - SDK messages are read directly from sdk_messages joined through session_group_members.
- * - Group/system events are read from task_group_events.
- *
- * A single groupId parameter is threaded via `target_group` CTE and consumed by both branches.
- */
 const SESSION_GROUP_MESSAGES_BY_GROUP_SQL = `
 WITH target_group AS (
   SELECT id
@@ -1852,15 +1683,6 @@ ORDER BY
   st.id ASC
 `.trim();
 
-/**
- * Shared CTE block for `spaceTaskMessages.byTask*` queries.
- *
- * Produces a `joined` row set — one row per (session, sdk_message) pair — that
- * the variant queries then either emit as-is (full) or slice with window
- * functions (compact).
- *
- * The final variant must append its own `SELECT ... FROM ranked|joined ORDER BY`.
- */
 const SPACE_TASK_MESSAGES_BASE_CTE = `
 WITH target_task AS (
   SELECT *
@@ -2129,10 +1951,6 @@ joined AS (
 )
 `.trim();
 
-/**
- * Legacy/full variant — emits every joined row. Used by the verbose renderer
- * and as a fallback when a caller genuinely needs the full history.
- */
 const SPACE_TASK_MESSAGES_BY_TASK_SQL = `
 ${SPACE_TASK_MESSAGES_BASE_CTE}
 SELECT
@@ -2155,38 +1973,10 @@ FROM joined
 ORDER BY createdAt ASC, id ASC
 `.trim();
 
-/** Recent conversation turns the compact feed returns by default (#2338).
-
-  Bounding the window is what brings the compact query under 100ms on 40k+
-  message tasks: the per-segment window passes then run over a small, recent set
-  instead of the whole task. There is deliberately no load-more param — older
-  history is reachable via the unbounded `spaceTaskMessages.byTask` (full) feed,
-  which targets a different (drill-in) surface. */
 export const SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS = 100;
 
-/** Max tool_use-bearing assistant rows kept as a segment summary fallback when
-  the segment has no assistant text and no thinking (#2338). */
 export const SPACE_TASK_MESSAGES_COMPACT_TOOL_SUMMARY_LIMIT = 3;
 
-/**
- * Conversation-turn base CTE for `spaceTaskMessages.byTask.compact` and
- * `spaceTaskActiveTurn.byTask` (#2338).
- *
- * Replaces the legacy `SPACE_TASK_MESSAGES_BASE_CTE` for these two queries
- * (byTask/full still uses the legacy one). Reads the materialized
- * `conversation_turn_index` column directly and pushes a recent-turn cap
- * (`recent_turns`) into the sdk_messages scan, so only recent conversation
- * turns are processed. Drop the 6 window passes + the dead turnUserMessageId
- * forward-fill of the legacy base.
- *
- * Produces a `joined` row set carrying `turnIndex` (conversation turn) and
- * `insOrder` (sdk_messages.rowid, the same-ms tiebreak). The variant must
- * append its own `SELECT ... FROM joined ... ORDER BY`.
- *
- * Turn model: a conversation turn starts at each renderable user message
- * (human input or synthetic agent->agent handoff; NOT tool_result rows, NOT
- * system messages) — see docs/design/2338-compact-conversation-turns.md.
- */
 const SPACE_TASK_CONV_BASE_CTE = `
 WITH target_task AS (
   SELECT *
@@ -2387,31 +2177,6 @@ joined AS (
 )
 `.trim();
 
-/**
- * Compact variant — conversation-turn compaction for task threads (#2338).
- *
- * Turn model: a conversation turn starts at each renderable user message
- * (human input or synthetic agent->agent handoff) and runs until the next.
- * `conversation_turn_index` (materialized) carries the turn number.
- *
- * Per conversation segment the feed emits a small, representative set (NOT
- * every tool call):
- *   - the anchor (the renderable user message that started the turn) — always;
- *     this is the fix for mid-turn user messages being swallowed (#2338).
- *   - the result row, when the segment has one (completion / error marker).
- *   - non-hook `system` rows (init / compact_boundary) — per-exec metadata.
- *   - a summary line, first non-empty wins:
- *       1. last assistant row with a non-empty text block;
- *       2. else last assistant row with a non-empty thinking block;
- *       3. else the last N tool_use-bearing assistant rows.
- *     Rendered via each row's own type so a summary that is reasoning or tool
- *     activity reads differently from a plain reply.
- *
- * Bounded to the recent ${SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS}
- * conversation turns. Older history is not paged here — it is reachable via the
- * unbounded `spaceTaskMessages.byTask` (full) feed (see
- * SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS for the rationale).
- */
 const SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL = `
 ${SPACE_TASK_CONV_BASE_CTE},
 -- Assistant rows with a non-empty text block, ranked newest-first per segment.
@@ -2561,40 +2326,6 @@ JOIN selected_ids s ON s.id = j.id
 ORDER BY j.createdAt ASC, j.insOrder ASC
 `.trim();
 
-/**
- * SQL for the active-turn activity summary that ships alongside the compact
- * feed.
- *
- * Per the design in task #131: the running roster on the Space task view is
- * supposed to summarise the *currently active* turn — every tool_use, text,
- * thinking block, plus user-row activity (real human input + synthetic
- * agent→agent handoffs). The compact feed query keeps only the last 5
- * non-terminal renderable rows per `(session, turn)`, which is right for the
- * feed but too narrow for the roster.
- *
- * Strategy:
- *   1. Reuse the base CTE chain to identify per-session turns (turnIndex is
- *      the cumulative count of `result` rows preceding each row, plus one).
- *   2. For each session, find the highest turnIndex with no terminal row yet —
- *      that's the *active* turn. Closed turns are intentionally excluded.
- *   3. Walk every row of the active turn (NOT the compacted slice). For
- *      assistant rows, explode the SDK content blocks via `json_each` and
- *      classify each one (`tool_use` / `text` / `thinking`). For user rows,
- *      emit a single entry tagged either `__user_message` (human input) or
- *      `__user_replay` (synthetic handoff) per `isReplay`. Empty/whitespace
- *      `text` and `thinking` blocks are filtered out — they're noise. User
- *      rows whose content is exclusively `tool_result` blocks are dropped
- *      (mirrors the compact-feed transmission filter).
- *   4. Order the union deterministically: `(sessionId, ts, rowId, blockIdx)`
- *      so chronological sequence is preserved across rows AND across
- *      multiple content blocks within a single row.
- *
- * The JS-side `mapResult` hook for `spaceTaskMessages.byTask.compact` runs
- * this SQL with the same `?1 = task_id` param the compact subscription was
- * bound with, then aggregates the per-entry rows by sessionId into the
- * `ActiveTurnSummary[]` shape consumers expect. Closed turns produce zero
- * rows here and so simply don't appear in the metadata payload.
- */
 export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
 ${SPACE_TASK_CONV_BASE_CTE},
 active_turn AS (
@@ -2954,28 +2685,6 @@ FROM api_retry_entries
 ORDER BY sessionId ASC, ts ASC, rowId ASC, blockIdx ASC, id ASC
 `.trim();
 
-// ============================================================================
-// Registry
-// ============================================================================
-
-/**
- * Server-side named-query registry.
- *
- * Keys are opaque identifiers sent by the client in `LiveQuerySubscribeRequest.queryName`.
- * Each entry specifies the SQL template, expected parameter count, and an optional
- * row mapper that performs post-processing (JSON parsing, type coercion).
- *
- * Exported for use in `liveQuery.subscribe` / `liveQuery.unsubscribe` handlers
- * and for direct inspection in unit tests.
- */
-
-/**
- * SQL for `sessions.list` LiveQuery.
- *
- * Returns all user-visible sessions (excludes internal room/space/agent sessions).
- * Filters out room/space sessions by checking session_context for roomId/spaceId.
- * Includes archived sessions so the client can toggle visibility.
- */
 const SESSIONS_LIST_SQL = `
 SELECT
   s.id as id,
@@ -3015,11 +2724,6 @@ WHERE s.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 
 ORDER BY s.last_active_at DESC, s.id DESC
 `.trim();
 
-/**
- * SQL for counting ALL user-visible sessions regardless of archived status.
- * Used to provide an accurate totalCount even when the visible session list is empty
- * (e.g. when all sessions are archived and showArchived=false).
- */
 const SESSIONS_TOTAL_COUNT_SQL = `
 SELECT COUNT(*) as cnt FROM sessions s
 WHERE s.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
@@ -3027,10 +2731,6 @@ WHERE s.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 
   AND json_extract(s.session_context, '$.spaceId') IS NULL
 `.trim();
 
-/**
- * SQL for counting only archived user-visible sessions.
- * Used to provide an accurate archivedCount even when the visible session list is empty.
- */
 const SESSIONS_ARCHIVED_COUNT_SQL = `
 SELECT COUNT(*) as cnt FROM sessions s
 WHERE s.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
@@ -3039,14 +2739,6 @@ WHERE s.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 
   AND s.status = 'archived'
 `.trim();
 
-/**
- * Map a raw SQLite sessions row to a SessionInfo object.
- *
- * Handles:
- * - JSON parsing of config, metadata, session_context, available_commands
- * - Worktree metadata reconstruction from flat columns
- * - Type coercion for is_worktree (integer → boolean)
- */
 function mapSessionRow(row: Record<string, unknown>): Record<string, unknown> {
   const isWorktree = row.is_worktree === 1;
   const worktree = isWorktree
@@ -3096,14 +2788,6 @@ function mapSessionRow(row: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-/**
- * Render-hidden rows excluded before applying transcript pagination limits.
- * Used by `messages.bySession` to cap the visible transcript window. The
- * `spaceSessions.bySpace` badge count now reads the maintained
- * `sessions.visible_message_count` column instead of a correlated COUNT(*), but
- * the same visibility predicate is enforced there incrementally by
- * SDKMessageRepository (and backfilled by migration 177).
- */
 const EXCLUDED_FROM_PAGINATION_SQL_LIST = toSqlStringList([
   ...HIDDEN_SYSTEM_SUBTYPES,
   'thinking_tokens',
@@ -3129,17 +2813,6 @@ WHERE j.value = s.id AND s.status != 'archived' AND s.type != 'space_chat'
 ORDER BY s.last_active_at DESC, s.id DESC
 `.trim();
 
-/**
- * Map a raw `spaceSessions.bySpace` row into the web-friendly shape.
- *
- * `processingState` is the persisted JSON-serialised `AgentProcessingState`
- * (mirrors `mapSessionRow` for the global sessions list); the web client parses
- * it via `session-status.ts`'s `parseProcessingState`. `messageCount` is the
- * maintained `sessions.visible_message_count` counter (deferred/enqueued user
- * rows are excluded, matching the `messages.bySession` transcript view), coerced
- * to a number so the sidebar can drive an unread badge the same way global chat
- * sessions do.
- */
 function mapSpaceSessionRow(row: Record<string, unknown>): Record<string, unknown> {
   return {
     id: row.id,
@@ -3151,27 +2824,6 @@ function mapSpaceSessionRow(row: Record<string, unknown>): Record<string, unknow
   };
 }
 
-/**
- * SQL for `messages.bySession` LiveQuery.
- *
- * Returns SDK messages for a session in the same shape that
- * `SDKMessageRepository.getSDKMessages()` produces:
- *   - Top-level messages (no `parent_tool_use_id`), limited to the most recent
- *     N visible transcript rows (by timestamp DESC).
- *   - Plus subagent messages (rows whose `parent_tool_use_id` is a tool_use id
- *     emitted by one of those top-level assistant rows).
- *   - User messages with `send_status = 'deferred'` or `'enqueued'` are
- *     excluded, matching the RPC behavior.
- *
- * Parameters (positional, via `?1` / `?2`):
- *   ?1 — session_id (used twice because the CTE references sdk_messages twice)
- *   ?2 — top-level row limit (default 100 from the client)
- *
- * Mapping: the raw row carries the JSON-serialised SDK message in `content`,
- * plus `timestamp` (epoch ms), `sendStatus`, and `origin`.  `mapMessageRow`
- * inflates the JSON and merges the extras to produce a ChatMessage-shaped
- * object.
- */
 const BACKGROUND_TASK_METADATA_SUBTYPES = ['task_started', 'task_updated', 'task_notification'];
 const BACKGROUND_TASK_METADATA_BATCH_SIZE = 300;
 const MAX_MESSAGES_BY_SESSION_WINDOW = 200;
@@ -3474,22 +3126,6 @@ FROM subagent
 ORDER BY timestamp ASC, rowid ASC
 `.trim();
 
-/**
- * Map a raw `messages.bySession` row into a ChatMessage-shaped object.
- *
- * Mirrors the behaviour of `SDKMessageRepository.getSDKMessages()`:
- *   - Parse the `sdk_message` JSON blob and spread its fields onto the output.
- *   - Override `origin` with the DB column value — explicit `undefined` is
- *     preserved so any SDK-level `origin?: SDKMessageOrigin` object gets
- *     stripped in favour of the app's `MessageOrigin` string.
- *   - Attach `timestamp` (epoch ms, computed SQL-side).
- *   - Attach `deliveryStatus` (task #862) for user messages — the user-facing
- *     delivery lifecycle (queued / processing / retrying / delivered / failed),
- *     mapped from `send_status` + the active-job retry signal via the shared
- *     `sendStatusToDeliveryStatus`. Non-user rows get no delivery state.
- *   - Attach `id` so client-side LiveQuery diffing is stable even when the
- *     SDK message lacks a `uuid`.
- */
 function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
   const contentRaw = row.content;
   let parsed: Record<string, unknown> = {};
@@ -3497,7 +3133,6 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
     try {
       parsed = JSON.parse(contentRaw) as Record<string, unknown>;
     } catch {
-      // Corrupted JSON — return a sentinel object so the client doesn't crash.
       parsed = { type: 'unknown', rawContent: contentRaw };
     }
   }
@@ -3505,14 +3140,9 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
   const extras: Record<string, unknown> = {
     id: row.id,
     timestamp: typeof row.timestamp === 'number' ? row.timestamp : Number(row.timestamp ?? 0),
-    // Insertion-order rowid — exposed so ChatContainer can seed the
-    // (timestamp, rowid) pagination cursor from the initial LiveQuery
-    // snapshot, not just from the RPC page fetches.
     rowid: typeof row.rowid === 'number' ? row.rowid : Number(row.rowid ?? 0),
     origin: row.origin != null ? row.origin : undefined,
   };
-  // Only user messages carry a delivery lifecycle. The active-job retry info
-  // arrives as a JSON blob {count, runAt, max} (NULL when no active job).
   if (parsed.type === 'user') {
     let retryCount = 0;
     let retryInfo: { count?: number; runAt?: number; max?: number } | null = null;
@@ -3541,34 +3171,12 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
   return { ...parsed, ...extras };
 }
 
-/**
- * Build a scope filter for task-scoped queries (`spaceTaskMessages.byTask*`,
- * `spaceTaskActivity.byTask`). Returns `false` when the writing session is
- * not part of the target task, so the live query engine can skip re-evaluation.
- *
- * Membership is derived from three sources:
- *   1. `space_tasks.task_agent_session_id` — the orchestration session
- *   2. `node_executions` for the task's workflow run — node-agent sessions
- *   3. `sdk_messages.task_id` — sessions that have stamped messages for the task
- *
- * Because scoped delete events are emitted *after* the row is removed, a
- * session that just deleted its final task-stamped message would fail the
- * `sdk_messages.task_id` check even though the feed changed. To prevent
- * false negatives we capture the set of sessions that were linked at
- * subscribe time (including those with historical messages) and keep them
- * in-scope for the lifetime of the subscription. New sessions that join
- * after subscribe are caught by the dynamic checks.
- */
 function buildTaskScopeFilter(
   params: ReadonlyArray<unknown>,
   db: BunDatabase
 ): ((scope: TableChangeScope) => boolean) | undefined {
   const taskId = params[0] as string;
 
-  // Capture the set of sessions linked to this task at subscribe time.
-  // This prevents the delete-last-message false negative: a session that
-  // had messages when the subscription was created stays in-scope even
-  // after those messages are deleted.
   const linkedSessions = new Set<string>();
   try {
     const taskAgent = db
@@ -3607,7 +3215,6 @@ function buildTaskScopeFilter(
     // sdk_messages may not exist in minimal test schemas
   }
 
-  // Dynamic checks for sessions that become linked after subscribe time.
   const messageStmt = db.prepare(
     `SELECT 1 FROM sdk_messages WHERE task_id = ? AND session_id = ? LIMIT 1`
   );
@@ -3631,16 +3238,6 @@ function buildTaskScopeFilter(
     return !!nodeExecStmt.get(taskId, scope.sessionId);
   };
 }
-
-// Note: `sessions.list` intentionally has no scope filter. The query only
-// watches the `sessions` table, so incoming scopes describe session-level
-// writes (createSession / updateSession / deleteSession). The scope reflects
-// the *post*-write row, so we cannot tell whether an `updateSession` moved a
-// session in or out of the visible chat-sidebar set (e.g. by gaining
-// `roomId`/`spaceId`, or being reclassified to an internal type via
-// `AgentSession.fromInit`). Skipping such writes leaves stale rows. Session
-// writes are infrequent compared to `sdk_messages`, so re-evaluating
-// `sessions.list` on every session write is cheap and correct.
 
 function buildWorkflowRunScopeFilter(
   params: ReadonlyArray<unknown>,
@@ -3701,15 +3298,6 @@ function buildSpaceSessionsScopeFilter(
   db: BunDatabase
 ): (scope: TableChangeScope) => boolean {
   const spaceId = params[0] as string;
-  // Re-query membership on every invalidation rather than snapshotting at
-  // subscribe time. Snapshotting drops two important update paths:
-  //   1. Sessions added to the space *after* subscription would be filtered
-  //      out and miss title/status/lastActiveAt changes until the client
-  //      reconnects.
-  //   2. Sessions removed from the space would remain "in scope" forever,
-  //      causing avoidable re-evaluations.
-  // Reading the row is a single indexed lookup against `spaces.id`, so
-  // the cost is negligible relative to the SQL re-evaluation it gates.
   const memberStmt = db.prepare('SELECT session_ids FROM spaces WHERE id = ?');
   const readMembership = (): Set<string> | null => {
     try {
@@ -3728,22 +3316,12 @@ function buildSpaceSessionsScopeFilter(
   };
 
   return (scope) => {
-    // If the scope explicitly tags this write with our spaceId (e.g. the
-    // session was just created/updated as a member of this space), accept
-    // without an extra DB hit. Covers the new-member case directly.
     if (scope.spaceId === spaceId) return true;
 
-    // No sessionId on the scope (e.g. a `spaces` row was rewritten):
-    // we cannot tell what changed, so be conservative.
     if (!scope.sessionId) return true;
 
     const members = readMembership();
-    if (members === null) return true; // membership unreadable: be safe
-    // Re-evaluate when the session is currently in this space *or* could
-    // have been a member just before the write — we cannot distinguish a
-    // just-removed session from an unrelated session here, so accept any
-    // scope whose sessionId matches the live set. Sessions outside the
-    // live set with no spaceId hint are filtered.
+    if (members === null) return true;
     return members.has(scope.sessionId);
   };
 }
@@ -3910,10 +3488,6 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
       paramCount: 1,
       debounceMs: DEBOUNCE_SESSION_LIST_MS,
       mapRow: mapSessionRow,
-      // No scope filter — see the comment on the (deleted)
-      // `buildSessionsListScopeFilter` site above. Session writes are
-      // infrequent and `updateSession` post-write scope can hide
-      // transitions that should remove a row from this list.
       mapResult: (rawRows) => {
         if (rawRows.length > 0 && rawRows[0]._totalCount != null) {
           return {
@@ -3927,33 +3501,15 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
   ],
 ]);
 
-// ============================================================================
-// Logger
-// ============================================================================
-
 const log = new Logger('live-query-handlers');
 
-// ============================================================================
-// RPC handler setup
-// ============================================================================
-
-/**
- * Register `liveQuery.subscribe` and `liveQuery.unsubscribe` RPC handlers.
- *
- * Returns a cleanup function that disposes all active subscriptions and
- * unregisters the client-disconnect listener.
- */
 export function setupLiveQueryHandlers(
   messageHub: MessageHub,
   liveQueries: LiveQueryEngine,
   db: BunDatabase
 ): () => void {
-  // Map<clientId → Map<subscriptionId → LiveQueryHandle>>
   const subscriptions = new Map<string, Map<string, LiveQueryHandle<Record<string, unknown>>>>();
 
-  // Build a local registry that overrides sessions.list with a closure capturing db.
-  // This ensures totalCount and archivedCount metadata are accurate even when the
-  // visible session list is empty (e.g. all sessions are archived, showArchived=false).
   const stmtSessionsTotalCount = db.prepare(SESSIONS_TOTAL_COUNT_SQL);
   const stmtSessionsArchivedCount = db.prepare(SESSIONS_ARCHIVED_COUNT_SQL);
 
@@ -3989,8 +3545,6 @@ export function setupLiveQueryHandlers(
           archivedCount: (rawRows[0]._archivedCount as number | null) ?? 0,
         };
       }
-      // When no visible sessions exist (e.g. all archived and showArchived=false),
-      // run direct count queries so hasArchivedSessions correctly shows the toggle.
       const totalRow = stmtSessionsTotalCount.get() as { cnt: number } | undefined;
       const archivedRow = stmtSessionsArchivedCount.get() as { cnt: number } | undefined;
       return {
@@ -4000,46 +3554,33 @@ export function setupLiveQueryHandlers(
     },
   });
 
-  // Cache prepared statements once at setup time — compiled once per handler
-  // registration, not once per subscribe call (which would add compilation
-  // overhead on every subscribe RPC invocation).
   const stmtRoom = db.prepare('SELECT id FROM rooms WHERE id = ?');
   const stmtGroup = db.prepare('SELECT ref_id, group_type FROM session_groups WHERE id = ?');
   const stmtTask = db.prepare('SELECT room_id FROM tasks WHERE id = ?');
   const stmtSpace = db.prepare('SELECT id FROM spaces WHERE id = ?');
   const stmtSession = db.prepare('SELECT id FROM sessions WHERE id = ?');
 
-  // -------------------------------------------------------------------------
-  // liveQuery.subscribe
-  // -------------------------------------------------------------------------
-
   messageHub.onRequest('liveQuery.subscribe', (data, context) => {
     const { queryName, params, subscriptionId } = data as LiveQuerySubscribeRequest;
     const { clientId, sessionId } = context;
 
-    // 1. Require WebSocket clientId
     if (!clientId) {
       throw new Error('liveQuery.subscribe requires a WebSocket connection (clientId absent)');
     }
 
-    // Router reference for the per-client subscription guardrail below and the
-    // handle tracking at the success path. See task #899 / incident #2414.
     const router = messageHub.getRouter();
 
-    // 2. Resolve query from registry
     const namedQuery = activeRegistry.get(queryName);
     if (!namedQuery) {
       throw new Error(`Unknown query name: "${queryName}"`);
     }
 
-    // 3. Validate parameter count
     if (params.length !== namedQuery.paramCount) {
       throw new Error(
         `Query "${queryName}" expects ${namedQuery.paramCount} parameter(s), got ${params.length}`
       );
     }
 
-    // 4. Authorization checks
     if (queryName === 'sessionGroupMessages.byGroup') {
       const groupId = params[0] as string;
       const group = stmtGroup.get(groupId) as { ref_id: string; group_type: string } | null;
@@ -4047,8 +3588,6 @@ export function setupLiveQueryHandlers(
         throw new Error(`Unauthorized: session group "${groupId}" not found`);
       }
       if (group.group_type === 'task') {
-        // For task-typed groups, verify the full group → task → room chain.
-        // This ensures the requesting client has access to the room the task belongs to.
         const task = stmtTask.get(group.ref_id) as { room_id: string } | null;
         if (!task) {
           throw new Error(`Unauthorized: task "${group.ref_id}" not found`);
@@ -4057,11 +3596,6 @@ export function setupLiveQueryHandlers(
           throw new Error(`Unauthorized: room "${task.room_id}" not found`);
         }
       }
-      // Non-task group types (e.g., 'workflow', 'global') are authorized by group
-      // existence alone.  All current non-task groups are internal daemon constructs
-      // not directly reachable by client-supplied IDs without prior knowledge.
-      // If new group types with finer-grained access control are introduced, extend
-      // this block with the appropriate chain validation.
     } else if (
       queryName === 'spaceTaskActivity.byTask' ||
       queryName === 'spaceTaskMessages.byTask' ||
@@ -4108,10 +3642,6 @@ export function setupLiveQueryHandlers(
         throw new Error(`Unauthorized: space "${spaceId}" not found`);
       }
     } else if (queryName === 'messages.bySession') {
-      // Verify the session exists. We intentionally do not restrict by
-      // session type (users can view their own worker, room_chat, space_chat,
-      // task_agent, etc. sessions), and the WebSocket clientId check above
-      // already requires an active connection.
       const targetSessionId = params[0] as string;
       if (typeof targetSessionId !== 'string' || targetSessionId.length === 0) {
         throw new Error('Unauthorized: messages.bySession requires a non-empty sessionId');
@@ -4119,9 +3649,6 @@ export function setupLiveQueryHandlers(
       if (!stmtSession.get(targetSessionId)) {
         throw new Error(`Unauthorized: session "${targetSessionId}" not found`);
       }
-      // Validate the limit parameter is a positive integer so bad input
-      // (e.g. NaN, negative numbers) doesn't silently produce an empty result
-      // set that the client would interpret as "no messages".
       const limit = params[1];
       if (
         typeof limit !== 'number' ||
@@ -4135,14 +3662,12 @@ export function setupLiveQueryHandlers(
       }
     }
 
-    // 5. Get or create client subscription map
     let clientSubs = subscriptions.get(clientId);
     if (!clientSubs) {
       clientSubs = new Map();
       subscriptions.set(clientId, clientSubs);
     }
 
-    // 6. Handle subscriptionId collision — dispose existing handle silently
     const existing = clientSubs.get(subscriptionId);
     const isReplacement = !!existing;
     if (existing) {
@@ -4151,19 +3676,9 @@ export function setupLiveQueryHandlers(
       );
       existing.dispose();
       clientSubs.delete(subscriptionId);
-      // The replaced handle held a subscription slot; the new subscribe
-      // re-acquires one at the success path below, so release the old here to
-      // keep the router counter in sync with the live handle count.
       router?.releaseClientSubscription(clientId);
     }
 
-    // 6b. Ingress fan-out guardrail: refuse a NEW subscription when the client
-    // is at the per-client cap. This runs AFTER collision handling so a
-    // replacement (same subscriptionId) is allowed even at the cap — it does
-    // not increase fan-out (e.g. GlobalStore reuses stable subscriptionIds on
-    // refresh) — and BEFORE the LiveQueryEngine subscribe so refusal has no
-    // snapshot side effects and tears down nothing. Mirrors the structured
-    // MESSAGE_TOO_LARGE refusal pattern (#2423). See task #899 / incident #2414.
     if (router && !isReplacement) {
       const capacity = router.checkSubscriptionCapacity(clientId);
       if (!capacity.ok) {
@@ -4174,15 +3689,10 @@ export function setupLiveQueryHandlers(
       }
     }
 
-    // 7. Subscribe to LiveQueryEngine
     const { sql, mapRow } = namedQuery;
     const applyMapRow = (row: Record<string, unknown>) => (mapRow ? mapRow(row) : row);
     const applyMapRows = (rows: Record<string, unknown>[]) => rows.map(applyMapRow);
 
-    // Track whether the synchronous snapshot delivery failed so we can
-    // dispose the handle after subscribe() returns.  The snapshot is fired
-    // inside liveQueries.subscribe() before it returns the handle, so we
-    // cannot call handle.dispose() directly during the callback.
     let snapshotDeliveryFailed = false;
     let snapshotTooLarge = false;
 
@@ -4192,10 +3702,6 @@ export function setupLiveQueryHandlers(
       (diff: QueryDiff<Record<string, unknown>>) => {
         const router = messageHub.getRouter();
         if (!router) {
-          // Router not yet registered or already torn down.  Mark snapshot
-          // as failed so the handle is disposed after subscribe() returns;
-          // for deltas this is a no-op since the engine will never fire
-          // another callback after the handle is disposed.
           log.warn(
             `liveQuery: router unavailable; skipping event (clientId=${clientId}, subscriptionId=${subscriptionId})`
           );
@@ -4205,9 +3711,6 @@ export function setupLiveQueryHandlers(
           return;
         }
 
-        // Metadata is computed by LiveQueryEngine once per cached query
-        // evaluation so identical subscriptions share expensive sidecars
-        // like the compact task feed's active-turn aggregation.
         const metadata = diff.metadata;
 
         let message: ReturnType<typeof createEventMessage>;
@@ -4260,20 +3763,17 @@ export function setupLiveQueryHandlers(
             const subs = subscriptions.get(clientId);
             subs?.delete(subscriptionId);
             if (subs?.size === 0) subscriptions.delete(clientId);
-            // Tracked handle disposed mid-flight — release its slot.
             router.releaseClientSubscription(clientId);
           }
           return;
         }
         if (!delivery.ok) {
           if (diff.type === 'snapshot') {
-            // handle not yet assigned; defer cleanup to after subscribe() returns
             snapshotDeliveryFailed = true;
             log.warn(
               `liveQuery: snapshot delivery failed for client ${clientId}; subscription ${subscriptionId} will be disposed`
             );
           } else {
-            // Delta: client disconnected — dispose now (handle is assigned)
             log.warn(
               `liveQuery: delta delivery failed for client ${clientId}; disposing subscription ${subscriptionId}`
             );
@@ -4283,7 +3783,6 @@ export function setupLiveQueryHandlers(
               subs.delete(subscriptionId);
               if (subs.size === 0) subscriptions.delete(clientId);
             }
-            // Tracked handle disposed mid-flight — release its slot.
             router.releaseClientSubscription(clientId);
           }
         }
@@ -4300,15 +3799,11 @@ export function setupLiveQueryHandlers(
       throw new Error('MESSAGE_TOO_LARGE: Live query snapshot exceeds the outbound size limit');
     }
 
-    // If snapshot delivery failed (no router or client not found), clean up
-    // immediately and return ok — this is not a protocol error from the
-    // client's perspective.
     if (snapshotDeliveryFailed) {
       handle.dispose();
       return { ok: true } satisfies LiveQuerySubscribeResponse;
     }
 
-    // 8. Track the handle
     router?.addClientSubscription(clientId);
     clientSubs.set(subscriptionId, handle);
     log.debug(
@@ -4317,10 +3812,6 @@ export function setupLiveQueryHandlers(
 
     return { ok: true } satisfies LiveQuerySubscribeResponse;
   });
-
-  // -------------------------------------------------------------------------
-  // liveQuery.unsubscribe
-  // -------------------------------------------------------------------------
 
   messageHub.onRequest('liveQuery.unsubscribe', (data, context) => {
     const { subscriptionId } = data as LiveQueryUnsubscribeRequest;
@@ -4336,7 +3827,6 @@ export function setupLiveQueryHandlers(
       handle.dispose();
       clientSubs!.delete(subscriptionId);
       if (clientSubs!.size === 0) subscriptions.delete(clientId);
-      // Release the slot the now-disposed handle held.
       messageHub.getRouter()?.releaseClientSubscription(clientId);
       log.debug(
         `liveQuery.unsubscribe: disposed subscription ${subscriptionId} for client ${clientId}`
@@ -4349,10 +3839,6 @@ export function setupLiveQueryHandlers(
 
     return { ok: true } satisfies LiveQueryUnsubscribeResponse;
   });
-
-  // -------------------------------------------------------------------------
-  // Client disconnect cleanup
-  // -------------------------------------------------------------------------
 
   const unsubDisconnect = messageHub.onClientDisconnect((disconnectedClientId) => {
     const clientSubs = subscriptions.get(disconnectedClientId);
@@ -4367,14 +3853,7 @@ export function setupLiveQueryHandlers(
     subscriptions.delete(disconnectedClientId);
   });
 
-  // -------------------------------------------------------------------------
-  // Cleanup function
-  // -------------------------------------------------------------------------
-
   return () => {
-    // Dispose all active handles before unregistering the disconnect listener.
-    // This ensures handles are cleaned up against the live engine before it
-    // may be disposed by the caller (e.g., createDaemonApp shutdown sequence).
     for (const [, clientSubs] of subscriptions) {
       for (const [, handle] of clientSubs) {
         handle.dispose();

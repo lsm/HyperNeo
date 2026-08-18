@@ -1,23 +1,7 @@
-/**
- * InspectPanel — shared inner chrome for the third-column inspect panels
- * (git / task / goal / scope).
- *
- * The OUTER shell (container, rounded-l border, resize handle, width
- * persistence, open/close transitions) lives in `RightPanel`. This is the
- * INNER chrome every panel fills: an outer column shell, a sticky 88px detail
- * header, and the rectangular header badge — previously re-implemented per
- * panel.
- */
 import type { ComponentChildren } from 'preact';
 import { INDICATOR_TONES, type IndicatorTone } from '../../lib/indicator-tokens';
 import { cn } from '../../lib/utils';
 
-/**
- * Outer column shell shared by every inspect panel. Renders the `header` slot
- * followed by the `children` (scroll body). When `emptyState` is provided it
- * replaces both — used for the not-found / loading surfaces that fill the panel
- * without a header.
- */
 export function InspectPanel({
   header,
   children,
@@ -41,11 +25,6 @@ export function InspectPanel({
   );
 }
 
-/**
- * Sticky 88px detail header: a title row (with optional inline `actions`) over
- * a `badges` row. `pr-12` keeps content clear of the floating right-panel
- * toggle; the bottom hairline separates header from the scroll body.
- */
 export function InspectPanelHeader({
   title,
   actions,
@@ -73,11 +52,6 @@ export function InspectPanelHeader({
   );
 }
 
-/**
- * Rectangular header badge (rounded-md, h-6) driven by an indicator tone.
- * Drop-in for the per-panel `TaskPanelBadge` / `GoalPanelBadge`. Omit `tone`
- * and pass `class` for a bespoke soft style (e.g. the mono task-number chip).
- */
 export function InspectBadge({
   tone,
   children,

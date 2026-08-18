@@ -1,17 +1,3 @@
-/**
- * InternalQueryBus Unit Tests
- *
- * Covers:
- *   – handler registration and execute
- *   – structured success/failure results
- *   – duplicate handler rejection
- *   – missing handler structured failure
- *   – handler throw normalization
- *   – unregister, unsubscribe, clear, diagnostics
- *
- * See docs/plans/internal-event-command-query-architecture.md
- */
-
 import { beforeEach, describe, expect, it } from 'bun:test';
 import {
   createInternalQueryBus,
@@ -190,7 +176,6 @@ describe('InternalQueryBus', () => {
 
       bus.register('space.workflowRun.get', async () => ({ run: { id: 'B' } }));
 
-      // Calling the old unsubscribe should not delete the new handler
       unsubA();
       expect(bus.hasHandler('space.workflowRun.get')).toBe(true);
 

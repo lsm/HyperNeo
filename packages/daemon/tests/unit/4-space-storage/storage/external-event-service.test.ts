@@ -1,14 +1,3 @@
-/**
- * ExternalEventService Unit Tests
- *
- * Covers:
- *   - publish: new event → stored, bus published
- *   - publish: terminal duplicate → short-circuits
- *   - publish: retryable duplicate → returns retryable_duplicate, re-emits bus
- *   - bus payload carries space-scoped sessionId
- *   - no session injection in service
- */
-
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import {
@@ -66,10 +55,6 @@ beforeEach(() => {
   service = new ExternalEventService(store, bus);
 });
 
-// ---------------------------------------------------------------------------
-// New event
-// ---------------------------------------------------------------------------
-
 describe('publish — new event', () => {
   test('stores event, publishes bus event, returns published', async () => {
     const busReceived: ExternalEventPublishedPayload[] = [];
@@ -87,7 +72,6 @@ describe('publish — new event', () => {
     expect(result.outcome).toBe('published');
     expect(result.eventId).toBe(event.id);
 
-    // Bus fired with full event payload
     expect(busReceived).toHaveLength(1);
     expect(busReceived[0]!.spaceId).toBe(SPACE_ID);
     expect(busReceived[0]!.namespaceId).toBe(SPACE_ID);
@@ -101,7 +85,6 @@ describe('publish — new event', () => {
     expect(busReceived[0]!.occurredAt).toBe(event.occurredAt);
     expect(busReceived[0]!.ingestedAt).toBe(event.ingestedAt);
 
-    // Stored state is published
     const rec = store.getById(event.id);
     expect(rec!.state).toBe('published');
   });
@@ -130,8 +113,6 @@ describe('publish — new event', () => {
       { subscriberName: 'test-sub' }
     );
 
-    // Event with non-JSON-normalized values (undefined field) that would be
-    // dropped during JSON.stringify/parse round-tripping.
     const event = makeEvent({
       payload: { action: 'opened', prNumber: 42, extra: undefined },
     });
@@ -139,15 +120,10 @@ describe('publish — new event', () => {
 
     expect(result.outcome).toBe('published');
     expect(busReceived).toHaveLength(1);
-    // The bus payload should be the canonical stored version (no `extra` key).
     expect(busReceived[0]!.payload).toEqual({ action: 'opened', prNumber: 42 });
     expect('extra' in busReceived[0]!.payload).toBe(false);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Duplicates
-// ---------------------------------------------------------------------------
 
 describe('publish — duplicates', () => {
   test('terminal duplicate returns duplicate_terminal', async () => {
@@ -185,10 +161,6 @@ describe('publish — duplicates', () => {
     expect(busReceived).toHaveLength(2);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Bus semantics
-// ---------------------------------------------------------------------------
 
 describe('publish — bus semantics', () => {
   test('bus event is space-scoped (namespaceId === spaceId)', async () => {
@@ -238,11 +210,10 @@ describe('publish — bus semantics', () => {
     await service.publish(event);
     expect(received).toHaveLength(1);
 
-    // Mark terminal, then duplicate should NOT fire bus
     store.markEventIgnored(event.id, 'no_matching_subscriptions');
     const dup = makeEvent({ id: 'evt-dup', dedupeKey: event.dedupeKey });
     const result = await service.publish(dup);
     expect(result.outcome).toBe('duplicate_terminal');
-    expect(received).toHaveLength(1); // no second bus event
+    expect(received).toHaveLength(1);
   });
 });

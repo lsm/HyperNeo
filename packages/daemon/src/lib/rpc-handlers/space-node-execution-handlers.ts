@@ -1,25 +1,12 @@
-/**
- * Space Node Execution RPC Handlers
- *
- * RPC handlers for NodeExecution queries:
- * - nodeExecution.list   - Lists node executions for a workflow run (requires spaceId)
- * - nodeExecution.create - Creates a node execution record (test infrastructure only)
- * - nodeExecution.update - Updates an execution status/result (test infrastructure only)
- */
-
 import type { MessageHub, NodeExecutionStatus } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 
-/**
- * Register RPC handlers for NodeExecution queries.
- */
 export function setupNodeExecutionHandlers(
   messageHub: MessageHub,
   nodeExecutionRepo: NodeExecutionRepository,
   workflowRunRepo: SpaceWorkflowRunRepository
 ): void {
-  // ─── nodeExecution.list ─────────────────────────────────────────────────
   messageHub.onRequest('nodeExecution.list', async (data) => {
     const params = data as { workflowRunId: string; spaceId: string };
 
@@ -30,7 +17,6 @@ export function setupNodeExecutionHandlers(
       throw new Error('spaceId is required');
     }
 
-    // Ownership check — reject cross-space access
     const run = workflowRunRepo.getRun(params.workflowRunId);
     if (!run || run.spaceId !== params.spaceId) {
       throw new Error(`WorkflowRun not found: ${params.workflowRunId}`);
@@ -41,9 +27,6 @@ export function setupNodeExecutionHandlers(
     return { executions };
   });
 
-  // ─── nodeExecution.create / update (test infrastructure only) ───────────
-  //
-  // Disabled in production to prevent unauthorized state manipulation.
   if (process.env.NODE_ENV !== 'production') {
     messageHub.onRequest('nodeExecution.create', async (data) => {
       const params = data as {
@@ -67,8 +50,6 @@ export function setupNodeExecutionHandlers(
         status: params.status ?? 'in_progress',
       });
 
-      // If a specific status was requested and it differs from the created record
-      // (e.g., createOrIgnore returned an existing 'pending' record), update it.
       if (params.status && execution.status !== params.status) {
         const updated = nodeExecutionRepo.update(execution.id, { status: params.status });
         if (updated) return { execution: updated };

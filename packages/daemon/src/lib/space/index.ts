@@ -1,7 +1,3 @@
-/**
- * Space module — managers and repositories for the Space multi-agent workflow system.
- */
-
 export { SpaceManager } from './managers/space-manager';
 export { SpaceWorktreeManager } from './managers/space-worktree-manager';
 export type { SpaceWorktreeInfo } from './managers/space-worktree-manager';
@@ -92,7 +88,6 @@ export {
 } from './export-format';
 export type { ValidationResult } from './export-format';
 
-// Types — re-exported from @hyperneo/shared for convenience
 export type {
   SpaceWorkflow,
   WorkflowNode,

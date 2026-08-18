@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Button Component
- */
 
 import { render } from '@testing-library/preact';
 import { describe, it, expect, vi } from 'vitest';
@@ -165,7 +162,6 @@ describe('Button', () => {
 
       button?.click();
 
-      // Disabled buttons don't fire click events
       expect(onClick).not.toHaveBeenCalled();
     });
 

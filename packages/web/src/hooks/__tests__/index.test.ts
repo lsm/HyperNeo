@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Hooks Index (barrel export)
- *
- * Verifies that all exports from the hooks index file are accessible.
- */
 
 import {
   useModal,

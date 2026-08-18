@@ -1,24 +1,3 @@
-/**
- * Anthropic-to-Codex Bridge Provider
- *
- * Provides an Anthropic-compatible bridge for OpenAI-backed models.
- * The bridge speaks the Anthropic Messages API (POST /v1/messages with SSE
- * streaming) backed directly by OpenAI's Responses API.
- *
- * Authentication discovery for API calls (priority order):
- *   1. OPENAI_API_KEY environment variable (daemon/test use only)
- *   2. ~/.hyperneo/auth.json  — HyperNeo's own auth store (key "openai")
- *   3. ~/.codex/auth.json   — imported once into ~/.hyperneo/auth.json (for users who ran `codex login`)
- *
- * UI authentication requires HyperNeo-managed OAuth credentials in ~/.hyperneo/auth.json.
- * Env var credentials are used internally for API calls but not shown in the UI.
- * OAuth credentials obtained through HyperNeo's login flow are written to
- * ~/.hyperneo/auth.json so they persist across sessions.
- *
- * Workspace isolation: each unique workspace path gets its own bridge server
- * so Codex is always rooted at the correct directory.
- */
-
 import { getDataDir } from '../data-dir';
 import type {
   Provider,
@@ -51,15 +30,7 @@ import * as crypto from 'crypto';
 
 const logger = new Logger('anthropic-to-codex-bridge-provider');
 
-// ---------------------------------------------------------------------------
-// Model catalogue
-// ---------------------------------------------------------------------------
-
 const ANTHROPIC_CODEX_MODELS = getCodexBridgeModelInfos();
-
-// ---------------------------------------------------------------------------
-// OAuth configuration (ChatGPT Plus / Pro)
-// ---------------------------------------------------------------------------
 
 const OAUTH_CONFIG = {
   clientId: 'app_EMoamEEZ73f0CkXaXp7hrann',
@@ -70,22 +41,16 @@ const OAUTH_CONFIG = {
   callbackPort: 1455,
 };
 
-// ---------------------------------------------------------------------------
-// Auth credential types
-// ---------------------------------------------------------------------------
-
-/** Shape stored in ~/.hyperneo/auth.json under the "openai" key. */
 interface StoredCredentials {
   type: 'oauth' | 'api_key';
   access?: string;
   refresh?: string;
-  expires?: number; // Unix timestamp in ms
+  expires?: number;
   accountId?: string;
   planType?: string;
   isFedrampAccount?: boolean;
 }
 
-/** Raw OAuth token response from auth.openai.com. */
 export interface OpenAIOAuthToken {
   access_token: string;
   refresh_token: string;
@@ -98,16 +63,6 @@ export type CodexRefreshResult =
   | { ok: true; token: OpenAIOAuthToken }
   | { ok: false; definitive: boolean };
 
-/**
- * Exchange a Codex/OpenAI OAuth refresh token for a new access token.
- *
- * Returns `{ ok: true, token }` on success. On failure returns `{ ok: false,
- * definitive }` where `definitive` is `true` when the refresh token itself is
- * invalid/expired/revoked (4xx errors) and `false` for transient failures
- * (network errors, timeouts, 5xx, 429).
- *
- * Exported for provider auth discovery and online test setup helpers.
- */
 export async function refreshCodexToken(
   refreshToken: string,
   timeoutMs = 5000
@@ -126,8 +81,6 @@ export async function refreshCodexToken(
     if (!response.ok) {
       const body = await response.text();
       logger.warn(`AnthropicToCodexBridgeProvider: token refresh HTTP ${response.status}: ${body}`);
-      // 4xx (except 408/429) means the refresh token is invalid — definitive.
-      // 5xx and 429 are transient.
       const definitive =
         response.status >= 400 &&
         response.status < 500 &&
@@ -151,7 +104,6 @@ export async function refreshCodexToken(
   }
 }
 
-/** Shape of ~/.codex/auth.json as written by the Codex CLI. */
 interface CodexAuthFile {
   OPENAI_API_KEY?: string | null;
   tokens?: {
@@ -163,10 +115,6 @@ interface CodexAuthFile {
   last_refresh?: string;
 }
 
-// ---------------------------------------------------------------------------
-// Anthropic-to-Codex Bridge Provider
-// ---------------------------------------------------------------------------
-
 export class AnthropicToCodexBridgeProvider implements Provider {
   readonly id = 'anthropic-codex';
   readonly displayName = 'OpenAI (Codex)';
@@ -174,8 +122,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   get capabilities(): ProviderCapabilities {
     return {
       streaming: true,
-      // GPT-5.6 supports reasoning.effort via the OpenAI Responses API; the bridge
-      // translates OpenAI reasoning events to Anthropic thinking SSE blocks.
       extendedThinking: true,
       thinkingModes: 'granular',
       maxContextWindow: 1050000,
@@ -184,35 +130,22 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     };
   }
 
-  /** Responses bridge servers, shared by auth. */
   private readonly bridgeServers = new Map<string, OpenAIResponsesBridgeServer>();
   private readonly bridgeServerAuthKeys = new Map<string, string>();
 
-  /** Path to HyperNeo's own auth store. */
   private readonly authPath: string;
 
-  /** Path to the Codex CLI auth file. */
   private readonly codexAuthPath: string;
 
-  /** In-memory cache of credentials read from the HyperNeo auth file. */
   private cachedCredentials: StoredCredentials | null = null;
   private readonly credentialListeners = new Set<
     (credentials: ProviderCredentials) => void | Promise<void>
   >();
 
-  /**
-   * Cached resolved bridge auth.
-   * undefined = unresolved, null = resolved but unavailable.
-   */
   private cachedBridgeAuth: OpenAIResponsesBridgeAuth | null | undefined = undefined;
 
-  /**
-   * Backward-compatibility cache for the legacy getApiKey() return path.
-   * undefined = unresolved, '' = resolved unavailable, non-empty = resolved.
-   */
   private cachedApiKey: string | undefined = undefined;
 
-  /** Active OAuth flow state (PKCE flow). */
   private activeOAuthFlow: {
     state: string;
     verifier: string;
@@ -221,10 +154,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     success: boolean;
   } | null = null;
 
-  /**
-   * Cached credential-probe result keyed by the bridge auth cache key so
-   * repeated `providers.test` calls don't re-probe within a short window.
-   */
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
   private static readonly PROBE_TTL_MS = 30_000;
   private static readonly PROBE_TIMEOUT_MS = 5000;
@@ -270,9 +199,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   async getCredentials(): Promise<ProviderCredentials | null> {
     let credentials = await this.loadCredentials();
     if (!credentials) {
-      // Import from ~/.codex/auth.json if the user has valid Codex CLI
-      // credentials but no HyperNeo auth file, so startup reconciliation
-      // sees provider-owned credentials before applying stale rows.
       await this.importFromCodexAuth();
       credentials = await this.loadCredentials();
     }
@@ -310,16 +236,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     };
   }
 
-  // -------------------------------------------------------------------------
-  // Auth status & credential discovery
-  // -------------------------------------------------------------------------
-
-  /**
-   * Return provider credentials, following discovery order:
-   *   1. OPENAI_API_KEY env var
-   *   2. ~/.hyperneo/auth.json["openai"]
-   *   3. One-time migration from ~/.codex/auth.json into ~/.hyperneo/auth.json
-   */
   private async getBridgeAuth(): Promise<OpenAIResponsesBridgeAuth | undefined> {
     if (this.env.OPENAI_API_KEY) {
       return { source: 'api_key', apiKey: this.env.OPENAI_API_KEY };
@@ -351,10 +267,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return undefined;
   }
 
-  /**
-   * Backward-compatible helper used by call sites that still ask for "api key".
-   * For OAuth mode this returns the OAuth access token.
-   */
   async getApiKey(): Promise<string | undefined> {
     const auth = await this.getBridgeAuth();
     return auth?.apiKey;
@@ -368,7 +280,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
     const accountId = credentials.accountId ?? this.extractAccountId(credentials.access);
     if (!accountId) {
-      // Fallback for legacy malformed entries: treat unknown oauth "access" as API key.
       return { source: 'api_key', apiKey: credentials.access };
     }
 
@@ -393,15 +304,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     };
   }
 
-  /**
-   * Stable identifier for bridge server reuse.
-   *
-   * Must NOT include the raw OAuth access token: the bridge server performs its
-   * own in-request token refresh, so rotating the token must not create a new
-   * bridge (which would kill the old port and leave the SDK subprocess talking
-   * to a dead server). API keys are hashed so switching keys still changes the
-   * key and triggers cleanup of the stale bridge.
-   */
   private bridgeAuthCacheKey(auth: OpenAIResponsesBridgeAuth | undefined): string {
     if (!auth) return 'none';
     if (auth.source === 'api_key') {
@@ -411,12 +313,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return ['chatgpt', auth.accountId, auth.isFedrampAccount ? 'fedramp' : 'standard'].join(':');
   }
 
-  /**
-   * Resolve the active bridge auth using the same precedence as buildSdkConfig:
-   *   1. OPENAI_API_KEY env var
-   *   2. Cached credentials file
-   *   3. cachedBridgeAuth (from prior OAuth flow)
-   */
   private resolveBridgeAuth(): OpenAIResponsesBridgeAuth | undefined {
     const envAuth = this.env.OPENAI_API_KEY
       ? ({ source: 'api_key', apiKey: this.env.OPENAI_API_KEY } as const)
@@ -426,7 +322,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   private modelAliases(): Record<string, string> {
-    // User-facing aliases (e.g. 'codex' → 'gpt-5.3-codex')
     const userAliases = Object.fromEntries(
       ANTHROPIC_CODEX_MODELS.flatMap((model) => [
         ...(model.alias ? [[model.alias, model.id] as const] : []),
@@ -441,10 +336,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       id: model.id,
       display_name: model.name,
       created_at: `${model.releaseDate ?? '2026-01-01'}T00:00:00Z`,
-      // The ChatGPT Codex backend caps GPT-5.6 input at 272K (not the 1.05M
-      // published spec); report that cap on the OAuth path so the SDK compacts
-      // before exceeding it. API-key routing (api.openai.com) keeps the full
-      // published window.
       context_window: isChatgptOAuth
         ? (codexBackendContextWindow(model.id) ?? model.contextWindow)
         : model.contextWindow,
@@ -494,8 +385,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
-    // Only HyperNeo-managed OAuth credentials are recognised in the UI.
-    // OPENAI_API_KEY env vars are for daemon/test use only.
     const hyperneoCreds = await this.loadCredentials();
     if (!hyperneoCreds || hyperneoCreds.type !== 'oauth') {
       return {
@@ -522,21 +411,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return { isAuthenticated: true, method: 'oauth' };
   }
 
-  /**
-   * Verify the resolved Codex credentials actually work against the OpenAI
-   * upstream by sending a minimal `/responses` request. The request URL is
-   * chosen by auth source so both API-key mode (`api.openai.com/v1`) and
-   * ChatGPT OAuth mode (`chatgpt.com/backend-api/codex`) are exercised
-   * through their real upstream paths.
-   *
-   * The request body differs per auth source: API-key mode sends
-   * `max_output_tokens: 1` to keep the probe cheap. ChatGPT Codex OAuth
-   * hard-rejects that field and requires the same shape as normal bridge
-   * traffic: instructions, `store: false`, and streaming enabled.
-   *
-   * @throws {Error} when credentials are rejected, the upstream is
-   *   unreachable, or the request times out.
-   */
   private async verifyCredentials(auth: OpenAIResponsesBridgeAuth): Promise<void> {
     const cacheKey = this.bridgeAuthCacheKey(auth);
     const cached = this.probeCache.get(cacheKey);
@@ -566,15 +440,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       authorization: `Bearer ${auth.apiKey}`,
     };
     if (isChatgptOAuth && auth.accountId) {
-      // Match buildOpenAIHeaders in openai-responses-bridge/server.ts:648
-      // (capital `ID`). The gateway is case-sensitive on this header; the
-      // bridge's own traffic uses capital ID, so the probe must too or it
-      // will 4xx and false-mark the provider unhealthy.
       headers['ChatGPT-Account-ID'] = auth.accountId;
     }
 
-    // Build request body. API-key mode accepts max_output_tokens; ChatGPT
-    // Codex OAuth requires the same streaming shape as regular bridge traffic.
     const body: Record<string, unknown> = {
       model: 'gpt-5.4-mini',
       input: [
@@ -621,40 +489,23 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   async getModels(): Promise<ModelInfo[]> {
-    // Use isAvailable() (which includes env-var credentials via getBridgeAuth()) so
-    // that the model picker works for all credential sources.  getAuthStatus() is
-    // UI-only: it gates the Login/Logout buttons but must not hide models from users
-    // who authenticate via OPENAI_API_KEY env vars.
     const auth = await this.getBridgeAuth();
     if (!auth) return [];
-    // Probe upstream so `providers.test` actually verifies the credentials work.
-    // The model-service layer catches and swallows errors from getModels(), so a
-    // failed probe does not break the model picker — it just hides the Codex
-    // models until the credentials are fixed.
     await this.verifyCredentials(auth);
     return ANTHROPIC_CODEX_MODELS.map((m) => ({ ...m, thinkingModes: 'granular' as const }));
   }
 
   ownsModel(modelId: string): boolean {
-    // Only claim model IDs that are explicitly listed in our catalogue.
-    // This avoids hijacking other providers' models (e.g. gpt-4, gpt-4o).
     return ANTHROPIC_CODEX_MODELS.some(
       (m) => m.id === modelId || m.alias === modelId || m.providerAliases?.includes(modelId)
     );
   }
 
   translateModelIdForSdk(_modelId: string): string {
-    // Following GLM/Kimi pattern: return 'default' and let SDK use ANTHROPIC_DEFAULT_*_MODEL
-    // env vars to route to real Codex model IDs. Context window comes from /v1/models metadata.
     return 'default';
   }
 
   getModelForTier(tier: ModelTier): string | undefined {
-    // Routing policy:
-    //   opus    → gpt-5.6-sol       (latest flagship, matches ANTHROPIC_DEFAULT_OPUS_MODEL)
-    //   sonnet  → gpt-5.6-terra     (balanced model, matches ANTHROPIC_DEFAULT_SONNET_MODEL)
-    //   haiku   → gpt-5.6-luna      (fast/cheap, matches ANTHROPIC_DEFAULT_HAIKU_MODEL)
-    //   default → gpt-5.6-terra     (same as sonnet; no separate env var needed)
     const map: Record<ModelTier, string> = {
       opus: 'gpt-5.6-sol',
       sonnet: 'gpt-5.6-terra',
@@ -664,20 +515,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return map[tier];
   }
 
-  // -------------------------------------------------------------------------
-  // Bridge server management
-  // -------------------------------------------------------------------------
-
-  /**
-   * Build SDK configuration.
-   *
-   * Lazily starts a per-workspace bridge server and returns env vars that
-   * route the Anthropic SDK to that bridge's local HTTP endpoint.
-   */
   buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
     const sessionId = sessionConfig?.sessionId ?? 'default';
-    // buildSdkConfig() is synchronous per the Provider interface.  The async
-    // discovery chain populates cachedBridgeAuth via isAvailable()/getAuthStatus().
     const auth = this.resolveBridgeAuth();
     const authKey = this.bridgeAuthCacheKey(auth);
     const bridgeKey = `responses:${authKey}`;
@@ -688,8 +527,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       this.bridgeServers.delete(key);
       this.bridgeServerAuthKeys.delete(key);
     }
-    // Resolve alias (e.g. 'codex' → 'gpt-5.3-codex') so ANTHROPIC_DEFAULT_*_MODEL
-    // receives real OpenAI model IDs that the bridge can forward upstream.
     const entry = ANTHROPIC_CODEX_MODELS.find(
       (m) => m.alias === modelId || m.id === modelId || m.providerAliases?.includes(modelId)
     );
@@ -726,8 +563,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       throw new Error(`Unknown Codex model: ${modelId}`);
     }
 
-    // Register a per-session override so the bridge sends the originally-selected
-    // Codex model ID upstream instead of the default alias target.
     bridgeServer.setSessionModelConfig?.(sessionId, sdkModelId, resolvedId);
 
     return {
@@ -741,8 +576,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         ),
         CLAUDE_CODE_OAUTH_TOKEN: '',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-        // Route all tiers to real Codex model IDs. SDK uses these for sub-agent
-        // selection and fallback. Context window comes from /v1/models metadata.
         ANTHROPIC_DEFAULT_OPUS_MODEL: CODEX_TO_SDK_MODEL['gpt-5.6-sol'],
         ANTHROPIC_DEFAULT_SONNET_MODEL: sdkModelId,
         ANTHROPIC_DEFAULT_HAIKU_MODEL: CODEX_TO_SDK_MODEL['gpt-5.6-luna'],
@@ -752,14 +585,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     };
   }
 
-  /**
-   * Propagate the session's thinking level to the Responses bridge.
-   *
-   * The Claude Code CLI handles thinking internally and does not include the
-   * thinking field in Anthropic Messages API request bodies. Without this
-   * side-channel the bridge has no way to know that reasoning should be
-   * forwarded to the OpenAI Responses API.
-   */
   setSessionThinkingConfig(sessionId: string, thinkingLevel: string | undefined): void {
     const auth = this.resolveBridgeAuth();
     const authKey = this.bridgeAuthCacheKey(auth);
@@ -779,29 +604,20 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     });
   }
 
-  /** Stop all bridge servers and reset cached auth state. Called at provider shutdown (e.g. tests). */
   stopAllBridgeServers(): void {
     for (const server of this.bridgeServers.values()) {
       server.stop();
     }
     this.bridgeServers.clear();
     this.bridgeServerAuthKeys.clear();
-    // Reset cached auth so a new provider instance starts with a clean slate.
-    // Without this, cachedBridgeAuth=null from a previous run would cause
-    // isAvailable() to return false even when valid credentials are present.
     this.cachedCredentials = null;
     this.cachedBridgeAuth = undefined;
     this.cachedApiKey = undefined;
   }
 
-  /** @deprecated Use stopAllBridgeServers(). */
   stopBridgeServer(): void {
     this.stopAllBridgeServers();
   }
-
-  // -------------------------------------------------------------------------
-  // OAuth flow (ChatGPT Plus / Pro)
-  // -------------------------------------------------------------------------
 
   async startOAuthFlow(): Promise<ProviderOAuthFlowData> {
     if (this.activeOAuthFlow && !this.activeOAuthFlow.completed) {
@@ -850,8 +666,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     authUrl.searchParams.set('state', state);
     authUrl.searchParams.set('id_token_add_organizations', 'true');
     authUrl.searchParams.set('codex_cli_simplified_flow', 'true');
-    // 'originator' is retained as 'neokai' (external OAuth client identity) —
-    // renamed with the external rebrand alongside the GitHub repo URL.
     authUrl.searchParams.set('originator', 'neokai');
     return authUrl;
   }
@@ -977,7 +791,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   async logout(): Promise<void> {
     this.cachedCredentials = null;
     this.cachedBridgeAuth = undefined;
-    this.cachedApiKey = undefined; // reset so the next getApiKey() re-reads from disk
+    this.cachedApiKey = undefined;
     try {
       const content = await fs.readFile(this.authPath, 'utf-8');
       const data = JSON.parse(content) as Record<string, unknown>;
@@ -986,7 +800,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       if (Object.keys(data).length === 0) {
         await fs.unlink(this.authPath);
       } else {
-        // Atomic write to avoid partial-write corruption (same pattern as saveCredentials)
         const json = JSON.stringify(data, null, 2);
         const tmpPath = `${this.authPath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
         try {
@@ -1001,10 +814,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       // file does not exist — nothing to do
     }
   }
-
-  // -------------------------------------------------------------------------
-  // Private: credential persistence
-  // -------------------------------------------------------------------------
 
   private async loadCredentials(): Promise<StoredCredentials | null> {
     if (this.cachedCredentials) return this.cachedCredentials;
@@ -1038,33 +847,25 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     data['openai'] = credentials;
     const json = JSON.stringify(data, null, 2);
 
-    // Atomic write: write to a temp file then rename so partial writes never
-    // corrupt the auth store.
     const tmpPath = `${this.authPath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
     try {
       await fs.writeFile(tmpPath, json, { mode: 0o600 });
       await fs.rename(tmpPath, this.authPath);
     } catch (err) {
-      // Clean up the temp file on failure
       await fs.unlink(tmpPath).catch(() => {});
       throw err;
     }
   }
 
-  /**
-   * One-time migration: read credentials from ~/.codex/auth.json, optionally
-   * refresh the access token, and write to ~/.hyperneo/auth.json.
-   */
   private async importFromCodexAuth(): Promise<void> {
     let codexData: CodexAuthFile;
     try {
       const raw = await fs.readFile(this.codexAuthPath, 'utf-8');
       codexData = JSON.parse(raw) as CodexAuthFile;
     } catch {
-      return; // file missing or malformed
+      return;
     }
 
-    // Case 1: explicit API key (not an OAuth token) — import directly.
     if (codexData.OPENAI_API_KEY && typeof codexData.OPENAI_API_KEY === 'string') {
       const creds: StoredCredentials = {
         type: 'api_key',
@@ -1078,7 +879,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       return;
     }
 
-    // Case 2: OAuth tokens.
     if (!codexData.tokens?.access_token) return;
 
     let accessToken = codexData.tokens.access_token;
@@ -1086,8 +886,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     let expires: number | undefined;
 
     if (refreshToken) {
-      // Prefer a fresh token before importing; if refresh fails, still import
-      // existing tokens so HyperNeo remains decoupled from ~/.codex/auth.json.
       const refreshed = await this.tryRefreshCodexToken(refreshToken);
       if (refreshed.ok) {
         accessToken = refreshed.token.access_token;
@@ -1121,17 +919,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     logger.info('AnthropicToCodexBridgeProvider: imported OAuth token from ~/.codex/auth.json');
   }
 
-  /**
-   * Attempt to refresh a Codex/OpenAI OAuth token.
-   * Delegates to the exported module-level refreshCodexToken() function.
-   */
   private tryRefreshCodexToken(refreshToken: string): Promise<CodexRefreshResult> {
     return refreshCodexToken(refreshToken);
   }
-
-  // -------------------------------------------------------------------------
-  // Private: PKCE helpers
-  // -------------------------------------------------------------------------
 
   private generateRandomString(length: number): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';

@@ -1,9 +1,3 @@
-/**
- * Tests for session-lifecycle-status.ts
- *
- * Verifies session lifecycle statuses map to the expected tones and labels.
- */
-
 import { describe, expect, it } from 'vitest';
 import {
   getSessionLifecycleStatusClasses,

@@ -1,12 +1,3 @@
-/**
- * Model Switching Tests
- *
- * Tests for model switching functionality via WebSocket:
- * - session.model.get
- * - session.model.switch error handling
- * - Model switching edge cases
- */
-
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 
@@ -56,7 +47,6 @@ describe('Model Switching', () => {
         modelInfo?: { id: string; name: string; family: string };
       };
 
-      // 'default' alias may resolve to 'sonnet' if model cache is populated
       expect(result.currentModel).toBeOneOf(['default', 'sonnet']);
       if (result.modelInfo) {
         expect(result.modelInfo.id).toBeOneOf(['default', 'sonnet']);

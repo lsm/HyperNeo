@@ -1,11 +1,3 @@
-/**
- * Shared hook for fetching model lists from custom endpoints.
- *
- * Encapsulates the RPC call, loading/error state, and cache-clearing
- * behaviour so parent components (AddProviderModal, ProvidersSettings,
- * CustomEndpointsSettings) don't duplicate the same ~35-line block.
- */
-
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
 import { listCustomEndpointModels } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
@@ -28,9 +20,6 @@ export function useFetchModels(editor: EditorState | null) {
     setFetchedAt(null);
   }, []);
 
-  // Reset fetched state whenever the endpoint connection fields change
-  // (baseUrl, type, apiKey, headersText) or when the editor is opened/closed.
-  // Also bumps the request counter so any in-flight fetch is ignored.
   useEffect(() => {
     clearFetchState();
     activeRequestRef.current++;
@@ -64,14 +53,14 @@ export function useFetchModels(editor: EditorState | null) {
         apiKey: editor.apiKey.trim() || undefined,
         headers,
       });
-      if (reqId !== activeRequestRef.current) return; // stale response
+      if (reqId !== activeRequestRef.current) return;
       setFetchedModels(models);
       setFetchedAt(Date.now());
       if (models.length === 0) {
         toast.info('No models found — you can still enter one manually');
       }
     } catch (e) {
-      if (reqId !== activeRequestRef.current) return; // stale response
+      if (reqId !== activeRequestRef.current) return;
       const msg = e instanceof Error ? e.message : 'Failed to fetch models';
       setFetchModelsError(msg);
       setFetchedModels(null);

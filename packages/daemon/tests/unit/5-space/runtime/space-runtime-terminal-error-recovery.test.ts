@@ -1,28 +1,3 @@
-/**
- * SpaceRuntime — Terminal-Error Idle Recovery (Task #673)
- *
- * Catch-all recovery for node-agent sessions that end on a terminal error
- * result (e.g. Codex 400, `error_during_execution`). Such a session leaves the
- * node idle with a *live* session, and because the result is classified
- * `terminal` no existing sweep recovers it — the worker is only revivable by a
- * manual "continue".
- *
- * `handleTerminalErrorIdleExecutions` injects a bounded number of continues via
- * the same primitive a manual continue uses, then escalates to `blocked`.
- *
- * Behaviour under test:
- *   1. `error_during_execution` (alive session) → one continue injected.
- *   2. `error_max_turns` is retryable → continue injected.
- *   3. Grace cooldown suppresses an immediate second continue.
- *   4. A different error signature earns a second continue (after cooldown).
- *   5. Retry cap (2) exhausted → execution/run/task → `blocked`.
- *   6. Deterministic repeat (identical signature) → blocked immediately.
- *   7. `error_max_budget_usd` (cost guard) → no continue, no blocked.
- *   8. Prompt-too-long result → no continue (deferred to #670 compaction).
- *   9. Dead session → no continue (crash-retry path owns it).
- *  10. Task not `in_progress` → no action.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -40,10 +15,6 @@ import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-
-// ---------------------------------------------------------------------------
-// DB helpers
-// ---------------------------------------------------------------------------
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -95,10 +66,6 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: s
   ).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
-
 describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
   let db: BunDatabase;
   let workflowRunRepo: SpaceWorkflowRunRepository;
@@ -139,8 +106,6 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       sdkMessageRepo,
       internalEventBus: bus,
       taskAgentManager: tam as never,
-      // Collapse the grace cooldown so cap/repeat tests can advance in
-      // successive ticks without waiting minutes.
       agentStuckNagGraceMs: 0,
       ...overrides,
     };
@@ -177,8 +142,6 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       ) => {
         const exec = execution as { id?: string };
         if (exec.id) {
-          // Snapshot the DB state at spawn time so tests can verify the stale
-          // agentSessionId was cleared before the fresh session is assigned.
           const current = nodeExecutionRepo.getById(exec.id);
           spawnSnapshots.push({ agentSessionIdAtSpawn: current?.agentSessionId ?? null });
           nodeExecutionRepo.update(exec.id, {
@@ -203,10 +166,6 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     };
   }
 
-  /**
-   * Persist a terminal `result` message for a session via direct SQL so the
-   * subtype round-trips through `getLastSDKMessage` exactly.
-   */
   function saveResultError(
     sessionId: string,
     opts: {
@@ -240,7 +199,6 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     ).run(id, sessionId, opts.subtype, JSON.stringify(message), ts);
   }
 
-  /** Seed a single-node workflow run whose execution is idle on an error result. */
   function seedIdleErrorRun(opts: {
     subtype: string;
     errors?: string[];
@@ -296,13 +254,6 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     return { runId: run.id, taskId: task.id, executionId: execution.id };
   }
 
-  /**
-   * Simulate `handleSubSessionComplete` returning a continued execution to
-   * `idle` after the resumed turn ends, optionally re-writing the persisted
-   * terminal result (e.g. to a different error signature). Production flips the
-   * execution to `in_progress` on a continue; tests must move it back to idle
-   * for the sweep to re-evaluate it on the next tick.
-   */
   function resumeToIdle(
     executionId: string,
     opts: { subtype: string; errors?: string[]; terminalReason?: string }
@@ -369,11 +320,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(tam._injected[0].sessionId).toBe(SESSION);
     expect(tam._injected[0].message).toContain('[Runtime recovery — terminal error]');
     expect(tam._injected[0].message).toContain('error_during_execution');
-    // Execution stays idle: handleSubSessionComplete is a one-shot callback that
-    // already fired for the terminal error, so flipping to in_progress would
-    // leave it stuck. The sweep re-evaluates idle rows every tick instead.
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
-    // Run/task remain in_progress — recovery is a continue, not a block.
     expect(workflowRunRepo.getRun(runId)?.status).toBe('in_progress');
     expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
   });
@@ -418,8 +365,6 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
 
     await rt.executeTick();
 
-    // #670 owns prompt-too-long recovery (it injects a /compact). This sweep
-    // must NOT inject its own terminal-error continue on top of it.
     expect(
       tam._injected.filter((m) => m.message.includes('[Runtime recovery — terminal error]'))
     ).toHaveLength(0);
@@ -452,15 +397,9 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
 
     await rt.executeTick();
 
-    // A dead session cannot be continued. The crash-retry path only scans
-    // in_progress/pending, so this sweep resets the idle row for a bounded
-    // re-spawn. The stale (terminal-tainted) agentSessionId is cleared BEFORE
-    // the spawn so createSubSession spawns a fresh session instead of
-    // rehydrating/reusing the dead one.
     expect(tam._injected).toHaveLength(0);
     expect(tam._spawnSnapshots.length).toBeGreaterThanOrEqual(1);
     expect(tam._spawnSnapshots[0].agentSessionIdAtSpawn).toBeNull();
-    // The spawn loop then re-spawns a fresh session.
     const updated = nodeExecutionRepo.getById(executionId)!;
     expect(updated.status).toBe('in_progress');
   });
@@ -469,8 +408,6 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     const { runId, executionId } = seedIdleErrorRun({
       subtype: 'error_during_execution',
     });
-    // Seed an active tool_use for this execution — the pending tool_result is
-    // the next valid transcript item; injecting a user continue would race it.
     const toolRepo = new ToolContinuationRecoveryRepository(db);
     toolRepo.ensureSchema();
     toolRepo.recordToolUse({
@@ -497,19 +434,14 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     const rt = new SpaceRuntime(buildConfig(tam));
     (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
 
-    // First tick → continue #1 (max-turns, signature stored).
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
 
-    // Resumed turn hits max-turns AGAIN with the SAME (empty) signature.
     resumeToIdle(executionId, { subtype: 'error_max_turns' });
 
-    // Second tick → max-turns is exempt from the deterministic-repeat shortcut,
-    // so it gets continue #2 (the cap), not an immediate block.
     await rt.executeTick();
     expect(tam._injected).toHaveLength(2);
 
-    // Third occurrence → cap (2) exhausted → blocked.
     resumeToIdle(executionId, { subtype: 'error_max_turns' });
     await rt.executeTick();
     expect(tam._injected).toHaveLength(2);
@@ -527,17 +459,11 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
 
     await rt.executeTick();
 
-    // A dead cost-guarded session is NOT re-spawned — the subtype guards run
-    // before the dead-session reset, so non-retryable subtypes are skipped
-    // consistently whether the session is live or dead (no guaranteed-to-re-fail
-    // re-spawns).
     expect(tam._injected).toHaveLength(0);
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
   });
 
   test('a shared session across idle rows injects only one continue per tick', async () => {
-    // Simulate a reused agent session: two idle node executions reference the
-    // SAME agentSessionId, both ending on the terminal error result for it.
     const { runId } = seedIdleErrorRun({
       subtype: 'error_during_execution',
       errors: ['shared-session error'],
@@ -567,15 +493,11 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
 
     await rt.executeTick();
 
-    // One continue for the shared session — not one per idle row.
     expect(tam._injected).toHaveLength(1);
     expect(tam._injected[0].sessionId).toBe('session:shared');
   });
 
   test('a shared session recovers via the NEWEST execution (not a stale node)', async () => {
-    // createSubSession treats the newest execution for a session as current.
-    // Two idle rows share a session; recovery must target the newest (step-b),
-    // so that a blocked escalation re-spawns the right workflow step.
     const { runId, executionId: oldestId } = seedIdleErrorRun({
       subtype: 'error_during_execution',
       errors: ['shared-session error'],
@@ -593,8 +515,6 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       agentSessionId: 'session:shared',
       startedAt: Date.now() - 5 * 60_000,
     });
-    // Force step-b to be unambiguously newer than step-a (same-ms createdAt
-    // otherwise ties break by UUID, making "newest" non-deterministic in tests).
     db.prepare('UPDATE node_executions SET created_at = ? WHERE id = ?').run(
       Date.now() + 60_000,
       newest.id
@@ -604,22 +524,17 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     const rt = new SpaceRuntime(buildConfig(tam));
     (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
 
-    // Tick 1 → continue #1 (targets the newest execution, step-b).
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
 
-    // Resume the NEWEST execution to idle with the SAME signature → deterministic
-    // repeat on step-b → blocked. The oldest (step-a) must remain untouched.
     resumeToIdle(newest.id, {
       subtype: 'error_during_execution',
       errors: ['shared-session error'],
     });
     await rt.executeTick();
 
-    expect(tam._injected).toHaveLength(1); // no second continue
+    expect(tam._injected).toHaveLength(1);
     expect(nodeExecutionRepo.getById(newest.id)?.status).toBe('blocked');
-    // The blocked escalation detaches the stale session from EVERY sibling row
-    // (createSubSession would otherwise resurrect it via the older idle row).
     expect(nodeExecutionRepo.getById(newest.id)?.agentSessionId).toBeNull();
     expect(nodeExecutionRepo.getById(oldestId)?.agentSessionId).toBeNull();
     expect(nodeExecutionRepo.getById(oldestId)?.status).toBe('idle');
@@ -637,8 +552,6 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
   });
 
   test('a session already active (in_progress) on another execution is not recovered via the stale idle row', async () => {
-    // Reused agent session: older row idle on a terminal error, newer row
-    // in_progress on the same session (processing a new activation).
     const { runId, executionId: idleId } = seedIdleErrorRun({
       subtype: 'error_during_execution',
       errors: ['stale-row error'],
@@ -667,8 +580,6 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
 
     await rt.executeTick();
 
-    // The session has an active owner; the stale idle row must not trigger a
-    // terminal-error continue that races the in-progress activation.
     expect(tam._injected).toHaveLength(0);
     expect(nodeExecutionRepo.getById(idleId)?.status).toBe('idle');
   });
@@ -682,18 +593,14 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     const rt = new SpaceRuntime(buildConfig(tam));
     (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
 
-    // First tick → continue #1 (signature A); execution flips to in_progress.
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
 
-    // Simulate the resumed turn ending back at idle with a DIFFERENT error so
-    // the signature changes and the cap (not the repeat guard) is what trips.
     resumeToIdle(executionId, {
       subtype: 'error_during_execution',
       errors: ['transient hiccup B'],
     });
 
-    // Second tick → continue #2 (signature B, under cap of 2).
     await rt.executeTick();
     expect(tam._injected).toHaveLength(2);
 
@@ -702,13 +609,10 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       errors: ['transient hiccup C'],
     });
 
-    // Third tick → cap (2) exhausted → blocked.
     await rt.executeTick();
 
     const execution = nodeExecutionRepo.getById(executionId)!;
     expect(execution.status).toBe('blocked');
-    // The stale live session is cancelled and cleared so attemptBlockedRunRecovery
-    // re-spawns a FRESH session instead of re-promoting this one.
     expect(execution.agentSessionId).toBeNull();
     expect(tam._cancelled).toContain(SESSION);
     expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
@@ -727,17 +631,14 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     const rt = new SpaceRuntime(buildConfig(tam));
     (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
 
-    // First tick → continue #1, signature stored.
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
 
-    // Resumed turn re-errored identically → same signature next evaluation.
     resumeToIdle(executionId, {
       subtype: 'error_during_execution',
       errors: ['Codex 400 invalid_request_error'],
     });
 
-    // Second tick → grace (0) passed, repeat detected → blocked, no 2nd continue.
     await rt.executeTick();
 
     expect(tam._injected).toHaveLength(1);
@@ -752,24 +653,18 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       subtype: 'error_during_execution',
       errors: ['hiccup'],
     });
-    // Non-zero grace so the cooldown window is active.
     const tam = makeTam();
     const rt = new SpaceRuntime(buildConfig(tam, { agentStuckNagGraceMs: 60_000 }));
     (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
 
-    // First tick → continue #1.
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
 
-    // Resumed turn ends back at idle with a distinct signature. Even though the
-    // signature differs (so neither the repeat nor the cap would trip), the
-    // cooldown must give the prior continue its grace window before acting again.
     resumeToIdle(executionId, {
       subtype: 'error_during_execution',
       errors: ['different'],
     });
 
-    // Immediate second tick → within grace → no new continue.
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
@@ -785,12 +680,9 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     const rt = new SpaceRuntime(buildConfig(tam));
     (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
 
-    // Gen-1 session: continue once.
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
 
-    // Simulate a blocked-recovery re-spawn: same execution, new session id,
-    // fresh error result, back to idle.
     nodeExecutionRepo.update(executionId, {
       status: 'idle',
       agentSessionId: 'session:gen-2',
@@ -802,7 +694,6 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     });
 
     await rt.executeTick();
-    // Budget reset → a continue fires for the new session despite the prior one.
     expect(tam._injected).toHaveLength(2);
     expect(tam._injected[1].sessionId).toBe('session:gen-2');
   });
@@ -820,16 +711,12 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     const rt = new SpaceRuntime(buildConfig(tam));
     (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
 
-    // First tick → injection fails (failure 1); execution stays idle.
     await rt.executeTick();
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
 
-    // Second tick → still within grace(0)? grace=0 means cooldown never blocks,
-    // but failedInjectionCount(1) < cap(2) → retry → fails again (failure 2).
     await rt.executeTick();
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
 
-    // Third tick → failedInjectionCount(2) >= cap → escalate to blocked.
     await rt.executeTick();
 
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
@@ -847,15 +734,9 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     const rt = new SpaceRuntime(buildConfig(tam));
     (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
 
-    // Tick 1 → continue #1 (signature stored).
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
 
-    // Simulate the injected continue being consumed / the agent mid-turn: the
-    // last message is briefly a non-error (assistant) message. The recovery
-    // state must NOT be cleared here — getLastSDKMessage returns consumed user
-    // rows too, so resetting on any non-error message would defeat the
-    // repeat/cap guards (unbounded continues).
     db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`).run(SESSION);
     sdkMessageRepo.saveSDKMessage(SESSION, {
       type: 'assistant',
@@ -866,17 +747,12 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       },
     } as never);
 
-    // Tick 2 → non-error last message → execution skipped, no state change.
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
 
-    // The resumed turn then fails with the SAME terminal error.
     db.prepare(`DELETE FROM sdk_messages WHERE session_id = ?`).run(SESSION);
     saveResultError(SESSION, { subtype: 'error_during_execution', errors: ['generic 400'] });
 
-    // Tick 3 → state was preserved → deterministic-repeat detected → blocked.
-    // (A fresh budget only comes from a re-spawn / new session id, not from a
-    // transient non-error last message.)
     await rt.executeTick();
     expect(tam._injected).toHaveLength(1);
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');

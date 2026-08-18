@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * MessageInfoDropdown Component Tests
- *
- * Tests message info dropdown content rendering
- */
 import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
@@ -11,10 +6,8 @@ import { MessageInfoDropdown } from '../MessageInfoDropdown';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 
-// Helper to create a valid UUID
 const createUUID = (): UUID => crypto.randomUUID() as UUID;
 
-// Factory function for session info
 function createSessionInfo(
   overrides: Partial<Extract<SDKMessage, { type: 'system'; subtype: 'init' }>> = {}
 ): Extract<SDKMessage, { type: 'system'; subtype: 'init' }> {
@@ -346,7 +339,6 @@ describe('MessageInfoDropdown', () => {
       const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
       expect(container.textContent).toContain(longPath);
-      // Should have break-all for long paths
       expect(container.querySelector('.break-all')).toBeTruthy();
     });
 

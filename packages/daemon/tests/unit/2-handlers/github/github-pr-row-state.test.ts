@@ -4,10 +4,6 @@ import {
   pullRequestUpdatedAt,
 } from '../../../../src/lib/external-events/github/github-pr-row-state';
 
-// Characterization tests for the GitHub pull-request row-state decoders. These
-// were previously inline in github-event-extension.ts with no direct unit
-// coverage; every branch is pinned here.
-
 describe('pullRequestUpdatedAt', () => {
   const updatedAt = '2024-05-01T12:00:00Z';
 
@@ -23,9 +19,6 @@ describe('pullRequestUpdatedAt', () => {
   });
 
   it('returns the current time (Date.now fallback) when updated_at is absent', () => {
-    // An object row with no timestamp field delegates to parseGitHubTimestamp,
-    // which returns Date.now() — so a timestamp-less row is treated as fresh
-    // rather than dropped. (Only a non-object row returns the literal 0.)
     const before = Date.now();
     const result = pullRequestUpdatedAt({});
     const after = Date.now();

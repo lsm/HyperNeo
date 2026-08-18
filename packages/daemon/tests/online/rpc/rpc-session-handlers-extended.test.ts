@@ -1,15 +1,3 @@
-/**
- * Extended Session RPC Handlers Tests
- *
- * Tests session RPC handlers through the real WebSocket protocol:
- * - session.archive, session.update, session.list
- * - session.model.get, session.model.switch
- * - session.create with config, session.delete
- * - session.thinking.set, worktree.cleanup
- * - models.list, models.clearCache
- * - agent.getState, session.get, client.interrupt
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 
@@ -118,7 +106,6 @@ describe('Session RPC Handlers - Extended', () => {
     });
 
     test('should return empty array when no sessions exist', async () => {
-      // Note: other tests may have created sessions, so we just check it's an array
       const sessions = await listSessions();
       expect(sessions).toBeArray();
     });

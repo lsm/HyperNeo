@@ -60,16 +60,6 @@ interface TaskMilestoneTimelineProps {
   bottomInsetPx?: number;
 }
 
-/**
- * Curated task Timeline: human-meaningful milestones (creation, status
- * transitions, instructions, agent answers, PR / review / result artifacts,
- * GitHub CI activity, collapsed API retries) — tone-coded, with real content.
- *
- * Replaces the raw actor-message log. The backend `taskMilestones.byTask`
- * projection supplies content-rich rows; this component collapses retry bursts
- * and dedupes consecutive duplicates, then renders only one timestamp per
- * consecutive same-bucket group.
- */
 export function TaskMilestoneTimeline({
   taskId,
   topInsetClass = 'pt-12',
@@ -77,8 +67,6 @@ export function TaskMilestoneTimeline({
 }: TaskMilestoneTimelineProps) {
   const { rows, isLoading, isReconnecting } = useTaskMilestones({ taskId });
   const curated = useMemo(() => curateTaskMilestones(rows), [rows]);
-  // Re-render once a minute so relative timestamps ("just now" → "5m") stay
-  // current even when no new LiveQuery rows arrive for an open task panel.
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((n) => n + 1), 60_000);
@@ -108,8 +96,6 @@ export function TaskMilestoneTimeline({
     );
   }
 
-  // Show a timestamp only when its relative bucket differs from the previous row,
-  // so a same-second burst reads under a single time label.
   let prevLabel = '';
   const rendered = curated.map((row) => {
     const label = formatRelativeTimestamp(row.createdAt, now);

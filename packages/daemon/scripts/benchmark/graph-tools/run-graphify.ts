@@ -1,10 +1,3 @@
-/**
- * Graphify benchmark arm.
- *
- * Usage:
- *   bun scripts/benchmark/graph-tools/run-graphify.ts
- */
-
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -22,7 +15,6 @@ import {
 const GRAPHIFY_BIN = process.env.HYPERNEO_BENCHMARK_GRAPHIFY_BIN || 'graphify';
 const GRAPHIFY_BACKEND = process.env.HYPERNEO_BENCHMARK_GRAPHIFY_BACKEND || 'ollama';
 
-/** Verify interpreter has graphify.serve (MCP extra). */
 function checkGraphifyServe(python: string): boolean {
   try {
     execFileSync(python, ['-c', 'import graphify.serve'], { encoding: 'utf-8' });
@@ -32,7 +24,6 @@ function checkGraphifyServe(python: string): boolean {
   }
 }
 
-/** Discover the Python interpreter that has graphify + graphify.serve installed. */
 function resolveGraphifyPython(): string {
   const env = process.env.HYPERNEO_BENCHMARK_GRAPHIFY_PYTHON;
   if (env) {
@@ -48,7 +39,6 @@ function resolveGraphifyPython(): string {
 
   const candidates: string[] = [];
 
-  // Try reading shebang from graphify binary
   try {
     const bin = execFileSync('which', [GRAPHIFY_BIN], { encoding: 'utf-8' }).trim();
     const first = readFileSync(bin, 'utf-8').split('\n')[0];
@@ -85,14 +75,12 @@ function resolveGraphifyPython(): string {
 
 const GRAPHIFY_PYTHON = resolveGraphifyPython();
 
-/** Cache dir includes worktree + backend so switching backends invalidates cache. */
 const GRAPHIFY_OUT =
   process.env.HYPERNEO_BENCHMARK_GRAPHIFY_OUT ||
   `/tmp/hyperneo-benchmark-graphify/${createHash('sha256')
     .update(WORKTREE + '\0' + GRAPHIFY_BACKEND)
     .digest('hex')}`;
 
-/** Get graphify CLI version string for cache invalidation. */
 function getGraphifyVersion(): string {
   try {
     return execFileSync(GRAPHIFY_BIN, ['--version'], { encoding: 'utf-8' }).trim();
@@ -101,7 +89,6 @@ function getGraphifyVersion(): string {
   }
 }
 
-/** Check if worktree has uncommitted changes. */
 function isWorktreeDirty(): boolean {
   try {
     const status = execFileSync('git', ['status', '--porcelain'], {

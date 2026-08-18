@@ -1,21 +1,3 @@
-/**
- * ExternalEventStore Unit Tests
- *
- * Covers:
- *   - store: first observation, terminal duplicate short-circuit, retryable duplicate re-emit
- *   - registerExpectedDelivery: idempotency, preservation of terminal state
- *   - markDeliveryDelivered / markDeliveryFailed: terminal vs transient failure
- *   - markEventDeliveredIfAllDeliveriesDelivered: only when all deliveries delivered
- *   - markEventFailedIfAnyDeliveryTerminalFailed: any terminal failure → source failed
- *   - markEventFailedIfAllDeliveriesTerminal: only when all terminal AND at least one failed
- *   - markEventFailed / markEventIgnored: terminalization
- *   - getEventIdForDeliveryKey / isDeliveryTerminal
- *   - Validation: missing fields, source mismatch, topic mismatch, unknown source
- *
- * Uses an in-memory SQLite DB seeded with the full Space schema so FK constraints
- * match production.
- */
-
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import {
@@ -74,10 +56,6 @@ beforeEach(() => {
   store = new ExternalEventStore(db);
 });
 
-// ---------------------------------------------------------------------------
-// store — first observation
-// ---------------------------------------------------------------------------
-
 describe('store — first observation', () => {
   test('inserts a new row and returns duplicate=false, terminal=false', () => {
     const result = store.store(EVENT_A);
@@ -104,7 +82,6 @@ describe('store — first observation', () => {
     const rec = store.getById('evt-a');
     expect(rec!.event.sourceEventId).toBe('del-123');
     expect(rec!.event.externalUrl).toBe('https://github.com/lsm/neokai/pull/42');
-    // Source-specific metadata lives in payload
     expect(rec!.event.payload.prNumber).toBe(42);
     expect(rec!.event.payload.repoOwner).toBe('lsm');
     expect(rec!.event.payload.repoName).toBe('neokai');
@@ -118,10 +95,6 @@ describe('store — first observation', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// store — duplicate handling
-// ---------------------------------------------------------------------------
-
 describe('store — duplicate handling', () => {
   test('terminal duplicate short-circuits (delivered)', () => {
     store.store(EVENT_A);
@@ -130,7 +103,7 @@ describe('store — duplicate handling', () => {
     const dup = store.store({ ...EVENT_A, id: 'evt-a-dup' });
     expect(dup.duplicate).toBe(true);
     expect(dup.terminal).toBe(true);
-    expect(dup.event.id).toBe('evt-a'); // canonical id
+    expect(dup.event.id).toBe('evt-a');
   });
 
   test('terminal duplicate short-circuits (failed)', () => {
@@ -151,10 +124,6 @@ describe('store — duplicate handling', () => {
     expect(dup.event.id).toBe('evt-a');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Validation
-// ---------------------------------------------------------------------------
 
 describe('store — validation', () => {
   test('rejects missing id', () => {
@@ -239,10 +208,6 @@ describe('store — validation', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// registerExpectedDelivery
-// ---------------------------------------------------------------------------
-
 describe('registerExpectedDelivery', () => {
   test('inserts a pending row for a new delivery key', () => {
     store.store(EVENT_A);
@@ -292,7 +257,6 @@ describe('registerExpectedDelivery', () => {
   test('listDeliveryLog filters by workflowRunId and nodeId (the run/node join)', () => {
     store.store(EVENT_A);
     store.store(EVENT_B);
-    // Two deliveries in run-1 (different nodes), one in run-2.
     store.registerExpectedDelivery('evt-a', 'dk-run1-coder', {
       workflowRunId: 'run-1',
       taskId: 'task-1',
@@ -312,14 +276,12 @@ describe('registerExpectedDelivery', () => {
       agentName: 'coder',
     });
 
-    // Filter by run alone — both run-1 deliveries, newest-updated first.
     const run1 = store.listDeliveryLog({ spaceId: SPACE_ID, workflowRunId: 'run-1' });
     expect(run1).toHaveLength(2);
     expect(new Set(run1.map((d) => d.deliveryKey))).toEqual(
       new Set(['dk-run1-coder', 'dk-run1-reviewer'])
     );
 
-    // Filter by run + node — narrows to one row.
     const run1Coder = store.listDeliveryLog({
       spaceId: SPACE_ID,
       workflowRunId: 'run-1',
@@ -327,14 +289,11 @@ describe('registerExpectedDelivery', () => {
     });
     expect(run1Coder).toHaveLength(1);
     expect(run1Coder[0]!.deliveryKey).toBe('dk-run1-coder');
-    // The join still surfaces the source-event essence.
     expect(run1Coder[0]!.event.topic).toBe(EVENT_A.topic);
 
-    // nodeId filter is applied within the space across runs.
     const coderAll = store.listDeliveryLog({ spaceId: SPACE_ID, nodeId: 'node-coder' });
     expect(coderAll).toHaveLength(2);
 
-    // run-2 is isolated from run-1.
     const run2 = store.listDeliveryLog({ spaceId: SPACE_ID, workflowRunId: 'run-2' });
     expect(run2).toHaveLength(1);
     expect(run2[0]!.deliveryKey).toBe('dk-run2');
@@ -549,10 +508,6 @@ describe('registerExpectedDelivery', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// isDeliveryTerminal / getEventIdForDeliveryKey
-// ---------------------------------------------------------------------------
-
 describe('isDeliveryTerminal', () => {
   test('returns false for pending', () => {
     store.store(EVENT_A);
@@ -611,10 +566,6 @@ describe('getEventIdForDeliveryKey', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// markDeliveryDelivered
-// ---------------------------------------------------------------------------
-
 describe('markDeliveryDelivered', () => {
   test('advances pending → delivered', () => {
     store.store(EVENT_A);
@@ -660,10 +611,6 @@ describe('markDeliveryDelivered', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// markDeliveryFailed
-// ---------------------------------------------------------------------------
-
 describe('markDeliveryFailed', () => {
   test('terminal failure advances pending → failed', () => {
     store.store(EVENT_A);
@@ -708,10 +655,6 @@ describe('markDeliveryFailed', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// markEventDeliveredIfAllDeliveriesDelivered
-// ---------------------------------------------------------------------------
-
 describe('markEventDeliveredIfAllDeliveriesDelivered', () => {
   test('delivers when all deliveries are delivered', () => {
     store.store(EVENT_A);
@@ -730,7 +673,7 @@ describe('markEventDeliveredIfAllDeliveriesDelivered', () => {
 
     store.markDeliveryDelivered('evt-a', 'dk-1');
     store.markEventDeliveredIfAllDeliveriesDelivered('evt-a');
-    expect(store.getById('evt-a')!.state).toBe('published'); // not yet
+    expect(store.getById('evt-a')!.state).toBe('published');
 
     store.markDeliveryDelivered('evt-a', 'dk-2');
     store.markEventDeliveredIfAllDeliveriesDelivered('evt-a');
@@ -777,10 +720,6 @@ describe('markEventDeliveredIfAllDeliveriesDelivered', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// markEventFailedIfAnyDeliveryTerminalFailed
-// ---------------------------------------------------------------------------
-
 describe('markEventFailedIfAnyDeliveryTerminalFailed', () => {
   test('fails when any delivery is terminal failed', () => {
     store.store(EVENT_A);
@@ -823,10 +762,6 @@ describe('markEventFailedIfAnyDeliveryTerminalFailed', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// markEventFailedIfAllDeliveriesTerminal
-// ---------------------------------------------------------------------------
-
 describe('markEventFailedIfAllDeliveriesTerminal', () => {
   test('fails when all are terminal and at least one is failed', () => {
     store.store(EVENT_A);
@@ -866,7 +801,7 @@ describe('markEventFailedIfAllDeliveriesTerminal', () => {
     store.markDeliveryDelivered('evt-a', 'dk-1');
     store.markDeliveryDelivered('evt-a', 'dk-2');
     store.markEventFailedIfAllDeliveriesTerminal('evt-a');
-    expect(store.getById('evt-a')!.state).toBe('published'); // not yet delivered
+    expect(store.getById('evt-a')!.state).toBe('published');
   });
 
   test('no-op when some deliveries are still pending', () => {
@@ -884,7 +819,6 @@ describe('markEventFailedIfAllDeliveriesTerminal', () => {
       agentName: 'reviewer',
     });
     store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'boom' });
-    // dk-2 still pending
     store.markEventFailedIfAllDeliveriesTerminal('evt-a');
     expect(store.getById('evt-a')!.state).toBe('published');
   });
@@ -895,10 +829,6 @@ describe('markEventFailedIfAllDeliveriesTerminal', () => {
     expect(store.getById('evt-a')!.state).toBe('published');
   });
 });
-
-// ---------------------------------------------------------------------------
-// markEventFailed / markEventIgnored
-// ---------------------------------------------------------------------------
 
 describe('markEventFailed', () => {
   test('advances published → failed', () => {
@@ -937,10 +867,6 @@ describe('markEventIgnored', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Cross-event isolation
-// ---------------------------------------------------------------------------
-
 describe('cross-event isolation', () => {
   test('events with different dedupe keys are independent', () => {
     store.store(EVENT_A);
@@ -971,7 +897,6 @@ describe('cross-event isolation', () => {
   });
 });
 
-// Delivery-terminal hook + pending-age query (queue-health instrumentation)
 describe('delivery-terminal hook', () => {
   function registerPending(deliveryKey = 'dk-1'): void {
     store.store(EVENT_A);
@@ -1001,14 +926,12 @@ describe('delivery-terminal hook', () => {
     );
     registerPending();
 
-    // Non-terminal (retryable) failure must NOT fire the hook.
     store.markDeliveryFailed('evt-a', 'dk-1', {
       terminal: false,
       reason: 'node_execution_not_active',
     });
     expect(events).toHaveLength(0);
 
-    // Terminal failure fires with the reason.
     store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'ttl_expired' });
     expect(events).toEqual([{ outcome: 'failed', reason: 'ttl_expired' }]);
   });
@@ -1019,8 +942,8 @@ describe('delivery-terminal hook', () => {
     registerPending();
 
     store.markDeliveryDelivered('evt-a', 'dk-1');
-    store.markDeliveryDelivered('evt-a', 'dk-1'); // no-op, already delivered
-    store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'late' }); // no-op
+    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'late' });
 
     expect(events).toEqual(['delivered']);
   });
@@ -1047,8 +970,6 @@ describe('summarizePendingDeliveries', () => {
       nodeId: 'node-1',
       agentName: 'coder',
     });
-    // created_at is ingestion time (the TTL anchor). Backdate evt-a 60s and
-    // evt-b 30s so min/max/avg/p95 are deterministic.
     db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
       now - 60_000,
       'evt-a'
@@ -1067,10 +988,8 @@ describe('summarizePendingDeliveries', () => {
     expect(summary!.maxMs).toBeLessThanOrEqual(61_000);
     expect(summary!.avgMs).toBeGreaterThanOrEqual(44_000);
     expect(summary!.avgMs).toBeLessThanOrEqual(46_000);
-    // With 2 values, nearest-rank p95 = the max.
     expect(summary!.p95Ms).toBe(summary!.maxMs);
 
-    // Delivering one drops the count to 1 and recomputes the single-value stats.
     store.markDeliveryDelivered('evt-b', 'dk-b');
     const afterDeliver = store.summarizePendingDeliveries(now);
     expect(afterDeliver!.count).toBe(1);
@@ -1078,10 +997,6 @@ describe('summarizePendingDeliveries', () => {
     expect(afterDeliver!.p95Ms).toBe(afterDeliver!.maxMs);
   });
 });
-
-// ---------------------------------------------------------------------------
-// reactive invalidation — raw-SQL writes notify LiveQuery consumers
-// ---------------------------------------------------------------------------
 
 describe('reactive invalidation', () => {
   function makeReactiveSpy() {
@@ -1111,7 +1026,7 @@ describe('reactive invalidation', () => {
     const s = new ExternalEventStore(db, reactiveDb);
     s.store(EVENT_A);
     calls.length = 0;
-    s.store(EVENT_A); // same dedupe key → ON CONFLICT DO NOTHING
+    s.store(EVENT_A);
     expect(calls).toEqual([]);
   });
 
@@ -1136,7 +1051,7 @@ describe('reactive invalidation', () => {
   });
 
   test('no reactiveDb → writes still succeed without throwing', () => {
-    const s = new ExternalEventStore(db); // no reactiveDb
+    const s = new ExternalEventStore(db);
     expect(() => {
       s.store(EVENT_A);
       s.registerExpectedDelivery('evt-a', 'dk-1', deliveryTarget());
@@ -1145,14 +1060,9 @@ describe('reactive invalidation', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// listEventCountsByTopic — recent per-topic ingestion counts (health snapshot)
-// ---------------------------------------------------------------------------
-
 describe('listEventCountsByTopic', () => {
   test('groups events by topic and reports count + most recent ingested_at', () => {
-    store.store(EVENT_A); // ingested @ 1_700_000_001_000
-    // A second event on the SAME topic but a newer ingested_at (unique id/dedupe).
+    store.store(EVENT_A);
     store.store({
       ...EVENT_A,
       id: 'evt-a2',
@@ -1160,7 +1070,7 @@ describe('listEventCountsByTopic', () => {
       occurredAt: 1_700_000_500_000,
       ingestedAt: 1_700_000_501_000,
     });
-    store.store(EVENT_B); // ingested @ 1_700_000_101_000
+    store.store(EVENT_B);
 
     const counts = store.listEventCountsByTopic({ spaceId: SPACE_ID, source: 'github' });
     const byTopic = new Map(counts.map((c) => [c.topic, c]));
@@ -1177,15 +1087,11 @@ describe('listEventCountsByTopic', () => {
   });
 
   test('counts a late-ingested event by ingested_at, not its older occurred_at', () => {
-    // A webhook delayed/replayed days after its GitHub timestamp: occurred_at is
-    // old, but it was just ingested. This is a recent-ingestion health metric, so
-    // the row must count (and report its fresh ingested_at), not be excluded by
-    // the recency cutoff applied to occurred_at.
     const recent = Date.now();
     store.store({
       ...EVENT_A,
-      occurredAt: recent - 48 * 60 * 60 * 1000, // GitHub timestamp is 2 days old…
-      ingestedAt: recent, // …but it landed just now.
+      occurredAt: recent - 48 * 60 * 60 * 1000,
+      ingestedAt: recent,
     });
     const counts = store.listEventCountsByTopic({
       spaceId: SPACE_ID,
@@ -1198,7 +1104,7 @@ describe('listEventCountsByTopic', () => {
   });
 
   test('filters by source and applies the since cutoff', () => {
-    store.store(EVENT_A); // github, ingested @ 1_700_000_001_000
+    store.store(EVENT_A);
     store.store({
       ...EVENT_A,
       id: 'evt-space',
@@ -1206,11 +1112,9 @@ describe('listEventCountsByTopic', () => {
       topic: 'space/foo/bar/1',
       dedupeKey: 'space:1',
     });
-    // source=github keeps only the GitHub topic.
     const githubOnly = store.listEventCountsByTopic({ spaceId: SPACE_ID, source: 'github' });
     expect(githubOnly).toHaveLength(1);
     expect(githubOnly[0].topic).toBe(EVENT_A.topic);
-    // A since cutoff above the event's ingested_at excludes it.
     expect(
       store.listEventCountsByTopic({
         spaceId: SPACE_ID,

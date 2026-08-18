@@ -289,9 +289,6 @@ export function PageHeadingsDemo() {
         </div>
       </div>
 
-      {/* ============================================================ */}
-      {/* 06 - With Logo, Meta and Actions */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With logo, meta and actions</h3>
         <div class="px-4 py-10 sm:px-6 lg:px-8">
@@ -360,9 +357,6 @@ export function PageHeadingsDemo() {
         </div>
       </div>
 
-      {/* ============================================================ */}
-      {/* 07 - Card with Avatar and Stats */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">Card with avatar and stats</h3>
         <div class="overflow-hidden rounded-lg bg-surface-0 shadow-sm dark:bg-surface-0/50 dark:shadow-none dark:outline dark:-outline-offset-1 dark:outline-white/10">
@@ -407,9 +401,6 @@ export function PageHeadingsDemo() {
         </div>
       </div>
 
-      {/* ============================================================ */}
-      {/* 08 - With Icon Meta and Dropdown */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With icon meta and dropdown</h3>
         <div class="lg:flex lg:items-center lg:justify-between">
@@ -467,7 +458,6 @@ export function PageHeadingsDemo() {
               </button>
             </span>
 
-            {/* Dropdown */}
             <Menu as="div" class="relative ml-3 sm:hidden">
               <MenuButton class="inline-flex items-center rounded-md bg-surface-0 px-3 py-2 text-sm font-semibold text-text-primary shadow-xs ring-1 ring-inset ring-surface-border hover:bg-surface-1 dark:bg-white/10 dark:text-text-primary dark:shadow-none dark:ring-white/5 dark:hover:bg-white/20 cursor-pointer">
                 More

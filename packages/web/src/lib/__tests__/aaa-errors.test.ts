@@ -1,11 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Connection Error Types
- *
- * Tests only the public API: ConnectionError, ConnectionNotReadyError, ConnectionTimeoutError.
- * Internal error types (RPCTimeoutError, MaxReconnectAttemptsError) and helper functions
- * (isConnectionError, isRecoverableConnectionError) are implementation details.
- */
 
 import { ConnectionError, ConnectionNotReadyError, ConnectionTimeoutError } from '../errors';
 

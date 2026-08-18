@@ -1,10 +1,3 @@
-/**
- * Provider RPC Handlers
- *
- * Unified CRUD for the providers table. Bridges persistence, credential storage,
- * and the live ProviderRegistry so changes take effect immediately.
- */
-
 import type { MessageHub } from '@hyperneo/shared';
 import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers';
 import type { CreateProviderParams, UpdateProviderParams } from '@hyperneo/shared';
@@ -101,10 +94,6 @@ function validateUpdateParams(params: unknown): Partial<UpdateProviderParams> {
   return out;
 }
 
-/**
- * Shape of the credential payload carried on `providers.create`/`update` RPCs.
- * Kept structural so this module doesn't depend on the request DTO.
- */
 type RequestCredentials = {
   apiKey?: string;
   oauthAccessToken?: string;
@@ -112,30 +101,6 @@ type RequestCredentials = {
   oauthExpiresAt?: number;
 };
 
-/**
- * Resolve the credential object to hydrate the live provider instance with,
- * after a create/update has persisted credentials for `providerId`.
- *
- * - New API key in the request → hydrate directly from it. It is the
- *   authoritative key the user just entered, and reading it back from the
- *   credential store can return either a stale macOS-Keychain value (when the
- *   fresh write fell through to the encrypted fallback while the Keychain
- *   remained readable) or null (locked-Keychain read) — either outcome would
- *   leave the live provider un-hydrated, so `isAvailable()` stays false and its
- *   models never reach the picker even though the Provider panel shows it
- *   "connected". Hydrating from the request closes that gap without a restart.
- * - New OAuth token in the request → prefer the store's normalised shape (it
- *   carries the `raw` metadata OAuth providers like Codex attach during
- *   `storeOAuthTokens`), falling back to the request value if the store read is
- *   empty so the provider is still hydrated.
- * - No new credentials (config-only resync, e.g. a Kimi region change) →
- *   preserve the live provider's existing credentials rather than re-reading
- *   the store. A prior request-derived hydration may hold a key the credential
- *   store still reports as stale (locked-keychain fallback read), and
- *   overwriting it would reintroduce the connected-vs-available gap. Falls
- *   back to the store only when the live instance has no credentials yet
- *   (e.g. it was just re-registered after being re-enabled).
- */
 export async function resolveCredentialsForHydration(
   credentialManager: ProviderCredentialManager,
   providerId: string,
@@ -145,11 +110,6 @@ export async function resolveCredentialsForHydration(
     return { type: 'api_key', apiKey: requestCreds.apiKey };
   }
   if (requestCreds?.oauthAccessToken) {
-    // Submitted tokens are authoritative — same stale-read rationale as the
-    // API-key branch (a fallback keychain write can leave the store reporting
-    // an older OAuth token that would otherwise win here). Preserve any `raw`
-    // metadata the store normalised (e.g. Codex accountId/planType/fedramp) so
-    // the OAuth provider keeps its enriched state.
     const stored = await credentialManager.getCredentials(providerId);
     const raw = stored?.type === 'oauth' ? stored.raw : undefined;
     return {
@@ -160,8 +120,6 @@ export async function resolveCredentialsForHydration(
       ...(raw ? { raw } : {}),
     };
   }
-  // Config-only resync: preserve the live provider's credentials instead of
-  // re-reading a potentially-stale store value.
   const provider = getProviderRegistry().get(providerId);
   if (provider?.getCredentials) {
     const live = await provider.getCredentials();
@@ -169,10 +127,6 @@ export async function resolveCredentialsForHydration(
   }
   return credentialManager.getCredentials(providerId);
 }
-
-// ---------------------------------------------------------------------------
-// Mutation lock — serialises all provider mutations
-// ---------------------------------------------------------------------------
 
 let mutationQueue: Promise<unknown> = Promise.resolve();
 
@@ -182,13 +136,6 @@ function withProviderLock<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-/**
- * Normalises a `KeychainUnavailableError` into a plain `Error` carrying
- * `KEYCHAIN_UNAVAILABLE_MESSAGE` so the RPC layer serialises actionable UX
- * guidance to the client. Other errors pass through unchanged. `action` and
- * `providerId` feed the structured warn log so operators can correlate the
- * failed mutation in daemon logs.
- */
 function rethrowKeychainError(err: unknown, action: string, providerId: string): never {
   if (err instanceof KeychainUnavailableError) {
     log.warn(`Provider ${action} blocked for ${providerId}: ${KEYCHAIN_UNAVAILABLE_MESSAGE}`);
@@ -196,10 +143,6 @@ function rethrowKeychainError(err: unknown, action: string, providerId: string):
   }
   throw err;
 }
-
-// ---------------------------------------------------------------------------
-// Handler wiring
-// ---------------------------------------------------------------------------
 
 export interface ProviderHandlerDeps {
   messageHub: MessageHub;
@@ -219,7 +162,6 @@ async function clearCacheAndNotifyProvidersChanged(
 export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
   const { messageHub, providerRepo, credentialManager, internalEventBus } = deps;
 
-  /** List all providers with live auth status from the registry. */
   messageHub.onRequest('providers.list', async () => {
     const records = providerRepo.listProviders();
     const registry = getProviderRegistry();
@@ -236,7 +178,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     return { providers: enriched };
   });
 
-  /** Get a single provider by id. */
   messageHub.onRequest('providers.get', async (data: { id: string }) => {
     const record = providerRepo.getProvider(data.id);
     if (!record) throw new Error(`Provider ${data.id} not found`);
@@ -245,7 +186,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     return { provider: { ...record, available } };
   });
 
-  /** Create a provider, store credentials, and register it. */
   messageHub.onRequest(
     'providers.create',
     async (data: {
@@ -265,9 +205,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         const record = providerRepo.createProvider(data.params);
 
         try {
-          // Store credentials if provided. Custom endpoints keep auth inline in
-          // customEndpointConfigJson, so skip the credential store entirely —
-          // otherwise a locked macOS Keychain would block creating the endpoint.
           if (record.kind !== 'custom_endpoint') {
             if (data.credentials?.apiKey) {
               await credentialManager.storeApiKey(record.providerId, data.credentials.apiKey);
@@ -280,7 +217,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             }
           }
 
-          // Sync to registry.
           if (record.kind === 'built_in') {
             const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
             await ensureBuiltInProviderRegistered(record.providerId);
@@ -292,8 +228,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           );
           await syncProviderToRegistry(record, creds);
         } catch (err) {
-          // Compensating delete: remove the orphan DB record so retries don't fail
-          // with 'already exists'.
           providerRepo.deleteProvider(record.id);
           rethrowKeychainError(err, 'create', record.providerId);
         }
@@ -305,7 +239,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     }
   );
 
-  /** Update a provider. Re-registers if config changed. */
   messageHub.onRequest(
     'providers.update',
     async (data: {
@@ -330,8 +263,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             ? withCustomEndpointsLock
             : (fn: () => Promise<unknown>) => fn();
         return lock(async () => {
-          // Handle credential updates. Custom endpoints keep auth inline, so
-          // skip the credential store for them.
           if (data.credentials && existing.kind !== 'custom_endpoint') {
             try {
               if (data.credentials.apiKey) {
@@ -353,7 +284,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           const record = providerRepo.updateProvider(data.id, updates);
           if (!record) throw new Error(`Provider ${data.id} not found`);
 
-          // Re-sync to registry if config, credentials, or enabled state changed.
           const shouldResync =
             data.credentials !== undefined ||
             updates.baseUrl !== undefined ||
@@ -387,7 +317,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     }
   );
 
-  /** Delete a provider, remove credentials, and unregister. */
   messageHub.onRequest('providers.delete', async (data: { id: string }) => {
     const record = providerRepo.getProvider(data.id);
     if (!record) throw new Error(`Provider ${data.id} not found`);
@@ -395,15 +324,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       throw new Error(`providerId '${VOICE_CREDENTIAL_PROVIDER_ID}' is reserved`);
     const lock = record.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
     return lock(async () => {
-      // Custom endpoints store auth inline in customEndpointConfigJson, not in
-      // the credential store, so skip keychain cleanup for them — otherwise a
-      // locked Keychain would block removing an endpoint that has nothing in
-      // the Keychain to clean up.
       if (record.kind !== 'custom_endpoint') {
         try {
-          // Keychain-only persistence: remove credentials before deleting provider
-          // config. If the Keychain is locked, block deletion so we don't leave a
-          // stale credential that can reappear if the provider is re-added.
           await credentialManager.removeCredentials(record.providerId);
         } catch (error) {
           rethrowKeychainError(error, 'delete', record.providerId);
@@ -411,8 +333,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       }
 
       if (record.kind === 'built_in') {
-        // Built-ins cannot be truly deleted; keep the row disabled so the
-        // disabled state persists across daemon restarts.
         providerRepo.updateProvider(data.id, { isEnabled: false });
         markBuiltInProviderDisabled(record.providerId);
       } else {
@@ -424,7 +344,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     });
   });
 
-  /** Set a provider as the default. */
   messageHub.onRequest('providers.setDefault', async (data: { id: string }) => {
     return withProviderLock(async () => {
       providerRepo.setDefaultProvider(data.id);
@@ -432,7 +351,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     });
   });
 
-  /** Test a single provider and update its health_status. */
   messageHub.onRequest('providers.test', async (data: { id: string }) => {
     const record = providerRepo.getProvider(data.id);
     if (!record) throw new Error(`Provider ${data.id} not found`);
@@ -471,7 +389,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     }
   });
 
-  /** Batch health check for all enabled providers. */
   messageHub.onRequest('providers.healthCheck', async () => {
     const records = providerRepo.listEnabledProviders();
     const registry = getProviderRegistry();

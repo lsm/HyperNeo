@@ -29,16 +29,12 @@ describe('DeliveryTurnStallWatchdog (no-progress stall detector)', () => {
       }
     );
     const promise = wd.arm();
-    // Simulate a continuous stream of SDK messages every 15ms — well inside the
-    // 40ms window. A multi-hour turn that keeps producing output never stalls.
     for (let i = 0; i < 10; i++) {
       await sleep(15);
       wd.bump();
     }
     wd.cancel();
     expect(fired).toBe(false);
-    // Cancel resolves nothing; the promise stays pending (the turn ended
-    // normally). Assert it did not resolve to a stall.
     let resolved = false;
     promise.then(() => {
       resolved = true;
@@ -58,20 +54,14 @@ describe('DeliveryTurnStallWatchdog (no-progress stall detector)', () => {
       }
     );
     const promise = wd.arm();
-    // At 40ms the watchdog ticks but a tool is running → defer (re-arm), no fire.
     await sleep(60);
     expect(fired).toBe(false);
-    // Tool completes; the next tick (after another window) finds no outstanding
-    // tool → fires.
     outstanding = false;
     await promise;
     expect(fired).toBe(true);
   });
 
   it('defers while a rate-limit cooldown is scheduled, then fires once it lifts', async () => {
-    // A 429 cooldown silences the query on purpose for the provider's reset
-    // window; firing there would cancel the cooldown timer and re-drive the
-    // provider early. Silence is scheduled, not a stall. (Codex P1.)
     let cooldown = true;
     let fired = false;
     const wd = new DeliveryTurnStallWatchdog(
@@ -83,10 +73,8 @@ describe('DeliveryTurnStallWatchdog (no-progress stall detector)', () => {
       () => cooldown
     );
     const promise = wd.arm();
-    // At 40ms the watchdog ticks but the cooldown holds → defer (re-arm).
     await sleep(60);
     expect(fired).toBe(false);
-    // Cooldown lifts; the next tick finds a genuinely silent turn → fires.
     cooldown = false;
     await promise;
     expect(fired).toBe(true);
@@ -117,7 +105,6 @@ describe('DeliveryTurnStallWatchdog (no-progress stall detector)', () => {
       }
     );
     wd.arm();
-    // Re-arm with a fresh window before the first would fire.
     const second = wd.arm();
     await second;
     expect(fired).toBe(true);

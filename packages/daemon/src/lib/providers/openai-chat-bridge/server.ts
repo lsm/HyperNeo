@@ -1,23 +1,3 @@
-/**
- * OpenAI Chat Completions Anthropic Bridge — HTTP Server
- *
- * Translates between the Anthropic Messages API and the OpenAI Chat Completions
- * API. Lets the Claude Agent SDK drive any OpenAI-compatible endpoint:
- * LM Studio, vLLM, LiteLLM, Ollama (OpenAI mode), self-hosted deployments, etc.
- *
- * Mapping summary:
- *   Anthropic system field         → OpenAI system message
- *   Anthropic user/assistant       → OpenAI user/assistant messages
- *   Anthropic tool_use (assistant) → OpenAI assistant tool_calls[]
- *   Anthropic tool_result (user)   → OpenAI tool role message
- *   Anthropic image blocks         → OpenAI image_url content parts
- *   OpenAI delta.content           → Anthropic content_block text_delta
- *   OpenAI delta.tool_calls        → Anthropic tool_use content blocks
- *
- * Capability gating is performed by `CustomEndpointProvider` before requests
- * reach this server (e.g. `tools` array is empty when toolUse=false on a model).
- */
-
 import {
   type AnthropicContentBlockImage,
   type AnthropicContentBlockText,
@@ -50,52 +30,22 @@ const logger = new Logger('openai-chat-bridge-server');
 
 export type OpenAIChatBridgeServer = {
   port: number;
-  /** Set per-session thinking config so the bridge can include reasoning even when the Anthropic SDK client omits the thinking field. */
   setSessionThinkingConfig?(sessionId: string, thinking: AnthropicRequest['thinking']): void;
   stop(): void;
 };
 
 export type OpenAIChatBridgeConfig = {
-  /** Upstream OpenAI-compatible base URL. The bridge appends `/chat/completions`. */
   baseUrl: string;
-  /** Optional bearer token for `Authorization: Bearer ...` header. */
   apiKey?: string;
-  /** Extra headers attached to every upstream request. */
   headers?: Record<string, string>;
-  /** Override fetch (used by tests). */
   fetchImpl?: typeof fetch;
-  /** Whether the active model supports tool use. Tools are dropped when false. */
   toolUseSupported?: boolean;
-  /** Whether the active model supports vision. Images are dropped when false. */
   visionSupported?: boolean;
-  /**
-   * Whether the active model supports extended thinking / reasoning. When
-   * true, the bridge maps `AnthropicRequest.thinking` to OpenAI
-   * `reasoning_effort` so the upstream actually sees the request.
-   */
   thinkingSupported?: boolean;
-  /** Max context window for the active model (used in usage events). */
   modelContextWindow?: number;
-  /**
-   * Whether the upstream accepts `stream_options: { include_usage: true }`.
-   * Off by default because many strict OpenAI-compatible backends reject
-   * unknown request fields with HTTP 400/422 before any generation. When
-   * false the bridge still produces usage events using a token estimator
-   * — accuracy degrades but the endpoint remains usable.
-   */
   streamUsageSupported?: boolean;
-  /**
-   * Per-model `chat_template_kwargs` forwarded verbatim into every upstream
-   * request body. Used for fields the OpenAI Chat schema does not define but
-   * llama.cpp / vLLM templates read — most notably
-   * `{ enable_thinking: false }` to skip Qwen3 `<think>` blocks.
-   */
   chatTemplateKwargs?: Record<string, unknown>;
 };
-
-// ---------------------------------------------------------------------------
-// OpenAI Chat Completions wire types (minimal subset)
-// ---------------------------------------------------------------------------
 
 type OpenAIChatTextPart = { type: 'text'; text: string };
 type OpenAIChatImagePart = {
@@ -135,18 +85,7 @@ type OpenAIChatRequest = {
   max_tokens?: number;
   stream: true;
   stream_options?: { include_usage: boolean };
-  /**
-   * Maps from Anthropic `thinking.budget_tokens`. Forwarded only when the
-   * caller declared the model `thinkingSupported`. Most OpenAI-compatible
-   * endpoints either honour this (o-series, modern reasoning models) or
-   * ignore unknown fields silently.
-   */
   reasoning_effort?: 'low' | 'medium' | 'high';
-  /**
-   * Jinja template kwargs (e.g. `{ enable_thinking: false }`). Forwarded
-   * verbatim; only llama.cpp / vLLM-style backends interpret it. Other
-   * OpenAI-compatible servers ignore unknown fields silently.
-   */
   chat_template_kwargs?: Record<string, unknown>;
 };
 
@@ -178,10 +117,6 @@ type OpenAIChatStreamChunk = {
   error?: { message?: string; type?: string };
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function sendJsonError(
   status: number,
   type: AnthropicErrorType,
@@ -194,10 +129,6 @@ function sendJsonError(
   });
 }
 
-/**
- * Emit a normalized retryable upstream error with `x-should-retry: true` so the
- * Claude Agent SDK retries (it already retries on 429 / >=500 status).
- */
 function sendRetryableUpstreamError(normalized: {
   type: AnthropicErrorType;
   status: number;
@@ -234,12 +165,6 @@ function extractSystemText(system: AnthropicRequest['system']): string {
   return system.map((b) => b.text).join('\n');
 }
 
-/**
- * Convert Anthropic messages → OpenAI chat messages. Tool results become
- * `tool` role messages with `tool_call_id`. Assistant tool_use blocks become
- * `tool_calls` on the assistant message. Vision blocks dropped when not
- * supported.
- */
 function toOpenAIMessages(body: AnthropicRequest, visionSupported: boolean): OpenAIChatMessage[] {
   const out: OpenAIChatMessage[] = [];
   const system = extractSystemText(body.system);
@@ -279,9 +204,6 @@ function toOpenAIMessages(body: AnthropicRequest, visionSupported: boolean): Ope
       continue;
     }
 
-    // User role: may contain text, images, tool_result blocks. Emit any
-    // tool_result as its own `tool` message; the remainder as one user
-    // message with mixed content parts.
     const toolResults = content.filter(
       (b): b is AnthropicContentBlockToolResult => b.type === 'tool_result'
     );
@@ -301,7 +223,6 @@ function toOpenAIMessages(body: AnthropicRequest, visionSupported: boolean): Ope
       });
     }
     if (userParts.length > 0) {
-      // If only text, collapse to string for endpoints that don't accept arrays.
       const onlyText = userParts.every((p) => p.type === 'text');
       if (onlyText) {
         const joined = userParts.map((p) => (p as OpenAIChatTextPart).text).join('\n');
@@ -357,11 +278,6 @@ function buildChatRequest(
     messages: toOpenAIMessages(body, visionSupported),
     stream: true,
   };
-  // `stream_options` is opt-in. Strict OpenAI-compatible backends reject
-  // unknown request fields with HTTP 400/422, which would break the entire
-  // endpoint. The bridge still emits usage events via a token estimator when
-  // the upstream doesn't echo `usage` chunks, so omitting this field only
-  // degrades accuracy, not availability.
   if (streamUsageSupported) {
     request.stream_options = { include_usage: true };
   }
@@ -376,22 +292,12 @@ function buildChatRequest(
     const effort = thinkingToReasoningEffort(body.thinking);
     if (effort) request.reasoning_effort = effort;
   }
-  // llama.cpp / vLLM-style Jinja kwargs. Forwarded verbatim; other
-  // OpenAI-compatible servers ignore unknown fields silently. Most
-  // common use: `{ enable_thinking: false }` to skip Qwen3 `<think>`
-  // blocks for simple prompts that don't need reasoning.
   if (chatTemplateKwargs) {
     request.chat_template_kwargs = chatTemplateKwargs;
   }
   return request;
 }
 
-/**
- * Map Anthropic thinking config to OpenAI `reasoning_effort`. Anthropic's
- * config is a token budget; OpenAI uses a coarse three-step enum. We bucket
- * by budget so the upstream still gets *some* signal even though the
- * granularity is lost.
- */
 function thinkingToReasoningEffort(
   thinking: AnthropicRequest['thinking']
 ): 'low' | 'medium' | 'high' | undefined {
@@ -407,22 +313,6 @@ function thinkingToReasoningEffort(
   return undefined;
 }
 
-/**
- * Build the final Chat Completions request URL from a user-supplied baseUrl.
- *
- * Users routinely paste either:
- *   - the OpenAI-style root, e.g. `https://api.example.com/v1`
- *   - the full chat endpoint, e.g. `https://api.example.com/v1/chat/completions`
- *   - Azure-style URLs with a query string, e.g.
- *     `https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview`
- *
- * Naive string concatenation produces malformed targets like
- * `.../chat/completions/chat/completions` (404) or
- * `...?api-version=.../chat/completions` (also broken). Parse the URL,
- * strip a trailing `/chat/completions` from the path, reattach the chat
- * suffix to the path, and preserve any query string by re-serialising via
- * the `URL` API.
- */
 export function buildChatCompletionsUrl(input: string): string {
   const trimmed = input.trim();
   let parsed: URL;
@@ -433,24 +323,14 @@ export function buildChatCompletionsUrl(input: string): string {
       `Custom endpoint baseUrl is not a valid URL: ${err instanceof Error ? err.message : String(err)}`
     );
   }
-  // Strip trailing slashes from the path, then any trailing `/chat/completions`,
-  // then re-add a single `/chat/completions` suffix. This keeps `?api-version=...`
-  // and any other query string intact since we only mutate `pathname`.
   let path = parsed.pathname.replace(/\/+$/, '');
   path = path.replace(/\/chat\/completions$/i, '');
   parsed.pathname = `${path}/chat/completions`;
   return parsed.toString();
 }
 
-/**
- * Legacy export retained for the rare caller that wanted the "base prefix"
- * (everything except `/chat/completions`). Now expressed in terms of the
- * URL-aware builder so query strings are preserved consistently.
- */
 export function normaliseChatBaseUrl(input: string): string {
   const full = buildChatCompletionsUrl(input);
-  // Strip the `/chat/completions` suffix that buildChatCompletionsUrl just
-  // added, leaving the base prefix (with any query string preserved).
   const parsed = new URL(full);
   parsed.pathname = parsed.pathname.replace(/\/chat\/completions$/i, '');
   return parsed.toString().replace(/\/$/, '');
@@ -477,7 +357,6 @@ function parseUpstreamError(status: number, text: string): string {
   return text || `Upstream API request failed with status ${status}`;
 }
 
-/** Parse a single SSE `data:` payload (possibly multi-line, already joined). */
 function parseSseDataPayload(data: string): OpenAIChatStreamChunk | null {
   const trimmed = data.trim();
   if (!trimmed || trimmed === '[DONE]') return null;
@@ -485,25 +364,10 @@ function parseSseDataPayload(data: string): OpenAIChatStreamChunk | null {
   return parsed ? (parsed as OpenAIChatStreamChunk) : null;
 }
 
-/**
- * Collect all `data:` lines from a single SSE event block into one payload.
- *
- * Per the SSE spec one event may carry multiple consecutive `data:` lines,
- * which the parser MUST concatenate with `\n` before treating the result as
- * the event payload. Some OpenAI-compatible proxies wrap-fold large JSON
- * chunks across lines; parsing each line independently would fail JSON
- * decoding and silently drop the event (and could trigger our "non-SSE 200"
- * guard against an otherwise valid stream).
- *
- * Lines that are not `data:` (e.g. `event:`, `id:`, `:keepalive` comments)
- * are ignored — we only consume Chat Completions data frames.
- */
 function joinSseDataLines(block: string): string | null {
   const parts: string[] = [];
   for (const rawLine of block.split(/\r?\n/)) {
     if (!rawLine.startsWith('data:')) continue;
-    // Per the spec, a single space immediately after the colon is stripped;
-    // anything else is preserved.
     let value = rawLine.slice('data:'.length);
     if (value.startsWith(' ')) value = value.slice(1);
     parts.push(value);
@@ -511,7 +375,6 @@ function joinSseDataLines(block: string): string | null {
   return parts.length === 0 ? null : parts.join('\n');
 }
 
-/** Read an OpenAI Chat Completions SSE stream as chunks. */
 async function* readChatStream(
   body: ReadableStream<Uint8Array>
 ): AsyncGenerator<OpenAIChatStreamChunk> {
@@ -541,17 +404,6 @@ async function* readChatStream(
   }
 }
 
-/**
- * Extract a serialized `{error: ...}` body from a chat-stream chunk, for both
- * the standard nested `chunk.error` shape and a FLAT payload.
- *
- * `readChatStream` discards the SSE `event:` line, so a flat `event: error`
- * block like `data: {"type":"server_error","message":"overloaded"}` reaches the
- * loop with no `error` wrapper. Without this, the flat error chunk has no
- * choices, is skipped, and the bridge ends with a normal `end_turn` instead of
- * surfacing the (retryable) error. A flat chunk is only treated as an error
- * when it has no choices and no usage but carries error-like top-level fields.
- */
 function chatChunkErrorBody(chunk: OpenAIChatStreamChunk): string | undefined {
   if (chunk.error) return JSON.stringify({ error: chunk.error });
   if (!chunk.choices?.length && !chunk.usage) {
@@ -559,9 +411,6 @@ function chatChunkErrorBody(chunk: OpenAIChatStreamChunk): string | undefined {
     const message = typeof flat.message === 'string' ? flat.message : undefined;
     const detail = typeof flat.detail === 'string' ? flat.detail : undefined;
     const type = typeof flat.type === 'string' ? flat.type : undefined;
-    // Accept numeric codes (some gateways send {"code":429}) and RFC 7807
-    // problem-detail fields (status→code, detail→message), coercing to strings
-    // so the normalizer can classify them.
     const rawCode = flat.code;
     const code =
       typeof rawCode === 'string'
@@ -576,11 +425,6 @@ function chatChunkErrorBody(chunk: OpenAIChatStreamChunk): string | undefined {
         : typeof rawStatus === 'number' && Number.isFinite(rawStatus)
           ? String(rawStatus)
           : undefined;
-    // Require an actual error signal: a message/detail, a code/status, OR a
-    // `type` that is a recognized transient error type. A bare unknown `type`
-    // is treated as a heartbeat/metadata frame (e.g. `{"type":"ping"}`) and
-    // ignored so it doesn't abort a valid stream; a known type-only frame like
-    // `{"type":"server_error"}` is still admitted.
     if (
       message ||
       detail ||
@@ -598,10 +442,6 @@ function chatChunkErrorBody(chunk: OpenAIChatStreamChunk): string | undefined {
   return undefined;
 }
 
-/**
- * Translate the upstream OpenAI Chat Completions SSE stream into Anthropic
- * Messages SSE events. Handles incremental tool_calls accumulation.
- */
 async function streamChatToAnthropic(params: {
   upstreamResponse: Response;
   controller: ReadableStreamDefaultController<Uint8Array>;
@@ -626,14 +466,6 @@ async function streamChatToAnthropic(params: {
   let finishReason: string | null = null;
   type PendingToolCall = {
     blockIndex: number;
-    /**
-     * Upstream `tool_calls[].id` if seen, else empty string until we
-     * synthesize one at stream end. We MUST NOT open the Anthropic
-     * tool_use block before this is known (or finalised) — otherwise
-     * the client sees one id but the model's follow-up `tool` message
-     * references a different upstream id, and OpenAI-compatible
-     * backends reject the continuation via `tool_call_id` validation.
-     */
     id: string;
     name: string;
     argumentsText: string;
@@ -682,10 +514,6 @@ async function streamChatToAnthropic(params: {
 
   const finishToolCall = (call: PendingToolCall) => {
     if (!call.opened) return;
-    // Emit the (possibly accumulated) JSON args once, then close. Endpoints
-    // stream arguments in fragments; we buffer until completion to avoid
-    // emitting partial JSON deltas with stale partial_json strings that
-    // would not parse downstream.
     send(inputJsonDeltaSSE(call.blockIndex, call.argumentsText || '{}'));
     send(contentBlockStopSSE(call.blockIndex));
     emittedIds.add(call.id);
@@ -699,12 +527,6 @@ async function streamChatToAnthropic(params: {
       sawAnyChunk = true;
       const errorBody = chatChunkErrorBody(chunk);
       if (errorBody) {
-        // Carry the serialized error body so the catch handler can classify a
-        // transient mid-stream error (rate_limit / overloaded) instead of
-        // defaulting to a terminal api_error. The SDK cannot retry a stream it
-        // has already started, so the correct type also lets the query-runner
-        // (B4) recognise and re-issue the whole query. Handles both the nested
-        // `chunk.error` shape and flat payloads (see chatChunkErrorBody).
         let errorMessage = 'OpenAI stream error';
         try {
           const err = (JSON.parse(errorBody).error ?? {}) as { message?: string };
@@ -752,12 +574,6 @@ async function streamChatToAnthropic(params: {
           if (!pending) {
             pending = {
               blockIndex: -1,
-              // Don't synthesize here — wait for upstream id; if none
-              // arrives by stream end we synthesize once in the flush
-              // pass below. Opening the block with a placeholder and
-              // then overwriting `pending.id` would leak a bogus id
-              // to the client that no follow-up `tool` message can
-              // match.
               id: tc.id ?? '',
               name: tc.function?.name ?? '',
               argumentsText: '',
@@ -765,46 +581,23 @@ async function streamChatToAnthropic(params: {
             };
             pendingByIdx.set(idx, pending);
           } else {
-            // First non-empty upstream id wins; subsequent chunks
-            // generally repeat it but we keep the first to be safe.
             if (tc.id && !pending.id) pending.id = tc.id;
             if (tc.function?.name) pending.name = tc.function.name;
           }
           if (tc.function?.arguments) pending.argumentsText += tc.function.arguments;
-          // NOTE: we do NOT open the tool_use block here. Opening is deferred to
-          // the post-loop flush below, where each pending call is emitted as one
-          // complete, sequential content block (start -> args -> stop). Eager
-          // mid-stream opening had two defects: (1) parallel tool_calls in one
-          // delta produced OVERLAPPING content blocks (two starts before either
-          // stop — malformed per Anthropic's sequential-block protocol); (2) a
-          // stream that errored after a tool_call's name+id arrived left the
-          // block open, and closing it emitted a half-streamed input_json_delta
-          // (invalid JSON). The flush still waits for the upstream id — it
-          // synthesizes one only if none ever arrives — preserving id fidelity.
         }
       }
     }
 
     if (!sawAnyChunk) {
-      // Upstream returned 200 but the body contained no SSE `data:` chunks
-      // (e.g. a non-streaming endpoint that ignored `stream: true` and
-      // returned a one-shot JSON object, or a misconfigured proxy that
-      // stripped the SSE framing). Fail loudly instead of emitting an
-      // empty `end_turn` that hides the incompatibility from the user.
       throw new Error(
         'Upstream returned a non-SSE 200 response. Check that the endpoint supports streaming Chat Completions and that any proxy preserves text/event-stream framing.'
       );
     }
 
     ensureStarted();
-    // Flush any tool calls that received a name but never closed via finish_reason.
     for (const call of pendingByIdx.values()) {
       if (!call.opened && call.name) {
-        // No upstream id ever arrived — synthesize one so we can still
-        // emit a valid Anthropic tool_use block. Backends that strictly
-        // validate `tool_call_id` will already be unhappy with this
-        // stream, but emitting *something* is better than dropping the
-        // call entirely.
         if (!call.id) call.id = genToolUseId();
         openToolCall(call);
       }
@@ -838,20 +631,11 @@ async function streamChatToAnthropic(params: {
       'openai-chat-bridge: streaming failed:',
       error instanceof Error ? error.message : String(error)
     );
-    // Classify a transient mid-stream error body to the right Anthropic type so
-    // the SDK (and query-runner B4) can recognise it as retryable.
     const upstreamErrorBody = (error as { upstreamErrorBody?: string }).upstreamErrorBody;
     const normalized = upstreamErrorBody
       ? normalizeOpenAiUpstreamError(upstreamErrorBody, 200)
       : undefined;
     const errorType: AnthropicErrorType = normalized?.type ?? 'api_error';
-    // Close any open text/thinking block before surfacing the error — without
-    // this the SDK receives a content_block_start with no matching
-    // content_block_stop (a malformed stream) whenever an upstream error arrives
-    // mid-block. Tool blocks are never opened mid-stream (opening is deferred to
-    // the post-loop flush, which the error path bypasses), so an interrupted
-    // tool_call is simply dropped on error — cleaner than emitting a block with
-    // half-streamed or empty arguments that could mask the retryable error.
     try {
       ensureStarted();
       closeThinkingBlock();
@@ -890,14 +674,9 @@ export function createOpenAIChatBridgeServer(
   const chatTemplateKwargs = config.chatTemplateKwargs;
   const modelContextWindow = config.modelContextWindow;
 
-  // Per-session thinking config injected by the daemon when the Anthropic SDK client
-  // (Claude Code CLI) omits the thinking field from request bodies.
   const sessionThinkingConfigs = new Map<string, { thinking: AnthropicRequest['thinking'] }>();
 
   const server = Bun.serve({
-    // Bind to loopback so other local users cannot probe the ephemeral port
-    // and reach this bridge with the configured upstream API key. The SDK
-    // connects via ANTHROPIC_BASE_URL=http://127.0.0.1:<port>.
     hostname: '127.0.0.1',
     port: 0,
     idleTimeout: 0,
@@ -957,9 +736,6 @@ export function createOpenAIChatBridgeServer(
         );
       }
 
-      // The Claude Code CLI handles thinking internally and does not include the
-      // thinking field in Anthropic Messages API requests. Merge the per-session
-      // thinking config injected by the daemon so reasoning is forwarded to OpenAI.
       const sessionThinkingEntry = sessionThinkingConfigs.get(sessionId);
       if (sessionThinkingEntry?.thinking && !body.thinking) {
         body = { ...body, thinking: sessionThinkingEntry.thinking };
@@ -997,10 +773,6 @@ export function createOpenAIChatBridgeServer(
 
       if (!upstreamResponse.ok) {
         const text = await upstreamResponse.text();
-        // Inspect the BODY for transient signals (rate_limit_exceeded /
-        // server_error / overload text) that the status alone misses — e.g. a
-        // 4xx carrying a rate-limit body, or a 5xx that should surface as
-        // overloaded_error. Reclassify so the SDK retries.
         const normalized = normalizeOpenAiUpstreamError(text, upstreamResponse.status);
         if (normalized) {
           logger.warn(
@@ -1016,12 +788,6 @@ export function createOpenAIChatBridgeServer(
         );
       }
 
-      // Some OpenAI-compatible proxies return 200 with a JSON error body instead
-      // of an SSE stream. Only pre-buffer when the content-type explicitly says
-      // JSON — gating on "not event-stream" would also buffer endpoints that
-      // stream valid SSE with a missing/mislabeled content-type, waiting for the
-      // whole body and breaking incremental output. A real SSE stream (any other
-      // content-type, or none) flows straight through to readChatStream.
       const upstreamContentType = upstreamResponse.headers.get('content-type') ?? '';
       if (isJsonContentType(upstreamContentType)) {
         const bodyText = await upstreamResponse.text();
@@ -1033,8 +799,6 @@ export function createOpenAIChatBridgeServer(
           );
           return sendRetryableUpstreamError(normalized);
         }
-        // Non-transient: reconstruct the response so the streaming path handles
-        // the non-SSE body exactly as before (terminal api_error for the user).
         upstreamResponse = new Response(bodyText, {
           status: upstreamResponse.status,
           headers: { 'Content-Type': upstreamContentType },
@@ -1079,7 +843,6 @@ export function createOpenAIChatBridgeServer(
   };
 }
 
-// Exports for testing.
 export const _openAIChatBridgeTesting = {
   toOpenAIMessages,
   toOpenAITools,

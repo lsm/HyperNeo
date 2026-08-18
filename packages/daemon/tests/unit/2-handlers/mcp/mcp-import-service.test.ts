@@ -1,22 +1,3 @@
-/**
- * McpImportService Unit Tests
- *
- * Covers:
- *   - refreshFromFile: adds new imported rows with enabled=false
- *   - refreshFromFile is idempotent — re-scanning the same file is a no-op
- *   - refreshFromFile updates rows whose config drifted
- *   - refreshFromFile prunes rows whose name disappeared (remove+add on rename)
- *   - Malformed / missing files are handled without throwing
- *   - Non-absolute paths throw (programmer error)
- *   - refreshAll scans every workspace + `~/.claude/.mcp.json` via TEST_USER_SETTINGS_DIR
- *   - refreshAll prunes imported rows for workspaces removed from history
- *   - Name collision with existing 'user' / 'builtin' row skips the import
- *   - Imported → user transition leaves the row alone on subsequent scans
- *
- * The MCP config unification plan (`docs/plans/unify-mcp-config-model/00-overview.md`)
- * is the source of truth for the behavioral contract exercised here.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
@@ -29,10 +10,6 @@ import { McpImportService } from '../../../../src/lib/mcp/mcp-import-service';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { Database } from '../../../../src/storage/database';
 
-// ---------------------------------------------------------------------------
-// Test harness
-// ---------------------------------------------------------------------------
-
 function buildTestDb(): {
   bunDb: BunDatabase;
   reactiveDb: ReactiveDatabase;
@@ -43,7 +20,6 @@ function buildTestDb(): {
   createTables(bunDb);
   const reactiveDb = createReactiveDatabase({ getDatabase: () => bunDb } as never);
   const repo = new AppMcpServerRepository(bunDb, reactiveDb);
-  // Minimal facade — service only touches `appMcpServers`.
   const db = { appMcpServers: repo } as unknown as Database;
   return { bunDb, reactiveDb, repo, db };
 }
@@ -51,10 +27,6 @@ function buildTestDb(): {
 function writeMcpJson(path: string, payload: unknown): void {
   writeFileSync(path, JSON.stringify(payload, null, 2), 'utf-8');
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('McpImportService', () => {
   let bunDb: BunDatabase;
@@ -68,8 +40,6 @@ describe('McpImportService', () => {
     repo = h.repo;
     service = new McpImportService(h.db);
     tmpRoot = mkdtempSync(join(tmpdir(), 'mcp-import-test-'));
-    // Point user-level scan at the temp dir so tests never read the
-    // developer's real `~/.claude/.mcp.json`.
     process.env.TEST_USER_SETTINGS_DIR = tmpRoot;
   });
 
@@ -78,10 +48,6 @@ describe('McpImportService', () => {
     bunDb.close();
     rmSync(tmpRoot, { recursive: true, force: true });
   });
-
-  // -----------------------------------------------------------------------
-  // refreshFromFile — core
-  // -----------------------------------------------------------------------
 
   describe('refreshFromFile', () => {
     test('imports new entries with source=imported and enabled=false', () => {
@@ -103,7 +69,7 @@ describe('McpImportService', () => {
       expect(row).not.toBeNull();
       expect(row!.source).toBe('imported');
       expect(row!.sourcePath).toBe(file);
-      expect(row!.enabled).toBe(false); // M2 contract: imported rows land disabled
+      expect(row!.enabled).toBe(false);
       expect(row!.command).toBe('echo');
       expect(row!.args).toEqual(['test-server']);
     });
@@ -132,7 +98,6 @@ describe('McpImportService', () => {
       });
       service.refreshFromFile(file);
 
-      // Update args in the file
       writeMcpJson(file, {
         mcpServers: { drift: { command: 'node', args: ['v2.js'] } },
       });
@@ -222,7 +187,6 @@ describe('McpImportService', () => {
       writeMcpJson(file, { mcpServers: { safe: { command: 'node' } } });
       service.refreshFromFile(file);
 
-      // Break the file; re-scan should leave the row untouched.
       writeFileSync(file, '{ broken', 'utf-8');
       service.refreshFromFile(file);
 
@@ -234,8 +198,8 @@ describe('McpImportService', () => {
       writeMcpJson(file, {
         mcpServers: {
           ok: { command: 'node' },
-          'bad-stdio': {}, // no command, no url → skipped
-          'bad-http': { type: 'http' }, // no url → skipped
+          'bad-stdio': {},
+          'bad-http': { type: 'http' },
         },
       });
 
@@ -276,7 +240,6 @@ describe('McpImportService', () => {
     });
 
     test('skips when name collides with an existing user row', () => {
-      // User has their own "docs" entry
       repo.create({ name: 'docs', sourceType: 'stdio', command: 'my-docs' });
 
       const file = join(tmpRoot, '.mcp.json');
@@ -286,7 +249,6 @@ describe('McpImportService', () => {
       const result = service.refreshFromFile(file);
 
       expect(result.added).toBe(0);
-      // The user row is untouched
       const row = repo.getByName('docs');
       expect(row!.source).toBe('user');
       expect(row!.command).toBe('my-docs');
@@ -315,17 +277,12 @@ describe('McpImportService', () => {
       writeMcpJson(file, { mcpServers: { claimed: { command: 'orig' } } });
       service.refreshFromFile(file);
 
-      // User claims the imported row
       const row = repo.getByName('claimed')!;
       repo.update(row.id, { source: 'user', sourcePath: undefined });
 
-      // Change the file — the claimed row must not be updated back
       writeMcpJson(file, { mcpServers: { claimed: { command: 'changed' } } });
       const result = service.refreshFromFile(file);
 
-      // The scanner sees no imported row for (path, 'claimed') and tries to
-      // create a new one — which collides with the claimed user row by name,
-      // so the import skips.
       expect(result.added).toBe(0);
       expect(repo.getByName('claimed')!.source).toBe('user');
       expect(repo.getByName('claimed')!.command).toBe('orig');
@@ -338,40 +295,27 @@ describe('McpImportService', () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // refreshAll — multi-file sweep
-  // -----------------------------------------------------------------------
-
   describe('refreshAll', () => {
     test('imports user-level ~/.claude/.mcp.json in the production path (no TEST_USER_SETTINGS_DIR)', () => {
-      // Regression for task #875: in production TEST_USER_SETTINGS_DIR is unset,
-      // so the user-level path must resolve to <home>/.claude/.mcp.json — NOT
-      // <home>/.mcp.json. Bun's os.homedir() ignores process.env.HOME, so the
-      // home dir is injected via the constructor to exercise this branch without
-      // touching the developer's real home directory.
       const savedSettingsDir = process.env.TEST_USER_SETTINGS_DIR;
       delete process.env.TEST_USER_SETTINGS_DIR;
       const fakeHome = mkdtempSync(join(tmpdir(), 'fake-home-'));
-      // Share the same repo as the default `service` so assertions read through `repo`.
       const prodService = new McpImportService(
         { appMcpServers: repo } as unknown as Database,
         fakeHome
       );
       try {
-        // The real file, where Claude Code and the working scanner expect it.
         mkdirSync(join(fakeHome, '.claude'), { recursive: true });
         writeMcpJson(join(fakeHome, '.claude', '.mcp.json'), {
           mcpServers: {
             'codebase-memory-mcp': { command: '/usr/local/bin/codebase-memory-mcp' },
           },
         });
-        // Decoy at the OLD (buggy) location <home>/.mcp.json — must NOT be read.
         writeMcpJson(join(fakeHome, '.mcp.json'), {
           mcpServers: { 'decoy-buggy-path': { command: 'should-not-import' } },
         });
 
         const { results } = prodService.refreshAll([]);
-        // The user-level file was scanned and added its entry.
         const userResult = results.find(
           (r) => r.sourcePath === join(fakeHome, '.claude', '.mcp.json')
         );
@@ -381,7 +325,6 @@ describe('McpImportService', () => {
         expect(imported).not.toBeNull();
         expect(imported!.source).toBe('imported');
         expect(imported!.sourcePath).toBe(join(fakeHome, '.claude', '.mcp.json'));
-        // The decoy at <home>/.mcp.json must not have been picked up.
         expect(repo.getByName('decoy-buggy-path')).toBeNull();
       } finally {
         rmSync(fakeHome, { recursive: true, force: true });
@@ -390,17 +333,14 @@ describe('McpImportService', () => {
     });
 
     test('scans each workspace plus the user-level file', () => {
-      // workspace A
       const wsA = mkdtempSync(join(tmpRoot, 'ws-a-'));
       writeMcpJson(join(wsA, '.mcp.json'), {
         mcpServers: { 'a-server': { command: 'a' } },
       });
-      // workspace B
       const wsB = mkdtempSync(join(tmpRoot, 'ws-b-'));
       writeMcpJson(join(wsB, '.mcp.json'), {
         mcpServers: { 'b-server': { command: 'b' } },
       });
-      // User-level file (tmpRoot is TEST_USER_SETTINGS_DIR)
       writeMcpJson(join(tmpRoot, '.mcp.json'), {
         mcpServers: { 'user-server': { command: 'u' } },
       });
@@ -419,19 +359,13 @@ describe('McpImportService', () => {
       const file = join(ws, '.mcp.json');
       writeMcpJson(file, { mcpServers: { ghost: { command: 'x' } } });
 
-      // First sweep imports the row.
       service.refreshAll([ws]);
       expect(repo.getByName('ghost')).not.toBeNull();
 
-      // Workspace is gone — drop it from history AND delete the file.
       rmSync(ws, { recursive: true, force: true });
 
-      // Passing an empty workspace list means the scanner doesn't visit the
-      // path directly; the listImported() sweep must prune it because the
-      // sourcePath no longer exists. The prune is reported via `orphanPruned`,
-      // NOT any per-file result, so callers can total removals accurately.
       const { results, orphanPruned } = service.refreshAll([]);
-      expect(results.every((r) => r.removed === 0)).toBe(true); // not in per-file results
+      expect(results.every((r) => r.removed === 0)).toBe(true);
       expect(orphanPruned).toBe(1);
       expect(repo.getByName('ghost')).toBeNull();
     });
@@ -441,7 +375,7 @@ describe('McpImportService', () => {
       writeMcpJson(join(wsA, '.mcp.json'), {
         mcpServers: { present: { command: 'x' } },
       });
-      const wsB = mkdtempSync(join(tmpRoot, 'ws-without-')); // no .mcp.json inside
+      const wsB = mkdtempSync(join(tmpRoot, 'ws-without-'));
 
       const { results } = service.refreshAll([wsA, wsB]);
       const byStatus = Object.fromEntries(results.map((r) => [r.sourcePath, r.status]));
@@ -452,10 +386,6 @@ describe('McpImportService', () => {
     });
 
     test('session handler module does not reference McpImportService (scan-never-on-session-create contract)', () => {
-      // The plan doc is explicit: `session.create` must not touch the
-      // filesystem for MCP scanning. Enforce this structurally — if a
-      // future change pulls the import service into session-handlers.ts
-      // the CI regression guard fails here.
       const sessionHandlersPath = join(
         __dirname,
         '..',
@@ -479,7 +409,6 @@ describe('McpImportService', () => {
         mcpServers: { once: { command: 'x' } },
       });
       const { results } = service.refreshAll([ws, ws]);
-      // Workspace file + user file = 2 scans; the duplicate workspace path is collapsed.
       expect(results).toHaveLength(2);
       expect(repo.listBySourcePath(join(ws, '.mcp.json'))).toHaveLength(1);
     });

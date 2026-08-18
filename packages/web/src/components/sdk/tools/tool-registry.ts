@@ -1,37 +1,20 @@
-/**
- * Tool Registry - Central configuration for all tool types
- *
- * This registry provides metadata and configuration for each tool type,
- * enabling consistent rendering and easy extensibility.
- */
-
 import { h } from 'preact';
 import type { ToolConfig, ToolCategory } from './tool-types.ts';
 import { TodoViewer } from './TodoViewer.tsx';
 import { borderColors } from '../../../lib/design-tokens.ts';
 
-/**
- * Helper to safely get a property from unknown input as string
- */
 const getProp = (input: unknown, key: string): string | undefined => {
   const obj = input as Record<string, unknown>;
   const value = obj?.[key];
   return typeof value === 'string' ? value : undefined;
 };
 
-/**
- * Helper to safely get a property from unknown input as any type
- */
 const getPropAny = (input: unknown, key: string): unknown => {
   const obj = input as Record<string, unknown>;
   return obj?.[key];
 };
 
-/**
- * Default tool configurations
- */
 const defaultToolConfigs: Record<string, ToolConfig> = {
-  // File operations
   Write: {
     displayName: 'Write',
     category: 'file',
@@ -96,7 +79,6 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     defaultExpanded: false,
   },
 
-  // Search operations
   Glob: {
     displayName: 'Glob',
     category: 'search',
@@ -112,7 +94,6 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     defaultExpanded: false,
   },
 
-  // Terminal operations
   Bash: {
     displayName: 'Bash',
     category: 'terminal',
@@ -138,7 +119,6 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     defaultExpanded: false,
   },
 
-  // Agent/Task operations
   Task: {
     displayName: 'Task',
     category: 'agent',
@@ -169,7 +149,6 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     defaultExpanded: false,
   },
 
-  // Web operations
   WebFetch: {
     displayName: 'Web Fetch',
     category: 'web',
@@ -185,7 +164,6 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     defaultExpanded: false,
   },
 
-  // Todo operations
   TodoWrite: {
     displayName: 'Todo',
     category: 'todo',
@@ -205,7 +183,6 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     defaultExpanded: true,
   },
 
-  // MCP operations
   ListMcpResourcesTool: {
     displayName: 'List MCP Resources',
     category: 'mcp',
@@ -221,7 +198,6 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     defaultExpanded: false,
   },
 
-  // System operations
   AskUserQuestion: {
     displayName: 'AskUserQuestion',
     category: 'system',
@@ -261,7 +237,6 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     displayName: 'Thinking',
     category: 'system',
     summaryExtractor: (input) => {
-      // Input will be the thinking text
       if (typeof input === 'string') {
         const charCount = input.length;
         return `${charCount} character${charCount !== 1 ? 's' : ''}`;
@@ -270,7 +245,6 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     },
     hasLongOutput: true,
     defaultExpanded: false,
-    // Custom amber colors for Thinking (using design tokens)
     colors: {
       bg: 'bg-amber-50 dark:bg-amber-900/20',
       text: 'text-amber-900 dark:text-amber-100',
@@ -281,15 +255,8 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
   },
 };
 
-/**
- * Custom tool configurations (can be extended at runtime)
- */
 const customToolConfigs: Map<string, ToolConfig> = new Map();
 
-/**
- * Get category colors
- * Uses centralized border color tokens from design-tokens.ts
- */
 export function getCategoryColors(category: ToolCategory) {
   switch (category) {
     case 'file':
@@ -367,18 +334,12 @@ export function getCategoryColors(category: ToolCategory) {
   }
 }
 
-/**
- * Helper: Extract filename from path
- */
 function extractFileName(path: string | undefined): string | null {
   if (!path) return null;
   const parts = path.split('/');
   return parts[parts.length - 1] || path;
 }
 
-/**
- * Helper: Truncate string with ellipsis
- */
 function truncateString(str: string | undefined, maxLength: number): string | null {
   if (!str) return null;
   return str.length > maxLength ? str.slice(0, maxLength) + '...' : str;
@@ -396,19 +357,13 @@ function summarizeQuestionInput(input: unknown): string {
   return `${truncateString(text, 60) ?? text}${suffix}`;
 }
 
-/**
- * Get tool configuration
- */
 export function getToolConfig(toolName: string): ToolConfig {
-  // Check custom configs first
   const customConfig = customToolConfigs.get(toolName);
   if (customConfig) return customConfig;
 
-  // Check default configs
   const defaultConfig = defaultToolConfigs[toolName];
   if (defaultConfig) return defaultConfig;
 
-  // Handle MCP tools (pattern: mcp__server__tool)
   if (toolName.startsWith('mcp__')) {
     const parts = toolName.split('__');
     const serverName = parts[1] || 'unknown';
@@ -423,12 +378,10 @@ export function getToolConfig(toolName: string): ToolConfig {
     };
   }
 
-  // Unknown tool fallback
   return {
     displayName: toolName,
     category: 'unknown',
     summaryExtractor: (input) => {
-      // Try to extract something meaningful from input
       if (input && typeof input === 'object') {
         const obj = input as Record<string, unknown>;
         const keys = Object.keys(obj);

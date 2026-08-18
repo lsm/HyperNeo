@@ -6,13 +6,6 @@ import {
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
-/**
- * Task #676: the OpenAI chat bridge (custom endpoints) normalizes body-embedded
- * and mid-stream provider errors to retryable Anthropic types. OpenAI-compatible
- * proxies sometimes return 200 with a JSON error body, or a mid-stream `error`
- * chunk — both would otherwise surface as a terminal api_error.
- */
-
 function makeServer(upstream: typeof fetch): OpenAIChatBridgeServer {
   return createOpenAIChatBridgeServer({
     baseUrl: 'https://api.example.com/v1',
@@ -102,9 +95,6 @@ describe.skipIf(!isBun)(
     });
 
     it('recognizes non-canonical JSON content-types (application/problem+json, case-insensitive)', async () => {
-      // The gate must match the JSON media-type family case-insensitively,
-      // including RFC 7807 problem+json — otherwise these error bodies bypass
-      // normalization and the streamer emits an empty end_turn.
       server = makeServer(
         async () =>
           new Response(
@@ -122,7 +112,6 @@ describe.skipIf(!isBun)(
     });
 
     it('classifies a mid-stream rate-limit chunk to rate_limit_error SSE (not api_error)', async () => {
-      // Upstream returns a valid SSE stream that emits an `error` chunk mid-stream.
       const sse =
         'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n' +
         'data: {"error":{"message":"rate limit exceeded","type":"rate_limit_exceeded"}}\n\n';
@@ -153,10 +142,6 @@ describe.skipIf(!isBun)(
     });
 
     it('classifies a flat SSE error payload (event: error, top-level fields)', async () => {
-      // readChatStream drops the `event:` line; a flat payload like
-      // data: {"type":"server_error","message":"overloaded"} has no `error`
-      // wrapper and no choices, so it must be detected via the top-level fields
-      // (otherwise the bridge ends with a normal end_turn and hides the error).
       const sse =
         'event: error\n' + 'data: {"type":"server_error","message":"the engine is overloaded"}\n\n';
       server = makeServer(
@@ -173,8 +158,6 @@ describe.skipIf(!isBun)(
     });
 
     it('ignores type-only heartbeat frames (e.g. {"type":"ping"}) and streams normally', async () => {
-      // A bare top-level `type` with no message/code is a heartbeat/metadata
-      // frame, not an error — it must not abort the stream.
       const sse =
         'data: {"type":"ping"}\n\n' +
         'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n' +
@@ -195,9 +178,6 @@ describe.skipIf(!isBun)(
     });
 
     it('admits a type-only flat error frame with a known transient type', async () => {
-      // A flat `event: error` block whose data is just {"type":"server_error"}
-      // (no message/code) is still a retryable error and must be surfaced, not
-      // ignored like a heartbeat.
       const sse = 'event: error\n' + 'data: {"type":"server_error"}\n\n';
       server = makeServer(
         async () =>
@@ -213,9 +193,6 @@ describe.skipIf(!isBun)(
     });
 
     it('admits a flat RFC 7807 problem-detail error frame (status/detail)', async () => {
-      // readChatStream discards `event: error`; a frame like
-      // {"status":429,"detail":"Too Many Requests"} has no message/code/known-type,
-      // so status→code and detail→message must be mapped before the guard.
       const sse = 'event: error\n' + 'data: {"status":429,"detail":"Too Many Requests"}\n\n';
       server = makeServer(
         async () =>
@@ -246,10 +223,6 @@ describe.skipIf(!isBun)(
     });
 
     it('streams a mislabeled-content-type SSE response without buffering or misclassifying it', async () => {
-      // A proxy that streams valid SSE but sends Content-Type text/plain (or none)
-      // must flow straight through to the streamer — NOT be buffered and matched
-      // against the overload substring (which would misclassify a valid stream
-      // whose content happens to mention "overloaded" as a retryable error).
       const sse =
         'data: {"choices":[{"delta":{"content":"The server is overloaded but this is normal text"}}]}\n\n' +
         'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n';
@@ -260,7 +233,6 @@ describe.skipIf(!isBun)(
       const res = await postMessages(server.port);
       expect(res.status).toBe(200);
       const events = await readSSEEventTypes(res.body);
-      // It streamed normally: a text delta was emitted (not an error event).
       const errorEvent = events.find((e) => e.event === 'error');
       expect(errorEvent).toBeUndefined();
       const stop = events.find((e) => e.event === 'message_delta');

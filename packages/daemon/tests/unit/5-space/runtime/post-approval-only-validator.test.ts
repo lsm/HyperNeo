@@ -1,23 +1,3 @@
-/**
- * Unit tests for the post-approval-only built-in validator.
- *
- * This validator gates the stable `Coding with QA` workflow's `Coding → QA`
- * channel so it can only carry a post-approval merge-blocker / fix-push report.
- * It must block during the implementation phase (when the task is in-progress)
- * so a coder cannot message QA directly and activate the end node — and the
- * approval authority — without Review ever running.
- *
- * Covers:
- *   - allows a merge_blocked report while the task is approved
- *   - allows a merge_fix_pushed report while the task is approved
- *   - blocks a merge report while the task is in_progress (spoof guard)
- *   - blocks any send when taskStatus is undefined (fails closed)
- *   - blocks an approved task without a merge reason
- *   - blocks an approved task with an unrelated reason
- *   - reads reason from rawParams when bounded params.data is truncated
- *   - reason present but not a string does not exempt
- */
-
 import { describe, test, expect } from 'bun:test';
 import { createPostApprovalOnlyValidator } from '../../../../src/lib/space/runtime/built-in-validators/post-approval-only-validator';
 import type { HookExecutorContext } from '../../../../src/lib/space/runtime/hook-executor';
@@ -183,8 +163,6 @@ describe('post_approval_only validator', () => {
   });
 
   test('blocks a blocker whose pr_url differs from the frozen reviewed PR', async () => {
-    // A prompt-injected post-approval coder must not redirect the approval
-    // authority to a different same-host PR.
     const validator = createPostApprovalOnlyValidator();
     const result = await validator(
       makeContext({

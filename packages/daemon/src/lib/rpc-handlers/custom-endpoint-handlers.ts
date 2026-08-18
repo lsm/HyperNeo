@@ -1,12 +1,3 @@
-/**
- * Custom Endpoint RPC Handlers
- *
- * CRUD over user-defined API endpoints (OpenAI Chat, Anthropic Messages,
- * Ollama native). Each mutation writes the full list back to
- * `settings.customEndpoints` and re-syncs the provider registry so changes
- * take effect immediately without a daemon restart.
- */
-
 import type { MessageHub } from '@hyperneo/shared';
 import type { CustomEndpointConfig, CustomEndpointType } from '@hyperneo/shared';
 import { customProviderIdFor } from '../providers/custom-endpoint-provider.js';
@@ -25,18 +16,15 @@ const VALID_CUSTOM_ENDPOINT_TYPES: ReadonlySet<CustomEndpointType> = new Set([
 
 const log = new Logger('rpc-handlers:custom-endpoints');
 
-/** Model list cache entry */
 interface CachedModels {
   models: Array<{ id: string; name?: string }>;
   fetchedAt: number;
 }
 
-/** In-memory cache for model-list fetches (30s TTL). */
 const modelListCache = new Map<string, CachedModels>();
 const MODEL_LIST_CACHE_TTL_MS = 30_000;
 
 // knip-ignore-next-line
-/** Clear the model-list cache (used by tests). */
 export function clearModelListCache(): void {
   modelListCache.clear();
 }
@@ -55,18 +43,6 @@ function cacheKey(params: {
   ]);
 }
 
-/**
- * Build the model-list URL by stripping known trailing suffixes from the
- * base URL path before appending the correct route. Mirrors the URL builders
- * in the bridge servers so a user-pasted `.../v1` or `.../v1/models` doesn't
- * produce a double-suffixed path like `.../v1/v1/models`.
- */
-/**
- * Detect Azure OpenAI-style URLs (`…/openai/deployments/{name}/…`) and
- * return the deployment name as the only available model. Azure does not
- * expose a `/v1/models` equivalent, so we derive the model from the URL
- * path rather than probing a non-existent endpoint.
- */
 function extractAzureDeploymentModel(baseUrl: string): { id: string } | null {
   const parsed = new URL(baseUrl.trim());
   const match = parsed.pathname.match(/\/openai\/deployments\/([^/]+)/i);
@@ -96,7 +72,6 @@ function buildModelListUrl(baseUrl: string, type: string): string {
 
 function normalizeModelList(type: string, data: unknown): Array<{ id: string; name?: string }> {
   if (type === 'ollama-native') {
-    // Ollama /api/tags returns { models: [{ name, model?, ... }] }
     const body = data as { models?: Array<{ name?: string; model?: string }> } | undefined;
     const list = body?.models ?? [];
     return list
@@ -109,7 +84,6 @@ function normalizeModelList(type: string, data: unknown): Array<{ id: string; na
   }
 
   if (type === 'anthropic-messages') {
-    // Anthropic-compatible /v1/models returns { data: [{ id, type?, display_name? }] }
     const body = data as
       | {
           data?: Array<{
@@ -135,7 +109,6 @@ function normalizeModelList(type: string, data: unknown): Array<{ id: string; na
       .filter((m): m is { id: string; name?: string } => m !== null);
   }
 
-  // OpenAI-compatible /v1/models returns { data: [{ id, object? }] }
   const body = data as { data?: Array<{ id?: string; object?: string }> } | undefined;
   const list = body?.data ?? [];
   return list
@@ -193,11 +166,6 @@ async function fetchModelsFromEndpoint(params: {
   }
 }
 
-/**
- * Validate a single endpoint. Exported for callers (e.g. the generic
- * `settings.global.update`/`save` RPCs) that need to reject invalid configs
- * before persisting and syncing the provider registry.
- */
 export function validateCustomEndpoint(config: CustomEndpointConfig): void {
   if (!config?.id || typeof config.id !== 'string')
     throw new Error('Custom endpoint id is required');
@@ -245,17 +213,6 @@ export function validateCustomEndpoint(config: CustomEndpointConfig): void {
   }
 }
 
-/**
- * Validate a list of endpoints, rejecting on duplicate ids in addition to all
- * per-entry checks. Used by the generic settings RPCs to keep stored settings
- * in sync with what the provider registry will accept.
- *
- * `undefined` means "field not provided" and is accepted as a no-op so callers
- * can pass `updates.customEndpoints` straight through; `null` is rejected
- * explicitly because it's a malformed payload (the field exists with a value
- * that is neither an array nor "not provided") that would otherwise sync as
- * empty and unregister all custom providers.
- */
 export function validateCustomEndpoints(configs: CustomEndpointConfig[] | undefined): void {
   if (configs === undefined) return;
   if (configs === null) throw new Error('customEndpoints must be an array, got null');
@@ -318,10 +275,6 @@ function removeEndpointFromProviderTable(db: Database | undefined, endpointId: s
   }
 }
 
-/**
- * Sync the full custom endpoint list to the providers table.
- * Disabled endpoints are still updated so re-enablement uses the latest config.
- */
 export function syncCustomEndpointsToProviderTable(
   db: Database,
   endpoints: CustomEndpointConfig[]
@@ -331,7 +284,6 @@ export function syncCustomEndpointsToProviderTable(
   for (const endpoint of endpoints) {
     syncEndpointToProviderTable(db, endpoint);
   }
-  // Remove any provider records for endpoints that no longer exist.
   for (const record of db.providers.listProviders()) {
     if (record.kind === 'custom_endpoint' && !allProviderIds.has(record.providerId)) {
       db.providers.deleteProvider(record.id);
@@ -346,17 +298,11 @@ async function persistAndSync(
   db?: Database,
   credentialManager?: ProviderCredentialManager
 ): Promise<void> {
-  // Filter out custom endpoints disabled in the providers table so legacy
-  // sync does not re-register them despite is_enabled = 0.
   const syncEndpoints = db ? filterDisabledCustomEndpoints(endpoints, db) : endpoints;
 
   const updated = settingsManager.updateGlobalSettings({ customEndpoints: endpoints });
   const { syncCustomEndpointProviders } = await import('../providers/factory.js');
   await syncCustomEndpointProviders(syncEndpoints);
-  // Invalidate the cached global model list so newly added/removed custom
-  // models become discoverable immediately instead of waiting for the TTL
-  // to expire. Without this, model resolution can keep using stale defaults
-  // until the next refresh.
   const { clearModelsCache } = await import('../model-service.js');
   clearModelsCache();
   internalEventBus.publishAsync('settings.updated', {
@@ -367,40 +313,18 @@ async function persistAndSync(
     sessionId: 'global',
   });
 
-  // Compat: sync the full list to the providers table so the unified registry
-  // stays in sync with the legacy customEndpoints JSON blob.
   if (db) {
     syncCustomEndpointsToProviderTable(db, endpoints);
   }
 }
 
-/**
- * Serialise add/update/remove mutations on `settings.customEndpoints`.
- *
- * Each handler performs a read-modify-write on the JSON array; without a
- * lock two concurrent mutations would both read the same pre-update array
- * and whichever wrote last would overwrite the other, dropping changes.
- * A single in-process promise chain is sufficient since all RPC traffic
- * goes through one MessageHub on the daemon side.
- *
- * Exported so the generic `settings.global.update` / `settings.global.save`
- * RPCs can route their `customEndpoints` writes through the same queue.
- * Otherwise a concurrent settings-RPC write would race with an in-flight
- * `customEndpoints.add` and last-writer-wins would drop one mutation.
- */
 let mutationQueue: Promise<unknown> = Promise.resolve();
 export function withCustomEndpointsLock<T>(fn: () => Promise<T>): Promise<T> {
   const run = mutationQueue.then(fn, fn);
-  // Swallow errors on the queue tail so one failure doesn't poison the chain.
   mutationQueue = run.catch(() => {});
   return run;
 }
 
-/**
- * Filter out custom endpoints that are disabled in the providers table.
- * Used by both the legacy custom-endpoint handlers and the generic settings
- * handlers so disabled endpoints are not re-registered by unrelated syncs.
- */
 export function filterDisabledCustomEndpoints(
   endpoints: CustomEndpointConfig[],
   db: Database
@@ -422,12 +346,10 @@ export function registerCustomEndpointHandlers(
   db?: Database,
   credentialManager?: ProviderCredentialManager
 ): void {
-  /** List all configured custom endpoints. */
   messageHub.onRequest('customEndpoints.list', async () => {
     return { endpoints: settingsManager.getGlobalSettings().customEndpoints ?? [] };
   });
 
-  /** Fetch available models from a custom endpoint. */
   messageHub.onRequest(
     'customEndpoints.listModels',
     async (data: {
@@ -467,7 +389,6 @@ export function registerCustomEndpointHandlers(
     }
   );
 
-  /** Add a new custom endpoint. Rejects when the id already exists. */
   messageHub.onRequest('customEndpoints.add', async (data: { endpoint: CustomEndpointConfig }) => {
     return withCustomEndpointsLock(async () => {
       validateCustomEndpoint(data.endpoint);
@@ -481,7 +402,6 @@ export function registerCustomEndpointHandlers(
     });
   });
 
-  /** Update an existing custom endpoint. Replaces the entry by id. */
   messageHub.onRequest(
     'customEndpoints.update',
     async (data: { endpoint: CustomEndpointConfig }) => {
@@ -497,7 +417,6 @@ export function registerCustomEndpointHandlers(
     }
   );
 
-  /** Remove a custom endpoint by id. */
   messageHub.onRequest('customEndpoints.remove', async (data: { id: string }) => {
     return withCustomEndpointsLock(async () => {
       const current = settingsManager.getGlobalSettings().customEndpoints ?? [];

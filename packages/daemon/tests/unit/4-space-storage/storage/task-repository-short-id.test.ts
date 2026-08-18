@@ -1,14 +1,3 @@
-/**
- * TaskRepository — Short ID tests
- *
- * Covers:
- *  - createTask assigns shortId when allocator is present
- *  - getTaskByShortId finds by short ID
- *  - getTaskByShortId returns null for unknown short ID
- *  - lazy backfill in getTask
- *  - lazy backfill in listTasks (mixed rows)
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { TaskRepository } from '../../../../src/storage/repositories/task-repository';
@@ -121,7 +110,6 @@ describe('TaskRepository — short ID', () => {
 
   describe('lazy backfill in getTask', () => {
     it('assigns a short ID to a legacy row (created without short_id)', () => {
-      // Insert a row directly without a short_id to simulate a legacy record
       db.prepare(
         `INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at, updated_at)
 				 VALUES ('legacy-id', 'room-1', 'Legacy', 'Desc', 'pending', 'normal', '[]', 1000, 1000)`
@@ -132,7 +120,6 @@ describe('TaskRepository — short ID', () => {
       expect(task!.shortId).toBeDefined();
       expect(task!.shortId).toBe('t-1');
 
-      // Verify the row was actually updated in the DB
       const row = db.prepare(`SELECT short_id FROM tasks WHERE id = 'legacy-id'`).get() as {
         short_id: string;
       };
@@ -143,7 +130,6 @@ describe('TaskRepository — short ID', () => {
       const task = repo.createTask({ roomId: 'room-1', title: 'T', description: 'D' });
       expect(task.shortId).toBe('t-1');
 
-      // Counter is at 1; calling getTask should not allocate another
       const fetched = repo.getTask(task.id);
       expect(fetched!.shortId).toBe('t-1');
       expect(allocator.getCounter('task', 'room-1')).toBe(1);
@@ -156,7 +142,6 @@ describe('TaskRepository — short ID', () => {
 
   describe('lazy backfill in listTasks', () => {
     it('backfills tasks that are missing short_id', () => {
-      // Insert two legacy rows without short_id
       db.prepare(
         `INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at, updated_at)
 				 VALUES ('leg-1', 'room-1', 'L1', 'D', 'pending', 'normal', '[]', 1000, 1000)`
@@ -174,7 +159,6 @@ describe('TaskRepository — short ID', () => {
     });
 
     it('returns mix of tasks with and without short_id, all populated after call', () => {
-      // Task created with allocator gets t-1
       const withShortId = repo.createTask({
         roomId: 'room-1',
         title: 'Has short ID',
@@ -182,7 +166,6 @@ describe('TaskRepository — short ID', () => {
       });
       expect(withShortId.shortId).toBe('t-1');
 
-      // Legacy row without short_id
       db.prepare(
         `INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at, updated_at)
 				 VALUES ('leg-old', 'room-1', 'Legacy', 'D', 'pending', 'normal', '[]', 999, 999)`
@@ -192,7 +175,6 @@ describe('TaskRepository — short ID', () => {
       expect(tasks.length).toBe(2);
       expect(tasks.every((t) => !!t.shortId)).toBe(true);
 
-      // The legacy row should have gotten t-2 (counter was already at 1)
       const legacyTask = tasks.find((t) => t.id === 'leg-old');
       expect(legacyTask!.shortId).toBe('t-2');
     });
@@ -205,7 +187,6 @@ describe('TaskRepository — short ID', () => {
       const tasks = repo.listTasks('room-1');
       const afterCounter = allocator.getCounter('task', 'room-1');
 
-      // Counter should not have changed — no new allocations needed
       expect(afterCounter).toBe(beforeCounter);
       expect(tasks.find((t) => t.id === t1.id)!.shortId).toBe('t-1');
       expect(tasks.find((t) => t.id === t2.id)!.shortId).toBe('t-2');
@@ -214,7 +195,6 @@ describe('TaskRepository — short ID', () => {
 
   describe('lazy backfill in getDraftTasksByCreator', () => {
     it('backfills short_id for legacy draft rows', () => {
-      // Insert a legacy draft row without short_id
       db.prepare(
         `INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_by_task_id, created_at, updated_at)
 				 VALUES ('draft-leg', 'room-1', 'Draft Legacy', 'D', 'draft', 'normal', '[]', 'planner-1', 1000, 1000)`
@@ -224,7 +204,6 @@ describe('TaskRepository — short ID', () => {
       expect(tasks.length).toBe(1);
       expect(tasks[0].shortId).toBe('t-1');
 
-      // Verify the DB row was updated
       const row = db.prepare(`SELECT short_id FROM tasks WHERE id = 'draft-leg'`).get() as {
         short_id: string;
       };

@@ -1,75 +1,17 @@
-/**
- * Node Agent MCP Tool Schemas — Zod schemas and TypeScript types for the
- * tools available to node agent sub-sessions.
- *
- * Action tools:
- *   send_message    — channel-validated direct messaging
- *   save_artifact   — persist typed data to the workflow run artifact store (replaces save/write_artifact)
- *   create_standalone_task — create a new task in the same Space
- *
- * Discovery tools (read-only):
- *   list_artifacts       — list artifacts for the current workflow run
- *   list_peers           — list other group members with statuses and permitted channels
- *   list_reachable_agents — list all reachable agents/nodes grouped by proximity
- *   list_channels        — list all channels declared in the workflow
- *
- * This file contains only schema definitions — no runtime logic or side effects.
- *
- * Style conventions (matching task-agent-tool-schemas.ts):
- *   - z.string().describe() on every field — .describe() before .optional()
- *   - optional fields use .optional() after .describe()
- */
-
 import { z } from 'zod';
 import { ARTIFACT_SHAPES } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// list_peers
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `list_peers` input.
- * Lists all other members of the current workflow node group.
- * No arguments — the group and self are inferred from the node agent context.
- */
 export const ListPeersSchema = z.object({});
 
 export type ListPeersInput = z.infer<typeof ListPeersSchema>;
 
-// ---------------------------------------------------------------------------
-// send_message
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `send_message` input.
- *
- * Primary direct messaging tool for node agents. Validates against declared channel
- * topology before routing. Supports four target forms:
- *   - Agent name: `target: 'coder'` — DM to the named agent
- *   - Node name: `target: 'node-name'` — fan-out to all agents in the named node
- *   - Multicast array: `target: ['coder', 'reviewer']` — deliver to multiple agents
- *   - Broadcast to all permitted: `target: '*'`
- */
 export const SendMessageSchema = z.object({
-  /**
-   * Delivery target: an agent name for DM, a node name for fan-out,
-   * an array of agent names for multicast, or '*' for broadcast to all topology-permitted targets.
-   * - Agent name: delivers to the specific agent (or all agents sharing the name)
-   * - Node name: fan-out to all agents in the named node
-   * - Array of agent names: multicast to each specified agent (all must be permitted)
-   * - '*': broadcast to all permitted targets
-   */
   target: z
     .union([z.string(), z.array(z.string())])
     .describe(
       "Delivery target: agent name (DM), node name (fan-out), array of agent names (multicast), or '*' (broadcast to all permitted targets)"
     ),
-  /** The message to send to the target(s). */
   message: z.string().min(1).describe('The message content to send to the target peer(s)'),
-  /**
-   * Optional structured data payload attached to the message.
-   * Passed through to the target and available to send_message hooks for validation.
-   */
   data: z
     .record(z.string(), z.unknown())
     .describe(
@@ -79,10 +21,6 @@ export const SendMessageSchema = z.object({
 });
 
 export type SendMessageInput = z.infer<typeof SendMessageSchema>;
-
-// ---------------------------------------------------------------------------
-// external event subscriptions
-// ---------------------------------------------------------------------------
 
 export const SubscribeExternalEventSchema = z.object({
   topicPattern: z
@@ -115,19 +53,6 @@ export const SubscribePrEventsSchema = z.object({
 
 export type SubscribePrEventsInput = z.infer<typeof SubscribePrEventsSchema>;
 
-// ---------------------------------------------------------------------------
-// get_external_event
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `get_external_event` input.
- *
- * Fetches the full raw record for a single external event by its id — the
- * on-demand deep-dive counterpart to the lean "essence" injected into sessions
- * as a message. Use this for the rare (~1%) case where the digested summary is
- * not enough and you need the complete payload (incl. `rawPayload`, `body`,
- * `actor`, `eventType`, source-native fields, etc.).
- */
 export const GetExternalEventSchema = z.object({
   eventId: z
     .string()
@@ -137,28 +62,6 @@ export const GetExternalEventSchema = z.object({
 
 export type GetExternalEventInput = z.infer<typeof GetExternalEventSchema>;
 
-// ---------------------------------------------------------------------------
-// list_deliveries
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `list_deliveries` input.
- *
- * Read-only diagnostic tool that lists recent per-subscription external-event
- * deliveries (`space_external_event_deliveries`) joined to their source events
- * (`space_external_events`), so an agent can investigate why an event was or
- * was not delivered without raw SQL. Always scoped to the current space;
- * defaults to the current workflow run.
- *
- * `db_query` cannot reach these tables because they are space-scoped (by
- * `space_id`), not session-scoped — this tool is the intentional surface for
- * that delivery state.
- *
- * Delivery `state` is one of `pending` (registered, not yet delivered / retryable),
- * `delivered` (terminal), or `failed` (terminal). The joined `event.state` in
- * each row also surfaces the source-level lifecycle, including `ignored`
- * (no matching subscriptions — such events have no delivery rows of their own).
- */
 export const ListDeliveriesSchema = z.object({
   workflowRunId: z
     .string()
@@ -194,29 +97,6 @@ export const ListDeliveriesSchema = z.object({
 
 export type ListDeliveriesInput = z.infer<typeof ListDeliveriesSchema>;
 
-// ---------------------------------------------------------------------------
-// list_subscriptions
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `list_subscriptions` input.
- *
- * Read-only diagnostic that snapshots a workflow run's external-event
- * subscriptions across three layers — so an agent can answer "is this node
- * actually subscribed to these events?" from durable state, without raw SQL:
- *
- *   1. `declared`  — static interests from the workflow definition (durable).
- *   2. `persisted` — dynamic rows from `space_workflow_event_subscriptions`
- *      (durable; the PR 5 table).
- *   3. `active`    — in-memory trie entries, shown ONLY as a live cross-check.
- *
- * The durable layers (1 + 2) are the source of truth; the trie (3) is never the
- * answer. Each active entry is reconciled against durable state
- * (`source: 'declared' | 'persisted' | 'orphan'`), and durable rows missing
- * from the trie surface as `active: false` plus a `mismatches` summary — so a
- * declared-vs-active discrepancy is immediately visible. Always scoped to the
- * current space; defaults to this workflow run.
- */
 export const ListSubscriptionsSchema = z.object({
   workflowRunId: z
     .string()
@@ -235,47 +115,12 @@ export const ListSubscriptionsSchema = z.object({
 
 export type ListSubscriptionsInput = z.infer<typeof ListSubscriptionsSchema>;
 
-// ---------------------------------------------------------------------------
-// save_artifact
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `save_artifact` input.
- *
- * Persists data to the workflow run artifact store as a generic SHAPE from a
- * closed, domain-agnostic vocabulary: `link`, `commit_set`, `check`, `metric`,
- * `decision`, `note`. A SHAPE is structure (infra vocabulary); a KIND is a
- * freeform semantic label the domain supplies (e.g. `pr`, `issue`, `preview`,
- * `ci`, `review`). Infra never enumerates domain kinds.
- *
- * Identity is shape-aware and derived automatically (see examples below), so a
- * `note` is a single rolling status that upserts in place, a `link` is
- * one-per-kind, and a `decision` is single-terminal — unless you pass an
- * explicit multi-instance `key` (e.g. a decision 'round-0', or a note
- * 'attempt-0' for a per-attempt audit trail).
- *
- *   PR / preview / doc:   save_artifact({ shape: 'link', kind: 'pr',    data: { url, title } })
- *   CI / tests:           save_artifact({ shape: 'check',                data: { name: 'ci', status: 'pass', counts } })
- *   Review verdict:       save_artifact({ shape: 'decision', kind:'review', data: { recommendation: 'approve', summary } })
- *   Multi-round history:  save_artifact({ shape: 'decision', kind:'review', key: 'round-0', data: {...} })
- *   Per-attempt audit:    save_artifact({ shape: 'note', kind:'merge_conflict', key: 'attempt-0', data: { text } })
- *   Rolling status:       save_artifact({ shape: 'note',                 data: { text: 'writing tests' } })
- */
 export const SaveArtifactSchema = z.object({
-  /**
-   * STRUCTURE — closed vocabulary. One of the values in ARTIFACT_SHAPES.
-   * Validated against the set; unknown values are rejected. Required.
-   */
   shape: z
     .enum(ARTIFACT_SHAPES)
     .describe(
       "Structured shape from the closed set: 'link' | 'commit_set' | 'check' | 'metric' | 'decision' | 'note'. Required."
     ),
-  /**
-   * SEMANTIC hint (freeform, domain-extensible). Supplies the icon/label in
-   * the UI and folds into the identity key for `link`/`decision` so one kind
-   * never overwrites another. Examples: 'pr', 'issue', 'preview', 'ci', 'review'.
-   */
   kind: z
     .string()
     .min(1)
@@ -283,27 +128,16 @@ export const SaveArtifactSchema = z.object({
       "Semantic hint (freeform): 'pr', 'issue', 'preview', 'ci', 'review', etc. Used for the UI label/icon and folds into the identity key."
     )
     .optional(),
-  /**
-   * Identity override. Defaults are derived from the shape (note→'current',
-   * link→kind, check/metric→name, decision→key|kind|'current'). Pass an
-   * explicit key only for multi-round history (e.g. decision 'round-0').
-   */
   key: z
     .string()
     .describe(
       "Identity key override. Derived from the shape by default. Pass an explicit value only for multi-instance shapes — multi-round history (decision key: 'round-0') or per-attempt audit trails (note key: 'attempt-0')."
     )
     .optional(),
-  /** ≤1 sentence human note. Stored under data.summary (note/decision). */
   summary: z
     .string()
     .describe('Short human note (≤1 sentence). Stored as data.summary for note/decision shapes.')
     .optional(),
-  /**
-   * Shape-specific structured payload. Required fields depend on the shape
-   * (e.g. link needs `url`; check needs `name`+`status`; decision needs
-   * `recommendation`). Validated by save_artifact.
-   */
   data: z
     .record(z.string(), z.unknown())
     .describe(
@@ -314,14 +148,6 @@ export const SaveArtifactSchema = z.object({
 
 export type SaveArtifactInput = z.infer<typeof SaveArtifactSchema>;
 
-// ---------------------------------------------------------------------------
-// list_tasks
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `list_tasks` input.
- * Lists tasks in the current space. Filterable by status.
- */
 export const ListTasksSchema = z.object({
   status: z
     .enum([
@@ -360,14 +186,6 @@ export const ListTasksSchema = z.object({
 
 export type ListTasksInput = z.infer<typeof ListTasksSchema>;
 
-// ---------------------------------------------------------------------------
-// get_task
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `get_task` input.
- * Retrieves detailed information about a specific task by UUID or numeric task number.
- */
 export const GetTaskSchema = z.object({
   task_id: z.string().describe('UUID of the task to retrieve').optional(),
   task_number: z
@@ -378,14 +196,6 @@ export const GetTaskSchema = z.object({
 
 export type GetTaskInput = z.infer<typeof GetTaskSchema>;
 
-// ---------------------------------------------------------------------------
-// list_audit_entries
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `list_audit_entries` input.
- * Lists MCP audit log entries for the current space, filtered by task or session.
- */
 export const ListAuditEntriesSchema = z.object({
   task_id: z.string().describe('Filter by task ID').optional(),
   session_id: z.string().describe('Filter by session ID').optional(),
@@ -406,16 +216,6 @@ export const ListAuditEntriesSchema = z.object({
 
 export type ListAuditEntriesInput = z.infer<typeof ListAuditEntriesSchema>;
 
-// ---------------------------------------------------------------------------
-// create_standalone_task
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `create_standalone_task` input.
- *
- * Mirrors the Space Agent tool so workflow node agents can dispatch follow-up
- * work without needing the broader space-agent-tools MCP namespace.
- */
 export const CreateStandaloneTaskSchema = z.object({
   title: z.string().describe('Short title for the task'),
   description: z.string().describe('Detailed description of the work to be done'),
@@ -446,47 +246,16 @@ export const CreateStandaloneTaskSchema = z.object({
 
 export type CreateStandaloneTaskInput = z.infer<typeof CreateStandaloneTaskSchema>;
 
-// ---------------------------------------------------------------------------
-// list_reachable_agents
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `list_reachable_agents` input.
- * Lists all agents and nodes this agent can reach, grouped by within-node peers
- * and cross-node targets. Includes gate status for cross-node targets.
- * No arguments — the reachability graph is inferred from the agent's context.
- */
 export const ListReachableAgentsSchema = z.object({});
 
 export type ListReachableAgentsInput = z.infer<typeof ListReachableAgentsSchema>;
 
-// ---------------------------------------------------------------------------
-// list_channels
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `list_channels` input.
- * Lists all channels declared in the current workflow.
- * No arguments — channels are derived from the workflow run context.
- */
 export const ListChannelsSchema = z.object({});
 
 export type ListChannelsInput = z.infer<typeof ListChannelsSchema>;
 
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// list_artifacts
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `list_artifacts` input.
- * Lists artifacts for the current workflow run, optionally filtered.
- */
 export const ListArtifactsSchema = z.object({
-  /** Filter by originating node ID. */
   nodeId: z.string().describe('Filter by node ID').optional(),
-  /** Filter by artifact shape from the closed vocabulary (link/commit_set/check/metric/decision/note). */
   type: z
     .string()
     .describe('Filter by artifact shape (e.g. "link", "decision", "note")')
@@ -495,28 +264,7 @@ export const ListArtifactsSchema = z.object({
 
 export type ListArtifactsInput = z.infer<typeof ListArtifactsSchema>;
 
-// ---------------------------------------------------------------------------
-// restore_node_agent
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `restore_node_agent` input.
- *
- * Self-heal primitive — invoked by a sub-session agent when it detects (or
- * suspects) that node-agent tools are unavailable. The fact that this tool
- * call succeeds is itself proof that node-agent is registered for the
- * current session; the handler additionally re-attaches node-agent on the
- * server side as a belt-and-braces measure and returns the visible MCP
- * server names so the agent can confirm its environment.
- *
- * Use this when:
- *   - A previous `mcp__node-agent__send_message` (or other node-agent tool)
- *     unexpectedly returned "No such tool available".
- *   - You want to verify the node-agent environment before performing a
- *     critical handoff.
- */
 export const RestoreNodeAgentSchema = z.object({
-  /** Optional human-readable reason for the restore — recorded in logs. */
   reason: z
     .string()
     .describe(
@@ -527,49 +275,18 @@ export const RestoreNodeAgentSchema = z.object({
 
 export type RestoreNodeAgentInput = z.infer<typeof RestoreNodeAgentSchema>;
 
-// ---------------------------------------------------------------------------
-// publish_task
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `publish_task` input.
- *
- * Transitions a draft task to open status so the runtime's tick loop can
- * pick it up for orchestration. Only valid when the task is in `draft` status.
- */
 export const PublishTaskSchema = z.object({
-  /** UUID of the task to publish. */
   task_id: z.string().describe('UUID of the draft task to publish (draft → open)'),
 });
 
 export type PublishTaskInput = z.infer<typeof PublishTaskSchema>;
 
-// ---------------------------------------------------------------------------
-// archive_task
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `archive_task` input.
- *
- * Transitions a task to archived status — the true terminal state.
- * Valid from any status that allows the `archived` transition (see
- * VALID_SPACE_TASK_TRANSITIONS). Archived tasks are excluded from most
- * queries and cannot be reactivated.
- */
 export const ArchiveTaskSchema = z.object({
-  /** UUID of the task to archive. */
   task_id: z.string().describe('UUID of the task to archive'),
 });
 
 export type ArchiveTaskInput = z.infer<typeof ArchiveTaskSchema>;
 
-// ---------------------------------------------------------------------------
-// Aggregate export
-// ---------------------------------------------------------------------------
-
-/**
- * All node agent tool schemas keyed by tool name.
- */
 export const NODE_AGENT_TOOL_SCHEMAS = {
   list_peers: ListPeersSchema,
   send_message: SendMessageSchema,

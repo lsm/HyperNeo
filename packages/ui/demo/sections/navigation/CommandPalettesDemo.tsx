@@ -32,10 +32,6 @@ import {
   X,
 } from 'lucide-preact';
 
-// ============================================================================
-// DATA
-// ============================================================================
-
 interface Person {
   id: number;
   name: string;
@@ -260,10 +256,6 @@ const items: GroupedItem[] = [
   { id: 8, name: 'Customer Portal', category: 'Projects', url: '#' },
 ];
 
-// ============================================================================
-// EXAMPLE 1: Simple Command Palette
-// ============================================================================
-
 function SimpleCommandPalette() {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -352,10 +344,6 @@ function SimpleCommandPalette() {
   );
 }
 
-// ============================================================================
-// EXAMPLE 2: Simple with Padding
-// ============================================================================
-
 function SimpleWithPaddingCommandPalette() {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -441,10 +429,6 @@ function SimpleWithPaddingCommandPalette() {
     </div>
   );
 }
-
-// ============================================================================
-// EXAMPLE 3: With Preview
-// ============================================================================
 
 function WithPreviewCommandPalette() {
   const [open, setOpen] = useState(false);
@@ -638,10 +622,6 @@ function WithPreviewCommandPalette() {
   );
 }
 
-// ============================================================================
-// EXAMPLE 4: With Images and Descriptions
-// ============================================================================
-
 function WithImagesAndDescriptionsCommandPalette() {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -749,10 +729,6 @@ function WithImagesAndDescriptionsCommandPalette() {
     </div>
   );
 }
-
-// ============================================================================
-// EXAMPLE 5: With Icons
-// ============================================================================
 
 function WithIconsCommandPalette() {
   const [query, setQuery] = useState('');
@@ -889,10 +865,6 @@ function WithIconsCommandPalette() {
   );
 }
 
-// ============================================================================
-// EXAMPLE 6: Semi-Transparent with Icons
-// ============================================================================
-
 function SemiTransparentWithIconsCommandPalette() {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -1028,10 +1000,6 @@ function SemiTransparentWithIconsCommandPalette() {
   );
 }
 
-// ============================================================================
-// EXAMPLE 7: With Groups
-// ============================================================================
-
 function WithGroupsCommandPalette() {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -1153,10 +1121,6 @@ function WithGroupsCommandPalette() {
     </div>
   );
 }
-
-// ============================================================================
-// EXAMPLE 8: With Footer
-// ============================================================================
 
 function WithFooterCommandPalette() {
   const [query, setQuery] = useState('');
@@ -1323,14 +1287,9 @@ function WithFooterCommandPalette() {
   );
 }
 
-// ============================================================================
-// MAIN EXPORT
-// ============================================================================
-
 export function CommandPalettesDemo() {
   return (
     <div class="flex flex-col gap-12">
-      {/* Example 1: Simple */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Simple</h3>
         <div class="flex justify-center rounded-lg border border-surface-border bg-surface-0 p-8 dark:bg-surface-2">
@@ -1338,7 +1297,6 @@ export function CommandPalettesDemo() {
         </div>
       </div>
 
-      {/* Example 2: Simple with Padding */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Simple with padding</h3>
         <div class="flex justify-center rounded-lg border border-surface-border bg-surface-0 p-8 dark:bg-surface-2">
@@ -1346,7 +1304,6 @@ export function CommandPalettesDemo() {
         </div>
       </div>
 
-      {/* Example 3: With Preview */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">With preview</h3>
         <div class="flex justify-center rounded-lg border border-surface-border bg-surface-0 p-8 dark:bg-surface-2">
@@ -1354,7 +1311,6 @@ export function CommandPalettesDemo() {
         </div>
       </div>
 
-      {/* Example 4: With Images and Descriptions */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">With images and descriptions</h3>
         <div class="flex justify-center rounded-lg border border-surface-border bg-surface-0 p-8 dark:bg-surface-2">
@@ -1362,7 +1318,6 @@ export function CommandPalettesDemo() {
         </div>
       </div>
 
-      {/* Example 5: With Icons */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">With icons</h3>
         <div class="flex justify-center rounded-lg border border-surface-border bg-surface-0 p-8 dark:bg-surface-2">
@@ -1370,7 +1325,6 @@ export function CommandPalettesDemo() {
         </div>
       </div>
 
-      {/* Example 6: Semi-Transparent with Icons */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Semi-transparent with icons</h3>
         <div class="flex justify-center rounded-lg border border-surface-border bg-surface-1/50 p-8 dark:bg-surface-2/50">
@@ -1378,7 +1332,6 @@ export function CommandPalettesDemo() {
         </div>
       </div>
 
-      {/* Example 7: With Groups */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">With groups</h3>
         <div class="flex justify-center rounded-lg border border-surface-border bg-surface-0 p-8 dark:bg-surface-2">
@@ -1386,7 +1339,6 @@ export function CommandPalettesDemo() {
         </div>
       </div>
 
-      {/* Example 8: With Footer */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">With footer</h3>
         <div class="flex justify-center rounded-lg border border-surface-border bg-surface-0 p-8 dark:bg-surface-2">

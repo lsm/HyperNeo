@@ -21,8 +21,6 @@ interface TaskAuxiliaryPanelProps {
   navigationSpaceId?: string;
   taskId: string;
   onClose?: () => void;
-  /** Section to scroll into view on open/navigation, e.g. 'timeline' or
-   *  'artifacts' carried over from a legacy /timeline or /artifacts task URL. */
   focusSection?: string;
 }
 
@@ -70,8 +68,6 @@ function formatSchedule(schedule: {
   return formatTime(schedule.runAt);
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
-
 export function TaskAuxiliaryPanel({
   spaceId,
   navigationSpaceId,
@@ -117,9 +113,6 @@ export function TaskAuxiliaryPanel({
     };
   }, [task?.evolutionScopeId]);
 
-  // Land on the section requested by a legacy /timeline or /artifacts deep-link
-  // (SpaceTaskPane records it in rightPanelTargetSignal.tab before rewriting
-  // the URL to /thread). Tabs are gone, so scroll to the matching section.
   useEffect(() => {
     if (!focusSection) return;
     const testId =
@@ -194,10 +187,6 @@ export function TaskAuxiliaryPanel({
   const schedule = task.createdByTaskScheduleId
     ? (spaceStore.schedules.value.find((item) => item.id === task.createdByTaskScheduleId) ?? null)
     : null;
-  // Workflow run identity + execution status (store reads only — no detail
-  // fetch). preferredWorkflowId is the configured default; once a run exists
-  // it may differ (Auto-select), so surface the executed workflow and the run
-  // status, which is distinct from the task's own status.
   const workflowRun = task.workflowRunId
     ? (spaceStore.workflowRuns.value.find((run) => run.id === task.workflowRunId) ?? null)
     : null;

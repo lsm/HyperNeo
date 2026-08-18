@@ -1,9 +1,3 @@
-/**
- * Tests for SpaceDetailPanel.
- *
- * Covers overview/agent navigation, task tab defaults, counters, and sessions behavior.
- */
-
 import type { Space, SpaceTask } from '@hyperneo/shared';
 import { type Signal, signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
@@ -270,8 +264,6 @@ describe('SpaceDetailPanel', () => {
   });
 
   it('orders running tasks before open ones in the Active tab (recency as tiebreaker)', () => {
-    // Give the open task the most recent updatedAt so a pure-recency sort would
-    // surface it first — the status tier must override that.
     mockTasksSignal.value = [
       makeTask('t-open', 'Open Recent', 'open', { updatedAt: 300 }),
       makeTask('t-prog', 'In Progress Older', 'in_progress', { updatedAt: 100 }),
@@ -285,7 +277,6 @@ describe('SpaceDetailPanel', () => {
     const openEl = screen.getByText('Open Recent');
     const follows = Node.DOCUMENT_POSITION_FOLLOWING;
 
-    // Expected order: in_progress → approved → open.
     expect(prog.compareDocumentPosition(appr) & follows).toBeTruthy();
     expect(appr.compareDocumentPosition(openEl) & follows).toBeTruthy();
   });
@@ -298,7 +289,6 @@ describe('SpaceDetailPanel', () => {
     mockCurrentSpaceTaskIdSignal.value = 't2';
     render(<SpaceDetailPanel spaceId="space-1" />);
 
-    // Done tasks belong to neither tab; selecting one should not make it appear in the list
     expect(screen.queryByText('Done Task')).toBeNull();
   });
 
@@ -369,9 +359,7 @@ describe('SpaceDetailPanel', () => {
       ];
       render(<SpaceDetailPanel spaceId="space-1" />);
 
-      // Rename is via double-click only; the hover pencil was removed.
       expect(screen.queryByTestId('space-session-rename')).toBeNull();
-      // Archive is the single hover action.
       expect(screen.getByTestId('space-session-archive')).toBeTruthy();
     });
 
@@ -417,7 +405,6 @@ describe('SpaceDetailPanel', () => {
       fireEvent.click(screen.getByTestId('space-session-archive-confirm'));
 
       await waitFor(() => expect(mockArchiveSession).toHaveBeenCalledWith('s1', false));
-      // The commit-loss modal renders (ArchiveConfirmDialog heading).
       expect(screen.getByText('Confirm Archive')).toBeTruthy();
       expect(mockToastSuccess).not.toHaveBeenCalled();
     });
@@ -437,16 +424,13 @@ describe('SpaceDetailPanel', () => {
       fireEvent.click(screen.getByTestId('space-session-archive-confirm'));
       await waitFor(() => expect(screen.getByText('Confirm Archive')).toBeTruthy());
 
-      // Navigate to a different Space — the panel is reused without a remount key.
       mockSpaceIdSignal.value = 'space-2';
       rerender(<SpaceDetailPanel spaceId="space-2" />);
 
-      // The stale confirmation dialog from the previous Space must be gone.
       await waitFor(() => expect(screen.queryByText('Confirm Archive')).toBeNull());
     });
 
     it('ignores an archive probe that resolves after navigating to a different space', async () => {
-      // Hold the probe unresolved so we can navigate mid-flight.
       let resolveProbe: (value: Record<string, unknown>) => void = () => {};
       mockArchiveSession.mockReturnValue(
         new Promise<Record<string, unknown>>((resolve) => {
@@ -461,11 +445,9 @@ describe('SpaceDetailPanel', () => {
       fireEvent.click(screen.getByTestId('space-session-archive'));
       fireEvent.click(screen.getByTestId('space-session-archive-confirm'));
 
-      // Probe is in flight — switch Spaces before it resolves.
       mockSpaceIdSignal.value = 'space-2';
       rerender(<SpaceDetailPanel spaceId="space-2" />);
 
-      // Now the stale probe resolves requesting confirmation.
       resolveProbe({
         success: false,
         requiresConfirmation: true,
@@ -473,7 +455,6 @@ describe('SpaceDetailPanel', () => {
       });
 
       await waitFor(() => expect(mockArchiveSession).toHaveBeenCalledWith('s1', false));
-      // The stale confirmation must NOT appear over the new Space.
       expect(screen.queryByText('Confirm Archive')).toBeNull();
     });
   });
@@ -488,13 +469,11 @@ describe('SpaceDetailPanel', () => {
       ];
       render(<SpaceDetailPanel spaceId="space-1" />);
 
-      // Default tab is "action" — shows blocked tasks
       expect(screen.getByText('Blocked Task')).toBeTruthy();
       expect(screen.queryByText('Open Task')).toBeNull();
       expect(screen.queryByText('In Progress Task')).toBeNull();
       expect(screen.queryByText('Done Task')).toBeNull();
 
-      // Switch to Active — shows open + in_progress
       fireEvent.click(getTaskTab('Active'));
       expect(screen.getByText('Open Task')).toBeTruthy();
       expect(screen.getByText('In Progress Task')).toBeTruthy();
@@ -505,10 +484,8 @@ describe('SpaceDetailPanel', () => {
       mockTasksSignal.value = [];
       const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
 
-      // Verify empty state before an action-required task arrives.
       expect(screen.getByText('No tasks')).toBeTruthy();
 
-      // Simulate new task arriving via event (signal update)
       mockTasksSignal.value = [makeTask('t-new', 'New Task', 'blocked')];
       rerender(<SpaceDetailPanel spaceId="space-1" />);
 
@@ -520,18 +497,15 @@ describe('SpaceDetailPanel', () => {
       mockTasksSignal.value = [makeTask('t1', 'Task A', 'open')];
       const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
 
-      // Active: 1, Action: 0 — Tasks-nav badge hidden (action count = 0)
       expect(screen.getByText('1')).toBeTruthy();
       expect(screen.getByText('0')).toBeTruthy();
 
-      // Add a blocked task
       mockTasksSignal.value = [
         makeTask('t1', 'Task A', 'open'),
         makeTask('t2', 'Task B', 'blocked'),
       ];
       rerender(<SpaceDetailPanel spaceId="space-1" />);
 
-      // Active tab pill: 1, Action tab pill: 1, Tasks-nav badge: 1 → 3 elements
       const badges = screen.getAllByText('1');
       expect(badges.length).toBe(3);
     });
@@ -543,27 +517,19 @@ describe('SpaceDetailPanel', () => {
       ];
       const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
 
-      // Action tab (default): shows blocked task
       expect(screen.getByText('Task Two')).toBeTruthy();
 
-      // Simulate task status change: t1 becomes blocked, t2 becomes done
       mockTasksSignal.value = [
         makeTask('t1', 'Task One', 'blocked'),
         makeTask('t2', 'Task Two', 'done'),
       ];
       rerender(<SpaceDetailPanel spaceId="space-1" />);
 
-      // Action tab should now show Task One (blocked) but not Task Two (done)
       expect(screen.getByText('Task One')).toBeTruthy();
       expect(screen.queryByText('Task Two')).toBeNull();
     });
 
     it('Tasks-nav badge counts blocked tasks even when no review tasks exist', () => {
-      // Regression: previously the sidebar Tasks badge only counted
-      // tasks the server-side `spaceTasks.needingAttention` query
-      // returned (review + blocked-with-specific-reasons). Plain
-      // blocked tasks shown under the Action tab were missed, so
-      // e.g. 2 blocked / 0 review rendered no badge at all.
       mockTasksSignal.value = [
         makeTask('t1', 'Blocked One', 'blocked'),
         makeTask('t2', 'Blocked Two', 'blocked'),
@@ -572,7 +538,6 @@ describe('SpaceDetailPanel', () => {
 
       const tasksNav = screen.getByTestId('space-detail-tasks');
       expect(tasksNav).toBeTruthy();
-      // The badge inside the Tasks nav row should read "2".
       expect(within(tasksNav).getByText('2')).toBeTruthy();
     });
 
@@ -584,11 +549,9 @@ describe('SpaceDetailPanel', () => {
       ];
       render(<SpaceDetailPanel spaceId="space-1" />);
 
-      // Action tab badge inside the tab pill shows "2" (blocked + review).
       const actionTabButton = screen.getByRole('button', { name: /Action/i });
       expect(within(actionTabButton).getByText('2')).toBeTruthy();
 
-      // Sidebar Tasks badge should match.
       const tasksNav = screen.getByTestId('space-detail-tasks');
       expect(within(tasksNav).getByText('2')).toBeTruthy();
     });
@@ -603,18 +566,11 @@ describe('SpaceDetailPanel', () => {
 
       const tasksNav = screen.getByTestId('space-detail-tasks');
       expect(tasksNav).toBeTruthy();
-      // No amber badge on the Tasks row — the only number on this row
-      // would come from the badge, which renders only when count > 0.
       expect(within(tasksNav).queryByText('2')).toBeNull();
       expect(within(tasksNav).queryByText('1')).toBeNull();
     });
 
     it('shows approved (post-approval running) tasks under the Active tab', () => {
-      // Regression: the sidebar "Active" tab and the main-pane Tasks
-      // "Active" tab disagreed about `approved` tasks — the sidebar
-      // hid them while the tasks-view surfaced them. Both now share
-      // `isActiveTask` from `task-filters.ts`, which includes
-      // `approved` so a stuck post-approval task stays visible.
       mockTasksSignal.value = [
         makeTask('t1', 'Approved Task', 'approved'),
         makeTask('t2', 'Open Task', 'open'),
@@ -627,13 +583,11 @@ describe('SpaceDetailPanel', () => {
       expect(screen.getByText('Open Task')).toBeTruthy();
       expect(screen.queryByText('Blocked Task')).toBeNull();
 
-      // Active count should include the approved task (2 = open + approved)
       const activeTab = getTaskTab('Active');
       expect(within(activeTab).getByText('2')).toBeTruthy();
     });
 
     it('multiple tasks created via different paths all appear in panel', () => {
-      // Simulate tasks created via different paths: UI dialog, agent tool, workflow run
       mockTasksSignal.value = [
         makeTask('t-ui', 'UI Dialog Task', 'open'),
         makeTask('t-agent', 'Agent Created Task', 'in_progress', {
@@ -645,10 +599,8 @@ describe('SpaceDetailPanel', () => {
       ];
       render(<SpaceDetailPanel spaceId="space-1" />);
 
-      // Switch to Active tab
       fireEvent.click(getTaskTab('Active'));
 
-      // All three tasks should appear regardless of creation path
       expect(screen.getByText('UI Dialog Task')).toBeTruthy();
       expect(screen.getByText('Agent Created Task')).toBeTruthy();
       expect(screen.getByText('Workflow Task')).toBeTruthy();
@@ -657,17 +609,12 @@ describe('SpaceDetailPanel', () => {
 
   describe('sidebar list caps and View all links', () => {
     function makeTasks(count: number, status: SpaceTask['status'] = 'blocked') {
-      // updatedAt ascending so the oldest tasks have the lowest ids — sorted
-      // desc by recency, the low-id tasks are the ones that fall past the cap.
       return Array.from({ length: count }, (_, i) =>
         makeTask(`t${i}`, `Task ${String(i)}`, status, { updatedAt: i })
       );
     }
 
     function makeSessions(count: number) {
-      // lastActiveAt ascending; sorted desc by recency the low-id sessions
-      // fall past the cap. Insertion order is the same ascending order, so
-      // without the recency sort the low-id sessions would be the VISIBLE ones.
       return Array.from({ length: count }, (_, i) => ({
         id: `s${i}`,
         title: `Session ${String(i)}`,
@@ -687,7 +634,6 @@ describe('SpaceDetailPanel', () => {
     it('caps tasks at LIMIT and shows a View all button with the full tab count', () => {
       mockTasksSignal.value = makeTasks(12);
       render(<SpaceDetailPanel spaceId="space-1" />);
-      // Oldest two (Task 0, Task 1) fall past the cap.
       expect(screen.queryByText('Task 0')).toBeNull();
       expect(screen.queryByText('Task 1')).toBeNull();
       expect(screen.getByText('Task 2')).toBeTruthy();
@@ -700,7 +646,6 @@ describe('SpaceDetailPanel', () => {
       mockCurrentSpaceTaskIdSignal.value = 't0';
       render(<SpaceDetailPanel spaceId="space-1" />);
       expect(screen.getByText('Task 0')).toBeTruthy();
-      // The other capped-out task stays hidden.
       expect(screen.queryByText('Task 1')).toBeNull();
     });
 
@@ -713,7 +658,6 @@ describe('SpaceDetailPanel', () => {
     });
 
     it('Tasks nav button still uses the derived default tab', () => {
-      // No action tasks but active tasks present → default tab resolves to 'active'.
       mockTasksSignal.value = [makeTask('t1', 'Open Task', 'open')];
       render(<SpaceDetailPanel spaceId="space-1" />);
       fireEvent.click(screen.getByTestId('space-detail-tasks'));
@@ -729,7 +673,6 @@ describe('SpaceDetailPanel', () => {
     it('caps sessions at LIMIT (most-recent-first) and shows a View all button with the full count', () => {
       mockSessionsSignal.value = makeSessions(12);
       render(<SpaceDetailPanel spaceId="space-1" />);
-      // The recency sort keeps the recent sessions; the two oldest are hidden.
       expect(screen.queryByText('Session 0')).toBeNull();
       expect(screen.queryByText('Session 1')).toBeNull();
       expect(screen.getByText('Session 2')).toBeTruthy();

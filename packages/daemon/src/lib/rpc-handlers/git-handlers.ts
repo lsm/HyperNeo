@@ -1,10 +1,3 @@
-/**
- * Git RPC Handlers
- *
- * Read-only git context for folder paths, used by the session-creation flow to
- * drive workspace / worktree / branch pickers.
- */
-
 import type { MessageHub } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
 import type { WorktreeManager } from '../worktree-manager';
@@ -14,8 +7,6 @@ export function setupGitHandlers(
   worktreeManager: WorktreeManager,
   sessionManager: SessionManager
 ): void {
-  // Git context (repo detection, branches, current/default branch, dirty state)
-  // for a folder path. Returns a safe empty result for non-git paths.
   messageHub.onRequest('git.branches', async (data) => {
     const { path } = (data ?? {}) as { path?: unknown };
     if (typeof path !== 'string' || path.trim().length === 0) {
@@ -38,8 +29,6 @@ export function setupGitHandlers(
     return worktreeManager.getSessionGitStatus(session);
   });
 
-  // Full (untruncated) diff for a single file — read-only. Used by the Git
-  // panel to expand a diff that was truncated in the review payload.
   messageHub.onRequest('git.fileDiff', async (data) => {
     const { sessionId, path } = (data ?? {}) as { sessionId?: unknown; path?: unknown };
     if (typeof sessionId !== 'string' || sessionId.trim().length === 0) {

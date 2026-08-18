@@ -1,17 +1,3 @@
-/**
- * Unit tests for createNodeAgentToolHandlers()
- *
- * Covers all node agent peer communication tools:
- *   list_peers              — list peers excluding self and task-agent
- *   send_message            — channel-validated direct messaging
- *   save                    — persist summary and/or structured data to NodeExecution
- *   list_channels           — enumerate declared channels
- *   list_reachable_agents   — cross-node reachability
- *
- * Tests use a real SQLite database (via runMigrations) and mock message
- * injectors so no real agent sessions are created.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -47,13 +33,7 @@ import type {
 import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
 import type { WorkflowArtifactProfile } from '../../../../src/lib/space/runtime/artifact-profile.ts';
 
-// ---------------------------------------------------------------------------
-// DB helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
@@ -82,10 +62,6 @@ function seedSpaceWorkflowRunRow(
   ).run(runId, spaceId, workflowId, now, now);
 }
 
-/**
- * Creates a fresh workflow run and returns its ID.
- * Used by tests that need isolation from the default makeCtx() run.
- */
 function makeFreshRunId(db: BunDatabase, spaceId: string): string {
   const runId = `run-${Math.random().toString(36).slice(2)}`;
   seedSpaceWorkflowRunRow(db, runId, spaceId, 'wf-seed');
@@ -156,10 +132,6 @@ function seedSpaceTask(
   return id;
 }
 
-// ---------------------------------------------------------------------------
-// Test fixtures
-// ---------------------------------------------------------------------------
-
 function makeResolvedChannel(
   from: string,
   to: string,
@@ -173,10 +145,6 @@ function makeResolvedChannel(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Test context
-// ---------------------------------------------------------------------------
-
 interface TestCtx {
   db: BunDatabase;
   spaceId: string;
@@ -185,18 +153,13 @@ interface TestCtx {
   spaceTaskRepo: SpaceTaskRepository;
   nodeExecutionRepo: NodeExecutionRepository;
   artifactRepo: WorkflowRunArtifactRepository;
-  /** Coding artifact profile (PR resolution + review history) wired into the handlers. */
   artifactProfile: WorkflowArtifactProfile;
-  /** Workflow run ID for peer task seeding. */
   workflowRunId: string;
-  /** Workflow node ID for peer task seeding. */
   nodeId: string;
   coderSessionId: string;
   reviewerSessionId: string;
   taskAgentSessionId: string;
-  /** ID of the parent (main) task seeded in the DB. */
   parentTaskId: string;
-  /** ID of the step task seeded in the DB. */
   stepTaskId: string;
 }
 
@@ -213,19 +176,15 @@ function makeCtx(): TestCtx {
   const artifactRepo = new WorkflowRunArtifactRepository(db);
   const artifactProfile = new CodingArtifactProfile({ db, artifactRepo });
 
-  // Session IDs for peers
   const taskAgentSessionId = 'session-task-agent';
   const coderSessionId = 'session-coder';
   const reviewerSessionId = 'session-reviewer';
 
-  // Workflow run/node IDs for peer task seeding
   const workflowRunId = 'run-node-tools-default';
   const nodeId = 'node-node-tools-default';
 
-  // Seed workflow run so peer task FK constraints are satisfied
   seedSpaceWorkflowRunRow(db, workflowRunId, spaceId, 'wf-seed');
 
-  // Seed peer tasks: coder and reviewer on the default node
   seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'coder', 'in_progress', null, coderSessionId);
   seedSpaceTask(
     db,
@@ -238,7 +197,6 @@ function makeCtx(): TestCtx {
     reviewerSessionId
   );
 
-  // Seed a parent task and a step task in the DB
   const parentTask = taskRepo.createTask({
     spaceId,
     title: 'Parent Task',
@@ -307,17 +265,9 @@ function makeConfig(ctx: TestCtx, overrides: NodeConfigOverrides = {}): NodeAgen
   };
 }
 
-/**
- * Build a ChannelResolver directly from resolved channel entries.
- * Replaces the old seedWorkflowRunWithChannels + DB approach.
- */
 function makeResolver(channels: WorkflowChannel[]): ChannelResolver {
   return new ChannelResolver(channels);
 }
-
-// ---------------------------------------------------------------------------
-// Tests: list_peers
-// ---------------------------------------------------------------------------
 
 describe('node-agent-tools: list_peers', () => {
   let ctx: TestCtx;
@@ -337,7 +287,7 @@ describe('node-agent-tools: list_peers', () => {
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(true);
-    expect(data.peers).toHaveLength(1); // only reviewer (coder=self, task-agent=excluded)
+    expect(data.peers).toHaveLength(1);
     expect(data.peers[0].agentName).toBe('reviewer');
     expect(data.peers[0].sessionId).toBe(ctx.reviewerSessionId);
     expect(data.myAgentName).toBe('coder');
@@ -367,7 +317,6 @@ describe('node-agent-tools: list_peers', () => {
   });
 
   test('returns empty peer list when no peers in the run', async () => {
-    // Use a fresh run that has only the coder task (self) — no reviewer
     const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
     seedSpaceTask(
       ctx.db,
@@ -390,10 +339,8 @@ describe('node-agent-tools: list_peers', () => {
   });
 
   test('excludes open task with no session from peers list', async () => {
-    // Seed an open task with no session — should not appear in peers
     const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
     seedSpaceTask(ctx.db, ctx.spaceId, isolatedRunId, ctx.nodeId, 'tester', 'open', null);
-    // Do NOT set task_agent_session_id — simulates not-yet-spawned task
 
     const config = makeConfig(ctx, { workflowRunId: isolatedRunId });
     const handlers = createNodeAgentToolHandlers(config);
@@ -405,7 +352,6 @@ describe('node-agent-tools: list_peers', () => {
   });
 
   test('excludes failed task with no session from peers list', async () => {
-    // A blocked task that never got a session should also be excluded
     const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
     seedSpaceTask(
       ctx.db,
@@ -427,11 +373,8 @@ describe('node-agent-tools: list_peers', () => {
   });
 
   test('includes idle task with no session in peers list', async () => {
-    // An idle task whose session was cleared should still appear for visibility
-    // space_tasks uses 'done'; toNodeExecutionStatus maps it to 'idle' for node_executions
     const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
     seedSpaceTask(ctx.db, ctx.spaceId, isolatedRunId, ctx.nodeId, 'tester', 'done', 'Done');
-    // Do NOT set task_agent_session_id — simulates post-session cleanup
 
     const config = makeConfig(ctx, { workflowRunId: isolatedRunId });
     const handlers = createNodeAgentToolHandlers(config);
@@ -446,10 +389,6 @@ describe('node-agent-tools: list_peers', () => {
     expect(data.peers[0].completionState.completionSummary).toBe('Done');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Tests: send_message
-// ---------------------------------------------------------------------------
 
 describe('node-agent-tools: send_message', () => {
   let ctx: TestCtx;
@@ -484,7 +423,7 @@ describe('node-agent-tools: send_message', () => {
 
   test('point-to-point fails when channel not declared', async () => {
     const config = makeConfig(ctx, {
-      channelResolver: makeResolver([makeResolvedChannel('reviewer', 'coder')]), // reverse direction only
+      channelResolver: makeResolver([makeResolvedChannel('reviewer', 'coder')]),
     });
     const handlers = createNodeAgentToolHandlers(config);
     const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
@@ -496,12 +435,11 @@ describe('node-agent-tools: send_message', () => {
   });
 
   test('returns error when no channels declared at all (empty topology blocks send_message)', async () => {
-    const config = makeConfig(ctx); // no workflowRunId, no channels
+    const config = makeConfig(ctx);
     const handlers = createNodeAgentToolHandlers(config);
     const result = await handlers.send_message({ target: 'reviewer', message: 'test' });
     const data = JSON.parse(result.content[0].text);
 
-    // With no declared channels, send_message is unavailable.
     expect(data.success).toBe(false);
     expect(data.error).toContain('No channel topology declared');
   });
@@ -564,7 +502,7 @@ describe('node-agent-tools: send_message', () => {
 
   test('broadcast (*) fails when no channels declared', async () => {
     const config = makeConfig(ctx, {
-      channelResolver: makeResolver([makeResolvedChannel('reviewer', 'coder')]), // coder has no outgoing channels
+      channelResolver: makeResolver([makeResolvedChannel('reviewer', 'coder')]),
     });
     const handlers = createNodeAgentToolHandlers(config);
     const result = await handlers.send_message({ target: '*', message: 'broadcast' });
@@ -575,7 +513,6 @@ describe('node-agent-tools: send_message', () => {
   });
 
   test('broadcast (*) with empty topology returns error', async () => {
-    // No channels declared at all
     const config = makeConfig(ctx);
     const handlers = createNodeAgentToolHandlers(config);
     const result = await handlers.send_message({ target: '*', message: 'broadcast' });
@@ -586,7 +523,6 @@ describe('node-agent-tools: send_message', () => {
   });
 
   test('multicast delivers to all specified target roles', async () => {
-    // Add a security peer task
     seedSpaceTask(
       ctx.db,
       ctx.spaceId,
@@ -622,7 +558,6 @@ describe('node-agent-tools: send_message', () => {
   });
 
   test('multicast partial authorization fails with full error', async () => {
-    // Add security peer task
     seedSpaceTask(
       ctx.db,
       ctx.spaceId,
@@ -634,10 +569,7 @@ describe('node-agent-tools: send_message', () => {
       'session-security'
     );
     const config = makeConfig(ctx, {
-      channelResolver: makeResolver([
-        makeResolvedChannel('coder', 'reviewer'),
-        // no coder → security channel
-      ]),
+      channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
     });
     const handlers = createNodeAgentToolHandlers(config);
     const result = await handlers.send_message({
@@ -651,7 +583,6 @@ describe('node-agent-tools: send_message', () => {
   });
 
   test('hub-spoke: spoke cannot send to other spokes', async () => {
-    // Hub-spoke topology: hub ↔ coder, hub ↔ reviewer (coder cannot send to reviewer directly)
     const config = makeConfig(ctx, {
       channelResolver: makeResolver([
         makeResolvedChannel('hub', 'coder', true),
@@ -659,7 +590,7 @@ describe('node-agent-tools: send_message', () => {
         makeResolvedChannel('hub', 'reviewer', true),
         makeResolvedChannel('reviewer', 'hub', true),
       ]),
-    }); // myAgentName='coder'
+    });
     const handlers = createNodeAgentToolHandlers(config);
     const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
     const data = JSON.parse(result.content[0].text);
@@ -669,7 +600,6 @@ describe('node-agent-tools: send_message', () => {
   });
 
   test('hub-spoke: spoke can reply to hub', async () => {
-    // Add hub peer task
     seedSpaceTask(
       ctx.db,
       ctx.spaceId,
@@ -699,7 +629,6 @@ describe('node-agent-tools: send_message', () => {
   });
 
   test('bidirectional: both directions work', async () => {
-    // coder ↔ reviewer
     const biResolver = makeResolver([
       makeResolvedChannel('coder', 'reviewer'),
       makeResolvedChannel('reviewer', 'coder'),
@@ -713,11 +642,9 @@ describe('node-agent-tools: send_message', () => {
     });
     const handlers = createNodeAgentToolHandlers(config);
 
-    // coder → reviewer
     const r1 = await handlers.send_message({ target: 'reviewer', message: 'code ready' });
     expect(JSON.parse(r1.content[0].text).success).toBe(true);
 
-    // reviewer → coder (as reviewer)
     const configAsReviewer = makeConfig(ctx, {
       channelResolver: biResolver,
       mySessionId: ctx.reviewerSessionId,
@@ -732,10 +659,6 @@ describe('node-agent-tools: send_message', () => {
   });
 
   test('returns no-active-sessions when topology declares target but no session exists yet', async () => {
-    // "tester" is declared in channel topology (coder → tester) but has no active session.
-    // Target resolution succeeds (topology-declared), but delivery fails with
-    // a "could not deliver" error explaining the target is declared but has no session.
-    // Reworded in Task #133 to disambiguate from the genuinely-unknown-agent path.
     const config = makeConfig(ctx, {
       channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
     });
@@ -749,7 +672,6 @@ describe('node-agent-tools: send_message', () => {
   });
 
   test('returns unknown-target when role is not in topology or any execution', async () => {
-    // "totally-unknown" is not declared in channel topology and has no execution record.
     const config = makeConfig(ctx, {
       channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
     });
@@ -765,8 +687,6 @@ describe('node-agent-tools: send_message', () => {
   });
 
   test('handles partial injection failures gracefully (partial success)', async () => {
-    // In the new task-centric model, agent_name is unique per (run, node).
-    // Partial success is tested via multicast to two different roles: reviewer + security.
     seedSpaceTask(
       ctx.db,
       ctx.spaceId,
@@ -786,7 +706,6 @@ describe('node-agent-tools: send_message', () => {
       messageInjector: async (_sid) => {
         callCount++;
         if (callCount === 1) throw new Error('injection failed');
-        // second call succeeds
       },
     });
     const handlers = createNodeAgentToolHandlers(config);
@@ -796,11 +715,9 @@ describe('node-agent-tools: send_message', () => {
     });
     const data = JSON.parse(result.content[0].text);
 
-    // Partial success — one delivered, one failed
     expect(data.success).toBe('partial');
     expect(data.delivered).toHaveLength(1);
     expect(data.failed).toHaveLength(1);
-    // Both targets were attempted (best-effort, not stop-on-first-error)
     expect(callCount).toBe(2);
   });
 
@@ -821,7 +738,6 @@ describe('node-agent-tools: send_message', () => {
   });
 
   test('best-effort multicast: first delivery succeeds, second fails — partial success', async () => {
-    // Add security peer task so we can send to two different non-task-agent roles
     seedSpaceTask(
       ctx.db,
       ctx.spaceId,
@@ -852,12 +768,10 @@ describe('node-agent-tools: send_message', () => {
     });
     const data = JSON.parse(result.content[0].text);
 
-    // Should NOT return success: false for total failure — it's partial
     expect(data.success).toBe('partial');
     expect(data.delivered).toHaveLength(1);
     expect(data.failed).toHaveLength(1);
     expect(data.failed[0].error).toContain('session not available');
-    // Both targets were attempted (best-effort, not stop-on-first-error)
     expect(callCount).toBe(2);
   });
 
@@ -878,10 +792,6 @@ describe('node-agent-tools: send_message', () => {
     expect(data.failed).toHaveLength(1);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Tests: save_artifact
-// ---------------------------------------------------------------------------
 
 describe('node-agent-tools: save_artifact', () => {
   let ctx: TestCtx;
@@ -907,7 +817,6 @@ describe('node-agent-tools: save_artifact', () => {
     expect(data.artifact.nodeId).toBe(ctx.nodeId);
     expect(data.artifact.runId).toBe(ctx.workflowRunId);
 
-    // Verify persisted in DB as the shape.
     const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
     expect(artifacts).toHaveLength(1);
     expect(artifacts[0].data.text).toBe('PR #42 merged.');
@@ -961,7 +870,6 @@ describe('node-agent-tools: save_artifact', () => {
       (await handlers.save_artifact({ shape: 'note', data: { text: 'second' } })).content[0].text
     );
     expect(r2.success).toBe(true);
-    // Same artifact ID (upserted in place — note is a single rolling-status row)
     expect(r2.artifact.id).toBe(r1.artifact.id);
 
     const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
@@ -981,7 +889,6 @@ describe('node-agent-tools: save_artifact', () => {
       kind: 'issue',
       data: { url: 'https://example.com/issue/2' },
     });
-    // Same kind upserts; different kind is a new row.
     await handlers.save_artifact({
       shape: 'link',
       kind: 'pr',
@@ -1018,7 +925,6 @@ describe('node-agent-tools: save_artifact', () => {
     );
     expect(r1.success).toBe(true);
     expect(r2.success).toBe(true);
-    // Distinct rows (multi-round, not collapsed).
     expect(r2.artifact.id).not.toBe(r1.artifact.id);
 
     const decisions = ctx.artifactRepo.listByRun(ctx.workflowRunId, {
@@ -1029,7 +935,6 @@ describe('node-agent-tools: save_artifact', () => {
 
   test('rejects an unknown shape', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    // Bypass the schema by calling the handler directly with a bad shape.
     const result = await handlers.save_artifact({
       // @ts-expect-error — intentionally invalid shape
       shape: 'banana',
@@ -1064,12 +969,8 @@ describe('node-agent-tools: save_artifact', () => {
     expect(data.error).toContain('summary');
   });
 
-  // ── Shape required (legacy `type` alias removed) ──────────────────────────
-
   test('rejects when shape is missing — the legacy `type` alias is no longer accepted', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-    // `type` is silently stripped by the schema; with no `shape`, the handler
-    // rejects. This documents the cutover off the legacy freeform-type shim.
     const result = await handlers.save_artifact({
       // @ts-expect-error — legacy `type` is no longer part of the schema
       type: 'progress',
@@ -1080,13 +981,6 @@ describe('node-agent-tools: save_artifact', () => {
     expect(data.error).toContain('shape');
   });
 
-  // ── Prompt → validator parity ───────────────────────────────────────────
-  // Runs the EXACT save_artifact payloads emitted by the migrated coding-workflow
-  // prompts (built-in-workflows, post-approval-merge-template) and the end-node
-  // Runtime Execution Contract through the real handler. CI was green while the
-  // `decision` sites omitted `data.recommendation` only because nothing exercised
-  // prompt→validator; this test is the regression guard for that class of bug.
-
   test('every migrated prompt payload is accepted and persists', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
     const run = async (payload: Parameters<typeof handlers.save_artifact>[0]) => {
@@ -1095,7 +989,6 @@ describe('node-agent-tools: save_artifact', () => {
       return parsed;
     };
 
-    // Dispatcher (built-in-workflows) — terminal outcome decision.
     await run({
       shape: 'decision',
       summary: 'Created 2 tasks from plan: foo, bar',
@@ -1107,7 +1000,6 @@ describe('node-agent-tools: save_artifact', () => {
       },
     });
 
-    // Fullstack QA all-green (built-in-workflows) — PR link + terminal outcome.
     await run({ shape: 'link', kind: 'pr', data: { url: 'https://github.com/o/r/pull/9' } });
     await run({
       shape: 'decision',
@@ -1121,9 +1013,6 @@ describe('node-agent-tools: save_artifact', () => {
       },
     });
 
-    // End-node Runtime Execution Contract (task-agent-manager) — both branches
-    // carry data.recommendation and a distinct key so the generic outcome
-    // decision doesn't clobber a slot-prompt terminal decision (key 'current').
     await run({
       shape: 'decision',
       key: 'outcome',
@@ -1131,7 +1020,6 @@ describe('node-agent-tools: save_artifact', () => {
       data: { recommendation: 'completed' },
     });
 
-    // Merge-conflict attempt (post-approval-merge-template) — per-attempt note.
     await run({
       shape: 'note',
       kind: 'merge_conflict',
@@ -1153,7 +1041,6 @@ describe('node-agent-tools: save_artifact', () => {
       data: { pr_url: 'https://github.com/o/r/pull/9', attempt: 1 },
     });
 
-    // Post-merge audit (post-approval-merge-template) — link kind:'merge'.
     await run({
       shape: 'link',
       kind: 'merge',
@@ -1164,8 +1051,6 @@ describe('node-agent-tools: save_artifact', () => {
       },
     });
 
-    // Fullstack QA failure (built-in-workflows) — per-cycle note so each failure
-    // cycle keeps its own repro evidence.
     await run({
       shape: 'note',
       kind: 'qa',
@@ -1179,7 +1064,6 @@ describe('node-agent-tools: save_artifact', () => {
       summary: 'QA failed (cycle 2): flaky test on retry',
     });
 
-    // Per-attempt / per-cycle notes must persist as DISTINCT rows (not overwrite).
     const notes = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' });
     expect(notes.map((n) => n.artifactKey).sort()).toEqual([
       'merge_conflict:attempt-0',
@@ -1189,10 +1073,6 @@ describe('node-agent-tools: save_artifact', () => {
     ]);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Tests: list_artifacts
-// ---------------------------------------------------------------------------
 
 describe('node-agent-tools: list_artifacts', () => {
   let ctx: TestCtx;
@@ -1205,9 +1085,6 @@ describe('node-agent-tools: list_artifacts', () => {
     ctx.db.close();
   });
 
-  // Seed a realistic mix of shapes and kinds, then return a fresh handler pair
-  // for listing. save_artifact is the production writer, so this exercises the
-  // real kind assignment (pr/review get an implicit kind; result is overloaded).
   async function seedMixed() {
     const writer = createNodeAgentToolHandlers(makeConfig(ctx));
     const writes: SaveArtifactInput[] = [
@@ -1245,10 +1122,6 @@ describe('node-agent-tools: list_artifacts', () => {
     expect(artifacts).toHaveLength(6);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Tests: list_channels
-// ---------------------------------------------------------------------------
 
 describe('node-agent-tools: list_channels', () => {
   let ctx: TestCtx;
@@ -1335,7 +1208,6 @@ describe('node-agent-tools: list_reachable_agents', () => {
   });
 
   test('returns cross-node targets for channels to roles not in current group', async () => {
-    // 'tester' is not a member of the session group — cross-node target
     const config = makeConfig(ctx, {
       channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
     });
@@ -1347,11 +1219,9 @@ describe('node-agent-tools: list_reachable_agents', () => {
     expect(data.reachabilityDeclared).toBe(true);
     expect(data.crossNodeTargets).toHaveLength(1);
     expect(data.crossNodeTargets[0].nodeName).toBe('tester');
-    // isFanOut removed from cross-node targets (fan-out is determined by array 'to')
   });
 
   test('within-node peer with a channel does not appear in cross-node targets', async () => {
-    // 'reviewer' is in the session group — stays in withinNodePeers, not crossNodeTargets
     const config = makeConfig(ctx, {
       channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
     });
@@ -1376,15 +1246,13 @@ describe('node-agent-tools: list_reachable_agents', () => {
 
     expect(data.crossNodeTargets).toHaveLength(1);
     expect(data.crossNodeTargets[0].nodeName).toBe('qa-node');
-    // isFanOut removed - channel to[] array already indicates fan-out
   });
 
   test('deduplicates cross-node targets from multiple channels to same role', async () => {
-    // Two channels to 'tester' (e.g. from bidirectional expansion) — should appear once
     const config = makeConfig(ctx, {
       channelResolver: makeResolver([
         makeResolvedChannel('coder', 'tester'),
-        makeResolvedChannel('coder', 'tester'), // duplicate
+        makeResolvedChannel('coder', 'tester'),
       ]),
     });
     const handlers = createNodeAgentToolHandlers(config);
@@ -1395,7 +1263,6 @@ describe('node-agent-tools: list_reachable_agents', () => {
   });
 
   test('only includes outgoing channels (fromRole matches myAgentName)', async () => {
-    // Channel from 'tester' → 'coder' should NOT appear as a cross-node target for coder
     const config = makeConfig(ctx, {
       channelResolver: makeResolver([makeResolvedChannel('tester', 'coder')]),
     });
@@ -1406,10 +1273,6 @@ describe('node-agent-tools: list_reachable_agents', () => {
     expect(data.crossNodeTargets).toHaveLength(0);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Tests: external event subscriptions
-// ---------------------------------------------------------------------------
 
 describe('node-agent-tools: external event subscriptions', () => {
   let ctx: TestCtx;
@@ -1513,10 +1376,6 @@ describe('node-agent-tools: external event subscriptions', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Tests: get_external_event
-// ---------------------------------------------------------------------------
-
 function makeGitHubEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
   return {
     id: crypto.randomUUID(),
@@ -1585,7 +1444,6 @@ describe('node-agent-tools: get_external_event', () => {
     expect(data.event.topic).toBe(event.topic);
     expect(data.event.summary).toBe(event.summary);
     expect(data.event.externalUrl).toBe(event.externalUrl);
-    // The complete source payload — including the nested rawPayload — is present.
     expect(data.event.payload.body).toBe('nit: prefer const');
     expect(data.event.payload.rawPayload.comment.node_id).toBe('PRRC_node1');
     expect(data.event.payload.rawPayload.comment.path).toBe('src/index.ts');
@@ -1605,9 +1463,6 @@ describe('node-agent-tools: get_external_event', () => {
 
   test('treats an event in another space as not-found (no cross-space leak)', async () => {
     const store = new ExternalEventStore(ctx.db);
-    // Seed the foreign-space row so the event FK is satisfied; the lookup must
-    // still reject it because the caller's space differs. Use a distinct
-    // workspace_path — the column is UNIQUE and the default helper hardcodes /tmp.
     ctx.db
       .prepare(
         `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
@@ -1654,14 +1509,6 @@ describe('node-agent-tools: get_external_event', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Tests: list_deliveries
-// ---------------------------------------------------------------------------
-
-/**
- * Seed a delivery row (pending by default) for the given event in the test
- * space, attached to the context's default run/node unless overridden.
- */
 function seedDelivery(
   store: ExternalEventStore,
   event: ExternalEvent,
@@ -1709,7 +1556,6 @@ describe('node-agent-tools: list_deliveries', () => {
     expect(delivery.state).toBe('pending');
     expect(delivery.workflowRunId).toBe(ctx.workflowRunId);
     expect(delivery.nodeId).toBe(ctx.nodeId);
-    // Event essence is joined in.
     expect(delivery.event.topic).toBe(event.topic);
     expect(delivery.event.source).toBe('github');
     expect(delivery.event.summary).toBe(event.summary);
@@ -1776,7 +1622,6 @@ describe('node-agent-tools: list_deliveries', () => {
     expect(data.deliveries).toHaveLength(1);
     expect(data.deliveries[0].deliveryKey).toBe('dk-mine');
 
-    // Explicit override reaches the other run (same space).
     const other = await handlers.list_deliveries({ workflowRunId: 'run-node-tools-other' });
     const otherData = JSON.parse(other.content[0].text);
     expect(otherData.deliveries).toHaveLength(1);
@@ -1785,11 +1630,9 @@ describe('node-agent-tools: list_deliveries', () => {
 
   test('does not leak deliveries from another space', async () => {
     const store = new ExternalEventStore(ctx.db);
-    // A delivery in the current run/space.
     const ownEvent = makeGitHubEvent({ spaceId: ctx.spaceId });
     seedDelivery(store, ownEvent, { deliveryKey: 'dk-own' });
 
-    // A delivery with the SAME run id but in a different space.
     ctx.db
       .prepare(
         `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
@@ -1843,10 +1686,6 @@ describe('node-agent-tools: list_deliveries', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Tests: list_subscriptions
-// ---------------------------------------------------------------------------
-
 describe('node-agent-tools: list_subscriptions', () => {
   let ctx: TestCtx;
 
@@ -1880,7 +1719,6 @@ describe('node-agent-tools: list_subscriptions', () => {
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(true);
-    // No args → callback receives the session's current run, no node filter.
     expect(calls).toEqual([{ workflowRunId: undefined, nodeId: undefined }]);
   });
 
@@ -1914,8 +1752,6 @@ describe('node-agent-tools: list_subscriptions', () => {
   });
 
   test('a realistic result envelope survives the jsonResult round-trip', async () => {
-    // End-to-end pass-through: the structured {success, result:{declared, persisted,
-    // active, mismatches}} envelope the callback returns is what the agent receives.
     const handlers = createNodeAgentToolHandlers(
       makeConfig(ctx, {
         onListSubscriptions: async () => ({
@@ -1983,10 +1819,6 @@ describe('node-agent-tools: list_subscriptions', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Tests: createNodeAgentMcpServer (factory)
-// ---------------------------------------------------------------------------
-
 describe('node-agent-tools: createNodeAgentMcpServer', () => {
   let ctx: TestCtx;
 
@@ -2002,7 +1834,6 @@ describe('node-agent-tools: createNodeAgentMcpServer', () => {
     const config = makeConfig(ctx);
     const server = createNodeAgentMcpServer(config);
 
-    // Server should be an object with a server property (MCP SDK server)
     expect(server).toBeDefined();
     expect(typeof server).toBe('object');
   });
@@ -2027,10 +1858,6 @@ describe('node-agent-tools: system prompt uses only visible prompt text', () => 
   });
 });
 
-// ---------------------------------------------------------------------------
-// Tests: list_peers — completion state
-// ---------------------------------------------------------------------------
-
 describe('list_peers — completion state', () => {
   let ctx: TestCtx;
 
@@ -2048,8 +1875,6 @@ describe('list_peers — completion state', () => {
 
     seedSpaceWorkflowRunRow(ctx.db, workflowRunId, ctx.spaceId, 'wf-seed');
 
-    // Seed a completed task for the reviewer peer
-    // space_tasks uses 'done'; toNodeExecutionStatus maps it to 'idle' for node_executions
     seedSpaceTask(
       ctx.db,
       ctx.spaceId,
@@ -2083,9 +1908,7 @@ describe('list_peers — completion state', () => {
 
     seedSpaceWorkflowRunRow(ctx.db, workflowRunId, ctx.spaceId, 'wf-seed');
 
-    // Seed tasks for both coder and reviewer on the same node
     seedSpaceTask(ctx.db, ctx.spaceId, workflowRunId, workflowNodeId, 'coder', 'in_progress', null);
-    // space_tasks uses 'done'; toNodeExecutionStatus maps it to 'idle' for node_executions
     seedSpaceTask(
       ctx.db,
       ctx.spaceId,
@@ -2126,7 +1949,6 @@ describe('list_peers — completion state', () => {
     const workflowNodeId = 'node-empty';
     const workflowRunId = 'run-test-empty';
 
-    // No tasks seeded for this node
     const config = makeConfig(ctx, {
       workflowRunId,
       workflowNodeId,
@@ -2137,16 +1959,11 @@ describe('list_peers — completion state', () => {
 
     expect(data.success).toBe(true);
     expect(data.nodeCompletionState).toHaveLength(0);
-    // All peers should have null completionState
     for (const peer of data.peers) {
       expect(peer.completionState).toBeNull();
     }
   });
 });
-
-// ---------------------------------------------------------------------------
-// Tests: create_standalone_task
-// ---------------------------------------------------------------------------
 
 describe('node-agent-tools: create_standalone_task', () => {
   let ctx: TestCtx;
@@ -2224,10 +2041,6 @@ describe('node-agent-tools: create_standalone_task', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Tests: restore_node_agent (self-heal primitive)
-// ---------------------------------------------------------------------------
-
 describe('node-agent-tools: restore_node_agent', () => {
   let ctx: TestCtx;
 
@@ -2276,8 +2089,6 @@ describe('node-agent-tools: restore_node_agent', () => {
     const result = await handlers.restore_node_agent({ reason: 'diagnostic' });
     const data = JSON.parse(result.content[0].text);
 
-    // The tool MUST report success — calling it at all proves node-agent is registered.
-    // Server-side reattach failures are logged but must not block the agent's recovery flow.
     expect(data.success).toBe(true);
     expect(data.sessionId).toBe(ctx.coderSessionId);
   });
@@ -2307,10 +2118,6 @@ describe('node-agent-tools: restore_node_agent', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Tests: list_peers — cross-node peer discovery (Bug #1 fix)
-// ---------------------------------------------------------------------------
-
 describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
   let ctx: TestCtx;
 
@@ -2323,14 +2130,9 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
   });
 
   test('shows cross-node peer as not_started when node has not been activated yet', async () => {
-    // Workflow: Coding node (coder) → Review node (reviewer).
-    // Coder is active; Review node hasn't been activated yet (no execution record).
-    // After the fix: list_peers should include the reviewer with taskStatus: "not_started"
-    // so the coder knows to send_message to activate it.
     const reviewNodeId = 'node-review';
-    const codingNodeId = ctx.nodeId; // the node coder is running on
+    const codingNodeId = ctx.nodeId;
 
-    // Workflow definition with two nodes and a channel
     const workflow: SpaceWorkflow = {
       id: 'wf-cross-node',
       spaceId: ctx.spaceId,
@@ -2359,8 +2161,6 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
       { id: 'ch-coding-review', from: 'Coding', to: 'Review' },
     ]);
 
-    // Coder is on the Coding node; reviewer is on Review node but NOT YET ACTIVATED
-    // (no execution record for Review node exists)
     const config = makeConfig(ctx, {
       myAgentName: 'coder',
       mySessionId: ctx.coderSessionId,
@@ -2373,7 +2173,6 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(true);
-    // Should include the reviewer as a cross-node peer even though not yet activated
     const crossNodePeer = data.peers.find(
       (p: { agentName: string }) => p.agentName === 'agent-reviewer'
     );
@@ -2382,10 +2181,8 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
     expect(crossNodePeer.completionState.taskStatus).toBe('not_started');
     expect(crossNodePeer.nodeName).toBe('Review');
 
-    // permittedTargets must include BOTH the topology node name AND the resolved slot name
-    // so callers can use either form with send_message.
-    expect(data.permittedTargets).toContain('Review'); // topology node name
-    expect(data.permittedTargets).toContain('agent-reviewer'); // resolved slot name
+    expect(data.permittedTargets).toContain('Review');
+    expect(data.permittedTargets).toContain('agent-reviewer');
   });
 
   test('shows cross-node peer with active status when node has been activated', async () => {
@@ -2420,7 +2217,6 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
       { id: 'ch-coding-review', from: 'Coding', to: 'Review' },
     ]);
 
-    // Seed a reviewer execution on the Review node (already activated)
     const reviewerSessionId = 'session-reviewer-cross';
     const nodeExecutionRepo = ctx.nodeExecutionRepo;
     const exec = nodeExecutionRepo.createOrIgnore({
@@ -2485,7 +2281,6 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
       { id: 'ch-coding-review', from: 'Coding', to: 'Review' },
     ]);
 
-    // Seed a completed (idle) reviewer execution
     const nodeExecutionRepo = ctx.nodeExecutionRepo;
     const exec = nodeExecutionRepo.createOrIgnore({
       workflowRunId: ctx.workflowRunId,
@@ -2518,9 +2313,8 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
   });
 
   test('does not include cross-node peers when no channel topology declared', async () => {
-    // Without a channel resolver, no cross-node peers should appear
     const config = makeConfig(ctx, {
-      channelResolver: makeResolver([]), // empty topology
+      channelResolver: makeResolver([]),
       workflow: null,
     });
     const handlers = createNodeAgentToolHandlers(config);
@@ -2528,16 +2322,11 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(true);
-    // Only within-node peers (reviewer), no cross-node since topology empty
     expect(data.peers).toHaveLength(1);
     expect(data.peers[0].agentName).toBe('reviewer');
   });
 
   test('cross-node peer uses topology target name as agentName when workflow is null', async () => {
-    // workflow: null means workflow?.nodes.find(...) → undefined, so targetNode is never found.
-    // The fallback path (else branch after resolveNodeAgents) uses targetNodeName as agentName.
-    // This verifies the code path is safe when a non-empty channelResolver is provided
-    // but no workflow definition is available to look up node details.
     const config = makeConfig(ctx, {
       myAgentName: 'coder',
       mySessionId: ctx.coderSessionId,
@@ -2550,7 +2339,6 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(true);
-    // No workflow → targetNode is undefined → agentName falls back to targetNodeName ('Review')
     const crossPeer = data.peers.find((p: { agentName: string }) => p.agentName === 'Review');
     expect(crossPeer).toBeDefined();
     expect(crossPeer.status).toBe('not_started');
@@ -2558,8 +2346,6 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
   });
 
   test('cross-node peer uses node name when resolveNodeAgents throws (no agents defined)', async () => {
-    // When a node has no agents array and no agentId shorthand, resolveNodeAgents throws.
-    // The catch block falls back to using the targetNodeName as the agent name.
     const reviewNodeId = 'node-review-no-agents';
     const codingNodeId = ctx.nodeId;
 
@@ -2574,7 +2360,6 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
           name: 'Coding',
           agents: [{ agentId: 'agent-coder', name: 'coder' }],
         },
-        // No agents defined and no legacy agentId — resolveNodeAgents will throw
         { id: reviewNodeId, name: 'Review', agents: [] },
       ],
       startNodeId: codingNodeId,
@@ -2596,7 +2381,6 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(true);
-    // resolveNodeAgents throws (empty agents, no legacy agentId) → catch → agentName = 'Review'
     const crossPeer = data.peers.find((p: { agentName: string }) => p.agentName === 'Review');
     expect(crossPeer).toBeDefined();
     expect(crossPeer.status).toBe('not_started');
@@ -2604,8 +2388,6 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
   });
 
   test('cross-node peer with pending execution status appears as not_started', async () => {
-    // Guards the fix for comment #1: 'pending' execution (node activated, session not yet
-    // spawned) must appear as 'not_started' not 'active' in the cross-node peer list.
     const reviewNodeId = 'node-review-pending';
     const codingNodeId = ctx.nodeId;
 
@@ -2633,14 +2415,12 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
       channels: [{ id: 'ch-coding-review', from: 'Coding', to: 'Review' }],
     };
 
-    // Seed a 'pending' execution for reviewer (activation created, session not yet spawned)
     ctx.nodeExecutionRepo.createOrIgnore({
       workflowRunId: ctx.workflowRunId,
       workflowNodeId: reviewNodeId,
       agentName: 'agent-reviewer',
       status: 'pending',
     });
-    // No agentSessionId set — the session hasn't been assigned yet
 
     const config = makeConfig(ctx, {
       myAgentName: 'coder',
@@ -2658,16 +2438,11 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
       (p: { agentName: string }) => p.agentName === 'agent-reviewer'
     );
     expect(crossPeer).toBeDefined();
-    // 'pending' must NOT map to 'active' — it should be 'not_started'
     expect(crossPeer.status).toBe('not_started');
     expect(crossPeer.completionState.taskStatus).toBe('pending');
     expect(crossPeer.nodeName).toBe('Review');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Tests: send_message — queue-when-inactive (Bug #2 fix)
-// ---------------------------------------------------------------------------
 
 describe('node-agent-tools: send_message — queue-when-inactive', () => {
   let ctx: TestCtx;
@@ -2681,11 +2456,8 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
   });
 
   test('queues message for declared-but-inactive agent when pendingMessageRepo provided', async () => {
-    // "reviewer" is declared in node_executions but has no active session.
-    // With pendingMessageRepo configured, the message should be queued, not dropped.
     const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
 
-    // Seed reviewer execution WITHOUT a session (pending activation)
     const nodeExecutionRepo = ctx.nodeExecutionRepo;
     nodeExecutionRepo.createOrIgnore({
       workflowRunId: isolatedRunId,
@@ -2719,14 +2491,12 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
     });
     const data = JSON.parse(result.content[0].text);
 
-    // Message should be queued as a backstop, but not reported as delivered.
     expect(data.success).toBe(false);
     expect(data.queued).toBeDefined();
     expect(data.queued).toHaveLength(1);
     expect(data.queued[0].agentName).toBe('reviewer');
     expect(data.delivered ?? []).toHaveLength(0);
 
-    // Verify the message is in the queue
     const pending = pendingMessageRepo.listPendingForTarget(isolatedRunId, 'reviewer');
     expect(pending).toHaveLength(1);
     expect(pending[0].sourceAgentName).toBe('coder');
@@ -2772,7 +2542,6 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
     expect(data.success).toBe(false);
     expect(data.queued).toHaveLength(1);
 
-    // Queued message should include the structured data appendix
     const pending = pendingMessageRepo.listPendingForTarget(isolatedRunId, 'reviewer');
     expect(pending).toHaveLength(1);
     expect(pending[0].message).toContain('please review my PR');
@@ -2780,11 +2549,9 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
   });
 
   test('delivers immediately when target has an active session, queues when it does not', async () => {
-    // Test mixed delivery: reviewer is active, security is not yet started.
     const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
 
     const nodeExecutionRepo = ctx.nodeExecutionRepo;
-    // reviewer has an active session
     const revExec = nodeExecutionRepo.createOrIgnore({
       workflowRunId: isolatedRunId,
       workflowNodeId: 'node-review',
@@ -2794,7 +2561,6 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
     });
     nodeExecutionRepo.update(revExec.id, { agentSessionId: 'session-reviewer-live' });
 
-    // security has no session yet (pending)
     nodeExecutionRepo.createOrIgnore({
       workflowRunId: isolatedRunId,
       workflowNodeId: 'node-security',
@@ -2836,22 +2602,16 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(true);
-    // reviewer delivered directly
     expect(data.delivered).toHaveLength(1);
     expect(data.delivered[0].agentName).toBe('reviewer');
     expect(injectedSessions).toContain('session-reviewer-live');
 
-    // security queued
     expect(data.queued).toHaveLength(1);
     expect(data.queued[0].agentName).toBe('security');
     const securityPending = pendingMessageRepo.listPendingForTarget(isolatedRunId, 'security');
     expect(securityPending).toHaveLength(1);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Tests: list_tasks / get_task
-// ---------------------------------------------------------------------------
 
 describe('node-agent-tools: list_tasks', () => {
   let ctx: TestCtx;
@@ -2904,13 +2664,11 @@ describe('node-agent-tools: list_tasks', () => {
     const config = makeConfig(ctx, { taskRepo: ctx.taskRepo });
     const handlers = createNodeAgentToolHandlers(config);
 
-    // Get first page
     const page1 = await handlers.list_tasks({ limit: 1, offset: 0 });
     const data1 = JSON.parse(page1.content[0].text);
     expect(data1.tasks).toHaveLength(1);
     expect(data1.has_more).toBe(true);
 
-    // Get second page
     const page2 = await handlers.list_tasks({ limit: 1, offset: 1 });
     const data2 = JSON.parse(page2.content[0].text);
     expect(data2.tasks).toHaveLength(1);
@@ -2943,7 +2701,6 @@ describe('node-agent-tools: get_task', () => {
     const config = makeConfig(ctx, { taskRepo: ctx.taskRepo });
     const handlers = createNodeAgentToolHandlers(config);
 
-    // Create a task with a known number
     const task = ctx.taskRepo.createTask({
       spaceId: ctx.spaceId,
       title: 'Task by number',
@@ -2979,7 +2736,6 @@ describe('node-agent-tools: get_task', () => {
     const config = makeConfig(ctx, { taskRepo: ctx.taskRepo });
     const handlers = createNodeAgentToolHandlers(config);
 
-    // Create another space and task
     const otherSpaceId = 'other-space';
     ctx.db
       .prepare(
@@ -2995,7 +2751,6 @@ describe('node-agent-tools: get_task', () => {
       description: '',
     });
 
-    // Should not find the task from the other space
     const result = await handlers.get_task({ task_id: otherTask.id });
     const data = JSON.parse(result.content[0].text);
 
@@ -3033,10 +2788,6 @@ describe('node-agent-tools: get_task', () => {
     expect(data.error).toContain('Task repository not available');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Tests: list_audit_entries
-// ---------------------------------------------------------------------------
 
 describe('node-agent-tools: list_audit_entries', () => {
   let ctx: TestCtx;
@@ -3186,7 +2937,6 @@ describe('node-agent-tools: list_audit_entries', () => {
     expect(data2.entries).toHaveLength(1);
     expect(data2.total).toBe(3);
     expect(data2.has_more).toBe(false);
-    // Entries have same-timestamp + random UUIDs, so ordering of the "last" entry is non-deterministic.
     expect(data2.entries[0].toolName).toMatch(/^t[123]$/);
   });
 
@@ -3212,10 +2962,6 @@ describe('node-agent-tools: list_audit_entries', () => {
     expect(data.error).toContain('Audit log repository not available');
   });
 });
-
-// ---------------------------------------------------------------------------
-// publish_task
-// ---------------------------------------------------------------------------
 
 describe('node-agent-tools \u2014 publish_task', () => {
   let ctx: TestCtx;
@@ -3306,7 +3052,6 @@ describe('node-agent-tools \u2014 publish_task', () => {
       },
     } as unknown as InternalEventBus<DaemonInternalEventMap>;
 
-    // This callback mirrors the wiring in task-agent-manager.ts
     const onPublishTask = async (args: { task_id: string }) => {
       try {
         const updated = await ctx.taskManager.publishTask(args.task_id);
@@ -3339,10 +3084,6 @@ describe('node-agent-tools \u2014 publish_task', () => {
     expect(publishedEvents[0].data.sessionId).toBe('global');
   });
 });
-
-// ---------------------------------------------------------------------------
-// archive_task
-// ---------------------------------------------------------------------------
 
 describe('node-agent-tools \u2014 archive_task', () => {
   let ctx: TestCtx;
@@ -3457,7 +3198,6 @@ describe('node-agent-tools \u2014 archive_task', () => {
       },
     } as unknown as InternalEventBus<DaemonInternalEventMap>;
 
-    // This callback mirrors the wiring in task-agent-manager.ts
     const onArchiveTask = async (args: { task_id: string }) => {
       try {
         const updated = await ctx.taskManager.archiveTask(args.task_id);
@@ -3522,10 +3262,6 @@ describe('node-agent-tools \u2014 archive_task', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Tests: subscribe_pr_events
-// ---------------------------------------------------------------------------
-
 describe('node-agent-tools: subscribe_pr_events', () => {
   let ctx: TestCtx;
 
@@ -3574,7 +3310,7 @@ describe('node-agent-tools: subscribe_pr_events', () => {
   });
 
   test('errors when external-event subscriptions are not available', async () => {
-    const handlers = createNodeAgentToolHandlers(makeConfig(ctx)); // no callback wired
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
     const result = await handlers.subscribe_pr_events({});
     const data = JSON.parse(result.content[0].text);
 
@@ -3582,10 +3318,6 @@ describe('node-agent-tools: subscribe_pr_events', () => {
     expect(data.error).toMatch(/not available/i);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Tests: pr_url payloads do not implicitly subscribe
-// ---------------------------------------------------------------------------
 
 describe('node-agent-tools: pr_url payloads do not auto-subscribe', () => {
   let ctx: TestCtx;

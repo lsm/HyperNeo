@@ -2,8 +2,6 @@ import { createElement } from 'preact';
 import { render } from '../../internal/render.ts';
 import type { ElementType } from '../../internal/types.ts';
 
-// --- ProgressBar ---
-
 type ProgressBarSize = 'sm' | 'md' | 'lg';
 
 interface ProgressBarProps {
@@ -33,7 +31,6 @@ function ProgressBarFn({
 }: ProgressBarProps) {
   const isIndeterminate = value === null || value === undefined;
 
-  // Calculate percentage only if not indeterminate, clamped between 0 and 100
   const percentage = isIndeterminate
     ? 0
     : Math.min(100, Math.max(0, ((value! - min) / (max - min)) * 100));

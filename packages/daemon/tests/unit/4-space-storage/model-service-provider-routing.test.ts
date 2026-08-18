@@ -1,12 +1,3 @@
-/**
- * Model Service — Provider-Routing Unit Tests
- *
- * Focused tests for:
- * - getModelInfo disambiguation when multiple providers share a model ID
- * - resolveModelAlias with explicit providerId
- * - Global cache populated from all available providers via initializeModels
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { Provider, ProviderCapabilities, ProviderSdkConfig } from '@hyperneo/shared/provider';
@@ -26,9 +17,6 @@ import {
 } from '../../../src/lib/providers/registry';
 import { initializeProviders, resetProviderFactory } from '../../../src/lib/providers/factory';
 
-// ---------------------------------------------------------------------------
-// Minimal provider stub — implements the full Provider interface structurally
-// ---------------------------------------------------------------------------
 function makeStubProvider(id: string, models: ModelInfo[], available: boolean = true): Provider {
   const capabilities: ProviderCapabilities = {
     streaming: true,
@@ -50,7 +38,6 @@ function makeStubProvider(id: string, models: ModelInfo[], available: boolean = 
   return stub;
 }
 
-// Shared model IDs that appear in more than one provider
 const SHARED_MODEL_ID = 'claude-sonnet-4.6';
 
 const anthropicModels: ModelInfo[] = [
@@ -91,7 +78,6 @@ const codexModels: ModelInfo[] = [
     id: 'gpt-5.3-codex',
     name: 'GPT-5.3 Codex',
     alias: 'codex',
-    // Real Codex model ID (no longer using Anthropic aliases).
     sdkModelIds: ['gpt-5.3-codex'],
     family: 'gpt',
     provider: 'anthropic-codex',
@@ -134,7 +120,6 @@ const kimiModels: ModelInfo[] = [
   },
 ];
 
-// All models from all providers in one flat list (simulates populated cache)
 const allModels: ModelInfo[] = [
   ...anthropicModels,
   ...copilotModels,
@@ -155,9 +140,6 @@ describe('Model Service — provider routing', () => {
     resetProviderFactory();
   });
 
-  // -------------------------------------------------------------------------
-  // getModelInfo with providerId disambiguation
-  // -------------------------------------------------------------------------
   describe('getModelInfo — collision disambiguation', () => {
     beforeEach(() => {
       const cache = new Map<string, ModelInfo[]>();
@@ -191,10 +173,8 @@ describe('Model Service — provider routing', () => {
     });
 
     it('does not treat Codex SDK model IDs as provider-accepted aliases', async () => {
-      // Real Codex IDs are in sdkModelIds but should not be treated as provider-accepted aliases.
-      // Users should select the canonical model ID, not the SDK-reported ID.
       const model = await getModelInfo('gpt-5.3-codex', 'global', 'anthropic-codex');
-      expect(model).not.toBeNull(); // This should work since it's the canonical ID
+      expect(model).not.toBeNull();
     });
 
     it('resolves Kimi provider aliases case-insensitively to canonical metadata', async () => {
@@ -226,9 +206,6 @@ describe('Model Service — provider routing', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // resolveModelAlias with providerId
-  // -------------------------------------------------------------------------
   describe('resolveModelAlias — provider-aware', () => {
     beforeEach(() => {
       const cache = new Map<string, ModelInfo[]>();
@@ -263,13 +240,11 @@ describe('Model Service — provider routing', () => {
     });
 
     it('returns alias as-is when no matching model found for the specified provider', async () => {
-      // codex alias does not exist in the anthropic provider
       const resolved = await resolveModelAlias('codex', 'global', 'anthropic');
       expect(resolved).toBe('codex');
     });
 
     it('resolves legacy model ID scoped to anthropic', async () => {
-      // Add a sonnet entry for anthropic so legacy mapping resolves correctly
       const modelsWithSonnet: ModelInfo[] = [
         ...allModels,
         {
@@ -286,26 +261,20 @@ describe('Model Service — provider routing', () => {
       cache.set('global', modelsWithSonnet);
       setModelsCache(cache);
 
-      // LEGACY_MODEL_MAPPINGS: 'claude-sonnet-4-5-20250929' → 'sonnet'
       const resolved = await resolveModelAlias('claude-sonnet-4-5-20250929', 'global', 'anthropic');
       expect(resolved).toBe('sonnet');
     });
 
     it('returns legacy model ID as-is when provider has no matching target', async () => {
-      // anthropic-codex has no 'sonnet' model — legacy mapping finds no match
       const resolved = await resolveModelAlias(
         'claude-sonnet-4-5-20250929',
         'global',
         'anthropic-codex'
       );
-      // Falls back to the original input since there's no 'sonnet' in codex
       expect(resolved).toBe('claude-sonnet-4-5-20250929');
     });
   });
 
-  // -------------------------------------------------------------------------
-  // isValidModel with providerId
-  // -------------------------------------------------------------------------
   describe('isValidModel — provider-scoped validation', () => {
     beforeEach(() => {
       const cache = new Map<string, ModelInfo[]>();
@@ -350,16 +319,6 @@ describe('Model Service — provider routing', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Global cache populated from all available providers via initializeModels
-  // -------------------------------------------------------------------------
-  // Strategy: call initializeProviders() first so the 5 built-in providers are
-  // registered and initialized=true. Then add stub providers. When initializeModels()
-  // runs it calls initializeProviders() again, but because initialized=true and
-  // registry.size > 0, it returns early without touching the registry.
-  // All 5 real providers are unavailable in the test environment (no credentials),
-  // so only stub models make it into the cache — giving us deterministic assertions.
-  // -------------------------------------------------------------------------
   describe('initializeModels — global cache contains models from all providers', () => {
     const STUB_A = 'stub-provider-alpha';
     const STUB_B = 'stub-provider-beta';
@@ -403,7 +362,6 @@ describe('Model Service — provider routing', () => {
     ];
 
     it('populates cache with models from all registered stub providers', async () => {
-      // Register real providers first (all unavailable); then add stubs.
       initializeProviders();
       const registry = getProviderRegistry();
       registry.register(makeStubProvider(STUB_A, stubModelsA, true));
@@ -437,7 +395,6 @@ describe('Model Service — provider routing', () => {
       const models = getAvailableModels('global');
       const entriesForSharedId = models.filter((m) => m.id === STUB_SHARED_ID);
 
-      // Both provider entries must survive the merge — no last-writer-wins
       expect(entriesForSharedId.length).toBeGreaterThanOrEqual(2);
       const providers = entriesForSharedId.map((m) => m.provider);
       expect(providers).toContain(STUB_A);
@@ -448,15 +405,13 @@ describe('Model Service — provider routing', () => {
       initializeProviders();
       const registry = getProviderRegistry();
       registry.register(makeStubProvider(STUB_A, stubModelsA, true));
-      registry.register(makeStubProvider(STUB_B, stubModelsB, false)); // unavailable
+      registry.register(makeStubProvider(STUB_B, stubModelsB, false));
 
       await initializeModels();
 
-      // STUB_B was unavailable — its models must not appear
       const entryB = await getModelInfo(STUB_SHARED_ID, 'global', STUB_B);
       expect(entryB).toBeNull();
 
-      // But STUB_A models are still present
       const entryA = await getModelInfo(STUB_SHARED_ID, 'global', STUB_A);
       expect(entryA).not.toBeNull();
     });
@@ -469,22 +424,16 @@ describe('Model Service — provider routing', () => {
 
       await initializeModels();
 
-      // FALLBACK_MODELS always include 'sonnet' for 'anthropic'
       const fallback = await getModelInfo('sonnet', 'global', 'anthropic');
       expect(fallback).not.toBeNull();
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Static provider inference for new Kimi model IDs
-  // -------------------------------------------------------------------------
   describe('inferProviderForModel — Kimi catalogue IDs', () => {
     it('routes kimi-k3 and aliases to the kimi provider', () => {
       expect(inferProviderForModel('kimi-k3')).toBe('kimi');
       expect(inferProviderForModel('k3')).toBe('kimi');
       expect(inferProviderForModel('Kimi-K3')).toBe('kimi');
-      // Bare k3-256k must hit the Kimi fast path; otherwise Anthropic (which
-      // claims unknown IDs) would win and route it to the wrong provider.
       expect(inferProviderForModel('k3-256k')).toBe('kimi');
     });
 

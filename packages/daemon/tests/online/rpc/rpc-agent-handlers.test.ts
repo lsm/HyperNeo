@@ -1,11 +1,3 @@
-/**
- * Agent RPC Handlers Tests
- *
- * Tests for agent state and query management RPC handlers via WebSocket:
- * - agent.getState
- * - session.resetQuery
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 
@@ -86,7 +78,6 @@ describe('Agent RPC Handlers', () => {
 
       expect(resetResult.success).toBe(true);
 
-      // Verify state is idle
       const stateResult = (await daemon.messageHub.request('agent.getState', {
         sessionId,
       })) as { state: { status: string } };

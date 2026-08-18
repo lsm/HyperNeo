@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for the Codex-style sessions sidebar.
- */
 
 import type { Session, WorkspaceHistoryEntry } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';

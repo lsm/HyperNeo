@@ -1,42 +1,3 @@
-/**
- * Provider context-window & capability contract tests.
- *
- * Purpose
- * -------
- * Pin the expected context-window and capability metadata for representative
- * Anthropic, Codex, GLM, Kimi, and Ollama models, and assert that ONE value
- * flows unchanged through every consumer of that metadata:
- *
- *   1. Model catalog output   — the provider's catalog source (`MODELS` /
- *                               fallback arrays, Codex bridge infos, the
- *                               Anthropic SDK converter, or capabilities) — the
- *                               values `models.list` / `session.model.get`
- *                               project to the frontend.
- *   2. Session/UI resolution  — `getModelInfo()` resolves the same window; this
- *                               is the value the UI context-usage bar receives
- *                               as `maxContextTokens` via `session.model.get`.
- *   3. SDK/runtime config     — `buildProviderSettings()` emits the SDK
- *                               `autoCompactWindow` from the context window it
- *                               is passed (mirroring `query-options-builder`).
- *   4. Bridge model selection — the bridge's `CLAUDE_CODE_AUTO_COMPACT_WINDOW`
- *                               env (Codex `getModelContextWindow`, GLM/Kimi
- *                               `buildSdkConfig`) agrees with the catalog.
- *   5. Compaction thresholds  — `reserveBasedThreshold()` derives the trigger
- *                               from the same value with the right reserve.
- *
- * Why
- * ---
- * This batch fixed repeated wrong-context-window, prompt-too-long, and
- * compaction drift across providers — the same defect class patched from a
- * different consumer each time. These tests make that drift a compile/test
- * failure: if you change a context window, update it in the canonical table
- * below and confirm every consumer still agrees. Do not patch a single
- * consumer in isolation.
- *
- * NOTE: This is a contract over values, not an exhaustive provider test. Per-
- * provider behaviour lives in the sibling `*-provider.test.ts` files.
- */
-
 import { beforeEach, describe, expect, it } from 'bun:test';
 import {
   COMPACTION_THRESHOLD,
@@ -59,11 +20,6 @@ import { MinimaxProvider } from '../../../../src/lib/providers/minimax-provider'
 import { OllamaProvider } from '../../../../src/lib/providers/ollama-provider';
 import { OpenRouterProvider } from '../../../../src/lib/providers/openrouter-provider';
 
-/**
- * What `buildProviderSettings` must return for a model:
- * - `native`: the SDK trusts its own window for this provider → `undefined`.
- * - `compact`: SDK auto-compact is enabled with an explicit `autoCompactWindow`.
- */
 type SdkSettingExpectation = { kind: 'native' } | { kind: 'compact'; autoCompactWindow: number };
 
 type CatalogSource =
@@ -76,33 +32,18 @@ type CatalogSource =
   | { kind: 'openrouter'; id: string };
 
 interface ContractRow {
-  /** Short, unique label used in test titles. */
   label: string;
-  /** Provider id — drives SDK settings + compaction reserve selection. */
   provider: string;
-  /** The canonical, expected context window — the single source of truth. */
   contextWindow: number;
-  /** Expected `preferContextWindowMetadata` on the resolved/catalog ModelInfo. */
   preferMetadata: boolean;
-  /** Alias or id resolved by `getModelInfo` (omitted when not in static metadata). */
   resolveInput?: string;
-  /** `session.config.model` value fed to `buildProviderSettings` + the bridge. */
   sdkModelId: string;
-  /** Expected `buildProviderSettings(provider, contextWindow, sdkModelId)`. */
   sdkSettings: SdkSettingExpectation;
-  /** Expected `reserveBasedThreshold(contextWindow, provider)`. */
   compactionThreshold: number;
-  /** Where the catalog source of truth lives for this model. */
   catalog: CatalogSource;
-  /** Expected bridge `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (omitted when n/a). */
   bridgeAutoCompactWindow?: number;
 }
 
-/**
- * The canonical contract. Every consumer below is asserted against these rows.
- * When a context window changes, update it here and let the per-consumer tests
- * confirm nothing else drifted.
- */
 const CONTRACT: ContractRow[] = [
   {
     label: 'Anthropic Sonnet',
@@ -112,7 +53,7 @@ const CONTRACT: ContractRow[] = [
     resolveInput: 'sonnet',
     sdkModelId: 'sonnet',
     sdkSettings: { kind: 'native' },
-    compactionThreshold: 167_000, // 200k − 33k default reserve
+    compactionThreshold: 167_000,
     catalog: { kind: 'anthropic' },
   },
   {
@@ -123,7 +64,7 @@ const CONTRACT: ContractRow[] = [
     resolveInput: 'codex',
     sdkModelId: 'gpt-5.3-codex',
     sdkSettings: { kind: 'native' },
-    compactionThreshold: 239_000, // 272k − 33k
+    compactionThreshold: 239_000,
     catalog: { kind: 'codex', id: 'gpt-5.3-codex' },
     bridgeAutoCompactWindow: 272_000,
   },
@@ -135,7 +76,7 @@ const CONTRACT: ContractRow[] = [
     resolveInput: 'glm-5.2',
     sdkModelId: 'glm-5.2',
     sdkSettings: { kind: 'native' },
-    compactionThreshold: 967_000, // 1M − 33k
+    compactionThreshold: 967_000,
     catalog: { kind: 'glm', id: 'glm-5.2[1m]' },
     bridgeAutoCompactWindow: 1_000_000,
   },
@@ -147,7 +88,7 @@ const CONTRACT: ContractRow[] = [
     resolveInput: 'glm',
     sdkModelId: 'glm-5',
     sdkSettings: { kind: 'native' },
-    compactionThreshold: 167_000, // 200k − 33k
+    compactionThreshold: 167_000,
     catalog: { kind: 'glm', id: 'glm-5' },
     bridgeAutoCompactWindow: 200_000,
   },
@@ -159,7 +100,7 @@ const CONTRACT: ContractRow[] = [
     resolveInput: 'k3',
     sdkModelId: 'kimi-k3[1m]',
     sdkSettings: { kind: 'compact', autoCompactWindow: 1_048_576 },
-    compactionThreshold: 1_003_576, // 1_048_576 − 45k Kimi reserve
+    compactionThreshold: 1_003_576,
     catalog: { kind: 'kimi', id: 'kimi-k3[1m]' },
     bridgeAutoCompactWindow: 1_048_576,
   },
@@ -171,7 +112,7 @@ const CONTRACT: ContractRow[] = [
     resolveInput: 'kimi',
     sdkModelId: 'kimi-for-coding',
     sdkSettings: { kind: 'compact', autoCompactWindow: 262_144 },
-    compactionThreshold: 217_144, // 262_144 − 45k Kimi reserve
+    compactionThreshold: 217_144,
     catalog: { kind: 'kimi', id: 'kimi-for-coding' },
     bridgeAutoCompactWindow: 262_144,
   },
@@ -180,11 +121,9 @@ const CONTRACT: ContractRow[] = [
     provider: 'ollama',
     contextWindow: 128_000,
     preferMetadata: false,
-    // Ollama's model catalog is dynamic (/api/tags); the stable contract is the
-    // provider capability window plus the SDK-settings pass-through.
     sdkModelId: 'llama3.2',
     sdkSettings: { kind: 'compact', autoCompactWindow: 128_000 },
-    compactionThreshold: 95_000, // 128k − 33k
+    compactionThreshold: 95_000,
     catalog: { kind: 'ollama' },
   },
   {
@@ -194,7 +133,7 @@ const CONTRACT: ContractRow[] = [
     preferMetadata: false,
     sdkModelId: 'MiniMax-M2.5',
     sdkSettings: { kind: 'compact', autoCompactWindow: 200_000 },
-    compactionThreshold: 167_000, // 200k − 33k
+    compactionThreshold: 167_000,
     catalog: { kind: 'minimax', id: 'MiniMax-M2.5' },
   },
   {
@@ -202,20 +141,14 @@ const CONTRACT: ContractRow[] = [
     provider: 'openrouter',
     contextWindow: 1_000_000,
     preferMetadata: false,
-    // OpenRouter's live catalog is dynamic (from the /models API, which also
-    // stamps preferContextWindowMetadata: true). The static contract pinned here
-    // is the fallback model + capability that drive buildProviderSettings.
     sdkModelId: 'openrouter/auto',
     sdkSettings: { kind: 'compact', autoCompactWindow: 1_000_000 },
-    compactionThreshold: 967_000, // 1M − 33k
+    compactionThreshold: 967_000,
     catalog: { kind: 'openrouter', id: 'openrouter/auto' },
   },
 ];
 
 describe('provider context-window & capability contract', () => {
-  // Force the static-metadata fallback path before each test so resolution is
-  // deterministic regardless of what a sibling test cached on the shared
-  // model-service singleton (matches model-service.test.ts isolation).
   beforeEach(() => {
     clearModelsCache('global');
   });
@@ -226,8 +159,6 @@ describe('provider context-window & capability contract', () => {
     });
 
     it('applies a larger reserve for Kimi than the default (provider-aware)', () => {
-      // Same 200k window → different thresholds because Kimi reserves 45k
-      // (≈32k max output + reasoning) vs the 33k SDK-matching default.
       expect(reserveBasedThreshold(200_000, 'anthropic')).toBe(167_000);
       expect(reserveBasedThreshold(200_000, 'kimi')).toBe(155_000);
     });
@@ -247,7 +178,6 @@ describe('provider context-window & capability contract', () => {
           case 'anthropic': {
             const provider = new AnthropicProvider();
             expect(provider.capabilities.maxContextWindow).toBe(row.contextWindow);
-            // The SDK converter is what stamps Anthropic catalog entries.
             const converted = provider.convertSdkModels([
               {
                 value: 'sonnet',
@@ -324,15 +254,12 @@ describe('provider context-window & capability contract', () => {
         const settings = buildProviderSettings(row.provider, row.contextWindow, row.sdkModelId);
         if (row.sdkSettings.kind === 'native') {
           expect(settings).toBeUndefined();
-          // Native providers must be listed in the native set for the contract
-          // to hold; pin membership so the list and the rows stay in sync.
           expect(NATIVE_CONTEXT_WINDOW_PROVIDER_IDS).toContain(row.provider);
         } else {
           expect(settings).toEqual({
             autoCompactEnabled: true,
             autoCompactWindow: row.sdkSettings.autoCompactWindow,
           });
-          // Non-native providers must NOT claim native membership.
           expect(NATIVE_CONTEXT_WINDOW_PROVIDER_IDS).not.toContain(row.provider);
         }
       });
@@ -346,9 +273,6 @@ describe('provider context-window & capability contract', () => {
       switch (row.catalog.kind) {
         case 'codex':
           it(`${row.label}: getModelContextWindow returns ${expected.toLocaleString()}`, () => {
-            // The canonical id and its alias both resolve to the catalog window —
-            // this is the value the Codex bridge stringifies into env. The alias
-            // ('codex') is exercised by the resolution consumer above.
             expect(getModelContextWindow(row.sdkModelId)).toBe(expected);
             expect(
               MODEL_CONTEXT_WINDOWS[row.sdkModelId as keyof typeof MODEL_CONTEXT_WINDOWS]
@@ -373,7 +297,6 @@ describe('provider context-window & capability contract', () => {
     }
 
     it('every bridge auto-compact window equals the canonical context window', () => {
-      // The bridge must never invent a window: it re-emits the catalog value.
       for (const row of CONTRACT) {
         if (row.bridgeAutoCompactWindow === undefined) continue;
         expect(row.bridgeAutoCompactWindow, row.label).toBe(row.contextWindow);

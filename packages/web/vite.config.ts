@@ -49,9 +49,6 @@ export default defineConfig({
   },
 
   server: {
-    // NOTE: When using dev-server.ts (make dev), these settings are OVERRIDDEN
-    // by the createViteServer() options which uses port 5173 internally.
-    // These defaults are for standalone Vite development (make web).
     port: 9283,
     strictPort: true,
     host: true,
@@ -68,26 +65,15 @@ export default defineConfig({
       host: 'localhost',
     },
     watch: {
-      // Watch for changes in all relevant files
-      // Exclude database, temporary files, and session workspace worktrees
-      // NOTE: We specifically ignore tmp/workspace/.worktrees/ (session worktrees) but NOT
-      // the development worktree we might be running from (e.g., .worktrees/session-id/)
-      ignored: [
-        '**/node_modules/**',
-        '**/dist/**',
-        '**/data/**',
-        `${repoTmpDir}/**`, // Repo-local tmp only; worktrees may live under /Users/.../tmp.
-      ],
-      usePolling: false, // Use native file system events
+      ignored: ['**/node_modules/**', '**/dist/**', '**/data/**', `${repoTmpDir}/**`],
+      usePolling: false,
     },
-    // Proxy API and WebSocket requests to daemon
     proxy: {
       '/api': {
         target: process.env.DAEMON_URL || 'http://localhost:8283',
         changeOrigin: true,
-        ws: true, // Enable WebSocket proxying
+        ws: true,
       },
-      // Also proxy WebSocket connections directly
       '/ws': {
         target: 'ws://localhost:8283',
         changeOrigin: true,
@@ -98,7 +84,7 @@ export default defineConfig({
 
   optimizeDeps: {
     include: ['preact', '@preact/signals', 'clsx'],
-    exclude: ['@hyperneo/shared'], // Exclude local packages from pre-bundling
+    exclude: ['@hyperneo/shared'],
     esbuildOptions: {
       jsx: 'automatic',
       jsxImportSource: 'preact',
@@ -107,12 +93,10 @@ export default defineConfig({
 
   resolve: {
     alias: [
-      // Handle subpath imports (e.g., @hyperneo/shared/sdk/type-guards)
       {
         find: /^@hyperneo\/shared\/(.+)$/,
         replacement: resolve(__dirname, '../shared/src/$1'),
       },
-      // Handle main package import
       {
         find: '@hyperneo/shared',
         replacement: resolve(__dirname, '../shared/src/mod.ts'),

@@ -1,8 +1,3 @@
-/**
- * CLI argument parsing utilities
- * Extracted from main.ts for testability
- */
-
 export interface CliOptions {
   port?: number;
   host?: string;
@@ -17,10 +12,6 @@ export interface ParseArgsResult {
   error?: string;
 }
 
-/**
- * Parse CLI arguments into options
- * Returns an error message instead of exiting for testability
- */
 export function parseArgs(args: string[]): ParseArgsResult {
   const options: CliOptions = {};
 
@@ -54,7 +45,6 @@ export function parseArgs(args: string[]): ParseArgsResult {
         return { options, error: '--workspace requires a path' };
       }
     } else {
-      // Unknown option - set help flag and return error
       options.help = true;
       return { options, error: `Unknown option: ${arg}` };
     }
@@ -63,9 +53,6 @@ export function parseArgs(args: string[]): ParseArgsResult {
   return { options };
 }
 
-/**
- * Get the help text for the CLI
- */
 export function getHelpText(): string {
   return `
 HyperNeo - Claude Code web UI for coding, life, and anything in between
@@ -88,44 +75,24 @@ Examples:
 `;
 }
 
-// ============================================================
-// Server Utilities
-// ============================================================
-
-/**
- * CORS headers for preflight responses
- */
 export const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 } as const;
 
-/**
- * Create a CORS preflight response
- */
 export function createCorsPreflightResponse(): Response {
   return new Response(null, { headers: CORS_HEADERS });
 }
 
-/**
- * Check if a file extension should have immutable cache headers
- * These are typically content-hashed assets
- */
 export function shouldHaveImmutableCache(path: string): boolean {
   return /\.(js|css|woff2?|ttf|svg|png|jpg|jpeg|gif|ico)$/.test(path);
 }
 
-/**
- * Check if a path is an HTML file that should not be cached
- */
 export function isHtmlFile(path: string): boolean {
   return path.endsWith('.html');
 }
 
-/**
- * Get appropriate cache control header for a static file
- */
 export function getCacheControlHeader(path: string): string {
   if (shouldHaveImmutableCache(path)) {
     return 'public, max-age=31536000, immutable';
@@ -133,20 +100,13 @@ export function getCacheControlHeader(path: string): string {
   if (isHtmlFile(path)) {
     return 'no-cache';
   }
-  // Default: short cache
   return 'public, max-age=3600';
 }
 
-/**
- * Check if a request path is the WebSocket endpoint
- */
 export function isWebSocketPath(pathname: string): boolean {
   return pathname === '/ws';
 }
 
-/**
- * Create a JSON error response
- */
 export function createJsonErrorResponse(message: string, status: number = 500): Response {
   return new Response(
     JSON.stringify({
@@ -160,10 +120,6 @@ export function createJsonErrorResponse(message: string, status: number = 500): 
   );
 }
 
-/**
- * Get local network addresses for display
- * Returns an array of { label, address } for all non-internal IPv4 interfaces
- */
 function getNetworkAddresses(): Array<{ label: string; address: string }> {
   const os = require('os');
   const interfaces = os.networkInterfaces();
@@ -172,7 +128,6 @@ function getNetworkAddresses(): Array<{ label: string; address: string }> {
   for (const [name, nets] of Object.entries(interfaces)) {
     if (!nets) continue;
     for (const net of nets as Array<{ family: string; address: string; internal: boolean }>) {
-      // Skip internal (loopback) and non-IPv4 addresses
       if (net.family === 'IPv4' && !net.internal) {
         addresses.push({ label: name, address: net.address });
       }
@@ -182,9 +137,6 @@ function getNetworkAddresses(): Array<{ label: string; address: string }> {
   return addresses;
 }
 
-/**
- * Print server listening info with all network addresses
- */
 export function printServerUrls(port: number, host: string): void {
   console.log(`   🌐 Local:   http://localhost:${port}`);
 
@@ -200,12 +152,7 @@ export function printServerUrls(port: number, host: string): void {
   console.log(`   🔌 WebSocket: ws://localhost:${port}/ws`);
 }
 
-/**
- * Find an available port by creating a temporary server
- * Uses Node.js net module to bind to port 0 (OS assigns available port)
- */
 export async function findAvailablePort(): Promise<number> {
-  // Import net dynamically to avoid issues in browser builds
   const net = await import('net');
 
   return new Promise((resolve, reject) => {

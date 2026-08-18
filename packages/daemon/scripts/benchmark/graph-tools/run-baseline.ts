@@ -1,10 +1,3 @@
-/**
- * Baseline benchmark: built-in Read/Grep/Glob tools only.
- *
- * Usage:
- *   bun scripts/benchmark/graph-tools/run-baseline.ts
- */
-
 import {
   BENCHMARK_PROMPT_UNSEDED,
   runWithGlm,
@@ -26,7 +19,6 @@ async function main() {
   console.log(`  Tokens: ${result.totalTokens} | Tool calls: ${result.toolCallCount}`);
   console.log(`  Response: ${result.responseLength} chars`);
 
-  // Write individual result
   const path = `/tmp/graph-tool-benchmark-baseline.json`;
   writeBenchmarkResults([result], WORKTREE, path, resolveCommitSha(), BENCHMARK_MODEL);
   console.log(`  Results written to ${path}`);

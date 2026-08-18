@@ -1,67 +1,8 @@
-/**
- * Integration tests for VisualWorkflowEditor
- *
- * Tests:
- * Rendering
- * - Renders with empty workflow (create mode)
- * - Renders "New Workflow" title in create mode
- * - Renders "Edit Workflow" title in edit mode
- * - Pre-fills name and description when editing
- * - Renders existing workflow with saved layout
- * - Renders existing workflow without layout (auto-layout fallback)
- *
- * Add Step
- * - Adds a node when button clicked
- * - Adding second step does not replace first
- * - First added step becomes start node (rendered with START badge)
- *
- * Node selection → NodeConfigPanel
- * - Clicking a node opens NodeConfigPanel
- * - Close button dismisses NodeConfigPanel
- * - handleSetAsStart: clicking "Set as Start Node" updates start badge
- * - handleDeleteNode: deleting a node removes it from canvas and clears panel
- * - handleDeleteNode: edge referencing deleted node is also removed
- * - handleUpdateNode: editing step name updates node display
- *
- * Edge selection → EdgeConfigPanel
- * - Clicking an edge hitbox opens EdgeConfigPanel
- * - Close button dismisses EdgeConfigPanel
- * - handleDeleteEdge: deleting edge removes EdgeConfigPanel
- * - handleUpdateEdgeCondition: changing condition type updates panel
- *
- * handleCreateTransition
- * - Renders exactly one edge for the single transition in the workflow (port-drag dedup not testable in JSDOM)
- *
- * Save — validation
- * - Error when name is empty
- * - Error when no steps
- * - Error when a step has no agent
- * - Error when condition-type edge has empty expression
- *
- * Save — new workflow
- * - Calls createWorkflow with name and layout
- * - Layout includes a position for each step
- * - Calls onSave after successful create
- *
- * Save — existing workflow
- * - Calls updateWorkflow (not createWorkflow) when editing
- * - Passes workflow id to updateWorkflow
- * - Includes layout in update params preserving positions
- *
- * Tags
- * - Adding a tag via suggestion button
- * - Removing a tag via × button
- * - Adding tag via keyboard Enter
- *
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor, act } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
 import type { SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { makeBuiltInTemplateWorkflows } from '../../__tests__/fixtures/builtInTemplateWorkflows';
-
-// ---- Mocks ----
 
 const mockAgents: Signal<SpaceWorkerAgent[]> = signal([]);
 const mockWorkflows: Signal<SpaceWorkflow[]> = signal([]);
@@ -123,10 +64,6 @@ vi.mock('../../../../lib/utils', () => ({
 import { VisualWorkflowEditor } from '../VisualWorkflowEditor';
 import type { VisualWorkflowEditorProps } from '../VisualWorkflowEditor';
 
-// ============================================================================
-// Fixtures
-// ============================================================================
-
 function makeAgent(id: string, name: string, _role = 'coder'): SpaceWorkerAgent {
   return {
     id,
@@ -170,10 +107,6 @@ function makeProps(overrides: Partial<VisualWorkflowEditorProps> = {}): VisualWo
   };
 }
 
-// ============================================================================
-// Setup / Teardown
-// ============================================================================
-
 beforeEach(() => {
   cleanup();
   mockAgents.value = [
@@ -197,15 +130,7 @@ afterEach(() => {
   cleanup();
 });
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 describe('VisualWorkflowEditor', () => {
-  // -------------------------------------------------------------------------
-  // Rendering
-  // -------------------------------------------------------------------------
-
   describe('rendering — create mode', () => {
     it('renders the editor container', () => {
       const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
@@ -214,25 +139,21 @@ describe('VisualWorkflowEditor', () => {
 
     it('releases the node-execution subscription on unmount', async () => {
       const { unmount } = render(<VisualWorkflowEditor {...makeProps()} />);
-      // mount requests node executions (null for a run-less new workflow)
       await waitFor(() => expect(mockEnsureNodeExecutions).toHaveBeenCalled());
       mockEnsureNodeExecutions.mockClear();
       unmount();
-      // unmount releases the run subscription
       expect(mockEnsureNodeExecutions).toHaveBeenCalledWith(null);
     });
 
     it('loads node executions for the relevant run and re-loads when the run changes', async () => {
-      const wf = makeWorkflow(); // id: 'wf-1'
+      const wf = makeWorkflow();
       mockWorkflowRuns.value = [
         { id: 'run-a', workflowId: 'wf-1', status: 'in_progress', updatedAt: 1 },
       ];
       const { rerender } = render(<VisualWorkflowEditor {...makeProps({ workflow: wf })} />);
 
-      // mount loads the workflow's active run
       await waitFor(() => expect(mockEnsureNodeExecutions).toHaveBeenCalledWith('run-a'));
 
-      // a newer active run appears → relevantRunId switches and the effect re-fires
       mockEnsureNodeExecutions.mockClear();
       mockWorkflowRuns.value = [
         { id: 'run-a', workflowId: 'wf-1', status: 'completed', updatedAt: 1 },
@@ -306,10 +227,6 @@ describe('VisualWorkflowEditor', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Add Step
-  // -------------------------------------------------------------------------
-
   describe('Add Step', () => {
     it('adds a node when Add Step is clicked', () => {
       const { getByTestId, queryAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
@@ -330,14 +247,9 @@ describe('VisualWorkflowEditor', () => {
     it('first added step gets the START badge', () => {
       const { getByTestId, getByText } = render(<VisualWorkflowEditor {...makeProps()} />);
       fireEvent.click(getByTestId('add-step-button'));
-      // WorkflowNode renders "START" badge for the start node
       expect(getByText('START')).toBeTruthy();
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Cancel
-  // -------------------------------------------------------------------------
 
   describe('Cancel', () => {
     it('calls onCancel when Cancel button is clicked', () => {
@@ -354,10 +266,6 @@ describe('VisualWorkflowEditor', () => {
       expect(onCancel).toHaveBeenCalledOnce();
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Node selection → NodeConfigPanel
-  // -------------------------------------------------------------------------
 
   describe('Node selection — NodeConfigPanel', () => {
     it('clicking a node opens NodeConfigPanel', () => {
@@ -384,8 +292,6 @@ describe('VisualWorkflowEditor', () => {
     });
 
     it('Set as Start Node button updates the start badge', () => {
-      // Render with a two-step workflow where step-2 is not the start.
-      // Find the Code (step-2) node and click it, then click Set as Start.
       const { container, getAllByTestId, queryByTestId, getByTestId } = render(
         <VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
       );
@@ -395,15 +301,12 @@ describe('VisualWorkflowEditor', () => {
       expect(nonStartNode).toBeTruthy();
       fireEvent.click(nonStartNode!);
 
-      // The "Set as Start Node" button should be visible in the panel
       expect(queryByTestId('set-as-start-button')).toBeTruthy();
       fireEvent.click(getByTestId('set-as-start-button'));
 
-      // After setting as start, the canvas start-badge should now be inside this node.
       const updatedNodes = container.querySelectorAll('[data-testid^="workflow-node-"]');
       const startBadges = container.querySelectorAll('[data-testid="start-badge"]');
       expect(startBadges.length).toBe(1);
-      // The badge should be inside the node we clicked
       const startNode = Array.from(updatedNodes).find((n) => n.contains(startBadges[0]));
       expect(startNode).toBe(
         nonStartNode!.closest('[data-testid^="workflow-node-"]') ?? nonStartNode
@@ -420,13 +323,11 @@ describe('VisualWorkflowEditor', () => {
       const nonStartNode = nodes.find((n) => !n.querySelector('[data-testid="start-badge"]'))!;
       fireEvent.click(nonStartNode);
 
-      // Initiate delete
       fireEvent.click(getByTestId('delete-step-button'));
       fireEvent.click(getByTestId('delete-confirm-button'));
 
       expect(getAllByTestId(/^workflow-node-/).length).toBe(nodesBefore - 1);
       expect(queryByTestId('node-config-panel')).toBeNull();
-      // Transitions are hidden on canvas (channels are primary connections).
     });
 
     it('keyboard Delete on start node — next regular node becomes start (wasStart=true path)', () => {
@@ -463,25 +364,14 @@ describe('VisualWorkflowEditor', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // handleCreateTransition
-  // -------------------------------------------------------------------------
-
   describe('handleCreateTransition', () => {
     it('renders no visible edges (transitions hidden; channels are primary connections)', () => {
-      // Transitions are stored in state but not passed to EdgeRenderer (channels
-      // replaced them as the primary visual connections in Task 7.1).
       const { container } = render(
         <VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
       );
-      // Transitions are hidden: no [data-edge-id] elements expected
       expect(container.querySelectorAll('[data-edge-id]').length).toBe(0);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Save — validation
-  // -------------------------------------------------------------------------
 
   describe('Save — validation', () => {
     it('shows error when name is empty', async () => {
@@ -506,7 +396,6 @@ describe('VisualWorkflowEditor', () => {
     });
 
     it('shows error when a node has no agent', async () => {
-      // Create a step, leave agentId blank
       const { getByTestId, getByText } = render(<VisualWorkflowEditor {...makeProps()} />);
       fireEvent.input(getByTestId('workflow-name-input'), { target: { value: 'WF' } });
       fireEvent.click(getByTestId('add-step-button'));
@@ -517,10 +406,6 @@ describe('VisualWorkflowEditor', () => {
       await waitFor(() => expect(getByText('Node 1 requires an agent.')).toBeTruthy());
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Save — new workflow
-  // -------------------------------------------------------------------------
 
   describe('Save — new workflow', () => {
     it('calls createWorkflow with name and layout', async () => {
@@ -589,10 +474,6 @@ describe('VisualWorkflowEditor', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Save — existing workflow
-  // -------------------------------------------------------------------------
-
   describe('Save — existing workflow', () => {
     it('calls updateWorkflow (not createWorkflow) when editing', async () => {
       const { getByTestId } = render(
@@ -650,10 +531,6 @@ describe('VisualWorkflowEditor', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Autonomy level selector
-  // -------------------------------------------------------------------------
-
   describe('Autonomy level selector', () => {
     it('renders all 5 autonomy level buttons', () => {
       const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
@@ -664,7 +541,6 @@ describe('VisualWorkflowEditor', () => {
 
     it('defaults to level 3 in create mode', () => {
       const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
-      // Level 3 button should have the active class
       const btn3 = getByTestId('autonomy-level-3');
       expect(btn3.className).toContain('bg-blue-500/10');
     });
@@ -712,10 +588,6 @@ describe('VisualWorkflowEditor', () => {
       expect(params.completionAutonomyLevel).toBe(2);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Post-approval route
-  // -------------------------------------------------------------------------
 
   describe('Post-approval route', () => {
     it('reflects legacy workflow postApproval on the end node in edit mode', () => {
@@ -785,10 +657,6 @@ describe('VisualWorkflowEditor', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Tags
-  // -------------------------------------------------------------------------
-
   describe('Tags', () => {
     it('does not render tag suggestion buttons', () => {
       const { queryByText } = render(<VisualWorkflowEditor {...makeProps()} />);
@@ -797,7 +665,6 @@ describe('VisualWorkflowEditor', () => {
     });
 
     it('removes a tag via × button', () => {
-      // Load a workflow with an existing tag
       const wf = makeWorkflow({ tags: ['research'] });
       const { getByLabelText, queryByText } = render(
         <VisualWorkflowEditor {...makeProps({ workflow: wf })} />
@@ -820,10 +687,6 @@ describe('VisualWorkflowEditor', () => {
       expect(queryByText('mytag')).toBeTruthy();
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Template picker
-  // -------------------------------------------------------------------------
 
   describe('Template picker', () => {
     it('shows template picker button in create mode', () => {
@@ -856,7 +719,6 @@ describe('VisualWorkflowEditor', () => {
       const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
       fireEvent.click(getByTestId('template-picker-button'));
 
-      // Select the "Coding Workflow" template (2 nodes: code + review)
       const options = getAllByTestId('template-option');
       const codingOption = options.find(
         (el) => el.getAttribute('data-template-label') === 'Coding Workflow'
@@ -878,7 +740,6 @@ describe('VisualWorkflowEditor', () => {
       );
       fireEvent.click(codingOption!);
 
-      // Transitions hidden; channels are the primary visual connections.
       expect(container.querySelectorAll('[data-edge-id]').length).toBe(0);
     });
 
@@ -891,9 +752,6 @@ describe('VisualWorkflowEditor', () => {
       );
       fireEvent.click(codingOption!);
 
-      // Nodes use absolute positioning via `left` and `top` style properties.
-      // autoLayout places the first node at START_X=50, START_Y=170, so at
-      // least one node must have a non-zero left position.
       const nodes = getAllByTestId(/^workflow-node-/);
       const hasNonZeroLeft = nodes.some((n) => {
         const left = n.style.left;
@@ -911,7 +769,6 @@ describe('VisualWorkflowEditor', () => {
       );
       fireEvent.click(codingOption!);
 
-      // Exactly one node should have the START badge
       const startBadges = getAllByTestId(/^workflow-node-/).filter((n) =>
         n.textContent?.includes('START')
       );
@@ -1170,7 +1027,6 @@ describe('VisualWorkflowEditor', () => {
       fireEvent.click(firstChannelHitbox!);
       fireEvent.click(getByTestId('convert-channel-relation-button'));
 
-      // The reverse link (Code→Plan) closes a loop and should show cyclic info
       await waitFor(() => expect(getAllByTestId('channel-cyclic-info')).toHaveLength(1));
     });
 
@@ -1221,7 +1077,6 @@ describe('VisualWorkflowEditor', () => {
       fireEvent.click(firstChannelHitbox!);
 
       await waitFor(() => expect(getAllByTestId('channel-edge-config-panel')).toHaveLength(2));
-      // The backward link (Code→Plan) should show cyclic info
       expect(getAllByTestId('channel-cyclic-info')).toHaveLength(1);
     });
 

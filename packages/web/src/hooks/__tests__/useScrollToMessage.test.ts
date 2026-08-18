@@ -1,14 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for useScrollToMessage Hook
- *
- * Verifies that:
- * - Scrolls the matching `data-message-id` element into view (instant) and
- *   applies the amber highlight classes.
- * - No-ops when `messageId` is falsy or `isInitialLoad` is true.
- * - Cleanup on unmount removes the highlight and clears timers.
- * - Re-runs on `messageCount` changes until the target is found, then latches.
- */
 
 import { renderHook, act } from '@testing-library/preact';
 import type { RefObject } from 'preact';
@@ -44,7 +34,6 @@ function createTargetEl(id: string) {
 function createContainer(target: HTMLElement | null | (() => HTMLElement | null)) {
   const getTarget = typeof target === 'function' ? target : () => target;
   const querySelector = vi.fn((sel: string) => {
-    // Pretend it found the element if the selector matches by id
     return getTarget();
   });
   const container = {
@@ -161,11 +150,8 @@ describe('useScrollToMessage', () => {
       })
     );
 
-    // Initial anchor.
     expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
 
-    // Two re-anchors at ~16ms and ~64ms inside the settle window, plus one at
-    // the end of the window (250ms).
     act(() => {
       vi.advanceTimersByTime(20);
     });
@@ -206,8 +192,6 @@ describe('useScrollToMessage', () => {
       vi.advanceTimersByTime(2000);
     });
 
-    // No further scroll calls after the settle window — only the fade timer
-    // (which doesn't scroll) might still be pending.
     expect(scrollIntoViewMock.mock.calls.length).toBe(callsAtT2s);
   });
 
@@ -250,7 +234,6 @@ describe('useScrollToMessage', () => {
 
     expect(scrollIntoViewMock).not.toHaveBeenCalled();
 
-    // New message streams in and the previously missing target is now in the DOM.
     target = el;
     rerender({ messageCount: 4 });
 

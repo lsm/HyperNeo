@@ -33,12 +33,10 @@ describe('EmptyDrawer', () => {
     render(<EmptyDrawer />);
     await act(async () => {});
 
-    // Click the open button
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Open drawer' }));
     });
 
-    // Panel title should be visible
     expect(screen.getByText('Panel title')).toBeTruthy();
   });
 
@@ -184,7 +182,6 @@ describe('UserProfileDrawer', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Open drawer' }));
     });
 
-    // The heading should be inside a DialogTitle for accessibility
     const dialogTitle = document.querySelector('[role="dialog"] h2, [role="dialog"] h3');
     expect(dialogTitle).toBeTruthy();
   });

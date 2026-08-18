@@ -1,12 +1,3 @@
-/**
- * Tests for Question RPC Handlers
- *
- * Tests the RPC handlers for question operations:
- * - question.respond - Send user's response to pending question
- * - question.saveDraft - Save draft responses as user interacts
- * - question.cancel - Cancel the pending question without answering
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub, type QuestionDraftResponse } from '@hyperneo/shared';
 import { setupQuestionHandlers } from '../../../../src/lib/rpc-handlers/question-handlers';
@@ -14,10 +5,8 @@ import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
-// Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
-// Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -48,7 +37,6 @@ function createMockMessageHub(): {
   return { hub, handlers };
 }
 
-// Helper to create mock DaemonHub
 function createMockDaemonHub(): DaemonHub {
   return {
     emit: mock(async () => {}),
@@ -58,7 +46,6 @@ function createMockDaemonHub(): DaemonHub {
   } as unknown as DaemonHub;
 }
 
-// Helper to create a mock AgentSession with question handlers
 function createMockAgentSession(): {
   agentSession: AgentSession;
   mocks: {
@@ -80,7 +67,6 @@ function createMockAgentSession(): {
   return { agentSession, mocks };
 }
 
-// Helper to create mock SessionManager
 function createMockSessionManager(): {
   sessionManager: SessionManager;
   getSessionAsyncMock: ReturnType<typeof mock>;
@@ -106,7 +92,6 @@ describe('Question RPC Handlers', () => {
     daemonHub = createMockDaemonHub();
     sessionManagerData = createMockSessionManager();
 
-    // Setup handlers with mocked dependencies
     setupQuestionHandlers(messageHubData.hub, sessionManagerData.sessionManager, daemonHub);
   });
 

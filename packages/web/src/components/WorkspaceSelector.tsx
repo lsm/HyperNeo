@@ -1,17 +1,3 @@
-/**
- * WorkspaceSelector Component
- *
- * Centered panel shown in the ChatContainer empty state for worker sessions
- * that were created without a workspace. Allows users to:
- * - Select from recent workspace history (pre-selected: most recent)
- * - Enter a project path in browser mode, or use a native folder picker in desktop
- * - Choose worktree vs direct mode
- * - Skip workspace selection entirely
- *
- * Rendered inside the message area (replacing "No messages yet") so the UX
- * feels like workspace context is set early in the session flow.
- */
-
 import { useState, useEffect } from 'preact/hooks';
 import type { WorkspaceHistoryEntry } from '@hyperneo/shared';
 import { connectionManager } from '../lib/connection-manager';
@@ -50,7 +36,6 @@ export function WorkspaceSelector({
     getWorkspaceHistory()
       .then((entries) => {
         setHistory(entries);
-        // Pre-select most recent workspace
         if (entries.length > 0) {
           setSelectedPath(entries[0].path);
         }
@@ -120,7 +105,6 @@ export function WorkspaceSelector({
       const entry = await addWorkspaceToHistory(path);
       await setSessionWorkspace(sessionId, entry.path, worktreeMode);
 
-      // Persist to history
       addRecentPath(entry.path);
 
       onConfirmCallback();
@@ -134,7 +118,6 @@ export function WorkspaceSelector({
   return (
     <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 py-12">
       <div class="w-full max-w-md">
-        {/* Welcome area */}
         <div class="text-center mb-8">
           <div class="flex items-center justify-center mb-5">
             <div class="w-16 h-16 rounded-2xl bg-dark-800 border border-dark-700 flex items-center justify-center shadow-lg">
@@ -160,9 +143,7 @@ export function WorkspaceSelector({
           </p>
         </div>
 
-        {/* Selection card */}
         <div class="bg-dark-800 border border-dark-700 rounded-2xl p-5 space-y-4 shadow-xl">
-          {/* Workspace picker */}
           {!showCustomInput ? (
             <div>
               <label class="block text-xs font-medium text-gray-400 mb-1.5">Workspace folder</label>
@@ -243,7 +224,6 @@ export function WorkspaceSelector({
             </div>
           )}
 
-          {/* Worktree / Direct toggle — only when a path is chosen */}
           {activePath && (
             <div>
               <label class="block text-xs font-medium text-gray-400 mb-1.5">Edit mode</label>
@@ -288,10 +268,8 @@ export function WorkspaceSelector({
             </div>
           )}
 
-          {/* Error */}
           {error && <p class="text-xs text-red-400">{error}</p>}
 
-          {/* Actions */}
           <div class="flex gap-3 pt-1">
             <button
               type="button"

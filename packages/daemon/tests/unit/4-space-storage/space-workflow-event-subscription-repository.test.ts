@@ -1,12 +1,3 @@
-/**
- * SpaceWorkflowEventSubscriptionRepository — CRUD tests.
- *
- * The repository is the durable source of truth for the runtime's in-memory
- * topic trie. These tests cover the write-through contract: upsert idempotency,
- * case-insensitive dedup, and every scoped delete used by the runtime's
- * register/unregister/clear paths.
- */
-
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../src/storage/repositories/space-workflow-event-subscription-repository';
 import { createWorkflowEventSubscriptionTables } from '../../../src/storage/schema/workflow-event-subscriptions';
@@ -19,8 +10,6 @@ const NODE_ID = 'node-code';
 const AGENT = 'coder';
 
 function makeRepo(): { repo: SpaceWorkflowEventSubscriptionRepository; db: BunDatabase } {
-  // Bare in-memory DB — FKs default to OFF, so we can exercise the table in
-  // isolation without seeding parent spaces/runs rows.
   const db = new BunDatabase(':memory:');
   createWorkflowEventSubscriptionTables(db);
   return { repo: new SpaceWorkflowEventSubscriptionRepository(db), db };
@@ -80,7 +69,6 @@ describe('SpaceWorkflowEventSubscriptionRepository', () => {
     upsert(repo, { topic: 'GitHub/Owner/Repo' });
     upsert(repo, { topic: 'github/owner/repo' });
     expect(repo.listBySpace(SPACE_ID)).toHaveLength(1);
-    // The original casing from the latest write is preserved.
     expect(repo.listBySpace(SPACE_ID)[0]!.topic).toBe('github/owner/repo');
   });
 
@@ -100,8 +88,6 @@ describe('SpaceWorkflowEventSubscriptionRepository', () => {
         nodeId: NODE_ID,
         agentName: AGENT,
         topic: 'github/a',
-        // Cast keeps the call shape honest about the runtime contract: only
-        // 'dynamic' is persisted.
         subscriptionKind: 'static' as 'dynamic',
       })
     ).toThrow();

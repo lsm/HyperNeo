@@ -126,7 +126,6 @@ describe('MessageHub Protocol', () => {
       });
       expect(isValidMessage(validMsg)).toBe(true);
 
-      // Missing required fields
       expect(isValidMessage({})).toBe(false);
       expect(isValidMessage({ id: '123' })).toBe(false);
       expect(isValidMessage({ id: '123', type: 'REQ' })).toBe(false);

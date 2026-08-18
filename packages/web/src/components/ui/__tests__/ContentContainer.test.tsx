@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ContentContainer Component
- */
 
 import { render } from '@testing-library/preact';
 import { describe, it, expect } from 'vitest';
@@ -138,7 +135,6 @@ describe('ContentContainer', () => {
         </ContentContainer>
       );
       const div = container.querySelector('div');
-      // Should still have default classes
       expect(div?.className).toContain('mx-auto');
       expect(div?.className).toContain('px-4');
     });
@@ -150,7 +146,6 @@ describe('ContentContainer', () => {
         </ContentContainer>
       );
       const div = container.querySelector('div');
-      // Should have default classes without extra spaces
       expect(div?.className).toBe('mx-auto px-4 w-full');
     });
   });
@@ -174,7 +169,7 @@ describe('ContentContainer', () => {
         </ContentContainer>
       );
       const divs = container.querySelectorAll('div');
-      expect(divs.length).toBe(1); // Only the ContentContainer div
+      expect(divs.length).toBe(1);
     });
   });
 
@@ -217,7 +212,6 @@ describe('ContentContainer', () => {
           </div>
         </ContentContainer>
       );
-      // The w-full class should expand the container
       const wrapper = container.querySelector('div');
       expect(wrapper?.className).toContain('w-full');
     });
@@ -278,7 +272,6 @@ describe('ContentContainer', () => {
       );
       const div = container.querySelector('div');
       const classes = div?.className.split(' ');
-      // Base classes should come first
       expect(classes?.indexOf('mx-auto')).toBeLessThan(classes?.indexOf('custom') || 999);
       expect(classes?.indexOf('px-4')).toBeLessThan(classes?.indexOf('custom') || 999);
       expect(classes?.indexOf('w-full')).toBeLessThan(classes?.indexOf('custom') || 999);
@@ -291,8 +284,6 @@ describe('ContentContainer', () => {
         </ContentContainer>
       );
       const div = container.querySelector('div');
-      // Both px-4 (default) and px-8 (custom) should be present
-      // The later one (px-8) would take precedence in CSS
       expect(div?.className).toContain('px-4');
       expect(div?.className).toContain('px-8');
     });

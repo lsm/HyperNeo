@@ -1,12 +1,4 @@
 // @ts-nocheck
-/**
- * SpaceTaskPane image passthrough tests
- *
- * Verifies the wiring TaskSessionChatComposer.onSend → SpaceTaskPane.sendThreadMessage
- * → spaceStore.sendTaskMessage forwards images. The image surface is awkward to drive
- * end-to-end through the real composer (would require File/clipboard mocks), so we
- * mock TaskSessionChatComposer to capture its onSend prop and invoke it directly.
- */
 
 import type {
   NodeExecution,

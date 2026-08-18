@@ -4,21 +4,14 @@ import { Dropdown, type DropdownMenuItem } from './ui/Dropdown.tsx';
 import { GitBranchIcon } from './icons/GitBranchIcon.tsx';
 import { projectName } from '../lib/projects.ts';
 
-/** Max branches rendered in the picker before asking the user to refine. */
 const MAX_BRANCH_RESULTS = 100;
 
 interface WorkspaceChipsProps {
-  /** Known project folder paths. */
   projects: string[];
-  /** Currently selected project path, or null for "no folder". */
   selectedProject: string | null;
-  /** Git context for the selected project (null while loading or for "no folder"). */
   gitInfo: GitBranchesResponse | null;
-  /** Whether git context is currently being fetched. */
   gitLoading: boolean;
-  /** Worktree mode (only meaningful for a git project). */
   mode: 'worktree' | 'direct';
-  /** Base branch for worktree mode. */
   baseBranch: string | null;
   onSelectProject: (path: string | null) => void;
   onBrowse: () => void;
@@ -57,7 +50,6 @@ function FolderIcon() {
   );
 }
 
-/** Order branches so the default and current branch float to the top. */
 function orderBranches(info: GitBranchesResponse): string[] {
   const seen = new Set<string>();
   const ordered: string[] = [];
@@ -70,10 +62,6 @@ function orderBranches(info: GitBranchesResponse): string[] {
   return ordered;
 }
 
-/**
- * Project / worktree-mode / branch selector chips shown under the empty-state
- * composer. Mirrors the Codex new-chat composer's context row.
- */
 export function WorkspaceChips({
   projects,
   selectedProject,
@@ -132,7 +120,6 @@ export function WorkspaceChips({
 
   return (
     <div class="flex items-center gap-1 flex-wrap">
-      {/* Project */}
       <Dropdown
         position="left"
         items={projectItems}
@@ -147,10 +134,8 @@ export function WorkspaceChips({
         }
       />
 
-      {/* Loading git context */}
       {selectedProject && gitLoading && <span class="px-2 py-1 text-xs text-gray-600">…</span>}
 
-      {/* Worktree mode — git projects only */}
       {isGit && !gitLoading && (
         <Dropdown
           position="left"
@@ -165,7 +150,6 @@ export function WorkspaceChips({
         />
       )}
 
-      {/* Branch — git projects only */}
       {isGit && !gitLoading && mode === 'worktree' && (
         <Dropdown
           position="left"
@@ -239,7 +223,6 @@ export function WorkspaceChips({
         />
       )}
 
-      {/* Direct mode — show the folder's current branch, read-only */}
       {isGit && !gitLoading && mode === 'direct' && gitInfo?.currentBranch && (
         <span
           class="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-500"

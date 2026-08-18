@@ -1,9 +1,3 @@
-/**
- * Tests for task-status.ts
- *
- * Verifies task statuses map to the expected tones and labels.
- */
-
 import { describe, expect, it } from 'vitest';
 import { getTaskStatusClasses, getTaskStatusConfig, TASK_STATUS_CONFIG } from './task-status.js';
 

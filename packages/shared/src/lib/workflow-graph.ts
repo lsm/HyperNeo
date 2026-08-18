@@ -1,25 +1,5 @@
-/**
- * Pure graph-topology utilities for workflow channel cyclicity inference.
- *
- * A channel is "cyclic" when it sends a message backward in the workflow graph
- * — from a later node to an earlier one, closing a loop. This module provides
- * functions to determine cyclicity from the graph structure so it does not need
- * to be stored as a field on the channel.
- *
- * **Node order convention:** Position in the `WorkflowNode[]` array serves as
- * topological order. This is the same convention the visual editor uses.
- */
-
 import type { WorkflowChannel, WorkflowNode } from '../types/space.ts';
 
-// ---------------------------------------------------------------------------
-// Endpoint lookup builder
-// ---------------------------------------------------------------------------
-
-/**
- * Builds a map from channel endpoint names (node names and node IDs) to node IDs.
- * Channels use node names as addresses, so only node names are indexed here.
- */
 export function buildEndpointNodeIdLookup(nodes: WorkflowNode[]): Map<string, string> {
   const map = new Map<string, string>();
   for (const node of nodes) {
@@ -29,16 +9,9 @@ export function buildEndpointNodeIdLookup(nodes: WorkflowNode[]): Map<string, st
   return map;
 }
 
-/**
- * Builds a map from node ID → position index (topological order).
- */
 export function buildNodeOrder(nodes: WorkflowNode[]): Map<string, number> {
   return new Map(nodes.map((node, index) => [node.id, index]));
 }
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
 
 function resolveChannelTargetNodeIds(
   channel: WorkflowChannel,
@@ -92,22 +65,6 @@ function doesPathExist(
   return false;
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Determines whether a specific channel (by index) is cyclic — i.e. it closes
- * a loop by sending a message from a later node back to an earlier one.
- *
- * @param channelIndex       Index into the `channels` array
- * @param channels           All channels in the workflow
- * @param nodes              All nodes in the workflow (array order = topological order)
- * @param endpointLookup     Pre-built lookup (optional, built from `nodes` if absent)
- * @param nodeOrder          Pre-built order map (optional, built from `nodes` if absent)
- * @param ignoreChannelIndex Optional channel index to exclude from path search
- *                           (used by the editor when checking a channel being edited)
- */
 export function isChannelCyclic(
   channelIndex: number,
   channels: WorkflowChannel[],
@@ -138,10 +95,6 @@ export function isChannelCyclic(
   return false;
 }
 
-/**
- * Returns the set of channel indexes that are cyclic (backward edges) in the
- * workflow graph.
- */
 export function getCyclicChannelIndexes(
   channels: WorkflowChannel[],
   nodes: WorkflowNode[]

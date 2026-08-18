@@ -1,13 +1,3 @@
-/**
- * seedDefaultMcpEntries Unit Tests
- *
- * Verifies:
- * - fetch-mcp and chrome-devtools are created on a fresh registry.
- * - fetch-mcp is enabled; chrome-devtools is disabled.
- * - Calling seedDefaultMcpEntries a second time does not create duplicates.
- * - Pre-existing entries (same name) are not overwritten.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables } from '../../../../src/storage/schema';
@@ -17,10 +7,6 @@ import { seedDefaultMcpEntries } from '../../../../src/lib/mcp';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { Database } from '../../../../src/storage/database';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function createTestDb(): { bunDb: BunDatabase; db: Database; repo: AppMcpServerRepository } {
   const bunDb = new BunDatabase(':memory:');
   createTables(bunDb);
@@ -29,10 +15,6 @@ function createTestDb(): { bunDb: BunDatabase; db: Database; repo: AppMcpServerR
   const db = { appMcpServers: repo } as unknown as Database;
   return { bunDb, db, repo };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('seedDefaultMcpEntries', () => {
   let bunDb: BunDatabase;
@@ -105,7 +87,6 @@ describe('seedDefaultMcpEntries', () => {
     seedDefaultMcpEntries(db);
 
     const entry = repo.getByName('fetch-mcp');
-    // command must still be the original value, not overwritten by seed
     expect(entry!.command).toBe('custom-fetch');
     expect(entry!.enabled).toBe(false);
   });

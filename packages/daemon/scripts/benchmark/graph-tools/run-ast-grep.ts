@@ -1,10 +1,3 @@
-/**
- * ast-grep benchmark arm.
- *
- * Usage:
- *   bun scripts/benchmark/graph-tools/run-ast-grep.ts
- */
-
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

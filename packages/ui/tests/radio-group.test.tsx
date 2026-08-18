@@ -47,8 +47,6 @@ describe('RadioGroup', () => {
     expect(radio.tagName.toLowerCase()).toBe('span');
   });
 
-  // --- Uncontrolled ---
-
   it('uncontrolled: no radio checked by default', () => {
     render(
       <RadioGroup>
@@ -87,8 +85,6 @@ describe('RadioGroup', () => {
     expect(a.getAttribute('aria-checked')).toBe('true');
     expect(b.getAttribute('aria-checked')).toBe('false');
   });
-
-  // --- Controlled ---
 
   it('controlled: value prop controls selection', () => {
     const onChange = vi.fn();
@@ -130,12 +126,9 @@ describe('RadioGroup', () => {
     await act(async () => {
       fireEvent.click(b);
     });
-    // Since we didn't update the controlled prop, 'a' remains checked
     const [a] = screen.getAllByRole('radio');
     expect(a.getAttribute('aria-checked')).toBe('true');
   });
-
-  // --- Keyboard navigation ---
 
   it('ArrowDown selects next radio', async () => {
     render(
@@ -250,7 +243,6 @@ describe('RadioGroup', () => {
     await act(async () => {
       fireEvent.keyDown(a, { key: ' ' });
     });
-    // still checked
     expect(a.getAttribute('aria-checked')).toBe('true');
   });
 
@@ -268,8 +260,6 @@ describe('RadioGroup', () => {
     expect(a.getAttribute('aria-checked')).toBe('true');
     expect(b.getAttribute('aria-checked')).toBe('false');
   });
-
-  // --- Disabled radios ---
 
   it('disabled Radio is skipped during ArrowDown navigation', async () => {
     render(
@@ -334,7 +324,6 @@ describe('RadioGroup', () => {
     await act(async () => {
       fireEvent.keyDown(a, { key: 'ArrowDown' });
     });
-    // a is disabled so keyDown is ignored
     expect(a.getAttribute('aria-checked')).toBe('true');
   });
 
@@ -365,8 +354,6 @@ describe('RadioGroup', () => {
     expect(screen.getByRole('radiogroup').hasAttribute('data-disabled')).toBe(true);
   });
 
-  // --- Roving tabindex ---
-
   it('selected radio gets tabIndex=0, others get -1', async () => {
     render(
       <RadioGroup defaultValue="b">
@@ -375,9 +362,7 @@ describe('RadioGroup', () => {
         <Radio value="c">C</Radio>
       </RadioGroup>
     );
-    // Need to wait for registration effect
     const [a, b, c] = screen.getAllByRole('radio');
-    // Allow effects to run
     await act(async () => {});
     expect(b.getAttribute('tabindex')).toBe('0');
     expect(a.getAttribute('tabindex')).toBe('-1');
@@ -399,8 +384,6 @@ describe('RadioGroup', () => {
     expect(b.getAttribute('tabindex')).toBe('0');
     expect(c.getAttribute('tabindex')).toBe('-1');
   });
-
-  // --- name renders hidden input ---
 
   it('name prop renders a hidden input', () => {
     render(
@@ -443,8 +426,6 @@ describe('RadioGroup', () => {
     expect(document.querySelector('input[type="hidden"]')).toBeNull();
   });
 
-  // --- by prop: string comparison ---
-
   it('by string key: selects radio by comparing object property', async () => {
     const onChange = vi.fn();
     const options = [
@@ -457,7 +438,6 @@ describe('RadioGroup', () => {
         <Radio value={options[1]}>{options[1].label}</Radio>
       </RadioGroup>
     );
-    // The first radio should match because id matches
     const [a, b] = screen.getAllByRole('radio');
     expect(a.getAttribute('aria-checked')).toBe('true');
     expect(b.getAttribute('aria-checked')).toBe('false');
@@ -482,8 +462,6 @@ describe('RadioGroup', () => {
     expect(onChange).toHaveBeenCalledWith(options[1]);
   });
 
-  // --- by prop: function comparison ---
-
   it('by function: uses custom comparator', async () => {
     const byFn = (a: unknown, b: unknown) => (a as { id: number }).id === (b as { id: number }).id;
     const options = [
@@ -500,8 +478,6 @@ describe('RadioGroup', () => {
     expect(a.getAttribute('aria-checked')).toBe('false');
     expect(b.getAttribute('aria-checked')).toBe('true');
   });
-
-  // --- Data attributes on Radio ---
 
   it('Radio sets data-hover on mouseenter and clears on mouseleave', () => {
     render(
@@ -580,8 +556,6 @@ describe('RadioGroup', () => {
     expect(radio.hasAttribute('data-disabled')).toBe(true);
   });
 
-  // --- Custom as prop ---
-
   it('RadioGroup supports custom as="ul"', () => {
     render(
       <RadioGroup as="ul">
@@ -605,15 +579,11 @@ describe('RadioGroup', () => {
     expect(radio.tagName.toLowerCase()).toBe('button');
   });
 
-  // --- throws when Radio used outside RadioGroup ---
-
   it('throws when Radio used outside RadioGroup', () => {
     expect(() => {
       render(<Radio value="a">A</Radio>);
     }).toThrow('<Radio> must be used within a <RadioGroup>');
   });
-
-  // --- render prop ---
 
   it('RadioGroup render prop receives slot with value', async () => {
     let slotValue: unknown = null;
@@ -646,8 +616,6 @@ describe('RadioGroup', () => {
     expect(slotValues?.checked).toBe(true);
     expect(slotValues?.disabled).toBe(false);
   });
-
-  // --- passes through extra props ---
 
   it('RadioGroup passes through extra props', () => {
     render(

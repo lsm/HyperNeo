@@ -61,7 +61,7 @@ describe('curateTaskMilestones', () => {
   });
 
   it('does not merge retries that are far apart (separate episodes)', () => {
-    const gap = 10 * 60_000; // 10 minutes — beyond the 5-minute burst window
+    const gap = 10 * 60_000;
     const input = [
       row({ id: 'r1', category: 'retry', title: 'API retry', createdAt: 1000 }),
       row({ id: 'r2', category: 'retry', title: 'API retry', createdAt: 1000 + gap }),
@@ -95,8 +95,6 @@ describe('curateTaskMilestones', () => {
   });
 
   it('keeps same-content milestones that differ in tone (different outcomes)', () => {
-    // Tone is user-visible (the dot colour); a danger row following an identical
-    // neutral one within the echo window must not be dropped.
     const input = [
       row({
         id: 'g1',
@@ -120,7 +118,6 @@ describe('curateTaskMilestones', () => {
   });
 
   it('keeps identical answers repeated past the echo window (not just echoes)', () => {
-    // Same producer, same content, but >60s apart → a genuine repeat, not an echo.
     const input = [
       row({
         id: 'a1',
@@ -144,8 +141,6 @@ describe('curateTaskMilestones', () => {
   });
 
   it('does not merge retries from different sessions sharing an agent label', () => {
-    // Custom workflows may reuse an agent name across nodes; the session id is
-    // the stable identity, so these must stay separate bursts.
     const input = [
       row({
         id: 'r1',

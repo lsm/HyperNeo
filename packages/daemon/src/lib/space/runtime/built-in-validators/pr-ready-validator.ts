@@ -1,11 +1,3 @@
-/**
- * PR Ready Built-in Validator
- *
- * Typed replacement for the legacy PR_READY_BASH_SCRIPT. Validates that a
- * GitHub PR is open, mergeable, and has no unresolved review threads before
- * allowing a send_message handoff to a review node.
- */
-
 import type { WorkflowHookResult } from '@hyperneo/shared';
 import type { HookExecutorContext } from '../hook-executor';
 import { collectWithMaxBuffer, parseJsonStdout } from '../script-utils';
@@ -50,17 +42,6 @@ interface GraphQlResponse {
   errors?: unknown[];
 }
 
-/**
- * Post-approval merge signals carried in `send_message` `data.reason`. When the
- * coder (reused as the merger on the Coding node) reports a merge blocker or a
- * fix-push, the PR is by definition NOT "ready for Review" — the coder is
- * reporting unreadiness (or that it just changed the head). The pr_ready gate
- * must not block those reports, or an administrative blocker that leaves the PR
- * UNSTABLE/DIRTY/BEHIND is undeliverable to the approval authority and the
- * approved task stalls. Only the coder-owned Coding workflow routes the
- * post-approval coder through the pr_ready-hooked Coding → Review channel (the
- * merger variants use a dedicated, ungated Post-Approval → Review channel).
- */
 const POST_APPROVAL_MERGE_REASONS = new Set(['merge_blocked', 'merge_fix_pushed']);
 
 function readSendReason(context: HookExecutorContext): string | undefined {
@@ -73,30 +54,16 @@ function readSendReason(context: HookExecutorContext): string | undefined {
 }
 
 export function createPrReadyValidator(
-  // Lazy default: referencing `Bun.spawn` directly as the default value throws
-  // at import/call time under non-Bun runtimes (e.g. Vitest on Node) even when
-  // the validator is never invoked.
   spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
     Bun.spawn(...args)) as typeof Bun.spawn
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   return async (context: HookExecutorContext): Promise<WorkflowHookResult> => {
-    // Exempt post-approval merge-blocker reports / fix-push notices from the
-    // readiness gate — but ONLY while the task is `approved` (post-approval
-    // phase). The initial implementation handoff runs while the task is still
-    // in-progress, so gating on `approved` prevents a sender from spoofing one
-    // of these reasons to bypass the gate and activate Review with an unready
-    // PR.
     if (context.taskStatus === 'approved') {
       const data = (context.rawParams ?? context.params)?.data;
       const suppliedPrUrl =
         data && typeof data === 'object' && 'pr_url' in data
           ? (data as { pr_url?: unknown }).pr_url
           : undefined;
-      // The frozen reviewed PR is the engine-stamped reserved identity
-      // (context.frozenPrUrl) — NOT this hook's own localState, which a cross-
-      // hook stateForHook write could pollute. Fall back to the hook's own
-      // state only when the engine did not provide the reserved value (older
-      // runs / tests without the engine resolver).
       const frozenPrUrl =
         typeof context.frozenPrUrl === 'string'
           ? context.frozenPrUrl
@@ -106,12 +73,6 @@ export function createPrReadyValidator(
               ? context.hookLocalState.prUrl
               : undefined;
       const isMergeReason = POST_APPROVAL_MERGE_REASONS.has(readSendReason(context) ?? '');
-      // Blocker / fix-push handoffs MUST carry data.pr_url bound to the frozen
-      // reviewed PR. Treating omission as safe lets an approved coder send
-      // `reason: "merge_blocked"` with no structured pr_url while naming a
-      // different PR in the free-form message — the re-approval authority then
-      // has no trusted identity to bind. So require the pr_url and a frozen
-      // identity to compare it against.
       if (isMergeReason) {
         if (typeof suppliedPrUrl !== 'string') {
           return {
@@ -135,8 +96,6 @@ export function createPrReadyValidator(
         }
         return { type: 'allow' };
       }
-      // Non-merge approved handoff: bind any supplied pr_url to the frozen
-      // identity (a missing pr_url is allowed here — it is not a blocker report).
       if (typeof suppliedPrUrl === 'string') {
         if (!frozenPrUrl) {
           return {
@@ -169,9 +128,6 @@ export function createPrReadyValidator(
       };
     }
 
-    // Run gh pr view. The requested fields (mergeable/mergeStateStatus) are
-    // GraphQL PullRequest fields in the GitHub CLI, so a rate-limit probe uses
-    // the `graphql` resource window rather than REST `core`.
     const prView = await runCommand<PrViewResult>(
       ['gh', 'pr', 'view', prUrl, '--json', 'url,state,mergeable,mergeStateStatus'],
       context.workspacePath,
@@ -226,7 +182,6 @@ export function createPrReadyValidator(
       };
     }
 
-    // Check unresolved review threads
     const threadsResult = await runReviewThreadsQuery(
       prMeta,
       context.workspacePath,
@@ -279,10 +234,6 @@ async function resolvePrUrl(
   const templatePrUrl = extractTemplatePrUrl(context);
   if (templatePrUrl) return { success: true, prUrl: templatePrUrl, shouldPatchPrUrl: true };
 
-  // Run gh pr view for current branch. The URL field is resolved via GitHub
-  // CLI's GraphQL PR finder, so a rate-limit probe uses the `graphql` resource
-  // window rather than REST `core`. When GH_HOST points to an Enterprise host,
-  // forward it so the probe queries the same host.
   const currentBranchPr = await runCommand<{ url?: string }>(
     ['gh', 'pr', 'view', '--json', 'url'],
     context.workspacePath,
@@ -342,7 +293,6 @@ function parseGitRemoteHost(remoteUrl: string): string | undefined {
     const url = new URL(trimmed);
     return url.hostname || undefined;
   } catch {
-    // scp-like SSH remote: git@github.example.com:owner/repo.git
     const match = trimmed.match(/^[^@]+@([^:]+):/);
     return match?.[1];
   }
@@ -465,12 +415,8 @@ async function runReviewThreadsQuery(
 
     const json = result.data;
     if (json.errors) {
-      // GraphQL rate-limit errors come as HTTP 200 with an errors payload.
-      // Check if any error message indicates a rate limit and retry accordingly.
       const errorsText = JSON.stringify(json.errors);
       if (isSecondaryRateLimitError(errorsText)) {
-        // Secondary/abuse throttles do not update /rate_limit; use the minimum
-        // backoff rather than an unrelated primary reset window.
         return {
           success: false,
           error: `GraphQL secondary rate limit: ${errorsText}`,
@@ -524,15 +470,6 @@ function remainingTimeoutMs(deadlineMs: number): number {
   return Math.max(1, deadlineMs - Date.now());
 }
 
-/**
- * Failure shape returned by `runCommand`.
- *
- * - `rateLimited: true` when stderr matched GitHub rate-limit patterns. The
- *   caller converts this into a `retryable_block` so the workflow engine
- *   backs off rather than re-running the validator on every action dispatch.
- * - `retryAfterMs` is derived from a follow-up `gh api /rate_limit` probe
- *   (when reachable) and bounded by `RATE_LIMIT_MIN_BACKOFF_MS`.
- */
 type CommandFailure = {
   success: false;
   error: string;
@@ -542,12 +479,6 @@ type CommandFailure = {
 type CommandSuccess<T> = { success: true; data: T };
 type CommandOutcome<T> = CommandSuccess<T> | CommandFailure;
 
-/**
- * Spawns a `gh` command, captures stdout/stderr, and parses JSON stdout.
- *
- * This is the inner primitive — it does NOT interpret rate-limit errors.
- * Callers that want rate-limit awareness should use `runCommand` instead.
- */
 async function runCommandRaw<T>(
   args: string[],
   cwd: string,
@@ -594,16 +525,6 @@ async function runCommandRaw<T>(
   return { success: true, data: parsed as T };
 }
 
-/**
- * Runs a `gh` command, classifying non-zero exits as rate-limited when the
- * stderr matches GitHub's rate-limit error patterns.
- *
- * On rate-limit detection, performs a follow-up `gh api /rate_limit` probe
- * to compute `retryAfterMs` (bounded by `RATE_LIMIT_MIN_BACKOFF_MS`).
- * `options.hostHint` is forwarded to the probe so an Enterprise rate-limit
- * is measured against the right host. All other failures pass through
- * unchanged so existing block-path behavior is preserved.
- */
 async function runCommand<T>(
   args: string[],
   cwd: string,
@@ -614,7 +535,6 @@ async function runCommand<T>(
   const outcome = await runCommandRaw<T>(args, cwd, timeoutMs, spawnImpl);
   if (outcome.success) return outcome;
   if (!isRateLimitError(outcome.error)) return outcome;
-  // Secondary rate limits don't update /rate_limit — skip the probe and use minimum backoff.
   if (isSecondaryRateLimitError(outcome.error)) {
     return {
       success: false,
@@ -638,13 +558,6 @@ async function runCommand<T>(
   };
 }
 
-/**
- * Wraps a failed `runCommand` outcome into the right `WorkflowHookResult`.
- *
- * Rate-limited failures become `retryable_block` so the workflow engine
- * defers the next attempt past the reset window. All other failures pass
- * through as `block` with the original `prefix` framing.
- */
 function commandFailureToHookResult(failure: CommandFailure, prefix: string): WorkflowHookResult {
   if (failure.rateLimited) {
     return {

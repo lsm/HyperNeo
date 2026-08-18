@@ -1,10 +1,3 @@
-/**
- * SpaceDetailPanel
- *
- * Space-specific context panel for the three-column layout.
- * Prioritizes fast access to overview, review work, and sessions.
- */
-
 import type {
   AgentProcessingState,
   SessionStatus,
@@ -55,14 +48,8 @@ import { cn } from '../lib/utils';
 
 type TaskTab = 'active' | 'action' | 'draft';
 
-/**
- * Maximum number of Tasks/Sessions rows rendered in the sidebar preview.
- * Beyond this a "View all N" link routes to the full page. The currently
- * selected item is always kept visible even when it falls past the cap.
- */
 const SIDEBAR_PREVIEW_LIMIT = 10;
 
-/** Parse the persisted processingState JSON string into an AgentProcessingState. */
 function parseAgentState(value?: string): AgentProcessingState {
   if (!value) return { status: 'idle' };
   try {
@@ -72,14 +59,6 @@ function parseAgentState(value?: string): AgentProcessingState {
   }
 }
 
-/**
- * Resolve the indicator tone + pulse for a space session row.
- *
- * Any non-idle processing state (queued/processing/waiting/cooldown/interrupted)
- * drives the tone from the processing-state map, so a session that needs
- * attention never reads as a healthy green. Only processing/queued pulse (active
- * work); the lifecycle tone is the fallback when the agent is idle.
- */
 function sessionIndicator(session: SpaceSessionRow): { tone: IndicatorTone; pulse: boolean } {
   const agentState = parseAgentState(session.processingState);
   if (agentState.status !== 'idle') {
@@ -90,11 +69,6 @@ function sessionIndicator(session: SpaceSessionRow): { tone: IndicatorTone; puls
   return { tone: lifecycle?.tone ?? 'neutral', pulse: false };
 }
 
-/**
- * Session row in the Space detail panel sessions list. Mirrors the plain-chat
- * SessionListItem: double-click the title to rename, with a single hover-revealed
- * archive action that arms an inline red confirm before firing.
- */
 function SpaceDetailSessionRow({
   session,
   isSelected,
@@ -120,13 +94,7 @@ function SpaceDetailSessionRow({
     }
   };
 
-  // Touch the last-seen signal so the badge re-renders when the session is
-  // marked read (e.g. on becoming selected).
   void spaceSessionLastSeen.value;
-  // Suppress synchronously for the selected session so an incoming message-count
-  // update can't flash a badge for the one render before the mark-read effect
-  // catches up (mirrors the global session-status behavior of excluding the
-  // current session).
   const unread = isSelected ? 0 : getSpaceSessionUnreadCount(session.id, session.messageCount);
   const { tone, pulse } = sessionIndicator(session);
 
@@ -143,8 +111,6 @@ function SpaceDetailSessionRow({
 
   const openSession = () => onClick(session.id);
   const handleKeyDown = (e: KeyboardEvent) => {
-    // Only activate when the row itself is focused, so Enter on a nested
-    // action button doesn't also open the session.
     if (e.currentTarget === e.target && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
       openSession();
@@ -218,9 +184,6 @@ function SpaceDetailSessionRow({
 }
 
 function TaskStatusDot({ status, pulse }: { status: SpaceTaskStatus; pulse?: boolean }) {
-  // Colour always comes from the unified task-status tone map; the caller
-  // decides whether to pulse (only when a live run is actually executing, so a
-  // stuck in_progress task doesn't read as active).
   return <StatusDot tone={getTaskStatusConfig(status).tone} pulse={pulse} />;
 }
 
@@ -323,27 +286,18 @@ export function SpaceDetailPanel({
   const selectedSessionId = currentSpaceSessionIdSignal.value;
   const selectedTaskId = currentSpaceTaskIdSignal.value;
   const [taskTab, setTaskTab] = useState<TaskTab>('action');
-  // Session pending archive-with-commit-loss confirmation (mirrors SessionsSidebar).
   const [archiveConfirm, setArchiveConfirm] = useState<{
     sessionId: string;
     commitStatus: WorktreeCommitStatus;
   } | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
-  // The panel is reused across Spaces (no remount key), so track the live
-  // spaceId in a ref. An archive probe started in Space A that resolves after
-  // the user navigates to Space B must be ignored — otherwise its confirmation
-  // dialog lands on Space B and confirming archives the wrong session.
   const spaceIdRef = useRef(spaceId);
 
-  // Drop any pending archive confirmation when the Space changes: it belongs to
-  // the previous Space's session and must not be confirmable while viewing a
-  // different Space.
   useEffect(() => {
     spaceIdRef.current = spaceId;
     setArchiveConfirm(null);
   }, [spaceId]);
 
-  // Auto-switch tab when the selected task changes (not on every task update)
   useEffect(() => {
     if (!selectedTaskId) return;
     const task = tasks.find((t) => t.id === selectedTaskId);
@@ -351,30 +305,22 @@ export function SpaceDetailPanel({
     if (isActiveTask(task) && taskTab !== 'active') setTaskTab('active');
     else if (isActionRequired(task) && taskTab !== 'action') setTaskTab('action');
     else if (isDraftTask(task) && taskTab !== 'draft') setTaskTab('draft');
-    // Only re-run when the selected task changes, not on every task list update.
   }, [selectedTaskId]);
 
-  // Mark the selected space session as read so its unread badge clears.
   useEffect(() => {
     if (!selectedSessionId) return;
     const session = spaceStore.sessions.value.find((s) => s.id === selectedSessionId);
     if (session) markSpaceSessionRead(session.id, session.messageCount);
   }, [selectedSessionId, spaceStore.sessions.value]);
 
-  // Lower any session's stored unread baseline when its message count drops
-  // below it (e.g. after a rewind), so new post-rewind messages read as unread.
   useEffect(() => {
     syncSpaceSessionSeen(spaceStore.sessions.value);
   }, [spaceStore.sessions.value]);
 
-  // Seed each task's last-seen `updatedAt` as the list renders, so a task only
-  // reads as "unread" when it changes AFTER the user first saw it (no cold-start
-  // noise where every task flashes unread on load).
   useEffect(() => {
     seedSpaceTasksSeen(tasks);
   }, [tasks]);
 
-  // Mark the selected task as read so its update dot clears.
   useEffect(() => {
     if (!selectedTaskId) return;
     const task = tasks.find((t) => t.id === selectedTaskId);
@@ -392,8 +338,6 @@ export function SpaceDetailPanel({
   const isTasksSelected = currentSpaceViewModeSignal.value === 'tasks';
   const isSessionsSelected = currentSpaceViewModeSignal.value === 'sessions';
 
-  // Action tab + Tasks-nav badge share the same predicate (`isActionRequired`)
-  // so the badge count cannot drift from what's visible under the Action tab.
   const { activeCount, actionCount, draftCount } = useMemo(() => {
     let active = 0;
     let action = 0;
@@ -410,9 +354,6 @@ export function SpaceDetailPanel({
   const tasksForTab = useMemo(() => {
     const predicate =
       taskTab === 'action' ? isActionRequired : taskTab === 'draft' ? isDraftTask : isActiveTask;
-    // Active tab: surface running tasks (in_progress, then approved) before
-    // waiting ones (open), with recency as the tiebreaker within each tier.
-    // Other tabs keep pure recency order.
     const statusRank =
       taskTab === 'active'
         ? (s: SpaceTaskStatus) => (s === 'in_progress' ? 0 : s === 'approved' ? 1 : 2)
@@ -425,8 +366,6 @@ export function SpaceDetailPanel({
       .filter(predicate);
   }, [tasks, taskTab, selectedTaskId]);
 
-  // Cap the sidebar preview, but always keep the selected task visible even
-  // when it would otherwise fall past the cap (e.g. it is #15).
   const visibleTasks = useMemo(() => {
     const capped = tasksForTab.slice(0, SIDEBAR_PREVIEW_LIMIT);
     const selected = tasksForTab.find((t) => t.id === selectedTaskId);
@@ -442,15 +381,11 @@ export function SpaceDetailPanel({
       sessionId.startsWith(`space:${spaceId}:task:`) ||
       sessionId.startsWith(`space:${spaceId}:workflow:`);
 
-    // The store holds sessions in Map-insertion order (space-store.ts), so sort
-    // by recency here — otherwise capping below shows the oldest sessions.
     return storeSessions
       .filter((s) => !isSystemSpaceSession(s.id))
       .sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0));
   }, [spaceStore.sessions.value, spaceId]);
 
-  // Cap the sidebar preview, but always keep the selected session visible even
-  // when it would otherwise fall past the cap (e.g. it is #15).
   const visibleSessions = useMemo(() => {
     const capped = sessions.slice(0, SIDEBAR_PREVIEW_LIMIT);
     const selected = sessions.find((s) => s.id === selectedSessionId);
@@ -517,15 +452,10 @@ export function SpaceDetailPanel({
     [routeSpaceId, onNavigate]
   );
 
-  // Archive a space session. Worktree sessions with unmerged commits get a
-  // confirm dialog listing what would be lost; everything else archives
-  // immediately. Same flow as the chat sidebar (SessionsSidebar).
   const handleArchive = useCallback(async (sessionId: string) => {
     const probeSpaceId = spaceIdRef.current;
     try {
       const result = await archiveSession(sessionId, false);
-      // Ignore the result if the user navigated to a different Space while the
-      // probe was in flight — confirming it would archive the wrong session.
       if (probeSpaceId !== spaceIdRef.current) return;
       if (result.requiresConfirmation && result.commitStatus) {
         setArchiveConfirm({ sessionId, commitStatus: result.commitStatus });
@@ -793,9 +723,6 @@ export function SpaceDetailPanel({
             visibleTasks.map((task) => {
               const taskUnread =
                 selectedTaskId !== task.id && isSpaceTaskUnread(task.id, task.updatedAt);
-              // Pulse when a task is in_progress and either standalone (no run
-              // to gate on) or its workflow run is genuinely live — mirrors
-              // SpaceTasks' TaskItem.
               const taskRunning =
                 task.status === 'in_progress' &&
                 (!task.workflowRunId ||

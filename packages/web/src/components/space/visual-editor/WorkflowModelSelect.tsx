@@ -146,8 +146,6 @@ export function WorkflowModelSelect({
     );
   }
 
-  // Native select remains intentionally simple here because OpenRouter is capped server-side;
-  // the primary status-bar and fallback settings pickers provide searchable custom menus.
   return (
     <select
       data-testid={testId}

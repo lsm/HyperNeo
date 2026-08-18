@@ -1,14 +1,3 @@
-/**
- * ACP Query Adapter
- *
- * Bridges ACP protocol notifications to HyperNeo's internal Query interface.
- * Implements AsyncGenerator<SDKMessage, void> plus interrupt(), close(),
- * sessionId getter, and setMcpServers().
- *
- * Accumulates streaming chunks into complete assistant messages before
- * yielding them to the consumer.
- */
-
 import type {
   SDKControlGetContextUsageResponse,
   SDKControlInterruptResponse,
@@ -80,7 +69,6 @@ export class AcpQueryAdapter implements QueryLike {
         }
       }
 
-      // Flush any remaining accumulated chunks
       const flushMessages = this.translator.flush();
       for (const msg of flushMessages) {
         yield msg;
@@ -88,7 +76,6 @@ export class AcpQueryAdapter implements QueryLike {
 
       this.notifyContextUsage();
 
-      // Emit result message using the ACP stop reason if available
       const stopReason = this.client.getLastPromptStopReason() ?? 'end_turn';
       const isError = stopReason !== 'end_turn';
       yield this.translator.translateResult(stopReason, isError);
@@ -101,9 +88,6 @@ export class AcpQueryAdapter implements QueryLike {
     }
   }
 
-  /**
-   * Interrupt the current query turn.
-   */
   async interrupt(): Promise<SDKControlInterruptResponse | undefined> {
     if (this.closed || this.interrupted) return undefined;
     this.interrupted = true;
@@ -111,18 +95,12 @@ export class AcpQueryAdapter implements QueryLike {
     return undefined;
   }
 
-  /**
-   * Close the underlying ACP client and transport.
-   */
   close(): void {
     if (this.closed) return;
     this.closed = true;
     this.client.close();
   }
 
-  /**
-   * Get the ACP session ID.
-   */
   get sessionId(): string {
     const id = this.client.getSessionId();
     if (!id) {
@@ -131,10 +109,6 @@ export class AcpQueryAdapter implements QueryLike {
     return id;
   }
 
-  /**
-   * Set MCP servers dynamically. No-op for PR 2 — dynamic MCP
-   * updates will be implemented in PR 6.
-   */
   setMcpServers(): Promise<McpSetServersResult> {
     return Promise.resolve({ added: [], removed: [], errors: {} });
   }

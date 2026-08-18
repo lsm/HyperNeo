@@ -11,17 +11,11 @@ import {
   type ScopeTableConfig,
 } from '@/lib/db-query/scope-config';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 function tableNames(configs: ScopeTableConfig[]): string[] {
   return configs.map((c) => c.tableName);
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
 describe('scope-config', () => {
-  // ── getScopeConfig ────────────────────────────────────────────────────────
-
   describe('getScopeConfig', () => {
     it('global scope returns the correct set of tables', () => {
       const config = getScopeConfig('global');
@@ -83,7 +77,6 @@ describe('scope-config', () => {
         'evolution_task_proposals',
         'evolution_metric_snapshots',
         'goal_automation_cursors',
-        // Main-DB tables exposed with space-scoped filtering via session ID prefix:
         'sessions',
         'sdk_messages',
         'session_groups',
@@ -100,8 +93,6 @@ describe('scope-config', () => {
       }
     });
   });
-
-  // ── Column blacklists ─────────────────────────────────────────────────────
 
   describe('column blacklists', () => {
     it('sessions blacklist excludes config and session_context', () => {
@@ -158,8 +149,6 @@ describe('scope-config', () => {
     });
   });
 
-  // ── getScopeForSession ────────────────────────────────────────────────────
-
   describe('getScopeForSession', () => {
     it('maps roomId to room scope', () => {
       const result = getScopeForSession({ roomId: 'room-123' });
@@ -187,8 +176,6 @@ describe('scope-config', () => {
     });
   });
 
-  // ── Sensitive tables never in any scope ───────────────────────────────────
-
   describe('sensitive table exclusion', () => {
     it('auth_config is not in any scope', () => {
       for (const scopeType of ['global', 'room', 'space'] as const) {
@@ -210,18 +197,14 @@ describe('scope-config', () => {
     });
 
     it('sdk_messages is accessible in space scope (with session ID prefix filtering)', () => {
-      // sdk_messages is now exposed in space scope (filtered by session_id LIKE 'space:<id>:%')
       expect(getAccessibleTableNames('space')).toContain('sdk_messages');
-      // But NOT in global or room scope
       expect(getAccessibleTableNames('global')).not.toContain('sdk_messages');
       expect(getAccessibleTableNames('room')).not.toContain('sdk_messages');
     });
 
     it('session_groups and session_group_members are accessible in space scope only', () => {
-      // Now exposed in space scope via session ID prefix filtering
       expect(getAccessibleTableNames('space')).toContain('session_groups');
       expect(getAccessibleTableNames('space')).toContain('session_group_members');
-      // But NOT in global or room scope
       expect(getAccessibleTableNames('global')).not.toContain('session_groups');
       expect(getAccessibleTableNames('global')).not.toContain('session_group_members');
       expect(getAccessibleTableNames('room')).not.toContain('session_groups');
@@ -240,8 +223,6 @@ describe('scope-config', () => {
       }
     });
   });
-
-  // ── Dropped tables ────────────────────────────────────────────────────────
 
   describe('dropped tables', () => {
     const droppedTables = [
@@ -267,8 +248,6 @@ describe('scope-config', () => {
     });
   });
 
-  // ── getExcludedTableNames ─────────────────────────────────────────────────
-
   describe('getExcludedTableNames', () => {
     it('includes all sensitive tables', () => {
       const excluded = getExcludedTableNames();
@@ -278,13 +257,10 @@ describe('scope-config', () => {
     });
 
     it('does not include sdk_messages (now in space scope)', () => {
-      // sdk_messages is no longer globally excluded — it's accessible in space scope
-      // with session ID prefix filtering. It remains inaccessible in global/room scopes.
       expect(getExcludedTableNames()).not.toContain('sdk_messages');
     });
 
     it('does not include session_groups or session_group_members (now in space scope)', () => {
-      // These tables are now accessible in space scope with session ID prefix filtering.
       expect(getExcludedTableNames()).not.toContain('session_groups');
       expect(getExcludedTableNames()).not.toContain('session_group_members');
     });
@@ -332,8 +308,6 @@ describe('scope-config', () => {
       }
     });
   });
-
-  // ── buildScopeFilter ──────────────────────────────────────────────────────
 
   describe('buildScopeFilter', () => {
     it('returns empty filter for global scope tables (no scopeColumn or scopeJoin)', () => {
@@ -473,7 +447,6 @@ describe('scope-config', () => {
     });
 
     it('all indirect scope filters produce valid SQL with one parameter', () => {
-      // Collect all indirect configs across all scopes
       const indirectConfigs: ScopeTableConfig[] = [];
       for (const scopeType of ['global', 'room', 'space'] as const) {
         for (const cfg of getScopeConfig(scopeType)) {
@@ -487,14 +460,11 @@ describe('scope-config', () => {
 
       for (const cfg of indirectConfigs) {
         const result = buildScopeFilter(cfg, 'test-scope-value');
-        // Should contain IN subquery pattern
         expect(result.whereClause).toContain('IN (SELECT');
         expect(result.whereClause).toContain('FROM');
         expect(result.whereClause).toContain('WHERE');
         expect(result.whereClause).toContain('?');
-        // Exactly one parameter
         expect(result.params).toHaveLength(1);
-        // Standard join: param is the scope value. LIKE-based join: param is the full LIKE pattern.
         if (cfg.scopeJoin?.likePrefix !== undefined) {
           expect(result.params[0] as string).toContain('test-scope-value');
         } else {
@@ -524,8 +494,6 @@ describe('scope-config', () => {
     });
   });
 
-  // ── Scope filter enforcement ──────────────────────────────────────────────
-
   describe('scope filter enforcement', () => {
     it('every room-scoped table has scopeColumn or scopeJoin', () => {
       const unfiltered: string[] = [];
@@ -538,7 +506,6 @@ describe('scope-config', () => {
     });
 
     it('every space-scoped table has scopeColumn, scopeJoin, or scopeLike', () => {
-      // Tables using scopeLike filter by session ID prefix (e.g., 'space:<id>:%').
       const unfiltered: string[] = [];
       for (const table of getScopeConfig('space')) {
         if (!table.scopeColumn && !table.scopeJoin && !table.scopeLike) {
@@ -549,20 +516,14 @@ describe('scope-config', () => {
     });
   });
 
-  // ── Cross-cutting: intentional multi-scope tables and uniqueness ──────────
-
   describe('table name uniqueness', () => {
     it('sessions intentionally appears in both global and space scope', () => {
-      // `sessions` is in global scope (no filter) AND
-      // in space scope (filtered by session ID prefix — space agent access).
-      // This is an intentional design: the two scopes apply different filtering.
       expect(getAccessibleTableNames('global')).toContain('sessions');
       expect(getAccessibleTableNames('space')).toContain('sessions');
       expect(getAccessibleTableNames('room')).not.toContain('sessions');
     });
 
     it('no table other than sessions appears in more than one scope', () => {
-      // `sessions` is the only intentional cross-scope table (global + space).
       const INTENTIONAL_MULTI_SCOPE = new Set(['sessions']);
 
       const allTables = new Map<string, string[]>();
@@ -584,29 +545,21 @@ describe('scope-config', () => {
     });
   });
 
-  // ── Schema evolution: every actual DB table is accounted for ──────────────
-
   describe('schema evolution', () => {
     it('every table in the actual schema is either in a scope config or in the excluded list', () => {
-      // Create a fresh in-memory database with the full schema
       const db = new Database(':memory:');
       runMigrations(db, () => {});
       createTables(db);
 
-      // Query sqlite_master for all actual table names
       const rows = db
         .query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         .all() as {
         name: string;
       }[];
       const actualTables = new Set(
-        rows
-          .map((r) => r.name)
-          // Filter out internal SQLite tables (sqlite_sequence is auto-created for AUTOINCREMENT)
-          .filter((name) => !name.startsWith('sqlite_'))
+        rows.map((r) => r.name).filter((name) => !name.startsWith('sqlite_'))
       );
 
-      // Collect all tables that are either in a scope config or excluded
       const accountedFor = new Set<string>();
       for (const scopeType of ['global', 'room', 'space'] as const) {
         for (const name of getAccessibleTableNames(scopeType)) {
@@ -617,7 +570,6 @@ describe('scope-config', () => {
         accountedFor.add(name);
       }
 
-      // Every actual table must be accounted for
       const unaccounted: string[] = [];
       for (const tableName of actualTables) {
         if (!accountedFor.has(tableName)) {

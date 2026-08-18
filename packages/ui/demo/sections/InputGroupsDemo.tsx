@@ -13,13 +13,11 @@ const inputDisabledClass =
 export function InputGroupsDemo() {
   return (
     <div class="space-y-6">
-      {/* 1. Input with label */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Input with label</h3>
         <Input type="email" placeholder="Enter your email" class={inputClass} />
       </div>
 
-      {/* 2. Input with label and help text */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Input with label and help text</h3>
         <div>
@@ -35,7 +33,6 @@ export function InputGroupsDemo() {
         </div>
       </div>
 
-      {/* 3. Input with validation error */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Input with validation error</h3>
         <Input
@@ -49,7 +46,6 @@ export function InputGroupsDemo() {
         </p>
       </div>
 
-      {/* 4. Input with disabled state */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Input with disabled state</h3>
         <Input
@@ -60,7 +56,6 @@ export function InputGroupsDemo() {
         />
       </div>
 
-      {/* 5. Input with hidden label */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Input with hidden label</h3>
         <Input
@@ -71,7 +66,6 @@ export function InputGroupsDemo() {
         />
       </div>
 
-      {/* 6. Input with corner hint */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Input with corner hint</h3>
         <div class="relative">
@@ -82,7 +76,6 @@ export function InputGroupsDemo() {
         </div>
       </div>
 
-      {/* 7. Input with leading icon */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Input with leading icon</h3>
         <div class="relative">
@@ -93,7 +86,6 @@ export function InputGroupsDemo() {
         </div>
       </div>
 
-      {/* 8. Input with trailing icon */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Input with trailing icon</h3>
         <div class="relative">
@@ -104,7 +96,6 @@ export function InputGroupsDemo() {
         </div>
       </div>
 
-      {/* 9. Input with add-on */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Input with add-on</h3>
         <InputGroup class="flex">
@@ -119,7 +110,6 @@ export function InputGroupsDemo() {
         </InputGroup>
       </div>
 
-      {/* 10. Input with inline add-on */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Input with inline add-on</h3>
         <InputGroup class="flex">
@@ -134,7 +124,6 @@ export function InputGroupsDemo() {
         </InputGroup>
       </div>
 
-      {/* 11. Input with inline leading and trailing add-ons */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">
           Input with inline leading and trailing add-ons
@@ -150,7 +139,6 @@ export function InputGroupsDemo() {
         </InputGroup>
       </div>
 
-      {/* 12. Input with inline leading dropdown */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">
           Input with inline leading dropdown
@@ -169,7 +157,6 @@ export function InputGroupsDemo() {
         </InputGroup>
       </div>
 
-      {/* 13. Input with inline leading add-on and trailing dropdown */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">
           Input with inline leading add-on and trailing dropdown
@@ -191,7 +178,6 @@ export function InputGroupsDemo() {
         </InputGroup>
       </div>
 
-      {/* 14. Input with leading icon and trailing button */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">
           Input with leading icon and trailing button

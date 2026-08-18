@@ -1,7 +1,3 @@
-/**
- * Message Persistence Tests
- */
-
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
 import type { Database } from '../../../../src/storage/database';
@@ -97,10 +93,6 @@ describe('MessagePersistence', () => {
     );
   });
 
-  // v2 is the default: dispatch is deferred to the durable message_delivery
-  // handler (the `message.persisted` subscriber routes to deliverChatMessage).
-  // persist must persist the row and publish the event, but must NOT drive the
-  // query inline.
   it('persists idle immediate as enqueued and defers dispatch to the durable handler', async () => {
     await persistence.persist({
       sessionId: 'test-session-id',
@@ -227,9 +219,6 @@ describe('MessagePersistence', () => {
     expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
   });
 
-  // Opt-out rollback path: HYPERNEO_MESSAGE_DELIVERY_V2=0 restores the legacy
-  // inline dispatch (startQueryAndEnqueue) so a regression can be rolled back
-  // without a redeploy.
   it('opt-out (HYPERNEO_MESSAGE_DELIVERY_V2=0) dispatches inline via startQueryAndEnqueue', async () => {
     const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
     process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
@@ -269,14 +258,13 @@ describe('MessagePersistence', () => {
       content: 'durable steer',
     });
 
-    // persist defers to the durable handler; it must not touch queued state itself.
     expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
     expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
   });
 });
 
 describe('validateImageSizes', () => {
-  const tinyData = 'AAAA'; // 4 bytes — well under the 5MB cap
+  const tinyData = 'AAAA';
 
   it('returns without error for an empty list', () => {
     expect(() => validateImageSizes([])).not.toThrow();

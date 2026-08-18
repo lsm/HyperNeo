@@ -1,18 +1,3 @@
-/**
- * QuestionPrompt Component
- *
- * Renders a user question prompt from the AskUserQuestion tool.
- * Allows users to select predefined options or enter custom text.
- *
- * Features:
- * - Single and multi-select support with checkbox indicators
- * - "Other" option for custom text input (multi-line textarea)
- * - Always visible form content (never hidden)
- * - Draft saving for persistence across refreshes
- * - Cancel/dismiss option
- * - Shows resolved state (submitted/cancelled) in disabled form
- */
-
 import { useState, useCallback, useEffect } from 'preact/hooks';
 import type {
   PendingUserQuestion,
@@ -24,9 +9,7 @@ import { Button } from './ui/Button.tsx';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 
-// Rose/pink color scheme to differentiate from ThinkingBlock's amber
 const questionColors = {
-  // Active/pending state
   active: {
     bg: 'bg-rose-950/30',
     border: 'border-rose-200 dark:border-rose-800',
@@ -36,14 +19,12 @@ const questionColors = {
     unselectedBg: 'bg-dark-800/60',
     unselectedText: 'text-gray-300',
   },
-  // Submitted state
   submitted: {
     bg: 'bg-green-950/20',
     border: borderColors.semantic.success,
     text: 'text-green-200',
     iconColor: 'text-green-400',
   },
-  // Cancelled state
   cancelled: {
     bg: 'bg-gray-900/30',
     border: borderColors.ui.secondary,
@@ -57,19 +38,9 @@ export type ResolvedState = 'submitted' | 'cancelled' | null;
 interface QuestionPromptProps {
   sessionId: string;
   pendingQuestion: PendingUserQuestion;
-  /** If set, the question has been resolved and should be shown in a disabled state */
   resolvedState?: ResolvedState;
-  /** Final responses when resolved (for display) */
   finalResponses?: QuestionDraftResponse[];
-  /**
-   * When `resolvedState === 'cancelled'`, explains who cancelled the question.
-   * - `user_cancelled` (default): user clicked Skip
-   * - `agent_session_terminated`: session ended before the user answered, so
-   *   the card is rendered as an orphan note rather than a "Question skipped"
-   *   pretending the user dismissed it.
-   */
   cancelReason?: QuestionCancelReason;
-  /** Callback when the question is resolved (submitted or cancelled) */
   onResolved?: (state: 'submitted' | 'cancelled', responses: QuestionDraftResponse[]) => void;
 }
 
@@ -85,9 +56,7 @@ export function QuestionPrompt({
   const { callIfConnected } = useMessageHub();
   const isResolved = resolvedState !== null;
 
-  // Track selections for each question (map of questionIndex -> Set of selected labels)
   const [selections, setSelections] = useState<Map<number, Set<string>>>(() => {
-    // Initialize from final responses if resolved, otherwise from draft
     const source = finalResponses || draftResponses;
     const map = new Map<number, Set<string>>();
     if (source) {
@@ -98,9 +67,7 @@ export function QuestionPrompt({
     return map;
   });
 
-  // Track custom text inputs (map of questionIndex -> text)
   const [customInputs, setCustomInputs] = useState<Map<number, string>>(() => {
-    // Initialize from final responses if resolved, otherwise from draft
     const source = finalResponses || draftResponses;
     const map = new Map<number, string>();
     if (source) {
@@ -113,9 +80,7 @@ export function QuestionPrompt({
     return map;
   });
 
-  // Track which questions show the "Other" input
   const [showOther, setShowOther] = useState<Set<number>>(() => {
-    // Initialize from final responses if resolved, otherwise from draft
     const source = finalResponses || draftResponses;
     const set = new Set<number>();
     if (source) {
@@ -131,7 +96,6 @@ export function QuestionPrompt({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
 
-  // Save draft whenever selections change (guarded by useEffect below)
   const saveDraft = useCallback(async () => {
     const responses: QuestionDraftResponse[] = [];
     for (let i = 0; i < questions.length; i++) {
@@ -156,7 +120,6 @@ export function QuestionPrompt({
     }
   }, [sessionId, questions.length, selections, customInputs, callIfConnected]);
 
-  // Debounced draft saving
   useEffect(() => {
     if (isResolved) return;
 
@@ -171,21 +134,18 @@ export function QuestionPrompt({
     const current = new Set(selections.get(questionIndex) || []);
 
     if (question.multiSelect) {
-      // Toggle selection
       if (current.has(label)) {
         current.delete(label);
       } else {
         current.add(label);
       }
     } else {
-      // Single select - replace
       current.clear();
       current.add(label);
     }
 
     setSelections(new Map(selections.set(questionIndex, current)));
 
-    // Clear "Other" if regular option selected (only for single select)
     if (!question.multiSelect) {
       setShowOther((prev) => {
         const next = new Set(prev);
@@ -205,7 +165,6 @@ export function QuestionPrompt({
 
     setShowOther((prev) => new Set([...prev, questionIndex]));
 
-    // Clear regular selections only for single select
     if (!question.multiSelect) {
       setSelections((prev) => {
         const next = new Map(prev);
@@ -237,7 +196,6 @@ export function QuestionPrompt({
         responses,
       });
 
-      // Notify parent of resolution
       onResolved?.('submitted', responses);
     } catch {
       // Error handled by toast
@@ -255,7 +213,6 @@ export function QuestionPrompt({
         toolUseId,
       });
 
-      // Notify parent of resolution with empty responses
       onResolved?.('cancelled', []);
     } catch {
       // Error handled by toast
@@ -264,14 +221,12 @@ export function QuestionPrompt({
     }
   };
 
-  // Check if form is valid (at least one answer per question)
   const isValid = questions.every((_, index) => {
     const hasSelection = (selections.get(index)?.size || 0) > 0;
     const hasCustom = !!customInputs.get(index);
     return hasSelection || hasCustom;
   });
 
-  // Get container styling based on state
   const getContainerClasses = () => {
     if (resolvedState === 'submitted') {
       return cn(
@@ -296,7 +251,6 @@ export function QuestionPrompt({
     );
   };
 
-  // Get header icon based on state
   const getHeaderIcon = () => {
     if (resolvedState === 'submitted') {
       return (
@@ -344,13 +298,9 @@ export function QuestionPrompt({
     );
   };
 
-  // Get header title based on state
   const getHeaderTitle = () => {
     if (resolvedState === 'submitted') return 'Response submitted';
     if (resolvedState === 'cancelled') {
-      // `agent_session_terminated`: the session ended before the user
-      // answered, so the question card is being cleaned up by the
-      // runtime rather than dismissed by the user.
       if (cancelReason === 'agent_session_terminated') {
         return 'Question cancelled — agent session ended';
       }
@@ -359,7 +309,6 @@ export function QuestionPrompt({
     return 'Claude needs your input';
   };
 
-  // Get header text color based on state
   const getHeaderTextColor = () => {
     if (resolvedState === 'submitted') return questionColors.submitted.text;
     if (resolvedState === 'cancelled') return questionColors.cancelled.text;
@@ -368,7 +317,6 @@ export function QuestionPrompt({
 
   return (
     <div class={getContainerClasses()} data-testid="question-prompt">
-      {/* Header */}
       <div class="flex items-center gap-2 min-w-0 flex-1 p-3">
         {getHeaderIcon()}
         <span class={cn('font-semibold text-sm flex-shrink-0', getHeaderTextColor())}>
@@ -381,11 +329,9 @@ export function QuestionPrompt({
         )}
       </div>
 
-      {/* Content area - always visible */}
       <div class="p-4 border-t bg-white dark:bg-gray-900 space-y-4 border-rose-200 dark:border-rose-800">
         {questions.map((question, qIndex) => (
           <div key={qIndex} class={cn('space-y-3', qIndex > 0 && 'pt-4 border-t border-dark-700')}>
-            {/* Question header and text */}
             <div class="flex items-start gap-2">
               <span
                 class={cn(
@@ -427,7 +373,6 @@ export function QuestionPrompt({
               </div>
             </div>
 
-            {/* Options grid layout */}
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
               {(question.options || []).map((option) => {
                 const isSelected = selections.get(qIndex)?.has(option.label);
@@ -455,7 +400,6 @@ export function QuestionPrompt({
                     )}
                     title={option.description}
                   >
-                    {/* Checkbox indicator for multi-select */}
                     {question.multiSelect && (
                       <div
                         class={cn(
@@ -480,7 +424,6 @@ export function QuestionPrompt({
                         )}
                       </div>
                     )}
-                    {/* Radio indicator for single select */}
                     {!question.multiSelect && (
                       <div
                         class={cn(
@@ -506,7 +449,6 @@ export function QuestionPrompt({
                 );
               })}
 
-              {/* Other option button */}
               {!(resolvedState === 'cancelled' && !showOther.has(qIndex)) && (
                 <button
                   onClick={() => handleOtherClick(qIndex)}
@@ -550,7 +492,6 @@ export function QuestionPrompt({
               )}
             </div>
 
-            {/* Custom text input when "Other" is selected - multi-line textarea */}
             {showOther.has(qIndex) && (
               <textarea
                 placeholder="Enter your response..."
@@ -570,7 +511,6 @@ export function QuestionPrompt({
           </div>
         ))}
 
-        {/* Action buttons - only show for pending state */}
         {!isResolved && (
           <div class="flex items-center gap-3 pt-4 border-t border-dark-700">
             <Button

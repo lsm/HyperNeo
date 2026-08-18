@@ -1,24 +1,11 @@
-/**
- * EmptyState — Unified empty state for lists, sections, and panels.
- *
- * Usage:
- *   <EmptyState icon={ClipboardIcon} title="No tasks yet" description="Create a mission to get started" />
- *   <EmptyState title="Nothing here" action={{ label: "Create", onClick: handleCreate }} />
- */
-
 import type { ComponentChildren, JSX } from 'preact';
 import { cn } from '../../lib/utils';
 
 export interface EmptyStateProps {
-  /** SVG icon rendered at 40×40 in muted gray */
   icon?: (props: { class?: string }) => JSX.Element;
-  /** Primary message */
   title: string;
-  /** Optional secondary text */
   description?: string;
-  /** Optional call-to-action button */
   action?: { label: string; onClick: () => void };
-  /** Extra classes on the wrapper */
   class?: string;
   children?: ComponentChildren;
 }

@@ -1,15 +1,3 @@
-/**
- * Forge (Evolution) automation-policy validation.
- *
- * Shared by the RPC path (`evolution.scope.update` via its `beforeScopeUpdate`
- * hook) and the MCP path (`update_forge_scope`) so both entry points reject the
- * same invalid `automation.*` configuration — UI-editable fields like
- * `completedTaskThreshold` and `completedTaskAutomationEnabled`, plus the
- * self-nag cron/timezone. Extracted here (rather than living only in the RPC
- * layer) so the `space-agent-tools` MCP handler can validate identically
- * without importing the RPC layer.
- */
-
 import type { EvolutionScope } from '@hyperneo/shared';
 import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils';
 import { readAutomationPolicyForScope } from './goal-automation-service';
@@ -36,10 +24,6 @@ export function validateGoalAutomationSelfNagPolicy(params: {
   if (enabled !== undefined && typeof enabled !== 'boolean') {
     throw new Error('completedTaskAutomationEnabled must be a boolean');
   }
-  // Validate the RAW self-nag field types before readAutomationPolicyForScope
-  // normalizes them: a non-string like selfNagTimezone: 42 would otherwise be
-  // normalized away, accepted here, persisted, and silently fall back to UTC
-  // during schedule reconciliation. null is allowed (clears the key).
   const rawAutomation = params.policy?.automation;
   if (rawAutomation && typeof rawAutomation === 'object' && !Array.isArray(rawAutomation)) {
     const record = rawAutomation as Record<string, unknown>;

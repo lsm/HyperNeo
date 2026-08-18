@@ -1,11 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Mock ACP Server
- *
- * A minimal JSON-RPC 2.0 over stdio server for integration testing.
- * Handles initialize, authenticate, session/new, session/prompt, and
- * server-to-client request responses.
- */
 
 import { createInterface } from 'node:readline';
 
@@ -49,7 +42,6 @@ rl.on('line', (line) => {
     return;
   }
 
-  // Notifications have no id; requests have id
   const isRequest = 'id' in msg && msg.id !== undefined;
 
   switch (msg.method) {
@@ -98,7 +90,6 @@ rl.on('line', (line) => {
         const params = msg.params as { sessionId: string; prompt: unknown[] };
         const sid = params.sessionId;
 
-        // Stream some notifications
         sendNotification('session/update', {
           sessionId: sid,
           update: {
@@ -132,14 +123,12 @@ rl.on('line', (line) => {
           },
         });
 
-        // Then respond
         sendResponse(msg.id, { stopReason: 'end_turn' });
       }
       break;
     }
 
     case 'session/cancel': {
-      // Notification: no response needed
       break;
     }
 

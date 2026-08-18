@@ -3,20 +3,13 @@ import SessionListItem from './SessionListItem.tsx';
 import { cn } from '../lib/utils.ts';
 
 interface SessionProjectGroupProps {
-  /** Display name (folder basename). */
   name: string;
-  /** Absolute project root path — shown as the row tooltip. */
   path: string;
-  /** Sessions belonging to this project, pre-sorted. */
   sessions: Session[];
-  /** Whether the group is collapsed. */
   collapsed: boolean;
-  /** Toggle the collapsed state. */
   onToggle: () => void;
   onSessionClick: (sessionId: string) => void;
-  /** Archive a session in this project. */
   onArchive: (sessionId: string) => void | Promise<void>;
-  /** When provided, shows a remove affordance (only passed for empty projects). */
   onRemove?: () => void;
 }
 
@@ -38,11 +31,6 @@ function folderToneForPath(path: string) {
   return FOLDER_TONES[hash % FOLDER_TONES.length];
 }
 
-/**
- * A collapsible project folder in the chats sidebar. Renders a disclosure
- * header (chevron + folder + name) and, when expanded, the nested chats — or
- * a "No chats" placeholder for empty projects.
- */
 export function SessionProjectGroup({
   name,
   path,
