@@ -638,6 +638,8 @@ describe('Session RPC Handlers — models.list', () => {
         getSessionAsync: (hydrateSpy = mock(async () => ({
           getSessionData: () => ({ id: 'sess-1', status: 'active' }),
           startQueryAndEnqueue: mock(async () => {}),
+          // Round-14 P2: the retry lane resets the startup-timeout budget.
+          resetStartupRetryBudget: mock(() => {}),
         }))),
         getDatabase: () => dbFacade,
       } as unknown as SessionManager;

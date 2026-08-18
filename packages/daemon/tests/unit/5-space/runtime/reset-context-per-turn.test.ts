@@ -49,6 +49,8 @@ function makeManager(opts: {
   const enqueueMock = mock(async () => {});
   const getProcessingState = mock(() => ({ status: 'idle' }));
   const saveUserMessage = mock(() => 'db-id');
+  // Round-14 P2: the inject retry lane resets the startup-timeout budget.
+  const resetStartupRetryBudget = mock(() => {});
   // v2 durable-delivery plumbing (harmless under the legacy path, which never
   // reaches these repos): the dedup guard's getDeliveryContent + the
   // deliverMessage jobQueue calls.
@@ -144,6 +146,7 @@ function makeManager(opts: {
       clearMock,
       ensureStartedMock,
       enqueueMock,
+      resetStartupRetryBudget,
       getProcessingState,
       saveUserMessage,
       jobQueueEnqueue,
@@ -183,6 +186,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       getProcessingState: () => ({ status: 'idle' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
+      resetStartupRetryBudget: session.resetStartupRetryBudget,
       messageQueue: { enqueueWithId: session.enqueueMock },
     } as unknown as AgentSession;
     indexSession(manager, live);
@@ -203,6 +207,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       getProcessingState: () => ({ status: 'idle' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
+      resetStartupRetryBudget: session.resetStartupRetryBudget,
       messageQueue: { enqueueWithId: session.enqueueMock },
     } as unknown as AgentSession;
     indexSession(manager, live);
@@ -226,6 +231,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       getProcessingState: () => ({ status: 'idle' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
+      resetStartupRetryBudget: session.resetStartupRetryBudget,
       messageQueue: { enqueueWithId: session.enqueueMock },
     } as unknown as AgentSession;
     indexSession(manager, live);
@@ -243,6 +249,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       getProcessingState: () => ({ status: 'idle' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
+      resetStartupRetryBudget: session.resetStartupRetryBudget,
       messageQueue: { enqueueWithId: session.enqueueMock },
     } as unknown as AgentSession;
     indexSession(manager, live);
@@ -259,6 +266,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       getProcessingState: () => ({ status: 'idle' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
+      resetStartupRetryBudget: session.resetStartupRetryBudget,
       messageQueue: { enqueueWithId: session.enqueueMock },
     } as unknown as AgentSession;
     indexSession(manager, live);
@@ -275,6 +283,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       getProcessingState: () => ({ status: 'idle' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
+      resetStartupRetryBudget: session.resetStartupRetryBudget,
       messageQueue: { enqueueWithId: session.enqueueMock },
     } as unknown as AgentSession;
     indexSession(manager, live);
@@ -291,6 +300,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       getProcessingState: () => ({ status: 'processing' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
+      resetStartupRetryBudget: session.resetStartupRetryBudget,
       messageQueue: { enqueueWithId: session.enqueueMock },
     } as unknown as AgentSession;
     indexSession(manager, live);
@@ -310,6 +320,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       getProcessingState: () => ({ status: 'idle' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
+      resetStartupRetryBudget: session.resetStartupRetryBudget,
       messageQueue: { enqueueWithId: session.enqueueMock },
     } as unknown as AgentSession;
     indexSession(manager, live);
@@ -374,6 +385,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       getProcessingState: () => ({ status: 'idle' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
+      resetStartupRetryBudget: session.resetStartupRetryBudget,
       messageQueue: { enqueueWithId: session.enqueueMock },
     } as unknown as AgentSession;
     indexSession(manager, live);
@@ -393,6 +405,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       getProcessingState: () => ({ status: 'idle' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
+      resetStartupRetryBudget: session.resetStartupRetryBudget,
       messageQueue: { enqueueWithId: session.enqueueMock },
     } as unknown as AgentSession;
     indexSession(manager, live);
@@ -431,6 +444,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       getProcessingState: () => ({ status: 'idle' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
+      resetStartupRetryBudget: session.resetStartupRetryBudget,
       messageQueue: { enqueueWithId: session.enqueueMock },
     } as unknown as AgentSession;
   }
@@ -482,6 +496,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       getProcessingState: () => ({ status: 'idle' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
+      resetStartupRetryBudget: session.resetStartupRetryBudget,
       messageQueue: { enqueueWithId: session.enqueueMock },
     } as unknown as AgentSession;
     indexSession(manager, live);
@@ -504,6 +519,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       getProcessingState: () => ({ status: 'rate_limit_cooldown' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
+      resetStartupRetryBudget: session.resetStartupRetryBudget,
       messageQueue: { enqueueWithId: session.enqueueMock },
     } as unknown as AgentSession;
     indexSession(manager, live);
@@ -529,6 +545,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       getProcessingState: () => ({ status: 'processing' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
+      resetStartupRetryBudget: session.resetStartupRetryBudget,
       messageQueue: { enqueueWithId: session.enqueueMock },
     } as unknown as AgentSession;
     indexSession(manager, live);
