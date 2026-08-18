@@ -1070,7 +1070,7 @@ export function SpaceTaskPane({
     });
   }
   const openableActivityMembers = activityMembers.filter(
-    (m) => m.nodeExecution?.status !== 'cancelled' && m.nodeExecution?.status !== 'pending'
+    (m) => m.nodeExecution?.status !== 'pending'
   );
   if (openableActivityMembers.length > 0) {
     taskActionItems.push(

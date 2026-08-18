@@ -1632,6 +1632,60 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(getByText('Open Coder (Queued)')).toBeTruthy();
   });
 
+  it('keeps members with a cancelled node execution openable (paused task)', () => {
+    mockTasks.value = [makeTask({ status: 'open', taskAgentSessionId: 'session-abc' })];
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          makeActivityMember({
+            id: 'm1',
+            sessionId: 'sess-cancelled-exec',
+            label: 'Coder',
+            state: 'interrupted',
+            nodeExecution: {
+              nodeExecutionId: 'ne-1',
+              nodeId: 'node-coder',
+              agentName: 'coder',
+              status: 'cancelled',
+            },
+          }),
+        ],
+      ],
+    ]);
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Open Coder (Interrupted)'));
+    expect(mockSpaceOverlaySessionIdSignal.value).toBe('sess-cancelled-exec');
+    expect(mockSpaceOverlayAgentNameSignal.value).toBe('Coder');
+  });
+
+  it('still hides members whose node execution is pending', () => {
+    mockTasks.value = [makeTask({ status: 'open', taskAgentSessionId: 'session-abc' })];
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          makeActivityMember({
+            id: 'm1',
+            sessionId: 'sess-pending-exec',
+            label: 'Coder',
+            state: 'queued',
+            nodeExecution: {
+              nodeExecutionId: 'ne-2',
+              nodeId: 'node-coder',
+              agentName: 'coder',
+              status: 'pending',
+            },
+          }),
+        ],
+      ],
+    ]);
+    const { getByTestId, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    expect(queryByText('Open Coder (Queued)')).toBeNull();
+  });
+
   it('clicking an activity member action opens overlay with correct session and label', () => {
     mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
     mockTaskActivity.value = new Map([
