@@ -1527,7 +1527,33 @@ describe('QueryRunner', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
-    it('should not emit an assistant retry notice for startup-timeout auto-retry', async () => {
+    it('emits an interim assistant notice when the startup-timeout retry runs', async () => {
+      const kickoff = { uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] };
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({
+          type: 'assistant',
+          message: expect.objectContaining({
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringContaining('Retrying once'),
+              }),
+            ]),
+          }),
+        })
+      );
+    });
+
+    it('does not emit the interim retry notice when the startup-timeout retry is skipped', async () => {
       const ctx = createContext();
       runner = new QueryRunner(ctx);
       runner.start();
@@ -1540,7 +1566,42 @@ describe('QueryRunner', () => {
           message: expect.objectContaining({
             content: expect.arrayContaining([
               expect.objectContaining({
-                text: expect.stringContaining('Retrying automatically'),
+                text: expect.stringContaining('Retrying once'),
+              }),
+            ]),
+          }),
+        })
+      );
+    });
+
+    it('skips the futile startup-timeout retry when no prompt was consumed or queued', async () => {
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).toHaveBeenCalled();
+    });
+
+    it('still retries a startup timeout when a prompt remains queued', async () => {
+      sizeSpy.mockReturnValue(1);
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({
+          type: 'assistant',
+          message: expect.objectContaining({
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringContaining('Retrying once'),
               }),
             ]),
           }),
@@ -1570,6 +1631,11 @@ describe('QueryRunner', () => {
 
       const ctx = createContext({ queryObject: mockQueryObject });
       runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([
+        [1, [{ uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] }]],
+      ]);
 
       runner.start();
       await ctx.queryPromise?.catch(() => {});
@@ -1581,6 +1647,11 @@ describe('QueryRunner', () => {
     it('should force-terminate orphaned SDK processes before retrying after startup timeout', async () => {
       const ctx = createContext();
       runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([
+        [1, [{ uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] }]],
+      ]);
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
@@ -1610,6 +1681,11 @@ describe('QueryRunner', () => {
         processExitedPromise: exitPromise,
       });
       runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([
+        [1, [{ uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] }]],
+      ]);
 
       runner.start();
       await ctx.queryPromise?.catch(() => {});
@@ -1625,6 +1701,11 @@ describe('QueryRunner', () => {
       });
       const ctx = createContext();
       runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([
+        [1, [{ uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] }]],
+      ]);
 
       runner.start();
       await ctx.queryPromise?.catch(() => {});
@@ -1639,6 +1720,11 @@ describe('QueryRunner', () => {
       });
       const ctx = createContext();
       runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([
+        [1, [{ uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] }]],
+      ]);
 
       runner.start();
       await ctx.queryPromise?.catch(() => {});
