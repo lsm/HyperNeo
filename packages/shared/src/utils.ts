@@ -117,6 +117,29 @@ export function appendDraftText(existing: string, text: string): string {
  * paths may consume the staging. Its two comparison literals encode
  * `appendDraftText`'s separator rules — keep them in lockstep.
  */
+/**
+ * How a sender's `expected` text relates to the stored draft and a staged
+ * voice transcript — the shared predicate behind the send-clear gate
+ * (message.persisted subscriber) and session.clearInputDraftIf:
+ * - 'direct': the stored draft IS the expected text (a typing-only sender —
+ *   it never saw the staged transcript, which stays staged).
+ * - 'composition': the composition of draft + pending is the expected text
+ *   (the sender read the composed draft and its message carries the voice).
+ * - null: neither (a newer draft intervened — write nothing).
+ */
+export function matchesDraftOrComposition(
+  draft: string,
+  pending: string,
+  expected: string
+): 'direct' | 'composition' | null {
+  if (draft.trim() === expected.trim()) return 'direct';
+  if (pending.trim() !== '') {
+    const composed = composeDraftWhole(draft, pending);
+    if (composed !== null && composed.trim() === expected.trim()) return 'composition';
+  }
+  return null;
+}
+
 export function composeDraftWhole(draft: string, pending: string): string | null {
   const composed = appendDraftText(draft, pending);
   return composed === `${draft}${pending}` || composed === `${draft} ${pending}` ? composed : null;

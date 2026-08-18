@@ -23,7 +23,7 @@ import type {
 } from '@hyperneo/shared';
 import { normalizeThinkingLevel } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { composeDraftWhole, generateUUID } from '@hyperneo/shared';
+import { composeDraftWhole, generateUUID, matchesDraftOrComposition } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@hyperneo/shared';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
@@ -620,13 +620,8 @@ export function setupSessionHandlers(
     if (!session) throw new Error('Session not found');
     const draft = session.metadata?.inputDraft ?? '';
     const pending = session.metadata?.inputDraftVoicePending ?? '';
-    const directMatch = draft.trim() === expected.trim();
-    let compositionMatch = false;
-    if (!directMatch && pending.trim() !== '') {
-      const composed = composeDraftWhole(draft, pending);
-      compositionMatch = composed !== null && composed.trim() === expected.trim();
-    }
-    if (!directMatch && !compositionMatch) {
+    const match = matchesDraftOrComposition(draft, pending, expected);
+    if (!match) {
       return { cleared: false };
     }
     // The staged transcript is consumed ONLY on a composition match: the sent
@@ -635,7 +630,7 @@ export function setupSessionHandlers(
     const updates: UpdateSessionRequest = {
       metadata: {
         inputDraft: null,
-        ...(compositionMatch ? { inputDraftVoicePending: null } : {}),
+        ...(match === 'composition' ? { inputDraftVoicePending: null } : {}),
       },
     };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);

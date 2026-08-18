@@ -3,6 +3,7 @@ import {
   appendDraftText,
   composeDraftWhole,
   generateUUID,
+  matchesDraftOrComposition,
   parseJson,
   parseJsonOptional,
 } from '../src/utils.ts';
@@ -238,5 +239,45 @@ describe('composeDraftWhole', () => {
     expect(composed?.length).toBe(100_000);
     // One character more cannot fit whole.
     expect(composeDraftWhole(`${draft}x`, 'abcd')).toBeNull();
+  });
+});
+
+describe('matchesDraftOrComposition', () => {
+  test("returns 'direct' when the stored draft equals the expected text", () => {
+    // A typing-only sender: the staged transcript stays staged.
+    expect(matchesDraftOrComposition('hello', 'voice', 'hello')).toBe('direct');
+  });
+
+  test("returns 'direct' with an empty stored draft and empty expected", () => {
+    expect(matchesDraftOrComposition('', 'voice', '')).toBe('direct');
+  });
+
+  test("returns 'composition' when draft + pending compose the expected text", () => {
+    // The sender read the composed draft — its message carried the voice.
+    expect(matchesDraftOrComposition('hello', 'voice', 'hello voice')).toBe('composition');
+  });
+
+  test("returns 'composition' for a voice-only composition (empty draft)", () => {
+    expect(matchesDraftOrComposition('', 'voice', 'voice')).toBe('composition');
+  });
+
+  test('trims both sides before comparing', () => {
+    expect(matchesDraftOrComposition('  hello  ', 'voice', ' hello ')).toBe('direct');
+    expect(matchesDraftOrComposition('hello', 'voice', '  hello voice  ')).toBe('composition');
+  });
+
+  test('composes without a separator across a CJK boundary', () => {
+    expect(matchesDraftOrComposition('你好', '世界', '你好世界')).toBe('composition');
+  });
+
+  test('returns null when neither the draft nor the composition matches', () => {
+    // A newer draft intervened — write nothing.
+    expect(matchesDraftOrComposition('newer edits', 'voice', 'hello voice')).toBeNull();
+    expect(matchesDraftOrComposition('hello', 'voice', 'unrelated')).toBeNull();
+  });
+
+  test('never reports a composition from an empty pending', () => {
+    expect(matchesDraftOrComposition('hello', '', 'hello')).toBe('direct');
+    expect(matchesDraftOrComposition('hello', '', 'hello there')).toBeNull();
   });
 });

@@ -19,7 +19,7 @@ import type {
   MessageOrigin,
   MessageImage,
 } from '@hyperneo/shared';
-import { composeDraftWhole, generateUUID } from '@hyperneo/shared';
+import { generateUUID, matchesDraftOrComposition } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import {
@@ -406,18 +406,12 @@ export class SessionManager {
             const beforeClear = this.getSessionFromDB(sessionId);
             const draft = beforeClear?.metadata?.inputDraft ?? '';
             const pending = beforeClear?.metadata?.inputDraftVoicePending ?? '';
-            const directMatch = draft.trim() === (userMessageText ?? '').trim();
-            let compositionMatch = false;
-            if (!directMatch && pending.trim() !== '') {
-              const composed = composeDraftWhole(draft, pending);
-              compositionMatch =
-                composed !== null && composed.trim() === (userMessageText ?? '').trim();
-            }
-            if (directMatch || compositionMatch) {
+            const match = matchesDraftOrComposition(draft, pending, userMessageText ?? '');
+            if (match) {
               await this.sessionLifecycle.update(sessionId, {
                 metadata: {
                   inputDraft: null,
-                  ...(compositionMatch ? { inputDraftVoicePending: null } : {}),
+                  ...(match === 'composition' ? { inputDraftVoicePending: null } : {}),
                 },
               } as Partial<Session>);
             } else if (

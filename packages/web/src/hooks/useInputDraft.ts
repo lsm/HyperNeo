@@ -244,15 +244,11 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           }
           deferredVoiceAdoptRef.current = null;
           if (!draft) return; // nothing staged — the landing is handled
-          // Typing began mid-get (the guard flipped between the apply and
-          // here): the immediate save must not push the composition over
-          // newer keystrokes — their own debounced save carries the text,
-          // and the staged transcript survives server-side until an
-          // adoption or the send-clear consumes it.
-          if (contentSignal.peek() !== draft) {
-            deferredVoiceAdoptRef.current = targetSessionId;
-            return;
-          }
+          // (No mid-get typing check here: onResult runs SYNCHRONOUSLY in
+          // the same then-block that assigned the signal, so the composer
+          // provably still shows `draft` — typing that began mid-get was
+          // already handled by the resolve-time applyGuard above, which
+          // rejected the apply and armed the one-shot instead.)
           // Over-limit: the composition of draft + pending would exceed the
           // character limit, so the daemon returned the draft ALONE. The
           // immediate save below cannot contain the pending (the daemon
@@ -378,14 +374,35 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     loadDraft(
       sessionId,
       () => cancelled,
-      (_ok, applied) => {
+      (_ok, applied, draft, voicePending) => {
         if (cancelled) return; // session changed / unmounted — not our load
+        const pendingTrimmed = (voicePending ?? '').trim();
+        if (!applied) {
+          // Typing began while the mount-time get was in flight: the
+          // resolve-time guard correctly rejected the apply — but the DROPPED
+          // response may have carried a staged transcript (landed while this
+          // composer was unmounted, so its voiceLanded event was never heard
+          // here). Arm the one-shot so the next empty-composer or connection
+          // transition surfaces it, mirroring the adoption refresh's
+          // rejection arm — otherwise the staging strands invisibly until a
+          // navigation or a later landing.
+          if (pendingTrimmed !== '') {
+            deferredVoiceAdoptRef.current = sessionId;
+          }
+          return;
+        }
         // Only a load that actually APPLIED marks the initial load settled. A
         // load discarded as superseded (a voiceLanded refresh's get was newer)
         // must not open the empty-clear guard while the signal still shows the
         // transient pre-load '' — that write would wipe the server draft.
-        if (!applied) return;
         initialLoadSettledRef.current = sessionId;
+        // Over-limit on the initial load: the daemon returned the draft ALONE
+        // (the composition would not fit whole), so nothing here will consume
+        // the staging — arm the one-shot for the next empty-composer or
+        // connection transition, mirroring the adoption refresh.
+        if (pendingTrimmed !== '' && draft && !draft.includes(pendingTrimmed)) {
+          deferredVoiceAdoptRef.current = sessionId;
+        }
       },
       adoptable
     );
@@ -420,9 +437,11 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     };
     register();
     // Re-arm across connection cycles: a replaced hub drops event handlers,
-    // and the subscription must survive reconnects. (Reading .value here would
-    // re-run the effect on every connection change; the subscription API
-    // itself is the established pattern for connection-keyed re-armoring.)
+    // and the subscription must survive reconnects. (This is a PLAIN useEffect
+    // — it does not track signal reads, so merely reading connectionState.value
+    // here could never re-run it on a connection change. connectionState.subscribe
+    // is what actually fires on each transition, re-registering the listener and
+    // consuming the deferred one-shot below.)
     const unsubscribeConnection = connectionState.subscribe(() => {
       if (unsubEvent) {
         unsubEvent();

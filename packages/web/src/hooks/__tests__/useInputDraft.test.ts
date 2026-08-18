@@ -1836,6 +1836,101 @@ describe('useInputDraft', () => {
       expect(gets).toBe(getsAfterLanding + 1);
     });
 
+    it('re-arms the one-shot when typing rejects the INITIAL load that carried a staging', async () => {
+      // The PR's headline case from the other direction: the transcript
+      // landed while this composer was unmounted (the voiceLanded event was
+      // never heard here), and the user starts typing BEFORE the mount-time
+      // get resolves. The resolve-time guard correctly drops the response —
+      // but it carried a staging, and without arming the one-shot here every
+      // later surfacing path stays inert until a navigation or new landing.
+      const pendingResolvers: Array<(v: unknown) => void> = [];
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return new Promise((resolve) => {
+            pendingResolvers.push(resolve);
+          });
+        }
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      // The user types BEFORE the mount-time get resolves.
+      act(() => {
+        result.current.setContent('fresh typing');
+      });
+      // The mount get resolves carrying a composition + staging; the guard
+      // rejects the apply (typing is never clobbered)…
+      await act(async () => {
+        pendingResolvers[0]?.({
+          session: {
+            metadata: { inputDraft: 'stale draft voice', inputDraftVoicePending: 'voice' },
+          },
+        });
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      // …typing survived and no save pushed the stale composition.
+      expect(result.current.content).toBe('fresh typing');
+      const staleSaves = mockHub.request.mock.calls.filter(
+        ([m, d]) => m === 'session.update' && d?.metadata?.inputDraft === 'stale draft voice'
+      );
+      expect(staleSaves).toHaveLength(0);
+
+      // The composer empties (a send or a clear): the ARMED one-shot re-checks
+      // and surfaces the transcript.
+      act(() => {
+        result.current.setContent('');
+      });
+      await act(async () => {
+        pendingResolvers[1]?.({
+          session: {
+            metadata: { inputDraft: 'stale draft voice', inputDraftVoicePending: 'voice' },
+          },
+        });
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('stale draft voice');
+      const saves = mockHub.request.mock.calls.filter(
+        ([m, d]) => m === 'session.update' && d?.metadata?.inputDraft === 'stale draft voice'
+      );
+      expect(saves.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('arms the one-shot when the INITIAL load applies an over-limit raw draft over a staging', async () => {
+      // Over-limit on mount: the daemon returns the draft ALONE; nothing in
+      // the applied load consumes the staging, so the one-shot must arm for
+      // the next empty-composer or connection transition.
+      const rawDraft = 'x'.repeat(50);
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: { metadata: { inputDraft: rawDraft, inputDraftVoicePending: 'voice words' } },
+          };
+        }
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe(rawDraft);
+      const gets = () => mockHub.request.mock.calls.filter(([m]) => m === 'session.get').length;
+      const getsAfterLoad = gets();
+      // The composer empties: the armed one-shot re-checks (room may have
+      // appeared server-side since the load).
+      act(() => {
+        result.current.setContent('');
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(gets()).toBe(getsAfterLoad + 1);
+    });
+
     it('surfaces a deferred staging after a successful submit releases the hold', async () => {
       // Same arming, but the send SUCCEEDS: the composer stays empty, and the
       // hold's end fires the deferred re-check — the transcript surfaces
