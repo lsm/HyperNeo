@@ -91,6 +91,8 @@ describe('SpaceRuntime — parkInFlightExecutionsForSpace()', () => {
       { id: `step-a-${token}`, name: 'Step A', agentId },
       { id: `step-b-${token}`, name: 'Step B', agentId },
       { id: `step-c-${token}`, name: 'Step C', agentId },
+      { id: `step-d-${token}`, name: 'Step D', agentId },
+      { id: `step-e-${token}`, name: 'Step E', agentId },
     ];
     const transitions = nodes.slice(0, -1).map((step, i) => ({
       from: step.id,
@@ -120,6 +122,8 @@ describe('SpaceRuntime — parkInFlightExecutionsForSpace()', () => {
       stepA: nodes[0].id,
       stepB: nodes[1].id,
       stepC: nodes[2].id,
+      stepD: nodes[3].id,
+      stepE: nodes[4].id,
     };
   }
 
@@ -216,17 +220,24 @@ describe('SpaceRuntime — parkInFlightExecutionsForSpace()', () => {
     expect(parkedB.agentSessionId).toBeNull();
   });
 
-  test('leaves done, pending, and cancelled executions untouched in an affected run', () => {
-    const { workflow, stepA, stepB, stepC } = buildWorkflow(SPACE_ID);
+  test('leaves idle, waiting_rebind, pending, and cancelled executions untouched in an affected run', () => {
+    const { workflow, stepA, stepB, stepC, stepD, stepE } = buildWorkflow(SPACE_ID);
     const run = createRun(SPACE_ID, workflow.id, 'Mixed Run');
-    const execDone = seedExec(run.id, stepA, 'Step A', 'done', {
-      agentSessionId: 'session-done',
+    const execIdle = seedExec(run.id, stepA, 'Step A', 'idle', {
+      agentSessionId: 'session-idle',
       result: 'finished work',
     });
-    const execPending = seedExec(run.id, stepB, 'Step B', 'pending');
-    const execCancelled = seedExec(run.id, stepC, 'Step C', 'cancelled', {
+    const execWaitingRebind = seedExec(run.id, stepB, 'Step B', 'waiting_rebind', {
+      agentSessionId: 'session-rebind',
+      result: 'waiting for orphaned tool_result recovery',
+    });
+    const execPending = seedExec(run.id, stepC, 'Step C', 'pending');
+    const execCancelled = seedExec(run.id, stepD, 'Step D', 'cancelled', {
       agentSessionId: 'session-cancelled',
       result: 'cancelled by user',
+    });
+    const execInFlight = seedExec(run.id, stepE, 'Step E', 'in_progress', {
+      agentSessionId: 'session-in-flight',
     });
     const other = buildWorkflow(OTHER_SPACE_ID, OTHER_AGENT);
     const runOther = createRun(OTHER_SPACE_ID, other.workflow.id, 'Other Run');
@@ -241,19 +252,27 @@ describe('SpaceRuntime — parkInFlightExecutionsForSpace()', () => {
 
     makeRuntime().parkInFlightExecutionsForSpace(SPACE_ID);
 
-    const done = nodeExecutionRepo.getById(execDone.id)!;
+    const idle = nodeExecutionRepo.getById(execIdle.id)!;
+    const waitingRebind = nodeExecutionRepo.getById(execWaitingRebind.id)!;
     const pending = nodeExecutionRepo.getById(execPending.id)!;
     const cancelled = nodeExecutionRepo.getById(execCancelled.id)!;
+    const parked = nodeExecutionRepo.getById(execInFlight.id)!;
     const untouchedOther = nodeExecutionRepo.getById(execOther.id)!;
-    expect(done.status).toBe('done');
-    expect(done.result).toBe('finished work');
-    expect(done.agentSessionId).toBe('session-done');
+    expect(idle.status).toBe('idle');
+    expect(idle.result).toBe('finished work');
+    expect(idle.agentSessionId).toBe('session-idle');
+    expect(waitingRebind.status).toBe('waiting_rebind');
+    expect(waitingRebind.result).toBe('waiting for orphaned tool_result recovery');
+    expect(waitingRebind.agentSessionId).toBe('session-rebind');
     expect(pending.status).toBe('pending');
     expect(pending.result).toBeNull();
     expect(pending.agentSessionId).toBeNull();
     expect(cancelled.status).toBe('cancelled');
     expect(cancelled.result).toBe('cancelled by user');
     expect(cancelled.agentSessionId).toBe('session-cancelled');
+    expect(parked.status).toBe('pending');
+    expect(parked.result).toBeNull();
+    expect(parked.agentSessionId).toBeNull();
     expect(untouchedOther.status).toBe('in_progress');
     expect(untouchedOther.agentSessionId).toBe('session-other');
   });
@@ -266,8 +285,8 @@ describe('SpaceRuntime — parkInFlightExecutionsForSpace()', () => {
     });
     const second = buildWorkflow(SPACE_ID);
     const unaffectedRun = createRun(SPACE_ID, second.workflow.id, 'Unaffected Run');
-    const execUnaffected = seedExec(unaffectedRun.id, second.stepA, 'Step A', 'done', {
-      agentSessionId: 'session-done',
+    const execUnaffected = seedExec(unaffectedRun.id, second.stepA, 'Step A', 'idle', {
+      agentSessionId: 'session-idle',
     });
     const other = buildWorkflow(OTHER_SPACE_ID, OTHER_AGENT);
     const runOther = createRun(OTHER_SPACE_ID, other.workflow.id, 'Other Space Run');
@@ -333,7 +352,7 @@ describe('SpaceRuntime — parkInFlightExecutionsForSpace()', () => {
     });
     expect(internals.taskCrashCounts.get(`${runOther.id}:${execOther.id}`)).toBe(1);
     expect(internals.blockedRetryCounts.get(runOther.id)).toBe(3);
-    expect(nodeExecutionRepo.getById(execUnaffected.id)?.status).toBe('done');
+    expect(nodeExecutionRepo.getById(execUnaffected.id)?.status).toBe('idle');
     expect(nodeExecutionRepo.getById(execOther.id)?.status).toBe('in_progress');
   });
 
