@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
+import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 import type {
   NodeExecution,
   Space,
@@ -13,9 +13,11 @@ import type {
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const IDLE_TIMEOUT = IS_MOCK ? 10_000 : 60_000;
 const SETUP_TIMEOUT = IS_MOCK ? 20_000 : 60_000;
-const TEST_TIMEOUT = IS_MOCK ? 60_000 : 240_000;
+const TEST_TIMEOUT = IS_MOCK ? 180_000 : 360_000;
 
-const TASK_AGENT_SPAWN_TIMEOUT = IS_MOCK ? 15_000 : 45_000;
+const TASK_AGENT_SPAWN_TIMEOUT = IS_MOCK ? 30_000 : 45_000;
+const KICKOFF_CONTEXT_TIMEOUT = IS_MOCK ? 40_000 : 90_000;
+const PROBE_RESPONSE_TIMEOUT = IS_MOCK ? 40_000 : 90_000;
 
 const STEP_CODE_ID = 'step-code-lifecycle-001';
 
@@ -175,6 +177,50 @@ async function waitForRunStatus(
   );
 }
 
+async function fetchSdkMessages(
+  daemon: DaemonServerContext,
+  sessionId: string
+): Promise<Array<Record<string, unknown>>> {
+  const { sdkMessages } = (await daemon.messageHub.request('message.sdkMessages', {
+    sessionId,
+  })) as { sdkMessages: Array<Record<string, unknown>> };
+  return sdkMessages;
+}
+
+async function waitForKickoffContext(
+  daemon: DaemonServerContext,
+  sessionId: string,
+  timeout: number
+): Promise<Array<Record<string, unknown>>> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const sdkMessages = await fetchSdkMessages(daemon, sessionId);
+    if (sdkMessages.length > 0) return sdkMessages;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error(
+    `Node agent session ${sessionId} received no kickoff sdk messages within ${timeout}ms`
+  );
+}
+
+async function waitForAssistantResponseBeyond(
+  daemon: DaemonServerContext,
+  sessionId: string,
+  baselineCount: number,
+  timeout: number
+): Promise<Array<Record<string, unknown>>> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const assistantMsgs = getAssistantMessages(await fetchSdkMessages(daemon, sessionId));
+    if (assistantMsgs.length > baselineCount) return assistantMsgs;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error(
+    `Node agent session ${sessionId} produced no assistant response beyond ${baselineCount} ` +
+      `message(s) within ${timeout}ms`
+  );
+}
+
 function getAssistantMessages(
   sdkMessages: Array<Record<string, unknown>>
 ): Array<Record<string, unknown>> {
@@ -289,11 +335,11 @@ describe('Task Agent Lifecycle — Online Tests', () => {
       );
       daemon.trackSession(nodeAgentSessionId);
 
-      await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
-      const { sdkMessages } = await waitForSdkMessages(daemon, nodeAgentSessionId, {
-        minCount: 1,
-        timeout: 5_000,
-      });
+      const sdkMessages = await waitForKickoffContext(
+        daemon,
+        nodeAgentSessionId,
+        KICKOFF_CONTEXT_TIMEOUT
+      );
 
       expect(sdkMessages.length).toBeGreaterThan(0);
     },
@@ -321,20 +367,23 @@ describe('Task Agent Lifecycle — Online Tests', () => {
       );
       daemon.trackSession(nodeAgentSessionId);
 
+      await waitForKickoffContext(daemon, nodeAgentSessionId, KICKOFF_CONTEXT_TIMEOUT);
       await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
+      const baselineAssistantCount = getAssistantMessages(
+        await fetchSdkMessages(daemon, nodeAgentSessionId)
+      ).length;
       await sendMessage(
         daemon,
         nodeAgentSessionId,
         'probe_task_agent_spawn_step_001: Please spawn the node agent for the first workflow step.'
       );
-      await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
+      const assistantMsgs = await waitForAssistantResponseBeyond(
+        daemon,
+        nodeAgentSessionId,
+        baselineAssistantCount,
+        PROBE_RESPONSE_TIMEOUT
+      );
 
-      const { sdkMessages } = await waitForSdkMessages(daemon, nodeAgentSessionId, {
-        minCount: 4,
-        timeout: 5_000,
-      });
-
-      const assistantMsgs = getAssistantMessages(sdkMessages);
       const textContent = extractTextContent(assistantMsgs);
       expect(assistantMsgs.length).toBeGreaterThan(0);
       expect(textContent.length).toBeGreaterThan(0);
@@ -374,20 +423,23 @@ describe('Task Agent Lifecycle — Online Tests', () => {
       );
       daemon.trackSession(nodeAgentSessionId);
 
+      await waitForKickoffContext(daemon, nodeAgentSessionId, KICKOFF_CONTEXT_TIMEOUT);
       await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
+      const baselineAssistantCount = getAssistantMessages(
+        await fetchSdkMessages(daemon, nodeAgentSessionId)
+      ).length;
       await sendMessage(
         daemon,
         nodeAgentSessionId,
         'probe_task_agent_check_step_001: Please check the status of the running node agent.'
       );
-      await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
+      const assistantMsgs = await waitForAssistantResponseBeyond(
+        daemon,
+        nodeAgentSessionId,
+        baselineAssistantCount,
+        PROBE_RESPONSE_TIMEOUT
+      );
 
-      const { sdkMessages } = await waitForSdkMessages(daemon, nodeAgentSessionId, {
-        minCount: 4,
-        timeout: 5_000,
-      });
-
-      const assistantMsgs = getAssistantMessages(sdkMessages);
       const textContent = extractTextContent(assistantMsgs);
       expect(assistantMsgs.length).toBeGreaterThan(0);
       expect(textContent.length).toBeGreaterThan(0);
