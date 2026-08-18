@@ -721,7 +721,12 @@ export class QueryRunner {
       void this.applyDeferredPermissionMode(
         queryObject,
         optionsBuilder.getDeferredPermissionMode()
-      );
+      ).catch((err) => {
+        logger.warn(
+          `QueryRunner.start: deferred permission mode switch failed for session ${session.id}: ` +
+            `${err instanceof Error ? err.message : String(err)}`
+        );
+      });
 
       if (session.config.provider !== 'acp') {
         const effectiveMcpServers = optionsBuilder.getEffectiveMcpServers() ?? {};

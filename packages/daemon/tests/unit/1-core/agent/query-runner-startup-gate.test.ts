@@ -126,7 +126,10 @@ describe('QueryRunner startup gate', () => {
   let handleErrorSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
 
-  function createRunner(sessionId: string): { runner: QueryRunner; ctx: QueryRunnerContext } {
+  function createRunner(
+    sessionId: string,
+    overrides: Partial<QueryRunnerContext> = {}
+  ): { runner: QueryRunner; ctx: QueryRunnerContext } {
     const session: Session = {
       id: sessionId,
       title: sessionId,
@@ -233,7 +236,8 @@ describe('QueryRunner startup gate', () => {
       onModelsFetched: async () => {},
       onMarkApiSuccess: async () => {},
     };
-    return { runner: new QueryRunner(ctx), ctx };
+    const merged: QueryRunnerContext = { ...ctx, ...overrides };
+    return { runner: new QueryRunner(merged), ctx: merged };
   }
 
   const settle = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -392,5 +396,45 @@ describe('QueryRunner startup gate', () => {
       queued: 0,
       maxConcurrent: 2,
     });
+  });
+
+  it('registers the AskUserQuestion hook and applies the deferred mode after spawn (runQuery wiring)', async () => {
+    const setPermissionMode = mock(async () => {});
+    const setAskUserQuestionHook = mock(() => {});
+    const preToolUseHook = mock(async () => ({}));
+    const createPreToolUseHook = mock(() => preToolUseHook);
+    queryFactory = () => {
+      const controlled = createControlledQuery();
+      Object.assign(controlled.queryObject, { setPermissionMode });
+      spawned.push(controlled);
+      return controlled.queryObject;
+    };
+
+    const { runner, ctx } = createRunner('auq-wiring', {
+      optionsBuilder: {
+        build: async () => ({ model: 'claude-sonnet-4-20250514' }),
+        addSessionStateOptions: (options: unknown) => options,
+        setCanUseTool: () => {},
+        setAskUserQuestionHook,
+        getDeferredPermissionMode: () => 'bypassPermissions',
+        getEffectiveMcpServers: () => ({}),
+      } as unknown as QueryOptionsBuilder,
+      askUserQuestionHandler: {
+        createCanUseToolCallback: () => async () => true,
+        createPreToolUseHook,
+      } as unknown as AskUserQuestionHandler,
+    });
+
+    runner.start();
+    await waitFor(() => spawned.length === 1);
+    await waitFor(() => setAskUserQuestionHook.mock.calls.length > 0);
+    await waitFor(() => setPermissionMode.mock.calls.length > 0);
+    await settle();
+
+    expect(setAskUserQuestionHook).toHaveBeenCalledWith(preToolUseHook);
+    expect(setPermissionMode).toHaveBeenCalledWith('bypassPermissions');
+
+    await completeQuery(spawned[0], waitFor);
+    await ctx.queryPromise;
   });
 });
