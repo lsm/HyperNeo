@@ -25,7 +25,7 @@ describe('ApproveTaskSchema', () => {
     expect(description).toBeDefined();
     expect(description).toMatch(/TERMINAL/i);
     expect(description).toMatch(/APPROVE/);
-    expect(description).toContain('P0–P3');
+    expect(description).toContain('P0–P2');
   });
 });
 
@@ -64,7 +64,7 @@ describe('SubmitForApprovalSchema', () => {
     expect(description).toBeDefined();
     expect(description).toMatch(/TERMINAL/i);
     expect(description).toMatch(/approve_task/);
-    expect(description).toContain('P0–P3');
+    expect(description).toContain('P0–P2');
     expect(description).toMatch(/APPROVE/);
     expect(description).toMatch(/defer judgment|request changes/i);
   });

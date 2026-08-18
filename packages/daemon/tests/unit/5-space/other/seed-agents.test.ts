@@ -241,22 +241,21 @@ describe('seedPresetAgents', () => {
     expect(reviewer?.customPrompt).toMatch(/Provider:/);
   });
 
-  it('Reviewer custom prompt defines P0–P3 severity levels with decision rules', async () => {
+  it('Reviewer custom prompt defines P0–P2 severity levels with decision rules', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
     expect(reviewer?.customPrompt).toContain('P0');
     expect(reviewer?.customPrompt).toContain('P1');
     expect(reviewer?.customPrompt).toContain('P2');
-    expect(reviewer?.customPrompt).toContain('P3');
     expect(reviewer?.customPrompt).toContain('REQUEST_CHANGES');
     expect(reviewer?.customPrompt).toContain('APPROVE');
-    expect(reviewer?.customPrompt).toContain('P0-P3');
-    expect(reviewer?.customPrompt).toContain('Request changes for any P0-P3 finding');
-    expect(reviewer?.customPrompt).toContain('All four severities block approval');
+    expect(reviewer?.customPrompt).toContain('P0-P2');
+    expect(reviewer?.customPrompt).toContain('Request changes for any P0-P2 finding');
+    expect(reviewer?.customPrompt).toContain('all three levels block approval');
     expect(reviewer?.customPrompt).toContain('no optional severity');
     expect(reviewer?.customPrompt).toContain('pure function of your finding counts');
-    expect(reviewer?.customPrompt).toContain('P0=P1=P2=P3=0');
+    expect(reviewer?.customPrompt).toContain('P0=P1=P2=0');
   });
 
   it('Reviewer custom prompt fences terminal actions while findings are open (Task #136 regression)', async () => {
@@ -265,7 +264,7 @@ describe('seedPresetAgents', () => {
 
     expect(reviewer?.customPrompt).toContain('Terminal-action contract');
     expect(reviewer?.customPrompt).toContain('approve_task/submit_for_approval');
-    expect(reviewer?.customPrompt).toContain('zero P0-P3 findings');
+    expect(reviewer?.customPrompt).toContain('zero P0-P2 findings');
     expect(reviewer?.customPrompt).toContain('If findings remain');
   });
 
