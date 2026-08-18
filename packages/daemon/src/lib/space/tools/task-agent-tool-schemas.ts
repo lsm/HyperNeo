@@ -80,7 +80,7 @@ export const UpdateTaskSchema = z.object({
   status: z
     .enum(SPACE_TASK_STATUSES)
     .describe(
-      "New task status (same transitions as the UI). Invalid transitions are rejected with the allowed list. 'review'/'approved' cannot be set; review→done and exits from 'approved' are rejected (approve_task / mark_complete); 'done' is gated by completionAutonomyLevel (else submit_for_approval)."
+      "New task status (same transitions as the UI). Invalid transitions are rejected with the allowed list. 'review'/'approved'/'stopped' cannot be set; review→done and exits from 'approved' are rejected (approve_task / mark_complete); 'done' is gated by completionAutonomyLevel (else submit_for_approval)."
     )
     .optional(),
 });

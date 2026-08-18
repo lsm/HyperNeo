@@ -248,19 +248,22 @@ export interface UpdateSpaceParams {
   settingSources?: SettingSource[] | null;
 }
 
-export type SpaceTaskStatus =
-  | 'draft'
-  | 'open'
-  | 'in_progress'
-  | 'review'
-  | 'approved'
-  | 'done'
-  | 'blocked'
-  | 'cancelled'
-  | 'archived'
-  | 'rate_limited'
-  | 'usage_limited'
-  | 'stopped';
+export const SPACE_TASK_STATUSES = [
+  'draft',
+  'open',
+  'in_progress',
+  'review',
+  'approved',
+  'done',
+  'blocked',
+  'cancelled',
+  'archived',
+  'rate_limited',
+  'usage_limited',
+  'stopped',
+] as const;
+
+export type SpaceTaskStatus = (typeof SPACE_TASK_STATUSES)[number];
 
 export type SpaceReportedStatus = 'done' | 'blocked' | 'cancelled';
 

@@ -2118,6 +2118,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
                 `the approval metadata and dispatch the post-approval step.`,
             });
           }
+          if (args.status === 'stopped') {
+            return jsonResult({
+              success: false,
+              error:
+                `update_task cannot transition a task into 'stopped' directly. ` +
+                `Stopping a task halts its agents and preserves the run, sessions, and ` +
+                `task provenance — a dormant capability owned by the runtime's Stop ` +
+                `action, not settable per-transition.`,
+            });
+          }
           if (
             args.status === 'archived' &&
             task.workflowRunId &&
@@ -4309,7 +4319,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           .enum(SPACE_TASK_STATUSES)
           .optional()
           .describe(
-            "New task status (same transitions as the UI: e.g. open→in_progress Start, in_progress→open Pause, open/in_progress→blocked Block, cancelled→open Reopen, done/blocked→in_progress Resume, →cancelled Cancel, →archived Archive). Invalid transitions are rejected with the allowed list. 'review' and 'approved' cannot be set here; review→done and any exit from 'approved' are rejected (use approve_task / mark_complete); 'done' requires autonomy ≥ completionAutonomyLevel (else submit_for_approval); 'rate_limited'/'usage_limited' are runtime-set only."
+            "New task status (same transitions as the UI: e.g. open→in_progress Start, in_progress→open Pause, open/in_progress→blocked Block, cancelled→open Reopen, done/blocked→in_progress Resume, →cancelled Cancel, →archived Archive). Invalid transitions are rejected with the allowed list. 'review', 'approved', and 'stopped' cannot be set here; review→done and any exit from 'approved' are rejected (use approve_task / mark_complete); 'done' requires autonomy ≥ completionAutonomyLevel (else submit_for_approval); 'rate_limited'/'usage_limited' are runtime-set only."
           ),
       },
       (args) => handlers.update_task(args)

@@ -8633,6 +8633,38 @@ describe('createSpaceAgentToolHandlers — update_task status transitions', () =
     blockSpy.mockRestore();
     stopSpy.mockRestore();
   });
+
+  test("rejects transitions into 'stopped' (the runtime Stop action owns it)", async () => {
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+    await ctx.taskManager.startTask(created.id);
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: created.id, status: 'stopped' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("cannot transition a task into 'stopped' directly");
+    expect(ctx.taskRepo.getTask(created.id)?.status).toBe('in_progress');
+  });
+
+  test('transitions out of stopped take the plain path', async () => {
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+    await ctx.taskManager.startTask(created.id);
+    ctx.taskRepo.updateTask(created.id, { status: 'stopped' });
+    const recoverSpy = spyOn(ctx.runtime, 'recoverWorkflowBackedTask');
+    const stopSpy = spyOn(ctx.runtime, 'stopWorkflowBackedTaskForStatus');
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: created.id, status: 'in_progress' })
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('in_progress');
+    expect(recoverSpy).not.toHaveBeenCalled();
+    expect(stopSpy).not.toHaveBeenCalled();
+    recoverSpy.mockRestore();
+    stopSpy.mockRestore();
+  });
 });
 
 describe('createSpaceAgentToolHandlers — publish_task', () => {
