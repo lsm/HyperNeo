@@ -176,12 +176,12 @@ export default function SpaceIsland({
   }, [spaceId]);
 
   useEffect(() => {
-    if (!taskViewId) return;
+    if (!taskViewId || !space) return;
     spaceStore.subscribeTaskMessageActivity(taskViewId).catch(() => {});
     return () => {
       spaceStore.unsubscribeTaskMessageActivity(taskViewId);
     };
-  }, [taskViewId]);
+  }, [taskViewId, space]);
 
   useEffect(() => {
     if (viewMode !== 'tasks') {

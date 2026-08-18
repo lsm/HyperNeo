@@ -189,7 +189,6 @@ export function SpaceTaskPane({
     ? (spaceStore.taskActivity.value.get(taskId) ?? [])
     : [];
 
-  const [ensuringThread, setEnsuringThread] = useState(false);
   const [threadSendError, setThreadSendError] = useState<string | null>(null);
   const [sendingThread, setSendingThread] = useState(false);
   const [statusTransitioning, setStatusTransitioning] = useState(false);
@@ -576,8 +575,7 @@ export function SpaceTaskPane({
     return () => resizeObserver.disconnect();
   }, [showInlineComposer, taskComposerElement, threadSendError]);
 
-  const canSendThreadMessage =
-    !isTerminalTask && !ensuringThread && !sendingThread && composerTargets.length > 0;
+  const canSendThreadMessage = !isTerminalTask && !sendingThread && composerTargets.length > 0;
 
   const dropFilesRef = useRef<FileDropHandler | null>(null);
   const registerDropTarget = useCallback((fn: FileDropHandler | null) => {
@@ -967,7 +965,6 @@ export function SpaceTaskPane({
       setThreadSendError(formatTaskThreadError(err));
       return false;
     } finally {
-      setEnsuringThread(false);
       setSendingThread(false);
     }
   };
