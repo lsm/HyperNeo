@@ -1979,12 +1979,13 @@ describe('AgentSession', () => {
       (runner as unknown as Record<string, unknown>)._startupBackoffOwner = {};
       expect(agentSession.isInStartupBackoff()).toBe(true);
 
-      // An ACP runner never reports a window — the flag is SDK-runner-only.
-      (agentSession as unknown as Record<string, unknown>).queryRunner = new AcpQueryRunner(
-        agentSession as never,
-        (() => {}) as never
-      );
+      // An ACP runner with a closed window stays false; an open owner token
+      // (mirrored field) surfaces true — the exemption is runner-agnostic.
+      const acpRunner = new AcpQueryRunner(agentSession as never, (() => {}) as never);
+      (agentSession as unknown as Record<string, unknown>).queryRunner = acpRunner;
       expect(agentSession.isInStartupBackoff()).toBe(false);
+      (acpRunner as unknown as Record<string, unknown>)._startupBackoffOwner = {};
+      expect(agentSession.isInStartupBackoff()).toBe(true);
     });
   });
 
@@ -2019,6 +2020,43 @@ describe('AgentSession', () => {
       expect((runner as unknown as Record<string, unknown>)._startupTimeoutRetryState).toBe(state);
       agentSession.resetStartupTimeoutRetryBudget('retried-uuid');
       expect((runner as unknown as Record<string, unknown>)._startupTimeoutRetryState).toEqual({
+        key: null,
+        retries: 0,
+      });
+    });
+
+    it('delegates the retry-lane budget reset to the ACP runner (mirror)', () => {
+      const agentSession = new AgentSession(
+        {
+          id: 'seam-session',
+          title: 'Seam',
+          workspacePath: '/test/workspace',
+          createdAt: new Date().toISOString(),
+          lastActiveAt: new Date().toISOString(),
+          status: 'active',
+          config: { model: 'claude-sonnet-4-20250514', maxTokens: 8192, temperature: 1.0 },
+          metadata: {},
+        } as never,
+        { getSession: mock(() => null) } as never,
+        {} as never,
+        {
+          publish: mock(() => {}),
+          subscribe: mock(() => () => {}),
+        } as never,
+        mock(async () => null)
+      );
+      const acpRunner = new AcpQueryRunner(agentSession as never, (() => {}) as never);
+      (agentSession as unknown as Record<string, unknown>).queryRunner = acpRunner;
+      const state = { key: 'retried-uuid', retries: 9 };
+      (acpRunner as unknown as Record<string, unknown>)._startupTimeoutRetryState = state;
+
+      // Matching uuid resets; a different delivery's budget is untouched.
+      agentSession.resetStartupTimeoutRetryBudget('other-uuid');
+      expect((acpRunner as unknown as Record<string, unknown>)._startupTimeoutRetryState).toBe(
+        state
+      );
+      agentSession.resetStartupTimeoutRetryBudget('retried-uuid');
+      expect((acpRunner as unknown as Record<string, unknown>)._startupTimeoutRetryState).toEqual({
         key: null,
         retries: 0,
       });

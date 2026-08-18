@@ -411,6 +411,29 @@ function acpInstructionBlocks(queryOptions: Options): AcpContentBlock[] {
  */
 type AcpClientFactory = (options: AcpClientOptions) => AcpClient;
 
+/**
+ * Mutable state threaded through one ACP query chain's recursive attempts.
+ * Created at the top-level runQuery (from start()) and passed by reference to
+ * every recursive retry attempt of that chain. (Mirrors QueryRunner's
+ * QueryRecoveryState.)
+ */
+interface AcpRecoveryState {
+  /** True once a 429 rate-limit cooldown was scheduled for this chain. */
+  rateLimitCooldownScheduled: boolean;
+  /**
+   * Controller-ownership handoff for the startup-retry recursion: the retry
+   * site records the controller that owns the session right before recursing,
+   * and the child attempt verifies the field is unchanged before publishing
+   * its own controller — a stall-watchdog lifecycle stop NULLS
+   * ctx.queryAbortController (and a completed user Stop aborts-then-nulls it)
+   * inside the child's rebuild window without tripping any other guard, so
+   * without this check a stopped session would spawn a fresh ACP subprocess.
+   * Consumed at the child's pre-publication check so a later category's
+   * recursion cannot false-positive against a stale handoff. (Round-11 P1.)
+   */
+  startupRetryOwnerController: AbortController | null;
+}
+
 export class AcpQueryRunner {
   private _lastConsumedUserMessage: {
     uuid: string;
@@ -470,6 +493,36 @@ export class AcpQueryRunner {
    */
   private _replayAdmissionRejected = false;
 
+  /**
+   * Owner token of the currently-open startup-backoff recovery window (null
+   * while closed): from the retry branch's queue stop through the teardown,
+   * backoff sleep, and post-sleep guards, until the queue is restarted for
+   * the recursive attempt. In that window the session is 'processing' with a
+   * STOPPED queue, so follow-up steers park on exactly this state — and the
+   * window is bounded recovery, not abandonment: a full default chain sleeps
+   * 15+30+60+120+240 = 465 s, well past the delivery lane's MAX_STEER_PARKS
+   * bound (~300 s), so charging parks for it would dead-letter the steer
+   * `failed` minutes before the turn recovers and feeds it. The session
+   * surfaces the window (AgentSession.isInStartupBackoff) and the delivery
+   * handler parks such steers with a plain requeue — no __parkCount charge,
+   * mirroring the open-human-gate exemption.
+   *
+   * FENCING: a restart during chain A's backoff starts chain B on this same
+   * runner (the queue is stopped, so start()'s isRunning guard passes) and B
+   * can open its OWN window while A's is still open. A plain boolean would
+   * let A's post-sleep finally clear B's window mid-recovery. The window is
+   * therefore held by an owner TOKEN: each window mints one, start() clears
+   * any stale claim for a fresh turn, and the retry branch's exit clears the
+   * field only if its own token is still the owner (compare-and-clear).
+   * (Mirrors QueryRunner._startupBackoffOwner; rounds 12-13 P2s.)
+   */
+  private _startupBackoffOwner: object | null = null;
+
+  /** True while a startup-timeout retry chain is inside its backoff window. */
+  isInStartupBackoff(): boolean {
+    return this._startupBackoffOwner !== null;
+  }
+
   get lastConsumedUserMessage() {
     return this._lastConsumedUserMessage;
   }
@@ -505,6 +558,13 @@ export class AcpQueryRunner {
     // re-fed into the fresh turn (duplicate prompt).
     this._pendingStartupReplay = null;
     this._replayAdmissionRejected = false;
+    // ...and close any startup-backoff window a superseded chain left open:
+    // the queue THIS start() is about to run is live, so follow-up steers
+    // feed it normally and their parks charge from here. Clearing the claim
+    // also fences the superseded chain's exit (compare-and-clear against its
+    // stale token) from closing a window the new chain may open later.
+    // (Mirrors QueryRunner; rounds 12-13 P2s.)
+    this._startupBackoffOwner = null;
 
     const currentGeneration = this.ctx.incrementQueryGeneration();
     this.ctx.firstMessageReceived = false;
@@ -514,7 +574,10 @@ export class AcpQueryRunner {
   private async runQuery(
     queryGeneration: number,
     isRetry = false,
-    recoveryState = { rateLimitCooldownScheduled: false }
+    recoveryState: AcpRecoveryState = {
+      rateLimitCooldownScheduled: false,
+      startupRetryOwnerController: null,
+    }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
     let client: AcpClient | null = null;
@@ -625,6 +688,33 @@ export class AcpQueryRunner {
       );
       const cwd = getAcpWorkspacePath(session, queryOptions);
       const startupTimeoutMs = getStartupTimeoutMs();
+      // Startup-retry rebuild guard (mirrors QueryRunner, round-11 P1):
+      // between the retry site's post-sleep checks and this publication, a
+      // stall-watchdog lifecycle stop NULLS ctx.queryAbortController without
+      // aborting it, and a completed user Stop aborts it and then nulls —
+      // both look identical here because nothing in this window reads the
+      // abort. If the controller the retry site handed down is no longer the
+      // current one, this chain lost ownership mid-rebuild: do not publish,
+      // do not spawn — surface as an abort so the interrupt/stop cleanup
+      // that already ran keeps the session. Consume the handoff here so a
+      // later category's recursion (whose legitimate owner is a different
+      // controller) cannot false-positive against a stale handoff.
+      const startupRetryOwnerController = recoveryState.startupRetryOwnerController;
+      recoveryState.startupRetryOwnerController = null;
+      if (
+        startupRetryOwnerController !== null &&
+        this.ctx.queryAbortController !== startupRetryOwnerController
+      ) {
+        logger.warn(
+          'ACP startup retry abandoned: the session was stopped while the retry ' +
+            'was rebuilding (controller ownership changed before spawn).'
+        );
+        const stoppedDuringRebuild = new Error(
+          'ACP startup retry abandoned: session stopped during rebuild'
+        );
+        stoppedDuringRebuild.name = 'AbortError';
+        throw stoppedDuringRebuild;
+      }
       const abortController = new AbortController();
       this.ctx.queryAbortController = abortController;
       runAbortController = abortController;
@@ -1062,7 +1152,10 @@ export class AcpQueryRunner {
     createdAcpSessionDuringRun = false,
     receivedAcpMessageDuringRun = false,
     closeProxyBridge: () => Promise<void> = async () => {},
-    recoveryState = { rateLimitCooldownScheduled: false },
+    recoveryState: AcpRecoveryState = {
+      rateLimitCooldownScheduled: false,
+      startupRetryOwnerController: null,
+    },
     refeedTracking: { uuid: string | null; fenceSeq: number } = { uuid: null, fenceSeq: 0 }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger } = this.ctx;
@@ -1123,6 +1216,12 @@ export class AcpQueryRunner {
       // started — key on it so a starved first timeout of a NEW delivery gets
       // a fresh budget (and the settled-failed check below applies) instead
       // of charging whatever delivery timed out before it.
+      // (QueryRunner prefixes getActiveDeliveryKickoffUuid() here — round-14
+      // P2's true-kickoff keying, guarding against an unpulled leftover
+      // STEER being consumed first. N/A for ACP: the outer loop awaits each
+      // prompt's turn to completion, so the one consumed message IS the
+      // kickoff and steers never enter the replay; _lastConsumedUserMessage
+      // is already the delivery-layer truth here.)
       const deliveryKey =
         this._lastConsumedUserMessage?.uuid ?? messageQueue.peekNextUserMessageId() ?? null;
       const retryNumber = this.claimStartupTimeoutRetry(deliveryKey);
@@ -1143,11 +1242,45 @@ export class AcpQueryRunner {
         if (createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
           this.persistAcpSessionId(undefined);
         }
+        // Clean-slate teardown, mirroring the retry branch (round-14 P3): a
+        // subprocess hung hard enough to burn the whole budget is exactly the
+        // kind that ignores the outer finally's cooperative close — close the
+        // dead client BEFORE settling so it stops holding workspace locks and
+        // CPU into the session's next turn (or a manual Retry). The stale-
+        // query guard above already excluded replacements; the terminal
+        // settle below then runs against a torn-down chain.
+        if (this.ctx.queryObject) {
+          try {
+            this.ctx.queryObject.close();
+          } catch {
+            // Ignore close errors — transport may already be broken
+          }
+          this.ctx.queryObject = null;
+        } else {
+          client?.close();
+        }
+        await closeProxyBridge();
+        {
+          const exitPromise = this.ctx.processExitedPromise;
+          if (exitPromise) {
+            await Promise.race([
+              exitPromise,
+              new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+            ]);
+            if (this.ctx.processExitedPromise === exitPromise) {
+              this.ctx.resetProcessExitedPromise();
+            }
+          }
+        }
         // Fall through to the terminal error path below. When a prompt was
         // consumed, the per-prompt finally already marked the kickoff row
         // failed (markACPDeliveryFailed); when the handshake itself starved,
         // the row is still 'enqueued' and a live delivery job owns settling
         // it. Either way handleError surfaces the actionable resend hint.
+        // (QueryRunner also sweeps dropped STEERS failed here and on its
+        // superseded-give-up path — round-15 P2 — because steers have no
+        // delivery-layer recovery lane. N/A for ACP: steers never enter the
+        // ACP replay, so there is nothing to sweep.)
       } else {
         const maxStartupRetries = getMaxStartupTimeoutRetries();
         const delayMs = getStartupRetryDelayMs(retryNumber);
@@ -1184,286 +1317,310 @@ export class AcpQueryRunner {
         // the starved throw reaches its catch, plus its post-sleep restart.)
         messageQueue.stop();
 
-        if (createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
-          this.persistAcpSessionId(undefined);
-        }
+        // Recovery window opens (mirrors QueryRunner, rounds 12-13 P2s): from
+        // the teardown below through the backoff sleep and the post-sleep
+        // guards, the session is 'processing' with a STOPPED queue — follow-up
+        // steers park on exactly this state, and the window is bounded recovery,
+        // not abandonment (465 s of default-chain sleeps vs the ~300 s park
+        // bound). The session surfaces it (AgentSession.isInStartupBackoff) so
+        // the delivery handler parks those steers without charging their park
+        // budget. Closed on EVERY exit below (cancellation returns included)
+        // and before the recursive attempt starts. Held by an owner token:
+        // a restart during this sleep can start a replacement chain on this
+        // same runner whose own window must not be closed by THIS chain's exit
+        // — see _startupBackoffOwner.
+        const backoffWindowToken = {};
+        this._startupBackoffOwner = backoffWindowToken;
+        try {
+          if (createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
+            this.persistAcpSessionId(undefined);
+          }
 
-        // The per-prompt finally terminalized the timed-out row as
-        // fail-ambiguous (markACPDeliveryFailed — submitted but never
-        // accepted). Reopen it so the retry's resubmission can re-drive the
-        // same uuid (enqueued → submitted): without this, markMessageSubmitted
-        // finds no 'enqueued' row and aborts the retried prompt as revoked.
-        // The reopen ALSO makes the post-backoff settled-failed check below
-        // meaningful: the row is 'enqueued' during the window, so a 'failed'
-        // read at wake can only mean the delivery layer (consumption timeout /
-        // dead-letter) or an interrupt settled it while we slept.
-        // Prefer a STAGED replay (set when the previous round's re-feed was
-        // admission-TTL-rejected — runQuery's ENTRY null of
-        // _lastConsumedUserMessage already cleared it for the recursive
-        // attempt); otherwise the prompt this
-        // attempt consumed is the replay. QueryRunner MERGES the consumed set
-        // with its staging here (round-9 P1) and folds its flushed entries
-        // back in (round-10 P3) because its replay can hold a kickoff plus
-        // trailing steers whose durable rows are 'consumed' — no
-        // delivery-layer recovery lane — and its rejection handler's
-        // controller-IDENTITY guard no-ops once the recursion replaces
-        // ctx.queryAbortController, so a late TTL leaves those prompts
-        // lane-less. ACP needs neither: it replays exactly ONE prompt whose
-        // durable row this branch REOPENED to 'enqueued' (delivery-re-
-        // drivable), and the rejection handler below is GENERATION-guarded —
-        // the recursion keeps the same queryGeneration, so a late TTL still
-        // re-stages through the handler rather than dying. A staged entry
-        // plus a consumed prompt in the same round are necessarily the same
-        // uuid (the staging came from this chain's own re-feed of it) — the
-        // ?? preference is that dedupe-merge under ACP's single-prompt
-        // invariant.
-        const retryMessage = this._pendingStartupReplay ?? this._lastConsumedUserMessage;
-        if (retryMessage) {
-          try {
-            const reopenedId = this.ctx.db
-              .getSDKMessageRepo()
-              .reopenDeliveryByUuid(session.id, retryMessage.uuid);
-            if (reopenedId) {
-              this.ctx.internalEventBus
-                .publish('messages.statusChanged', {
-                  sessionId: session.id,
-                  messageIds: [reopenedId],
-                  status: 'enqueued',
-                })
-                .catch(() => {});
+          // The per-prompt finally terminalized the timed-out row as
+          // fail-ambiguous (markACPDeliveryFailed — submitted but never
+          // accepted). Reopen it so the retry's resubmission can re-drive the
+          // same uuid (enqueued → submitted): without this, markMessageSubmitted
+          // finds no 'enqueued' row and aborts the retried prompt as revoked.
+          // The reopen ALSO makes the post-backoff settled-failed check below
+          // meaningful: the row is 'enqueued' during the window, so a 'failed'
+          // read at wake can only mean the delivery layer (consumption timeout /
+          // dead-letter) or an interrupt settled it while we slept.
+          // Prefer a STAGED replay (set when the previous round's re-feed was
+          // admission-TTL-rejected — runQuery's ENTRY null of
+          // _lastConsumedUserMessage already cleared it for the recursive
+          // attempt); otherwise the prompt this
+          // attempt consumed is the replay. QueryRunner MERGES the consumed set
+          // with its staging here (round-9 P1) and folds its flushed entries
+          // back in (round-10 P3) because its replay can hold a kickoff plus
+          // trailing steers whose durable rows are 'consumed' — no
+          // delivery-layer recovery lane — and its rejection handler's
+          // controller-IDENTITY guard no-ops once the recursion replaces
+          // ctx.queryAbortController, so a late TTL leaves those prompts
+          // lane-less. ACP needs neither: it replays exactly ONE prompt whose
+          // durable row this branch REOPENED to 'enqueued' (delivery-re-
+          // drivable), and the rejection handler below is GENERATION-guarded —
+          // the recursion keeps the same queryGeneration, so a late TTL still
+          // re-stages through the handler rather than dying. A staged entry
+          // plus a consumed prompt in the same round are necessarily the same
+          // uuid (the staging came from this chain's own re-feed of it) — the
+          // ?? preference is that dedupe-merge under ACP's single-prompt
+          // invariant.
+          const retryMessage = this._pendingStartupReplay ?? this._lastConsumedUserMessage;
+          if (retryMessage) {
+            try {
+              const reopenedId = this.ctx.db
+                .getSDKMessageRepo()
+                .reopenDeliveryByUuid(session.id, retryMessage.uuid);
+              if (reopenedId) {
+                this.ctx.internalEventBus
+                  .publish('messages.statusChanged', {
+                    sessionId: session.id,
+                    messageIds: [reopenedId],
+                    status: 'enqueued',
+                  })
+                  .catch(() => {});
+              }
+            } catch (err) {
+              logger.warn('Failed to reopen the startup-retry delivery row:', err);
             }
-          } catch (err) {
-            logger.warn('Failed to reopen the startup-retry delivery row:', err);
           }
-        }
 
-        // Clean-slate teardown: close the dead client/transport, drop the MCP
-        // proxy bridge, and wait for the subprocess to exit so the retry's
-        // fresh spawn does not collide with workspace locks.
-        if (this.ctx.queryObject) {
-          try {
-            this.ctx.queryObject.close();
-          } catch {
-            // Ignore close errors
-          }
-          this.ctx.queryObject = null;
-        } else {
-          client?.close();
-        }
-        await closeProxyBridge();
-
-        const exitPromise = this.ctx.processExitedPromise;
-        if (exitPromise) {
-          await Promise.race([
-            exitPromise,
-            new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
-          ]);
-          // Clear only if the tracking still belongs to the old subprocess —
-          // a concurrent start during the await may have installed the
-          // replacement's exit promise. (Mirrors QueryRunner.)
-          if (this.ctx.processExitedPromise === exitPromise) {
-            this.ctx.resetProcessExitedPromise();
-          }
-        }
-
-        // Restore provider env vars BEFORE the backoff sleep so process.env
-        // is clean during the (potentially minutes-long) wait, and so a
-        // cancelled return below cannot skip the restore — the finally block
-        // skips cleanup for stale queries. The recursive attempt re-applies
-        // fresh provider env. (Mirrors QueryRunner.)
-        const envVarsToRestore = this.ctx.originalEnvVars;
-        if (Object.keys(envVarsToRestore).length > 0) {
-          getProviderService().restoreEnvVars(envVarsToRestore);
-          this.ctx.originalEnvVars = {};
-        }
-
-        // Exponential backoff before the retry attempt — immediate retries
-        // are what make a concurrent-start herd self-sustaining (each retry
-        // respawns an ACP subprocess into the very load that timed it out).
-        // Sleeps AFTER teardown so the wait is not spent holding a dead
-        // subprocess. (Mirrors the provider-retry / startup-retry ordering in
-        // QueryRunner.)
-        await sleep(delayMs);
-
-        // Cancellation guard at wake (mirrors QueryRunner, incl. its PR #2551
-        // P1 thread). This attempt's controller was legitimately ABORTED by
-        // the startup timer, but abort() leaves it non-null — null can only
-        // mean handleInterrupt (a COMPLETED Stop nulls the controller without
-        // touching the generation, queryPromise, or — here — the reopened
-        // 'enqueued' row the settled check below reads) or the lifecycle stop
-        // (already covered by the queryPromise disjunct). Cancellation
-        // signals, all cheap:
-        // - ctx.queryPromise === null — stall-watchdog reset / lifecycle
-        //   stop gave up on this chain (no generation bump).
-        // - ctx.queryAbortController === null — a completed user Stop.
-        // - generation supersession / interrupted status / shutdown.
-        if (
-          this.ctx.isCleaningUp() ||
-          this.ctx.queryAbortController === null ||
-          this.ctx.queryPromise === null ||
-          this.ctx.getQueryGeneration() !== queryGeneration ||
-          stateManager.getState().status === 'interrupted'
-        ) {
-          logger.warn(
-            'Startup-timeout retry cancelled: session interrupted/stopped/restarted/reset/cleaning up during backoff.'
-          );
-          return;
-        }
-
-        // Delivery row settled failed during the window: the reopen above
-        // left it 'enqueued', so this read can only be true when the
-        // delivery layer's consumption timeout / dead-letter — or an
-        // interrupt — terminalized it while we slept. Retrying would respawn
-        // subprocesses for a delivery the layer already settled; abandon and
-        // let the settled state stand. (Mirrors QueryRunner; runs AFTER the
-        // cheap disjuncts and reads a single row.)
-        if (
-          deliveryKey !== null &&
-          this.ctx.db.getMessageByStatusAndUuid(session.id, 'failed', deliveryKey)
-        ) {
-          logger.warn(
-            'Startup-timeout retry cancelled: delivery already settled failed during backoff ' +
-              `(message ${deliveryKey}).`
-          );
-          return;
-        }
-
-        // The retry branch stopped the queue before its teardown/sleep (see
-        // above — the timeout throw skips the post-loop stop), so restart it:
-        // the retry's generator exits immediately while the queue is stopped,
-        // the replay below would never feed it, and the attempt would time
-        // out again at zero messages. A stop by interrupt/shutdown is excluded
-        // by the checks above (generation, isCleaningUp) and the status guard
-        // below. (Mirrors QueryRunner's post-sleep restart.)
-        if (
-          !messageQueue.isRunning() &&
-          !this.ctx.isCleaningUp() &&
-          stateManager.getState().status !== 'interrupted'
-        ) {
-          messageQueue.start();
-        }
-
-        // Re-feed the timed-out prompt AFTER the backoff (not before the
-        // teardown) so the replay does not expire in the queue
-        // (enqueueWithId has a ~30s TTL) during a long backoff window. ACP
-        // replays the single in-flight prompt only — unlike the SDK runner
-        // (whose streaming-input generator can hand a silent subprocess the
-        // kickoff AND trailing steers, hence PR #2499's multi-message
-        // replay), the ACP outer loop awaits each prompt's turn to completion
-        // before pulling the next message, so a startup timeout always has
-        // exactly one un-consumed prompt. Unlike the SDK runner there is also
-        // no startup-gate wait between this enqueue and the generator attach
-        // (PR #2552 gates SDK spawns only), so no gate-admission deferral is
-        // needed — the enqueue-to-consume gap is the recursion itself.
-        if (retryMessage) {
-          // Duplicate guard (mirrors the SDK runner's staged-replay guard,
-          // narrowed to the queue): the reopen above left the durable row
-          // 'enqueued', so a delivery-layer redrive during the backoff window
-          // may have re-admitted this same uuid — admitWithId is not
-          // idempotent, and feeding it twice would hand the ACP agent the
-          // same prompt twice; the retry's generator consumes the existing
-          // admission instead. PENDING-ONLY (hasPendingAdmission), not
-          // hasPendingOrInFlight: this attempt's own admission lingers in
-          // `yielded` when the timed-out prompt's stdin write never fired
-          // (onSubmitted never ran, so onSent never settled it), and skipping
-          // the re-feed on that stale entry would leave the retry with an
-          // empty-but-sized queue — the generator arms the startup timer and
-          // blocks in waitForNextMessage (not abort-wakeable): one burned
-          // spawn plus a wedged window until the admission TTL / stall
-          // watchdog. A FRESH redrive admission sits in `queue`; our own
-          // stale entry self-settles at its TTL and duplicates nothing.
-          if (messageQueue.hasPendingAdmission(retryMessage.uuid)) {
-            logger.warn(
-              `Startup replay skip: message ${retryMessage.uuid} is already pending ` +
-                '(a redrive re-admitted it); not feeding it twice.'
-            );
+          // Clean-slate teardown: close the dead client/transport, drop the MCP
+          // proxy bridge, and wait for the subprocess to exit so the retry's
+          // fresh spawn does not collide with workspace locks.
+          if (this.ctx.queryObject) {
+            try {
+              this.ctx.queryObject.close();
+            } catch {
+              // Ignore close errors
+            }
+            this.ctx.queryObject = null;
           } else {
-            // Durable + prepend, mirroring the SDK runner's staged-replay
-            // flush: durable keeps the entry surviving the queue's
-            // claimed/yielded abort states, and prepend keeps the kickoff
-            // ahead of anything that slipped into the queue before the
-            // backoff stop. The in-queue admission TTL still applies — by
-            // design, see the rejection handler below: moving the enqueue
-            // past the backoff dodges the SLEEP but not the retry attempt's
-            // own pre-consumption window (spawn + initialize + session
-            // setup), which can exceed 30 s under a raised
-            // HYPERNEO_SDK_STARTUP_TIMEOUT_MS.
-            messageQueue
-              .enqueueWithId(retryMessage.uuid, retryMessage.content, false, {
-                prepend: true,
-                durable: true,
-              })
-              .catch((rejectionError) => {
-                // Gate on the admission-TTL error specifically (mirrors the
-                // SDK runner's handler): MessageQueue.clear() rejects
-                // queue/claimed entries with a plain 'Interrupted by user'
-                // regardless of durability, and a user Stop during the retry
-                // attempt's pre-consumption window lands here too — treating
-                // that as starvation would re-stage the prompt, set the
-                // classification flag, and (via the synthetic startup
-                // timeout) surface a spurious "ACP agent failed to start"
-                // error card for a cleanly-interrupted session. Only the
-                // admission TTL timer sets that error name; anything else is
-                // a no-op (the interrupt's own teardown owns the unwind).
-                if (
-                  (rejectionError as { name?: string } | null)?.name !== 'MessageQueueTimeoutError'
-                ) {
-                  return;
-                }
-                // Guarded writes + abort: only the chain's own, still-live
-                // generation. The generation check excludes a replacement
-                // query that took over while the admission sat unconsumed
-                // (its start() retires the staging) — checked BEFORE the
-                // warn so a superseded chain does not log an abort that
-                // never happens; the aborted check makes the timer-driven
-                // abort of the same attempt a no-op.
-                if (this.ctx.getQueryGeneration() !== queryGeneration) {
-                  return;
-                }
-                // The admission TTL fired: the retry attempt did not consume
-                // the replay in time (slow ACP handshake) — a
-                // startup-timeout-class failure, so route it into the bounded
-                // startup-retry machine rather than silently losing the
-                // prompt to the ~3-min stall watchdog: re-stage the message
-                // for the next attempt's re-feed and abort this attempt; the
-                // catch's replay-rejected classification converts the abort
-                // into an 'ACP startup timeout' error so it claims a budget
-                // round and backs off before retrying. (Mirrors
-                // QueryRunner's flush rejection handler.)
-                logger.warn(
-                  `Startup replay admission rejected for message ${retryMessage.uuid} ` +
-                    `(the ACP agent did not consume it within the admission TTL): ` +
-                    `${rejectionError instanceof Error ? rejectionError.message : String(rejectionError)} — ` +
-                    'aborting attempt for a bounded startup retry.'
-                );
-                this._pendingStartupReplay = retryMessage;
-                this._replayAdmissionRejected = true;
-                if (
-                  this.ctx.queryAbortController &&
-                  !this.ctx.queryAbortController.signal.aborted
-                ) {
-                  this.ctx.queryAbortController.abort();
-                }
-              });
-            // Fence for this chain's finally: admitWithId records the entry
-            // synchronously, so everything admitted through this point is
-            // THIS chain's re-feed — any admission of the same uuid recorded
-            // after this counter read belongs to a later re-feed (delivery-
-            // layer redrive) and must survive a superseded chain's purge.
-            // (Mirrors QueryRunner's flushAdmissionFenceSeq, round-9 P2.)
-            refeedTracking.uuid = retryMessage.uuid;
-            refeedTracking.fenceSeq = messageQueue.getAdmissionSeq();
+            client?.close();
           }
-          // The staged replay is now the queue's admission (or a redrive's) —
-          // either way the NEXT round re-derives it from the queue or the
-          // rejection handler's re-staging, not from this field. The
-          // operative guard for the next round's keying is runQuery's
-          // entry-null of _lastConsumedUserMessage (every attempt); this null
-          // is belt-and-suspenders for the same round's tail. Note the
-          // budget KEY never derives from the staging — only retryMessage
-          // does; the key path is _lastConsumedUserMessage/peek.
-          this._pendingStartupReplay = null;
-          this._lastConsumedUserMessage = null;
+          await closeProxyBridge();
+
+          const exitPromise = this.ctx.processExitedPromise;
+          if (exitPromise) {
+            await Promise.race([
+              exitPromise,
+              new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+            ]);
+            // Clear only if the tracking still belongs to the old subprocess —
+            // a concurrent start during the await may have installed the
+            // replacement's exit promise. (Mirrors QueryRunner.)
+            if (this.ctx.processExitedPromise === exitPromise) {
+              this.ctx.resetProcessExitedPromise();
+            }
+          }
+
+          // Restore provider env vars BEFORE the backoff sleep so process.env
+          // is clean during the (potentially minutes-long) wait, and so a
+          // cancelled return below cannot skip the restore — the finally block
+          // skips cleanup for stale queries. The recursive attempt re-applies
+          // fresh provider env. (Mirrors QueryRunner.)
+          const envVarsToRestore = this.ctx.originalEnvVars;
+          if (Object.keys(envVarsToRestore).length > 0) {
+            getProviderService().restoreEnvVars(envVarsToRestore);
+            this.ctx.originalEnvVars = {};
+          }
+
+          // Exponential backoff before the retry attempt — immediate retries
+          // are what make a concurrent-start herd self-sustaining (each retry
+          // respawns an ACP subprocess into the very load that timed it out).
+          // Sleeps AFTER teardown so the wait is not spent holding a dead
+          // subprocess. (Mirrors the provider-retry / startup-retry ordering in
+          // QueryRunner.)
+          await sleep(delayMs);
+
+          // Cancellation guard at wake (mirrors QueryRunner, incl. its PR #2551
+          // P1 thread). This attempt's controller was legitimately ABORTED by
+          // the startup timer, but abort() leaves it non-null — null can only
+          // mean handleInterrupt (a COMPLETED Stop nulls the controller without
+          // touching the generation, queryPromise, or — here — the reopened
+          // 'enqueued' row the settled check below reads) or the lifecycle stop
+          // (already covered by the queryPromise disjunct). Cancellation
+          // signals, all cheap:
+          // - ctx.queryPromise === null — stall-watchdog reset / lifecycle
+          //   stop gave up on this chain (no generation bump).
+          // - ctx.queryAbortController === null — a completed user Stop.
+          // - generation supersession / interrupted status / shutdown.
+          if (
+            this.ctx.isCleaningUp() ||
+            this.ctx.queryAbortController === null ||
+            this.ctx.queryPromise === null ||
+            this.ctx.getQueryGeneration() !== queryGeneration ||
+            stateManager.getState().status === 'interrupted'
+          ) {
+            logger.warn(
+              'Startup-timeout retry cancelled: session interrupted/stopped/restarted/reset/cleaning up during backoff.'
+            );
+            return;
+          }
+
+          // Delivery row settled failed during the window: the reopen above
+          // left it 'enqueued', so this read can only be true when the
+          // delivery layer's consumption timeout / dead-letter — or an
+          // interrupt — terminalized it while we slept. Retrying would respawn
+          // subprocesses for a delivery the layer already settled; abandon and
+          // let the settled state stand. (Mirrors QueryRunner; runs AFTER the
+          // cheap disjuncts and reads a single row.)
+          if (
+            deliveryKey !== null &&
+            this.ctx.db.getMessageByStatusAndUuid(session.id, 'failed', deliveryKey)
+          ) {
+            logger.warn(
+              'Startup-timeout retry cancelled: delivery already settled failed during backoff ' +
+                `(message ${deliveryKey}).`
+            );
+            return;
+          }
+
+          // The retry branch stopped the queue before its teardown/sleep (see
+          // above — the timeout throw skips the post-loop stop), so restart it:
+          // the retry's generator exits immediately while the queue is stopped,
+          // the replay below would never feed it, and the attempt would time
+          // out again at zero messages. A stop by interrupt/shutdown is excluded
+          // by the checks above (generation, isCleaningUp) and the status guard
+          // below. (Mirrors QueryRunner's post-sleep restart.)
+          if (
+            !messageQueue.isRunning() &&
+            !this.ctx.isCleaningUp() &&
+            stateManager.getState().status !== 'interrupted'
+          ) {
+            messageQueue.start();
+          }
+
+          // Re-feed the timed-out prompt AFTER the backoff (not before the
+          // teardown) so the replay does not expire in the queue
+          // (enqueueWithId has a ~30s TTL) during a long backoff window. ACP
+          // replays the single in-flight prompt only — unlike the SDK runner
+          // (whose streaming-input generator can hand a silent subprocess the
+          // kickoff AND trailing steers, hence PR #2499's multi-message
+          // replay), the ACP outer loop awaits each prompt's turn to completion
+          // before pulling the next message, so a startup timeout always has
+          // exactly one un-consumed prompt. Unlike the SDK runner there is also
+          // no startup-gate wait between this enqueue and the generator attach
+          // (PR #2552 gates SDK spawns only), so no gate-admission deferral is
+          // needed — the enqueue-to-consume gap is the recursion itself.
+          if (retryMessage) {
+            // Duplicate guard (mirrors the SDK runner's staged-replay guard,
+            // narrowed to the queue): the reopen above left the durable row
+            // 'enqueued', so a delivery-layer redrive during the backoff window
+            // may have re-admitted this same uuid — admitWithId is not
+            // idempotent, and feeding it twice would hand the ACP agent the
+            // same prompt twice; the retry's generator consumes the existing
+            // admission instead. PENDING-ONLY (hasPendingAdmission), not
+            // hasPendingOrInFlight: this attempt's own admission lingers in
+            // `yielded` when the timed-out prompt's stdin write never fired
+            // (onSubmitted never ran, so onSent never settled it), and skipping
+            // the re-feed on that stale entry would leave the retry with an
+            // empty-but-sized queue — the generator arms the startup timer and
+            // blocks in waitForNextMessage (not abort-wakeable): one burned
+            // spawn plus a wedged window until the admission TTL / stall
+            // watchdog. A FRESH redrive admission sits in `queue`; our own
+            // stale entry self-settles at its TTL and duplicates nothing.
+            if (messageQueue.hasPendingAdmission(retryMessage.uuid)) {
+              logger.warn(
+                `Startup replay skip: message ${retryMessage.uuid} is already pending ` +
+                  '(a redrive re-admitted it); not feeding it twice.'
+              );
+            } else {
+              // Durable + prepend, mirroring the SDK runner's staged-replay
+              // flush: durable keeps the entry surviving the queue's
+              // claimed/yielded abort states, and prepend keeps the kickoff
+              // ahead of anything that slipped into the queue before the
+              // backoff stop. The in-queue admission TTL still applies — by
+              // design, see the rejection handler below: moving the enqueue
+              // past the backoff dodges the SLEEP but not the retry attempt's
+              // own pre-consumption window (spawn + initialize + session
+              // setup), which can exceed 30 s under a raised
+              // HYPERNEO_SDK_STARTUP_TIMEOUT_MS.
+              messageQueue
+                .enqueueWithId(retryMessage.uuid, retryMessage.content, false, {
+                  prepend: true,
+                  durable: true,
+                })
+                .catch((rejectionError) => {
+                  // Gate on the admission-TTL error specifically (mirrors the
+                  // SDK runner's handler): MessageQueue.clear() rejects
+                  // queue/claimed entries with a plain 'Interrupted by user'
+                  // regardless of durability, and a user Stop during the retry
+                  // attempt's pre-consumption window lands here too — treating
+                  // that as starvation would re-stage the prompt, set the
+                  // classification flag, and (via the synthetic startup
+                  // timeout) surface a spurious "ACP agent failed to start"
+                  // error card for a cleanly-interrupted session. Only the
+                  // admission TTL timer sets that error name; anything else is
+                  // a no-op (the interrupt's own teardown owns the unwind).
+                  if (
+                    (rejectionError as { name?: string } | null)?.name !==
+                    'MessageQueueTimeoutError'
+                  ) {
+                    return;
+                  }
+                  // Guarded writes + abort: only the chain's own, still-live
+                  // generation. The generation check excludes a replacement
+                  // query that took over while the admission sat unconsumed
+                  // (its start() retires the staging) — checked BEFORE the
+                  // warn so a superseded chain does not log an abort that
+                  // never happens; the aborted check makes the timer-driven
+                  // abort of the same attempt a no-op.
+                  if (this.ctx.getQueryGeneration() !== queryGeneration) {
+                    return;
+                  }
+                  // The admission TTL fired: the retry attempt did not consume
+                  // the replay in time (slow ACP handshake) — a
+                  // startup-timeout-class failure, so route it into the bounded
+                  // startup-retry machine rather than silently losing the
+                  // prompt to the ~3-min stall watchdog: re-stage the message
+                  // for the next attempt's re-feed and abort this attempt; the
+                  // catch's replay-rejected classification converts the abort
+                  // into an 'ACP startup timeout' error so it claims a budget
+                  // round and backs off before retrying. (Mirrors
+                  // QueryRunner's flush rejection handler.)
+                  logger.warn(
+                    `Startup replay admission rejected for message ${retryMessage.uuid} ` +
+                      `(the ACP agent did not consume it within the admission TTL): ` +
+                      `${rejectionError instanceof Error ? rejectionError.message : String(rejectionError)} — ` +
+                      'aborting attempt for a bounded startup retry.'
+                  );
+                  this._pendingStartupReplay = retryMessage;
+                  this._replayAdmissionRejected = true;
+                  if (
+                    this.ctx.queryAbortController &&
+                    !this.ctx.queryAbortController.signal.aborted
+                  ) {
+                    this.ctx.queryAbortController.abort();
+                  }
+                });
+              // Fence for this chain's finally: admitWithId records the entry
+              // synchronously, so everything admitted through this point is
+              // THIS chain's re-feed — any admission of the same uuid recorded
+              // after this counter read belongs to a later re-feed (delivery-
+              // layer redrive) and must survive a superseded chain's purge.
+              // (Mirrors QueryRunner's flushAdmissionFenceSeq, round-9 P2.)
+              refeedTracking.uuid = retryMessage.uuid;
+              refeedTracking.fenceSeq = messageQueue.getAdmissionSeq();
+            }
+            // The staged replay is now the queue's admission (or a redrive's) —
+            // either way the NEXT round re-derives it from the queue or the
+            // rejection handler's re-staging, not from this field. The
+            // operative guard for the next round's keying is runQuery's
+            // entry-null of _lastConsumedUserMessage (every attempt); this null
+            // is belt-and-suspenders for the same round's tail. Note the
+            // budget KEY never derives from the staging — only retryMessage
+            // does; the key path is _lastConsumedUserMessage/peek.
+            this._pendingStartupReplay = null;
+            this._lastConsumedUserMessage = null;
+          }
+        } finally {
+          // Compare-and-clear: if a restart during this window already started
+          // a replacement chain that opened its OWN window, the owner token has
+          // moved on and this exit must NOT close the live window.
+          if (this._startupBackoffOwner === backoffWindowToken) {
+            this._startupBackoffOwner = null;
+          }
         }
 
         // Reset the startup-phase state for the recursive attempt (mirrors
@@ -1477,6 +1634,16 @@ export class AcpQueryRunner {
         // attempt's (fired) timer handle too so the retry arms a fresh one.
         this.clearStartupTimer();
         this.ctx.firstMessageReceived = false;
+
+        // Hand the recursive attempt the controller that owns the session
+        // RIGHT NOW — everything above this line that could stop the chain
+        // has already been checked, so the remaining exposure is the child's
+        // own rebuild window (provider resolution, options build, handshake
+        // setup) before it publishes its own controller. The child re-verifies
+        // this identity pre-publication; a lifecycle stop in that window NULLS
+        // the field (and a user Stop aborts-then-nulls it) without tripping
+        // any other guard. (Mirrors QueryRunner, round-11 P1.)
+        recoveryState.startupRetryOwnerController = this.ctx.queryAbortController;
 
         // `return await` keeps this chain's finally{} from racing the retry
         // (it runs only after the retry chain completes). isRetry=true also
@@ -1643,6 +1810,21 @@ export class AcpQueryRunner {
   /** Startup succeeded for the in-flight delivery — clear its backoff budget. */
   private clearStartupTimeoutRetryBudget(): void {
     this._startupTimeoutRetryState = { key: null, retries: 0 };
+  }
+
+  /**
+   * Reset the per-delivery startup-timeout budget for `messageUuid` when it
+   * is the budget's current key — the affordance the give-up surfacing
+   * advertises (send_message handoff / user Retry re-enqueues the row via
+   * reopenDeliveryForRetry, an explicitly identified new delivery cycle that
+   * must start from a fresh schedule rather than inherit the exhausted one).
+   * A different key's budget is untouched. (Mirrors
+   * QueryRunner.resetStartupTimeoutRetryBudgetFor; round-14 P2.)
+   */
+  resetStartupTimeoutRetryBudgetFor(messageUuid: string): void {
+    if (this._startupTimeoutRetryState.key === messageUuid) {
+      this._startupTimeoutRetryState = { key: null, retries: 0 };
+    }
   }
 
   private async ensureRequiredMcpServersForAcp(queryOptions: Options): Promise<Options> {

@@ -2385,6 +2385,111 @@ describe('AcpQueryRunner startup-timeout bounded retry', () => {
     }
   }, 1000);
 
+  test('opens the backoff window through the sleep and closes it on cancellation', async () => {
+    // Rounds 12-13 mirror: the recovery window must be open exactly while
+    // the session is 'processing' with a stopped queue (the state the
+    // delivery handler's park exemption keys on), closed on EVERY exit —
+    // including the cancellation returns — and fenced by the owner token so
+    // a replacement's start() clears a stale claim.
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '60' });
+    try {
+      const clients = [createHangingClient(), createMockClient()];
+      const { ctx } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      expect(runner.isInStartupBackoff()).toBe(false);
+      await runner.start();
+      expect(await waitForWarn(ctx, 'Auto-retrying ACP query')).toBe(true);
+      // Mid-window: the queue is stopped and the window is open.
+      expect(runner.isInStartupBackoff()).toBe(true);
+
+      ctx.incrementQueryGeneration();
+      await ctx.queryPromise;
+      // Closed on the cancellation exit.
+      expect(runner.isInStartupBackoff()).toBe(false);
+
+      // start() clears a stale claim a superseded chain left behind.
+      (runner as unknown as { _startupBackoffOwner: object | null })._startupBackoffOwner = {};
+      expect(runner.isInStartupBackoff()).toBe(true);
+      clients.push(createHangingClient());
+      await runner.start();
+      expect(runner.isInStartupBackoff()).toBe(false);
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('abandons the retry spawn when controller ownership changes during the rebuild', async () => {
+    // Round-11 mirror: between the retry site's post-sleep checks and the
+    // child's controller publication, a lifecycle stop NULLS
+    // ctx.queryAbortController without tripping any other guard — the child
+    // must refuse to publish/spawn and surface as an abort.
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '60' });
+    try {
+      const clients = [createHangingClient(), createMockClient()];
+      const { ctx } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+      // The child's options build is the deterministic mid-rebuild stop
+      // point: null the controller there (the shape of a stall-watchdog
+      // lifecycle stop), after every retry-site guard has already passed.
+      let builds = 0;
+      const realBuild = ctx.optionsBuilder.build.bind(ctx.optionsBuilder);
+      (ctx.optionsBuilder as unknown as { build: ReturnType<typeof mock> }).build = mock(
+        async () => {
+          builds += 1;
+          if (builds === 2) {
+            ctx.queryAbortController = null;
+          }
+          return realBuild();
+        }
+      );
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      // The retry attempt refused to spawn (no second client) and surfaced
+      // as an abort — no error card, no synthetic classification.
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+      expect(
+        warnLines(ctx).some((line) => line.includes('controller ownership changed before spawn'))
+      ).toBe(true);
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('tears the dead client down on the exhausted give-up before settling', async () => {
+    // Round-14 P3 mirror: a subprocess hung hard enough to burn the whole
+    // budget is closed BEFORE the terminal settle, not left for the outer
+    // finally's cooperative close.
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '0', max: '1' });
+    try {
+      const first = createHangingClient();
+      const second = createHangingClient();
+      const clients = [first, second];
+      const { ctx } = createRunnerFixture({ client: first });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+      const handleError = ctx.errorManager.handleError as unknown as ReturnType<typeof mock>;
+      let settled = false;
+      handleError.mockImplementation(async () => {
+        settled = true;
+        // At settle time the retry attempt's client must already be closed.
+        expect(second.close).toHaveBeenCalled();
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(settled).toBe(true);
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
   test('resets startup-phase state at the transient-retry recursion (stale flag survives otherwise)', async () => {
     // Round-5 P2: the transient-connection recursion must apply the same
     // startup-phase resets as the startup-retry site. A mid-stream drop

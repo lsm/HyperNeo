@@ -2896,7 +2896,11 @@ export class AgentSession
    * soon as the window closes. (Round-12 P2.)
    */
   isInStartupBackoff(): boolean {
-    return this.queryRunner instanceof QueryRunner && this.queryRunner.isInStartupBackoff();
+    // Both runners surface the window (QueryRunner natively; AcpQueryRunner
+    // mirrors it) — the delivery handler's park exemption is runner-agnostic.
+    if (this.queryRunner instanceof QueryRunner) return this.queryRunner.isInStartupBackoff();
+    if (this.queryRunner instanceof AcpQueryRunner) return this.queryRunner.isInStartupBackoff();
+    return false;
   }
 
   /**
@@ -2930,7 +2934,11 @@ export class AgentSession
    * wording per round-15 review.)
    */
   resetStartupTimeoutRetryBudget(messageUuid: string): void {
+    // Both runners key the budget by kickoff uuid (the ACP runner mirrors
+    // the reset) — the Retry affordance works for either session type.
     if (this.queryRunner instanceof QueryRunner) {
+      this.queryRunner.resetStartupTimeoutRetryBudgetFor(messageUuid);
+    } else if (this.queryRunner instanceof AcpQueryRunner) {
       this.queryRunner.resetStartupTimeoutRetryBudgetFor(messageUuid);
     }
   }
