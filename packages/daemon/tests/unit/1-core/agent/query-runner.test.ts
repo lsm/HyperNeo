@@ -22,6 +22,7 @@ import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
 import {
+  getMaxStartupTimeoutRetries,
   getStartupRetryDelayMs,
   looksLikeRateLimit429,
   QueryRunner,
@@ -2066,6 +2067,9 @@ describe('QueryRunner', () => {
 
       expect(buildSpy).toHaveBeenCalledTimes(1);
       expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      // No retry ever ran, so this terminate can only come from the give-up
+      // branch's clean-slate teardown (round-14 P3) — the unique pin for it.
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalled();
     });
 
     it('charges one budget per delivery, surviving redrives of the same message', () => {
@@ -2356,38 +2360,60 @@ describe('QueryRunner', () => {
       expect(runner.isInStartupBackoff()).toBe(false);
     });
 
-    it('cancels the retry when a COMPLETED Stop nulls the abort controller during the backoff', async () => {
-      // P1 regression guard: handleInterrupt on a processing session finishes
-      // in <1s — aborts-and-nulls ctx.queryAbortController, clears the queue,
-      // deletes delivery jobs, settles at IDLE — without touching the
-      // generation, queryPromise, or the 'consumed' kickoff row. Without the
-      // controller-null disjunct every other guard passes and the chain wakes
-      // to re-enqueue and re-run the prompt the user stopped.
-      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '25';
+    it.skipIf(!sdkQueryIsMock)(
+      'cancels the retry when a COMPLETED Stop nulls the abort controller during the backoff',
+      async () => {
+        // P1 regression guard: handleInterrupt on a processing session finishes
+        // in <1s — aborts-and-nulls ctx.queryAbortController, clears the queue,
+        // deletes delivery jobs, settles at IDLE — without touching the
+        // generation, queryPromise, or the 'consumed' kickoff row. Without the
+        // controller-null disjunct every other guard passes and the chain wakes
+        // to re-enqueue and re-run the prompt the user stopped.
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '25';
 
-      const ctx = createContext();
-      runner = new QueryRunner(ctx);
-      // Mimic handleInterrupt's observable effects by the time the chain is
-      // mid-backoff: controller nulled, queue cleared/stopped.
-      terminateTrackedAgentProcessesSpy.mockImplementation(() => {
-        ctx.queryAbortController = null;
-        stopSpy();
-        clearSpy();
-      });
+        const kickoff = {
+          uuid: 'stop-kickoff-uuid',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+        const steer = {
+          uuid: 'stop-steer-uuid',
+          content: [{ type: 'text' as const, text: 'S' }],
+        };
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        // A consumed-origin steer rides the chain (round-14 P3): the Stop exit
+        // must sweep it failed-with-Retry like the other no-next-flush exits —
+        // the turn it queued behind is gone, so it would otherwise vanish
+        // silently as 'consumed'.
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
+        // Mimic handleInterrupt's observable effects by the time the chain is
+        // mid-backoff: controller nulled, queue cleared/stopped.
+        terminateTrackedAgentProcessesSpy.mockImplementation(() => {
+          ctx.queryAbortController = null;
+          stopSpy();
+          clearSpy();
+        });
 
-      runner.start();
-      await ctx.queryPromise?.catch(() => {});
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
 
-      // No recursion and — critically — no resurrection of the stopped prompt.
-      expect(buildSpy).toHaveBeenCalledTimes(1);
-      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
-      const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
-        String(args[0])
-      );
-      expect(warns.some((w) => w.includes('Startup-timeout retry cancelled'))).toBe(true);
-      // The backoff window closed on the cancellation exit (round-13 P3 pin).
-      expect(runner.isInStartupBackoff()).toBe(false);
-    });
+        // No recursion and — critically — no resurrection of the stopped prompt.
+        expect(buildSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+        // The steer is surfaced; the kickoff (delivery layer's row) is not.
+        expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledTimes(1);
+        expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledWith(mockSession.id, steer.uuid);
+        const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+          String(args[0])
+        );
+        expect(warns.some((w) => w.includes('retry cancelled (interrupted/stopped)'))).toBe(true);
+        expect(warns.some((w) => w.includes('Startup-timeout retry cancelled'))).toBe(true);
+        // The backoff window closed on the cancellation exit (round-13 P3 pin).
+        expect(runner.isInStartupBackoff()).toBe(false);
+      }
+    );
 
     it.skipIf(!sdkQueryIsMock)(
       'aborts the rebuild when a Stop nulls the controller after the post-sleep guard',
@@ -2465,6 +2491,59 @@ describe('QueryRunner', () => {
         } finally {
           (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
         }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'a rejecting statusChanged subscriber cannot escape the give-up surfacing (guarded publish)',
+      async () => {
+        // Round-14 P3: publish() awaits every handler and rejects when one
+        // fails, and an unhandled rejection is daemon-fatal — the surfacing
+        // runs inside error-unwind paths, so the broadcast must be
+        // fire-and-forget guarded. Vitest fails this test on the unguarded
+        // shape via the unhandled rejection itself.
+        const kickoff = {
+          uuid: 'guarded-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+        const steer = {
+          uuid: 'guarded-steer',
+          content: [{ type: 'text' as const, text: 'S' }],
+        };
+
+        const ctx = createContext({
+          getActiveDeliveryKickoffUuid: () => kickoff.uuid,
+        });
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
+        buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+
+        // Pin handler attachment directly (bun's unhandled-rejection routing
+        // is not observable per-test): the broadcast promise returned by the
+        // spy records whether the production code attached a rejection
+        // handler, and the original rejection is pre-swallowed so even the
+        // unguarded shape cannot poison the rest of the suite.
+        let catchAttached = false;
+        publishEventSpy.mockImplementationOnce(() => {
+          const rejection = Promise.reject<void>(new Error('subscriber boom'));
+          const originalCatch = rejection.catch.bind(rejection);
+          originalCatch(() => {}); // never let the raw rejection escape
+          rejection.catch = ((handler: (reason: unknown) => unknown) => {
+            catchAttached = true;
+            return originalCatch(handler as never) as Promise<void>;
+          }) as typeof rejection.catch;
+          return rejection;
+        });
+
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 25));
+
+        expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledTimes(1);
+        expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledWith(mockSession.id, steer.uuid);
+        expect(catchAttached).toBe(true);
       }
     );
 
@@ -2703,6 +2782,9 @@ describe('QueryRunner', () => {
             warns.some((w) => w.includes(`steer ${steer.uuid} never reached a producing turn`))
           ).toBe(true);
           expect(warns.some((w) => w.includes('retry budget exhausted'))).toBe(true);
+          // Round-14 P3: give-up performs the retry branch's clean-slate
+          // teardown (terminate tracked subprocesses) before settling.
+          expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalled();
         } finally {
           (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
         }
@@ -2783,6 +2865,15 @@ describe('QueryRunner', () => {
             await new Promise((resolve) => setTimeout(resolve, 5));
           }
           expect(runner.isInStartupBackoff()).toBe(true);
+          // Ordering pin (round-14 P3): B's window must genuinely open while
+          // A's sleep is still pending — if A's guard/finally already ran
+          // first, the owner field is already null and even an unconditionally-
+          // clearing regressed finally would be a no-op here, silently
+          // removing the test's regression power. Fail loudly instead.
+          const warnsEarly = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(warnsEarly.some((w) => w.includes('Startup-timeout retry cancelled'))).toBe(false);
 
           // A's sleep ends: its post-sleep guard sees the superseded
           // generation and returns through A's finally. Wait for that warn,
@@ -2809,6 +2900,7 @@ describe('QueryRunner', () => {
           while (queryCalls < 2 && Date.now() < deadline) {
             await new Promise((resolve) => setTimeout(resolve, 5));
           }
+          expect(queryCalls).toBeGreaterThanOrEqual(2);
           ctx.queryAbortController?.abort();
           await ctx.queryPromise?.catch(() => {});
           expect(runner.isInStartupBackoff()).toBe(false); // closed for good
@@ -2847,12 +2939,18 @@ describe('QueryRunner', () => {
           uuid: 'giveup3-flushed',
           content: [{ type: 'text' as const, text: 'F' }],
         };
+        const flushedOnlySteer = {
+          uuid: 'giveup3-pending',
+          content: [{ type: 'text' as const, text: 'P' }],
+        };
 
         const ctx = createContext();
         runner = new QueryRunner(ctx);
         (
           runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
-        )._consumedUserMessages = new Map([[1, [kickoff, stagedSteer, flushedSteer]]]);
+        )._consumedUserMessages = new Map([
+          [1, [kickoff, stagedSteer, flushedSteer, flushedOnlySteer]],
+        ]);
         // Starved give-up keys the delivery by the PENDING kickoff (peek).
         peekNextUserMessageIdSpy.mockReturnValue(kickoff.uuid);
 
@@ -2875,6 +2973,10 @@ describe('QueryRunner', () => {
         // ends up in BOTH the flushed and staged carriers. Deferred so the
         // test can seed the consumed carrier BEFORE the rejection aborts
         // the attempt into give-up.
+        // flushedOnlySteer's admission merely resolves (stays pending at
+        // give-up): it reaches the sweep ONLY through flushedReplayEntries —
+        // the unique pin for the flushed carrier (dropping that carrier from
+        // the production sweep must fail THIS test, not just a sibling).
         let rejectFlushedAdmission: ((error: Error) => void) | null = null;
         hasPendingOrInFlightSpy.mockImplementation((uuid: string) => uuid === stagedSteer.uuid);
         enqueueWithIdSpy.mockImplementation((uuid: string) =>
@@ -2889,12 +2991,12 @@ describe('QueryRunner', () => {
           runner.start();
           let deadline = Date.now() + 2000;
           while (
-            (enqueueWithIdSpy.mock.calls.length < 2 || !rejectFlushedAdmission) &&
+            (enqueueWithIdSpy.mock.calls.length < 3 || !rejectFlushedAdmission) &&
             Date.now() < deadline
           ) {
             await new Promise((resolve) => setTimeout(resolve, 5));
           }
-          expect(enqueueWithIdSpy.mock.calls.length).toBe(2);
+          expect(enqueueWithIdSpy.mock.calls.length).toBe(3);
           // Record the CONSUMED carrier as the giving-up attempt's silent
           // iterator would (the recording path itself is pinned by the
           // generator-wrapper tests — here it stands in for a live pull
@@ -2913,16 +3015,21 @@ describe('QueryRunner', () => {
           // Exactly the three steers flipped — kickoff excluded (delivery
           // layer owns it), no duplicate attempts despite flushedSteer being
           // in two carriers.
-          expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledTimes(3);
+          expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledTimes(4);
           const flipped = markDeliveryFailedInclusiveSpy.mock.calls.map((c) => c[1]);
           expect(new Set(flipped)).toEqual(
-            new Set([consumedSteer.uuid, stagedSteer.uuid, flushedSteer.uuid])
+            new Set([
+              consumedSteer.uuid,
+              stagedSteer.uuid,
+              flushedSteer.uuid,
+              flushedOnlySteer.uuid,
+            ])
           );
           // One broadcast carries every flipped row.
           expect(publishEventSpy).toHaveBeenCalledTimes(1);
           expect(publishEventSpy).toHaveBeenCalledWith('messages.statusChanged', {
             sessionId: mockSession.id,
-            messageIds: ['db-row-id', 'db-row-id', 'db-row-id'],
+            messageIds: ['db-row-id', 'db-row-id', 'db-row-id', 'db-row-id'],
             status: 'failed',
           });
           const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
@@ -2936,6 +3043,201 @@ describe('QueryRunner', () => {
         } finally {
           (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
         }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'keys the budget and sweep by the delivery layer kickoff, not the first-consumed message (leftover steer)',
+      async () => {
+        // Round-14 P2(a): a steer admitted late in the previous turn that the
+        // SDK never pulled survives the stopped-not-cleared queue and is
+        // consumed FIRST by this generation — inference keyed deliveryKey to
+        // it, so the give-up sweep skipped the steer (silent consumed loss)
+        // and flipped the kickoff. The active-turn getter supplies the TRUE
+        // kickoff: budget keyed correctly, steer flipped, kickoff untouched.
+        const kickoff = {
+          uuid: 'leftover-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+        const leftoverSteer = {
+          uuid: 'leftover-steer',
+          content: [{ type: 'text' as const, text: 'S' }],
+        };
+
+        const ctx = createContext({
+          getActiveDeliveryKickoffUuid: () => kickoff.uuid,
+        });
+        runner = new QueryRunner(ctx);
+        // The leftover steer is pulled FIRST (FIFO from the prior turn's
+        // queue), the kickoff second — the exact misidentification shape.
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [leftoverSteer, kickoff]]]);
+
+        buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        // Attempt 1 gives up (suite MAX=1) with only the consumed carrier:
+        // the STEER flips, the kickoff does not.
+        expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledTimes(1);
+        expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledWith(
+          mockSession.id,
+          leftoverSteer.uuid
+        );
+        // The budget was keyed by the TRUE kickoff, not the first-consumed
+        // steer — the mis-keying also minted fresh budgets for the wrong
+        // delivery on later attempts.
+        expect(
+          (runner as unknown as { _startupTimeoutRetryState: { key: string | null } })
+            ._startupTimeoutRetryState.key
+        ).toBe(kickoff.uuid);
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'a starved null-inference give-up with an active turn job never flips the staged kickoff',
+      async () => {
+        // Round-14 P2(b): nothing consumed this attempt, queue empty, the
+        // kickoff staged only via the TTL/fold-back cascade — the old
+        // null deliveryKey excluded nothing and the inclusive flip settled
+        // the kickoff row the branch contract reserves for the delivery
+        // layer. With the active-turn getter the staged kickoff is excluded
+        // and a zero-flip give-up publishes NOTHING (also pins the no-op
+        // broadcast path).
+        const kickoff = {
+          uuid: 'starved-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext({
+          getActiveDeliveryKickoffUuid: () => kickoff.uuid,
+        });
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        // Both attempts die at build: attempt 1's retry stages the kickoff,
+        // attempt 2 gives up with it still staged and nothing else.
+        buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(markDeliveryFailedInclusiveSpy).not.toHaveBeenCalled();
+        expect(publishEventSpy).not.toHaveBeenCalled();
+        const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+          String(args[0])
+        );
+        expect(warns.some((w) => w.includes('retry budget exhausted'))).toBe(true);
+        expect(warns.some((w) => w.includes(kickoff.uuid))).toBe(false);
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'a manual retry lane resets the exhausted same-uuid budget (fresh automatic retries)',
+      async () => {
+        // Round-14 P2: reopenDeliveryByUuid re-enqueues the SAME uuid, and
+        // same-uuid attempts always charge — without the explicit-lane reset
+        // a post-give-up Retry gets exactly one attempt (its first timeout
+        // charges past the cap). AgentSession.resetStartupRetryBudget (wired
+        // at all four reopen callers) hands the runner the reset.
+        const kickoff = {
+          uuid: 'retry-lane-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+        const warnsAfterGiveUp = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map(
+          (args) => String(args[0])
+        );
+        expect(warnsAfterGiveUp.some((w) => w.includes('retry budget exhausted'))).toBe(true);
+        // MAX=1 grants one automatic retry: chain 1 runs TWO builds (retry,
+        // then give-up at the second claim).
+        expect(buildSpy).toHaveBeenCalledTimes(2);
+
+        // The manual Retry: fresh chain on the same runner, same uuid. The
+        // reset is what the reopen lane performs — no reset, no retries.
+        runner.resetStartupTimeoutRetryBudgetFor(kickoff.uuid);
+        stopSpy(); // the give-up left the queue stopped; the redriven turn restarts it
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[2, [kickoff]]]);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        const warnsAfterRetry = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map(
+          (args) => String(args[0])
+        );
+        // The retried delivery got its own automatic retry chain — not an
+        // instant give-up. Four builds total (2 per chain), one Auto-retrying
+        // per chain. WITHOUT the reset the retried chain inherits the
+        // exhausted same-uuid budget: 3 builds, 1 Auto-retrying.
+        expect(buildSpy).toHaveBeenCalledTimes(4);
+        expect(
+          warnsAfterRetry.filter((w) => w.includes('Auto-retrying query after startup timeout'))
+            .length
+        ).toBe(2);
+        // A wrong-uuid reset must not clear another delivery's budget.
+        runner.resetStartupTimeoutRetryBudgetFor('some-other-uuid');
+        expect(
+          (runner as unknown as { _startupTimeoutRetryState: { key: string | null } })
+            ._startupTimeoutRetryState.key
+        ).toBe(kickoff.uuid);
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'surfaces a null-flip steer with the dropped warn and publishes nothing (negative path)',
+      async () => {
+        // Round-14 P3: the flip returning null (row missing / already
+        // terminal — production-reachable exactly on the settled-failed
+        // exit, where the delivery layer already terminalized rows) takes
+        // the warn branch, and a zero-flip sweep must not broadcast.
+        const kickoff = {
+          uuid: 'nullflip-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+        const steer = {
+          uuid: 'nullflip-steer',
+          content: [{ type: 'text' as const, text: 'S' }],
+        };
+
+        const ctx = createContext({
+          getActiveDeliveryKickoffUuid: () => kickoff.uuid,
+        });
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
+        markDeliveryFailedInclusiveSpy.mockReturnValue(null);
+
+        buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledTimes(1);
+        expect(publishEventSpy).not.toHaveBeenCalled();
+        const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+          String(args[0])
+        );
+        expect(
+          warns.some(
+            (w) => w.includes('could not be marked failed') && w.includes('nullflip-steer')
+          )
+        ).toBe(true);
       }
     );
 
@@ -4725,6 +5027,19 @@ describe('QueryRunner', () => {
       expect(getStartupRetryDelayMs(1)).toBe(15000);
       process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '1500.9';
       expect(getStartupRetryDelayMs(1)).toBe(1500);
+
+      // RETRY_MAX parses the same way (round-14 P3: the title claimed
+      // garbage/negative fallbacks for both knobs; only BASE_MS was driven).
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = 'garbage';
+      expect(getMaxStartupTimeoutRetries()).toBe(5);
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '-3';
+      expect(getMaxStartupTimeoutRetries()).toBe(5);
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
+      expect(getMaxStartupTimeoutRetries()).toBe(2);
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '7.5';
+      expect(getMaxStartupTimeoutRetries()).toBe(7);
+      delete process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
+      expect(getMaxStartupTimeoutRetries()).toBe(5);
 
       // setTimeout's domain is [0, 2^31-1] ms; beyond it the delay inverts to
       // an ~1ms immediate fire. An extreme base must clamp, not overflow into

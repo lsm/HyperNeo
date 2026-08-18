@@ -939,6 +939,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         return; // genuinely delivered on a prior attempt — don't re-drive
       } else if (existing.sendStatus === 'failed') {
         sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
+        // Explicit handoff retry: fresh startup-timeout budget for the same
+        // uuid (see AgentSession.resetStartupRetryBudget). (Round-14 P2.)
+        session?.resetStartupRetryBudget(messageId);
       }
       // Await SDK consumption (onSent) before returning — a direct send_message
       // handoff has no retained source row to retry, so it must not record

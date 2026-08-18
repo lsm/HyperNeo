@@ -636,6 +636,33 @@ export class JobQueueRepository {
     return out;
   }
 
+  /**
+   * The session's currently-active TURN delivery's kickoff uuid (role 'turn',
+   * status pending/processing) — the delivery the live query chain is driving.
+   * Unlike {@link activeDeliveryMessageUuids} this excludes steers and returns
+   * a single uuid: the SDK runner keys its per-delivery startup-timeout budget
+   * and its give-up steer-sweep's kickoff exclusion by the TRUE kickoff, not
+   * by inference from what the silent iterator happened to consume first (a
+   * leftover unpulled steer can be consumed first by the next generation, and
+   * a starved give-up consumes nothing at all). Null when no turn job is
+   * active (turn ended / steers only / v2 off) — callers fall back to their
+   * inference. (Round-14 P2.)
+   */
+  activeDeliveryTurnUuid(sessionId: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT json_extract(payload, '$.messageUuid') AS uuid
+           FROM job_queue
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND json_extract(payload, '$.role') = 'turn'
+            AND status IN ('pending', 'processing')
+          LIMIT 1`
+      )
+      .get(sessionId) as { uuid: string | null } | undefined;
+    return typeof row?.uuid === 'string' ? row.uuid : null;
+  }
+
   complete(
     jobId: string,
     result?: Record<string, unknown>,

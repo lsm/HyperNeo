@@ -627,6 +627,12 @@ export class SpaceRuntimeService {
         // Prior enqueue threw and terminalized the row; the handler skips
         // `failed`, so reopen it before re-enqueueing.
         sdkMessageRepo.reopenDeliveryByUuid(sessionId, id);
+        // Explicit flush retry: fresh startup-timeout budget for the same
+        // uuid (see AgentSession.resetStartupRetryBudget). Best-effort —
+        // a missed reset only means the retried delivery inherits a spent
+        // budget. (Round-14 P2.)
+        const retrySession = await this.config.sessionManager?.getSessionAsync(sessionId);
+        retrySession?.resetStartupRetryBudget(id);
       }
       // else (enqueued/deferred/submitted): row exists; just (re-)enqueue —
       // deliverMessage dedups the active job via getActiveDeliveryRole. Enqueue

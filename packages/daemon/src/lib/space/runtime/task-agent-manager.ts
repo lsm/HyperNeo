@@ -4589,6 +4589,9 @@ export class TaskAgentManager {
     }
     if (existing?.sendStatus === 'failed') {
       this.config.db.getSDKMessageRepo().reopenDeliveryByUuid(sessionId, messageId);
+      // Explicit inject retry: fresh startup-timeout budget for the same
+      // uuid (see AgentSession.resetStartupRetryBudget). (Round-14 P2.)
+      session.resetStartupRetryBudget(messageId);
     }
 
     // defer + busy → persist as deferred for replay after current turn completes.

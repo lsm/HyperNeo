@@ -193,7 +193,7 @@ function getStartupRetryBaseMs(): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_STARTUP_RETRY_BASE_MS;
 }
 
-function getMaxStartupTimeoutRetries(): number {
+export function getMaxStartupTimeoutRetries(): number {
   const raw = process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
   if (!raw) return DEFAULT_MAX_STARTUP_TIMEOUT_RETRIES;
   const parsed = Number.parseInt(raw, 10);
@@ -493,6 +493,16 @@ export interface QueryRunnerContext {
   consumePendingResumeSessionAt?(): string | undefined;
 
   /**
+   * The delivery layer's kickoff uuid for the turn currently being driven
+   * (the session's active role:'turn' job), or null when none is active.
+   * The startup-timeout retry uses it as the TRUE delivery key — preferred
+   * over inferring from what the silent iterator consumed first (a leftover
+   * unpulled steer can be consumed first by the next generation) or from the
+   * pending queue head (empty on a starved give-up). (Round-14 P2.)
+   */
+  getActiveDeliveryKickoffUuid?(): string | null;
+
+  /**
    * Called when a 429 rate limit exhaustion error is detected (all SDK retries exhausted).
    * The RateLimitWatchdog uses this to schedule an automatic retry after cooldown.
    * @returns true if cooldown was scheduled (caller should skip setIdle),
@@ -522,12 +532,12 @@ interface QueryRecoveryState {
    * it and then nulls — an abort the recursive attempt cannot observe either
    * way once the field is nulled. The user Stop also leaves the generation
    * and queryPromise untouched; the lifecycle stop nulls queryPromise as well
-   * (query-lifecycle-manager step 8), but only when it lands before the
-   * post-sleep wake — which that guard's queryPromise-null disjunct already
-   * observes. What NO other guard sees is either stop landing inside the
-   * child's rebuild window (the child's post-admission identity check
-   * compares against the child's OWN just-published controller), and the
-   * child would spawn a fresh subprocess on a session the user stopped.
+   * (query-lifecycle-manager step 8) — that null IS observed by the
+   * post-sleep guard's queryPromise-null disjunct when it lands before the
+   * wake. What NO other guard sees is either stop landing inside the child's
+   * rebuild window (the child's post-admission identity check compares
+   * against the child's OWN just-published controller). The child would then
+   * spawn a fresh subprocess on a session the user stopped.
    * Consumed (nulled) at the verification so a LATER category's recursion —
    * whose legitimate current controller is a different object — cannot
    * false-positive against a stale handoff.
@@ -1117,9 +1127,8 @@ export class QueryRunner {
       // stop nulls queryPromise too, but that is observed by the post-sleep
       // guard's queryPromise-null disjunct when it lands before the wake.
       // What no other guard observes is either shape landing INSIDE this
-      // window, and the post-admission check below cannot catch it either
-      // (it compares against THIS controller, freshly published one line
-      // down). If the controller the retry site
+      // window. The post-admission check below cannot catch it either (it
+      // compares against THIS controller, freshly published one line down). If the controller the retry site
       // handed down is no longer the current one, this chain lost ownership
       // mid-rebuild: do not publish, do not spawn — surface as an abort so
       // the interrupt/stop cleanup that already ran keeps the session.
@@ -1599,7 +1608,21 @@ export class QueryRunner {
         // settled-failed check below applies) instead of charging whatever
         // delivery timed out before it.
         const consumedForKey = this._consumedUserMessages.get(queryGeneration) ?? [];
-        const deliveryKey = consumedForKey[0]?.uuid ?? messageQueue.peekNextUserMessageId() ?? null;
+        // Delivery-layer truth first (round-14 P2): the active turn job's
+        // kickoff is the delivery being driven, regardless of what the silent
+        // iterator happened to consume first (a leftover unpulled steer from
+        // the previous generation can be pulled first — keying the budget and
+        // the sweep's kickoff exclusion by it would flip the kickoff and lose
+        // the steer) and regardless of the queue head (empty on starved
+        // give-ups, which previously keyed null and swept the staged kickoff
+        // itself). Inference remains the fallback for harnesses/paths without
+        // the getter: consumed[0] is the kickoff by feed order, else the
+        // pending queue head.
+        const deliveryKey =
+          this.ctx.getActiveDeliveryKickoffUuid?.() ??
+          consumedForKey[0]?.uuid ??
+          messageQueue.peekNextUserMessageId() ??
+          null;
         const retryNumber = this.claimStartupTimeoutRetry(deliveryKey);
 
         if (retryNumber === null) {
@@ -1609,6 +1632,38 @@ export class QueryRunner {
               `cap ${getMaxStartupTimeoutRetries()}); giving up and surfacing the failure — ` +
               `the delivery layer settles the durable row.`
           );
+          // Clean-slate teardown, mirroring the retry branch (round-14 P3):
+          // a subprocess hung hard enough to burn the whole budget is exactly
+          // the kind that ignores the outer finally's cooperative close —
+          // terminate the tracked set and close the query object BEFORE
+          // settling, so it stops holding workspace locks and CPU into the
+          // session's next turn (or a manual Retry). Ownership check first,
+          // as at the retry site: a replacement's subprocess must never be
+          // terminated by this chain's exit.
+          if (this.retrySupersededByReplacement(queryGeneration)) {
+            return;
+          }
+          this.ctx.terminateTrackedAgentProcesses?.();
+          if (this.ctx.queryObject) {
+            try {
+              this.ctx.queryObject.close();
+            } catch {
+              // Ignore close errors — transport may already be in a broken state
+            }
+            this.ctx.queryObject = null;
+          }
+          {
+            const exitPromise = this.ctx.processExitedPromise;
+            if (exitPromise) {
+              await Promise.race([
+                exitPromise,
+                new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+              ]);
+              if (this.ctx.processExitedPromise === exitPromise) {
+                this.ctx.resetProcessExitedPromise();
+              }
+            }
+          }
           // Surface this chain's still-unrecovered STEERS (round-12 P3,
           // carriers completed round-13 P2): the terminal path below clears
           // the queue, and the retry site's fold-back only serves a NEXT
@@ -1773,6 +1828,25 @@ export class QueryRunner {
             ) {
               logger.warn(
                 'Startup-timeout retry cancelled: session interrupted/stopped/restarted/reset/cleaning up during backoff.'
+              );
+              // The chain ends here without another flush on EVERY disjunct
+              // of that guard — interrupt, lifecycle stop, replacement,
+              // shutdown — and its carriers hold consumed-origin steers with
+              // no re-drive lane, exactly like the settled-failed exit below:
+              // the finally drops the staging with warns only. Sweep them
+              // too: a steer that never reached a producing turn surfaces
+              // failed-with-Retry on every one of these shapes — including a
+              // user Stop, where the turn the steers queued behind is gone
+              // and they would otherwise vanish silently as 'consumed'.
+              // (Round-14 P3.)
+              this.surfaceDroppedSteers(
+                [
+                  ...consumedForKey,
+                  ...(this._pendingStartupReplay ?? []),
+                  ...(flushedReplayEntries ?? []),
+                ],
+                deliveryKey,
+                'retry cancelled (interrupted/stopped)'
               );
               return;
             }
@@ -2757,6 +2831,25 @@ export class QueryRunner {
   }
 
   /**
+   * Reset the per-delivery startup-timeout budget for `messageUuid` when it
+   * identifies the in-flight budget — called from the delivery layer's
+   * EXPLICIT retry lanes (reopenDeliveryByUuid callers: the user-facing Retry
+   * affordance the give-up surfacing advertises, send_message handoff
+   * retries, Space flushes). Without this a manual retry of a settled-failed
+   * delivery inherits the exhausted same-uuid budget and gets zero automatic
+   * startup retries. Cannot re-open the herd loop the budget bounds: every
+   * caller is a human/agent-initiated retry, never the automatic redrive
+   * lane (which re-drives the same enqueued row without reopening). Other
+   * keys are left alone — a different delivery's in-flight budget is not
+   * this retry's to clear. (Round-14 P2.)
+   */
+  resetStartupTimeoutRetryBudgetFor(messageUuid: string): void {
+    if (this._startupTimeoutRetryState.key === messageUuid) {
+      this._startupTimeoutRetryState = { key: null, retries: 0 };
+    }
+  }
+
+  /**
    * Flip the given dropped entries' durable rows to `failed` — steers only:
    * the kickoff identified by `deliveryKey` is the delivery layer's to settle
    * (its dead-letter lane re-opens it for retry), while a consumed steer has
@@ -2808,12 +2901,17 @@ export class QueryRunner {
     }
     if (flippedIds.length > 0) {
       // One broadcast carries every flipped row (same shape as the
-      // agent-session flip sites).
-      internalEventBus.publish('messages.statusChanged', {
-        sessionId: session.id,
-        messageIds: flippedIds,
-        status: 'failed',
-      });
+      // agent-session flip sites). publish() awaits every local handler and
+      // REJECTS when one fails — this surfacing runs inside error unwind
+      // paths, so a failing subscriber must not escape as an unhandled
+      // rejection or supersede the failure being surfaced: fire-and-forget.
+      void internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId: session.id,
+          messageIds: flippedIds,
+          status: 'failed',
+        })
+        .catch(() => {});
     }
   }
 

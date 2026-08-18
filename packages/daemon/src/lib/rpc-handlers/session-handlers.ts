@@ -1779,6 +1779,13 @@ export function setupSessionHandlers(
     if (!reopenedId) {
       return { retried: false };
     }
+    // An explicit Retry starts a fresh delivery cycle: clear the startup-
+    // timeout budget the failed cycle exhausted under the same uuid, or the
+    // retried delivery would get zero automatic startup retries on the exact
+    // affordance the give-up surfacing advertises. Safe against the herd
+    // loop the budget bounds — this lane is user-initiated, never the
+    // automatic redrive. (Round-14 P2.)
+    agentSession.resetStartupRetryBudget(message.uuid);
 
     // Roll the row back to `failed` if anything after the reopen throws — the
     // status broadcast OR creating the new delivery owner — mirroring the

@@ -2899,6 +2899,38 @@ export class AgentSession
     return this.queryRunner instanceof QueryRunner && this.queryRunner.isInStartupBackoff();
   }
 
+  /**
+   * The delivery layer's kickoff uuid for the turn currently being driven
+   * (the session's active role:'turn' job), or null when no turn is active.
+   * The SDK runner uses this as the TRUE delivery key for its startup-timeout
+   * budget and its give-up steer-sweep's kickoff exclusion — inference from
+   * what the silent iterator consumed first misidentifies the kickoff when a
+   * leftover unpulled steer is consumed first by the next generation, and a
+   * starved give-up consumes nothing at all. Stateless by design: it reads
+   * the live job row, so it is correct exactly while the turn job exists and
+   * reports null the moment it completes. (Round-14 P2.)
+   */
+  getActiveDeliveryKickoffUuid(): string | null {
+    const jobQueue = this.db.getJobQueueRepo?.();
+    return jobQueue?.activeDeliveryTurnUuid(this.session.id) ?? null;
+  }
+
+  /**
+   * Reset the SDK runner's per-delivery startup-timeout budget for an
+   * EXPLICITLY retried delivery (the reopenDeliveryByUuid lane: the
+   * user-facing Retry affordance, send_message handoff retries, Space
+   * flushes). Without this a manual retry inherits the failed cycle's
+   * exhausted same-uuid budget and gets zero automatic startup retries on the
+   * affordance the give-up surfacing advertises. Cannot re-open the herd loop
+   * the budget bounds: every reopenDeliveryByUuid caller is a human/agent
+   * retry, never the automatic redrive lane. (Round-14 P2.)
+   */
+  resetStartupRetryBudget(messageUuid: string): void {
+    if (this.queryRunner instanceof QueryRunner) {
+      this.queryRunner.resetStartupTimeoutRetryBudgetFor(messageUuid);
+    }
+  }
+
   async deliverChatMessage(messageUuid: string): Promise<void> {
     await withSessionLock(this.session.id, async () => {
       // Enqueue-time archive barrier: cancelForSession is point-in-time, so a send
