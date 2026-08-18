@@ -4303,7 +4303,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           .enum(SPACE_TASK_STATUSES)
           .optional()
           .describe(
-            "New task status (same transitions as the UI: e.g. open→in_progress Start, in_progress→open Pause, open→blocked Block, cancelled→open Reopen, done/blocked→in_progress Resume, →cancelled Cancel, →archived Archive). Invalid transitions are rejected with the allowed list. 'review' and 'approved' cannot be set here; review→done and any exit from 'approved' are rejected (use approve_task / mark_complete); 'done' requires autonomy ≥ completionAutonomyLevel (else submit_for_approval); 'rate_limited'/'usage_limited' are runtime-set only."
+            "New task status (same transitions as the UI: e.g. open→in_progress Start, in_progress→open Pause, open/in_progress→blocked Block, cancelled→open Reopen, done/blocked→in_progress Resume, →cancelled Cancel, →archived Archive). Invalid transitions are rejected with the allowed list. 'review' and 'approved' cannot be set here; review→done and any exit from 'approved' are rejected (use approve_task / mark_complete); 'done' requires autonomy ≥ completionAutonomyLevel (else submit_for_approval); 'rate_limited'/'usage_limited' are runtime-set only."
           ),
       },
       (args) => handlers.update_task(args)
