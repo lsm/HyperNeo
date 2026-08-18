@@ -98,6 +98,7 @@ let mockAgents: ReturnType<typeof signal<SpaceWorkerAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
 let mockTaskActivity: ReturnType<typeof signal<Map<string, SpaceTaskActivityMember[]>>>;
+let mockTaskMessageActivity: ReturnType<typeof signal<Map<string, number>>>;
 let mockNodeExecutions: ReturnType<typeof signal<NodeExecution[]>>;
 let mockNodeExecutionsByNodeId: ReturnType<typeof signal<Map<string, unknown[]>>>;
 
@@ -118,6 +119,11 @@ vi.mock('../../../lib/space-store', () => ({
       workflows: mockWorkflows,
       workflowRuns: mockWorkflowRuns,
       taskActivity: mockTaskActivity,
+      taskMessageActivity: mockTaskMessageActivity,
+      hasTaskMessageActivity: (id: string) => {
+        const count = mockTaskMessageActivity.value.get(id);
+        return count === undefined ? null : count > 0;
+      },
       nodeExecutions: mockNodeExecutions,
       nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
       updateTask: mockUpdateTask,
@@ -218,11 +224,16 @@ mockAgents = signal<SpaceWorkerAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
 mockTaskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
+mockTaskMessageActivity = signal<Map<string, number>>(new Map());
 mockNodeExecutions = signal<NodeExecution[]>([]);
 mockNodeExecutionsByNodeId = signal<Map<string, unknown[]>>(new Map());
 
 import { SpaceTaskPane } from '../SpaceTaskPane';
 import { rightPanelTargetSignal } from '../../../lib/signals';
+
+beforeEach(() => {
+  mockTaskMessageActivity.value = new Map();
+});
 
 function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
   return {
@@ -385,11 +396,21 @@ describe('SpaceTaskPane', () => {
     expect(mockCurrentSpaceTaskViewTabSignal.value).toBe('thread');
   });
 
-  it('shows unavailable-thread copy when no task session exists', () => {
+  it('shows the task information view instead of placeholder copy when the task has no message activity', () => {
     mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: null })];
-    const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
-    expect(getByText(/Task thread is not available/)).toBeTruthy();
-    expect(getByText('Keep this view open while the task thread starts.')).toBeTruthy();
+    mockTaskMessageActivity.value = new Map([['task-1', 0]]);
+    const { getByTestId, getByText, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+    expect(getByTestId('task-info-view')).toBeTruthy();
+    expect(queryByText(/Task thread is not available/)).toBeNull();
+    expect(getByText('Task description')).toBeTruthy();
+    expect(getByText('This task has no agent activity yet.')).toBeTruthy();
+  });
+
+  it('keeps the thread view while message activity is still unknown', () => {
+    mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: null })];
+    const { getByTestId, queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+    expect(getByTestId('space-task-unified-thread')).toBeTruthy();
+    expect(queryByTestId('task-info-view')).toBeNull();
   });
 
   it('calls onClose when back button is clicked', () => {
@@ -2135,5 +2156,136 @@ describe('SpaceTaskPane — submit for review modal', () => {
     const errEl = await findByTestId('submit-for-review-error');
     expect(errEl.textContent).toContain('Network down');
     expect(queryByTestId('submit-for-review-modal-content')).toBeTruthy();
+  });
+});
+
+describe('SpaceTaskPane — view follows activity, not status', () => {
+  beforeEach(() => {
+    cleanup();
+    mockTasks.value = [];
+    mockWorkflows.value = [];
+    mockWorkflowRuns.value = [];
+    mockTaskActivity.value = new Map();
+    mockTaskMessageActivity.value = new Map();
+    mockNodeExecutions.value = [];
+    mockCurrentSpaceTaskViewTabSignal.value = 'thread';
+    rightPanelTargetSignal.value = null;
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  const viewMatrix: Array<{
+    label: string;
+    status: SpaceTaskStatus;
+    activity: number | null;
+    workflowRunId?: string;
+    expectThread: boolean;
+  }> = [
+    {
+      label: 'paused task (open) with prior agent activity keeps the thread view',
+      status: 'open',
+      activity: 4,
+      expectThread: true,
+    },
+    {
+      label: 'open task that was never started shows the task information view',
+      status: 'open',
+      activity: 0,
+      expectThread: false,
+    },
+    {
+      label: 'open task while activity is unknown keeps the thread view',
+      status: 'open',
+      activity: null,
+      expectThread: true,
+    },
+    {
+      label: 'in_progress task without messages shows the task information view',
+      status: 'in_progress',
+      activity: 0,
+      expectThread: false,
+    },
+    {
+      label: 'task with a workflow run but zero messages shows the task information view',
+      status: 'blocked',
+      activity: 0,
+      workflowRunId: 'run-1',
+      expectThread: false,
+    },
+    {
+      label: 'blocked task with history keeps the thread view',
+      status: 'blocked',
+      activity: 7,
+      expectThread: true,
+    },
+    {
+      label: 'cancelled task with history keeps the thread view',
+      status: 'cancelled',
+      activity: 2,
+      expectThread: true,
+    },
+    {
+      label: 'done task with history keeps the thread view',
+      status: 'done',
+      activity: 9,
+      expectThread: true,
+    },
+    {
+      label: 'draft task shows the task information view',
+      status: 'draft',
+      activity: 0,
+      expectThread: false,
+    },
+  ];
+
+  for (const { label, status, activity, workflowRunId, expectThread } of viewMatrix) {
+    it(label, () => {
+      mockTasks.value = [makeTask({ status, workflowRunId })];
+      mockTaskMessageActivity.value =
+        activity === null ? new Map() : new Map([['task-1', activity]]);
+      const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+      expect(queryByTestId('space-task-unified-thread') !== null).toBe(expectThread);
+      expect(queryByTestId('task-info-view') !== null).toBe(!expectThread);
+    });
+  }
+
+  it('paused task with severed link pointers but message history keeps the thread view', () => {
+    mockTasks.value = [makeTask({ status: 'open', workflowRunId: null, taskAgentSessionId: null })];
+    mockTaskMessageActivity.value = new Map([['task-1', 5]]);
+    const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+    expect(queryByTestId('space-task-unified-thread')).toBeTruthy();
+    expect(queryByTestId('task-info-view')).toBeNull();
+  });
+
+  it('switches to the thread view when the first activity arrives', async () => {
+    mockTasks.value = [makeTask({ status: 'in_progress' })];
+    mockTaskMessageActivity.value = new Map([['task-1', 0]]);
+    const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+    expect(queryByTestId('task-info-view')).toBeTruthy();
+    mockTaskMessageActivity.value = new Map([['task-1', 2]]);
+    await waitFor(() => expect(queryByTestId('space-task-unified-thread')).toBeTruthy());
+    expect(queryByTestId('task-info-view')).toBeNull();
+  });
+
+  it('task information view surfaces description, workflow, and priority', () => {
+    mockTasks.value = [
+      makeTask({ status: 'open', priority: 'urgent', preferredWorkflowId: 'workflow-9' }),
+    ];
+    mockWorkflows.value = [
+      {
+        id: 'workflow-9',
+        spaceId: 'space-1',
+        name: 'Release Workflow',
+        nodes: [],
+      } as SpaceWorkflow,
+    ];
+    mockTaskMessageActivity.value = new Map([['task-1', 0]]);
+    const { getByText, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
+    expect(getByText('Task description')).toBeTruthy();
+    expect(getByText('Release Workflow')).toBeTruthy();
+    expect(getAllByText('Urgent Priority').length).toBeGreaterThan(0);
+    expect(getAllByText('Open').length).toBeGreaterThan(0);
   });
 });

@@ -1,4 +1,5 @@
 import {
+  getWorkflowRunExecutionStatusLabel,
   isWorkflowRecoveryTransition,
   type MessageDeliveryMode,
   type MessageImage,
@@ -30,6 +31,7 @@ import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { cn } from '../../lib/utils';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
+import { SectionCard } from '../ui/SectionCard';
 import { StatusBadge } from '../ui/StatusBadge';
 import { EditTaskModal } from './EditTaskModal';
 import { NodeAgentChoiceOverlay } from './NodeAgentChoiceOverlay';
@@ -155,6 +157,20 @@ function formatTaskThreadError(err: unknown): string {
 function formatEditTaskError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   return message || 'Failed to update task';
+}
+
+function formatTaskTimestamp(timestamp: number | null | undefined): string {
+  if (!timestamp) return '—';
+  return new Date(timestamp).toLocaleString();
+}
+
+function TaskInfoRow({ label, children }: { label: string; children: ComponentChildren }) {
+  return (
+    <div class="flex items-start justify-between gap-3 text-sm">
+      <span class="text-gray-400">{label}</span>
+      <span class="min-w-0 text-right text-gray-200">{children}</span>
+    </div>
+  );
 }
 
 export function SpaceTaskPane({
@@ -309,9 +325,6 @@ export function SpaceTaskPane({
     navigateToSpaceTask(navigationSpaceId, task.id, 'thread', true);
   }, [auxiliaryPanelTab, navigationSpaceId, targetSpaceIdForTask, task.id, task.workflowRunId]);
 
-  const agentSessionId =
-    activityMembers.find((m) => m.kind === 'node_agent' && m.sessionId)?.sessionId ?? null;
-
   const workflowRun = task.workflowRunId
     ? (spaceStore.workflowRuns.value.find((r) => r.id === task.workflowRunId) ?? null)
     : null;
@@ -334,6 +347,9 @@ export function SpaceTaskPane({
   }, [canvasWorkflowId, workflowVersion]);
 
   const workflow = fullWorkflow;
+  const preferredWorkflowName = task.preferredWorkflowId
+    ? (spaceStore.workflows.value.find((w) => w.id === task.preferredWorkflowId)?.name ?? null)
+    : null;
   const spaceAgents = spaceStore.agents.value;
   const nodeExecutions = spaceStore.nodeExecutions.value;
   const composerTargets: TaskComposerTarget[] = useMemo(() => {
@@ -532,8 +548,7 @@ export function SpaceTaskPane({
         })),
     [activityMembers]
   );
-  const hasUnifiedWorkflowThread =
-    !!task.workflowRunId || !!agentSessionId || activityMembers.length > 0;
+  const hasUnifiedWorkflowThread = spaceStore.hasTaskMessageActivity(task.id) !== false;
   const showInlineComposer = !isTerminalTask;
 
   useLayoutEffect(() => {
@@ -1298,17 +1313,34 @@ export function SpaceTaskPane({
                   onScrollerChange={setThreadScroller}
                 />
               ) : (
-                <div class="h-full overflow-y-auto">
-                  <div class="min-h-[calc(100%+1px)] px-4 py-10 text-center">
-                    <p class="text-sm text-gray-300">
-                      {ensuringThread
-                        ? 'Starting task thread...'
-                        : 'Task thread is not available yet.'}
-                    </p>
-                    <p class="mt-2 text-xs text-gray-400">
-                      {ensuringThread
-                        ? 'Connecting task and node-agent streams.'
-                        : 'Keep this view open while the task thread starts.'}
+                <div class="h-full overflow-y-auto" data-testid="task-info-view">
+                  <div class="mx-auto max-w-2xl space-y-4 px-4 py-6">
+                    <SectionCard title="Description">
+                      {task.description ? (
+                        <p class="whitespace-pre-wrap text-sm text-gray-300">{task.description}</p>
+                      ) : (
+                        <p class="text-sm text-gray-500">No description yet.</p>
+                      )}
+                    </SectionCard>
+                    <SectionCard title="Details">
+                      <TaskInfoRow label="Status">{STATUS_LABELS[task.status]}</TaskInfoRow>
+                      <TaskInfoRow label="Priority">
+                        {PRIORITY_LABELS[task.priority]} Priority
+                      </TaskInfoRow>
+                      <TaskInfoRow label="Created">
+                        {formatTaskTimestamp(task.createdAt)}
+                      </TaskInfoRow>
+                      <TaskInfoRow label="Workflow">
+                        {workflow?.name ?? preferredWorkflowName ?? 'Auto-select'}
+                      </TaskInfoRow>
+                      {workflowRun && (
+                        <TaskInfoRow label="Run status">
+                          {getWorkflowRunExecutionStatusLabel(workflowRun.status)}
+                        </TaskInfoRow>
+                      )}
+                    </SectionCard>
+                    <p class="text-center text-xs text-gray-500" data-testid="task-info-view-hint">
+                      This task has no agent activity yet.
                     </p>
                   </div>
                 </div>

@@ -176,6 +176,14 @@ export default function SpaceIsland({
   }, [spaceId]);
 
   useEffect(() => {
+    if (!taskViewId) return;
+    spaceStore.subscribeTaskMessageActivity(taskViewId).catch(() => {});
+    return () => {
+      spaceStore.unsubscribeTaskMessageActivity(taskViewId);
+    };
+  }, [taskViewId]);
+
+  useEffect(() => {
     if (viewMode !== 'tasks') {
       setCreateTaskOpen(false);
     }
@@ -277,9 +285,7 @@ export default function SpaceIsland({
   }
 
   if (taskViewId) {
-    const tasks = spaceStore.tasks.value;
-    const currentTask = tasks.find((t) => t.id === taskViewId) ?? null;
-    const showInMiddle = currentTask?.status === 'draft' || currentTask?.status === 'open';
+    const showInMiddle = spaceStore.hasTaskMessageActivity(taskViewId) === false;
     return (
       <>
         <div
