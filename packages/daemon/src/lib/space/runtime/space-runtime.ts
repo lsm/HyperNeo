@@ -6140,44 +6140,46 @@ export class SpaceRuntime {
         nodeExecutions.filter((e) => e.status === 'pending').map((e) => e.id)
       );
 
-      for (const execution of nodeExecutions) {
-        if (
-          !execution.agentSessionId ||
-          (execution.status !== 'in_progress' && execution.status !== 'pending')
-        ) {
-          continue;
-        }
-
-        if (tam.isSessionAlive(execution.agentSessionId)) {
-          continue;
-        }
-
-        try {
-          const liveSession = tam.getAgentSessionById(execution.agentSessionId);
-          if (liveSession) {
-            await liveSession.markPendingQuestionOrphaned('agent_session_terminated');
+      if (!space?.stopped) {
+        for (const execution of nodeExecutions) {
+          if (
+            !execution.agentSessionId ||
+            (execution.status !== 'in_progress' && execution.status !== 'pending')
+          ) {
+            continue;
           }
-        } catch (err) {
-          log.warn(
-            `SpaceRuntime: failed to clean up pending question for crashed session ${execution.agentSessionId}:`,
-            err
-          );
-        }
 
-        const exhausted = this.resetWorkflowNodeExecutionForSpawnRetry(
-          runId,
-          execution,
-          'agent session is no longer alive',
-          execution.agentSessionId
-        );
-        if (exhausted) {
-          blockedByCrash = true;
-          await this.safeNotify({
-            kind: 'agent_crash',
-            spaceId: meta.spaceId,
-            taskId: canonicalTask.id,
-            timestamp: new Date().toISOString(),
-          });
+          if (tam.isSessionAlive(execution.agentSessionId)) {
+            continue;
+          }
+
+          try {
+            const liveSession = tam.getAgentSessionById(execution.agentSessionId);
+            if (liveSession) {
+              await liveSession.markPendingQuestionOrphaned('agent_session_terminated');
+            }
+          } catch (err) {
+            log.warn(
+              `SpaceRuntime: failed to clean up pending question for crashed session ${execution.agentSessionId}:`,
+              err
+            );
+          }
+
+          const exhausted = this.resetWorkflowNodeExecutionForSpawnRetry(
+            runId,
+            execution,
+            'agent session is no longer alive',
+            execution.agentSessionId
+          );
+          if (exhausted) {
+            blockedByCrash = true;
+            await this.safeNotify({
+              kind: 'agent_crash',
+              spaceId: meta.spaceId,
+              taskId: canonicalTask.id,
+              timestamp: new Date().toISOString(),
+            });
+          }
         }
       }
 
@@ -7813,7 +7815,6 @@ export class SpaceRuntime {
       const inFlightExecutions = this.config.nodeExecutionRepo
         .listByWorkflowRun(run.id)
         .filter((execution) => execution.status === 'in_progress');
-      if (inFlightExecutions.length === 0) continue;
       for (const execution of inFlightExecutions) {
         this.config.nodeExecutionRepo.update(execution.id, {
           status: 'pending',

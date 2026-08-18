@@ -73,4 +73,36 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
       'Escalation: send_message({ target: "space-agent", message }) requests human/space-level judgment'
     );
   });
+
+  describe('listLiveSessionTaskIdsForSpace', () => {
+    test('enumerates live sub-session task ids by space-embedded session id prefix', () => {
+      const manager = makeManager();
+      const internals = manager as unknown as {
+        subSessions: Map<string, Map<string, unknown>>;
+      };
+      const fakeSession = {} as never;
+      internals.subSessions.set(
+        'task-1',
+        new Map<string, unknown>([
+          ['space:space-a:task:task-1:exec:exec-1', fakeSession],
+          ['space:space-a:task:task-1:exec:exec-2:1', fakeSession],
+        ])
+      );
+      internals.subSessions.set(
+        'task-2',
+        new Map<string, unknown>([['space:space-a:task:task-2:post-approval:coder', fakeSession]])
+      );
+      internals.subSessions.set(
+        'task-3',
+        new Map<string, unknown>([['space:space-b:task:task-3:exec:exec-9', fakeSession]])
+      );
+
+      expect(manager.listLiveSessionTaskIdsForSpace('space-a').sort()).toEqual([
+        'task-1',
+        'task-2',
+      ]);
+      expect(manager.listLiveSessionTaskIdsForSpace('space-b')).toEqual(['task-3']);
+      expect(manager.listLiveSessionTaskIdsForSpace('space-c')).toEqual([]);
+    });
+  });
 });

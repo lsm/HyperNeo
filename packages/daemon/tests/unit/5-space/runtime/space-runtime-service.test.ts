@@ -25,7 +25,7 @@ import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { SessionManager } from '../../../../src/lib/session-manager.ts';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
@@ -206,33 +206,69 @@ describe('SpaceRuntimeService', () => {
     });
   });
 
-  describe('stopActiveWork() — Task #85 invariant', () => {
-    test('routes tasks through TaskAgentManager.cleanup (DB-preserving) and never deleteSession*', async () => {
-      const activeTasks = [
-        { id: 't1', status: 'in_progress' as const },
-        { id: 't2', status: 'open' as const },
-        { id: 't3', status: 'done' as const },
-      ];
-
-      const cleanupCalls: Array<{ taskId: string; reason: string }> = [];
+  describe('stopActiveWork() — park semantics', () => {
+    function makeRecordingRepos(
+      tasks: Array<{ id: string; status: string }>,
+      runs: Array<{ id: string; status: string }> = []
+    ) {
       const updateCalls: Array<{ taskId: string; updates: unknown }> = [];
-
+      const transitionCalls: Array<{ runId: string; status: string }> = [];
       const mockTaskRepo = {
-        listBySpace: () => activeTasks,
+        listBySpace: () => tasks,
         updateTask: (taskId: string, updates: unknown) => {
           updateCalls.push({ taskId, updates });
         },
       } as unknown as SpaceTaskRepository;
-
       const mockWorkflowRunRepo = {
-        listBySpace: () => [],
-        transitionStatus: () => {},
+        listBySpace: () => runs,
+        transitionStatus: (runId: string, status: string) => {
+          transitionCalls.push({ runId, status });
+        },
       } as unknown as SpaceWorkflowRunRepository;
+      return { mockTaskRepo, mockWorkflowRunRepo, updateCalls, transitionCalls };
+    }
 
+    function spyRuntime(svc: SpaceRuntimeService) {
+      const runtime = (
+        svc as unknown as {
+          runtime: {
+            holdSpaceDeliveries: (spaceId: string) => void;
+            parkInFlightExecutionsForSpace: (spaceId: string) => void;
+            clearRunInterests: (runId: string) => void;
+          };
+        }
+      ).runtime;
+      const runtimeCalls: string[] = [];
+      const originalHold = runtime.holdSpaceDeliveries.bind(runtime);
+      runtime.holdSpaceDeliveries = (spaceId: string) => {
+        runtimeCalls.push(`holdDeliveries:${spaceId}`);
+        return originalHold(spaceId);
+      };
+      runtime.parkInFlightExecutionsForSpace = (spaceId: string) => {
+        runtimeCalls.push(`park:${spaceId}`);
+      };
+      runtime.clearRunInterests = (runId: string) => {
+        runtimeCalls.push(`clearRunInterests:${runId}`);
+      };
+      return runtimeCalls;
+    }
+
+    test('cleans up in_progress, open, and rate-limited tasks with reason stopped and never writes task status', async () => {
+      const tasks = [
+        { id: 't1', status: 'in_progress' },
+        { id: 't2', status: 'open' },
+        { id: 't3', status: 'rate_limited' },
+        { id: 't4', status: 'review' },
+        { id: 't5', status: 'done' },
+        { id: 't6', status: 'blocked' },
+      ];
+      const { mockTaskRepo, mockWorkflowRunRepo, updateCalls } = makeRecordingRepos(tasks);
+      const cleanupCalls: Array<{ taskId: string; reason: string }> = [];
       const mockTaskAgentManager = {
-        cleanup: async (taskId: string, reason: 'done' | 'cancelled') => {
+        cleanup: async (taskId: string, reason: string) => {
           cleanupCalls.push({ taskId, reason });
         },
+        listLiveSessionTaskIdsForSpace: () => [],
       } as unknown as TaskAgentManager;
 
       const svc = new SpaceRuntimeService({
@@ -241,39 +277,141 @@ describe('SpaceRuntimeService', () => {
         workflowRunRepo: mockWorkflowRunRepo,
       });
       svc.setTaskAgentManager(mockTaskAgentManager);
+      const runtimeCalls = spyRuntime(svc);
 
       await svc.stopActiveWork('space-1');
 
-      expect(cleanupCalls).toHaveLength(2);
-      expect(cleanupCalls.map((c) => c.taskId).sort()).toEqual(['t1', 't2']);
-      expect(cleanupCalls.every((c) => c.reason === 'cancelled')).toBe(true);
-      expect(updateCalls).toHaveLength(2);
-      expect(
-        updateCalls.every((c) => (c.updates as { status: string }).status === 'cancelled')
-      ).toBe(true);
+      expect(cleanupCalls.map((c) => c.taskId).sort()).toEqual(['t1', 't2', 't3']);
+      expect(cleanupCalls.every((c) => c.reason === 'stopped')).toBe(true);
+      expect(updateCalls).toHaveLength(0);
+      expect(runtimeCalls).toEqual(['holdDeliveries:space-1', 'park:space-1']);
+    });
+
+    test('interrupts live sub-sessions regardless of task status via space-wide enumeration', async () => {
+      const tasks = [
+        { id: 't1', status: 'in_progress' },
+        { id: 'review-task', status: 'review' },
+        { id: 'blocked-task', status: 'blocked' },
+        { id: 'done-task', status: 'done' },
+      ];
+      const { mockTaskRepo, mockWorkflowRunRepo, updateCalls } = makeRecordingRepos(tasks);
+      const cleanupCalls: Array<{ taskId: string; reason: string }> = [];
+      const mockTaskAgentManager = {
+        cleanup: async (taskId: string, reason: string) => {
+          cleanupCalls.push({ taskId, reason });
+        },
+        listLiveSessionTaskIdsForSpace: () => ['review-task', 'blocked-task', 'done-task'],
+      } as unknown as TaskAgentManager;
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(spaceManager),
+        taskRepo: mockTaskRepo,
+        workflowRunRepo: mockWorkflowRunRepo,
+      });
+      svc.setTaskAgentManager(mockTaskAgentManager);
+      spyRuntime(svc);
+
+      await svc.stopActiveWork('space-1');
+
+      expect(cleanupCalls.map((c) => c.taskId).sort()).toEqual([
+        'blocked-task',
+        'done-task',
+        'review-task',
+        't1',
+      ]);
+      expect(cleanupCalls.every((c) => c.reason === 'stopped')).toBe(true);
+      expect(updateCalls).toHaveLength(0);
+    });
+
+    test('never transitions workflow run statuses or clears run interests', async () => {
+      const { mockTaskRepo, mockWorkflowRunRepo, updateCalls, transitionCalls } =
+        makeRecordingRepos(
+          [{ id: 't1', status: 'in_progress' }],
+          [
+            { id: 'run-1', status: 'in_progress' },
+            { id: 'run-2', status: 'blocked' },
+            { id: 'run-3', status: 'pending' },
+          ]
+        );
+      const mockTaskAgentManager = {
+        cleanup: async () => {},
+        listLiveSessionTaskIdsForSpace: () => [],
+      } as unknown as TaskAgentManager;
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(spaceManager),
+        taskRepo: mockTaskRepo,
+        workflowRunRepo: mockWorkflowRunRepo,
+      });
+      svc.setTaskAgentManager(mockTaskAgentManager);
+      const runtimeCalls = spyRuntime(svc);
+
+      await svc.stopActiveWork('space-1');
+
+      expect(transitionCalls).toHaveLength(0);
+      expect(runtimeCalls.some((c) => c.startsWith('clearRunInterests:'))).toBe(false);
+      expect(runtimeCalls).toContain('park:space-1');
+      expect(updateCalls).toHaveLength(0);
+    });
+
+    test('a real TaskAgentManager holds zero live sub-sessions for the space after stop', async () => {
+      const tamDb = new BunDatabase(':memory:');
+      const realTam = new TaskAgentManager({
+        db: { getDatabase: () => tamDb },
+        internalEventBus: { subscribe: () => () => {} },
+      } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+      const internals = realTam as unknown as {
+        subSessions: Map<string, Map<string, AgentSession>>;
+      };
+      const fakeSession = {
+        handleInterrupt: async () => {},
+        cleanup: async () => {},
+      } as unknown as AgentSession;
+      internals.subSessions.set(
+        'review-task',
+        new Map([['space:space-1:task:review-task:exec:exec-1', fakeSession]])
+      );
+      internals.subSessions.set(
+        'blocked-task',
+        new Map([['space:space-1:task:blocked-task:exec:exec-2', fakeSession]])
+      );
+      internals.subSessions.set(
+        'other-space-task',
+        new Map([['space:space-9:task:other-space-task:exec:exec-3', fakeSession]])
+      );
+
+      const { mockTaskRepo, mockWorkflowRunRepo } = makeRecordingRepos([
+        { id: 't1', status: 'in_progress' },
+        { id: 'review-task', status: 'review' },
+      ]);
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(spaceManager),
+        taskRepo: mockTaskRepo,
+        workflowRunRepo: mockWorkflowRunRepo,
+      });
+      svc.setTaskAgentManager(realTam);
+      spyRuntime(svc);
+
+      await svc.stopActiveWork('space-1');
+
+      expect(realTam.listLiveSessionTaskIdsForSpace('space-1')).toEqual([]);
+      expect(realTam.listLiveSessionTaskIdsForSpace('space-9')).toEqual(['other-space-task']);
     });
 
     test('swallows cleanup errors so a single stuck task does not block the stop', async () => {
       const cleanupCalls: string[] = [];
-      const mockTaskRepo = {
-        listBySpace: () => [
-          { id: 'ok-1', status: 'in_progress' as const },
-          { id: 'broken', status: 'in_progress' as const },
-          { id: 'ok-2', status: 'in_progress' as const },
-        ],
-        updateTask: () => {},
-      } as unknown as SpaceTaskRepository;
-
-      const mockWorkflowRunRepo = {
-        listBySpace: () => [],
-        transitionStatus: () => {},
-      } as unknown as SpaceWorkflowRunRepository;
-
+      const { mockTaskRepo, mockWorkflowRunRepo } = makeRecordingRepos([
+        { id: 'ok-1', status: 'in_progress' },
+        { id: 'broken', status: 'in_progress' },
+        { id: 'ok-2', status: 'in_progress' },
+      ]);
       const mockTaskAgentManager = {
         cleanup: async (taskId: string) => {
           cleanupCalls.push(taskId);
           if (taskId === 'broken') throw new Error('boom');
         },
+        listLiveSessionTaskIdsForSpace: () => [],
       } as unknown as TaskAgentManager;
 
       const svc = new SpaceRuntimeService({
