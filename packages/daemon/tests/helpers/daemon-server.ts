@@ -262,7 +262,6 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
     CLAUDE_CODE_OAUTH_TOKEN: shouldUseDevProxy ? '' : process.env.CLAUDE_CODE_OAUTH_TOKEN,
     PORT: userPort.toString(),
     NODE_ENV: 'test',
-    HYPERNEO_SDK_STARTUP_TIMEOUT_MS: process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS || '30000',
   };
 
   const repoRoot = path.resolve(__dirname, '../../../..');

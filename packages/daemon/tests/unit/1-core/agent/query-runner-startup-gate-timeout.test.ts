@@ -130,11 +130,11 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
         isRunning = false;
       },
       clear: () => {},
-      size: () => 0,
+      size: () => 1,
       getGeneration: () => 0,
       enqueueWithId: async () => {},
       messageGenerator: mock(async function* () {
-        // The silent SDK never consumes input.
+        // The silent SDK never consumes the queued prompt.
       }),
     } as unknown as MessageQueue;
 

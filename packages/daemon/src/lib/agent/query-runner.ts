@@ -886,7 +886,19 @@ export class QueryRunner {
         );
       }
 
+      const startupRetryFutile =
+        isStartupTimeout &&
+        retryAttempt === 0 &&
+        !this.canRedeliverPromptOnStartupRetry(queryGeneration);
+      if (startupRetryFutile) {
+        logger.warn(
+          'SDK startup timeout with no consumed or queued prompt: skipping the one-shot ' +
+            'retry — a fresh attempt could not deliver anything.'
+        );
+      }
+
       if (
+        !startupRetryFutile &&
         isStartupTimeout &&
         retryAttempt === 0 &&
         !this.ctx.isCleaningUp() &&
@@ -946,6 +958,16 @@ export class QueryRunner {
           }
           this._consumedUserMessages.delete(queryGeneration);
           this._lastConsumedUserMessage = null;
+        }
+
+        try {
+          await this.displayErrorAsAssistantMessage(
+            `⚠️ The AI session is slow to start — no response after ` +
+              `${Math.round(STARTUP_TIMEOUT_MS / 1000)}s. Retrying once…`,
+            { markAsError: false }
+          );
+        } catch {
+          // Best-effort — don't let message emission block the retry
         }
 
         return await this.runQuery(queryGeneration, 1, recoveryState);
@@ -1458,6 +1480,11 @@ export class QueryRunner {
       `[MCP invariant] Space member session ${session.id} missing required MCP servers: ` +
         `[${missingServers.join(', ')}]. Refusing to start a degraded Space member turn.`
     );
+  }
+
+  private canRedeliverPromptOnStartupRetry(queryGeneration: number): boolean {
+    const consumed = this._consumedUserMessages.get(queryGeneration) ?? [];
+    return consumed.length > 0 || this.ctx.messageQueue.size() > 0;
   }
 
   private retrySupersededByReplacement(queryGeneration: number): boolean {
