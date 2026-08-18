@@ -2220,7 +2220,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           return jsonResult({ success: true, task: updated });
         }
 
-        let updated = await applyFieldUpdates();
+        const updated = await applyFieldUpdates();
 
         const dependencyBlockedRun =
           args.depends_on !== undefined &&
@@ -2231,14 +2231,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           updated.blockReason === 'dependency_added';
 
         if (dependencyBlockedRun) {
-          updated =
-            (await runtime.blockWorkflowBackedTask(spaceId, args.task_id, {
-              ...fieldParams,
-              status: 'blocked',
-              blockReason: 'dependency_added',
-              result: 'Dependency added while task was in progress',
-              completedAt: null,
-            })) ?? updated;
+          const stoppedRun = await runtime.blockWorkflowBackedTask(spaceId, args.task_id, {
+            ...fieldParams,
+            status: 'blocked',
+            blockReason: 'dependency_added',
+            result: 'Dependency added while task was in progress',
+            completedAt: null,
+          });
+          if (!stoppedRun) {
+            return jsonResult({
+              success: false,
+              error: `Task ${args.task_id} not found while blocking its workflow run.`,
+            });
+          }
 
           logAudit(
             'update_task',
@@ -2247,13 +2252,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
               description: args.description,
               priority: args.priority,
               depends_on: args.depends_on,
-              status: args.status,
+              status: 'blocked',
+              previousStatus: task.status,
               dependencyBlockRunStopped: true,
             },
             args.task_id
           );
 
-          return jsonResult({ success: true, task: updated });
+          return jsonResult({ success: true, task: stoppedRun });
         }
 
         logAudit(

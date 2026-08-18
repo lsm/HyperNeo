@@ -8496,6 +8496,143 @@ describe('createSpaceAgentToolHandlers — update_task status transitions', () =
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
   });
+
+  function seedLongHorizonAgentAtLevel(level: 1 | 2 | 3 | 4 | 5): string {
+    return ctx.longHorizonAgentRepo.create({
+      spaceId: ctx.spaceId,
+      handle: `lh-l${level}-${Math.random().toString(36).slice(2, 6)}`,
+      displayName: `LH Agent L${level}`,
+      autonomyLevel: level,
+    }).id;
+  }
+
+  test('→done gate applies the agent autonomy ceiling, not just the space level', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+
+    const cappedAgentId = seedLongHorizonAgentAtLevel(2);
+    const cappedTask = await ctx.taskManager.createTask({ title: 'Capped', description: '' });
+    await ctx.taskManager.startTask(cappedTask.id);
+    const capped = parseResult(
+      await makeHandlers(ctx, { myAgentId: cappedAgentId }).update_task({
+        task_id: cappedTask.id,
+        status: 'done',
+      })
+    );
+    expect(capped.success).toBe(false);
+    expect(capped.error).toContain('effective autonomy level 2');
+    expect(ctx.taskRepo.getTask(cappedTask.id)?.status).toBe('in_progress');
+
+    const fullAgentId = seedLongHorizonAgentAtLevel(5);
+    const fullTask = await ctx.taskManager.createTask({ title: 'Full', description: '' });
+    await ctx.taskManager.startTask(fullTask.id);
+    const allowed = parseResult(
+      await makeHandlers(ctx, { myAgentId: fullAgentId }).update_task({
+        task_id: fullTask.id,
+        status: 'done',
+      })
+    );
+    expect(allowed.success).toBe(true);
+    expect((allowed.task as SpaceTask).status).toBe('done');
+  });
+
+  test('blocked →done autonomy gate writes a completion_autonomy audit entry', async () => {
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+    await ctx.taskManager.startTask(created.id);
+    const handlers = makeHandlers(ctx, { auditLogRepo });
+
+    const result = parseResult(await handlers.update_task({ task_id: created.id, status: 'done' }));
+
+    expect(result.success).toBe(false);
+    const summaries = auditLogRepo
+      .listByTask(created.id)
+      .map((entry) => JSON.parse(entry.paramsSummary ?? '{}') as Record<string, unknown>);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0].blocked).toBe(true);
+    expect(summaries[0].reason).toBe('completion_autonomy');
+    expect(summaries[0].spaceLevel).toBe(1);
+    expect(summaries[0].required).toBe(5);
+  });
+
+  test('dependency-block teardown writes a dependencyBlockRunStopped audit entry', async () => {
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const { task } = makeWorkflowBackedTask('in_progress');
+    const dep = await ctx.taskManager.createTask({ title: 'Unmet dep', description: '' });
+    const spy = spyOn(ctx.runtime, 'blockWorkflowBackedTask').mockResolvedValue({
+      ...task,
+      status: 'blocked',
+      blockReason: 'dependency_added',
+    });
+    const handlers = makeHandlers(ctx, { auditLogRepo });
+
+    const result = parseResult(
+      await handlers.update_task({ task_id: task.id, depends_on: [dep.id] })
+    );
+
+    expect(result.success).toBe(true);
+    const summaries = auditLogRepo
+      .listByTask(task.id)
+      .map((entry) => JSON.parse(entry.paramsSummary ?? '{}') as Record<string, unknown>);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0].dependencyBlockRunStopped).toBe(true);
+    expect(summaries[0].status).toBe('blocked');
+    expect(summaries[0].previousStatus).toBe('in_progress');
+    spy.mockRestore();
+  });
+
+  test('returns an error when the task vanishes during the dependency-block teardown', async () => {
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const { task } = makeWorkflowBackedTask('in_progress');
+    const dep = await ctx.taskManager.createTask({ title: 'Unmet dep', description: '' });
+    const spy = spyOn(ctx.runtime, 'blockWorkflowBackedTask').mockResolvedValue(null);
+    const handlers = makeHandlers(ctx, { auditLogRepo });
+
+    const result = parseResult(
+      await handlers.update_task({ task_id: task.id, depends_on: [dep.id] })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not found while blocking its workflow run');
+    expect(auditLogRepo.listByTask(task.id)).toHaveLength(0);
+    spy.mockRestore();
+  });
+
+  test('field-only edits on an approved task still succeed', async () => {
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+    ctx.taskRepo.updateTask(created.id, { status: 'approved' });
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: created.id, title: 'Renamed' })
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).title).toBe('Renamed');
+    expect((result.task as SpaceTask).status).toBe('approved');
+  });
+
+  test('combined status + depends_on updates stay on the plain transition path', async () => {
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+    await ctx.taskManager.startTask(created.id);
+    const dep = await ctx.taskManager.createTask({ title: 'Unmet dep', description: '' });
+    const blockSpy = spyOn(ctx.runtime, 'blockWorkflowBackedTask');
+    const stopSpy = spyOn(ctx.runtime, 'stopWorkflowBackedTaskForStatus');
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({
+        task_id: created.id,
+        status: 'open',
+        depends_on: [dep.id],
+      })
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('open');
+    expect((result.task as SpaceTask).dependsOn).toEqual([dep.id]);
+    expect(blockSpy).not.toHaveBeenCalled();
+    expect(stopSpy).not.toHaveBeenCalled();
+    blockSpy.mockRestore();
+    stopSpy.mockRestore();
+  });
 });
 
 describe('createSpaceAgentToolHandlers — publish_task', () => {
