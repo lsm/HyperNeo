@@ -541,6 +541,8 @@ describe('Session RPC Handlers — models.list', () => {
   // Manual "Retry" affordance for a failed user message — reopens failed→
   // enqueued and re-enqueues the durable delivery job. Mirrors promotePending.
   describe('Session RPC Handlers — session.messages.retry (v2)', () => {
+    // Round-15 P2: captures the retry lane's startup-budget reset.
+    let resetBudgetSpy: ReturnType<typeof mock>;
     let messageHubData: ReturnType<typeof createMockMessageHub>;
     let eventBus: ReturnType<typeof createMockInternalEventBus>;
     let db: Database;
@@ -639,7 +641,7 @@ describe('Session RPC Handlers — models.list', () => {
           getSessionData: () => ({ id: 'sess-1', status: 'active' }),
           startQueryAndEnqueue: mock(async () => {}),
           // Round-14 P2: the retry lane resets the startup-timeout budget.
-          resetStartupRetryBudget: mock(() => {}),
+          resetStartupTimeoutRetryBudget: (resetBudgetSpy ??= mock(() => {})),
         }))),
         getDatabase: () => dbFacade,
       } as unknown as SessionManager;
@@ -679,6 +681,10 @@ describe('Session RPC Handlers — models.list', () => {
         )
         .get(MESSAGE_DELIVERY, 'retry-me') as { role: string };
       expect(job.role).toBe('turn');
+      // Round-15 P2: the lane reset the exhausted startup-timeout budget for
+      // the retried uuid (the affordance the give-up surfacing advertises).
+      expect(resetBudgetSpy).toHaveBeenCalledTimes(1);
+      expect(resetBudgetSpy).toHaveBeenCalledWith('retry-me');
     });
 
     it('returns retried:false for a non-failed message (nothing to reopen)', async () => {

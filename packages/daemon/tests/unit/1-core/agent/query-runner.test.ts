@@ -2802,7 +2802,7 @@ describe('QueryRunner', () => {
         // prevent. Fencing: start() closes the stale claim immediately (B's
         // queue is live, parks charge again), and A's finally clears only its
         // own owner token.
-        process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '250';
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '750';
         process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '3';
 
         const ctx = createContext();
@@ -3047,6 +3047,101 @@ describe('QueryRunner', () => {
     );
 
     it.skipIf(!sdkQueryIsMock)(
+      'sweeps the steers at give-up even when a replacement superseded the chain (teardown-only guard)',
+      async () => {
+        // Round-15 P2: a replacement landing before the giving-up attempt's
+        // throw reaches the catch used to skip the steer sweep entirely —
+        // the catch's stale return exited with nothing, and before that the
+        // round-14 teardown guard returned ahead of the sweep. The steers
+        // were unrecoverable: the replacement's start() nulls the staging,
+        // the stale finally purges flushed entries without flipping rows,
+        // and this chain's consumed history is deleted on the way out.
+        // Supersession now guards ONLY the teardown, and the stale catch
+        // entry sweeps too (DB-only flips of this chain's own steers —
+        // suppressing them protects nothing).
+        const kickoff = {
+          uuid: 'superseded-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+        const steer = {
+          uuid: 'superseded-steer',
+          content: [{ type: 'text' as const, text: 'S' }],
+        };
+
+        // Starved shape: nothing consumed this attempt, kickoff pending in
+        // the queue — peek keys the sweep's exclusion (no active-turn getter
+        // here; a replacement now owns the turn job and the getter would
+        // report ITS kickoff).
+        peekNextUserMessageIdSpy.mockReturnValue(kickoff.uuid);
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        // Attempt 2 parks in its iterator until released, then dies as a
+        // startup timeout — the release order lets the test land the
+        // replacement BEFORE the throw reaches the catch (stale entry).
+        let releaseAttempt: (() => void) | null = null;
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise<void>((resolve) => {
+              releaseAttempt = resolve;
+            });
+            throw new Error('SDK startup timeout - query aborted');
+          },
+        }));
+
+        try {
+          runner.start();
+          const deadline = Date.now() + 2000;
+          while (
+            (!releaseAttempt || enqueueWithIdSpy.mock.calls.length < 2) &&
+            Date.now() < deadline
+          ) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(enqueueWithIdSpy.mock.calls.length).toBe(2);
+
+          // Replacement first, then release the attempt into its throw: the
+          // catch enters STALE — the shape that used to skip the sweep.
+          ctx.incrementQueryGeneration();
+          releaseAttempt?.();
+          await ctx.queryPromise?.catch(() => {});
+
+          // The sweep ran DESPITE supersession: the steer flipped, the
+          // kickoff (this chain's own pending-queue key) did not.
+          expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledTimes(1);
+          expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledWith(mockSession.id, steer.uuid);
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(
+            warns.some((w) => w.includes(`steer ${steer.uuid} never reached a producing turn`))
+          ).toBe(true);
+          expect(warns.some((w) => w.includes(kickoff.uuid))).toBe(false);
+          // Teardown was suppressed: the attempt's query object was never
+          // closed by the superseded exit (the replacement owns the
+          // session's process set now).
+          expect(ctx.queryObject).not.toBeNull();
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+          if (ctx.startupTimeoutTimer) {
+            clearTimeout(ctx.startupTimeoutTimer);
+            ctx.startupTimeoutTimer = null;
+          }
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
       'keys the budget and sweep by the delivery layer kickoff, not the first-consumed message (leftover steer)',
       async () => {
         // Round-14 P2(a): a steer admitted late in the previous turn that the
@@ -3142,7 +3237,7 @@ describe('QueryRunner', () => {
         // Round-14 P2: reopenDeliveryByUuid re-enqueues the SAME uuid, and
         // same-uuid attempts always charge — without the explicit-lane reset
         // a post-give-up Retry gets exactly one attempt (its first timeout
-        // charges past the cap). AgentSession.resetStartupRetryBudget (wired
+        // charges past the cap). AgentSession.resetStartupTimeoutRetryBudget (wired
         // at all four reopen callers) hands the runner the reset.
         const kickoff = {
           uuid: 'retry-lane-kickoff',

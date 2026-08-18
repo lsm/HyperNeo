@@ -343,6 +343,106 @@ export interface RPCHandlerSetupResult {
  * Register all RPC handlers on MessageHub
  * Returns a result with cleanup function and exposed services
  */
+/**
+ * Space Agent injector — routes Task Agent → Space Agent escalations into
+ * the `space:chat:${spaceId}` session via SessionManager. Shared between
+ * TaskAgentManager (for queue flush) and task-agent tool wiring. Extracted
+ * as a factory (round-15 P2) so the handoff lane — including its failed-row
+ * reopen + startup-budget reset — is unit-testable.
+ */
+export function createSpaceAgentInjector(
+  sessionManager: RPCHandlerDependencies['sessionManager'],
+  deps: RPCHandlerDependencies
+) {
+  return async (
+    spaceId: string,
+    message: string,
+    replyToSessionId?: string | null,
+    explicitMessageId?: string
+  ): Promise<void> => {
+    let sessionId = replyToSessionId || `space:chat:${spaceId}`;
+    let session = await sessionManager.getSessionAsync(sessionId);
+    // Fallback: if the routed-to session no longer exists (e.g. ad-hoc member
+    // session ended), fall back to the canonical space chat session so the
+    // reply is not silently dropped.
+    if (!session && replyToSessionId) {
+      sessionId = `space:chat:${spaceId}`;
+      session = await sessionManager.getSessionAsync(sessionId);
+    }
+    if (!session) {
+      throw new Error(`Session not found for Space Agent reply routing: ${sessionId}`);
+    }
+    // An explicit id (the pending-row id from flushPendingMessagesForSpaceAgent)
+    // dedups a crash-retry: deliverAndMarkQueued/getActiveDeliveryRole keys on it.
+    const messageId = explicitMessageId ?? generateUUID();
+    const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
+      type: 'user' as const,
+      uuid: messageId as UUID,
+      session_id: sessionId,
+      parent_tool_use_id: null,
+      isSynthetic: true,
+      message: {
+        role: 'user' as const,
+        content: [{ type: 'text' as const, text: message }],
+      },
+    };
+    if (isMessageDeliveryV2Enabled()) {
+      // Idempotent persist (mirrors the LTA injector): when retried with a
+      // stable id (the pending-row id from flushPendingMessagesForSpaceAgent),
+      // don't insert a duplicate sdk_messages row or re-drive a terminal one.
+      const sdkMessageRepo = deps.reactiveDb.db.getSDKMessageRepo();
+      const existing = sdkMessageRepo.getDeliveryContent(sessionId, messageId);
+      const fresh = !existing;
+      if (!existing) {
+        deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      } else if (existing.sendStatus === 'consumed') {
+        return; // genuinely delivered on a prior attempt — don't re-drive
+      } else if (existing.sendStatus === 'failed') {
+        sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
+        session.resetStartupTimeoutRetryBudget(messageId);
+        // Explicit handoff retry: fresh startup-timeout budget for the same
+        // uuid (see AgentSession.resetStartupTimeoutRetryBudget) — one
+        // bounded schedule per reopened cycle. (Round-14 P2.)
+      }
+      // Await SDK consumption (onSent) before returning — a direct send_message
+      // handoff has no retained source row to retry, so it must not record
+      // delivered after a bare enqueue that may yet dead-letter. On timeout,
+      // terminalize ONLY a fresh row: direct send_message carries no stable id,
+      // so a retry mints a fresh UUID — terminalizing the timed-out fresh job
+      // stops it being consumed alongside the retry (duplicate). The flush path
+      // carries a stable id (existing row), so it omits the terminalize. (Codex P1.)
+      await awaitDeliveryConsumption({
+        sessionId,
+        messageUuid: messageId,
+        // ACP's consume boundary is acceptance (minutes), not queue admission —
+        // size the wait to it so a fresh ACP delivery isn't terminalized failed
+        // mid-run (which a direct retry would then execute twice). (Codex P1.)
+        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
+        deliver: () =>
+          deliverAndMarkQueued({
+            jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
+            stateManager: session.stateManager,
+            sessionId,
+            messageUuid: messageId,
+            origin: 'space_agent',
+            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+          }),
+        ...(fresh
+          ? {
+              terminalizeOnTimeout: () =>
+                sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+            }
+          : {}),
+      });
+    } else {
+      // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
+      await session.ensureQueryStarted();
+      deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      await session.messageQueue.enqueueWithId(messageId, message);
+    }
+  };
+}
+
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
   // setupSessionHandlers is registered below, after spaceRuntimeService is
   // constructed, so session.create can synchronously attach space-agent-tools
@@ -893,93 +993,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   // Space Agent injector — routes Task Agent → Space Agent escalations into the
   // `space:chat:${spaceId}` session via SessionManager. Shared between
   // TaskAgentManager (for queue flush) and task-agent tool wiring.
-  const sessionManagerRef = deps.sessionManager;
-  const spaceAgentInjector = async (
-    spaceId: string,
-    message: string,
-    replyToSessionId?: string | null,
-    explicitMessageId?: string
-  ): Promise<void> => {
-    let sessionId = replyToSessionId || `space:chat:${spaceId}`;
-    let session = await sessionManagerRef.getSessionAsync(sessionId);
-    // Fallback: if the routed-to session no longer exists (e.g. ad-hoc member
-    // session ended), fall back to the canonical space chat session so the
-    // reply is not silently dropped.
-    if (!session && replyToSessionId) {
-      sessionId = `space:chat:${spaceId}`;
-      session = await sessionManagerRef.getSessionAsync(sessionId);
-    }
-    if (!session) {
-      throw new Error(`Session not found for Space Agent reply routing: ${sessionId}`);
-    }
-    // An explicit id (the pending-row id from flushPendingMessagesForSpaceAgent)
-    // dedups a crash-retry: deliverAndMarkQueued/getActiveDeliveryRole keys on it.
-    const messageId = explicitMessageId ?? generateUUID();
-    const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
-      type: 'user' as const,
-      uuid: messageId as UUID,
-      session_id: sessionId,
-      parent_tool_use_id: null,
-      isSynthetic: true,
-      message: {
-        role: 'user' as const,
-        content: [{ type: 'text' as const, text: message }],
-      },
-    };
-    if (isMessageDeliveryV2Enabled()) {
-      // Idempotent persist (mirrors the LTA injector): when retried with a
-      // stable id (the pending-row id from flushPendingMessagesForSpaceAgent),
-      // don't insert a duplicate sdk_messages row or re-drive a terminal one.
-      const sdkMessageRepo = deps.reactiveDb.db.getSDKMessageRepo();
-      const existing = sdkMessageRepo.getDeliveryContent(sessionId, messageId);
-      const fresh = !existing;
-      if (!existing) {
-        deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-      } else if (existing.sendStatus === 'consumed') {
-        return; // genuinely delivered on a prior attempt — don't re-drive
-      } else if (existing.sendStatus === 'failed') {
-        sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
-        // Explicit handoff retry: fresh startup-timeout budget for the same
-        // uuid (see AgentSession.resetStartupRetryBudget). (Round-14 P2.)
-        session?.resetStartupRetryBudget(messageId);
-      }
-      // Await SDK consumption (onSent) before returning — a direct send_message
-      // handoff has no retained source row to retry, so it must not record
-      // delivered after a bare enqueue that may yet dead-letter. On timeout,
-      // terminalize ONLY a fresh row: direct send_message carries no stable id,
-      // so a retry mints a fresh UUID — terminalizing the timed-out fresh job
-      // stops it being consumed alongside the retry (duplicate). The flush path
-      // carries a stable id (existing row), so it omits the terminalize. (Codex P1.)
-      await awaitDeliveryConsumption({
-        sessionId,
-        messageUuid: messageId,
-        // ACP's consume boundary is acceptance (minutes), not queue admission —
-        // size the wait to it so a fresh ACP delivery isn't terminalized failed
-        // mid-run (which a direct retry would then execute twice). (Codex P1.)
-        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
-        deliver: () =>
-          deliverAndMarkQueued({
-            jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
-            stateManager: session.stateManager,
-            sessionId,
-            messageUuid: messageId,
-            origin: 'space_agent',
-            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
-          }),
-        ...(fresh
-          ? {
-              terminalizeOnTimeout: () =>
-                sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
-            }
-          : {}),
-      });
-    } else {
-      // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
-      await session.ensureQueryStarted();
-      deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-      await session.messageQueue.enqueueWithId(messageId, message);
-    }
-  };
+  const spaceAgentInjector = createSpaceAgentInjector(deps.sessionManager, deps);
 
   // Task Agent Manager — manages Task Agent session lifecycle and message injection.
   // Must be created after spaceRuntimeService so it can get WorkflowExecutors via

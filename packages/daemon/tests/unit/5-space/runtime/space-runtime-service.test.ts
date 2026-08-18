@@ -1420,11 +1420,13 @@ describe('SpaceRuntimeService', () => {
 
     test('long-horizon crash-retry reopens a failed row and re-enqueues it', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const resetBudgetSpy = mock(() => {});
       const createdSession = {
         ...makeSession(),
         getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} })),
         ensureQueryStarted: mock(async () => {}),
         messageQueue: { enqueueWithId: mock(async () => {}) },
+        resetStartupTimeoutRetryBudget: resetBudgetSpy,
       } as unknown as AgentSession;
       const sessionManager = makeSessionManager(null);
       (
@@ -1432,7 +1434,12 @@ describe('SpaceRuntimeService', () => {
       ).mockImplementation(async () => sessionId);
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(createdSession);
+        .mockResolvedValueOnce(createdSession)
+        // Round-15 P2: tail (not a third Once) so the reopen lane's reset
+        // lookup resolves to the session instead of falling off the null
+        // base — the reset actually RUNS, and a call-count shift can neither
+        // silently no-op nor TypeError.
+        .mockResolvedValue(createdSession);
       const longHorizonAgentRepo = {
         getById: mock(() => ({
           id: 'lh-agent-1',
@@ -1506,6 +1513,9 @@ describe('SpaceRuntimeService', () => {
       expect(saveUserMessage).not.toHaveBeenCalled(); // row already exists — no dup
       expect(reopenDeliveryByUuid).toHaveBeenCalledWith(sessionId, 'delivery-1'); // un-failed
       expect(enqueue).toHaveBeenCalled(); // re-driven
+      // Round-15 P2: the flush lane reset the startup-timeout budget for the
+      // reopened uuid.
+      expect(resetBudgetSpy).toHaveBeenCalledWith('delivery-1');
     });
 
     test('long-horizon delivery not consumed within the timeout rejects — no premature delivered (Codex P1)', async () => {

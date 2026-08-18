@@ -623,6 +623,47 @@ function steerJob(repo: JobQueueRepository, uuid: string): Job {
   return steer!;
 }
 
+describe("activeDeliveryTurnUuid — the runner's true-kickoff lookup (round-15 P2)", () => {
+  let db: Database;
+  let repo: JobQueueRepository;
+
+  beforeEach(() => {
+    ({ db, repo } = setupRepo());
+  });
+  afterEach(() => db.close());
+
+  it('returns the pending turn job uuid', () => {
+    // deliverMessage ENQUEUES without claiming — the job stays pending.
+    deliverMessage(repo, SESSION, 'turn-kickoff', { origin: 'chat' });
+    expect(repo.activeDeliveryTurnUuid(SESSION)).toBe('turn-kickoff');
+  });
+
+  it('returns the processing turn job uuid and excludes concurrent steers', () => {
+    const job = turnJob(repo, 'processing-turn'); // turnJob claims via dequeue
+    // Enqueued while the turn is active → role:'steer', pending. The lookup's
+    // role filter must skip it (LIMIT 1 stays deterministic: the partial
+    // unique index permits only one active TURN).
+    deliverMessage(repo, SESSION, 'concurrent-steer', { origin: 'chat' });
+    expect(repo.activeDeliveryTurnUuid(SESSION)).toBe(job.payload.messageUuid);
+    expect(repo.activeDeliveryTurnUuid(SESSION)).toBe('processing-turn');
+  });
+
+  it('returns null when only steer jobs are active (role filter)', () => {
+    steerJob(repo, 'only-steer');
+    expect(repo.activeDeliveryTurnUuid(SESSION)).toBeNull();
+  });
+
+  it('returns null when the turn job has completed', () => {
+    const job = turnJob(repo, 'done-turn');
+    repo.complete(job.id, { ok: true });
+    expect(repo.activeDeliveryTurnUuid(SESSION)).toBeNull();
+  });
+
+  it('returns null for a session with no delivery jobs', () => {
+    expect(repo.activeDeliveryTurnUuid('unknown-session')).toBeNull();
+  });
+});
+
 describe('message-delivery v2 — handler (conformance)', () => {
   let db: Database;
   let repo: JobQueueRepository;

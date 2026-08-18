@@ -1517,7 +1517,29 @@ export class QueryRunner {
       // surfacing. The error is from the intentional stop; the newer query owns
       // the queue, the env, and the completion lifecycle. Returning here also
       // lets the finally's isStaleQuery guard handle cleanup uniformly.
+      //
+      // ONE carve-out (round-15 P2): a superseded STARTUP-TIMEOUT still sweeps
+      // this chain's dropped steers before returning. The sweep is DB-only —
+      // it flips this chain's own consumed steers failed — so suppressing it
+      // protects nothing, and on this path the alternatives are all gone: a
+      // replacement's start() nulls the staging, the stale finally purges
+      // flushed entries without flipping rows, and this return skips the
+      // give-up branch entirely. deliveryKey here deliberately AVOIDS the
+      // active-turn getter (it now reports the REPLACEMENT's kickoff) and
+      // falls back to this chain's own feed order / queue head.
       if (this.ctx.getQueryGeneration() !== queryGeneration) {
+        if (String(error).includes('SDK startup timeout')) {
+          const staleConsumed = this._consumedUserMessages.get(queryGeneration) ?? [];
+          this.surfaceDroppedSteers(
+            [
+              ...staleConsumed,
+              ...(this._pendingStartupReplay ?? []),
+              ...(flushedReplayEntries ?? []),
+            ],
+            staleConsumed[0]?.uuid ?? messageQueue.peekNextUserMessageId() ?? null,
+            'retry superseded (stale catch)'
+          );
+        }
         return;
       }
 
@@ -1637,22 +1659,29 @@ export class QueryRunner {
           // the kind that ignores the outer finally's cooperative close —
           // terminate the tracked set and close the query object BEFORE
           // settling, so it stops holding workspace locks and CPU into the
-          // session's next turn (or a manual Retry). Ownership check first,
-          // as at the retry site: a replacement's subprocess must never be
-          // terminated by this chain's exit.
-          if (this.retrySupersededByReplacement(queryGeneration)) {
-            return;
-          }
-          this.ctx.terminateTrackedAgentProcesses?.();
-          if (this.ctx.queryObject) {
-            try {
-              this.ctx.queryObject.close();
-            } catch {
-              // Ignore close errors — transport may already be in a broken state
+          // session's next turn (or a manual Retry). Teardown ONLY — a
+          // replacement landing during the abort-driven iterator shutdown
+          // owns the subprocess set now, and its processes must never be
+          // terminated by this chain's exit. The sweep below still runs:
+          // it is DB-only (flips this chain's own consumed steers failed),
+          // so suppressing it protects nothing, and suppressing it LOSES
+          // them — the consumed entries are already pulled, start() nulls
+          // the staging on the generation bump, the stale finally purges
+          // flushed entries without flipping rows, and the supersession
+          // check itself deletes the consumed history. The post-sleep guard
+          // sweeps on this same disjunct; give-up must not be the one place
+          // supersession suppresses a sweep. (Round-15 P2.)
+          const supersededAtGiveUp = this.retrySupersededByReplacement(queryGeneration);
+          if (!supersededAtGiveUp) {
+            this.ctx.terminateTrackedAgentProcesses?.();
+            if (this.ctx.queryObject) {
+              try {
+                this.ctx.queryObject.close();
+              } catch {
+                // Ignore close errors — transport may already be in a broken state
+              }
+              this.ctx.queryObject = null;
             }
-            this.ctx.queryObject = null;
-          }
-          {
             const exitPromise = this.ctx.processExitedPromise;
             if (exitPromise) {
               await Promise.race([
@@ -2837,11 +2866,16 @@ export class QueryRunner {
    * affordance the give-up surfacing advertises, send_message handoff
    * retries, Space flushes). Without this a manual retry of a settled-failed
    * delivery inherits the exhausted same-uuid budget and gets zero automatic
-   * startup retries. Cannot re-open the herd loop the budget bounds: every
-   * caller is a human/agent-initiated retry, never the automatic redrive
-   * lane (which re-drives the same enqueued row without reopening). Other
-   * keys are left alone — a different delivery's in-flight budget is not
-   * this retry's to clear. (Round-14 P2.)
+   * startup retries. Bounded by construction, not by caller purity: the
+   * ordinary delivery-layer redrive re-drives the same ENQUEUED row without
+   * reopening (so it never reaches this reset), and the lanes that DO reopen
+   * — including the daemon-start inbox recovery and external-event
+   * at-least-once redelivery, which also reach the Space-flush lane — each
+   * reopen an explicitly identified delivery cycle, so the reset re-arms one
+   * bounded schedule per cycle rather than unbounding the loop the cap
+   * exists to close. Other keys are left alone — a different delivery's
+   * in-flight budget is not this retry's to clear. (Round-14 P2; wording
+   * per round-15 review.)
    */
   resetStartupTimeoutRetryBudgetFor(messageUuid: string): void {
     if (this._startupTimeoutRetryState.key === messageUuid) {

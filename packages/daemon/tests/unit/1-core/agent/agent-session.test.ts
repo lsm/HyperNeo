@@ -1988,6 +1988,43 @@ describe('AgentSession', () => {
     });
   });
 
+  describe('resetStartupTimeoutRetryBudget', () => {
+    it('delegates the retry-lane budget reset to the SDK runner (round-14 P2)', () => {
+      const agentSession = new AgentSession(
+        {
+          id: 'seam-session',
+          title: 'Seam',
+          workspacePath: '/test/workspace',
+          createdAt: new Date().toISOString(),
+          lastActiveAt: new Date().toISOString(),
+          status: 'active',
+          config: { model: 'claude-sonnet-4-20250514', maxTokens: 8192, temperature: 1.0 },
+          metadata: {},
+        } as never,
+        { getSession: mock(() => null) } as never,
+        {} as never,
+        {
+          publish: mock(() => {}),
+          subscribe: mock(() => () => {}),
+        } as never,
+        mock(async () => null)
+      );
+      const runner = new QueryRunner({} as QueryRunnerContext);
+      (agentSession as unknown as Record<string, unknown>).queryRunner = runner;
+      const state = { key: 'retried-uuid', retries: 9 };
+      (runner as unknown as Record<string, unknown>)._startupTimeoutRetryState = state;
+
+      // Matching uuid resets; a different delivery's budget is untouched.
+      agentSession.resetStartupTimeoutRetryBudget('other-uuid');
+      expect((runner as unknown as Record<string, unknown>)._startupTimeoutRetryState).toBe(state);
+      agentSession.resetStartupTimeoutRetryBudget('retried-uuid');
+      expect((runner as unknown as Record<string, unknown>)._startupTimeoutRetryState).toEqual({
+        key: null,
+        retries: 0,
+      });
+    });
+  });
+
   describe('startStreamingQuery', () => {
     let mockSession: Session;
     let mockDb: Database;

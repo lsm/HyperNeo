@@ -2921,11 +2921,15 @@ export class AgentSession
    * user-facing Retry affordance, send_message handoff retries, Space
    * flushes). Without this a manual retry inherits the failed cycle's
    * exhausted same-uuid budget and gets zero automatic startup retries on the
-   * affordance the give-up surfacing advertises. Cannot re-open the herd loop
-   * the budget bounds: every reopenDeliveryByUuid caller is a human/agent
-   * retry, never the automatic redrive lane. (Round-14 P2.)
+   * affordance the give-up surfacing advertises. Bounded by construction
+   * rather than caller purity: the automatic redrive re-drives the same
+   * enqueued row without reopening, and each reopen — including the
+   * daemon-start inbox recovery / external-event at-least-once redelivery
+   * paths that also reach the Space-flush lane — starts one explicitly
+   * identified delivery cycle with its own bounded schedule. (Round-14 P2;
+   * wording per round-15 review.)
    */
-  resetStartupRetryBudget(messageUuid: string): void {
+  resetStartupTimeoutRetryBudget(messageUuid: string): void {
     if (this.queryRunner instanceof QueryRunner) {
       this.queryRunner.resetStartupTimeoutRetryBudgetFor(messageUuid);
     }
