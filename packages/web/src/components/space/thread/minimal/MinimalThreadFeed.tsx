@@ -1733,6 +1733,15 @@ function openTurnSessionOverlay(args: {
     });
     return;
   }
+  if (args.overlayTaskId && args.overlayTaskReadonly && args.agentKind === 'task_agent') {
+    pushOverlayHistory(args.sessionId, args.agent, args.highlightMessageUuid, {
+      taskId: args.overlayTaskId,
+      agentName: args.agentRole,
+      sessionId: args.sessionId,
+      readonly: true,
+    });
+    return;
+  }
   pushOverlayHistory(args.sessionId, args.agent, args.highlightMessageUuid);
 }
 
@@ -1969,8 +1978,8 @@ function AgentTurnRow({
           type="button"
           class="-m-1 flex min-h-11 max-w-full items-center gap-3 rounded-lg p-1 pr-2 text-left transition-colors hover:bg-dark-800/55 active:bg-dark-800/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
           onClick={openSession}
-          title="Open session"
-          aria-label={`Open ${turn.agent} session`}
+          title={overlayTaskReadonly ? 'Opens read-only — resume the task to chat' : 'Open session'}
+          aria-label={`Open ${turn.agent} session${overlayTaskReadonly ? ' read-only' : ''}`}
           data-testid="minimal-thread-agent-open"
         >
           {headerContent}
@@ -2105,8 +2114,10 @@ function CompactBoundaryTurn({
           type="button"
           class="w-full rounded-lg text-left transition-colors hover:bg-yellow-400/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-300/60"
           onClick={openSession}
-          title="Open session"
-          aria-label={`Open ${turn.agent} session at compact boundary`}
+          title={overlayTaskReadonly ? 'Opens read-only — resume the task to chat' : 'Open session'}
+          aria-label={`Open ${turn.agent} session at compact boundary${
+            overlayTaskReadonly ? ' read-only' : ''
+          }`}
           data-testid="minimal-thread-compact-boundary"
         >
           {card}
@@ -2170,8 +2181,10 @@ function SystemTurn({
           type="button"
           class="rounded-lg text-left transition-colors hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/60"
           onClick={openSession}
-          title="Open session"
-          aria-label={`Open ${turn.agent} session at ${turn.title}`}
+          title={overlayTaskReadonly ? 'Opens read-only — resume the task to chat' : 'Open session'}
+          aria-label={`Open ${turn.agent} session at ${turn.title}${
+            overlayTaskReadonly ? ' read-only' : ''
+          }`}
           data-testid="minimal-thread-system"
         >
           {card}

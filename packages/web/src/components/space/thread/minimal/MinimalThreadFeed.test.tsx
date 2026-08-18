@@ -544,7 +544,9 @@ describe('MinimalThreadFeed', () => {
       }),
     ];
 
-    render(<MinimalThreadFeed parsedRows={nodeRows} overlayTaskId="task-1" overlayTaskReadonly />);
+    const { unmount } = render(
+      <MinimalThreadFeed parsedRows={nodeRows} overlayTaskId="task-1" overlayTaskReadonly />
+    );
     fireEvent.click(screen.getByTestId('minimal-thread-agent-open'));
     expect(mockPushOverlayHistory).toHaveBeenCalledWith(
       'session-node-ro',
@@ -554,6 +556,33 @@ describe('MinimalThreadFeed', () => {
         taskId: 'task-1',
         agentName: 'coder',
         sessionId: 'session-node-ro',
+        readonly: true,
+      }
+    );
+
+    unmount();
+    mockPushOverlayHistory.mockClear();
+    const taskRows = [
+      makeRow({
+        id: 'task-ro-1',
+        label: 'Task Agent',
+        kind: 'task_agent',
+        role: 'task',
+        createdAt: t,
+        message: assistantText('task-ro-1', 'done'),
+        sessionId: 'session-task-ro',
+      }),
+    ];
+    render(<MinimalThreadFeed parsedRows={taskRows} overlayTaskId="task-1" overlayTaskReadonly />);
+    fireEvent.click(screen.getByTestId('minimal-thread-agent-open'));
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith(
+      'session-task-ro',
+      'Task Agent',
+      'task-ro-1',
+      {
+        taskId: 'task-1',
+        agentName: 'task',
+        sessionId: 'session-task-ro',
         readonly: true,
       }
     );

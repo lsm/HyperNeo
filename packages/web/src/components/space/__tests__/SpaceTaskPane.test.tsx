@@ -1784,6 +1784,62 @@ describe('SpaceTaskPane — activity members actions', () => {
     );
   });
 
+  it('keeps a pointer-matching Task Agent live even when its derived state is idle', () => {
+    mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'sess-idle-ta' })];
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          makeActivityMember({
+            id: 'm1',
+            sessionId: 'sess-idle-ta',
+            kind: 'task_agent',
+            label: 'Task Agent',
+            role: 'task-agent',
+            state: 'idle',
+          }),
+        ],
+      ],
+    ]);
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Open Task Agent (Idle)'));
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith(
+      'sess-idle-ta',
+      'Task Agent',
+      undefined,
+      null
+    );
+  });
+
+  it('keeps a waiting-for-input Task Agent live with a cleared task pointer', () => {
+    mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: null })];
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          makeActivityMember({
+            id: 'm1',
+            sessionId: 'sess-waiting-ta',
+            kind: 'task_agent',
+            label: 'Task Agent',
+            role: 'task-agent',
+            state: 'waiting_for_input',
+          }),
+        ],
+      ],
+    ]);
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Open Task Agent (Waiting)'));
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith(
+      'sess-waiting-ta',
+      'Task Agent',
+      undefined,
+      null
+    );
+  });
+
   it('opens the current post-approval worker live and historical workers read-only', () => {
     mockTasks.value = [
       makeTask({
