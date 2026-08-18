@@ -33,10 +33,7 @@ import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
-import {
-  mapPostApprovalDispatchWarning,
-  isPostApprovalDeferredError,
-} from '../space/runtime/post-approval-router';
+import { handlePostApprovalDispatchError } from '../space/runtime/post-approval-router';
 import type { SpaceGoalService } from '../space/goals/goal-service';
 import { arraysEqual } from '../utils/array-utils';
 
@@ -833,36 +830,13 @@ export function setupSpaceTaskHandlers(
         // re-drives it — do NOT overwrite it with the generic warning (which
         // duplicates the "approval recorded" phrasing and suggests a manual
         // retry that space.start/space.resume performs automatically).
-        if (isPostApprovalDeferredError(dispatchErr)) {
-          // Most typed deferrals are stamped by the runtime before throwing —
-          // but a defensive re-check: the RESUME sweep filters on the reason,
-          // so a typed deferral that somehow reached us unstamped would wedge
-          // the task `approved` with no banner and no recovery. Stamp the
-          // generic warning in that case (the resume sweep re-drives it).
-          if (!afterCommit.postApprovalBlockedReason) {
-            log.warn(
-              `approvePendingCompletion: post-approval dispatch of task ${params.taskId} deferred ` +
-                `without a blocked-reason stamp (${dispatchErr.message}); stamping the generic recovery banner`
-            );
-            await taskManager.updateTask(params.taskId, {
-              postApprovalBlockedReason: mapPostApprovalDispatchWarning(dispatchErr.message),
-            });
-          } else {
-            log.info(
-              `approvePendingCompletion: post-approval dispatch of task ${params.taskId} deferred ` +
-                `(${dispatchErr.message}); approval recorded, dispatch re-runs when the space resumes`
-            );
-          }
-        } else {
-          const detail = dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr);
-          log.warn(
-            `approvePendingCompletion: post-approval dispatch failed for task ${params.taskId} ` +
-              `after status commit (${detail}); capturing as post-approval-blocked`
-          );
-          await taskManager.updateTask(params.taskId, {
-            postApprovalBlockedReason: mapPostApprovalDispatchWarning(detail),
-          });
-        }
+        await handlePostApprovalDispatchError({
+          taskId: params.taskId,
+          dispatchErr,
+          afterCommitReason: afterCommit.postApprovalBlockedReason,
+          updateTask: (taskId, updates) => taskManager.updateTask(taskId, updates),
+          logPrefix: 'approvePendingCompletion',
+        });
       }
       // Re-read the task so the caller sees the post-router state.
       const refreshed = await taskManager.getTask(params.taskId);

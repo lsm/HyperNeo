@@ -1009,15 +1009,24 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     const tam = tamOf(ctx);
     tam.isSessionUsableForPostApproval = () => true;
     const releaseGates: Array<() => void> = [];
+    // Deterministic ordering: the first spawn call (sweep1's task A) resolves
+    // this deferred, so sweep2 is registered only AFTER A's gated spawn is
+    // actually entered — no sleep-based assumption.
+    let onFirstSpawn: (() => void) | undefined;
+    const firstSpawnEntered = new Promise<void>((resolve) => {
+      onFirstSpawn = resolve;
+    });
     const gatedSpawn = () =>
       new Promise<{ sessionId: string }>((resolve) => {
         releaseGates.push(() => resolve({ sessionId: `session:merge-${releaseGates.length}` }));
+        onFirstSpawn?.();
+        onFirstSpawn = undefined;
       });
     tam.spawnPostApprovalSubSession = gatedSpawn;
 
     await ctx.spaceManager.stopSpace(SPACE_ID);
     await ctx.spaceManager.startSpace(SPACE_ID); // sweep1: dispatches A (gated)
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await firstSpawnEntered; // A's spawn entered — register sweep2 now
     await ctx.spaceManager.pauseSpace(SPACE_ID);
     await ctx.spaceManager.resumeSpace(SPACE_ID); // sweep2: skips A, gates on B
 

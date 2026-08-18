@@ -1519,6 +1519,49 @@ describe('SpaceRuntime external event subscriptions', () => {
     await runtime.stop();
   });
 
+  test('a STOPPED space holds external-event delivery; start requeues it', async () => {
+    // The stop chain: stop commits (row stopped + the onSpaceStopped callback
+    // adds the space to the sync delivery-hold cache) → a published event pends
+    // rather than injecting → start clears the hold and requeues it. This is
+    // the PR's headline "holds delivery while stopped" — only the paused
+    // variant was pinned.
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-stopped-live',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-stopped-live');
+    db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
+    runtime.holdSpaceDeliveries(SPACE_ID);
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+
+    // Start clears the hold (onSpaceResumed) and requeues the deferred
+    // delivery; the flush delivers it into the live session.
+    db.prepare(`UPDATE spaces SET stopped = 0 WHERE id = ?`).run(SPACE_ID);
+    await runtime.onSpaceResumed(SPACE_ID);
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-stopped-live',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-stopped-live');
+    await runtime.stop();
+  });
+
   test('delivers a linked-PR event after a matching subscription registers', async () => {
     const { workflow, run, task } = await startRunWithSubscription(DEFAULT_TOPIC);
     await runtime.executeTick();

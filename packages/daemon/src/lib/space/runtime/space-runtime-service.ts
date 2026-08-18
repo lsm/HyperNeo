@@ -1217,9 +1217,18 @@ export class SpaceRuntimeService {
     const interruptedSessionByTask = new Map<string, Set<string>>();
     await Promise.allSettled(
       activeTasks.map(async (task) => {
-        if (this.taskAgentManager) {
+        if (!this.taskAgentManager) return;
+        try {
           const cleaned = await this.taskAgentManager.cleanup(task.id, 'stopped');
           interruptedSessionByTask.set(task.id, cleaned);
+        } catch (err) {
+          // A cleanup rejection must not silently disable the step-1.5 gate
+          // for this task (the interrupted-set entry would be absent, so the
+          // gate would skip the task and a stale pointer would wedge it). Log
+          // it and record what we can: an absent entry means "unknown", which
+          // the gate treats as keep — conservative, and the next resume's
+          // already-routed guard sees the (possibly-live) session.
+          log.warn(`stopActiveWork: failed to cleanup agent session for task ${task.id}:`, err);
         }
       })
     );
@@ -1289,16 +1298,6 @@ export class SpaceRuntimeService {
           err
         );
       }
-      // Fresh per-task space read: a start landing BEFORE this task's stamp
-      // (earlier in the loop, or during the cleanup awaits) fired the resume
-      // sweep, which missed this reason — honor the "re-runs automatically"
-      // promise now. A start landing AFTER the stamp (between it and this
-      // read) is already re-driven by the sweep, so the per-task re-drive
-      // below is a deduped no-op (the dispatch mutex + already-routed guard).
-      // Fire-and-forget: the stop RPC must not wait on a merge spawn. A
-      // deferral throw means another stop or pause landed in between (the
-      // hold re-stamped the reason) — swallowed. A failed re-read keeps the
-      // deferral (conservative).
       // Fresh per-task space read: a start landing BEFORE this task's stamp
       // (earlier in the loop, or during the cleanup awaits) fired the resume
       // sweep, which missed this reason — honor the "re-runs automatically"

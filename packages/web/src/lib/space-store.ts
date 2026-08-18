@@ -2155,7 +2155,7 @@ class SpaceStore {
    * Stop the current space: pauses scheduling and interrupts active agent
    * sessions; in-progress workflow work is preserved (nothing is cancelled)
    * and resumes when the space is started again, while standalone in-progress
-   * tasks pause and may need a manual restart. Marks the space as stopped so
+   * tasks pause and will need a manual restart. Marks the space as stopped so
    * it does not auto-start on daemon restart.
    */
   async stopSpace(): Promise<void> {

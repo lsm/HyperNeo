@@ -756,6 +756,121 @@ describe('SpaceRuntimeService', () => {
       expect(redrives).toEqual(['tB']);
     });
 
+    test('standalone in_progress task: stop preserves status + interrupts the session; no re-drive', async () => {
+      // The web stop copy's headline: a standalone (no workflowRunId)
+      // in_progress task is parked — session interrupted, status preserved,
+      // NOT cancelled and NOT re-driven after the stop (the documented
+      // limitation; it needs a manual restart). The cooldown-timer rationale
+      // for including standalone tasks in the cleanup filter is that their
+      // armed rate-cap cooldown timer must not fire after the stop.
+      const activeTasks = [
+        {
+          id: 't-standalone',
+          status: 'in_progress' as const,
+          postApprovalSessionId: null,
+          postApprovalBlockedReason: null,
+        },
+      ];
+      const cleanupCalls: Array<{ taskId: string; reason: string }> = [];
+      const updateCalls: Array<{ taskId: string; updates: Record<string, unknown> }> = [];
+      const mockTaskRepo = {
+        listBySpace: () => activeTasks,
+        getTask: (id: string) => activeTasks.find((t) => t.id === id),
+        updateTask: (taskId: string, updates: Record<string, unknown>) => {
+          updateCalls.push({ taskId, updates });
+        },
+      } as unknown as SpaceTaskRepository;
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager({ ...mockSpace, stopped: true })),
+        taskRepo: mockTaskRepo,
+        workflowRunRepo: {
+          listBySpace: () => [],
+          transitionStatus: () => {},
+        } as unknown as SpaceWorkflowRunRepository,
+      });
+      svc.setTaskAgentManager({
+        cleanup: async (taskId: string, reason: string) => {
+          cleanupCalls.push({ taskId, reason });
+          return new Set<string>();
+        },
+      } as unknown as TaskAgentManager);
+      const redrives: Array<{ taskId: string }> = [];
+      svc.dispatchPostApproval = async (_spaceId, taskId) => {
+        redrives.push({ taskId });
+      };
+
+      await svc.stopActiveWork('space-1');
+
+      // Session interrupted (cleanup ran with the stopped reason)…
+      expect(cleanupCalls).toEqual([{ taskId: 't-standalone', reason: 'stopped' }]);
+      // …status preserved — NO status or pointer writes (it is not approved,
+      // so step 1.5 skips it; no status transition).
+      expect(updateCalls).toHaveLength(0);
+      // No post-approval re-drive (it is not an approved merge).
+      expect(redrives).toHaveLength(0);
+    });
+
+    test('a retried space.stop re-quiesces idempotently (converges to the parked shape)', async () => {
+      // The handler comment claims "The quiesce is idempotent: a retried
+      // space.stop re-parks safely". A second stopActiveWork must not throw,
+      // must re-run cleanup (no-op on already-interrupted sessions), must
+      // re-record the interrupted set (the pointer was already nulled — no
+      // double reason), and must re-park without doubling work.
+      const activeTasks = [
+        {
+          id: 't5',
+          status: 'approved' as const,
+          postApprovalSessionId: 'session:merge-1',
+          postApprovalBlockedReason: null,
+        },
+      ];
+      let cleanupCalls = 0;
+      const mockTaskRepo = {
+        listBySpace: () => activeTasks,
+        getTask: (id: string) => activeTasks.find((t) => t.id === id),
+        updateTask: (taskId: string, updates: Record<string, unknown>) => {
+          // Apply the null like the real repo so the retry sees the parked shape.
+          const task = activeTasks.find((t) => t.id === taskId)!;
+          if ('postApprovalSessionId' in updates) {
+            task.postApprovalSessionId = updates.postApprovalSessionId as string | null;
+          }
+          if ('postApprovalBlockedReason' in updates) {
+            task.postApprovalBlockedReason = updates.postApprovalBlockedReason as string | null;
+          }
+        },
+      } as unknown as SpaceTaskRepository;
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager({ ...mockSpace, stopped: true })),
+        taskRepo: mockTaskRepo,
+        workflowRunRepo: {
+          listBySpace: () => [],
+          transitionStatus: () => {},
+        } as unknown as SpaceWorkflowRunRepository,
+      });
+      svc.setTaskAgentManager({
+        cleanup: async () => {
+          cleanupCalls += 1;
+          return new Set(['session:merge-1']);
+        },
+      } as unknown as TaskAgentManager);
+      const redrives: Array<{ taskId: string }> = [];
+      svc.dispatchPostApproval = async (_spaceId, taskId) => {
+        redrives.push({ taskId });
+      };
+
+      await svc.stopActiveWork('space-1');
+      await svc.stopActiveWork('space-1'); // the retry
+
+      expect(cleanupCalls).toBe(2); // cleanup re-ran
+      const final = activeTasks[0];
+      expect(final.postApprovalSessionId).toBeNull(); // parked after the first
+      expect(final.postApprovalBlockedReason).toMatch(/interrupted by space\.stop/);
+      // No speculative re-drive on the still-stopped space.
+      expect(redrives).toHaveLength(0);
+    });
+
     test('parks in-flight and waiting_rebind node executions with the clean-recovery reset', async () => {
       // In-flight executions are reset to pending with a blank session
       // binding (mirroring recoverRateLimitedTasks) so the tick loop neither

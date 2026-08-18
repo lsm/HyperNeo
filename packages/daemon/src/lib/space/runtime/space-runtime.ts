@@ -1939,13 +1939,15 @@ export class SpaceRuntime {
    *
    * Best-effort and idempotent: a repo error on one run is logged and does
    * not block parking of the others, and a retry of `space.stop` re-parks
-   * safely. No-ops if the space resumed mid-quiesce (its delivery hold is
-   * gone) so a stop→start race cannot strip the bindings of live sessions.
+   * safely.
    *
    * Called by `SpaceRuntimeService.stopActiveWork`, which passes the stop's
    * pre-cleanup snapshot (production path). The no-snapshot form below is the
-   * legacy/test-only overload (hold-guarded): production never parks against
-   * the mutable hold set. Run and task statuses are NOT modified.
+   * LEGACY/TEST-ONLY overload — its "no-ops if the space resumed mid-quiesce
+   * so a stop→start race cannot strip the bindings of live sessions" behavior
+   * (hold-guarded) does NOT apply to production, which parks exactly the
+   * snapshot rows regardless of an intervening start. Run and task statuses
+   * are NOT modified.
    */
   parkInFlightExecutionsForSpace(spaceId: string, stopSnapshot?: NodeExecution[]): void {
     if (stopSnapshot) {
@@ -1971,6 +1973,11 @@ export class SpaceRuntime {
           const current = this.config.nodeExecutionRepo.getById(exec.id);
           if (!current) continue;
           if (current.status !== 'in_progress' && current.status !== 'waiting_rebind') continue;
+          // The binding must still be the snapshot's: a mid-quiesce space.start
+          // could have let the tick crash-reset this row and re-spawned it onto
+          // a LIVE S1 — blanking that binding would strip a live re-spawn
+          // session and spawn a duplicate next tick.
+          if (current.agentSessionId !== exec.agentSessionId) continue;
           this.config.nodeExecutionRepo.resetForCleanRecovery(exec.id);
           this.taskCrashCounts.delete(`${exec.workflowRunId}:${exec.id}`);
           parkedRuns.add(exec.workflowRunId);
@@ -4805,14 +4812,13 @@ export class SpaceRuntime {
         // stop's cleanup already interrupted the just-stamped merger. The
         // space check alone would skip the correction in that window.
         const stamped = this.config.taskRepo.getTask(taskId)?.postApprovalSessionId ?? null;
-        // Defensive call: the probe is new, and Task-Agent-shaped mocks and
-        // older call sites may not carry it — absence means "not known dead".
-        const probe = this.config.taskAgentManager as
-          | { isSessionUsableForPostApproval?: (sessionId: string) => boolean }
-          | undefined;
+        // Defensive optional-call: a mock/older Task-Agent shape without the
+        // method yields undefined → "not known dead". Test doubles implement
+        // the method (defaulting to not-known-dead) rather than weakening the
+        // type here.
         const sessionUsable =
-          stamped && probe?.isSessionUsableForPostApproval
-            ? probe.isSessionUsableForPostApproval(stamped)
+          stamped && this.config.taskAgentManager?.isSessionUsableForPostApproval
+            ? this.config.taskAgentManager.isSessionUsableForPostApproval(stamped)
             : true;
         if (postSpace?.stopped || !sessionUsable) {
           const detail = postSpace?.stopped

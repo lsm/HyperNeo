@@ -334,6 +334,57 @@ export function mapPostApprovalDispatchWarning(detail: string): string {
   return `Approval recorded, but ${cause}. The task is approved; you may need to manually trigger post-approval work.`;
 }
 
+/**
+ * Shared Layer-C recovery for a post-approval dispatch that threw AFTER the
+ * status commit (the task is `approved`). Used by the `approvePendingCompletion`
+ * RPC handler and the coordinator tool, which must encode the same policy:
+ *  - a typed deferral already stamped by the runtime is preserved verbatim
+ *    (do NOT overwrite with the generic warning);
+ *  - a typed deferral that reached the caller UNSTAMPED (a runtime stamping
+ *    gap) gets the generic recovery banner — the resume sweep filters on the
+ *    reason, so an unstamped deferral would wedge the task `approved` with no
+ *    banner and no recovery;
+ *  - any other failure is captured as the generic warning.
+ * The raw error cause stays in the caller's log; the banner carries generic
+ * copy (rendered verbatim to web clients).
+ */
+export async function handlePostApprovalDispatchError(opts: {
+  taskId: string;
+  dispatchErr: unknown;
+  /** `postApprovalBlockedReason` read AFTER the commit (may be null when the
+   *  runtime had a stamping gap). */
+  afterCommitReason: string | null | undefined;
+  updateTask: (taskId: string, updates: { postApprovalBlockedReason: string }) => Promise<unknown>;
+  logPrefix: string;
+}): Promise<void> {
+  const { taskId, dispatchErr, afterCommitReason, updateTask, logPrefix } = opts;
+  if (isPostApprovalDeferredError(dispatchErr)) {
+    if (!afterCommitReason) {
+      log.warn(
+        `${logPrefix}: post-approval dispatch of task ${taskId} deferred without a blocked-reason ` +
+          `stamp (${dispatchErr.message}); stamping the generic recovery banner`
+      );
+      await updateTask(taskId, {
+        postApprovalBlockedReason: mapPostApprovalDispatchWarning(dispatchErr.message),
+      });
+    } else {
+      log.info(
+        `${logPrefix}: post-approval dispatch of task ${taskId} deferred (${dispatchErr.message}); ` +
+          `approval recorded, dispatch re-runs when the space resumes`
+      );
+    }
+    return;
+  }
+  const detail = dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr);
+  log.warn(
+    `${logPrefix}: post-approval dispatch failed for task ${taskId} after status commit ` +
+      `(${detail}); capturing as post-approval-blocked`
+  );
+  await updateTask(taskId, {
+    postApprovalBlockedReason: mapPostApprovalDispatchWarning(detail),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // PostApprovalRouter
 // ---------------------------------------------------------------------------

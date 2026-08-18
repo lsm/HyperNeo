@@ -115,6 +115,48 @@ function reviewerExec(sessionId: string = REVIEWER_SESSION_ID) {
 }
 
 function makeManager(rows: unknown[] = [reviewerExec()]): TaskAgentManager {
+  return makeManagerWithSpaceManager(rows, {
+    getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }),
+  });
+}
+
+/**
+ * Space-manager mock that captures the stop/resume registration callbacks the
+ * TAM's constructor subscribes to — the peer-injection gate reads the sync
+ * stopped-space mirror populated by the onSpaceStopped callback, so tests
+ * drive that callback instead of overriding getSpace.
+ */
+function makeHoldAwareSpaceManager(): {
+  manager: {
+    getSpace: () => Promise<unknown>;
+    onSpaceStoppedRegister: (cb: (id: string) => void) => () => void;
+    onSpacePausedRegister: (cb: (id: string) => void) => () => void;
+    onSpaceResumedRegister: (cb: (id: string) => void) => () => void;
+  };
+  stopped: (id: string) => void;
+  resumed: (id: string) => void;
+} {
+  let stoppedCb: ((id: string) => void) | undefined;
+  let resumedCb: ((id: string) => void) | undefined;
+  return {
+    manager: {
+      getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws', stopped: false }),
+      onSpaceStoppedRegister: (cb) => {
+        stoppedCb = cb;
+        return () => {};
+      },
+      onSpacePausedRegister: () => () => {},
+      onSpaceResumedRegister: (cb) => {
+        resumedCb = cb;
+        return () => {};
+      },
+    },
+    stopped: (id) => stoppedCb?.(id),
+    resumed: (id) => resumedCb?.(id),
+  };
+}
+
+function makeManagerWithSpaceManager(rows: unknown[], spaceManager: unknown): TaskAgentManager {
   return new TaskAgentManager({
     db: { getDatabase: () => new BunDatabase(':memory:') },
     sessionManager: { registerSession: () => {} },
@@ -128,7 +170,7 @@ function makeManager(rows: unknown[] = [reviewerExec()]): TaskAgentManager {
       listByAgentSessionId: () => [],
       update: () => rows[0],
     },
-    spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+    spaceManager,
     // pendingMessageRepo / appMcpManager intentionally absent → flush + mcp
     // config resolution become no-ops inside createSubSession.
   } as unknown as TaskAgentManagerConfig);
@@ -482,12 +524,12 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
   test('peer-injection gate: a stopped space rejects the inject without reaching the session', async () => {
     // A peer message must not drive a session of a stopped space (the stop
     // quiesce interrupted it; injecting would restart it via
-    // ensureQueryStarted). The gate resolves the space from the rowless
-    // merger session id (`space:<id>:…`) and rejects before injection.
-    const tam = makeManager([]);
-    (tam.config as unknown as Record<string, unknown>).spaceManager = {
-      getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws', stopped: true }),
-    };
+    // ensureQueryStarted). The gate reads the SYNC stopped-space mirror
+    // (populated by the onSpaceStopped callback — no DB read), then rejects
+    // before injection.
+    const hold = makeHoldAwareSpaceManager();
+    const tam = makeManagerWithSpaceManager([], hold.manager);
+    hold.stopped(SPACE_ID); // space.stop fired the onSpaceStopped callback
     const MERGER_SESSION = `space:${SPACE_ID}:task:${TASK_ID}:post-approval:merger`;
     seedLiveSession(tam, MERGER_SESSION);
     const injected: string[] = [];
@@ -506,11 +548,10 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
 
   test('peer-injection gate: a paused space still injects (pause keeps live sessions reachable)', async () => {
     // Pause contract: running work continues — a live session on a paused
-    // space must stay reachable. The gate is stopped-ONLY.
-    const tam = makeManager([]);
-    (tam.config as unknown as Record<string, unknown>).spaceManager = {
-      getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws', paused: true }),
-    };
+    // space must stay reachable. The gate is stopped-ONLY (pause never adds
+    // to the stopped-space mirror).
+    const hold = makeHoldAwareSpaceManager();
+    const tam = makeManagerWithSpaceManager([], hold.manager);
     const MERGER_SESSION = `space:${SPACE_ID}:task:${TASK_ID}:post-approval:merger`;
     seedLiveSession(tam, MERGER_SESSION);
     const injected: string[] = [];
@@ -526,16 +567,18 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
   });
 
   test('peer-injection gate: a stop landing between the gate and the lock is re-checked inside the lock', async () => {
-    // TOCTOU: the gate read passes, then the space stops before the lock
-    // body (rehydrate branch would re-bind a parked execution and restart the
-    // interrupted session). The in-lock re-check must reject.
+    // TOCTOU: the sync gate passes (space not in the stopped mirror), then
+    // the space stops before the lock body (rehydrate branch would re-bind a
+    // parked execution and restart the interrupted session). The in-lock
+    // DB re-check must reject. Only ONE DB read now — the outer gate no
+    // longer reads the row.
     const tam = makeManager([]);
     let calls = 0;
     (tam.config as unknown as Record<string, unknown>).spaceManager = {
       getSpace: async () => {
         calls += 1;
-        // First read (the gate) sees active; the in-lock re-check sees stopped.
-        return { id: SPACE_ID, workspacePath: '/tmp/ws', stopped: calls >= 2 };
+        // The in-lock re-check sees stopped.
+        return { id: SPACE_ID, workspacePath: '/tmp/ws', stopped: true };
       },
     };
     const MERGER_SESSION = `space:${SPACE_ID}:task:${TASK_ID}:post-approval:merger`;
@@ -552,7 +595,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
       /stopped during the inject/
     );
     expect(injected).toEqual([]);
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
   });
 
   test('peer-injection gate: an active space injects normally', async () => {

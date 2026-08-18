@@ -145,6 +145,7 @@ function makeMockTaskAgentManager(
     spawnWorkflowNodeAgent?: (task: unknown) => Promise<string>;
     isExecutionSpawning?: (executionId: string) => boolean;
     isSessionAlive?: (sessionId: string) => boolean;
+    isSessionUsableForPostApproval?: (sessionId: string) => boolean;
     spawnWorkflowNodeAgentForExecution?: (
       task: unknown,
       space: unknown,
@@ -225,6 +226,9 @@ function makeMockTaskAgentManager(
         const taskId = sessionToTask.get(sessionId);
         return taskId ? overrides.isTaskAgentAlive(taskId) : false;
       }),
+    // The mock implements the new probe explicitly (defaulting to "not known
+    // dead") rather than leaving the production call to a defensive cast.
+    isSessionUsableForPostApproval: overrides.isSessionUsableForPostApproval ?? (() => true),
     spawnWorkflowNodeAgentForExecution: spawnExecutionImpl,
     rehydrate: overrides.rehydrate ?? (async () => {}),
     cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
@@ -2960,6 +2964,33 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(internals.agentStuckRecovery.has(`${run.id}:${execution.id}`)).toBe(false);
       expect(internals.nonTerminalIdleStates.has(`${run.id}:${execution.id}`)).toBe(false);
       expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('pending');
+    });
+
+    test('snapshot park re-read: a row re-spawned onto a LIVE session is not blanked', async () => {
+      // Round-15 P2-1: a mid-quiesce space.start can let the tick crash-reset
+      // a snapshot row and re-spawn it onto a LIVE S1. Park's re-read must
+      // require the binding to be UNCHANGED from the snapshot — blanking a
+      // live re-spawn binding would strip S1 and spawn a duplicate next tick.
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isTaskAgentAlive: () => true,
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      // The snapshot captured it bound to S0…
+      nodeExecutionRepo.update(execution.id, { status: 'in_progress', agentSessionId: 'S0' });
+      const snapshot = [nodeExecutionRepo.getById(execution.id)!];
+      // …but a start + crash-reset + re-spawn bound it to a LIVE S1.
+      nodeExecutionRepo.update(execution.id, { status: 'in_progress', agentSessionId: 'S1' });
+
+      rt.parkInFlightExecutionsForSpace(SPACE_ID, snapshot);
+
+      // Not reset: the row keeps its LIVE S1 binding.
+      expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('in_progress');
+      expect(nodeExecutionRepo.getById(execution.id)!.agentSessionId).toBe('S1');
     });
 
     test('snapshot park re-read: a row that settled during the window is not regressed', async () => {

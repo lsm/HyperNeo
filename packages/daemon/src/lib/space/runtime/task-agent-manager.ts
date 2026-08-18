@@ -656,7 +656,22 @@ export class TaskAgentManager {
     this.subscribeToTaskArchiveEvents();
     this.subscribeToRateLimitEvents();
     this.subscribeToActivityTracking();
+    // Sync mirror of stopped spaces, populated by the space manager's
+    // onSpaceStopped/onSpaceResumed callbacks (the same synchronous cadence
+    // the runtime's delivery-hold cache uses). The peer-injection gate reads
+    // this instead of the space ROW, so the channel-router hot path does not
+    // take a DB read per message. Stopped-only by construction: resume deletes
+    // (a resumed space is not stopped), and pause never adds.
+    this.config.spaceManager?.onSpaceStoppedRegister?.((spaceId) =>
+      this.stoppedSpaceIds.add(spaceId)
+    );
+    this.config.spaceManager?.onSpaceResumedRegister?.((spaceId) =>
+      this.stoppedSpaceIds.delete(spaceId)
+    );
   }
+
+  /** Synchronous mirror of stopped spaces (see the constructor). */
+  private stoppedSpaceIds = new Set<string>();
 
   *getTrackedAgentRootPids(): Iterable<number> {
     for (const [, nodeSessions] of this.subSessions) {
@@ -2100,17 +2115,17 @@ export class TaskAgentManager {
     // still be reachable. The routers report the failed delivery, so the
     // sender sees the failure rather than silently losing the message.
     const gateSpaceId = await this.resolveSpaceIdForSubSession(subSessionId);
-    if (gateSpaceId) {
-      const gateSpace = await this.config.spaceManager.getSpace(gateSpaceId);
-      if (gateSpace?.stopped) {
-        log.warn(
-          `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ` +
-            `${subSessionId} — space ${gateSpaceId} is stopped`
-        );
-        throw new Error(
-          `Cannot inject message to session ${subSessionId} — space ${gateSpaceId} is stopped`
-        );
-      }
+    // Sync stopped-space mirror (populated by the onSpaceStopped callback —
+    // no DB read on the hot path); the in-lock re-check below re-reads the
+    // row for the TOCTOU window.
+    if (gateSpaceId && this.stoppedSpaceIds.has(gateSpaceId)) {
+      log.warn(
+        `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ` +
+          `${subSessionId} — space ${gateSpaceId} is stopped`
+      );
+      throw new Error(
+        `Cannot inject message to session ${subSessionId} — space ${gateSpaceId} is stopped`
+      );
     }
 
     // Reject inject for a cancelled/archived task or cancelled run — the session
@@ -3696,6 +3711,11 @@ export class TaskAgentManager {
    * @param taskId - The task to clean up.
    * @param reason - Retained for logging only; behavior is identical for
    *                'done', 'cancelled', and 'stopped' (space stop quiesce).
+   * @returns The set of sub-session ids this cleanup interrupted — the ground
+   *   truth for `SpaceRuntimeService.stopActiveWork`'s step-1.5 gate (a
+   *   `postApprovalSessionId` in the set was interrupted and must be nulled).
+   *   An ABSENT entry for a task means "unknown" (the cleanup never ran or
+   *   rejected), NOT "none interrupted" — the gate treats absent as keep.
    */
   async cleanup(
     taskId: string,
