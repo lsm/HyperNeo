@@ -529,6 +529,36 @@ describe('MinimalThreadFeed', () => {
     expect(mockPushOverlayHistory).toHaveBeenCalledWith('session-task', 'Task Agent', 'task-a1');
   });
 
+  it('opens node-agent feed turns read-only when the task overlay is marked read-only', () => {
+    const t = Date.now();
+    const nodeRows = [
+      makeRow({
+        id: 'node-ro-1',
+        label: 'Coder Agent',
+        kind: 'node_agent',
+        role: 'coder',
+        nodeExecutionId: 'exec-coder-ro',
+        createdAt: t,
+        message: assistantText('node-ro-1', 'done'),
+        sessionId: 'session-node-ro',
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={nodeRows} overlayTaskId="task-1" overlayTaskReadonly />);
+    fireEvent.click(screen.getByTestId('minimal-thread-agent-open'));
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith(
+      'session-node-ro',
+      'Coder Agent',
+      'node-ro-1',
+      {
+        taskId: 'task-1',
+        agentName: 'coder',
+        sessionId: 'session-node-ro',
+        readonly: true,
+      }
+    );
+  });
+
   it('renders the last assistant text of a completed block as its message body', async () => {
     const t = Date.now();
     const rows = [

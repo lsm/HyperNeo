@@ -1076,44 +1076,54 @@ export function SpaceTaskPane({
   );
   const memberIsLive = (member: SpaceTaskActivityMember): boolean => {
     if (!taskAgentsLive) return false;
-    if (member.kind === 'task_agent') return member.sessionId === task.taskAgentSessionId;
+    if (member.kind === 'task_agent') {
+      return (
+        member.sessionId === task.taskAgentSessionId ||
+        member.state === 'active' ||
+        member.state === 'waiting_for_input' ||
+        member.state === 'cooldown'
+      );
+    }
     if (member.nodeExecution?.status === 'cancelled') return false;
     if (member.nodeExecution?.nodeExecutionId) return true;
     return member.nodeExecution?.isCurrentPostApproval === true;
   };
   if (openableActivityMembers.length > 0) {
     taskActionItems.push(
-      ...openableActivityMembers.map((member) => ({
-        label: `Open ${member.label} (${ACTIVITY_STATE_LABELS[member.state]})`,
-        onClick: () => {
-          const readOnly = isTerminalTask || !memberIsLive(member);
-          pushOverlayHistory(
-            member.sessionId,
-            member.label,
-            undefined,
-            readOnly
-              ? {
-                  taskId: task.id,
-                  agentName: member.role ?? '',
-                  sessionId: member.sessionId,
-                  readonly: true,
-                }
-              : member.kind !== 'node_agent'
-                ? null
-                : {
+      ...openableActivityMembers.map((member) => {
+        const readOnly = isTerminalTask || !memberIsLive(member);
+        return {
+          label: `Open ${member.label} (${ACTIVITY_STATE_LABELS[member.state]})`,
+          title: readOnly ? 'Opens read-only — resume the task to chat' : undefined,
+          onClick: () => {
+            pushOverlayHistory(
+              member.sessionId,
+              member.label,
+              undefined,
+              readOnly
+                ? {
                     taskId: task.id,
-                    agentName: member.role,
+                    agentName: member.role ?? '',
                     sessionId: member.sessionId,
-                    ...(member.nodeExecution?.nodeId
-                      ? { workflowNodeId: member.nodeExecution.nodeId }
-                      : {}),
-                    ...(member.nodeExecution?.nodeExecutionId
-                      ? { nodeExecutionId: member.nodeExecution.nodeExecutionId }
-                      : {}),
+                    readonly: true,
                   }
-          );
-        },
-      }))
+                : member.kind !== 'node_agent'
+                  ? null
+                  : {
+                      taskId: task.id,
+                      agentName: member.role,
+                      sessionId: member.sessionId,
+                      ...(member.nodeExecution?.nodeId
+                        ? { workflowNodeId: member.nodeExecution.nodeId }
+                        : {}),
+                      ...(member.nodeExecution?.nodeExecutionId
+                        ? { nodeExecutionId: member.nodeExecution.nodeExecutionId }
+                        : {}),
+                    }
+            );
+          },
+        };
+      })
     );
   }
   if (declaredAgentSlots.length > 0) {
@@ -1298,6 +1308,7 @@ export function SpaceTaskPane({
                   bottomInsetPx={taskComposerPaddingPx}
                   activeAgentLabels={activeAgentLabels}
                   overlayTaskId={task.id}
+                  overlayTaskReadonly={!taskAgentsLive}
                   cooldownBannerMembers={cooldownBannerMembers}
                   authErrorBannerMembers={authErrorBannerMembers}
                   autoScrollEnabled={autoScrollEnabled}

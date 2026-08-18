@@ -1485,6 +1485,7 @@ function makeActivityMember(
     role: 'task-agent',
     state: 'active',
     messageCount: 3,
+    nodeExecution: null,
     ...overrides,
   };
 }
@@ -1725,6 +1726,186 @@ describe('SpaceTaskPane — activity members actions', () => {
       workflowNodeId: 'node-coder',
       nodeExecutionId: 'ne-live',
     });
+  });
+
+  it('opens a Task Agent member matching the task pointer with a live (null) task context', () => {
+    mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'sess-live-ta' })];
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          makeActivityMember({
+            id: 'm1',
+            sessionId: 'sess-live-ta',
+            kind: 'task_agent',
+            label: 'Task Agent',
+            role: 'task-agent',
+            state: 'active',
+          }),
+        ],
+      ],
+    ]);
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Open Task Agent (Active)'));
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith(
+      'sess-live-ta',
+      'Task Agent',
+      undefined,
+      null
+    );
+  });
+
+  it('keeps an actively-processing Task Agent live after a restart cleared the task pointer', () => {
+    mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: null })];
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          makeActivityMember({
+            id: 'm1',
+            sessionId: 'sess-rehydrated-ta',
+            kind: 'task_agent',
+            label: 'Task Agent',
+            role: 'task-agent',
+            state: 'active',
+          }),
+        ],
+      ],
+    ]);
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Open Task Agent (Active)'));
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith(
+      'sess-rehydrated-ta',
+      'Task Agent',
+      undefined,
+      null
+    );
+  });
+
+  it('opens the current post-approval worker live and historical workers read-only', () => {
+    mockTasks.value = [
+      makeTask({
+        status: 'approved',
+        taskAgentSessionId: null,
+        postApprovalSessionId: 'sess-pa-current',
+      }),
+    ];
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          makeActivityMember({
+            id: 'm1',
+            sessionId: 'sess-pa-current',
+            label: 'Reviewer',
+            role: 'reviewer',
+            state: 'idle',
+            nodeExecution: {
+              nodeExecutionId: null,
+              nodeId: 'node-review',
+              agentName: 'reviewer',
+              status: undefined,
+              isCurrentPostApproval: true,
+            },
+          }),
+          makeActivityMember({
+            id: 'm2',
+            sessionId: 'sess-pa-historical',
+            label: 'Reviewer',
+            role: 'reviewer',
+            state: 'idle',
+            nodeExecution: {
+              nodeExecutionId: null,
+              nodeId: 'node-review',
+              agentName: 'reviewer',
+              status: undefined,
+              isCurrentPostApproval: false,
+            },
+          }),
+        ],
+      ],
+    ]);
+    const { getByTestId, getAllByText } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    const reviewerItems = getAllByText('Open Reviewer (Idle)');
+    expect(reviewerItems).toHaveLength(2);
+    fireEvent.click(reviewerItems[0]);
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith('sess-pa-current', 'Reviewer', undefined, {
+      taskId: 'task-1',
+      agentName: 'reviewer',
+      sessionId: 'sess-pa-current',
+      workflowNodeId: 'node-review',
+    });
+    fireEvent.click(reviewerItems[1]);
+    expect(mockPushOverlayHistory).toHaveBeenLastCalledWith(
+      'sess-pa-historical',
+      'Reviewer',
+      undefined,
+      {
+        taskId: 'task-1',
+        agentName: 'reviewer',
+        sessionId: 'sess-pa-historical',
+        readonly: true,
+      }
+    );
+  });
+
+  it('keeps members of a rate-limited task live (cooldown status is a running status)', () => {
+    mockTasks.value = [makeTask({ status: 'rate_limited', taskAgentSessionId: 'session-abc' })];
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          makeActivityMember({
+            id: 'm1',
+            sessionId: 'sess-cooling-coder',
+            label: 'Coder',
+            role: 'coder',
+            state: 'cooldown',
+            nodeExecution: {
+              nodeExecutionId: 'ne-cooling',
+              nodeId: 'node-coder',
+              agentName: 'coder',
+              status: 'in_progress',
+            },
+          }),
+        ],
+      ],
+    ]);
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Open Coder (Cooldown)'));
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith('sess-cooling-coder', 'Coder', undefined, {
+      taskId: 'task-1',
+      agentName: 'coder',
+      sessionId: 'sess-cooling-coder',
+      workflowNodeId: 'node-coder',
+      nodeExecutionId: 'ne-cooling',
+    });
+  });
+
+  it('annotates read-only member entries with a resume hint', () => {
+    mockTasks.value = [makeTask({ status: 'open', taskAgentSessionId: null })];
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          makeActivityMember({
+            id: 'm1',
+            sessionId: 'sess-readonly-hint',
+            label: 'Coder',
+            role: 'coder',
+            state: 'idle',
+          }),
+        ],
+      ],
+    ]);
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    const item = getByText('Open Coder (Idle)').closest('button');
+    expect(item?.title).toBe('Opens read-only — resume the task to chat');
   });
 
   it('still hides members whose node execution is pending', () => {
@@ -1980,7 +2161,7 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
             kind: 'node_agent',
             role: 'coder',
             label: 'Coder',
-            state: 'idle',
+            state: 'interrupted',
             nodeExecution: {
               nodeExecutionId: 'exec-cancelled',
               nodeId: 'node-1',
@@ -1994,7 +2175,7 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
             kind: 'node_agent',
             role: 'reviewer',
             label: 'Reviewer',
-            state: 'idle',
+            state: 'queued',
             nodeExecution: {
               nodeExecutionId: 'exec-pending',
               nodeId: 'node-2',
@@ -2010,10 +2191,10 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
     );
     await waitFor(() => expect(getByTestId('task-actions-menu-trigger')).toBeTruthy());
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
-    expect(queryByText('Open Reviewer (Idle)')).toBeNull();
+    expect(queryByText('Open Reviewer (Queued)')).toBeNull();
     expect(queryByText('Open coder (Not started)')).toBeNull();
     expect(getByText('Open reviewer (Not started)')).toBeTruthy();
-    fireEvent.click(getByText('Open Coder (Idle)'));
+    fireEvent.click(getByText('Open Coder (Interrupted)'));
     expect(mockPushOverlayHistory).toHaveBeenCalledWith('sess-cancelled', 'Coder', undefined, {
       taskId: 'task-1',
       agentName: 'coder',

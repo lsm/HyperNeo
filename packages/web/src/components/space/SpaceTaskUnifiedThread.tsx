@@ -30,6 +30,7 @@ interface SpaceTaskUnifiedThreadProps {
   topInsetClass?: string;
   activeAgentLabels?: ReadonlySet<string>;
   overlayTaskId?: string;
+  overlayTaskReadonly?: boolean;
   cooldownBannerMembers?: CooldownBannerMember[];
   authErrorBannerMembers?: AuthErrorBannerMember[];
   autoScrollEnabled?: boolean;
@@ -46,6 +47,7 @@ export function SpaceTaskUnifiedThread({
   topInsetClass = '',
   activeAgentLabels,
   overlayTaskId,
+  overlayTaskReadonly,
   cooldownBannerMembers = [],
   authErrorBannerMembers = [],
   autoScrollEnabled = true,
@@ -168,6 +170,7 @@ export function SpaceTaskUnifiedThread({
             activeAgentLabels={activeAgentLabels}
             activeTurnSummaries={activeTurnSummaries}
             overlayTaskId={overlayTaskId}
+            overlayTaskReadonly={overlayTaskReadonly}
           />
           <div ref={messagesEndRef} />
         </div>
