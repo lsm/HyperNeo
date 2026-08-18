@@ -586,6 +586,15 @@ describe('MinimalThreadFeed', () => {
         readonly: true,
       }
     );
+    expect(screen.getByTestId('minimal-thread-agent-open').getAttribute('title')).toBe(
+      'Opens read-only — resume the task to chat'
+    );
+    expect(screen.getAllByTitle('Opens read-only — resume the task to chat')).toHaveLength(2);
+    expect(
+      screen
+        .getAllByTitle('Opens read-only — resume the task to chat')
+        .every((el) => el.getAttribute('aria-label')?.includes('read-only'))
+    ).toBe(true);
   });
 
   it('renders the last assistant text of a completed block as its message body', async () => {

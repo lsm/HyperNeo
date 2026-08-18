@@ -1854,6 +1854,9 @@ function CompletedBody({
         copyText={turn.lastMessage}
         align="left"
         onOpenSession={openSession}
+        openSessionTitle={
+          overlayTaskReadonly ? 'Opens read-only — resume the task to chat' : undefined
+        }
         resultInfo={turn.resultInfo}
       />
     </div>
@@ -2228,6 +2231,11 @@ function SyntheticMessageTurn({
       renderAsPlainText={turn.bodyIsFallback}
       sessionInit={turn.sessionInit}
       widthClass={TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}
+      openSessionTitle={
+        overlayTaskReadonly && turn.sessionId
+          ? 'Opens read-only — resume the task to chat'
+          : undefined
+      }
       onOpenSession={
         turn.sessionId
           ? () => {
