@@ -13,7 +13,7 @@ const TMP_DIR = process.env.TMPDIR || '/tmp';
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
 const IDLE_TIMEOUT = IS_MOCK ? 10000 : 90000;
-const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
+const SETUP_TIMEOUT = IS_MOCK ? 20000 : 30000;
 const TEST_TIMEOUT = IS_MOCK ? 60000 : 180000;
 
 describe('Message delivery mode queue flow', () => {

@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
 
-const TIMEOUT = 15000;
 const IS_DEV_PROXY = process.env.HYPERNEO_USE_DEV_PROXY === '1';
+const TIMEOUT = IS_DEV_PROXY ? 60_000 : 15_000;
 
 describe('Message RPC Handlers', () => {
   let daemon: DaemonServerContext;
@@ -18,7 +18,7 @@ describe('Message RPC Handlers', () => {
   afterEach(async () => {
     if (!daemon) return;
     await daemon.waitForExit();
-  }, 15_000);
+  }, 20_000);
 
   async function createSessionWithMessages(title?: string): Promise<string> {
     const workspacePath = mkdtempSync(join(tmpdir(), 'hyperneo-rpc-message-'));

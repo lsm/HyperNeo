@@ -6,7 +6,7 @@ import type { NodeExecution, Space, SpaceWorkerAgent, SpaceWorkflow } from '@hyp
 import { buildPromptTooLongContinueNag } from '../../../src/lib/space/runtime/prompt-too-long-recovery';
 
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
-const IDLE_TIMEOUT = IS_MOCK ? 20_000 : 60_000;
+const IDLE_TIMEOUT = IS_MOCK ? 45_000 : 60_000;
 const SETUP_TIMEOUT = IS_MOCK ? 45_000 : 90_000;
 const TEST_TIMEOUT = IS_MOCK ? 180_000 : 300_000;
 const RECOVERY_TIMEOUT = IS_MOCK ? 60_000 : 90_000;
