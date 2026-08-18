@@ -129,6 +129,13 @@ export function setupSpaceTaskHandlers(
     if (draft) {
       rest.status = 'draft';
     }
+    if (rest.status === 'stopped') {
+      throw new Error(
+        `spaceTask.create cannot create a task with initial status 'stopped'. ` +
+          `Tasks are stopped through the task Stop action once it lands — ` +
+          `'stopped' is a dormant capability until then.`
+      );
+    }
     const task = await taskManager.createTask(rest);
 
     internalEventBus
@@ -433,6 +440,14 @@ export function setupSpaceTaskHandlers(
                 `Use spaceTask.approvePendingCompletion (UI Approve banner) or let the ` +
                 `runtime's post-approval router handle the transition — both stamp the ` +
                 `approval metadata and dispatch the configured post-approval step.`
+            );
+          }
+          if (updateParams.status === 'stopped') {
+            throw new Error(
+              `spaceTask.update cannot transition a task into 'stopped' directly. ` +
+                `Use the task Stop action once it lands — it halts all agents and ` +
+                `preserves the run, sessions, and task provenance. 'stopped' is a ` +
+                `dormant capability until then.`
             );
           }
           if (

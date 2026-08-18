@@ -239,6 +239,18 @@ describe('space-task-handlers', () => {
       );
     });
 
+    it("throws when initial status is 'stopped' (dormant until the Stop action lands)", async () => {
+      await expect(
+        call('spaceTask.create', {
+          spaceId: 'space-1',
+          title: 'T',
+          description: 'D',
+          status: 'stopped',
+        })
+      ).rejects.toThrow(/cannot create a task with initial status 'stopped'/);
+      expect(taskManager.createTask).not.toHaveBeenCalled();
+    });
+
     it('throws when title is missing', async () => {
       await expect(
         call('spaceTask.create', { spaceId: 'space-1', description: 'D' })
@@ -808,6 +820,17 @@ describe('space-task-handlers', () => {
         taskId: 'task-1',
         task: expect.objectContaining({ status: 'in_progress' }),
       });
+    });
+
+    it("rejects direct transition into 'stopped' (dormant until the Stop action lands)", async () => {
+      await expect(
+        call('spaceTask.update', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          status: 'stopped',
+        })
+      ).rejects.toThrow(/cannot transition a task into 'stopped' directly/);
+      expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
     });
 
     it('does NOT call setTaskStatus when status is unchanged (avoids spurious transition error)', async () => {

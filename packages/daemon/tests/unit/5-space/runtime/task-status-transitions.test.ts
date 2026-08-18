@@ -509,7 +509,7 @@ describe('SpaceTaskManager.setTaskStatus — stopped preserves task provenance (
     expect(stopped.result).toBe('blocked mid-run');
   });
 
-  test('review → stopped preserves pending-completion checkpoint fields', async () => {
+  test('review → stopped preserves pending-completion checkpoint and approval fields', async () => {
     const task = createTask('in_progress');
     await taskManager.setTaskStatus(task.id, 'review');
     taskRepo.updateTask(task.id, {
@@ -518,6 +518,9 @@ describe('SpaceTaskManager.setTaskStatus — stopped preserves task provenance (
       pendingCompletionSubmittedAt: 1234,
       pendingCompletionReason: 'ready for review',
       postApprovalSourceNodeId: 'reviewer-node',
+      approvalSource: 'human',
+      approvalReason: 'stamped before the park',
+      approvedAt: 5678,
     });
     const stopped = await taskManager.setTaskStatus(task.id, 'stopped');
     expect(stopped.status).toBe('stopped');
@@ -526,6 +529,9 @@ describe('SpaceTaskManager.setTaskStatus — stopped preserves task provenance (
     expect(stopped.pendingCompletionSubmittedAt).toBe(1234);
     expect(stopped.pendingCompletionReason).toBe('ready for review');
     expect(stopped.postApprovalSourceNodeId).toBe('reviewer-node');
+    expect(stopped.approvalSource).toBe('human');
+    expect(stopped.approvalReason).toBe('stamped before the park');
+    expect(stopped.approvedAt).toBe(5678);
   });
 
   test('rate_limited → stopped preserves result', async () => {
