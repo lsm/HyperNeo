@@ -20,15 +20,16 @@ const log = new Logger('space-task-manager');
 export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
   draft: ['open', 'archived'],
   open: ['in_progress', 'blocked', 'review', 'done', 'cancelled', 'archived'],
-  in_progress: ['open', 'review', 'approved', 'done', 'blocked', 'cancelled'],
-  review: ['done', 'approved', 'in_progress', 'cancelled', 'archived'],
+  in_progress: ['open', 'review', 'approved', 'done', 'blocked', 'cancelled', 'stopped'],
+  review: ['done', 'approved', 'in_progress', 'cancelled', 'archived', 'stopped'],
   approved: ['done', 'in_progress', 'archived', 'cancelled'],
   done: ['in_progress', 'archived'],
-  blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived'],
+  blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived', 'stopped'],
   cancelled: ['open', 'in_progress', 'done', 'archived'],
-  rate_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
-  usage_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
+  rate_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived', 'stopped'],
+  usage_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived', 'stopped'],
   archived: [],
+  stopped: ['in_progress', 'open', 'review', 'cancelled', 'archived'],
 };
 
 export function isValidSpaceTaskTransition(from: SpaceTaskStatus, to: SpaceTaskStatus): boolean {
@@ -140,7 +141,7 @@ export class SpaceTaskManager {
 
     if (newStatus === 'blocked') {
       updates.blockReason = options?.blockReason ?? null;
-    } else if (task.status === 'blocked') {
+    } else if (task.status === 'blocked' && newStatus !== 'stopped') {
       updates.blockReason = null;
     }
 
@@ -181,14 +182,22 @@ export class SpaceTaskManager {
       updates.postApprovalSourceNodeId = null;
     }
 
-    if ((task.status === 'review' && newStatus !== 'review') || newStatus === 'approved') {
+    if (
+      (task.status === 'review' && newStatus !== 'review' && newStatus !== 'stopped') ||
+      newStatus === 'approved'
+    ) {
       updates.pendingCheckpointType = null;
       updates.pendingCompletionSubmittedByNodeId = null;
       updates.pendingCompletionSubmittedAt = null;
       updates.pendingCompletionReason = null;
     }
 
-    if (task.status === 'review' && newStatus !== 'review' && newStatus !== 'approved') {
+    if (
+      task.status === 'review' &&
+      newStatus !== 'review' &&
+      newStatus !== 'approved' &&
+      newStatus !== 'stopped'
+    ) {
       updates.postApprovalSourceNodeId = null;
     }
 

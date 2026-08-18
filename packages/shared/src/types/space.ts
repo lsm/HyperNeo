@@ -259,7 +259,8 @@ export type SpaceTaskStatus =
   | 'cancelled'
   | 'archived'
   | 'rate_limited'
-  | 'usage_limited';
+  | 'usage_limited'
+  | 'stopped';
 
 export type SpaceReportedStatus = 'done' | 'blocked' | 'cancelled';
 

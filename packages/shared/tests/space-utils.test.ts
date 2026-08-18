@@ -324,6 +324,7 @@ describe('isRateOrUsageLimited — single source of truth for paused-on-cap stat
     'archived',
     'rate_limited',
     'usage_limited',
+    'stopped',
   ] as const satisfies readonly SpaceTaskStatus[];
 
   type _ExhaustiveSpaceTaskStatuses =

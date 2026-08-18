@@ -13,6 +13,7 @@ const ALL_STATUSES: SpaceTaskStatus[] = [
   'archived',
   'rate_limited',
   'usage_limited',
+  'stopped',
 ];
 
 function makeTask(status: SpaceTaskStatus): Pick<SpaceTask, 'status'> {
@@ -48,6 +49,10 @@ describe('isActionRequired', () => {
     const matching = ALL_STATUSES.filter((s) => isActionRequired(makeTask(s)));
     expect(matching.sort()).toEqual(['blocked', 'rate_limited', 'review', 'usage_limited']);
   });
+
+  it('returns false for stopped (dormant — own group lands with the stop switch-on)', () => {
+    expect(isActionRequired(makeTask('stopped'))).toBe(false);
+  });
 });
 
 describe('isActiveTask', () => {
@@ -68,6 +73,10 @@ describe('isActiveTask', () => {
   it('classifies the full status set deterministically', () => {
     const matching = ALL_STATUSES.filter((s) => isActiveTask(makeTask(s)));
     expect(matching.sort()).toEqual(['approved', 'in_progress', 'open']);
+  });
+
+  it('returns false for stopped (dormant — own group lands with the stop switch-on)', () => {
+    expect(isActiveTask(makeTask('stopped'))).toBe(false);
   });
 });
 
@@ -108,6 +117,7 @@ describe('Active filter — fixture coverage', () => {
   it('every status is covered by exactly one of action / active / completed / archived (no orphan)', () => {
     const completedStatuses: SpaceTaskStatus[] = ['done', 'cancelled'];
     const archivedStatuses: SpaceTaskStatus[] = ['archived'];
+    const ungroupedStatuses: SpaceTaskStatus[] = ['stopped'];
 
     for (const status of ALL_STATUSES) {
       const task = makeTask(status);
@@ -116,7 +126,8 @@ describe('Active filter — fixture coverage', () => {
       const inCompleted = completedStatuses.includes(status);
       const inArchived = archivedStatuses.includes(status);
       const memberships = [inAction, inActive, inCompleted, inArchived].filter(Boolean).length;
-      expect({ status, memberships }).toEqual({ status, memberships: 1 });
+      const expected = ungroupedStatuses.includes(status) ? 0 : 1;
+      expect({ status, memberships }).toEqual({ status, memberships: expected });
     }
   });
 });

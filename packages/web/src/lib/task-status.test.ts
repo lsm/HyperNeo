@@ -13,6 +13,7 @@ describe('task-status', () => {
       'blocked',
       'cancelled',
       'archived',
+      'stopped',
     ];
     for (const status of statuses) {
       expect(TASK_STATUS_CONFIG[status]).toBeDefined();
@@ -44,6 +45,11 @@ describe('task-status', () => {
     expect(TASK_STATUS_CONFIG.open.tone).toBe('neutral');
     expect(TASK_STATUS_CONFIG.cancelled.tone).toBe('neutral');
     expect(TASK_STATUS_CONFIG.archived.tone).toBe('neutral');
+  });
+
+  it('maps stopped to warning with a placeholder label', () => {
+    expect(TASK_STATUS_CONFIG.stopped.tone).toBe('warning');
+    expect(TASK_STATUS_CONFIG.stopped.label).toBe('Stopped');
   });
 
   it('returns tone classes from getTaskStatusClasses', () => {
