@@ -1,3 +1,10 @@
-# Note: Do NOT add [test] preload here — it would apply to online tests too
-# (CI runs `bun test` from this directory). Unit test preload is handled by
-# scripts/test-daemon.sh via --preload flag, and by package.json test:unit script.
+# Note: Do NOT add [test] preload here — it would apply to online runs too
+# (CI runs `bun test ./tests/online` from this directory). Unit-test env
+# isolation is owned by vitest setupFiles (tests/vitest.setup.ts, wired from
+# vitest.config.ts); scripts/test-daemon.sh and the package.json test scripts
+# invoke vitest directly and preload nothing. Caveat for the bare-bun local
+# loop: `bun test tests/unit/...` also runs with no preload while Bun
+# auto-loads this directory's .env, so an ambient HYPERNEO_SDK_STARTUP_TIMEOUT_MS
+# there fails the 'current: 60000ms' default pin in query-runner.test.ts with
+# the override value in the hint. Scrub it for bare-bun runs with
+# --preload=./tests/unit/setup.ts, or prefer ./scripts/test-daemon.sh.
