@@ -215,6 +215,8 @@ class SpaceStore {
 
   readonly taskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
 
+  readonly taskMessageActivity = signal<Map<string, number>>(new Map());
+
   readonly loading = signal<boolean>(false);
 
   readonly error = signal<string | null>(null);
@@ -296,6 +298,12 @@ class SpaceStore {
   private activeTaskActivityTaskId: string | null = null;
 
   private activeTaskActivitySubscriptionIds = new Set<string>();
+
+  private taskMessageActivityCleanupFns: Array<() => void> = [];
+
+  private activeTaskMessageActivityTaskId: string | null = null;
+
+  private activeTaskMessageActivitySubscriptionIds = new Set<string>();
 
   private nodeExecCleanupFns: Array<() => void> = [];
 
@@ -545,6 +553,7 @@ class SpaceStore {
     this.nodeExecutions.value = [];
     this.runtimeState.value = null;
     this.taskActivity.value = new Map();
+    this.taskMessageActivity.value = new Map();
     this.error.value = null;
     this.configDataLoaded.value = false;
     this.configDataPromise = null;
@@ -1253,6 +1262,7 @@ class SpaceStore {
     }
     this.cleanupFunctions = [];
     this.unsubscribeTaskActivity();
+    this.unsubscribeTaskMessageActivity();
     this.unsubscribeNodeExecutions();
   }
 
@@ -1435,6 +1445,105 @@ class SpaceStore {
     }
     this.taskActivityCleanupFns = [];
     this.activeTaskActivityTaskId = null;
+
+    const hub = connectionManager.getHubIfConnected();
+    if (hub) {
+      hub.request('liveQuery.unsubscribe', { subscriptionId }).catch(() => {});
+    }
+  }
+
+  hasTaskMessageActivity(taskId: string): boolean | null {
+    const count = this.taskMessageActivity.value.get(taskId);
+    return count === undefined ? null : count > 0;
+  }
+
+  async subscribeTaskMessageActivity(taskId: string): Promise<void> {
+    if (!taskId) return;
+    if (this.activeTaskMessageActivityTaskId === taskId) return;
+
+    this.unsubscribeTaskMessageActivity();
+    this.activeTaskMessageActivityTaskId = taskId;
+
+    const subscriptionId = `spaceTaskMessageActivity-${taskId}`;
+
+    try {
+      const hub = await connectionManager.getHub();
+      if (this.activeTaskMessageActivityTaskId !== taskId) return;
+
+      this.activeTaskMessageActivitySubscriptionIds.add(subscriptionId);
+
+      const setTaskMessageCount = (count: number) => {
+        this.taskMessageActivity.value = new Map(this.taskMessageActivity.value).set(taskId, count);
+      };
+
+      const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+        if (event.subscriptionId !== subscriptionId) return;
+        if (!this.activeTaskMessageActivitySubscriptionIds.has(subscriptionId)) return;
+        setTaskMessageCount(((event.rows as unknown[]) ?? []).length);
+      });
+      this.taskMessageActivityCleanupFns.push(unsubSnapshot);
+      this.taskMessageActivityCleanupFns.push(() =>
+        this.activeTaskMessageActivitySubscriptionIds.delete(subscriptionId)
+      );
+
+      const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+        if (event.subscriptionId !== subscriptionId) return;
+        if (!this.activeTaskMessageActivitySubscriptionIds.has(subscriptionId)) return;
+        const current = this.taskMessageActivity.value.get(taskId);
+        if (current === undefined) return;
+        const added = (event.added ?? []).length;
+        const removed = (event.removed ?? []).length;
+        if (added === 0 && removed === 0) return;
+        setTaskMessageCount(Math.max(0, current + added - removed));
+      });
+      this.taskMessageActivityCleanupFns.push(unsubDelta);
+
+      const unsubReconnect = hub.onConnection((state) => {
+        if (state !== 'connected') return;
+        if (!this.activeTaskMessageActivitySubscriptionIds.has(subscriptionId)) return;
+        hub
+          .request('liveQuery.subscribe', {
+            queryName: 'spaceTaskMessages.byTask.compact',
+            params: [taskId],
+            subscriptionId,
+          })
+          .catch((err) => {
+            logger.warn('Task message activity LiveQuery re-subscribe failed:', err);
+          });
+      });
+      this.taskMessageActivityCleanupFns.push(unsubReconnect);
+
+      await hub.request('liveQuery.subscribe', {
+        queryName: 'spaceTaskMessages.byTask.compact',
+        params: [taskId],
+        subscriptionId,
+      });
+
+      if (this.activeTaskMessageActivityTaskId !== taskId) {
+        this.unsubscribeTaskMessageActivity(taskId);
+      }
+    } catch (err) {
+      this.unsubscribeTaskMessageActivity(taskId);
+      throw err;
+    }
+  }
+
+  unsubscribeTaskMessageActivity(taskId?: string): void {
+    const activeTaskId = this.activeTaskMessageActivityTaskId;
+    if (!activeTaskId || (taskId && activeTaskId !== taskId)) return;
+
+    const subscriptionId = `spaceTaskMessageActivity-${activeTaskId}`;
+    this.activeTaskMessageActivitySubscriptionIds.delete(subscriptionId);
+
+    for (const cleanup of this.taskMessageActivityCleanupFns) {
+      try {
+        cleanup();
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+    this.taskMessageActivityCleanupFns = [];
+    this.activeTaskMessageActivityTaskId = null;
 
     const hub = connectionManager.getHubIfConnected();
     if (hub) {

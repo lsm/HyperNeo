@@ -60,6 +60,7 @@ vi.mock('../../../lib/space-store', () => ({
       workflowRuns: mockWorkflowRuns,
       nodeExecutions: mockNodeExecutions,
       taskActivity: mockTaskActivity,
+      hasTaskMessageActivity: () => null,
       updateTask: mockUpdateTask,
       ensureTaskAgentSession: mockEnsureTaskAgentSession,
       sendTaskMessage: mockSendTaskMessage,

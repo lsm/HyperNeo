@@ -5,7 +5,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const LAZY_LOAD_TIMEOUT = 5000;
 
-import type { Space, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
+import type { Space, SpaceTask, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { signal } from '@preact/signals';
 
 let mockLoading = signal(false);
@@ -15,8 +15,12 @@ let mockWorkflows = signal<SpaceWorkflow[]>([]);
 let mockAgents = signal<SpaceWorkerAgent[]>([]);
 let mockStoreSpaceId = signal<string | null>('space-1');
 let mockConfigDataLoaded = signal(true);
+let mockTasks = signal<SpaceTask[]>([]);
+let mockTaskMessageActivity = signal<Map<string, number>>(new Map());
 const mockEnsureConfigData = vi.fn().mockResolvedValue(undefined);
 const mockEnsureWorkflowDetails = vi.fn().mockResolvedValue(undefined);
+const mockSubscribeTaskMessageActivity = vi.fn().mockResolvedValue(undefined);
+const mockUnsubscribeTaskMessageActivity = vi.fn();
 
 const mockSelectSpace = vi.fn().mockResolvedValue(undefined);
 
@@ -173,6 +177,16 @@ vi.mock('../../components/space/SpaceTaskPane', () => ({
   ),
 }));
 
+vi.mock('../../components/space/TaskAuxiliaryPanel', () => ({
+  TaskAuxiliaryPanel: (props: { taskId: string; spaceId?: string }) => (
+    <div
+      data-testid="task-auxiliary-panel"
+      data-task-id={props.taskId}
+      data-space-id={props.spaceId ?? ''}
+    />
+  ),
+}));
+
 vi.mock('../../components/space/SpaceCreateTaskDialog', () => ({
   SpaceCreateTaskDialog: (props: {
     isOpen: boolean;
@@ -270,7 +284,14 @@ vi.mock('../../lib/space-store', () => ({
       workflowDetailsLoaded: { value: true },
       agents: mockAgents,
       sessions: { value: [] },
-      tasks: { value: [] },
+      tasks: mockTasks,
+      taskMessageActivity: mockTaskMessageActivity,
+      hasTaskMessageActivity: (id: string) => {
+        const count = mockTaskMessageActivity.value.get(id);
+        return count === undefined ? null : count > 0;
+      },
+      subscribeTaskMessageActivity: mockSubscribeTaskMessageActivity,
+      unsubscribeTaskMessageActivity: mockUnsubscribeTaskMessageActivity,
       schedules: { value: [] },
       listSchedules: vi.fn().mockResolvedValue(undefined),
       configDataLoaded: mockConfigDataLoaded,
@@ -366,6 +387,22 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
   };
 }
 
+function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
+  return {
+    id: 'task-xyz',
+    spaceId: 'space-1',
+    taskNumber: 1,
+    title: 'Routed Task',
+    description: '',
+    status: 'open',
+    priority: 'normal',
+    dependsOn: [],
+    createdAt: 0,
+    updatedAt: 0,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   mockLoading = signal(false);
   mockError = signal(null);
@@ -374,6 +411,11 @@ beforeEach(() => {
   mockAgents = signal([]);
   mockStoreSpaceId = signal('space-1');
   mockConfigDataLoaded = signal(true);
+  mockTasks = signal([]);
+  mockTaskMessageActivity = signal(new Map());
+  mockSubscribeTaskMessageActivity.mockClear();
+  mockSubscribeTaskMessageActivity.mockResolvedValue(undefined);
+  mockUnsubscribeTaskMessageActivity.mockClear();
   capturedVisualEditorProps = {};
   configureTabBridge.signal.value = 'agents';
   idBridge.signal.value = null;
@@ -627,6 +669,95 @@ describe('SpaceIsland — content priority chain', () => {
     );
     await findByTestId('chat-container');
     expect(queryByTestId('space-task-pane')).toBeNull();
+  });
+
+  it('subscribes to task message activity while a task view is open', async () => {
+    const { findByTestId, unmount } = render(
+      <SpaceIsland spaceId="space-1" viewMode="overview" taskViewId="task-xyz" />
+    );
+    await findByTestId('space-task-pane-inner');
+    expect(mockSubscribeTaskMessageActivity).toHaveBeenCalledWith('task-xyz');
+    unmount();
+    expect(mockUnsubscribeTaskMessageActivity).toHaveBeenCalledWith('task-xyz');
+  });
+
+  it('renders the task information panel when the task has no message activity', async () => {
+    mockTaskMessageActivity.value = new Map([['task-xyz', 0]]);
+    const { findByTestId, queryByTestId } = render(
+      <SpaceIsland spaceId="space-1" viewMode="overview" taskViewId="task-xyz" />
+    );
+    const panel = await findByTestId('task-auxiliary-panel');
+    expect(panel.getAttribute('data-task-id')).toBe('task-xyz');
+    expect(queryByTestId('space-task-pane-inner')).toBeNull();
+  });
+
+  it('renders the task thread pane when the task has message activity, regardless of status', async () => {
+    for (const status of ['open', 'in_progress', 'blocked', 'cancelled', 'done'] as const) {
+      cleanup();
+      mockTasks = signal([makeTask({ id: 'task-xyz', status })]);
+      mockTaskMessageActivity.value = new Map([['task-xyz', 3]]);
+      const { findByTestId, queryByTestId } = render(
+        <SpaceIsland spaceId="space-1" viewMode="overview" taskViewId="task-xyz" />
+      );
+      await findByTestId('space-task-pane-inner');
+      expect(queryByTestId('task-auxiliary-panel')).toBeNull();
+    }
+  });
+
+  it('renders the task information panel for a done task with no message activity', async () => {
+    mockTasks = signal([makeTask({ id: 'task-xyz', status: 'done' })]);
+    mockTaskMessageActivity.value = new Map([['task-xyz', 0]]);
+    const { findByTestId, queryByTestId } = render(
+      <SpaceIsland spaceId="space-1" viewMode="overview" taskViewId="task-xyz" />
+    );
+    await findByTestId('task-auxiliary-panel');
+    expect(queryByTestId('space-task-pane-inner')).toBeNull();
+  });
+
+  it('re-subscribes when the task view switches to another task', async () => {
+    mockTaskMessageActivity.value = new Map([
+      ['task-xyz', 3],
+      ['task-other', 0],
+    ]);
+    const { findByTestId, rerender } = render(
+      <SpaceIsland spaceId="space-1" viewMode="overview" taskViewId="task-xyz" />
+    );
+    await findByTestId('space-task-pane-inner');
+    expect(mockSubscribeTaskMessageActivity).toHaveBeenCalledWith('task-xyz');
+
+    rerender(<SpaceIsland spaceId="space-1" viewMode="overview" taskViewId="task-other" />);
+
+    await waitFor(() => {
+      expect(mockSubscribeTaskMessageActivity).toHaveBeenCalledWith('task-other');
+    });
+    expect(mockUnsubscribeTaskMessageActivity).toHaveBeenCalledWith('task-xyz');
+  });
+
+  it('waits for the space to load before subscribing so space selection cannot kill the subscription', async () => {
+    mockSpace = signal(null);
+    const { findByTestId } = render(
+      <SpaceIsland spaceId="space-1" viewMode="overview" taskViewId="task-xyz" />
+    );
+    await waitFor(() => expect(mockSelectSpace).toHaveBeenCalledWith('space-1'));
+    expect(mockSubscribeTaskMessageActivity).not.toHaveBeenCalled();
+
+    mockSpace.value = makeSpace();
+
+    await findByTestId('space-task-pane-inner');
+    await waitFor(() => {
+      expect(mockSubscribeTaskMessageActivity).toHaveBeenCalledWith('task-xyz');
+    });
+  });
+
+  it('switches from the information panel to the thread pane when activity arrives', async () => {
+    mockTaskMessageActivity.value = new Map([['task-xyz', 0]]);
+    const { findByTestId, queryByTestId } = render(
+      <SpaceIsland spaceId="space-1" viewMode="overview" taskViewId="task-xyz" />
+    );
+    await findByTestId('task-auxiliary-panel');
+    mockTaskMessageActivity.value = new Map([['task-xyz', 1]]);
+    await findByTestId('space-task-pane-inner');
+    expect(queryByTestId('task-auxiliary-panel')).toBeNull();
   });
 });
 

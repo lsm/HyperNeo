@@ -1887,6 +1887,71 @@ describe('SpaceStore — CRUD methods', () => {
     });
   });
 
+  it('subscribeTaskMessageActivity subscribes to the compact messages LiveQuery and stores the row count', async () => {
+    await spaceStore.selectSpace('space-1');
+    expect(spaceStore.hasTaskMessageActivity('t1')).toBeNull();
+
+    await spaceStore.subscribeTaskMessageActivity('t1');
+
+    expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+      queryName: 'spaceTaskMessages.byTask.compact',
+      params: ['t1'],
+      subscriptionId: 'spaceTaskMessageActivity-t1',
+    });
+    fireMockEvent('liveQuery.snapshot', {
+      subscriptionId: 'spaceTaskMessageActivity-t1',
+      rows: [{ id: 'm1' }, { id: 'm2' }],
+      version: 1,
+    });
+    expect(spaceStore.taskMessageActivity.value.get('t1')).toBe(2);
+    expect(spaceStore.hasTaskMessageActivity('t1')).toBe(true);
+  });
+
+  it('subscribeTaskMessageActivity stores zero counts and applies added/removed deltas', async () => {
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.subscribeTaskMessageActivity('t1');
+    fireMockEvent('liveQuery.snapshot', {
+      subscriptionId: 'spaceTaskMessageActivity-t1',
+      rows: [],
+      version: 1,
+    });
+    expect(spaceStore.taskMessageActivity.value.get('t1')).toBe(0);
+    expect(spaceStore.hasTaskMessageActivity('t1')).toBe(false);
+
+    fireMockEvent('liveQuery.delta', {
+      subscriptionId: 'spaceTaskMessageActivity-t1',
+      added: [{ id: 'm1' }, { id: 'm2' }],
+      version: 2,
+    });
+    expect(spaceStore.taskMessageActivity.value.get('t1')).toBe(2);
+    expect(spaceStore.hasTaskMessageActivity('t1')).toBe(true);
+
+    fireMockEvent('liveQuery.delta', {
+      subscriptionId: 'spaceTaskMessageActivity-t1',
+      removed: [{ id: 'm1' }, { id: 'm2' }],
+      version: 3,
+    });
+    expect(spaceStore.taskMessageActivity.value.get('t1')).toBe(0);
+    expect(spaceStore.hasTaskMessageActivity('t1')).toBe(false);
+  });
+
+  it('unsubscribeTaskMessageActivity tears down the compact messages subscription', async () => {
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.subscribeTaskMessageActivity('t1');
+
+    spaceStore.unsubscribeTaskMessageActivity();
+    expect(mockHub.request).toHaveBeenCalledWith('liveQuery.unsubscribe', {
+      subscriptionId: 'spaceTaskMessageActivity-t1',
+    });
+
+    fireMockEvent('liveQuery.snapshot', {
+      subscriptionId: 'spaceTaskMessageActivity-t1',
+      rows: [{ id: 'm1' }],
+      version: 2,
+    });
+    expect(spaceStore.taskMessageActivity.value.get('t1')).toBeUndefined();
+  });
+
   it('createAgent calls spaceAgent.create RPC and upserts returned agent', async () => {
     await spaceStore.selectSpace('space-1');
     await spaceStore.createAgent({ name: 'Coder' });
