@@ -1,7 +1,13 @@
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { generateUUID, getWorkflowRunExecutionStatusLabel, KNOWN_TOOLS } from '@hyperneo/shared';
+import {
+  generateUUID,
+  getWorkflowRunExecutionStatusLabel,
+  isRateOrUsageLimited,
+  isWorkflowRecoveryTransition,
+  KNOWN_TOOLS,
+} from '@hyperneo/shared';
 import type {
   CreateEvolutionEpisodeParams,
   EvolutionEpisodeStatus,
@@ -21,6 +27,7 @@ import type {
   SpaceLongHorizonAgentTemplate,
   SpaceTask,
   SpaceTaskPriority,
+  UpdateSpaceTaskParams,
   WorkflowRunStatus,
   SpaceTaskStatus,
   TaskProposalStatus,
@@ -61,6 +68,7 @@ import { mapPostApprovalDispatchWarning } from '../runtime/post-approval-router'
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
+import { SpaceTaskStatusSchema, UpdateTaskStatusParamDescription } from './task-agent-tool-schemas';
 import { validateGlobPattern, validateSource } from '../../external-events/topic-validator';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import { getAvailableModels, getModelInfoUnfiltered, isValidModel } from '../../model-service';
@@ -1993,17 +2001,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       description?: string;
       priority?: SpaceTaskPriority;
       depends_on?: string[];
+      status?: SpaceTaskStatus;
     }): Promise<ToolResult> {
       const hasChanges =
         args.title !== undefined ||
         args.description !== undefined ||
         args.priority !== undefined ||
-        args.depends_on !== undefined;
+        args.depends_on !== undefined ||
+        args.status !== undefined;
       if (!hasChanges) {
         return jsonResult({
           success: false,
           error:
-            'No fields to update. Provide at least one of: title, description, priority, depends_on.',
+            'No fields to update. Provide at least one of: title, description, priority, depends_on, status.',
         });
       }
 
@@ -2018,21 +2028,145 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
       }
 
-      try {
-        const updated = await taskManager.updateTask(
-          args.task_id,
-          {
-            title: args.title,
-            description: args.description,
-            priority: args.priority,
-            dependsOn: args.depends_on,
+      const fieldParams: UpdateSpaceTaskParams = {};
+      if (args.title !== undefined) fieldParams.title = args.title;
+      if (args.description !== undefined) fieldParams.description = args.description;
+      if (args.priority !== undefined) fieldParams.priority = args.priority;
+      if (args.depends_on !== undefined) fieldParams.dependsOn = args.depends_on;
+      const hasFieldUpdates = Object.keys(fieldParams).length > 0;
+      const applyFieldUpdates = async (): Promise<SpaceTask> =>
+        taskManager.updateTask(args.task_id, fieldParams, {
+          onCascadedTasks: async (cascadedTasks) => {
+            for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
           },
-          {
+        });
+
+      try {
+        if (args.status !== undefined && args.status !== task.status) {
+          if (args.status === 'review') {
+            return jsonResult({
+              success: false,
+              error:
+                `update_task cannot transition a task into 'review' directly. ` +
+                `Use submit_for_approval so the pending-completion fields get stamped ` +
+                `and the approval banner renders.`,
+            });
+          }
+          if (args.status === 'approved') {
+            return jsonResult({
+              success: false,
+              error:
+                `update_task cannot transition a task into 'approved' directly. ` +
+                `Use approve_pending_completion after submit_for_approval, or let the ` +
+                `runtime's post-approval router handle the transition — both stamp ` +
+                `the approval metadata and dispatch the configured post-approval step.`,
+            });
+          }
+          if (args.status === 'stopped') {
+            return jsonResult({
+              success: false,
+              error:
+                `update_task cannot transition a task into 'stopped' directly. ` +
+                `Use the task Stop action once it lands — it halts all agents and ` +
+                `preserves the run, sessions, and task provenance.`,
+            });
+          }
+          if (
+            args.status === 'archived' &&
+            task.workflowRunId &&
+            config.isWorkflowRunActive?.(task.workflowRunId)
+          ) {
+            return jsonResult({
+              success: false,
+              error:
+                `Cannot archive task ${args.task_id}: it belongs to an active workflow run ` +
+                `(${task.workflowRunId}). Cancel the task instead (cancel_task) so its ` +
+                `agents and lifecycle are torn down — archiving would leave the run stranded.`,
+            });
+          }
+
+          if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, args.status)) {
+            const { task: recovered } = await runtime.recoverWorkflowBackedTask(
+              spaceId,
+              args.task_id,
+              args.status
+            );
+            const updated = hasFieldUpdates ? await applyFieldUpdates() : recovered;
+            logAudit(
+              'update_task',
+              {
+                title: args.title,
+                description: args.description,
+                priority: args.priority,
+                depends_on: args.depends_on,
+                status: args.status,
+                previousStatus: task.status,
+              },
+              args.task_id
+            );
+            if (hasFieldUpdates) emitTaskUpdated(updated);
+            return jsonResult({ success: true, task: updated });
+          }
+
+          const fromActivePaused =
+            task.status === 'in_progress' ||
+            task.status === 'blocked' ||
+            isRateOrUsageLimited(task.status);
+          const toStopped = args.status === 'open' || args.status === 'cancelled';
+          const toBlockedFromPaused =
+            args.status === 'blocked' && isRateOrUsageLimited(task.status);
+          if (task.workflowRunId && fromActivePaused && (toStopped || toBlockedFromPaused)) {
+            const stopped =
+              (await runtime.stopWorkflowBackedTaskForStatus(spaceId, args.task_id, {
+                ...fieldParams,
+                status: args.status,
+              })) ?? taskRepo.getTask(args.task_id);
+            if (!stopped) {
+              return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+            }
+            logAudit(
+              'update_task',
+              {
+                title: args.title,
+                description: args.description,
+                priority: args.priority,
+                depends_on: args.depends_on,
+                status: args.status,
+                previousStatus: task.status,
+              },
+              args.task_id
+            );
+            return jsonResult({ success: true, task: stopped });
+          }
+
+          let updated = await taskManager.setTaskStatus(args.task_id, args.status, {
             onCascadedTasks: async (cascadedTasks) => {
               for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
             },
+          });
+          if (hasFieldUpdates) {
+            updated = await applyFieldUpdates();
           }
-        );
+
+          logAudit(
+            'update_task',
+            {
+              title: args.title,
+              description: args.description,
+              priority: args.priority,
+              depends_on: args.depends_on,
+              status: args.status,
+              previousStatus: task.status,
+            },
+            args.task_id
+          );
+
+          emitTaskUpdated(updated);
+
+          return jsonResult({ success: true, task: updated });
+        }
+
+        const updated = await applyFieldUpdates();
 
         logAudit(
           'update_task',
@@ -4064,7 +4198,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     ),
     tool(
       'update_task',
-      "Edit an existing task's title, description, priority, or dependencies. The task must belong to this space. Only the fields you provide are updated.",
+      "Edit an existing task's title, description, priority, dependencies, or status. The task must belong to this space. Only the fields you provide are updated. Status changes follow the same transition table as the UI, with the same restrictions: invalid transitions are rejected with the allowed list, 'review' and 'approved' cannot be set here, and archiving a task on an active workflow run is rejected.",
       {
         task_id: z.string().describe('UUID of the task to update'),
         title: z.string().min(1).optional().describe('New title for the task'),
@@ -4076,6 +4210,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           .describe(
             'New dependency list (replaces existing). All must be in the same space. Cycles and non-existent IDs are rejected.'
           ),
+        status: SpaceTaskStatusSchema.optional().describe(UpdateTaskStatusParamDescription),
       },
       (args) => handlers.update_task(args)
     ),

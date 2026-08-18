@@ -33,7 +33,7 @@ import {
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
-import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type { SpaceTask, SpaceTaskStatus, SpaceWorkflow } from '@hyperneo/shared';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
 import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
@@ -8053,6 +8053,243 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
 
     const names = getRegisteredToolNames(server);
     expect(names).toContain('update_task');
+  });
+});
+
+describe('createSpaceAgentToolHandlers — update_task status parameter (task #1088)', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  function createTaskWithStatus(status: SpaceTaskStatus, workflowRunId?: string): SpaceTask {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Status task',
+      description: '',
+      status: 'open',
+      ...(workflowRunId ? { workflowRunId } : {}),
+    });
+    return ctx.taskRepo.updateTask(task.id, { status }) ?? task;
+  }
+
+  function createRun(): string {
+    const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
+    return ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: wf.id,
+      title: 'Run',
+    }).id;
+  }
+
+  test('applies a valid transition (cancelled → open)', async () => {
+    const task = createTaskWithStatus('cancelled');
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'open' })
+    );
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('open');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('open');
+  });
+
+  test('applies a valid transition alongside field updates', async () => {
+    const task = createTaskWithStatus('open');
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({
+        task_id: task.id,
+        status: 'in_progress',
+        title: 'Renamed while starting',
+      })
+    );
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('in_progress');
+    expect((result.task as SpaceTask).title).toBe('Renamed while starting');
+  });
+
+  test('rejects an invalid transition with the transition-table error', async () => {
+    const task = createTaskWithStatus('draft');
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'cancelled' })
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Invalid status transition from 'draft' to 'cancelled'");
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('draft');
+  });
+
+  test('same→same status is a no-op when part of a broader update', async () => {
+    const task = createTaskWithStatus('open');
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'open', title: 'Still open' })
+    );
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).title).toBe('Still open');
+    expect((result.task as SpaceTask).status).toBe('open');
+  });
+
+  test('same→same status alone succeeds without changes', async () => {
+    const task = createTaskWithStatus('in_progress');
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'in_progress' })
+    );
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('in_progress');
+  });
+
+  test('rejects bare transition into review', async () => {
+    const task = createTaskWithStatus('in_progress');
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'review' })
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("cannot transition a task into 'review' directly");
+    expect(result.error).toContain('submit_for_approval');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('rejects bare transition into approved', async () => {
+    const task = createTaskWithStatus('in_progress');
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'approved' })
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("cannot transition a task into 'approved' directly");
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('rejects bare transition into stopped', async () => {
+    const task = createTaskWithStatus('in_progress');
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'stopped' })
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("cannot transition a task into 'stopped' directly");
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('rejects archiving a task belonging to an active workflow run', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('cancelled', runId);
+    const result = parseResult(
+      await makeHandlers(ctx, { isWorkflowRunActive: () => true }).update_task({
+        task_id: task.id,
+        status: 'archived',
+      })
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('active workflow run');
+    expect(result.error).toContain('cancel_task');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('cancelled');
+  });
+
+  test('routes workflow-backed recovery transitions through recoverWorkflowBackedTask', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('cancelled', runId);
+    const run = ctx.workflowRunRepo.getRun(runId);
+    if (!run) throw new Error(`run missing: ${runId}`);
+    const recoverSpy = spyOn(ctx.runtime, 'recoverWorkflowBackedTask').mockImplementation(
+      async (_spaceId, taskId, targetStatus) => {
+        return { task: await ctx.taskManager.setTaskStatus(taskId, targetStatus), run };
+      }
+    );
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({
+        task_id: task.id,
+        status: 'open',
+        title: 'Recovered',
+      })
+    );
+
+    expect(recoverSpy).toHaveBeenCalledTimes(1);
+    expect(recoverSpy).toHaveBeenCalledWith(ctx.spaceId, task.id, 'open');
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('open');
+    expect((result.task as SpaceTask).title).toBe('Recovered');
+  });
+
+  test('tears down the workflow when an active task moves to open', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('in_progress', runId);
+    const stopSpy = spyOn(ctx.runtime, 'stopWorkflowBackedTaskForStatus').mockImplementation(
+      async (_spaceId, taskId, params) =>
+        ctx.taskManager.setTaskStatus(taskId, params.status ?? 'open')
+    );
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'open' })
+    );
+
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(stopSpy).toHaveBeenCalledWith(ctx.spaceId, task.id, { status: 'open' });
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('open');
+  });
+
+  test('tears down the workflow when a rate-limited task is blocked', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('rate_limited', runId);
+    const stopSpy = spyOn(ctx.runtime, 'stopWorkflowBackedTaskForStatus').mockImplementation(
+      async (_spaceId, taskId, params) =>
+        ctx.taskManager.setTaskStatus(taskId, params.status ?? 'blocked')
+    );
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'blocked' })
+    );
+
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(stopSpy).toHaveBeenCalledWith(ctx.spaceId, task.id, { status: 'blocked' });
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('blocked');
+  });
+
+  test('emits space.task.updated and logs previousStatus on a transition', async () => {
+    const emitted: Array<Record<string, unknown>> = [];
+    const mockBus = {
+      publish: mock(async (event: string, payload: Record<string, unknown>) => {
+        if (event === 'space.task.updated') emitted.push(payload);
+      }),
+    };
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const task = createTaskWithStatus('cancelled');
+    const handlers = makeHandlers(ctx, {
+      internalEventBus:
+        mockBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
+          import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap
+        >,
+      auditLogRepo,
+    });
+
+    const result = parseResult(await handlers.update_task({ task_id: task.id, status: 'open' }));
+
+    expect(result.success).toBe(true);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].taskId).toBe(task.id);
+    expect((emitted[0].task as SpaceTask).status).toBe('open');
+    const entries = auditLogRepo.listByTask(task.id);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].toolName).toBe('update_task');
+    const params = JSON.parse(entries[0].paramsSummary ?? '{}') as Record<string, unknown>;
+    expect(params.status).toBe('open');
+    expect(params.previousStatus).toBe('cancelled');
+  });
+
+  test('update_task MCP schema accepts a status param', () => {
+    const server = createSpaceAgentMcpServer({
+      spaceId: ctx.spaceId,
+      runtime: ctx.runtime,
+      workflowManager: ctx.workflowManager,
+      taskRepo: ctx.taskRepo,
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunRepo: ctx.workflowRunRepo,
+      taskManager: ctx.taskManager,
+      spaceAgentManager: ctx.agentManager,
+    });
+
+    expectToolInputParses(server, 'update_task', { task_id: 't1', status: 'cancelled' });
   });
 });
 

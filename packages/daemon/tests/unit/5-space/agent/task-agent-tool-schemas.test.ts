@@ -112,6 +112,34 @@ describe('RequestHumanInputSchema', () => {
   });
 });
 
+describe('UpdateTaskSchema', () => {
+  test('accepts an optional status', () => {
+    const result = UpdateTaskSchema.safeParse({ task_id: 't1', status: 'cancelled' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.status).toBe('cancelled');
+    }
+  });
+
+  test('status stays optional', () => {
+    const result = UpdateTaskSchema.safeParse({ task_id: 't1', title: 'T' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.status).toBeUndefined();
+    }
+  });
+
+  test('rejects unknown status values', () => {
+    expect(UpdateTaskSchema.safeParse({ task_id: 't1', status: 'paused' }).success).toBe(false);
+  });
+
+  test('status description documents the review/approved restrictions', () => {
+    const description = UpdateTaskSchema.shape.status.description ?? '';
+    expect(description).toContain('submit_for_approval');
+    expect(description).toContain('approved');
+  });
+});
+
 describe('TASK_AGENT_TOOL_SCHEMAS', () => {
   test('contains all 6 tool schemas', () => {
     const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
