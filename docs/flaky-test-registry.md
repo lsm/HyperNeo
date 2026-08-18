@@ -35,18 +35,24 @@ fallback; it never sleeps for a fixed duration. Flakes come from the
   `HYPERNEO_SDK_STARTUP_TIMEOUT_MS + 10s`. The online vitest config sets
   that env before any module loads, so CI mock runs use the 30s startup
   bound → 40s floor; runs without the env set mirror query-runner's 60s
-  production default → 70s floor. A session cannot go idle before its SDK
-  subprocess cold-starts and the turn settles; CI cold starts take 20-30s
-  while warm turns settle in 1-2s, so per-file mock budgets below the floor
-  only hold on warm runners. Don't try to opt out of the floor.
+  production default → 70s floor (spawned-mode children still gate at
+  30s — the floor is merely over-patient there). A session cannot go
+  idle before its SDK subprocess cold-starts and the turn settles; CI
+  cold starts take 20-30s while warm turns settle in 1-2s, so per-file
+  mock budgets below the floor only hold on warm runners. Don't try to
+  opt out of the floor.
 - Per-test timeouts must leave room for one floored idle wait plus the
   warm turns the test performs (e.g. mock `TEST_TIMEOUT` ≥ 60s, 90s for
   multi-turn suites).
-- Hook budgets (`SETUP_TIMEOUT`) must exceed daemon teardown's worst case:
-  10s for the `waitForExit` race plus 5s per tracked session (each
-  `session.delete` is raced at 5s). A 10s hook budget turns every failed
-  idle wait into a second hook-timeout failure and doubles the reported
-  failure count; multi-session files need proportionally more.
+- Hook budgets (`SETUP_TIMEOUT`) must clear daemon teardown. In the
+  standard `kill(); waitForExit()` pattern the whole cleanup — including
+  the per-session `session.delete` races (5s each, rejections swallowed) —
+  runs inside `waitForExit`'s internal 10s race, so the awaited teardown
+  caps at ~10s plus a small tail regardless of how many sessions are
+  tracked. Tests that call `cleanup()` directly (outside `waitForExit`)
+  see the additive worst case instead: 10s + 5s per tracked session. A
+  10s hook budget leaves no room for even the capped path and turns every
+  failed idle wait into a second hook-timeout failure — use 20s or more.
 
 When an online shard flakes: pull the shard's junit + `daemon.jsonl`
 artifacts, read the actual claim→`first_sdk_response`→`settled` timeline,
