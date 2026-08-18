@@ -12,6 +12,7 @@ import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agen
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { MAX_BLOCKED_RUN_RETRIES } from '../../../../src/lib/space/runtime/constants.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
@@ -1472,6 +1473,213 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
       expect(nags).toEqual([]);
       expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
+    });
+  });
+
+  describe('paused/stopped spaces stay quiet under supervision', () => {
+    test('paused space emits no nags or restarts for a stale live session across ticks', async () => {
+      const nags: string[] = [];
+      const restarted: string[] = [];
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: () => true,
+        getAgentSessionById: () => processingState('processing'),
+        injectRuntimeRecoveryMessage: async (sessionId) => {
+          nags.push(sessionId);
+          return `runtime-nag:${sessionId}`;
+        },
+        restartStuckSubSession: async (sessionId) => {
+          restarted.push(sessionId);
+        },
+      });
+      const rt = new SpaceRuntime(
+        buildConfig(tam, { agentNoProgressThresholdMs: 60_000, agentStuckNagGraceMs: 0 })
+      );
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session:paused-stuck',
+        startedAt: Date.now() - 20 * 60_000,
+      });
+      saveAssistantMessage('session:paused-stuck', { minutesAgo: 20, toolUse: true });
+
+      for (let i = 0; i < 5; i++) {
+        await rt.executeTick();
+      }
+
+      expect(nags).toEqual([]);
+      expect(restarted).toEqual([]);
+      const updated = nodeExecutionRepo.getById(execution.id);
+      expect(updated?.status).toBe('in_progress');
+      expect(updated?.agentSessionId).toBe('session:paused-stuck');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    });
+
+    test('active space control: stale live session is still nagged and restarted', async () => {
+      const nags: string[] = [];
+      const restarted: string[] = [];
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: () => true,
+        getAgentSessionById: () => processingState('processing'),
+        injectRuntimeRecoveryMessage: async (sessionId) => {
+          nags.push(sessionId);
+          return `runtime-nag:${sessionId}`;
+        },
+        restartStuckSubSession: async (sessionId) => {
+          restarted.push(sessionId);
+        },
+      });
+      const rt = new SpaceRuntime(
+        buildConfig(tam, { agentNoProgressThresholdMs: 60_000, agentStuckNagGraceMs: 0 })
+      );
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session:active-stuck',
+        startedAt: Date.now() - 20 * 60_000,
+      });
+      saveAssistantMessage('session:active-stuck', { minutesAgo: 20, toolUse: true });
+
+      await rt.executeTick();
+      await rt.executeTick();
+
+      expect(nags).toEqual(['session:active-stuck']);
+      expect(restarted).toEqual(['session:active-stuck']);
+    });
+
+    test('stopped space does not auto-retry a blocked run across ticks', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: 'Agent session crashed',
+      });
+      taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+      db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
+
+      for (let i = 0; i < 3; i++) {
+        await rt.executeTick();
+      }
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+      expect(nodeExecutionRepo.getById(execution.id)?.result).toBe('Agent session crashed');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('blocked');
+    });
+
+    test('active space control: blocked run is auto-retried back to in_progress', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: 'Agent session crashed',
+      });
+      taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('pending');
+      expect(nodeExecutionRepo.getById(execution.id)?.result).toBeNull();
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('in_progress');
+    });
+
+    test('stopped space emits no needs_attention once blocked-run retries are exhausted', async () => {
+      const notifications: Array<{ runId?: string }> = [];
+      internalEventBus.subscribe(
+        'space.workflowRun.needsAttention',
+        (payload) => {
+          notifications.push({ runId: payload.runId });
+        },
+        { subscriberName: 'test-quiet-supervision:stopped' }
+      );
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: 'Agent session crashed',
+      });
+      taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+      (rt as unknown as { blockedRetryCounts: Map<string, number> }).blockedRetryCounts.set(
+        run.id,
+        MAX_BLOCKED_RUN_RETRIES
+      );
+      db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
+
+      for (let i = 0; i < 3; i++) {
+        await rt.executeTick();
+      }
+
+      expect(notifications).toEqual([]);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('blocked');
+    });
+
+    test('active space control: exhausted blocked-run retries still emit needs_attention', async () => {
+      const notifications: Array<{ runId?: string }> = [];
+      internalEventBus.subscribe(
+        'space.workflowRun.needsAttention',
+        (payload) => {
+          notifications.push({ runId: payload.runId });
+        },
+        { subscriberName: 'test-quiet-supervision:active' }
+      );
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: 'Agent session crashed',
+      });
+      taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+      (rt as unknown as { blockedRetryCounts: Map<string, number> }).blockedRetryCounts.set(
+        run.id,
+        MAX_BLOCKED_RUN_RETRIES
+      );
+
+      await rt.executeTick();
+
+      expect(notifications.filter((n) => n.runId === run.id).length).toBeGreaterThanOrEqual(1);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
     });
   });
 
