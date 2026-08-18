@@ -5795,8 +5795,11 @@ export class SpaceRuntime {
     canonicalTask: SpaceTask,
     nodeExecutions: NodeExecution[],
     tam: TaskAgentManager,
-    workflow: SpaceWorkflow
+    workflow: SpaceWorkflow,
+    space?: Space | null
   ): Promise<'none' | 'restarted' | 'blocked'> {
+    if (space?.paused || space?.stopped) return 'none';
+
     const nagGraceMs = this.config.agentStuckNagGraceMs ?? DEFAULT_AGENT_STUCK_NAG_GRACE_MS;
     const now = Date.now();
     for (const execution of nodeExecutions) {
@@ -6191,7 +6194,8 @@ export class SpaceRuntime {
         canonicalTask,
         nodeExecutions,
         tam,
-        meta.workflow
+        meta.workflow,
+        space ?? null
       );
       if (aliveStuckOutcome === 'restarted' || aliveStuckOutcome === 'blocked') {
         return;
@@ -7619,10 +7623,12 @@ export class SpaceRuntime {
 
     if (blockedExecutions.length === 0) return;
 
+    const space = await this.config.spaceManager.getSpace(meta.spaceId);
+    if (space?.paused || space?.stopped) return;
+
     const blockedReason = blockedExecutions[0].result ?? 'Unknown blocked reason';
 
     if (retryCount < MAX_BLOCKED_RUN_RETRIES) {
-      const space = await this.config.spaceManager.getSpace(meta.spaceId);
       if (this.getAvailableTaskSlots(space) <= 0) return;
 
       for (const execution of blockedExecutions) {
