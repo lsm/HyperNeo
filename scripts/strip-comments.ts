@@ -112,7 +112,7 @@ async function main(): Promise<void> {
 
   let files: string[];
   if (filesIdx !== -1) {
-    files = args.slice(filesIdx + 1);
+    files = args.slice(filesIdx + 1).filter((a) => !a.startsWith('--'));
   } else {
     const proc = Bun.spawnSync(['git', 'ls-files', '*.ts', '*.tsx']);
     files = proc.stdout
