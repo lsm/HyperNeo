@@ -1900,7 +1900,7 @@ export class SpaceRuntime {
     if (currentExecution?.status === 'blocked') return null;
     if (!this.hasAnyExecutionForTarget(target)) return null;
     const space = await this.config.spaceManager.getSpace(task.spaceId);
-    if (!space || space.paused || space.stopped) return target;
+    if (!space || space.paused || space.stopped || task.status === 'stopped') return target;
     const activate = this.config.taskAgentManager?.activateTargetSessionsForMessage;
     if (!activate) return null;
 
@@ -2945,6 +2945,9 @@ export class SpaceRuntime {
     if (task.status === 'cancelled' || task.status === 'archived' || task.status === 'done') {
       return { action: 'fail', reason: 'target_task_terminal' };
     }
+    if (task.status === 'stopped') {
+      return { action: 'hold' };
+    }
 
     return { action: 'deliver' };
   }
@@ -3567,6 +3570,9 @@ export class SpaceRuntime {
       throw new Error(`Invalid status transition from '${task.status}' to 'stopped'.`);
     }
 
+    const updated = await this.getOrCreateTaskManager(spaceId).setTaskStatus(taskId, 'stopped');
+    await this.safeOnTaskUpdated(spaceId, updated);
+
     const tam = this.config.taskAgentManager;
     const liveSessionIds = this.collectLiveSessionIdsForTask(task);
     let verifiedTotal = 0;
@@ -3603,13 +3609,11 @@ export class SpaceRuntime {
 
     const parkedRunId = this.parkInFlightExecutionsForTask(taskId);
 
-    const updated = await this.getOrCreateTaskManager(spaceId).setTaskStatus(taskId, 'stopped');
-    await this.safeOnTaskUpdated(spaceId, updated);
-
     log.info(
-      `parkStoppedWorkflowTask: verified-stopped ${verifiedStopped}/${verifiedTotal} session(s) ` +
-        `and parked ${parkedRunId ? `in-flight executions for run ${parkedRunId}` : 'no run executions'} ` +
-        `for task ${taskId} — run status preserved, task set to stopped`
+      `parkStoppedWorkflowTask: task ${taskId} set to stopped first; verified-stopped ` +
+        `${verifiedStopped}/${verifiedTotal} session(s) and parked ` +
+        `${parkedRunId ? `in-flight executions for run ${parkedRunId}` : 'no run executions'} ` +
+        `— run status preserved`
     );
     return updated;
   }
@@ -5017,6 +5021,7 @@ export class SpaceRuntime {
 
     const tasks = this.config.taskRepo.listByWorkflowRun(run.id);
     const canonicalTask = this.pickCanonicalTaskForRun(run, tasks);
+    if (canonicalTask?.status === 'stopped') return 'skipped';
 
     const completionSignalled =
       canonicalTask !== null &&
@@ -6470,14 +6475,18 @@ export class SpaceRuntime {
         (execution) => execution.status === 'pending'
       );
 
+      const freshCanonicalTask = this.config.taskRepo.getTask(canonicalTask.id);
+      if (freshCanonicalTask) canonicalTask = freshCanonicalTask;
+
       const canonicalTaskIsTerminal =
         canonicalTask.status === 'done' ||
         canonicalTask.status === 'cancelled' ||
-        canonicalTask.status === 'archived';
+        canonicalTask.status === 'archived' ||
+        canonicalTask.status === 'stopped';
 
       if (pendingExecutions.length > 0 && canonicalTaskIsTerminal) {
         log.info(
-          `SpaceRuntime: skipping agent spawn for run ${runId} — canonical task ${canonicalTask.id} is terminal (${canonicalTask.status})`
+          `SpaceRuntime: skipping agent spawn for run ${runId} — canonical task ${canonicalTask.id} status is ${canonicalTask.status}`
         );
       } else if (pendingExecutions.length > 0) {
         if (!space) {
@@ -7063,7 +7072,8 @@ export class SpaceRuntime {
       canonicalTask.status === 'approved' ||
       canonicalTask.status === 'done' ||
       canonicalTask.status === 'cancelled' ||
-      canonicalTask.status === 'archived'
+      canonicalTask.status === 'archived' ||
+      canonicalTask.status === 'stopped'
     ) {
       return 'none';
     }

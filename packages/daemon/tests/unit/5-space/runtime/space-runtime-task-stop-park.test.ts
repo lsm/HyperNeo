@@ -12,7 +12,7 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type { NodeExecutionStatus, SpaceWorkflow } from '@hyperneo/shared';
+import type { NodeExecutionStatus, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 
@@ -93,6 +93,12 @@ interface ParkTam {
   restartStuckSubSession: (sessionId: string) => Promise<void>;
   injectIntoTaskAgent: () => Promise<{ injected: boolean; reason: string }>;
   rehydrate: () => Promise<void>;
+  activateTargetSessionsForMessage: (
+    taskId: string,
+    workflowRunId: string,
+    agentName: string,
+    options?: unknown
+  ) => Promise<Array<{ agentName: string; sessionId: string }>>;
 }
 
 function makeParkTam(
@@ -100,16 +106,24 @@ function makeParkTam(
   opts: {
     liveSessionIds?: string[];
     subSessionsByTask?: Record<string, string[]>;
+    verifiedStopOutcome?: 'ok' | 'partial' | 'reject';
+    cleanupRejects?: boolean;
   } = {}
 ): ParkTam & {
   _spawned: Array<{ taskId: string; executionId: string; options: unknown }>;
   _verifiedStopCalls: string[][];
   _cleanupCalls: Array<{ taskId: string; reason: string }>;
+  _injectCalls: string[];
+  _restartCalls: string[];
+  _activateCalls: Array<{ taskId: string; agentName: string }>;
 } {
   const live = new Set(opts.liveSessionIds ?? []);
   const spawned: Array<{ taskId: string; executionId: string; options: unknown }> = [];
   const verifiedStopCalls: string[][] = [];
   const cleanupCalls: Array<{ taskId: string; reason: string }> = [];
+  const injectCalls: string[] = [];
+  const restartCalls: string[] = [];
+  const activateCalls: Array<{ taskId: string; agentName: string }> = [];
   return {
     isSessionAlive: (sessionId) => live.has(sessionId),
     isSessionInMemory: (sessionId) => live.has(sessionId),
@@ -122,11 +136,24 @@ function makeParkTam(
       taskIds.flatMap((taskId) => opts.subSessionsByTask?.[taskId] ?? []),
     stopSessionsVerified: async (sessionIds) => {
       verifiedStopCalls.push([...sessionIds]);
+      if (opts.verifiedStopOutcome === 'reject') {
+        throw new Error('verified stop exploded');
+      }
       for (const sessionId of sessionIds) live.delete(sessionId);
+      if (opts.verifiedStopOutcome === 'partial') {
+        return sessionIds.map((sessionId, index) =>
+          index === 0
+            ? { sessionId, stopped: true }
+            : { sessionId, stopped: false, detail: 'still alive: processing state' }
+        );
+      }
       return sessionIds.map((sessionId) => ({ sessionId, stopped: true }));
     },
     cleanup: async (taskId, reason) => {
       cleanupCalls.push({ taskId, reason });
+      if (opts.cleanupRejects) {
+        throw new Error('cleanup exploded');
+      }
     },
     spawnWorkflowNodeAgentForExecution: async (
       task,
@@ -152,13 +179,25 @@ function makeParkTam(
     getAgentSessionById: () => null,
     interruptBySessionId: async () => {},
     cancelBySessionId: () => {},
-    injectRuntimeRecoveryMessage: async (sessionId) => `runtime-nag:${sessionId}`,
-    restartStuckSubSession: async () => {},
+    injectRuntimeRecoveryMessage: async (sessionId) => {
+      injectCalls.push(sessionId);
+      return `runtime-nag:${sessionId}`;
+    },
+    restartStuckSubSession: async (sessionId) => {
+      restartCalls.push(sessionId);
+    },
     injectIntoTaskAgent: async () => ({ injected: false, reason: 'no-session' }),
     rehydrate: async () => {},
+    activateTargetSessionsForMessage: async (taskId, _workflowRunId, agentName) => {
+      activateCalls.push({ taskId, agentName });
+      return [];
+    },
     _spawned: spawned,
     _verifiedStopCalls: verifiedStopCalls,
     _cleanupCalls: cleanupCalls,
+    _injectCalls: injectCalls,
+    _restartCalls: restartCalls,
+    _activateCalls: activateCalls,
   };
 }
 
@@ -336,7 +375,7 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       seedExec(run.id, stepD, 'Step D', 'cancelled', {
         agentSessionId: 'session-dead',
       });
-      const tam = makeParkTam(nodeExecutionRepo, {
+      const baseTam = makeParkTam(nodeExecutionRepo, {
         liveSessionIds: [
           'session-in-flight',
           'session-rebind',
@@ -346,8 +385,18 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
         ],
         subSessionsByTask: { [task.id]: ['session-sub-extra'] },
       });
+      const taskStatusAtVerifiedStop: Array<string | null> = [];
+      const tam = {
+        ...baseTam,
+        stopSessionsVerified: async (sessionIds: string[]) => {
+          taskStatusAtVerifiedStop.push(taskRepo.getTask(task.id)?.status ?? null);
+          return baseTam.stopSessionsVerified(sessionIds);
+        },
+      };
 
       const updated = await buildRuntime(tam).parkStoppedWorkflowTask(SPACE_ID, task.id);
+
+      expect(taskStatusAtVerifiedStop).toEqual(['stopped']);
 
       expect(tam._verifiedStopCalls).toHaveLength(1);
       expect([...tam._verifiedStopCalls[0]].sort()).toEqual(
@@ -446,6 +495,221 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
     });
   });
 
+  describe('interrupt fail-open outcomes', () => {
+    async function seedStoppableTask() {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Fail-Open Run');
+      const task = seedTask(run.id, { taskAgentSessionId: 'session-task-agent' });
+      const exec = seedExec(run.id, stepA, 'Step A', 'in_progress', {
+        agentSessionId: 'session-in-flight',
+      });
+      return { run, task, exec };
+    }
+
+    test('a partially-verified stop still parks executions and writes stopped', async () => {
+      const { run, task, exec } = await seedStoppableTask();
+      const tam = makeParkTam(nodeExecutionRepo, {
+        liveSessionIds: ['session-in-flight', 'session-task-agent'],
+        verifiedStopOutcome: 'partial',
+      });
+
+      const updated = await buildRuntime(tam).parkStoppedWorkflowTask(SPACE_ID, task.id);
+
+      expect(updated?.status).toBe('stopped');
+      expect(tam._verifiedStopCalls).toHaveLength(1);
+      const parked = nodeExecutionRepo.getById(exec.id)!;
+      expect(parked.status).toBe('pending');
+      expect(parked.agentSessionId).toBeNull();
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    });
+
+    test('stopSessionsVerified rejecting still parks executions and writes stopped', async () => {
+      const { run, task, exec } = await seedStoppableTask();
+      const tam = makeParkTam(nodeExecutionRepo, {
+        liveSessionIds: ['session-in-flight', 'session-task-agent'],
+        verifiedStopOutcome: 'reject',
+      });
+
+      const updated = await buildRuntime(tam).parkStoppedWorkflowTask(SPACE_ID, task.id);
+
+      expect(updated?.status).toBe('stopped');
+      expect(nodeExecutionRepo.getById(exec.id)?.status).toBe('pending');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    });
+
+    test('cleanup rejecting still parks executions and writes stopped', async () => {
+      const { run, task, exec } = await seedStoppableTask();
+      const tam = makeParkTam(nodeExecutionRepo, {
+        liveSessionIds: ['session-in-flight'],
+        cleanupRejects: true,
+      });
+
+      const updated = await buildRuntime(tam).parkStoppedWorkflowTask(SPACE_ID, task.id);
+
+      expect(updated?.status).toBe('stopped');
+      expect(tam._cleanupCalls).toHaveLength(1);
+      expect(nodeExecutionRepo.getById(exec.id)?.status).toBe('pending');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    });
+  });
+
+  describe('stopped-task guards', () => {
+    function saveAssistantMessage(
+      sessionId: string,
+      opts: { minutesAgo: number; terminal?: boolean }
+    ): void {
+      const content = [{ type: 'text', text: 'work update' }];
+      const message = {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content,
+          stop_reason: opts.terminal ? 'end_turn' : null,
+        },
+      };
+      sdkMessageRepo.saveSDKMessage(sessionId, message as never);
+      const timestamp = new Date(Date.now() - opts.minutesAgo * 60_000).toISOString();
+      db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE session_id = ?`).run(
+        timestamp,
+        sessionId
+      );
+    }
+
+    test('attemptBlockedRunRecovery does not auto-retry a stopped task run', async () => {
+      const tam = makeParkTam(nodeExecutionRepo);
+      const rt = buildRuntime(tam);
+
+      const { workflow } = buildWorkflow(SPACE_ID);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Blocked Run');
+      const task = tasks[0];
+      await rt.executeTick();
+      const exec = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(exec.id, { status: 'blocked', result: 'agent blocked' });
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+
+      await rt.parkStoppedWorkflowTask(SPACE_ID, task.id);
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      expect(nodeExecutionRepo.getById(exec.id)?.status).toBe('blocked');
+      expect(taskRepo.getTask(task.id)?.status).toBe('stopped');
+      const internals = rt as unknown as { blockedRetryCounts: Map<string, number> };
+      expect(internals.blockedRetryCounts.has(run.id)).toBe(false);
+    });
+
+    test('recoverStalledRunsForSpace leaves an all-idle stopped run untouched', async () => {
+      const tam = makeParkTam(nodeExecutionRepo);
+      const rt = buildRuntime(tam);
+
+      const { workflow } = buildWorkflow(SPACE_ID);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Idle Stop Run');
+      const task = tasks[0];
+      await rt.executeTick();
+      const exec = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      saveAssistantMessage(exec.agentSessionId!, { minutesAgo: 30, terminal: true });
+      nodeExecutionRepo.update(exec.id, { status: 'idle', completedAt: Date.now() });
+
+      await rt.parkStoppedWorkflowTask(SPACE_ID, task.id);
+      const idsBefore = nodeExecutionRepo.listByWorkflowRun(run.id).map((e) => e.id);
+
+      await rt.recoverStalledRunsForSpace(SPACE_ID);
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)?.status).toBe('stopped');
+      const after = nodeExecutionRepo.listByWorkflowRun(run.id);
+      expect(after.map((e) => e.id)).toEqual(idsBefore);
+      expect(after[0]?.status).toBe('idle');
+    });
+
+    test('handleNonTerminalIdleExecutions returns none for a stopped task without nudging', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Nudge Run');
+      const task = seedTask(run.id);
+      seedExec(run.id, stepA, 'Step A', 'idle', { agentSessionId: 'session-idle' });
+      saveAssistantMessage('session-idle', { minutesAgo: 1 });
+      const tam = makeParkTam(nodeExecutionRepo, { liveSessionIds: ['session-idle'] });
+      const rt = buildRuntime(tam);
+      const internals = rt as unknown as {
+        handleNonTerminalIdleExecutions: (
+          runId: string,
+          spaceId: string,
+          canonicalTask: SpaceTask,
+          workflow?: unknown,
+          tam?: unknown,
+          space?: unknown
+        ) => Promise<string>;
+      };
+
+      const stoppedTask = { ...taskRepo.getTask(task.id)!, status: 'stopped' as const };
+      await expect(
+        internals.handleNonTerminalIdleExecutions(
+          run.id,
+          SPACE_ID,
+          stoppedTask,
+          undefined,
+          tam,
+          null
+        )
+      ).resolves.toBe('none');
+      expect(tam._injectCalls).toHaveLength(0);
+      expect(tam._restartCalls).toHaveLength(0);
+
+      await expect(
+        internals.handleNonTerminalIdleExecutions(
+          run.id,
+          SPACE_ID,
+          taskRepo.getTask(task.id)!,
+          undefined,
+          tam,
+          null
+        )
+      ).resolves.toBe('preserved');
+    });
+
+    test('prepareExternalEventTask holds deliveries for a stopped task', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Event Run');
+      const task = seedTask(run.id);
+      seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-a' });
+      await buildRuntime().parkStoppedWorkflowTask(SPACE_ID, task.id);
+
+      const rt = buildRuntime();
+      const internals = rt as unknown as {
+        prepareExternalEventTask: (target: unknown, event: unknown) => { action: string };
+      };
+      const decision = internals.prepareExternalEventTask(
+        { workflowRunId: run.id, taskId: task.id, nodeId: stepA, agentName: 'Step A' },
+        { spaceId: SPACE_ID, eventId: 'event-1' }
+      );
+
+      expect(decision).toEqual({ action: 'hold' });
+    });
+
+    test('activateSubscribedTargetForExternalEvent defers stopped tasks without activating', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Subscribe Run');
+      const task = seedTask(run.id);
+      seedExec(run.id, stepA, 'Step A', 'in_progress', { agentSessionId: 'session-a' });
+      const tam = makeParkTam(nodeExecutionRepo, { liveSessionIds: ['session-a'] });
+      const rt = buildRuntime(tam);
+      await rt.parkStoppedWorkflowTask(SPACE_ID, task.id);
+
+      const internals = rt as unknown as {
+        activateSubscribedTargetForExternalEvent: (target: unknown) => Promise<unknown>;
+      };
+      const target = {
+        workflowRunId: run.id,
+        taskId: task.id,
+        nodeId: stepA,
+        agentName: 'Step A',
+      };
+      const activated = await internals.activateSubscribedTargetForExternalEvent(target);
+
+      expect(activated).toEqual(target);
+      expect(tam._activateCalls).toHaveLength(0);
+    });
+  });
+
   describe('supervision and resume', () => {
     test('skips spawn, nag, and restart supervision for a stopped task across ticks, then resume re-drives with fresh budgets', async () => {
       const tam = makeParkTam(nodeExecutionRepo);
@@ -485,6 +749,8 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
 
       expect(tam._spawned).toHaveLength(1);
       expect(tam._verifiedStopCalls).toHaveLength(1);
+      expect(tam._injectCalls).toHaveLength(0);
+      expect(tam._restartCalls).toHaveLength(0);
       const parkedExecution = nodeExecutionRepo
         .listByWorkflowRun(run.id)
         .find((e) => e.id === executionsBeforeStop[0].id)!;
