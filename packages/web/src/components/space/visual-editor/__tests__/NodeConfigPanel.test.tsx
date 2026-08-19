@@ -1014,6 +1014,36 @@ describe('NodeConfigPanel', () => {
       );
     });
 
+    it('slot prompts textarea preserves spaces and newlines typed at the end', async () => {
+      function Wrapper() {
+        const [step, setStep] = useState(
+          makeStep({
+            agentId: '',
+            agents: [
+              { agentId: 'agent-1', name: 'planner' },
+              { agentId: 'agent-2', name: 'coder' },
+            ],
+          })
+        );
+        return <NodeConfigPanel {...makeProps({ step, onUpdate: setStep })} />;
+      }
+      const { getAllByTestId, getByTestId } = render(<Wrapper />);
+
+      fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
+      const textarea = getByTestId('slot-prompts-system-prompt') as HTMLTextAreaElement;
+
+      const target = 'Review the diff.\nFocus on:\n- edge cases ';
+      for (let i = 1; i <= target.length; i++) {
+        const partial = target.slice(0, i);
+        await act(async () => {
+          fireEvent.input(textarea, { target: { value: partial } });
+        });
+      }
+
+      expect(textarea.isConnected).toBe(true);
+      expect(textarea.value).toBe(target);
+    });
+
     it('slot prompts editor stays addressable after a slot role rename', async () => {
       function Wrapper() {
         const [step, setStep] = useState(

@@ -158,7 +158,7 @@ export function extractOverrideValue(
 }
 
 export function buildOverride(value: string): WorkflowNodeAgentOverride | undefined {
-  return value.trim() ? { value: value.trim() } : undefined;
+  return value.trim() ? { value } : undefined;
 }
 
 interface MultiAgentSectionProps {
