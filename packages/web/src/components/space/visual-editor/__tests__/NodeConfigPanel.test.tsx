@@ -983,6 +983,37 @@ describe('NodeConfigPanel', () => {
       expect(updatedStep.agents[1].customPrompt).toBeUndefined();
     });
 
+    it('slot prompts textarea stays mounted while typing', async () => {
+      function Wrapper() {
+        const [step, setStep] = useState(
+          makeStep({
+            agentId: '',
+            agents: [
+              { agentId: 'agent-1', name: 'planner' },
+              { agentId: 'agent-2', name: 'coder' },
+            ],
+          })
+        );
+        return <NodeConfigPanel {...makeProps({ step, onUpdate: setStep })} />;
+      }
+      const { getAllByTestId, getByTestId } = render(<Wrapper />);
+
+      fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
+      const textarea = getByTestId('slot-prompts-system-prompt') as HTMLTextAreaElement;
+
+      await act(async () => {
+        fireEvent.input(textarea, { target: { value: 'Review the diff.' } });
+      });
+      await act(async () => {
+        fireEvent.input(textarea, { target: { value: 'Review the diff carefully.' } });
+      });
+
+      expect(textarea.isConnected).toBe(true);
+      expect((getByTestId('slot-prompts-system-prompt') as HTMLTextAreaElement).value).toBe(
+        'Review the diff carefully.'
+      );
+    });
+
     it('slot prompts editor stays addressable after a slot role rename', async () => {
       function Wrapper() {
         const [step, setStep] = useState(
@@ -1093,6 +1124,7 @@ describe('NodeConfigPanel', () => {
       const { getAllByTestId, getByTestId } = renderControlled(multiAgentStep());
       fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
       fireEvent.click(getByTestId('prompt-mode-replace'));
+      fireEvent.click(getByTestId('node-panel-back-button'));
       fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
       expect(getByTestId('replace-prompt-warning')).toBeTruthy();
     });
@@ -1148,6 +1180,7 @@ describe('NodeConfigPanel', () => {
 
         fireEvent.click(getByTestId('edit-single-prompts-button'));
         fireEvent.click(getByTestId('prompt-mode-append'));
+        fireEvent.click(getByTestId('node-panel-back-button'));
         fireEvent.click(getByTestId('edit-single-prompts-button'));
         expect(queryByTestId('replace-prompt-warning')).toBeNull();
         expect((getByTestId('prompt-mode-append') as HTMLButtonElement).className).toContain(
