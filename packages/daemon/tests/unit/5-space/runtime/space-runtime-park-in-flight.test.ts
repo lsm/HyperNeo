@@ -277,15 +277,15 @@ describe('SpaceRuntime — parkInFlightExecutionsForSpace()', () => {
     expect(untouchedOther.agentSessionId).toBe('session-other');
   });
 
-  test('clears stuck state, crash counts, and retry budgets for affected runs only', () => {
+  test('clears stuck state, crash counts, and retry budgets for every run of the space only', () => {
     const first = buildWorkflow(SPACE_ID);
     const affectedRun = createRun(SPACE_ID, first.workflow.id, 'Affected Run');
     const execA = seedExec(affectedRun.id, first.stepA, 'Step A', 'in_progress', {
       agentSessionId: 'session-a',
     });
     const second = buildWorkflow(SPACE_ID);
-    const unaffectedRun = createRun(SPACE_ID, second.workflow.id, 'Unaffected Run');
-    const execUnaffected = seedExec(unaffectedRun.id, second.stepA, 'Step A', 'idle', {
+    const idleOnlyRun = createRun(SPACE_ID, second.workflow.id, 'Idle-Only Run');
+    const execIdleOnly = seedExec(idleOnlyRun.id, second.stepA, 'Step A', 'idle', {
       agentSessionId: 'session-idle',
     });
     const other = buildWorkflow(OTHER_SPACE_ID, OTHER_AGENT);
@@ -327,11 +327,11 @@ describe('SpaceRuntime — parkInFlightExecutionsForSpace()', () => {
     });
     internals.taskCrashCounts.set(`${affectedRun.id}:${execA.id}`, 2);
     internals.blockedRetryCounts.set(affectedRun.id, 1);
-    internals.agentStuckRecovery.set(`${unaffectedRun.id}:${execUnaffected.id}`, {
+    internals.agentStuckRecovery.set(`${idleOnlyRun.id}:${execIdleOnly.id}`, {
       nagCount: 1,
     });
-    internals.taskCrashCounts.set(`${unaffectedRun.id}:${execUnaffected.id}`, 1);
-    internals.blockedRetryCounts.set(unaffectedRun.id, 2);
+    internals.taskCrashCounts.set(`${idleOnlyRun.id}:${execIdleOnly.id}`, 1);
+    internals.blockedRetryCounts.set(idleOnlyRun.id, 2);
     internals.agentStuckRecovery.set(`${runOther.id}:${execOther.id}`, { nagCount: 1 });
     internals.taskCrashCounts.set(`${runOther.id}:${execOther.id}`, 1);
     internals.blockedRetryCounts.set(runOther.id, 3);
@@ -342,17 +342,15 @@ describe('SpaceRuntime — parkInFlightExecutionsForSpace()', () => {
     expect(internals.nonTerminalIdleStates.has(`${affectedRun.id}:${execA.id}`)).toBe(false);
     expect(internals.taskCrashCounts.has(`${affectedRun.id}:${execA.id}`)).toBe(false);
     expect(internals.blockedRetryCounts.has(affectedRun.id)).toBe(false);
-    expect(internals.agentStuckRecovery.get(`${unaffectedRun.id}:${execUnaffected.id}`)).toEqual({
-      nagCount: 1,
-    });
-    expect(internals.taskCrashCounts.get(`${unaffectedRun.id}:${execUnaffected.id}`)).toBe(1);
-    expect(internals.blockedRetryCounts.get(unaffectedRun.id)).toBe(2);
+    expect(internals.agentStuckRecovery.has(`${idleOnlyRun.id}:${execIdleOnly.id}`)).toBe(false);
+    expect(internals.blockedRetryCounts.has(idleOnlyRun.id)).toBe(false);
+    expect(internals.taskCrashCounts.get(`${idleOnlyRun.id}:${execIdleOnly.id}`)).toBe(1);
     expect(internals.agentStuckRecovery.get(`${runOther.id}:${execOther.id}`)).toEqual({
       nagCount: 1,
     });
     expect(internals.taskCrashCounts.get(`${runOther.id}:${execOther.id}`)).toBe(1);
     expect(internals.blockedRetryCounts.get(runOther.id)).toBe(3);
-    expect(nodeExecutionRepo.getById(execUnaffected.id)?.status).toBe('idle');
+    expect(nodeExecutionRepo.getById(execIdleOnly.id)?.status).toBe('idle');
     expect(nodeExecutionRepo.getById(execOther.id)?.status).toBe('in_progress');
   });
 

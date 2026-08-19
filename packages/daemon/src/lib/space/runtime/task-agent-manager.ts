@@ -2280,7 +2280,21 @@ export class TaskAgentManager {
     log.info(`TaskAgentManager: shutdown complete for task ${taskId} (DB state preserved)`);
   }
 
-  async cleanup(taskId: string, reason: 'done' | 'cancelled' = 'done'): Promise<void> {
+  listLiveSessionTaskIdsForSpace(spaceId: string): string[] {
+    const prefix = `space:${spaceId}:task:`;
+    const taskIds: string[] = [];
+    for (const [taskId, nodeMap] of this.subSessions) {
+      for (const subSessionId of nodeMap.keys()) {
+        if (subSessionId.startsWith(prefix)) {
+          taskIds.push(taskId);
+          break;
+        }
+      }
+    }
+    return taskIds;
+  }
+
+  async cleanup(taskId: string, reason: 'done' | 'cancelled' | 'stopped' = 'done'): Promise<void> {
     const sessionIdsToClean = new Set<string>();
 
     const nodeMap = this.subSessions.get(taskId);

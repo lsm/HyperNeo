@@ -332,11 +332,11 @@ export function setupSpaceHandlers(
       throw new Error('id is required');
     }
 
+    const space = await spaceManager.stopSpace(params.id);
+
     if (spaceRuntimeService) {
       await spaceRuntimeService.stopActiveWork(params.id);
     }
-
-    const space = await spaceManager.stopSpace(params.id);
 
     internalEventBus
       .publish('space.updated', { sessionId: 'global', spaceId: params.id, space })

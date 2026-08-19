@@ -912,74 +912,37 @@ export class SpaceRuntimeService {
   }
 
   async stopActiveWork(spaceId: string): Promise<void> {
-    const { taskRepo, workflowRunRepo } = this.config;
+    const { taskRepo } = this.config;
 
     this.runtime.holdSpaceDeliveries(spaceId);
 
-    const activeTasks = taskRepo
-      .listBySpace(spaceId)
-      .filter(
-        (t) => t.status === 'in_progress' || t.status === 'open' || isRateOrUsageLimited(t.status)
-      );
+    const cleanupTaskIds = new Set(
+      taskRepo
+        .listBySpace(spaceId)
+        .filter(
+          (t) => t.status === 'in_progress' || t.status === 'open' || isRateOrUsageLimited(t.status)
+        )
+        .map((t) => t.id)
+    );
+    if (this.taskAgentManager) {
+      for (const taskId of this.taskAgentManager.listLiveSessionTaskIdsForSpace(spaceId)) {
+        cleanupTaskIds.add(taskId);
+      }
+    }
 
     await Promise.allSettled(
-      activeTasks.map(async (task) => {
-        if (this.taskAgentManager) {
-          await this.taskAgentManager.cleanup(task.id, 'cancelled').catch((err: unknown) => {
-            log.warn(`stopActiveWork: failed to cleanup agent session for task ${task.id}:`, err);
-          });
-        }
-        taskRepo.updateTask(task.id, { status: 'cancelled' });
+      [...cleanupTaskIds].map(async (taskId) => {
+        if (!this.taskAgentManager) return;
+        await this.taskAgentManager.cleanup(taskId, 'stopped').catch((err: unknown) => {
+          log.warn(`stopActiveWork: failed to cleanup agent session for task ${taskId}:`, err);
+        });
       })
     );
-    const processedTaskIds = new Set(activeTasks.map((t) => t.id));
-    const reactivatedTasks = taskRepo
-      .listBySpace(spaceId)
-      .filter(
-        (t) => !processedTaskIds.has(t.id) && (t.status === 'in_progress' || t.status === 'open')
-      );
-    for (const task of reactivatedTasks) {
-      if (this.taskAgentManager) {
-        await this.taskAgentManager.cleanup(task.id, 'cancelled').catch((err: unknown) => {
-          log.warn(`stopActiveWork: failed to cleanup reactivated task ${task.id}:`, err);
-        });
-      }
-      taskRepo.updateTask(task.id, { status: 'cancelled' });
-    }
-    if (this.config.internalEventBus) {
-      for (const task of [...activeTasks, ...reactivatedTasks]) {
-        const cancelled = taskRepo.getTask(task.id);
-        if (!cancelled) continue;
-        void this.config.internalEventBus
-          .publish('space.task.updated', {
-            sessionId: 'global',
-            spaceId,
-            taskId: task.id,
-            task: cancelled,
-          })
-          .catch((err: unknown) => {
-            log.warn(`stopActiveWork: failed to emit task.updated for task ${task.id}:`, err);
-          });
-      }
-    }
 
-    const activeRuns = workflowRunRepo
-      .listBySpace(spaceId)
-      .filter(
-        (r) => r.status === 'pending' || r.status === 'in_progress' || r.status === 'blocked'
-      );
-
-    for (const run of activeRuns) {
-      try {
-        workflowRunRepo.transitionStatus(run.id, 'cancelled');
-      } catch (err) {
-        log.warn(`stopActiveWork: failed to cancel workflow run ${run.id}:`, err);
-      }
-      this.runtime.clearRunInterests(run.id);
-    }
+    this.runtime.parkInFlightExecutionsForSpace(spaceId);
 
     log.info(
-      `stopActiveWork: cancelled ${activeTasks.length} tasks and ${activeRuns.length} workflow runs for space ${spaceId}`
+      `stopActiveWork: interrupted ${cleanupTaskIds.size} task session(s) and parked in-flight executions for space ${spaceId} — task/run statuses preserved`
     );
   }
 

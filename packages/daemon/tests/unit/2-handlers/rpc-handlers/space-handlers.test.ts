@@ -664,12 +664,22 @@ describe('space-handlers', () => {
       setup(mockSpace, undefined, mockRuntimeService);
     });
 
-    it('stops active work via runtime service, marks space stopped, and publishes space.updated', async () => {
+    it('marks the space stopped before quiescing active work and publishes space.updated', async () => {
       const stoppedSpace = { ...mockSpace, stopped: true };
-      (spaceManager.stopSpace as ReturnType<typeof mock>).mockResolvedValue(stoppedSpace);
+      const callOrder: string[] = [];
+      (spaceManager.stopSpace as ReturnType<typeof mock>).mockImplementation(async () => {
+        callOrder.push('stopSpace');
+        return stoppedSpace;
+      });
+      (mockRuntimeService.stopActiveWork as ReturnType<typeof mock>).mockImplementation(
+        async () => {
+          callOrder.push('stopActiveWork');
+        }
+      );
 
       const result = await call('space.stop', { id: 'space-1' });
 
+      expect(callOrder).toEqual(['stopSpace', 'stopActiveWork']);
       expect(mockRuntimeService.stopActiveWork).toHaveBeenCalledWith('space-1');
       expect(spaceManager.stopSpace).toHaveBeenCalledWith('space-1');
       expect((result as Space).stopped).toBe(true);
