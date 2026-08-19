@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { SpaceWorkflow, NodeExecution, Space } from '@hyperneo/shared';
@@ -103,6 +103,75 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
       ]);
       expect(manager.listLiveSessionTaskIdsForSpace('space-b')).toEqual(['task-3']);
       expect(manager.listLiveSessionTaskIdsForSpace('space-c')).toEqual([]);
+    });
+  });
+
+  describe('rehydrate skips stopped spaces', () => {
+    const SPACE_ID = 'space-rehydrate-stopped';
+    const RUN_ID = 'run-rehydrate-stopped';
+    const TASK_ID = 'task-rehydrate-stopped';
+    const SUB_SESSION_ID = `space:${SPACE_ID}:task:${TASK_ID}:exec:exec-rehydrate-stopped`;
+
+    function makeRehydrateManager(space: Space | null): {
+      manager: TaskAgentManager;
+      restoreMock: ReturnType<typeof mock>;
+      listExecutionsMock: ReturnType<typeof mock>;
+    } {
+      const task = {
+        id: TASK_ID,
+        spaceId: SPACE_ID,
+        workflowRunId: RUN_ID,
+      };
+      const execution = {
+        id: 'exec-rehydrate-stopped',
+        workflowRunId: RUN_ID,
+        workflowNodeId: 'node-1',
+        agentName: 'coder',
+        agentSessionId: SUB_SESSION_ID,
+        status: 'in_progress',
+      };
+      const restoreMock = mock(async () => null);
+      const listExecutionsMock = mock(() => [execution]);
+      const db = new BunDatabase(':memory:');
+      const manager = new TaskAgentManager({
+        db: { getDatabase: () => db },
+        internalEventBus: { subscribe: () => () => {} },
+        taskRepo: {
+          listActive: () => [task],
+          listByWorkflowRun: () => [task],
+        },
+        spaceManager: {
+          getSpace: async () => space,
+        },
+        nodeExecutionRepo: {
+          listByWorkflowRun: listExecutionsMock,
+        },
+      } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+      (manager as unknown as { rehydrateSubSession: typeof restoreMock }).rehydrateSubSession =
+        restoreMock;
+      return { manager, restoreMock, listExecutionsMock };
+    }
+
+    test('stopped space in_progress execution sub-session is not restored', async () => {
+      const fixture = makeRehydrateManager({ id: SPACE_ID, stopped: true } as Space);
+
+      await fixture.manager.rehydrate();
+
+      expect(fixture.listExecutionsMock).toHaveBeenCalledTimes(0);
+      expect(fixture.restoreMock).toHaveBeenCalledTimes(0);
+    });
+
+    test('paused space in_progress execution sub-session is still restored', async () => {
+      const fixture = makeRehydrateManager({
+        id: SPACE_ID,
+        stopped: false,
+        paused: true,
+      } as Space);
+
+      await fixture.manager.rehydrate();
+
+      expect(fixture.restoreMock).toHaveBeenCalledTimes(1);
+      expect(fixture.restoreMock).toHaveBeenCalledWith(SUB_SESSION_ID);
     });
   });
 });

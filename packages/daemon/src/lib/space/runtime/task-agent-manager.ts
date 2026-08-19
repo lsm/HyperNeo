@@ -2648,6 +2648,17 @@ export class TaskAgentManager {
   private async rehydrateSubSessionsForRun(workflowRunId: string | null): Promise<void> {
     if (!workflowRunId) return;
 
+    const parentTask = this.config.taskRepo.listByWorkflowRun(workflowRunId)[0];
+    if (parentTask) {
+      const space = await this.config.spaceManager.getSpace(parentTask.spaceId);
+      if (space?.stopped) {
+        log.info(
+          `TaskAgentManager.rehydrateSubSessionsForRun: skipping run ${workflowRunId} because space ${parentTask.spaceId} is stopped`
+        );
+        return;
+      }
+    }
+
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
     for (const execution of executions) {
       const subSessionId = execution.agentSessionId;
