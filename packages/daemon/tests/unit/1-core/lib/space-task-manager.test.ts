@@ -102,16 +102,24 @@ describe('SpaceTaskManager', () => {
       expect(updated.status).toBe('in_progress');
     });
 
-    it('clears a stale reportedStatus when a stopped task is reopened', async () => {
+    it('clears stale outcome fields when a stopped task is reopened', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
       await manager.setTaskStatus(task.id, 'in_progress');
       await manager.setTaskStatus(task.id, 'stopped');
-      await manager.updateTask(task.id, { reportedStatus: 'done' });
+      await manager.updateTask(task.id, {
+        reportedStatus: 'done',
+        reportedSummary: 'stale summary',
+        result: 'stale result',
+        blockReason: 'stale reason',
+      });
 
       const reopened = await manager.setTaskStatus(task.id, 'open');
 
       expect(reopened.status).toBe('open');
       expect(reopened.reportedStatus).toBeNull();
+      expect(reopened.reportedSummary).toBeNull();
+      expect(reopened.result).toBeNull();
+      expect(reopened.blockReason).toBeNull();
     });
 
     it('transitions in_progress -> done with result', async () => {

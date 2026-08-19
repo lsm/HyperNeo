@@ -184,6 +184,9 @@ export class SpaceTaskManager {
 
     if (task.status === 'stopped' && newStatus === 'open') {
       updates.reportedStatus = null;
+      updates.reportedSummary = null;
+      updates.result = null;
+      updates.blockReason = null;
     }
 
     if (
