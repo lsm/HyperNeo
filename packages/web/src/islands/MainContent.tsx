@@ -88,7 +88,9 @@ function SpacesHome() {
   );
 
   const runningItems = spaces.flatMap((space) =>
-    space.tasks.filter(isActiveTask).map((task) => ({ task, space }))
+    space.tasks
+      .filter((task) => isActiveTask(task) && task.status !== 'stopped')
+      .map((task) => ({ task, space }))
   );
 
   const activeSessions = spaces
