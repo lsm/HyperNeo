@@ -4660,6 +4660,13 @@ export class SpaceRuntime {
           delivery.failureReason ?? `deliveryMode:${mode}; retry requeued after task resume`,
           { preserveAttemptCount: true, createdAt: eventRecord.createdAt }
         );
+      } else {
+        this.scheduleActivationRetry(
+          target,
+          eventPayload,
+          delivery.deliveryKey,
+          delivery.failureReason ?? 'node_execution_not_active'
+        );
       }
     }
   }

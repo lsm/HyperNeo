@@ -757,7 +757,7 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
         ...(commandBus ? { commandBus } : {}),
       });
 
-      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const { workflow, stepA, stepD } = buildWorkflow(SPACE_ID);
       const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Held Event Run');
       const task = tasks[0];
       rt.registerSubscription(
@@ -766,6 +766,13 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
         stepA,
         'Step A',
         'github/*/*/pull_request/*.review_*'
+      );
+      rt.registerSubscription(
+        run.id,
+        task.id,
+        stepD,
+        'Step D',
+        'github/*/*/pull_request/*.check_*'
       );
       await rt.executeTick();
       expect(tam._spawned).toHaveLength(1);
@@ -784,11 +791,27 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
         payload: { action: 'review_submitted', prNumber: 42 },
       };
       await eventService.publish(event);
+      const offPathEvent: ExternalEvent = {
+        id: `evt-${Math.random().toString(36).slice(2)}`,
+        spaceId: SPACE_ID,
+        source: 'github',
+        topic: 'github/lsm/neokai/pull_request/42.check_completed',
+        occurredAt: Date.now(),
+        ingestedAt: Date.now(),
+        dedupeKey: `dedupe-${Math.random().toString(36).slice(2)}`,
+        summary: 'CI check completed',
+        payload: { action: 'check_completed', prNumber: 42 },
+      };
+      await eventService.publish(offPathEvent);
 
-      const heldDelivery = eventStore.listPendingDeliveries(run.id)[0];
-      expect(heldDelivery).toBeDefined();
-      expect(heldDelivery.failureReason).toBe('deliveryMode:defer; task_stopped');
+      const heldDeliveries = eventStore.listPendingDeliveries(run.id);
+      expect(heldDeliveries).toHaveLength(2);
+      expect(
+        heldDeliveries.every((d) => d.failureReason === 'deliveryMode:defer; task_stopped')
+      ).toBe(true);
       expect(injected).toHaveLength(0);
+      const heldDelivery = heldDeliveries.find((d) => d.nodeId === stepA)!;
+      const offPathDelivery = heldDeliveries.find((d) => d.nodeId === stepD)!;
 
       const recovered = await rt.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
       expect(recovered.task.status).toBe('in_progress');
@@ -800,12 +823,20 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       ).pendingExternalEventQueue;
       const queuedKeys = [...queues.values()].flat().map((item) => item.deliveryKey);
       expect(queuedKeys).toContain(heldDelivery.deliveryKey);
+      expect(queuedKeys).toContain(offPathDelivery.deliveryKey);
+      const retryTimers = (rt as unknown as { externalEventRetryTimers: Set<string> })
+        .externalEventRetryTimers;
+      expect(retryTimers.has(offPathDelivery.deliveryKey)).toBe(true);
 
       await rt.executeTick();
       expect(tam._spawned).toHaveLength(2);
       expect(injected.length).toBeGreaterThanOrEqual(1);
       expect(injected[0]?.message).toContain(event.id);
-      expect(eventStore.listPendingDeliveries(run.id)).toHaveLength(0);
+      expect(
+        eventStore
+          .listPendingDeliveries(run.id)
+          .some((d) => d.deliveryKey === heldDelivery.deliveryKey)
+      ).toBe(false);
     });
   });
 
