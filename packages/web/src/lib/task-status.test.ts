@@ -47,9 +47,11 @@ describe('task-status', () => {
     expect(TASK_STATUS_CONFIG.archived.tone).toBe('neutral');
   });
 
-  it('maps stopped to warning with a placeholder label', () => {
-    expect(TASK_STATUS_CONFIG.stopped.tone).toBe('warning');
+  it('maps stopped to neutral — dormant, distinct from in_progress info and rate-limit warning', () => {
+    expect(TASK_STATUS_CONFIG.stopped.tone).toBe('neutral');
     expect(TASK_STATUS_CONFIG.stopped.label).toBe('Stopped');
+    expect(TASK_STATUS_CONFIG.stopped.tone).not.toBe(TASK_STATUS_CONFIG.in_progress.tone);
+    expect(TASK_STATUS_CONFIG.stopped.tone).not.toBe(TASK_STATUS_CONFIG.rate_limited.tone);
   });
 
   it('returns tone classes from getTaskStatusClasses', () => {

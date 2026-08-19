@@ -1604,6 +1604,60 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(mockUpdateTask).not.toHaveBeenCalled();
   });
 
+  it('stops an in_progress workflow task with a plain updateTask call', async () => {
+    mockTasks.value = [
+      makeTask({
+        status: 'in_progress',
+        workflowRunId: 'run-1',
+        taskAgentSessionId: 'session-abc',
+      }),
+    ];
+    mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', status: 'in_progress' })];
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Stop'));
+
+    await waitFor(() =>
+      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'stopped' })
+    );
+    expect(mockRecoverWorkflowTask).not.toHaveBeenCalled();
+    expect(mockCancelWorkflowRun).not.toHaveBeenCalled();
+  });
+
+  it('resumes a stopped workflow task through workflow recovery', async () => {
+    mockTasks.value = [
+      makeTask({
+        status: 'stopped',
+        workflowRunId: 'run-1',
+        taskAgentSessionId: 'session-abc',
+      }),
+    ];
+    mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', status: 'blocked' })];
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Resume workflow'));
+
+    await waitFor(() =>
+      expect(mockRecoverWorkflowTask).toHaveBeenCalledWith('task-1', 'in_progress')
+    );
+    expect(mockUpdateTask).not.toHaveBeenCalled();
+  });
+
+  it('resumes a stopped standalone task with a plain updateTask call', async () => {
+    mockTasks.value = [makeTask({ status: 'stopped', taskAgentSessionId: 'session-abc' })];
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Resume'));
+
+    await waitFor(() =>
+      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'in_progress' })
+    );
+    expect(mockRecoverWorkflowTask).not.toHaveBeenCalled();
+  });
+
   it('shows divider between activity members and transition actions', () => {
     mockTasks.value = [makeTask({ status: 'done', taskAgentSessionId: 'session-abc' })];
     mockTaskActivity.value = new Map([
@@ -2602,6 +2656,20 @@ describe('SpaceTaskPane — view follows activity, not status', () => {
       label: 'draft task shows the task information view',
       status: 'draft',
       activity: 0,
+      expectThread: false,
+    },
+    {
+      label: 'stopped task with prior agent activity keeps the thread view',
+      status: 'stopped',
+      activity: 6,
+      workflowRunId: 'run-1',
+      expectThread: true,
+    },
+    {
+      label: 'stopped task that was never started shows the task information view',
+      status: 'stopped',
+      activity: 0,
+      workflowRunId: 'run-1',
       expectThread: false,
     },
   ];

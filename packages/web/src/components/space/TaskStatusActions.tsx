@@ -3,16 +3,16 @@ import type { SpaceTaskStatus } from '@hyperneo/shared';
 export const VALID_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
   draft: ['open', 'archived'],
   open: ['in_progress', 'blocked', 'review', 'done', 'cancelled', 'archived'],
-  in_progress: ['open', 'review', 'done', 'blocked', 'cancelled'],
-  review: ['done', 'in_progress', 'cancelled', 'archived'],
+  in_progress: ['review', 'done', 'blocked', 'cancelled', 'stopped'],
+  review: ['done', 'in_progress', 'cancelled', 'archived', 'stopped'],
   approved: ['done', 'in_progress', 'archived', 'cancelled'],
   done: ['in_progress', 'archived'],
-  blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived'],
+  blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived', 'stopped'],
   cancelled: ['open', 'in_progress', 'done', 'archived'],
   rate_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
   usage_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
   archived: [],
-  stopped: [],
+  stopped: ['in_progress'],
 };
 
 export const TRANSITION_LABELS: Record<string, string> = {
@@ -24,15 +24,16 @@ export const TRANSITION_LABELS: Record<string, string> = {
   'open->done': 'Mark Done',
   'open->cancelled': 'Cancel',
   'open->archived': 'Archive',
-  'in_progress->open': 'Pause',
   'in_progress->review': 'Submit for Review',
   'in_progress->done': 'Mark Done',
   'in_progress->blocked': 'Block',
   'in_progress->cancelled': 'Cancel',
+  'in_progress->stopped': 'Stop',
   'review->done': 'Approve',
   'review->in_progress': 'Reopen',
   'review->cancelled': 'Cancel',
   'review->archived': 'Archive',
+  'review->stopped': 'Stop',
   'approved->done': 'Mark Done',
   'approved->in_progress': 'Reopen',
   'approved->archived': 'Archive',
@@ -45,6 +46,8 @@ export const TRANSITION_LABELS: Record<string, string> = {
   'blocked->done': 'Mark Done',
   'blocked->cancelled': 'Cancel',
   'blocked->archived': 'Archive',
+  'blocked->stopped': 'Stop',
+  'stopped->in_progress': 'Resume',
   'cancelled->open': 'Reopen',
   'cancelled->in_progress': 'Resume',
   'cancelled->done': 'Mark Done',
@@ -70,6 +73,7 @@ const TRANSITION_STYLES: Record<string, string> = {
   cancelled: 'text-red-300 hover:text-red-200',
   open: 'text-gray-300 hover:text-gray-100',
   archived: 'text-gray-400 hover:text-gray-300',
+  stopped: 'text-orange-300 hover:text-orange-200',
 };
 
 export function getTransitionActions(

@@ -56,7 +56,12 @@ describe('isActionRequired', () => {
 });
 
 describe('isActiveTask', () => {
-  it.each(['open', 'in_progress', 'approved'] as const)('returns true for %s status', (status) => {
+  it.each([
+    'open',
+    'in_progress',
+    'approved',
+    'stopped',
+  ] as const)('returns true for %s status', (status) => {
     expect(isActiveTask(makeTask(status))).toBe(true);
   });
 
@@ -72,11 +77,11 @@ describe('isActiveTask', () => {
 
   it('classifies the full status set deterministically', () => {
     const matching = ALL_STATUSES.filter((s) => isActiveTask(makeTask(s)));
-    expect(matching.sort()).toEqual(['approved', 'in_progress', 'open']);
+    expect(matching.sort()).toEqual(['approved', 'in_progress', 'open', 'stopped']);
   });
 
-  it('returns false for stopped (dormant — own group lands with the stop switch-on)', () => {
-    expect(isActiveTask(makeTask('stopped'))).toBe(false);
+  it('returns true for stopped (dormant but resumable — surfaced in its own Active-tab group)', () => {
+    expect(isActiveTask(makeTask('stopped'))).toBe(true);
   });
 });
 
@@ -104,20 +109,22 @@ describe('Active filter — fixture coverage', () => {
     { id: 'blocked-1', status: 'blocked' },
     { id: 'cancelled-1', status: 'cancelled' },
     { id: 'archived-1', status: 'archived' },
+    { id: 'stopped-1', status: 'stopped' },
   ];
 
-  it('selects exactly the open / in_progress / approved rows', () => {
+  it('selects exactly the open / in_progress / approved / stopped rows', () => {
     const ids = fixture
       .filter((r) => isActiveTask({ status: r.status }))
       .map((r) => r.id)
       .sort();
-    expect(ids).toEqual(['approved-1', 'approved-2', 'in_progress-1', 'open-1', 'open-2'].sort());
+    expect(ids).toEqual(
+      ['approved-1', 'approved-2', 'in_progress-1', 'open-1', 'open-2', 'stopped-1'].sort()
+    );
   });
 
   it('every status is covered by exactly one of action / active / completed / archived (no orphan)', () => {
     const completedStatuses: SpaceTaskStatus[] = ['done', 'cancelled'];
     const archivedStatuses: SpaceTaskStatus[] = ['archived'];
-    const ungroupedStatuses: SpaceTaskStatus[] = ['stopped'];
 
     for (const status of ALL_STATUSES) {
       const task = makeTask(status);
@@ -126,8 +133,7 @@ describe('Active filter — fixture coverage', () => {
       const inCompleted = completedStatuses.includes(status);
       const inArchived = archivedStatuses.includes(status);
       const memberships = [inAction, inActive, inCompleted, inArchived].filter(Boolean).length;
-      const expected = ungroupedStatuses.includes(status) ? 0 : 1;
-      expect({ status, memberships }).toEqual({ status, memberships: expected });
+      expect({ status, memberships }).toEqual({ status, memberships: 1 });
     }
   });
 });

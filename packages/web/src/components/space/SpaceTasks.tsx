@@ -68,6 +68,7 @@ const ACTIVE_GROUPS: StatusGroupDef[] = [
   { status: 'in_progress', title: 'In Progress', variant: 'yellow' },
   { status: 'approved', title: 'Post-Approval Running', variant: 'green' },
   { status: 'open', title: 'Open', variant: 'default' },
+  { status: 'stopped', title: 'Stopped', variant: 'gray' },
 ];
 
 const COMPLETED_GROUPS: StatusGroupDef[] = [

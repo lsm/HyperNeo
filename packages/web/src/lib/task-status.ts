@@ -18,7 +18,7 @@ export const TASK_STATUS_CONFIG: Record<SpaceTaskStatus, TaskStatusConfig> = {
   archived: { tone: 'neutral', label: 'Archived' },
   rate_limited: { tone: 'warning', label: 'Rate Limited' },
   usage_limited: { tone: 'warning', label: 'Usage Limited' },
-  stopped: { tone: 'warning', label: 'Stopped' },
+  stopped: { tone: 'neutral', label: 'Stopped' },
 };
 
 export function getTaskStatusConfig(status: SpaceTaskStatus): TaskStatusConfig {
