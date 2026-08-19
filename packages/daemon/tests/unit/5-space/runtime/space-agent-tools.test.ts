@@ -8285,9 +8285,24 @@ describe('createSpaceAgentToolHandlers — update_task status parameter (task #1
     );
 
     expect(result.success).toBe(false);
-    expect(result.error as string).toContain('cannot resume task');
-    expect(result.error as string).toContain("from 'stopped'");
+    expect(result.error as string).toContain('cannot move task');
+    expect(result.error as string).toContain("from 'stopped' to 'in_progress'");
     expect(recoverSpy).not.toHaveBeenCalled();
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('stopped');
+  });
+
+  test('refuses agent-initiated reopen of a stopped task — agents cannot un-park via open', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('stopped', runId);
+    const stopSpy = spyOn(ctx.runtime, 'stopWorkflowBackedTaskForStatus');
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'open' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error as string).toContain("from 'stopped' to 'open'");
+    expect(stopSpy).not.toHaveBeenCalled();
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('stopped');
   });
 

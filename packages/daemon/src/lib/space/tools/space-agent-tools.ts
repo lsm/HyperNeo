@@ -2106,14 +2106,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           if (
             task.workflowRunId &&
             task.status === 'stopped' &&
-            isWorkflowRecoveryTransition(task.status, args.status)
+            (args.status === 'in_progress' || args.status === 'open')
           ) {
             return jsonResult({
               success: false,
               error:
-                `update_task cannot resume task ${args.task_id} from 'stopped'. ` +
-                `A stopped task is parked by a human and resumed through the task ` +
-                `Resume action (spaceTask.update) — use that path instead.`,
+                `update_task cannot move task ${args.task_id} from 'stopped' to '${args.status}'. ` +
+                `A stopped task is parked by a human — resume or reopen it through the ` +
+                `task actions (spaceTask.update), or cancel it instead.`,
             });
           }
 
