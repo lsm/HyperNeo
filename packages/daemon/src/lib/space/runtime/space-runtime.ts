@@ -450,11 +450,7 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
   return workflowRunId.startsWith(prefix) ? workflowRunId.slice(prefix.length) : null;
 }
 
-type ExternalEventTaskDecision =
-  | { action: 'deliver' }
-  | { action: 'reactivate' }
-  | { action: 'hold' }
-  | { action: 'fail'; reason: string };
+type ExternalEventTaskDecision = { action: 'deliver' } | { action: 'fail'; reason: string };
 
 function parseSubscriptionQueueKey(
   key: string
@@ -641,7 +637,6 @@ export class SpaceRuntime {
   private readonly externalEventRetryTimers = new Map<string, Timer>();
   private readonly externalEventRetryCounts = new Map<string, number>();
   private readonly externalEventDeliveriesInFlight = new Set<string>();
-  private readonly recoveryInFlight = new Map<string, Promise<void>>();
   private readonly cancelledLongHorizonDeliveries = new Set<string>();
   private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
@@ -1629,41 +1624,6 @@ export class SpaceRuntime {
       await this.deliverToLongHorizonAgent(target, payload, deliveryKey);
     }
 
-    const reactivationTarget = [...workflowDeliveries.values()]
-      .filter(
-        ({ deliveryKey }) =>
-          !store.isDeliveryTerminal(payload.eventId, deliveryKey) &&
-          !this.externalEventDeliveriesInFlight.has(deliveryKey)
-      )
-      .map((entry) => entry.target)
-      .find((target) => this.prepareExternalEventTask(target, payload).action === 'reactivate');
-    if (reactivationTarget) {
-      const task = this.config.taskRepo.getTask(reactivationTarget.taskId);
-      if (task) {
-        const existing = this.recoveryInFlight.get(task.id);
-        if (existing) {
-          await existing;
-        } else {
-          const recoveryPromise = (async () => {
-            try {
-              await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
-                workflowNodeId: reactivationTarget.nodeId,
-                agentName: reactivationTarget.agentName,
-              });
-            } catch (err) {
-              log.warn(
-                `SpaceRuntime: failed to reactivate task ${task.id} for event ${payload.eventId}: ${formatCommandError(err)}`
-              );
-            }
-          })();
-          this.recoveryInFlight.set(task.id, recoveryPromise);
-          await recoveryPromise.finally(() => {
-            this.recoveryInFlight.delete(task.id);
-          });
-        }
-      }
-    }
-
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
       if (this.isDeliveryInDeliveryCooldown(deliveryKey)) {
         this.queueHealthMetrics.recordCooldownSkip();
@@ -1680,8 +1640,6 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
-    const pendingRecovery = this.recoveryInFlight.get(target.taskId);
-    if (pendingRecovery) await pendingRecovery;
     const resolved = this.resolveSubscriptionTarget(target);
     try {
       if (store.isDeliveryTerminal(payload.eventId, deliveryKey)) {
@@ -1707,7 +1665,7 @@ export class SpaceRuntime {
         return;
       }
 
-      const taskDecision = await this.resolveExternalEventDelivery(resolved, payload);
+      const taskDecision = this.prepareExternalEventTask(resolved, payload);
       if (taskDecision.action === 'fail') {
         store.markDeliveryFailed(payload.eventId, deliveryKey, {
           terminal: true,
@@ -1727,7 +1685,7 @@ export class SpaceRuntime {
         return;
       }
 
-      const preparedTarget = taskDecision.target;
+      const preparedTarget = resolved;
       const currentExecution = this.getCurrentQueueableOrActiveExecution(preparedTarget);
       if (preparedTarget.sessionId && this.isTargetSessionLive(preparedTarget.sessionId)) {
         const targetRun = this.config.workflowRunRepo.getRun(preparedTarget.workflowRunId);
@@ -2099,147 +2057,11 @@ export class SpaceRuntime {
         this.clearQueuedDelivery(target, deliveryKey);
         return;
       }
-      if (taskDecision.action === 'hold') {
-        this.queueHealthMetrics.recordPausedSpaceSkip();
-        this.queueForPendingNode(target, event, deliveryKey, deliveryMode, createdAt);
-        return;
-      }
-      if (taskDecision.action === 'reactivate') {
-        retainClaim = true;
-        void this.deliverReactivatedExternalEvent(
-          target,
-          event,
-          deliveryKey,
-          deliveryMode,
-          createdAt,
-          rateLimitKey
-        );
-        return;
-      }
 
       await this.deliverToSession(target, event, deliveryKey, deliveryMode, createdAt);
       this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
     } finally {
       if (!retainClaim) this.externalEventDeliveriesInFlight.delete(deliveryKey);
-    }
-  }
-
-  private async deliverReactivatedExternalEvent(
-    target: WorkflowSubscriptionTarget,
-    event: ExternalEventPublishedPayload,
-    deliveryKey: string,
-    deliveryMode: 'immediate' | 'defer',
-    createdAt: number,
-    rateLimitKey: string
-  ): Promise<void> {
-    const store = this.config.externalEventStore;
-    try {
-      if (!store) return;
-      const task = this.config.taskRepo.getTask(target.taskId);
-      if (!task) {
-        store.markDeliveryFailed(event.eventId, deliveryKey, {
-          terminal: true,
-          reason: 'invalid_target_ownership',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(target, deliveryKey);
-        return;
-      }
-      const existingRecovery = this.recoveryInFlight.get(task.id);
-      if (existingRecovery) {
-        await existingRecovery;
-        const afterShared = this.config.taskRepo.getTask(target.taskId);
-        if (!afterShared || afterShared.status === 'done') {
-          store.markDeliveryFailed(event.eventId, deliveryKey, {
-            terminal: true,
-            reason: 'target_task_reactivation_failed',
-          });
-          store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-          this.clearExternalEventRetry(deliveryKey);
-          this.clearQueuedDelivery(target, deliveryKey);
-          return;
-        }
-      } else {
-        const recoveryPromise = (async () => {
-          try {
-            await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
-              workflowNodeId: target.nodeId,
-              agentName: target.agentName,
-            });
-          } catch (err) {
-            log.warn(
-              `SpaceRuntime: failed to reactivate task ${task.id} for check failure ${event.eventId}: ${formatCommandError(err)}`
-            );
-          }
-        })();
-        this.recoveryInFlight.set(task.id, recoveryPromise);
-        await recoveryPromise.finally(() => {
-          this.recoveryInFlight.delete(task.id);
-        });
-        const recoveredTask = this.config.taskRepo.getTask(target.taskId);
-        if (!recoveredTask || recoveredTask.status === 'done') {
-          store.markDeliveryFailed(event.eventId, deliveryKey, {
-            terminal: true,
-            reason: 'target_task_reactivation_failed',
-          });
-          store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-          this.clearExternalEventRetry(deliveryKey);
-          this.clearQueuedDelivery(target, deliveryKey);
-          return;
-        }
-      }
-      const rechecked = this.revalidateRecoveredTarget(target, event);
-      if (rechecked.action === 'fail') {
-        store.markDeliveryFailed(event.eventId, deliveryKey, {
-          terminal: true,
-          reason: rechecked.reason,
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(target, deliveryKey);
-        return;
-      }
-      if (rechecked.action === 'hold') {
-        this.queueHealthMetrics.recordPausedSpaceSkip();
-        const eventRecord = store.getById(event.eventId);
-        this.queueForPendingNode(
-          target,
-          event,
-          deliveryKey,
-          deliveryMode,
-          eventRecord?.createdAt ?? createdAt
-        );
-        return;
-      }
-      const refreshed = rechecked.target;
-      if (refreshed.sessionId && this.isTargetSessionLive(refreshed.sessionId)) {
-        await this.normalizeStaleInterruptedSession(refreshed.sessionId);
-        if (this.parkDeliveryForInterruptedSession(refreshed, event, deliveryKey, createdAt)) {
-          return;
-        }
-        await this.deliverToSession(refreshed, event, deliveryKey, deliveryMode, createdAt);
-      } else {
-        const eventRecord = store.getById(event.eventId);
-        this.queueForPendingNode(
-          refreshed,
-          event,
-          deliveryKey,
-          deliveryMode,
-          eventRecord?.createdAt ?? createdAt
-        );
-        if (!(await this.isTargetSpacePausedOrStopped(refreshed))) {
-          this.scheduleActivationRetry(
-            refreshed,
-            event,
-            deliveryKey,
-            `deliveryMode:${deliveryMode}; node_execution_not_active`
-          );
-        }
-      }
-      this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
-    } finally {
-      this.externalEventDeliveriesInFlight.delete(deliveryKey);
     }
   }
 
@@ -2285,23 +2107,6 @@ export class SpaceRuntime {
         });
         store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
         this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
-        continue;
-      }
-      if (taskDecision.action === 'hold') {
-        this.queueHealthMetrics.recordPausedSpaceSkip();
-        this.preservePendingDigestItem(item);
-        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
-        continue;
-      }
-      if (taskDecision.action === 'reactivate') {
-        void this.deliverReactivatedExternalEvent(
-          item.target,
-          item.event,
-          item.deliveryKey,
-          item.deliveryMode,
-          item.createdAt,
-          this.buildRateLimitKey(item.target)
-        );
         continue;
       }
       dispatchable.push(item);
@@ -2954,53 +2759,6 @@ export class SpaceRuntime {
     }
 
     return { action: 'deliver' };
-  }
-
-  private async resolveExternalEventDelivery(
-    target: WorkflowSubscriptionTarget,
-    event: ExternalEventPublishedPayload
-  ): Promise<
-    | { action: 'deliver'; target: WorkflowSubscriptionTarget }
-    | { action: 'hold' }
-    | { action: 'fail'; reason: string }
-  > {
-    const decision = this.prepareExternalEventTask(target, event);
-    if (decision.action === 'fail') return { action: 'fail', reason: decision.reason };
-    if (decision.action === 'hold') return { action: 'hold' };
-    if (decision.action === 'reactivate') {
-      const task = this.config.taskRepo.getTask(target.taskId);
-      if (!task) return { action: 'fail', reason: 'invalid_target_ownership' };
-      try {
-        await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
-          workflowNodeId: target.nodeId,
-          agentName: target.agentName,
-        });
-      } catch (err) {
-        log.warn(
-          `SpaceRuntime: failed to reactivate task ${task.id} for check failure ${event.eventId}: ${formatCommandError(err)}`
-        );
-        return { action: 'fail', reason: 'target_task_reactivation_failed' };
-      }
-      return this.revalidateRecoveredTarget(target, event);
-    }
-    return { action: 'deliver', target };
-  }
-
-  private revalidateRecoveredTarget(
-    target: WorkflowSubscriptionTarget,
-    event: ExternalEventPublishedPayload
-  ):
-    | { action: 'deliver'; target: WorkflowSubscriptionTarget }
-    | { action: 'hold' }
-    | { action: 'fail'; reason: string } {
-    const refreshed = this.resolveSubscriptionTarget(target);
-    if (!this.isTargetStillSubscribed(refreshed, event.topic)) {
-      return { action: 'fail', reason: 'subscription_no_longer_active' };
-    }
-    const rechecked = this.prepareExternalEventTask(refreshed, event);
-    if (rechecked.action === 'fail') return { action: 'fail', reason: rechecked.reason };
-    if (rechecked.action === 'hold') return { action: 'hold' };
-    return { action: 'deliver', target: refreshed };
   }
 
   private evaluateRequeueTaskLifecycle(
