@@ -70,12 +70,31 @@ export const ListGroupMembersSchema = z.object({});
 
 export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
 
+export const SpaceTaskStatusSchema = z.enum([
+  'draft',
+  'open',
+  'in_progress',
+  'review',
+  'approved',
+  'done',
+  'blocked',
+  'cancelled',
+  'archived',
+  'rate_limited',
+  'usage_limited',
+  'stopped',
+]);
+
+export const UpdateTaskStatusParamDescription =
+  "New task status, validated against the same transition table as the UI (e.g. open→in_progress, in_progress→open, cancelled→open, done→in_progress, →cancelled, →blocked, →archived). Invalid transitions are rejected with the allowed list. 'review' cannot be set (use submit_for_approval so pending-completion metadata is stamped), 'approved' and review→done are owned by the approval pipeline (approve_task / human approval, which stamp the approval metadata and dispatch the post-approval step), 'stopped' is set only by the runtime's Stop action, and archiving is rejected while the task's workflow run is still active (use cancel_task).";
+
 export const UpdateTaskSchema = z.object({
   task_id: z.string().describe('UUID of the task to update'),
   title: z.string().min(1).describe('New title for the task').optional(),
   description: z.string().describe('New description for the task').optional(),
   priority: z.enum(['low', 'normal', 'high', 'urgent']).describe('New priority').optional(),
   depends_on: z.array(z.string()).describe('New dependency list (replaces existing)').optional(),
+  status: SpaceTaskStatusSchema.optional().describe(UpdateTaskStatusParamDescription),
 });
 
 export type UpdateTaskInput = z.infer<typeof UpdateTaskSchema>;
