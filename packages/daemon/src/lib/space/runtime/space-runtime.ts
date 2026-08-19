@@ -63,6 +63,21 @@ import {
 } from '../managers/space-workflow-manager';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import { deliveryModeFromFailureReason } from './delivery-mode';
+import {
+  buildQueueKey,
+  DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS,
+  evaluateRequeueTaskLifecycle,
+  hasAnyExecutionForTarget,
+  hasTerminalExecutionForTarget,
+  isPublishedExternalEventExpired,
+  isQueuedExternalEventExpired,
+  isWorkflowTargetOwnedBySpace,
+  prepareExternalEventTask,
+  resolveCurrentQueueableOrActiveExecution,
+  resolveLiveDeliveryTarget,
+  resolveSubscriptionTarget,
+  type ExternalEventTaskDecision,
+} from './external-event-admission-gates';
 import { CompletionDetector } from './completion-detector';
 import {
   DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
@@ -351,7 +366,10 @@ const EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP = parsePositiveIntegerEnv(
   'HYPERNEO_EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP',
   4096
 );
-const EXTERNAL_EVENT_QUEUE_TTL_MS = parsePositiveIntegerEnv('EXTERNAL_EVENT_QUEUE_TTL_MS', 300_000);
+const EXTERNAL_EVENT_QUEUE_TTL_MS = parsePositiveIntegerEnv(
+  'EXTERNAL_EVENT_QUEUE_TTL_MS',
+  DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS
+);
 
 export function parsePositiveIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -449,8 +467,6 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
   const prefix = 'long_horizon:';
   return workflowRunId.startsWith(prefix) ? workflowRunId.slice(prefix.length) : null;
 }
-
-type ExternalEventTaskDecision = { action: 'deliver' } | { action: 'fail'; reason: string };
 
 function parseSubscriptionQueueKey(
   key: string
@@ -2567,17 +2583,15 @@ export class SpaceRuntime {
   }
 
   private isQueuedExternalEventExpired(item: PendingExternalEvent, now = Date.now()): boolean {
-    return now - item.createdAt > EXTERNAL_EVENT_QUEUE_TTL_MS;
+    return isQueuedExternalEventExpired(item.createdAt, now, EXTERNAL_EVENT_QUEUE_TTL_MS);
   }
 
   private isPublishedExternalEventExpired(
     payload: ExternalEventPublishedPayload,
     now = Date.now()
   ): boolean {
-    const store = this.config.externalEventStore;
-    const createdAt = store?.getById(payload.eventId)?.createdAt;
-    if (createdAt === undefined) return false;
-    return now - createdAt > EXTERNAL_EVENT_QUEUE_TTL_MS;
+    const createdAt = this.config.externalEventStore?.getById(payload.eventId)?.createdAt;
+    return isPublishedExternalEventExpired(createdAt, now, EXTERNAL_EVENT_QUEUE_TTL_MS);
   }
 
   private failQueuedDeliveryForTtl(item: PendingExternalEvent, queueKey: string): void {
@@ -2681,16 +2695,19 @@ export class SpaceRuntime {
   private resolveSubscriptionTarget(
     target: WorkflowSubscriptionTarget
   ): WorkflowSubscriptionTarget {
-    const current = this.getCurrentQueueableOrActiveExecution(target);
-    return current?.agentSessionId ? { ...target, sessionId: current.agentSessionId } : target;
+    return resolveSubscriptionTarget(
+      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
+      target
+    );
   }
 
   private resolveLiveDeliveryTarget(
     target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
   ): WorkflowSubscriptionTarget | null {
-    const current = this.getCurrentQueueableOrActiveExecution(target);
-    if (!current?.agentSessionId) return null;
-    return { ...target, sessionId: current.agentSessionId };
+    return resolveLiveDeliveryTarget(
+      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
+      target
+    );
   }
 
   private isRunInterestRebuildEligible(run: SpaceWorkflowRun): boolean {
@@ -2719,13 +2736,7 @@ export class SpaceRuntime {
   ): boolean {
     const task = this.config.taskRepo.getTask(target.taskId);
     const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-    return !!(
-      task &&
-      run &&
-      task.spaceId === spaceId &&
-      run.spaceId === spaceId &&
-      task.workflowRunId === run.id
-    );
+    return isWorkflowTargetOwnedBySpace(task, run, spaceId);
   }
 
   private prepareExternalEventTask(
@@ -2734,44 +2745,24 @@ export class SpaceRuntime {
   ): ExternalEventTaskDecision {
     const task = this.config.taskRepo.getTask(target.taskId);
     const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-    if (
-      !task ||
-      !run ||
-      task.spaceId !== event.spaceId ||
-      run.spaceId !== event.spaceId ||
-      task.workflowRunId !== run.id
-    ) {
-      return { action: 'fail', reason: 'invalid_target_ownership' };
-    }
-    if (task.status === 'cancelled' || task.status === 'archived' || task.status === 'done') {
-      return { action: 'fail', reason: 'target_task_terminal' };
-    }
-
-    return { action: 'deliver' };
+    return prepareExternalEventTask(task, run, event);
   }
 
   private evaluateRequeueTaskLifecycle(
     target: Pick<WorkflowSubscriptionTarget, 'taskId'>,
     event: { topic: string; source: string }
   ): string | null {
-    void event;
     const task = this.config.taskRepo.getTask(target.taskId);
-    if (!task) return 'invalid_target_ownership';
-    if (task.status === 'cancelled' || task.status === 'archived' || task.status === 'done') {
-      return 'target_task_terminal';
-    }
-    return null;
+    return evaluateRequeueTaskLifecycle(task, event);
   }
 
   private getCurrentQueueableOrActiveExecution(
     target: WorkflowSubscriptionTarget
   ): NodeExecution | undefined {
-    return this.config.nodeExecutionRepo
-      .listByNode(target.workflowRunId, target.nodeId)
-      .filter(
-        (execution) => execution.agentName === target.agentName && execution.status !== 'cancelled'
-      )
-      .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))[0];
+    return resolveCurrentQueueableOrActiveExecution(
+      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
+      target
+    );
   }
 
   private isTargetSessionLive(sessionId: string): boolean {
@@ -2812,25 +2803,25 @@ export class SpaceRuntime {
   private hasTerminalExecutionForTarget(
     target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
   ): boolean {
-    return this.config.nodeExecutionRepo
-      .listByNode(target.workflowRunId, target.nodeId)
-      .some(
-        (execution) => execution.agentName === target.agentName && execution.status === 'cancelled'
-      );
+    return hasTerminalExecutionForTarget(
+      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
+      target
+    );
   }
 
   private hasAnyExecutionForTarget(
     target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
   ): boolean {
-    return this.config.nodeExecutionRepo
-      .listByNode(target.workflowRunId, target.nodeId)
-      .some((execution) => execution.agentName === target.agentName);
+    return hasAnyExecutionForTarget(
+      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
+      target
+    );
   }
 
   private buildQueueKey(
     target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
   ): string {
-    return JSON.stringify([target.workflowRunId, target.taskId, target.nodeId, target.agentName]);
+    return buildQueueKey(target);
   }
 
   private isDeliveryInDeliveryCooldown(deliveryKey: string): boolean {
