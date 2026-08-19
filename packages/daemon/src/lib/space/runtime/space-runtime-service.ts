@@ -930,6 +930,28 @@ export class SpaceRuntimeService {
       }
     }
 
+    let verifiedTotal = 0;
+    let verifiedStopped = 0;
+    if (this.taskAgentManager) {
+      try {
+        const sessionIds = this.taskAgentManager.getSubSessionIdsForTasks([...cleanupTaskIds]);
+        const results = await this.taskAgentManager.stopSessionsVerified(sessionIds);
+        verifiedTotal = results.length;
+        verifiedStopped = results.filter((result) => result.stopped).length;
+        const failures = results.filter((result) => !result.stopped);
+        if (failures.length > 0) {
+          log.warn(
+            `stopActiveWork: ${failures.length}/${results.length} session(s) for space ${spaceId} not confirmed stopped: ` +
+              failures
+                .map((failure) => `${failure.sessionId} (${failure.detail ?? 'unknown reason'})`)
+                .join('; ')
+          );
+        }
+      } catch (err) {
+        log.error(`stopActiveWork: verified session stop failed for space ${spaceId}:`, err);
+      }
+    }
+
     await Promise.allSettled(
       [...cleanupTaskIds].map(async (taskId) => {
         if (!this.taskAgentManager) return;
@@ -942,7 +964,7 @@ export class SpaceRuntimeService {
     this.runtime.parkInFlightExecutionsForSpace(spaceId);
 
     log.info(
-      `stopActiveWork: interrupted ${cleanupTaskIds.size} task session(s) and parked in-flight executions for space ${spaceId} — task/run statuses preserved`
+      `stopActiveWork: verified-stopped ${verifiedStopped}/${verifiedTotal} session(s) across ${cleanupTaskIds.size} task(s) and parked in-flight executions for space ${spaceId} — task/run statuses preserved`
     );
   }
 
