@@ -2905,7 +2905,11 @@ export class TaskAgentManager {
     const taskId = parentTask.id;
     const spaceId = parentTask.spaceId;
 
-    if (parentTask.status === 'cancelled' || parentTask.status === 'archived') {
+    if (
+      parentTask.status === 'cancelled' ||
+      parentTask.status === 'archived' ||
+      parentTask.status === 'stopped'
+    ) {
       log.warn(
         `TaskAgentManager.rehydrateSubSession: refusing to rehydrate session ${subSessionId} — parent task ${taskId} is ${parentTask.status}`
       );

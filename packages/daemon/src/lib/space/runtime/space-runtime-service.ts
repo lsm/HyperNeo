@@ -1796,6 +1796,14 @@ export class SpaceRuntimeService {
     return updated;
   }
 
+  async parkStoppedWorkflowTask(spaceId: string, taskId: string): Promise<SpaceTask> {
+    const updated = await this.runtime.parkStoppedWorkflowTask(spaceId, taskId);
+    if (!updated) {
+      throw new Error(`Failed to stop (park) workflow-backed task ${taskId}`);
+    }
+    return updated;
+  }
+
   async cancelWorkflowRun(spaceId: string, runId: string): Promise<SpaceWorkflowRun> {
     return this.runtime.cancelWorkflowRun(spaceId, runId);
   }

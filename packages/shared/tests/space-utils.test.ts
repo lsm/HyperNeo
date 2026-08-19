@@ -342,7 +342,8 @@ describe('isRateOrUsageLimited — single source of truth for paused-on-cap stat
         isRateOrUsageLimited(status) ||
           status === 'done' ||
           status === 'blocked' ||
-          status === 'cancelled'
+          status === 'cancelled' ||
+          status === 'stopped'
       );
     }
   });
@@ -354,6 +355,12 @@ describe('isWorkflowRecoveryTransition', () => {
     expect(isWorkflowRecoveryTransition('blocked', 'open')).toBe(true);
     expect(isWorkflowRecoveryTransition('cancelled', 'in_progress')).toBe(true);
     expect(isWorkflowRecoveryTransition('done', 'in_progress')).toBe(true);
+  });
+
+  test('stopped → in_progress is a recovery transition (parked run resume)', () => {
+    expect(isWorkflowRecoveryTransition('stopped', 'in_progress')).toBe(true);
+    expect(isWorkflowRecoveryTransition('stopped', 'open')).toBe(false);
+    expect(isWorkflowRecoveryTransition('stopped', 'cancelled')).toBe(false);
   });
 
   test('rate/usage-limited → in_progress is a recovery transition (manual resume)', () => {
