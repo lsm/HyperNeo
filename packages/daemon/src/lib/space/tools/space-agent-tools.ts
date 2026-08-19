@@ -2070,14 +2070,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
                 `the approval metadata and dispatch the configured post-approval step.`,
             });
           }
-          if (args.status === 'stopped') {
-            return jsonResult({
-              success: false,
-              error:
-                `update_task cannot transition a task into 'stopped' directly. ` +
-                `Use the task Stop action once it lands — it halts all agents and ` +
-                `preserves the run, sessions, and task provenance.`,
-            });
+          if (args.status === 'stopped' && task.workflowRunId) {
+            const parked = await runtime.parkStoppedWorkflowTask(spaceId, args.task_id);
+            if (!parked) {
+              return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+            }
+            const updated = hasFieldUpdates ? await applyFieldUpdates() : parked;
+            logAudit('update_task', transitionAuditParams, args.task_id);
+            if (hasFieldUpdates) emitTaskUpdated(updated);
+            return jsonResult({ success: true, task: updated });
           }
           if (args.status === 'done' && task.status === 'review') {
             return jsonResult({
@@ -2100,20 +2101,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
                 `Cannot archive task ${args.task_id}: it belongs to an active workflow run ` +
                 `(${task.workflowRunId}). Cancel the task instead (cancel_task) so its ` +
                 `agents and lifecycle are torn down — archiving would leave the run stranded.`,
-            });
-          }
-
-          if (
-            task.workflowRunId &&
-            task.status === 'stopped' &&
-            (args.status === 'in_progress' || args.status === 'open')
-          ) {
-            return jsonResult({
-              success: false,
-              error:
-                `update_task cannot move task ${args.task_id} from 'stopped' to '${args.status}'. ` +
-                `A stopped task is parked by a human — resume or reopen it through the ` +
-                `task actions (spaceTask.update), or cancel it instead.`,
             });
           }
 

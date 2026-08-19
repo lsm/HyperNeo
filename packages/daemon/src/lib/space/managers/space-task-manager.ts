@@ -182,6 +182,10 @@ export class SpaceTaskManager {
       updates.postApprovalSourceNodeId = null;
     }
 
+    if (task.status === 'stopped' && newStatus === 'open') {
+      updates.reportedStatus = null;
+    }
+
     if (
       (task.status === 'review' && newStatus !== 'review' && newStatus !== 'stopped') ||
       newStatus === 'approved'
