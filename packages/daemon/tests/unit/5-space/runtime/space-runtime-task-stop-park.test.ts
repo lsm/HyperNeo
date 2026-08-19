@@ -584,6 +584,28 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       expect(cancelled?.status).toBe('cancelled');
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
     });
+
+    test('a stopped review task on a done run does not break the tick', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Review Park Run');
+      const task = seedTask(run.id);
+      taskRepo.updateTask(task.id, { status: 'review' });
+      seedExec(run.id, stepA, 'Step A', 'idle', {
+        agentSessionId: 'session-submitter',
+        result: 'work finished',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'done');
+
+      const rt = buildRuntime(
+        makeParkTam(nodeExecutionRepo, { liveSessionIds: ['session-submitter'] })
+      );
+      await rt.parkStoppedWorkflowTask(SPACE_ID, task.id);
+
+      await expect(rt.executeTick()).resolves.toBeUndefined();
+
+      expect(taskRepo.getTask(task.id)?.status).toBe('stopped');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+    });
   });
 
   describe('stopped-task guards', () => {

@@ -3907,7 +3907,8 @@ export class SpaceRuntime {
         canonicalTask.status !== 'review' &&
         canonicalTask.status !== 'cancelled' &&
         canonicalTask.status !== 'approved' &&
-        canonicalTask.status !== 'blocked'
+        canonicalTask.status !== 'blocked' &&
+        canonicalTask.status !== 'stopped'
       ) {
         const updates = this.buildTaskOutcomeUpdates(
           canonicalTask,
