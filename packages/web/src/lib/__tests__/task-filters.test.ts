@@ -80,7 +80,7 @@ describe('isActiveTask', () => {
     expect(matching.sort()).toEqual(['approved', 'in_progress', 'open', 'stopped']);
   });
 
-  it('returns true for stopped (dormant but resumable — surfaced in its own Active-tab group)', () => {
+  it('returns true for stopped (dormant but resumable, own Active-tab group)', () => {
     expect(isActiveTask(makeTask('stopped'))).toBe(true);
   });
 });

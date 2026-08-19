@@ -50,7 +50,7 @@ describe('VALID_TASK_TRANSITIONS', () => {
     expect(VALID_TASK_TRANSITIONS.done).toEqual(['in_progress', 'archived']);
   });
 
-  it('blocked can transition to open, in_progress, review, done, cancelled, archived, stopped', () => {
+  it('blocked adds stopped to its existing transition targets', () => {
     expect(VALID_TASK_TRANSITIONS.blocked).toEqual([
       'open',
       'in_progress',

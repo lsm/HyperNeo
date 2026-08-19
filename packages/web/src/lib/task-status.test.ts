@@ -47,7 +47,7 @@ describe('task-status', () => {
     expect(TASK_STATUS_CONFIG.archived.tone).toBe('neutral');
   });
 
-  it('maps stopped to neutral — dormant, distinct from in_progress info and rate-limit warning', () => {
+  it('maps stopped to neutral, distinct from in_progress and rate limited', () => {
     expect(TASK_STATUS_CONFIG.stopped.tone).toBe('neutral');
     expect(TASK_STATUS_CONFIG.stopped.label).toBe('Stopped');
     expect(TASK_STATUS_CONFIG.stopped.tone).not.toBe(TASK_STATUS_CONFIG.in_progress.tone);

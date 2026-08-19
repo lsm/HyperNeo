@@ -552,7 +552,7 @@ export function SpaceTaskPane({
     [activityMembers]
   );
   const hasUnifiedWorkflowThread = spaceStore.hasTaskMessageActivity(task.id) !== false;
-  const showInlineComposer = !isTerminalTask;
+  const showInlineComposer = !isTerminalTask && task.status !== 'stopped';
 
   useLayoutEffect(() => {
     if (!showInlineComposer) {

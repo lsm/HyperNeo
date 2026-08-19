@@ -484,6 +484,17 @@ describe('SpaceTaskPane — composer', () => {
     expect(mockSendTaskMessage).not.toHaveBeenCalled();
   });
 
+  it('hides the composer for stopped tasks while live tasks keep it', () => {
+    setupTaskWithActivity({ status: 'stopped' });
+    const stopped = render(<SpaceTaskPane taskId="task-1" />);
+    expect(stopped.queryByTestId('task-session-chat-composer')).toBeNull();
+    stopped.unmount();
+
+    setupTaskWithActivity({ status: 'in_progress' });
+    const live = render(<SpaceTaskPane taskId="task-1" />);
+    expect(live.getByTestId('task-session-chat-composer')).toBeTruthy();
+  });
+
   it.skip('disables textarea while send is in flight and re-enables after completion', async () => {
     let resolveSend: () => void;
     const sendPromise = new Promise<void>((resolve) => {
