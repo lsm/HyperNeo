@@ -626,8 +626,8 @@ describe('buildOverride', () => {
     expect(buildOverride('   ')).toBeUndefined();
   });
 
-  it('trims the value', () => {
-    const result = buildOverride('  Custom prompt.  ');
-    expect(result).toEqual({ value: 'Custom prompt.' });
+  it('preserves leading, trailing, and inner whitespace', () => {
+    const result = buildOverride('  Custom prompt.\nSecond line ');
+    expect(result).toEqual({ value: '  Custom prompt.\nSecond line ' });
   });
 });
