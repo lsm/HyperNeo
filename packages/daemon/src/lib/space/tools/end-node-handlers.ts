@@ -307,6 +307,15 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
     onSubmitForApproval: async (args: SubmitForApprovalInput) => {
       const task = taskRepo.getTask(taskId);
       if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
+      if (task.status === 'stopped') {
+        return jsonResult({
+          success: false,
+          error:
+            `submit_for_approval cannot move task ${taskId} out of 'stopped'. ` +
+            `A stopped task is parked by a human — resume it through the task Resume ` +
+            `action (spaceTask.update) before submitting for approval.`,
+        });
+      }
 
       try {
         const updated = await taskManager.submitTaskForReview(taskId, {

@@ -830,6 +830,25 @@ describe('createEndNodeHandlers — submit_for_approval', () => {
     expect(t?.pendingCompletionReason).toBeNull();
   });
 
+  test('refuses to submit a human-parked (stopped) task for approval', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    ctx.taskRepo.updateTask(task.id, { status: 'stopped' });
+    const { onSubmitForApproval } = createEndNodeHandlers(makeDeps(ctx, task.id));
+
+    const out = await onSubmitForApproval({ reason: 'sneaky submit' });
+    const parsed = JSON.parse(out.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('cannot move task');
+    expect(parsed.error).toContain("out of 'stopped'");
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('stopped');
+  });
+
   test('succeeds regardless of space autonomy level', async () => {
     const task = ctx.taskRepo.createTask({
       spaceId: ctx.spaceId,
