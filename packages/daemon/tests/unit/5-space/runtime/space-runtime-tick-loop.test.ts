@@ -11,6 +11,7 @@ import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repo
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { MAX_BLOCKED_RUN_RETRIES } from '../../../../src/lib/space/runtime/constants.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
@@ -1845,6 +1846,77 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const crashCounts = (rt as unknown as { taskCrashCounts: Map<string, number> })
         .taskCrashCounts;
       expect(crashCounts.size).toBe(0);
+    });
+
+    test('review task parked at stop: reject then space.start re-drives the submitter via kickoff spawn', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const submitter = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(submitter.id, {
+        status: 'in_progress',
+        agentSessionId: `space:${SPACE_ID}:task:${tasks[0].id}:exec:${submitter.id}`,
+        startedAt: Date.now(),
+      });
+      taskRepo.updateTask(tasks[0].id, { status: 'review' });
+      rt.parkInFlightExecutionsForSpace(SPACE_ID);
+      db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
+
+      await rt.executeTick();
+      expect(tam._spawned).toEqual([]);
+
+      const taskManager = new SpaceTaskManager(db, SPACE_ID);
+      const rejected = await taskManager.setTaskStatus(tasks[0].id, 'in_progress');
+      expect(rejected.status).toBe('in_progress');
+      expect(rejected.pendingCheckpointType).toBeNull();
+
+      db.prepare(`UPDATE spaces SET stopped = 0 WHERE id = ?`).run(SPACE_ID);
+      await rt.executeTick();
+
+      expect(tam._spawned).toEqual([tasks[0].id]);
+      const executionAfter = nodeExecutionRepo.getById(submitter.id)!;
+      expect(executionAfter.status).toBe('in_progress');
+      expect(executionAfter.agentSessionId).toBe(`session:${submitter.id}`);
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('in_progress');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      const crashCounts = (rt as unknown as { taskCrashCounts: Map<string, number> })
+        .taskCrashCounts;
+      expect(crashCounts.size).toBe(0);
+    });
+
+    test('stopped space defers run-completion reconciliation and post-approval dispatch until start', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        result: 'work finished just before stop',
+        agentSessionId: 'session:finished',
+        completedAt: Date.now(),
+      });
+      taskRepo.updateTask(tasks[0].id, { status: 'in_progress', reportedStatus: 'done' });
+      db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
+
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('in_progress');
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('idle');
+      expect(tam._spawned).toEqual([]);
+
+      db.prepare(`UPDATE spaces SET stopped = 0 WHERE id = ?`).run(SPACE_ID);
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
     });
 
     test('blocked-only run with exhausted retry budget: stop then start retries instead of escalating', async () => {

@@ -6256,6 +6256,8 @@ export class SpaceRuntime {
         }
       }
 
+      if (space?.stopped) return;
+
       if (runIsComplete) {
         await this.transitionRunStatusAndEmit(runId, 'done');
         const summaryFromArtifact = this.resolvePrimaryResultArtifactSummary(runId);
