@@ -173,7 +173,11 @@ describe('Startup Timeout Error Surfacing', () => {
         ).not.toBeNull();
         const errorMsg = sessionError!.message;
         expect(errorMsg).toContain('failed to start');
-        expect(errorMsg).toContain('Common causes');
+        expect(errorMsg).toContain('did not emit its first message within the startup window');
+        expect(errorMsg).toContain('after one automatic retry');
+        expect(errorMsg).toContain('bounded by the startup gate');
+        expect(errorMsg).not.toContain('stale lock file');
+        expect(errorMsg).not.toContain('another Claude Code session');
         expect(errorMsg).toContain('HYPERNEO_SDK_STARTUP_TIMEOUT_MS');
         expect(errorMsg).toContain('current: 10ms');
       } finally {

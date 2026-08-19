@@ -1422,6 +1422,11 @@ describe('QueryRunner', () => {
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).not.toContain('attempt(s)');
       expect(userMessage).toContain('current: 60000ms');
+      expect(userMessage).toContain('did not emit its first message within the startup window');
+      expect(userMessage).toContain('after one automatic retry');
+      expect(userMessage).toContain('bounded by the startup gate');
+      expect(userMessage).not.toContain('stale lock file');
+      expect(userMessage).not.toContain('another Claude Code session');
     });
 
     it('should preserve sdkSessionId and surface error for conversation-not-found', async () => {
