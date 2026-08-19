@@ -12,7 +12,7 @@ export const VALID_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> 
   rate_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
   usage_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
   archived: [],
-  stopped: ['in_progress'],
+  stopped: ['in_progress', 'cancelled', 'archived'],
 };
 
 export const TRANSITION_LABELS: Record<string, string> = {
@@ -48,6 +48,8 @@ export const TRANSITION_LABELS: Record<string, string> = {
   'blocked->archived': 'Archive',
   'blocked->stopped': 'Stop',
   'stopped->in_progress': 'Resume',
+  'stopped->cancelled': 'Cancel',
+  'stopped->archived': 'Archive',
   'cancelled->open': 'Reopen',
   'cancelled->in_progress': 'Resume',
   'cancelled->done': 'Mark Done',

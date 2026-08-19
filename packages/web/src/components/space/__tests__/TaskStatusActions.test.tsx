@@ -62,8 +62,8 @@ describe('VALID_TASK_TRANSITIONS', () => {
     ]);
   });
 
-  it('stopped can only transition back to in_progress', () => {
-    expect(VALID_TASK_TRANSITIONS.stopped).toEqual(['in_progress']);
+  it('stopped can transition back to in_progress, cancelled, and archived', () => {
+    expect(VALID_TASK_TRANSITIONS.stopped).toEqual(['in_progress', 'cancelled', 'archived']);
   });
 
   it('approved can transition to done, in_progress, archived, and cancelled', () => {
@@ -119,9 +119,13 @@ describe('getTransitionActions', () => {
     ]);
   });
 
-  it('returns Resume as the only action for stopped status', () => {
+  it('returns Resume, Cancel, and Archive actions for stopped status', () => {
     const actions = getTransitionActions('stopped');
-    expect(actions).toEqual([{ target: 'in_progress', label: 'Resume' }]);
+    expect(actions).toEqual([
+      { target: 'in_progress', label: 'Resume' },
+      { target: 'cancelled', label: 'Cancel' },
+      { target: 'archived', label: 'Archive' },
+    ]);
   });
 
   it('returns correct actions for done status', () => {
@@ -247,14 +251,16 @@ describe('TaskStatusActions component', () => {
     expect(onTransition).toHaveBeenCalledWith('stopped');
   });
 
-  it('renders a single Resume button for stopped status', () => {
+  it('renders Resume, Cancel, and Archive buttons for stopped status', () => {
     const onTransition = vi.fn();
     const { container, getByTestId } = render(
       <TaskStatusActions status="stopped" onTransition={onTransition} />
     );
     const buttons = container.querySelectorAll('button');
-    expect(buttons.length).toBe(1);
+    expect(buttons.length).toBe(3);
     expect(getByTestId('task-action-in_progress').textContent).toBe('Resume');
+    expect(getByTestId('task-action-cancelled').textContent).toBe('Cancel');
+    expect(getByTestId('task-action-archived').textContent).toBe('Archive');
   });
 
   it('disables all buttons when disabled prop is true', () => {
