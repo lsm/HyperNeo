@@ -754,7 +754,7 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       const tam = makeParkTam(nodeExecutionRepo);
       const rt = buildRuntime(tam, {
         externalEventStore: eventStore,
-        ...(commandBus ? { commandBus } : {}),
+        commandBus,
       });
 
       const { workflow, stepA, stepD } = buildWorkflow(SPACE_ID);
@@ -830,7 +830,7 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
 
       await rt.executeTick();
       expect(tam._spawned).toHaveLength(2);
-      expect(injected.length).toBeGreaterThanOrEqual(1);
+      expect(injected).toHaveLength(1);
       expect(injected[0]?.message).toContain(event.id);
       expect(
         eventStore
