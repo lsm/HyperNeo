@@ -120,6 +120,23 @@ describe('SpaceTaskManager', () => {
       expect(reopened.reportedSummary).toBeNull();
       expect(reopened.result).toBeNull();
       expect(reopened.blockReason).toBeNull();
+
+      await manager.setTaskStatus(task.id, 'in_progress');
+      await manager.setTaskStatus(task.id, 'stopped');
+      await manager.updateTask(task.id, {
+        reportedStatus: 'done',
+        reportedSummary: 'stale summary',
+        result: 'stale result',
+        blockReason: 'stale reason',
+      });
+
+      const resumed = await manager.setTaskStatus(task.id, 'in_progress');
+
+      expect(resumed.status).toBe('in_progress');
+      expect(resumed.reportedStatus).toBeNull();
+      expect(resumed.reportedSummary).toBeNull();
+      expect(resumed.result).toBeNull();
+      expect(resumed.blockReason).toBeNull();
     });
 
     it('transitions in_progress -> done with result', async () => {

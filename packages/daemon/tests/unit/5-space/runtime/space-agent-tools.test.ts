@@ -8333,6 +8333,11 @@ describe('createSpaceAgentToolHandlers — update_task status parameter (task #1
 
   test('agent resume of a standalone stopped task is a plain status write', async () => {
     const task = createTaskWithStatus('stopped');
+    ctx.taskRepo.updateTask(task.id, {
+      result: 'parked work',
+      reportedSummary: 'parked summary',
+      blockReason: 'parked reason',
+    });
 
     const result = parseResult(
       await makeHandlers(ctx).update_task({ task_id: task.id, status: 'in_progress' })
@@ -8341,6 +8346,9 @@ describe('createSpaceAgentToolHandlers — update_task status parameter (task #1
     expect(result.success).toBe(true);
     expect((result.task as SpaceTask).status).toBe('in_progress');
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    expect(ctx.taskRepo.getTask(task.id)?.result).toBeNull();
+    expect(ctx.taskRepo.getTask(task.id)?.reportedSummary).toBeNull();
+    expect(ctx.taskRepo.getTask(task.id)?.blockReason).toBeNull();
   });
 
   test('emits space.task.updated and logs previousStatus on a transition', async () => {
