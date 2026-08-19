@@ -6559,8 +6559,8 @@ export class SpaceRuntime {
         canonicalTask.status === 'stopped';
       const parkedAwaitingApproval =
         (canonicalTask.status === 'review' || canonicalTask.status === 'approved') &&
-        !nodeExecutions.some(
-          (execution) => execution.agentSessionId && tam.isSessionAlive(execution.agentSessionId)
+        pendingExecutions.some(
+          (execution) => execution.startedAt !== null && execution.agentSessionId === null
         );
 
       if (pendingExecutions.length > 0 && (canonicalTaskIsTerminal || parkedAwaitingApproval)) {

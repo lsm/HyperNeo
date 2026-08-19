@@ -665,9 +665,44 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       expect(tam._spawned).toHaveLength(1);
       expect(taskRepo.getTask(task.id)?.status).toBe('review');
       const execs = nodeExecutionRepo.listByWorkflowRun(run.id);
-      expect(execs.filter((e) => e.status === 'pending').every((e) => !e.agentSessionId)).toBe(
-        true
-      );
+      expect(
+        execs
+          .filter((e) => e.status === 'pending')
+          .every((e) => !e.agentSessionId && e.startedAt !== null)
+      ).toBe(true);
+    });
+
+    test('a review task with fresh pending work still spawns after a restart', async () => {
+      const tam = makeParkTam(nodeExecutionRepo);
+      const rt = buildRuntime(tam);
+      const { workflow } = buildWorkflow(SPACE_ID);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Review Fresh Run');
+      const task = tasks[0];
+      expect(
+        nodeExecutionRepo
+          .listByWorkflowRun(run.id)
+          .every((e) => e.status !== 'in_progress' && e.startedAt === null)
+      ).toBe(true);
+
+      const taskManager = (
+        rt as unknown as {
+          getOrCreateTaskManager: (spaceId: string) => {
+            submitTaskForReview: (
+              taskId: string,
+              opts: { submittedByNodeId: string | null; reason: string | null }
+            ) => Promise<SpaceTask>;
+          };
+        }
+      ).getOrCreateTaskManager(SPACE_ID);
+      const submitted = await taskManager.submitTaskForReview(task.id, {
+        submittedByNodeId: null,
+        reason: 'submitted before any spawn',
+      });
+      expect(submitted.status).toBe('review');
+
+      await rt.executeTick();
+
+      expect(tam._spawned).toHaveLength(1);
     });
 
     test('resume clears a stale completion stamp left while parked', async () => {
