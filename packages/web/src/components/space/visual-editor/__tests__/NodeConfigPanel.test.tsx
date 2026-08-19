@@ -1044,6 +1044,28 @@ describe('NodeConfigPanel', () => {
       expect(textarea.value).toBe(target);
     });
 
+    it('slot prompts textarea keeps a multi-line minimum height while auto-growing', async () => {
+      function Wrapper() {
+        const [step, setStep] = useState(
+          makeStep({
+            agentId: '',
+            agents: [
+              { agentId: 'agent-1', name: 'planner' },
+              { agentId: 'agent-2', name: 'coder' },
+            ],
+          })
+        );
+        return <NodeConfigPanel {...makeProps({ step, onUpdate: setStep })} />;
+      }
+      const { getAllByTestId, getByTestId } = render(<Wrapper />);
+
+      fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
+      const textarea = getByTestId('slot-prompts-system-prompt') as HTMLTextAreaElement;
+
+      expect(textarea.style.minHeight).toBe('12rem');
+      expect(textarea.getAttribute('rows')).toBe('8');
+    });
+
     it('slot prompts editor stays addressable after a slot role rename', async () => {
       function Wrapper() {
         const [step, setStep] = useState(

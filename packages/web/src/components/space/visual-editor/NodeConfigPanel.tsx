@@ -707,6 +707,7 @@ function CustomPromptEditor({
         onInput={(e) => onChange((e.currentTarget as HTMLTextAreaElement).value)}
         rows={rows}
         placeholder={placeholder}
+        style={{ minHeight: `${rows * 1.5}rem` }}
         class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-none overflow-y-auto max-h-96"
       />
     </div>
