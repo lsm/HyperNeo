@@ -1720,6 +1720,10 @@ export class SpaceRuntime {
       }
       if (taskDecision.action === 'hold') {
         this.queueHealthMetrics.recordPausedSpaceSkip();
+        store.markDeliveryFailed(payload.eventId, deliveryKey, {
+          terminal: false,
+          reason: 'deliveryMode:defer; task_stopped',
+        });
         return;
       }
 
@@ -4411,6 +4415,7 @@ export class SpaceRuntime {
     if (recoveredWorkflow) {
       this.registerRunInterestsFromWorkflow(recovered.run, recoveredWorkflow);
     }
+    this.requeuePendingDeliveriesForRun(recovered.run.id);
     for (const sessionId of liveSessionIds) {
       const tam = this.config.taskAgentManager;
       const resumeOutcome: 'retried' | 'respawned' | 'noop' =
@@ -4601,6 +4606,59 @@ export class SpaceRuntime {
           eventPayload,
           delivery.deliveryKey,
           delivery.failureReason ?? 'node_execution_not_active'
+        );
+      }
+    }
+  }
+
+  private requeuePendingDeliveriesForRun(runId: string): void {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    for (const delivery of store.listPendingDeliveries(runId)) {
+      const target = {
+        workflowRunId: delivery.workflowRunId,
+        taskId: delivery.taskId,
+        nodeId: delivery.nodeId,
+        agentName: delivery.agentName,
+      };
+      const eventRecord = store.getById(delivery.eventId);
+      if (!eventRecord || eventRecord.state !== 'published') continue;
+      const mode = deliveryModeFromFailureReason(delivery.failureReason);
+      const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
+      const ttlItem = {
+        event: eventPayload,
+        deliveryKey: delivery.deliveryKey,
+        deliveryMode: mode,
+        createdAt: eventRecord.createdAt,
+      };
+      if (this.isQueuedExternalEventExpired(ttlItem)) {
+        this.failQueuedDeliveryForTtl(ttlItem, this.buildQueueKey(target));
+        continue;
+      }
+      if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: 'subscription_no_longer_active',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        continue;
+      }
+      this.queueForPendingNode(
+        target,
+        eventPayload,
+        delivery.deliveryKey,
+        mode,
+        eventRecord.createdAt
+      );
+      const resolved = this.resolveSubscriptionTarget(target);
+      if (resolved.sessionId) {
+        this.scheduleExternalEventRetry(
+          resolved,
+          eventPayload,
+          delivery.deliveryKey,
+          mode,
+          delivery.failureReason ?? `deliveryMode:${mode}; retry requeued after task resume`,
+          { preserveAttemptCount: true, createdAt: eventRecord.createdAt }
         );
       }
     }

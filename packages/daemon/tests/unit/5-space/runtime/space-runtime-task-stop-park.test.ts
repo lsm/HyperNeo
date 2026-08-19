@@ -15,6 +15,10 @@ import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space
 import type { NodeExecutionStatus, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
+import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
+import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
+import type { ExternalEvent } from '../../../../src/lib/external-events/types';
+import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -216,7 +220,10 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
   const SPACE_ID = 'space-task-stop';
   const AGENT = 'agent-task-stop';
 
-  function buildRuntime(tam?: ReturnType<typeof makeParkTam>): SpaceRuntime {
+  function buildRuntime(
+    tam?: ReturnType<typeof makeParkTam>,
+    overrides: Partial<SpaceRuntimeConfig> = {}
+  ): SpaceRuntime {
     const config: SpaceRuntimeConfig = {
       db,
       spaceManager,
@@ -228,6 +235,7 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       sdkMessageRepo,
       internalEventBus: bus,
       ...(tam ? { taskAgentManager: tam as never } : {}),
+      ...overrides,
     };
     return new SpaceRuntime(config);
   }
@@ -732,6 +740,72 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
 
       expect(activated).toEqual(target);
       expect(tam._activateCalls).toHaveLength(0);
+    });
+
+    test('held external-event deliveries are stamped, requeued on resume, and delivered after respawn', async () => {
+      const eventStore = new ExternalEventStore(db);
+      const eventService = new ExternalEventService(eventStore, bus);
+      const injected: Array<{ sessionId: string; message: string }> = [];
+      const commandBus = createInternalCommandBus();
+      commandBus.register('agent.message.inject', async (command) => {
+        injected.push({ sessionId: command.sessionId, message: command.message });
+        return { ok: true };
+      });
+      const tam = makeParkTam(nodeExecutionRepo);
+      const rt = buildRuntime(tam, {
+        externalEventStore: eventStore,
+        ...(commandBus ? { commandBus } : {}),
+      });
+
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Held Event Run');
+      const task = tasks[0];
+      rt.registerSubscription(
+        run.id,
+        task.id,
+        stepA,
+        'Step A',
+        'github/*/*/pull_request/*.review_*'
+      );
+      await rt.executeTick();
+      expect(tam._spawned).toHaveLength(1);
+      await rt.parkStoppedWorkflowTask(SPACE_ID, task.id);
+      expect(taskRepo.getTask(task.id)?.status).toBe('stopped');
+
+      const event: ExternalEvent = {
+        id: `evt-${Math.random().toString(36).slice(2)}`,
+        spaceId: SPACE_ID,
+        source: 'github',
+        topic: 'github/lsm/neokai/pull_request/42.review_submitted',
+        occurredAt: Date.now(),
+        ingestedAt: Date.now(),
+        dedupeKey: `dedupe-${Math.random().toString(36).slice(2)}`,
+        summary: 'PR review submitted',
+        payload: { action: 'review_submitted', prNumber: 42 },
+      };
+      await eventService.publish(event);
+
+      const heldDelivery = eventStore.listPendingDeliveries(run.id)[0];
+      expect(heldDelivery).toBeDefined();
+      expect(heldDelivery.failureReason).toBe('deliveryMode:defer; task_stopped');
+      expect(injected).toHaveLength(0);
+
+      const recovered = await rt.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+      expect(recovered.task.status).toBe('in_progress');
+
+      const queues = (
+        rt as unknown as {
+          pendingExternalEventQueue: Map<string, Array<{ deliveryKey: string }>>;
+        }
+      ).pendingExternalEventQueue;
+      const queuedKeys = [...queues.values()].flat().map((item) => item.deliveryKey);
+      expect(queuedKeys).toContain(heldDelivery.deliveryKey);
+
+      await rt.executeTick();
+      expect(tam._spawned).toHaveLength(2);
+      expect(injected.length).toBeGreaterThanOrEqual(1);
+      expect(injected[0]?.message).toContain(event.id);
+      expect(eventStore.listPendingDeliveries(run.id)).toHaveLength(0);
     });
   });
 

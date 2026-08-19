@@ -8275,6 +8275,22 @@ describe('createSpaceAgentToolHandlers — update_task status parameter (task #1
     expect((result.task as SpaceTask).status).toBe('cancelled');
   });
 
+  test('refuses agent-initiated resume of a stopped task — Resume stays human-only', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('stopped', runId);
+    const recoverSpy = spyOn(ctx.runtime, 'recoverWorkflowBackedTask');
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'in_progress' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error as string).toContain('cannot resume task');
+    expect(result.error as string).toContain("from 'stopped'");
+    expect(recoverSpy).not.toHaveBeenCalled();
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('stopped');
+  });
+
   test('emits space.task.updated and logs previousStatus on a transition', async () => {
     const emitted: Array<Record<string, unknown>> = [];
     const mockBus = {

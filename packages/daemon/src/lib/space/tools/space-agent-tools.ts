@@ -2103,6 +2103,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             });
           }
 
+          if (
+            task.workflowRunId &&
+            task.status === 'stopped' &&
+            isWorkflowRecoveryTransition(task.status, args.status)
+          ) {
+            return jsonResult({
+              success: false,
+              error:
+                `update_task cannot resume task ${args.task_id} from 'stopped'. ` +
+                `A stopped task is parked by a human and resumed through the task ` +
+                `Resume action (spaceTask.update) — use that path instead.`,
+            });
+          }
+
           if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, args.status)) {
             const { task: recovered } = await runtime.recoverWorkflowBackedTask(
               spaceId,
