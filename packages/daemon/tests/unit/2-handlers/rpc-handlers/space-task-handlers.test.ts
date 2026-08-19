@@ -919,6 +919,99 @@ describe('space-task-handlers', () => {
       );
     });
 
+    it('routes stopped → cancelled through runtime teardown so the run is not stranded', async () => {
+      const stoppedTask = {
+        ...mockTask,
+        status: 'stopped' as const,
+        workflowRunId: 'run-1',
+      };
+      const cancelledTask = { ...stoppedTask, status: 'cancelled' as const };
+      const runtime = {
+        stopWorkflowBackedTaskForStatus: mock(async () => cancelledTask),
+        isWorkflowRunActive: mock(() => false),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, stoppedTask, runtime);
+
+      const result = await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        status: 'cancelled',
+        cancelReason: 'user cancelled',
+      });
+
+      expect(result).toEqual(cancelledTask);
+      expect(runtime.stopWorkflowBackedTaskForStatus).toHaveBeenCalledWith('space-1', 'task-1', {
+        status: 'cancelled',
+        cancelReason: 'user cancelled',
+      });
+      expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+    });
+
+    it('routes stopped → open through runtime teardown', async () => {
+      const stoppedTask = {
+        ...mockTask,
+        status: 'stopped' as const,
+        workflowRunId: 'run-1',
+      };
+      const reopenedTask = { ...stoppedTask, status: 'open' as const };
+      const runtime = {
+        stopWorkflowBackedTaskForStatus: mock(async () => reopenedTask),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, stoppedTask, runtime);
+
+      const result = await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        status: 'open',
+      });
+
+      expect(result).toEqual(reopenedTask);
+      expect(runtime.stopWorkflowBackedTaskForStatus).toHaveBeenCalledWith('space-1', 'task-1', {
+        status: 'open',
+      });
+      expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+    });
+
+    it('a stopped→cancelled task becomes archivable once the run is torn down', async () => {
+      const stoppedTask = {
+        ...mockTask,
+        status: 'stopped' as const,
+        workflowRunId: 'run-1',
+      };
+      const cancelledTask = { ...stoppedTask, status: 'cancelled' as const };
+      const runtime = {
+        stopWorkflowBackedTaskForStatus: mock(async () => cancelledTask),
+        isWorkflowRunActive: mock(() => false),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, stoppedTask, runtime);
+
+      await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        status: 'cancelled',
+      });
+      (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(cancelledTask);
+      (taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+        ...cancelledTask,
+        status: 'archived' as const,
+      });
+
+      const result = await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        status: 'archived',
+      });
+
+      expect(runtime.isWorkflowRunActive).toHaveBeenCalledWith('run-1');
+      expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'archived', {
+        result: undefined,
+        reportedSummary: undefined,
+        approvalSource: undefined,
+        approvalReason: undefined,
+      });
+      expect(result).toBeDefined();
+    });
+
     it('does NOT call setTaskStatus when status is unchanged (avoids spurious transition error)', async () => {
       const result = await call('spaceTask.update', {
         spaceId: 'space-1',

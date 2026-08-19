@@ -553,6 +553,31 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
     });
   });
 
+  describe('leaving the stopped state', () => {
+    test('cancelling a stopped task tears down its run so it does not stay stranded', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Cancel After Stop Run');
+      const task = seedTask(run.id, { taskAgentSessionId: 'session-task-agent' });
+      seedExec(run.id, stepA, 'Step A', 'in_progress', {
+        agentSessionId: 'session-in-flight',
+      });
+      const rt = buildRuntime(
+        makeParkTam(nodeExecutionRepo, {
+          liveSessionIds: ['session-in-flight', 'session-task-agent'],
+        })
+      );
+      await rt.parkStoppedWorkflowTask(SPACE_ID, task.id);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+
+      const cancelled = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'cancelled',
+      });
+
+      expect(cancelled?.status).toBe('cancelled');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
+    });
+  });
+
   describe('stopped-task guards', () => {
     function saveAssistantMessage(
       sessionId: string,

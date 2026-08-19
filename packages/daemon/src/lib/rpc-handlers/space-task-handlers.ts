@@ -421,6 +421,7 @@ export function setupSpaceTaskHandlers(
           const fromActivePaused =
             currentTask.status === 'in_progress' ||
             currentTask.status === 'blocked' ||
+            currentTask.status === 'stopped' ||
             isRateOrUsageLimited(currentTask.status);
           const toStopped = updateParams.status === 'open' || updateParams.status === 'cancelled';
           const toBlockedFromPaused =

@@ -8257,6 +8257,24 @@ describe('createSpaceAgentToolHandlers — update_task status parameter (task #1
     expect((result.task as SpaceTask).status).toBe('blocked');
   });
 
+  test('tears down the workflow when a stopped task is cancelled', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('stopped', runId);
+    const stopSpy = spyOn(ctx.runtime, 'stopWorkflowBackedTaskForStatus').mockImplementation(
+      async (_spaceId, taskId, params) =>
+        ctx.taskManager.setTaskStatus(taskId, params.status ?? 'cancelled')
+    );
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'cancelled' })
+    );
+
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(stopSpy).toHaveBeenCalledWith(ctx.spaceId, task.id, { status: 'cancelled' });
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('cancelled');
+  });
+
   test('emits space.task.updated and logs previousStatus on a transition', async () => {
     const emitted: Array<Record<string, unknown>> = [];
     const mockBus = {

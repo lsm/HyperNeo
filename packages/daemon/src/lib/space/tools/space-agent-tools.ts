@@ -2118,6 +2118,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           const fromActivePaused =
             task.status === 'in_progress' ||
             task.status === 'blocked' ||
+            task.status === 'stopped' ||
             isRateOrUsageLimited(task.status);
           const toStopped = args.status === 'open' || args.status === 'cancelled';
           const toBlockedFromPaused =
