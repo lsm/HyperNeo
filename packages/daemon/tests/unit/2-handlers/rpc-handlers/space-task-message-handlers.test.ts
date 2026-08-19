@@ -232,6 +232,17 @@ describe('setupSpaceTaskMessageHandlers', () => {
       ).rejects.toThrow('message is required');
     });
 
+    it('throws when task is stopped with a resume hint', async () => {
+      setup({ ...mockTaskWithSession, status: 'stopped' });
+      await expect(
+        call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'ping',
+        })
+      ).rejects.toThrow(/stopped — resume it before sending messages/);
+    });
+
     it('throws when message exceeds 100,000 characters', async () => {
       const longMessage = 'x'.repeat(100_001);
       await expect(
@@ -2710,6 +2721,19 @@ describe('setupSpaceTaskMessageHandlers', () => {
           agentName: 'reviewer',
         })
       ).rejects.toThrow(/cancelled.*active task/);
+    });
+
+    it('throws when task is stopped with a resume hint', async () => {
+      const { handlers: h } = setupActivate({
+        task: { ...mockTaskWithRun, status: 'stopped' },
+      });
+      await expect(
+        (h.get('space.task.activateNodeAgent') as RequestHandler)({
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          agentName: 'reviewer',
+        })
+      ).rejects.toThrow(/stopped — resume it before activating agents/);
     });
   });
 });

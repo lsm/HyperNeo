@@ -8159,14 +8159,31 @@ describe('createSpaceAgentToolHandlers — update_task status parameter (task #1
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
   });
 
-  test('rejects bare transition into stopped', async () => {
+  test('stops a standalone task with a plain status write', async () => {
     const task = createTaskWithStatus('in_progress');
     const result = parseResult(
       await makeHandlers(ctx).update_task({ task_id: task.id, status: 'stopped' })
     );
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("cannot transition a task into 'stopped' directly");
-    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('stopped');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('stopped');
+  });
+
+  test('stops a workflow-backed task through the same park routine as the human path', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('in_progress', runId);
+    const parkSpy = spyOn(ctx.runtime, 'parkStoppedWorkflowTask').mockImplementation(
+      async (_spaceId, taskId) => ctx.taskManager.setTaskStatus(taskId, 'stopped')
+    );
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'stopped' })
+    );
+
+    expect(parkSpy).toHaveBeenCalledTimes(1);
+    expect(parkSpy).toHaveBeenCalledWith(ctx.spaceId, task.id);
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('stopped');
   });
 
   test('rejects review → done (owned by the approval pipeline)', async () => {
@@ -8255,6 +8272,83 @@ describe('createSpaceAgentToolHandlers — update_task status parameter (task #1
     expect(stopSpy).toHaveBeenCalledWith(ctx.spaceId, task.id, { status: 'blocked' });
     expect(result.success).toBe(true);
     expect((result.task as SpaceTask).status).toBe('blocked');
+  });
+
+  test('tears down the workflow when a stopped task is cancelled', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('stopped', runId);
+    const stopSpy = spyOn(ctx.runtime, 'stopWorkflowBackedTaskForStatus').mockImplementation(
+      async (_spaceId, taskId, params) =>
+        ctx.taskManager.setTaskStatus(taskId, params.status ?? 'cancelled')
+    );
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'cancelled' })
+    );
+
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(stopSpy).toHaveBeenCalledWith(ctx.spaceId, task.id, { status: 'cancelled' });
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('cancelled');
+  });
+
+  test('agent resume of a stopped task routes through the shared recovery path', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('stopped', runId);
+    const run = ctx.workflowRunRepo.getRun(runId);
+    if (!run) throw new Error(`run missing: ${runId}`);
+    const recoverSpy = spyOn(ctx.runtime, 'recoverWorkflowBackedTask').mockImplementation(
+      async (_spaceId, taskId, targetStatus) => {
+        return { task: await ctx.taskManager.setTaskStatus(taskId, targetStatus), run };
+      }
+    );
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'in_progress' })
+    );
+
+    expect(recoverSpy).toHaveBeenCalledTimes(1);
+    expect(recoverSpy).toHaveBeenCalledWith(ctx.spaceId, task.id, 'in_progress');
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('in_progress');
+  });
+
+  test('agent reopen of a stopped task routes through the shared teardown path', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('stopped', runId);
+    const stopSpy = spyOn(ctx.runtime, 'stopWorkflowBackedTaskForStatus').mockImplementation(
+      async (_spaceId, taskId, params) =>
+        ctx.taskManager.setTaskStatus(taskId, params.status ?? 'open')
+    );
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'open' })
+    );
+
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(stopSpy).toHaveBeenCalledWith(ctx.spaceId, task.id, { status: 'open' });
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('open');
+  });
+
+  test('agent resume of a standalone stopped task is a plain status write', async () => {
+    const task = createTaskWithStatus('stopped');
+    ctx.taskRepo.updateTask(task.id, {
+      result: 'parked work',
+      reportedSummary: 'parked summary',
+      blockReason: 'parked reason',
+    });
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'in_progress' })
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('in_progress');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    expect(ctx.taskRepo.getTask(task.id)?.result).toBeNull();
+    expect(ctx.taskRepo.getTask(task.id)?.reportedSummary).toBeNull();
+    expect(ctx.taskRepo.getTask(task.id)?.blockReason).toBeNull();
   });
 
   test('emits space.task.updated and logs previousStatus on a transition', async () => {
