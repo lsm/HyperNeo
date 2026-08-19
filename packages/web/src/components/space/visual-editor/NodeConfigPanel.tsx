@@ -736,11 +736,14 @@ export function NodeConfigPanel({
   useEffect(() => {
     setConfirmingDelete(false);
     setPanelView({ kind: 'main' });
+  }, [step.localId]);
+
+  useEffect(() => {
     const normalized = normalizeNodeDraftThinkingLevel(step);
     if (normalized !== step) {
       onUpdate(normalized);
     }
-  }, [step, step.localId, onUpdate]);
+  }, [step, onUpdate]);
 
   useEffect(() => {
     if (selectedChannelRelation) {
