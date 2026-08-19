@@ -439,6 +439,7 @@ interface AgentControlEvents {
     userMessageText: string;
     needsWorkspaceInit: boolean;
     hasDraftToClear: boolean;
+    voicePendingSent?: string;
     sendStatus: 'deferred' | 'enqueued' | 'consumed';
     deliveryMode: import('@hyperneo/shared').MessageDeliveryMode;
     skipQueryStart?: boolean;

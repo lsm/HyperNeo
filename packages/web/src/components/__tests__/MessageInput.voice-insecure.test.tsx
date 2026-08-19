@@ -44,7 +44,12 @@ vi.mock('../../hooks', () => ({
     cancel: voiceCancel,
     setRecordingCursor: vi.fn(),
   }),
-  useInputDraft: () => ({ content: '', setContent: vi.fn(), clear: vi.fn() }),
+  useInputDraft: () => ({
+    content: '',
+    setContent: vi.fn(),
+    clear: vi.fn(),
+    holdDraftAdoption: async (fn: () => Promise<unknown>) => fn(),
+  }),
   useModelSwitcher: () => ({
     currentModel: 'mock-model',
     currentModelInfo: null,

@@ -8,6 +8,7 @@ import type {
   ReferenceMetadata,
   Session,
 } from '@hyperneo/shared';
+import { composeDraftWhole } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database';
@@ -117,6 +118,14 @@ export class MessagePersistence {
         `[MessagePersistence] Session ${sessionId} is archived; cannot accept new messages.`
       );
     }
+
+    const preSendDraft = persistedSession?.metadata?.inputDraft ?? '';
+    const preSendPending = persistedSession?.metadata?.inputDraftVoicePending ?? '';
+    const preSendComposed = preSendPending.trim()
+      ? composeDraftWhole(preSendDraft, preSendPending)
+      : null;
+    const compositionAtSend =
+      preSendComposed !== null && content.trim().includes(preSendComposed.trim());
 
     const agentSession = await this.sessionCache.getAsync(sessionId);
     if (!agentSession) {
@@ -266,7 +275,8 @@ export class MessagePersistence {
             userMessageText: content,
             needsWorkspaceInit:
               !session.metadata.titleGenerated && session.metadata.titleSetBy !== 'user',
-            hasDraftToClear: session.metadata?.inputDraft === content.trim(),
+            hasDraftToClear: preSendDraft.trim() === content.trim() || compositionAtSend,
+            ...(compositionAtSend ? { voicePendingSent: preSendPending } : {}),
             sendStatus,
             deliveryMode: effectiveDeliveryMode,
             skipQueryStart: !useV2Delivery || useOutbox,

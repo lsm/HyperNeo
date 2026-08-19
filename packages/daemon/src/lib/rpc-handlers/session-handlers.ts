@@ -14,7 +14,7 @@ import type {
 } from '@hyperneo/shared';
 import { normalizeThinkingLevel } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { appendDraftText, generateUUID } from '@hyperneo/shared';
+import { composeDraftWhole, generateUUID, matchesDraftOrComposition } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@hyperneo/shared';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
@@ -280,25 +280,15 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    const beforeMerge = agentSession.getSessionData();
-    const voicePending = beforeMerge.metadata?.inputDraftVoicePending;
+    let session = agentSession.getSessionData();
+    const voicePending = session.metadata?.inputDraftVoicePending;
     if (voicePending && voicePending.trim()) {
-      const draft = beforeMerge.metadata?.inputDraft ?? '';
-      const merged = appendDraftText(draft, voicePending);
-      const fullyMerged =
-        merged === `${draft}${voicePending}` || merged === `${draft} ${voicePending}`;
-      if (fullyMerged) {
-        await sessionManager.updateSession(targetSessionId, {
-          metadata: {
-            inputDraft: merged,
-            inputDraftVoicePending: null,
-            inputDraftVersion: (beforeMerge.metadata?.inputDraftVersion ?? 0) + 1,
-          },
-        } as Partial<Session>);
+      const draft = session.metadata?.inputDraft ?? '';
+      const composed = composeDraftWhole(draft, voicePending);
+      if (composed !== null && session.metadata) {
+        session = { ...session, metadata: { ...session.metadata, inputDraft: composed } };
       }
     }
-
-    const session = agentSession.getSessionData();
 
     return {
       session,
@@ -334,50 +324,19 @@ export function setupSessionHandlers(
   });
 
   messageHub.onRequest('session.update', async (data, _ctx) => {
-    const {
-      sessionId: targetSessionId,
-      expectedDraftVersion,
-      ...updates
-    } = data as UpdateSessionRequest & {
+    const { sessionId: targetSessionId, ...updates } = data as UpdateSessionRequest & {
       sessionId: string;
-      expectedDraftVersion?: number;
     };
 
     const draftWrite = (updates.metadata as Partial<SessionMetadata> | undefined)?.inputDraft;
-    let didFold = false;
     if (draftWrite !== undefined) {
       const existing = sessionManager.getSessionFromDB(targetSessionId);
       const meta = existing?.metadata;
-      if ((meta?.inputDraftVoicePending ?? '').trim() !== '') {
-        (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = draftWrite ?? '';
-        (updates.metadata as Partial<SessionMetadata>).inputDraftVersion =
-          (meta?.inputDraftVersion ?? 0) + 1;
-      } else if (typeof meta?.inputDraftVoiceBaseline === 'string') {
-        const baseline = meta.inputDraftVoiceBaseline;
-        const draft = meta.inputDraft ?? '';
-        let transcripts = '';
-        if (draft.startsWith(`${baseline} `)) transcripts = draft.slice(baseline.length + 1);
-        else if (draft.startsWith(baseline)) transcripts = draft.slice(baseline.length);
-        const currentVersion = meta.inputDraftVersion ?? 0;
-        const alreadyIncluded =
-          expectedDraftVersion !== undefined && expectedDraftVersion === currentVersion;
-        const written = draftWrite ?? '';
-        const folded = alreadyIncluded
-          ? written
-          : transcripts
-            ? appendDraftText(written, transcripts)
-            : written;
-        (updates.metadata as Partial<SessionMetadata>).inputDraft = folded || null;
-        if (alreadyIncluded) {
-          (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = null;
-        } else {
-          (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = written;
-          didFold = true;
-        }
-        (updates.metadata as Partial<SessionMetadata>).inputDraftVersion = currentVersion + 1;
-      } else {
-        const currentVersion = meta?.inputDraftVersion ?? 0;
-        (updates.metadata as Partial<SessionMetadata>).inputDraftVersion = currentVersion + 1;
+      const pending = meta?.inputDraftVoicePending;
+      const pendingStaged = !!pending && pending.trim() !== '';
+      const written = draftWrite ?? '';
+      if (pendingStaged && written.trim() !== '' && written.includes(pending.trim())) {
+        (updates.metadata as Partial<SessionMetadata>).inputDraftVoicePending = null;
       }
     }
 
@@ -392,13 +351,7 @@ export function setupSessionHandlers(
       channel: `session:${targetSessionId}`,
     });
 
-    const appliedMeta = (updates.metadata as Partial<SessionMetadata> | undefined) ?? {};
-    const appliedVersion = appliedMeta.inputDraftVersion;
-    return {
-      success: true,
-      ...(appliedVersion !== undefined ? { draftVersion: appliedVersion } : {}),
-      ...(didFold ? { draftValue: appliedMeta.inputDraft ?? '' } : {}),
-    };
+    return { success: true };
   });
 
   messageHub.onRequest('session.appendVoiceDraft', async (data, _ctx) => {
@@ -409,6 +362,9 @@ export function setupSessionHandlers(
     };
     if (typeof text !== 'string' || text.trim().length === 0) {
       throw new Error('Text to append is required');
+    }
+    if (dedupId !== undefined && typeof dedupId !== 'string') {
+      throw new Error('dedupId must be a string when provided');
     }
     const session = sessionManager.getSessionFromDB(sessionId);
     if (!session) throw new Error('Session not found');
@@ -423,16 +379,11 @@ export function setupSessionHandlers(
     if (dedupId && processedLog.some((entry) => entry.id === dedupId)) {
       return { success: true, deduped: true };
     }
-    const existingPending = metadata.inputDraftVoicePending ?? '';
-    const pending = appendDraftText(existingPending, text);
-    const fits =
-      pending === `${existingPending}${text}` || pending === `${existingPending} ${text}`;
-    if (!fits) throw new Error('Pending voice draft is at the character limit');
+    const existingPending = (metadata.inputDraftVoicePending ?? '').trim();
+    const stagedText = text.trim();
+    const pending = composeDraftWhole(existingPending, stagedText);
+    if (pending === null) throw new Error('Pending voice draft is at the character limit');
     const metadataUpdate: Partial<SessionMetadata> = { inputDraftVoicePending: pending };
-    if (!existingPending.trim()) {
-      metadataUpdate.inputDraftVoiceBaseline = metadata.inputDraft ?? '';
-      metadataUpdate.inputDraftVoiceBaselineSeq = (metadata.inputDraftVoiceBaselineSeq ?? 0) + 1;
-    }
     if (dedupId) {
       metadataUpdate.inputDraftVoiceAppendLog = [...processedLog, { id: dedupId, ts: Date.now() }];
     }
@@ -445,6 +396,7 @@ export function setupSessionHandlers(
         channel: `session:${sessionId}`,
       }
     );
+    messageHub.event('session.voiceLanded', { sessionId }, { channel: `session:${sessionId}` });
     return { success: true };
   });
 
@@ -453,15 +405,16 @@ export function setupSessionHandlers(
     if (typeof expected !== 'string') throw new Error('Expected draft value is required');
     const session = sessionManager.getSessionFromDB(sessionId);
     if (!session) throw new Error('Session not found');
-    if ((session.metadata?.inputDraft ?? '').trim() !== expected.trim()) {
+    const draft = session.metadata?.inputDraft ?? '';
+    const pending = session.metadata?.inputDraftVoicePending ?? '';
+    const match = matchesDraftOrComposition(draft, pending, expected);
+    if (!match) {
       return { cleared: false };
     }
-    const staged = (session.metadata?.inputDraftVoicePending ?? '').trim() !== '';
     const updates: UpdateSessionRequest = {
       metadata: {
         inputDraft: null,
-        ...(staged ? { inputDraftVoiceBaseline: '' } : {}),
-        inputDraftVersion: (session.metadata?.inputDraftVersion ?? 0) + 1,
+        ...(match === 'composition' ? { inputDraftVoicePending: null } : {}),
       },
     };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);
@@ -473,111 +426,6 @@ export function setupSessionHandlers(
       }
     );
     return { cleared: true };
-  });
-
-  messageHub.onRequest('session.stripVoiceBaseline', async (data, _ctx) => {
-    const { sessionId, expected, expectedSeq } = data as {
-      sessionId: string;
-      expected: string;
-      expectedSeq?: number;
-    };
-    if (typeof expected !== 'string') throw new Error('Expected draft value is required');
-    const session = sessionManager.getSessionFromDB(sessionId);
-    if (!session) throw new Error('Session not found');
-    const metadata = session.metadata ?? {};
-    const baseline = metadata.inputDraftVoiceBaseline;
-    const draft = metadata.inputDraft ?? '';
-    if (
-      typeof baseline !== 'string' ||
-      typeof expectedSeq !== 'number' ||
-      metadata.inputDraftVoiceBaselineSeq !== expectedSeq ||
-      draft.trim() !== expected.trim()
-    ) {
-      return { updated: false };
-    }
-    let value: string;
-    if (draft === baseline) value = '';
-    else if (draft.startsWith(`${baseline} `)) value = draft.slice(baseline.length + 1);
-    else if (draft.startsWith(baseline)) value = draft.slice(baseline.length);
-    else return { updated: false };
-    const updates: UpdateSessionRequest = {
-      metadata: {
-        inputDraft: value || null,
-        inputDraftVoiceBaseline: null,
-        inputDraftVoiceLastStrippedSeq: expectedSeq,
-        inputDraftVersion: (metadata.inputDraftVersion ?? 0) + 1,
-      },
-    };
-    await sessionManager.updateSession(sessionId, updates as Partial<Session>);
-    messageHub.event(
-      'session.updated',
-      { ...updates, sessionId },
-      {
-        channel: `session:${sessionId}`,
-      }
-    );
-    return { updated: true, value };
-  });
-
-  messageHub.onRequest('session.mergeVoiceDraftBackup', async (data, _ctx) => {
-    const { sessionId, content, claimId } = data as {
-      sessionId: string;
-      content: string;
-      claimId?: string;
-    };
-    if (typeof content !== 'string') throw new Error('Backup content is required');
-    const session = sessionManager.getSessionFromDB(sessionId);
-    if (!session) throw new Error('Session not found');
-    const metadata = session.metadata ?? {};
-    const claimLogCutoff = Date.now() - VOICE_APPEND_LOG_TTL_MS;
-    const committedClaims = (metadata.inputDraftVoiceMergeClaimLog ?? []).filter(
-      (entry) =>
-        typeof entry?.id === 'string' && typeof entry?.ts === 'number' && entry.ts > claimLogCutoff
-    );
-    if (claimId && committedClaims.some((entry) => entry.id === claimId)) {
-      return { merged: true, value: metadata.inputDraft ?? '' };
-    }
-    const baseline = metadata.inputDraftVoiceBaseline;
-    const draft = metadata.inputDraft ?? '';
-    const trimmed = content.trim();
-    const metadataUpdate: Partial<SessionMetadata> = {};
-    if (typeof baseline !== 'string') {
-      metadataUpdate.inputDraft = trimmed || null;
-    } else if ((metadata.inputDraftVoicePending ?? '').trim() !== '') {
-      metadataUpdate.inputDraft = trimmed || null;
-      metadataUpdate.inputDraftVoiceBaseline = trimmed;
-    } else {
-      let transcripts: string;
-      if (draft === baseline) transcripts = '';
-      else if (draft.startsWith(`${baseline} `)) transcripts = draft.slice(baseline.length + 1);
-      else if (draft.startsWith(baseline)) transcripts = draft.slice(baseline.length);
-      else return { merged: false };
-      const value = appendDraftText(trimmed, transcripts);
-      const fits =
-        transcripts === '' ||
-        value === `${trimmed} ${transcripts}` ||
-        value === `${trimmed}${transcripts}`;
-      if (!fits) return { merged: false };
-      metadataUpdate.inputDraft = value || null;
-      metadataUpdate.inputDraftVoiceBaseline = null;
-    }
-    metadataUpdate.inputDraftVersion = (metadata.inputDraftVersion ?? 0) + 1;
-    if (claimId) {
-      metadataUpdate.inputDraftVoiceMergeClaimLog = [
-        ...committedClaims,
-        { id: claimId, ts: Date.now() },
-      ];
-    }
-    const updates: UpdateSessionRequest = { metadata: metadataUpdate };
-    await sessionManager.updateSession(sessionId, updates as Partial<Session>);
-    messageHub.event(
-      'session.updated',
-      { ...updates, sessionId },
-      {
-        channel: `session:${sessionId}`,
-      }
-    );
-    return { merged: true, value: metadataUpdate.inputDraft ?? '' };
   });
 
   messageHub.onRequest('session.delete', async (data, _ctx) => {
