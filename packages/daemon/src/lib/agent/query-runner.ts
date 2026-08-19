@@ -752,9 +752,9 @@ export class QueryRunner {
           logger.error(
             `SDK startup timeout: SDK did not respond within ${elapsed}ms. ` +
               `Model: ${queryOptions.model}, ${workspaceDesc}` +
-              (isRootWorkspace
-                ? ' — running on root workspace (not a worktree); check for other Claude Code sessions using this path'
-                : '') +
+              (isRootWorkspace ? ' — running on root workspace (not a worktree)' : '') +
+              ` The SDK subprocess did not emit its first message within the startup window; ` +
+              `concurrent cold-start load is bounded by the startup gate.` +
               ` (Hint: set HYPERNEO_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${STARTUP_TIMEOUT_MS}ms)`
           );
           logger.error(
@@ -1262,11 +1262,10 @@ export class QueryRunner {
 
           const startupTimeoutUserMessage = isStartupTimeout
             ? `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
-              `Common causes: another Claude Code session is using the same workspace, ` +
-              `a stale lock file in .claude/, or the workspace is under heavy load. ` +
-              `Try: closing other Claude sessions on this workspace, ` +
-              `then resend your message. ` +
-              `You can also increase the timeout with HYPERNEO_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
+              `The SDK subprocess did not emit its first message within the startup window ` +
+              `(after one automatic retry); concurrent cold-start load is bounded by the startup gate. ` +
+              `Try: resending your message, or increase the timeout with ` +
+              `HYPERNEO_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
             : isConversationNotFound
               ? `The AI session could not be resumed (workspace: ${session.workspacePath ?? 'unbound'}). ` +
                 `The previous session transcript was not found — this can happen after a provider switch, ` +
