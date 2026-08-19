@@ -3540,6 +3540,80 @@ export class SpaceRuntime {
     );
   }
 
+  private collectLiveSessionIdsForTask(task: SpaceTask): string[] {
+    const tam = this.config.taskAgentManager;
+    const ids = new Set<string>();
+    const collect = (sessionId: string | null | undefined): void => {
+      if (!sessionId || ids.has(sessionId)) return;
+      if (tam && !tam.isSessionAlive(sessionId)) return;
+      ids.add(sessionId);
+    };
+    if (task.workflowRunId) {
+      for (const execution of this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId)) {
+        collect(execution.agentSessionId);
+      }
+    }
+    collect(task.taskAgentSessionId);
+    for (const sessionId of tam?.getSubSessionIdsForTasks([task.id]) ?? []) {
+      collect(sessionId);
+    }
+    return [...ids];
+  }
+
+  async parkStoppedWorkflowTask(spaceId: string, taskId: string): Promise<SpaceTask | null> {
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task || task.spaceId !== spaceId) return null;
+    if (!isValidSpaceTaskTransition(task.status, 'stopped')) {
+      throw new Error(`Invalid status transition from '${task.status}' to 'stopped'.`);
+    }
+
+    const tam = this.config.taskAgentManager;
+    const liveSessionIds = this.collectLiveSessionIdsForTask(task);
+    let verifiedTotal = 0;
+    let verifiedStopped = 0;
+    if (tam) {
+      if (liveSessionIds.length > 0) {
+        try {
+          const results = await tam.stopSessionsVerified(liveSessionIds);
+          verifiedTotal = results.length;
+          verifiedStopped = results.filter((result) => result.stopped).length;
+          const failures = results.filter((result) => !result.stopped);
+          if (failures.length > 0) {
+            log.warn(
+              `parkStoppedWorkflowTask: ${failures.length}/${results.length} session(s) for task ${taskId} not confirmed stopped: ` +
+                failures
+                  .map((failure) => `${failure.sessionId} (${failure.detail ?? 'unknown reason'})`)
+                  .join('; ')
+            );
+          }
+        } catch (err) {
+          log.error(
+            `parkStoppedWorkflowTask: verified session stop failed for task ${taskId}:`,
+            err
+          );
+        }
+      }
+      await tam.cleanup(taskId, 'stopped').catch((err: unknown) => {
+        log.warn(
+          `parkStoppedWorkflowTask: failed to cleanup agent session for task ${taskId}:`,
+          err
+        );
+      });
+    }
+
+    const parkedRunId = this.parkInFlightExecutionsForTask(taskId);
+
+    const updated = await this.getOrCreateTaskManager(spaceId).setTaskStatus(taskId, 'stopped');
+    await this.safeOnTaskUpdated(spaceId, updated);
+
+    log.info(
+      `parkStoppedWorkflowTask: verified-stopped ${verifiedStopped}/${verifiedTotal} session(s) ` +
+        `and parked ${parkedRunId ? `in-flight executions for run ${parkedRunId}` : 'no run executions'} ` +
+        `for task ${taskId} — run status preserved, task set to stopped`
+    );
+    return updated;
+  }
+
   async stopWorkflowBackedTaskForStatus(
     spaceId: string,
     taskId: string,
@@ -6053,6 +6127,10 @@ export class SpaceRuntime {
       return;
     }
 
+    if (canonicalTask.status === 'stopped') {
+      return;
+    }
+
     let nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
     if (nodeExecutions.length === 0) return;
 
@@ -7619,6 +7697,7 @@ export class SpaceRuntime {
     if (allRunTasks.length === 0) return;
     const canonicalTask = this.pickCanonicalTaskForRun(run, allRunTasks);
     if (!canonicalTask) return;
+    if (canonicalTask.status === 'stopped') return;
 
     const retryCount = this.blockedRetryCounts.get(runId) ?? 0;
     const blockedExecutions = this.config.nodeExecutionRepo
@@ -7814,20 +7893,31 @@ export class SpaceRuntime {
 
   parkInFlightExecutionsForSpace(spaceId: string): void {
     for (const run of this.config.workflowRunRepo.listBySpace(spaceId)) {
-      const inFlightExecutions = this.config.nodeExecutionRepo
-        .listByWorkflowRun(run.id)
-        .filter((execution) => execution.status === 'in_progress');
-      for (const execution of inFlightExecutions) {
-        this.config.nodeExecutionRepo.update(execution.id, {
-          status: 'pending',
-          result: null,
-          agentSessionId: null,
-        });
-        this.taskCrashCounts.delete(`${run.id}:${execution.id}`);
-      }
-      this.clearAgentStuckStateForRun(run.id);
-      this.blockedRetryCounts.delete(run.id);
+      this.parkInFlightExecutionsForRun(run.id);
     }
+  }
+
+  parkInFlightExecutionsForTask(taskId: string): string | null {
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task?.workflowRunId) return null;
+    this.parkInFlightExecutionsForRun(task.workflowRunId);
+    return task.workflowRunId;
+  }
+
+  parkInFlightExecutionsForRun(runId: string): void {
+    const inFlightExecutions = this.config.nodeExecutionRepo
+      .listByWorkflowRun(runId)
+      .filter((execution) => execution.status === 'in_progress');
+    for (const execution of inFlightExecutions) {
+      this.config.nodeExecutionRepo.update(execution.id, {
+        status: 'pending',
+        result: null,
+        agentSessionId: null,
+      });
+      this.taskCrashCounts.delete(`${runId}:${execution.id}`);
+    }
+    this.clearAgentStuckStateForRun(runId);
+    this.blockedRetryCounts.delete(runId);
   }
 
   private async recoverRateLimitedTasks(): Promise<void> {

@@ -442,14 +442,8 @@ export function setupSpaceTaskHandlers(
                 `approval metadata and dispatch the configured post-approval step.`
             );
           }
-          if (updateParams.status === 'stopped') {
-            throw new Error(
-              `spaceTask.update cannot transition a task into 'stopped' directly. ` +
-                `Use the task Stop action once it lands — it halts all agents and ` +
-                `preserves the run, sessions, and task provenance. 'stopped' is a ` +
-                `dormant capability until then.`
-            );
-          }
+          const parkingStoppedWorkflowTask =
+            updateParams.status === 'stopped' && !!currentTask.workflowRunId;
           if (
             updateParams.status === 'archived' &&
             currentTask.workflowRunId &&
@@ -475,6 +469,29 @@ export function setupSpaceTaskHandlers(
             );
             emitTaskUpdated = false;
             handleGoalTerminal = false;
+          } else if (parkingStoppedWorkflowTask) {
+            if (!spaceRuntimeService) {
+              throw new Error(
+                `Cannot stop workflow-backed task ${taskId}: SpaceRuntimeService is unavailable.`
+              );
+            }
+            task = await spaceRuntimeService.parkStoppedWorkflowTask(spaceId, taskId);
+            emitTaskUpdated = false;
+
+            const {
+              status: _s,
+              result: _r,
+              approvalReason: _ar,
+              cancelReason: _cr,
+              ...otherFields
+            } = updateParams;
+            if (Object.keys(otherFields).length > 0) {
+              emitTaskUpdated = true;
+              await ensureWorkflowOverridesStillUnlocked(otherFields);
+              task = await taskManager.updateTask(taskId, otherFields, {
+                onCascadedTasks: emitCascadedTasks,
+              });
+            }
           } else {
             const mappedReason =
               updateParams.status === 'cancelled'

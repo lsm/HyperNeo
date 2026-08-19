@@ -37,7 +37,7 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
   ).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
 }
 
-describe('SpaceRuntime — parkInFlightExecutionsForSpace()', () => {
+describe('SpaceRuntime — in-flight execution parking', () => {
   let db: BunDatabase;
 
   let workflowRunRepo: SpaceWorkflowRunRepository;
@@ -197,195 +197,354 @@ describe('SpaceRuntime — parkInFlightExecutionsForSpace()', () => {
     }
   });
 
-  test('resets in_progress executions to pending with null result and session', () => {
-    const { workflow, stepA, stepB } = buildWorkflow(SPACE_ID);
-    const run = createRun(SPACE_ID, workflow.id, 'Park Run');
-    const execA = seedExec(run.id, stepA, 'Step A', 'in_progress', {
-      agentSessionId: 'session-a',
-      result: 'partial work in flight',
-    });
-    const execB = seedExec(run.id, stepB, 'Step B', 'in_progress', {
-      agentSessionId: 'session-b',
+  describe('parkInFlightExecutionsForSpace()', () => {
+    test('resets in_progress executions to pending with null result and session', () => {
+      const { workflow, stepA, stepB } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Park Run');
+      const execA = seedExec(run.id, stepA, 'Step A', 'in_progress', {
+        agentSessionId: 'session-a',
+        result: 'partial work in flight',
+      });
+      const execB = seedExec(run.id, stepB, 'Step B', 'in_progress', {
+        agentSessionId: 'session-b',
+      });
+
+      makeRuntime().parkInFlightExecutionsForSpace(SPACE_ID);
+
+      const parkedA = nodeExecutionRepo.getById(execA.id)!;
+      const parkedB = nodeExecutionRepo.getById(execB.id)!;
+      expect(parkedA.status).toBe('pending');
+      expect(parkedA.result).toBeNull();
+      expect(parkedA.agentSessionId).toBeNull();
+      expect(parkedB.status).toBe('pending');
+      expect(parkedB.result).toBeNull();
+      expect(parkedB.agentSessionId).toBeNull();
     });
 
-    makeRuntime().parkInFlightExecutionsForSpace(SPACE_ID);
+    test('leaves idle, waiting_rebind, pending, and cancelled executions untouched in an affected run', () => {
+      const { workflow, stepA, stepB, stepC, stepD, stepE } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Mixed Run');
+      const execIdle = seedExec(run.id, stepA, 'Step A', 'idle', {
+        agentSessionId: 'session-idle',
+        result: 'finished work',
+      });
+      const execWaitingRebind = seedExec(run.id, stepB, 'Step B', 'waiting_rebind', {
+        agentSessionId: 'session-rebind',
+        result: 'waiting for orphaned tool_result recovery',
+      });
+      const execPending = seedExec(run.id, stepC, 'Step C', 'pending');
+      const execCancelled = seedExec(run.id, stepD, 'Step D', 'cancelled', {
+        agentSessionId: 'session-cancelled',
+        result: 'cancelled by user',
+      });
+      const execInFlight = seedExec(run.id, stepE, 'Step E', 'in_progress', {
+        agentSessionId: 'session-in-flight',
+      });
+      const other = buildWorkflow(OTHER_SPACE_ID, OTHER_AGENT);
+      const runOther = createRun(OTHER_SPACE_ID, other.workflow.id, 'Other Run');
+      const execOther = seedExec(
+        runOther.id,
+        other.stepA,
+        'Step A',
+        'in_progress',
+        { agentSessionId: 'session-other' },
+        OTHER_AGENT
+      );
 
-    const parkedA = nodeExecutionRepo.getById(execA.id)!;
-    const parkedB = nodeExecutionRepo.getById(execB.id)!;
-    expect(parkedA.status).toBe('pending');
-    expect(parkedA.result).toBeNull();
-    expect(parkedA.agentSessionId).toBeNull();
-    expect(parkedB.status).toBe('pending');
-    expect(parkedB.result).toBeNull();
-    expect(parkedB.agentSessionId).toBeNull();
+      makeRuntime().parkInFlightExecutionsForSpace(SPACE_ID);
+
+      const idle = nodeExecutionRepo.getById(execIdle.id)!;
+      const waitingRebind = nodeExecutionRepo.getById(execWaitingRebind.id)!;
+      const pending = nodeExecutionRepo.getById(execPending.id)!;
+      const cancelled = nodeExecutionRepo.getById(execCancelled.id)!;
+      const parked = nodeExecutionRepo.getById(execInFlight.id)!;
+      const untouchedOther = nodeExecutionRepo.getById(execOther.id)!;
+      expect(idle.status).toBe('idle');
+      expect(idle.result).toBe('finished work');
+      expect(idle.agentSessionId).toBe('session-idle');
+      expect(waitingRebind.status).toBe('waiting_rebind');
+      expect(waitingRebind.result).toBe('waiting for orphaned tool_result recovery');
+      expect(waitingRebind.agentSessionId).toBe('session-rebind');
+      expect(pending.status).toBe('pending');
+      expect(pending.result).toBeNull();
+      expect(pending.agentSessionId).toBeNull();
+      expect(cancelled.status).toBe('cancelled');
+      expect(cancelled.result).toBe('cancelled by user');
+      expect(cancelled.agentSessionId).toBe('session-cancelled');
+      expect(parked.status).toBe('pending');
+      expect(parked.result).toBeNull();
+      expect(parked.agentSessionId).toBeNull();
+      expect(untouchedOther.status).toBe('in_progress');
+      expect(untouchedOther.agentSessionId).toBe('session-other');
+    });
+
+    test('clears stuck state, crash counts, and retry budgets for every run of the space only', () => {
+      const first = buildWorkflow(SPACE_ID);
+      const affectedRun = createRun(SPACE_ID, first.workflow.id, 'Affected Run');
+      const execA = seedExec(affectedRun.id, first.stepA, 'Step A', 'in_progress', {
+        agentSessionId: 'session-a',
+      });
+      const second = buildWorkflow(SPACE_ID);
+      const idleOnlyRun = createRun(SPACE_ID, second.workflow.id, 'Idle-Only Run');
+      const execIdleOnly = seedExec(idleOnlyRun.id, second.stepA, 'Step A', 'idle', {
+        agentSessionId: 'session-idle',
+      });
+      const other = buildWorkflow(OTHER_SPACE_ID, OTHER_AGENT);
+      const runOther = createRun(OTHER_SPACE_ID, other.workflow.id, 'Other Space Run');
+      const execOther = seedExec(
+        runOther.id,
+        other.stepA,
+        'Step A',
+        'in_progress',
+        { agentSessionId: 'session-other' },
+        OTHER_AGENT
+      );
+
+      const rt = makeRuntime();
+      const internals = rt as any;
+      internals.agentStuckRecovery.set(`${affectedRun.id}:${execA.id}`, {
+        nagCount: 1,
+        restartCount: 1,
+        lastAction: 'nagged',
+        lastActionAt: Date.now(),
+        lastObservedMessageId: 'msg-1',
+        lastObservedMessageAt: Date.now(),
+        lastObservedProgressMessageId: 'msg-1',
+        lastObservedProgressMessageAt: Date.now(),
+        lastRuntimeNagMessageId: 'nag-1',
+        lastSessionId: 'session-a',
+        pendingRestartNotice: null,
+      });
+      internals.nonTerminalIdleStates.set(`${affectedRun.id}:${execA.id}`, {
+        lastSessionId: 'session-a',
+        lastObservedMessageId: 'message-id',
+        lastObservedProgressMessageId: 'message-id',
+        lastObservedProgressMessageAt: Date.now(),
+        lastRuntimeNudgeMessageId: 'nudge-id',
+        nudgeCount: 3,
+        failedNudgeCount: 0,
+        lastNudgeAt: Date.now(),
+        lastAttentionLogAt: null,
+      });
+      internals.taskCrashCounts.set(`${affectedRun.id}:${execA.id}`, 2);
+      internals.blockedRetryCounts.set(affectedRun.id, 1);
+      internals.agentStuckRecovery.set(`${idleOnlyRun.id}:${execIdleOnly.id}`, {
+        nagCount: 1,
+      });
+      internals.taskCrashCounts.set(`${idleOnlyRun.id}:${execIdleOnly.id}`, 1);
+      internals.blockedRetryCounts.set(idleOnlyRun.id, 2);
+      internals.agentStuckRecovery.set(`${runOther.id}:${execOther.id}`, { nagCount: 1 });
+      internals.taskCrashCounts.set(`${runOther.id}:${execOther.id}`, 1);
+      internals.blockedRetryCounts.set(runOther.id, 3);
+
+      rt.parkInFlightExecutionsForSpace(SPACE_ID);
+
+      expect(internals.agentStuckRecovery.has(`${affectedRun.id}:${execA.id}`)).toBe(false);
+      expect(internals.nonTerminalIdleStates.has(`${affectedRun.id}:${execA.id}`)).toBe(false);
+      expect(internals.taskCrashCounts.has(`${affectedRun.id}:${execA.id}`)).toBe(false);
+      expect(internals.blockedRetryCounts.has(affectedRun.id)).toBe(false);
+      expect(internals.agentStuckRecovery.has(`${idleOnlyRun.id}:${execIdleOnly.id}`)).toBe(false);
+      expect(internals.blockedRetryCounts.has(idleOnlyRun.id)).toBe(false);
+      expect(internals.taskCrashCounts.get(`${idleOnlyRun.id}:${execIdleOnly.id}`)).toBe(1);
+      expect(internals.agentStuckRecovery.get(`${runOther.id}:${execOther.id}`)).toEqual({
+        nagCount: 1,
+      });
+      expect(internals.taskCrashCounts.get(`${runOther.id}:${execOther.id}`)).toBe(1);
+      expect(internals.blockedRetryCounts.get(runOther.id)).toBe(3);
+      expect(nodeExecutionRepo.getById(execIdleOnly.id)?.status).toBe('idle');
+      expect(nodeExecutionRepo.getById(execOther.id)?.status).toBe('in_progress');
+    });
+
+    test('does not write task or run statuses and emits no lifecycle events', () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Status Run');
+      seedExec(run.id, stepA, 'Step A', 'in_progress', {
+        agentSessionId: 'session-a',
+      });
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Status Run',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: stepA,
+        status: 'in_progress',
+      });
+
+      makeRuntime().parkInFlightExecutionsForSpace(SPACE_ID);
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      expect(notifications).toHaveLength(0);
+    });
+
+    test('space with no runs is a no-op', () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Unrelated Run');
+      const exec = seedExec(run.id, stepA, 'Step A', 'in_progress', {
+        agentSessionId: 'session-a',
+      });
+
+      expect(makeRuntime().parkInFlightExecutionsForSpace(EMPTY_SPACE_ID)).toBeUndefined();
+      expect(nodeExecutionRepo.getById(exec.id)?.status).toBe('in_progress');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(notifications).toHaveLength(0);
+    });
   });
 
-  test('leaves idle, waiting_rebind, pending, and cancelled executions untouched in an affected run', () => {
-    const { workflow, stepA, stepB, stepC, stepD, stepE } = buildWorkflow(SPACE_ID);
-    const run = createRun(SPACE_ID, workflow.id, 'Mixed Run');
-    const execIdle = seedExec(run.id, stepA, 'Step A', 'idle', {
-      agentSessionId: 'session-idle',
-      result: 'finished work',
-    });
-    const execWaitingRebind = seedExec(run.id, stepB, 'Step B', 'waiting_rebind', {
-      agentSessionId: 'session-rebind',
-      result: 'waiting for orphaned tool_result recovery',
-    });
-    const execPending = seedExec(run.id, stepC, 'Step C', 'pending');
-    const execCancelled = seedExec(run.id, stepD, 'Step D', 'cancelled', {
-      agentSessionId: 'session-cancelled',
-      result: 'cancelled by user',
-    });
-    const execInFlight = seedExec(run.id, stepE, 'Step E', 'in_progress', {
-      agentSessionId: 'session-in-flight',
-    });
-    const other = buildWorkflow(OTHER_SPACE_ID, OTHER_AGENT);
-    const runOther = createRun(OTHER_SPACE_ID, other.workflow.id, 'Other Run');
-    const execOther = seedExec(
-      runOther.id,
-      other.stepA,
-      'Step A',
-      'in_progress',
-      { agentSessionId: 'session-other' },
-      OTHER_AGENT
-    );
+  describe('parkInFlightExecutionsForTask()', () => {
+    function createTaskForRun(runId: string, nodeId: string, status = 'in_progress') {
+      return taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: `Task ${runId}`,
+        description: '',
+        workflowRunId: runId,
+        workflowNodeId: nodeId,
+        status,
+      });
+    }
 
-    makeRuntime().parkInFlightExecutionsForSpace(SPACE_ID);
+    test('parks in_progress executions of the task run and returns the run id', () => {
+      const { workflow, stepA, stepB } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Task Run');
+      const task = createTaskForRun(run.id, stepA);
+      const execA = seedExec(run.id, stepA, 'Step A', 'in_progress', {
+        agentSessionId: 'session-a',
+        result: 'partial work in flight',
+      });
+      const execB = seedExec(run.id, stepB, 'Step B', 'in_progress', {
+        agentSessionId: 'session-b',
+      });
 
-    const idle = nodeExecutionRepo.getById(execIdle.id)!;
-    const waitingRebind = nodeExecutionRepo.getById(execWaitingRebind.id)!;
-    const pending = nodeExecutionRepo.getById(execPending.id)!;
-    const cancelled = nodeExecutionRepo.getById(execCancelled.id)!;
-    const parked = nodeExecutionRepo.getById(execInFlight.id)!;
-    const untouchedOther = nodeExecutionRepo.getById(execOther.id)!;
-    expect(idle.status).toBe('idle');
-    expect(idle.result).toBe('finished work');
-    expect(idle.agentSessionId).toBe('session-idle');
-    expect(waitingRebind.status).toBe('waiting_rebind');
-    expect(waitingRebind.result).toBe('waiting for orphaned tool_result recovery');
-    expect(waitingRebind.agentSessionId).toBe('session-rebind');
-    expect(pending.status).toBe('pending');
-    expect(pending.result).toBeNull();
-    expect(pending.agentSessionId).toBeNull();
-    expect(cancelled.status).toBe('cancelled');
-    expect(cancelled.result).toBe('cancelled by user');
-    expect(cancelled.agentSessionId).toBe('session-cancelled');
-    expect(parked.status).toBe('pending');
-    expect(parked.result).toBeNull();
-    expect(parked.agentSessionId).toBeNull();
-    expect(untouchedOther.status).toBe('in_progress');
-    expect(untouchedOther.agentSessionId).toBe('session-other');
-  });
+      expect(makeRuntime().parkInFlightExecutionsForTask(task.id)).toBe(run.id);
 
-  test('clears stuck state, crash counts, and retry budgets for every run of the space only', () => {
-    const first = buildWorkflow(SPACE_ID);
-    const affectedRun = createRun(SPACE_ID, first.workflow.id, 'Affected Run');
-    const execA = seedExec(affectedRun.id, first.stepA, 'Step A', 'in_progress', {
-      agentSessionId: 'session-a',
-    });
-    const second = buildWorkflow(SPACE_ID);
-    const idleOnlyRun = createRun(SPACE_ID, second.workflow.id, 'Idle-Only Run');
-    const execIdleOnly = seedExec(idleOnlyRun.id, second.stepA, 'Step A', 'idle', {
-      agentSessionId: 'session-idle',
-    });
-    const other = buildWorkflow(OTHER_SPACE_ID, OTHER_AGENT);
-    const runOther = createRun(OTHER_SPACE_ID, other.workflow.id, 'Other Space Run');
-    const execOther = seedExec(
-      runOther.id,
-      other.stepA,
-      'Step A',
-      'in_progress',
-      { agentSessionId: 'session-other' },
-      OTHER_AGENT
-    );
-
-    const rt = makeRuntime();
-    const internals = rt as any;
-    internals.agentStuckRecovery.set(`${affectedRun.id}:${execA.id}`, {
-      nagCount: 1,
-      restartCount: 1,
-      lastAction: 'nagged',
-      lastActionAt: Date.now(),
-      lastObservedMessageId: 'msg-1',
-      lastObservedMessageAt: Date.now(),
-      lastObservedProgressMessageId: 'msg-1',
-      lastObservedProgressMessageAt: Date.now(),
-      lastRuntimeNagMessageId: 'nag-1',
-      lastSessionId: 'session-a',
-      pendingRestartNotice: null,
-    });
-    internals.nonTerminalIdleStates.set(`${affectedRun.id}:${execA.id}`, {
-      lastSessionId: 'session-a',
-      lastObservedMessageId: 'message-id',
-      lastObservedProgressMessageId: 'message-id',
-      lastObservedProgressMessageAt: Date.now(),
-      lastRuntimeNudgeMessageId: 'nudge-id',
-      nudgeCount: 3,
-      failedNudgeCount: 0,
-      lastNudgeAt: Date.now(),
-      lastAttentionLogAt: null,
-    });
-    internals.taskCrashCounts.set(`${affectedRun.id}:${execA.id}`, 2);
-    internals.blockedRetryCounts.set(affectedRun.id, 1);
-    internals.agentStuckRecovery.set(`${idleOnlyRun.id}:${execIdleOnly.id}`, {
-      nagCount: 1,
-    });
-    internals.taskCrashCounts.set(`${idleOnlyRun.id}:${execIdleOnly.id}`, 1);
-    internals.blockedRetryCounts.set(idleOnlyRun.id, 2);
-    internals.agentStuckRecovery.set(`${runOther.id}:${execOther.id}`, { nagCount: 1 });
-    internals.taskCrashCounts.set(`${runOther.id}:${execOther.id}`, 1);
-    internals.blockedRetryCounts.set(runOther.id, 3);
-
-    rt.parkInFlightExecutionsForSpace(SPACE_ID);
-
-    expect(internals.agentStuckRecovery.has(`${affectedRun.id}:${execA.id}`)).toBe(false);
-    expect(internals.nonTerminalIdleStates.has(`${affectedRun.id}:${execA.id}`)).toBe(false);
-    expect(internals.taskCrashCounts.has(`${affectedRun.id}:${execA.id}`)).toBe(false);
-    expect(internals.blockedRetryCounts.has(affectedRun.id)).toBe(false);
-    expect(internals.agentStuckRecovery.has(`${idleOnlyRun.id}:${execIdleOnly.id}`)).toBe(false);
-    expect(internals.blockedRetryCounts.has(idleOnlyRun.id)).toBe(false);
-    expect(internals.taskCrashCounts.get(`${idleOnlyRun.id}:${execIdleOnly.id}`)).toBe(1);
-    expect(internals.agentStuckRecovery.get(`${runOther.id}:${execOther.id}`)).toEqual({
-      nagCount: 1,
-    });
-    expect(internals.taskCrashCounts.get(`${runOther.id}:${execOther.id}`)).toBe(1);
-    expect(internals.blockedRetryCounts.get(runOther.id)).toBe(3);
-    expect(nodeExecutionRepo.getById(execIdleOnly.id)?.status).toBe('idle');
-    expect(nodeExecutionRepo.getById(execOther.id)?.status).toBe('in_progress');
-  });
-
-  test('does not write task or run statuses and emits no lifecycle events', () => {
-    const { workflow, stepA } = buildWorkflow(SPACE_ID);
-    const run = createRun(SPACE_ID, workflow.id, 'Status Run');
-    seedExec(run.id, stepA, 'Step A', 'in_progress', {
-      agentSessionId: 'session-a',
-    });
-    const task = taskRepo.createTask({
-      spaceId: SPACE_ID,
-      title: 'Status Run',
-      description: '',
-      workflowRunId: run.id,
-      workflowNodeId: stepA,
-      status: 'in_progress',
+      const parkedA = nodeExecutionRepo.getById(execA.id)!;
+      const parkedB = nodeExecutionRepo.getById(execB.id)!;
+      expect(parkedA.status).toBe('pending');
+      expect(parkedA.result).toBeNull();
+      expect(parkedA.agentSessionId).toBeNull();
+      expect(parkedB.status).toBe('pending');
+      expect(parkedB.result).toBeNull();
+      expect(parkedB.agentSessionId).toBeNull();
     });
 
-    makeRuntime().parkInFlightExecutionsForSpace(SPACE_ID);
+    test('touches only the stopped task run — sibling runs keep their executions', () => {
+      const first = buildWorkflow(SPACE_ID);
+      const targetRun = createRun(SPACE_ID, first.workflow.id, 'Target Run');
+      const targetTask = createTaskForRun(targetRun.id, first.stepA);
+      const execTarget = seedExec(targetRun.id, first.stepA, 'Step A', 'in_progress', {
+        agentSessionId: 'session-target',
+      });
+      const second = buildWorkflow(SPACE_ID);
+      const otherRun = createRun(SPACE_ID, second.workflow.id, 'Other Run');
+      const otherTask = createTaskForRun(otherRun.id, second.stepA);
+      const execOther = seedExec(otherRun.id, second.stepA, 'Step A', 'in_progress', {
+        agentSessionId: 'session-other',
+      });
 
-    expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
-    expect(notifications).toHaveLength(0);
-  });
+      makeRuntime().parkInFlightExecutionsForTask(targetTask.id);
 
-  test('space with no runs is a no-op', () => {
-    const { workflow, stepA } = buildWorkflow(SPACE_ID);
-    const run = createRun(SPACE_ID, workflow.id, 'Unrelated Run');
-    const exec = seedExec(run.id, stepA, 'Step A', 'in_progress', {
-      agentSessionId: 'session-a',
+      expect(nodeExecutionRepo.getById(execTarget.id)?.status).toBe('pending');
+      expect(nodeExecutionRepo.getById(execOther.id)?.status).toBe('in_progress');
+      expect(nodeExecutionRepo.getById(execOther.id)?.agentSessionId).toBe('session-other');
+      expect(taskRepo.getTask(otherTask.id)?.status).toBe('in_progress');
     });
 
-    expect(makeRuntime().parkInFlightExecutionsForSpace(EMPTY_SPACE_ID)).toBeUndefined();
-    expect(nodeExecutionRepo.getById(exec.id)?.status).toBe('in_progress');
-    expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-    expect(notifications).toHaveLength(0);
+    test('leaves waiting_rebind rows intact — the retained agentSessionId drives the rebind path', () => {
+      const { workflow, stepA, stepB, stepC } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Rebind Run');
+      const task = createTaskForRun(run.id, stepA);
+      const execRebind = seedExec(run.id, stepA, 'Step A', 'waiting_rebind', {
+        agentSessionId: 'session-rebind',
+        result: 'waiting for orphaned tool_result recovery',
+      });
+      const execIdle = seedExec(run.id, stepB, 'Step B', 'idle', {
+        agentSessionId: 'session-idle',
+        result: 'finished work',
+      });
+      const execInFlight = seedExec(run.id, stepC, 'Step C', 'in_progress', {
+        agentSessionId: 'session-in-flight',
+      });
+
+      makeRuntime().parkInFlightExecutionsForTask(task.id);
+
+      const rebind = nodeExecutionRepo.getById(execRebind.id)!;
+      expect(rebind.status).toBe('waiting_rebind');
+      expect(rebind.agentSessionId).toBe('session-rebind');
+      expect(rebind.result).toBe('waiting for orphaned tool_result recovery');
+      const idle = nodeExecutionRepo.getById(execIdle.id)!;
+      expect(idle.status).toBe('idle');
+      expect(idle.agentSessionId).toBe('session-idle');
+      expect(nodeExecutionRepo.getById(execInFlight.id)?.status).toBe('pending');
+    });
+
+    test('clears stuck state, crash counts, and retry budgets for the task run only', () => {
+      const first = buildWorkflow(SPACE_ID);
+      const targetRun = createRun(SPACE_ID, first.workflow.id, 'Target Run');
+      const targetTask = createTaskForRun(targetRun.id, first.stepA);
+      const execTarget = seedExec(targetRun.id, first.stepA, 'Step A', 'in_progress', {
+        agentSessionId: 'session-target',
+      });
+      const second = buildWorkflow(SPACE_ID);
+      const otherRun = createRun(SPACE_ID, second.workflow.id, 'Other Run');
+      const otherTask = createTaskForRun(otherRun.id, second.stepA);
+      const execOther = seedExec(otherRun.id, second.stepA, 'Step A', 'in_progress', {
+        agentSessionId: 'session-other',
+      });
+
+      const rt = makeRuntime();
+      const internals = rt as any;
+      internals.agentStuckRecovery.set(`${targetRun.id}:${execTarget.id}`, { nagCount: 1 });
+      internals.nonTerminalIdleStates.set(`${targetRun.id}:${execTarget.id}`, { nudgeCount: 1 });
+      internals.taskCrashCounts.set(`${targetRun.id}:${execTarget.id}`, 2);
+      internals.blockedRetryCounts.set(targetRun.id, 1);
+      internals.agentStuckRecovery.set(`${otherRun.id}:${execOther.id}`, { nagCount: 1 });
+      internals.taskCrashCounts.set(`${otherRun.id}:${execOther.id}`, 1);
+      internals.blockedRetryCounts.set(otherRun.id, 3);
+
+      rt.parkInFlightExecutionsForTask(targetTask.id);
+
+      expect(internals.agentStuckRecovery.has(`${targetRun.id}:${execTarget.id}`)).toBe(false);
+      expect(internals.nonTerminalIdleStates.has(`${targetRun.id}:${execTarget.id}`)).toBe(false);
+      expect(internals.taskCrashCounts.has(`${targetRun.id}:${execTarget.id}`)).toBe(false);
+      expect(internals.blockedRetryCounts.has(targetRun.id)).toBe(false);
+      expect(internals.agentStuckRecovery.get(`${otherRun.id}:${execOther.id}`)).toEqual({
+        nagCount: 1,
+      });
+      expect(internals.taskCrashCounts.get(`${otherRun.id}:${execOther.id}`)).toBe(1);
+      expect(internals.blockedRetryCounts.get(otherRun.id)).toBe(3);
+    });
+
+    test('does not write task or run statuses and emits no lifecycle events', () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Status Run');
+      const task = createTaskForRun(run.id, stepA);
+      seedExec(run.id, stepA, 'Step A', 'in_progress', {
+        agentSessionId: 'session-a',
+      });
+
+      makeRuntime().parkInFlightExecutionsForTask(task.id);
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      expect(notifications).toHaveLength(0);
+    });
+
+    test('task without a run is a no-op returning null', () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Unrelated Run');
+      const exec = seedExec(run.id, stepA, 'Step A', 'in_progress', {
+        agentSessionId: 'session-a',
+      });
+      const standalone = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Standalone',
+        description: '',
+        status: 'in_progress',
+      });
+
+      expect(makeRuntime().parkInFlightExecutionsForTask(standalone.id)).toBeNull();
+      expect(nodeExecutionRepo.getById(exec.id)?.status).toBe('in_progress');
+      expect(notifications).toHaveLength(0);
+    });
   });
 });

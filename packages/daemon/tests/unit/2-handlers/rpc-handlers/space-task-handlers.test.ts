@@ -684,6 +684,36 @@ describe('space-task-handlers', () => {
       expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
     });
 
+    it('routes workflow-backed stopped→in_progress Resume through workflow recovery', async () => {
+      const stoppedTask = {
+        ...mockTask,
+        status: 'stopped' as const,
+        workflowRunId: 'run-1',
+      };
+      const recoveredTask = {
+        ...stoppedTask,
+        status: 'in_progress' as const,
+      };
+      const runtime = {
+        recoverWorkflowBackedTask: mock(async () => recoveredTask),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, stoppedTask, runtime);
+
+      const result = await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        status: 'in_progress',
+      });
+
+      expect(result).toEqual(recoveredTask);
+      expect(runtime.recoverWorkflowBackedTask).toHaveBeenCalledWith(
+        'space-1',
+        'task-1',
+        'in_progress'
+      );
+      expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+    });
+
     it('exposes explicit workflow recovery RPC', async () => {
       const workflowTask = {
         ...mockTask,
@@ -822,15 +852,71 @@ describe('space-task-handlers', () => {
       });
     });
 
-    it("rejects direct transition into 'stopped' (dormant until the Stop action lands)", async () => {
+    it("writes 'stopped' via plain setTaskStatus for non-workflow tasks (nothing to park)", async () => {
+      const result = await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        status: 'stopped',
+      });
+
+      expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'stopped', {
+        result: undefined,
+        reportedSummary: undefined,
+        approvalSource: undefined,
+        approvalReason: undefined,
+      });
+      expect(result).toBeDefined();
+    });
+
+    it('routes workflow-backed stop through the park routine instead of cancel teardown', async () => {
+      const activeTask = {
+        ...mockTask,
+        status: 'in_progress' as const,
+        workflowRunId: 'run-1',
+        taskAgentSessionId: 'task-session-1',
+        result: 'partial work',
+        reportedSummary: 'partial summary',
+      };
+      const stoppedTask = { ...activeTask, status: 'stopped' as const };
+      const runtime = {
+        parkStoppedWorkflowTask: mock(async () => stoppedTask),
+        stopWorkflowBackedTaskForStatus: mock(async () => activeTask),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, activeTask, runtime);
+
+      const result = await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        status: 'stopped',
+      });
+
+      expect(result).toEqual(stoppedTask);
+      expect(runtime.parkStoppedWorkflowTask).toHaveBeenCalledWith('space-1', 'task-1');
+      expect(runtime.stopWorkflowBackedTaskForStatus).not.toHaveBeenCalled();
+      expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+      expect(internalEventBus.publish).not.toHaveBeenCalledWith(
+        'space.task.updated',
+        expect.objectContaining({ taskId: 'task-1' })
+      );
+    });
+
+    it('throws when stopping a workflow-backed task without SpaceRuntimeService', async () => {
+      const activeTask = {
+        ...mockTask,
+        status: 'in_progress' as const,
+        workflowRunId: 'run-1',
+      };
+      setup(mockSpace, activeTask);
+
       await expect(
         call('spaceTask.update', {
           spaceId: 'space-1',
           taskId: 'task-1',
           status: 'stopped',
         })
-      ).rejects.toThrow(/cannot transition a task into 'stopped' directly/);
-      expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+      ).rejects.toThrow(
+        'Cannot stop workflow-backed task task-1: SpaceRuntimeService is unavailable.'
+      );
     });
 
     it('does NOT call setTaskStatus when status is unchanged (avoids spurious transition error)', async () => {
