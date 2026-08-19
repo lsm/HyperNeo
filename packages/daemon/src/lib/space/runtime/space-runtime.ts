@@ -3689,6 +3689,8 @@ export class SpaceRuntime {
             reason
           );
         }
+      } else if (previous.status === 'stopped') {
+        this.requeuePendingDeliveriesForRun(previous.workflowRunId);
       }
       return updated;
     }
