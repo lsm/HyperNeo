@@ -3308,6 +3308,12 @@ export class SpaceRuntime {
       return { mode: 'skipped', reason };
     }
 
+    if (current.status !== 'approved' && !isValidSpaceTaskTransition(current.status, 'approved')) {
+      const reason = `task ${taskId} in status '${current.status}' cannot transition to approved`;
+      log.warn(`dispatchPostApproval: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
+
     const spaceId = current.spaceId;
     const space = await this.config.spaceManager.getSpace(spaceId);
     const run = current.workflowRunId
@@ -6551,8 +6557,13 @@ export class SpaceRuntime {
         canonicalTask.status === 'cancelled' ||
         canonicalTask.status === 'archived' ||
         canonicalTask.status === 'stopped';
+      const parkedAwaitingApproval =
+        (canonicalTask.status === 'review' || canonicalTask.status === 'approved') &&
+        !nodeExecutions.some(
+          (execution) => execution.agentSessionId && tam.isSessionAlive(execution.agentSessionId)
+        );
 
-      if (pendingExecutions.length > 0 && canonicalTaskIsTerminal) {
+      if (pendingExecutions.length > 0 && (canonicalTaskIsTerminal || parkedAwaitingApproval)) {
         log.info(
           `SpaceRuntime: skipping agent spawn for run ${runId} — canonical task ${canonicalTask.id} status is ${canonicalTask.status}`
         );

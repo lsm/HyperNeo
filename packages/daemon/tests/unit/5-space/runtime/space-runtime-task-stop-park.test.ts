@@ -606,6 +606,92 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       expect(taskRepo.getTask(task.id)?.status).toBe('stopped');
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
     });
+
+    test('a stopped task on a done run that is reopened does not break the tick', async () => {
+      const { workflow, stepA } = buildWorkflow(SPACE_ID);
+      const run = createRun(SPACE_ID, workflow.id, 'Reopen Done Run');
+      const task = seedTask(run.id);
+      taskRepo.updateTask(task.id, { status: 'review' });
+      seedExec(run.id, stepA, 'Step A', 'idle', {
+        agentSessionId: 'session-submitter',
+        result: 'work finished',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'done');
+
+      const rt = buildRuntime(
+        makeParkTam(nodeExecutionRepo, { liveSessionIds: ['session-submitter'] })
+      );
+      await rt.parkStoppedWorkflowTask(SPACE_ID, task.id);
+      const reopened = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'open',
+      });
+      expect(reopened?.status).toBe('open');
+
+      await expect(rt.executeTick()).resolves.toBeUndefined();
+      await expect(rt.executeTick()).resolves.toBeUndefined();
+
+      expect(taskRepo.getTask(task.id)?.status).toBe('open');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+    });
+
+    test('submitting a parked task for approval does not respawn parked agents', async () => {
+      const tam = makeParkTam(nodeExecutionRepo);
+      const rt = buildRuntime(tam);
+      const { workflow } = buildWorkflow(SPACE_ID);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Park Submit Run');
+      const task = tasks[0];
+      await rt.executeTick();
+      expect(tam._spawned).toHaveLength(1);
+      await rt.parkStoppedWorkflowTask(SPACE_ID, task.id);
+
+      const taskManager = (
+        rt as unknown as {
+          getOrCreateTaskManager: (spaceId: string) => {
+            submitTaskForReview: (
+              taskId: string,
+              opts: { submittedByNodeId: string | null; reason: string | null }
+            ) => Promise<SpaceTask>;
+          };
+        }
+      ).getOrCreateTaskManager(SPACE_ID);
+      const submitted = await taskManager.submitTaskForReview(task.id, {
+        submittedByNodeId: null,
+        reason: 'work complete while parked',
+      });
+      expect(submitted.status).toBe('review');
+
+      await rt.executeTick();
+
+      expect(tam._spawned).toHaveLength(1);
+      expect(taskRepo.getTask(task.id)?.status).toBe('review');
+      const execs = nodeExecutionRepo.listByWorkflowRun(run.id);
+      expect(execs.filter((e) => e.status === 'pending').every((e) => !e.agentSessionId)).toBe(
+        true
+      );
+    });
+
+    test('resume clears a stale completion stamp left while parked', async () => {
+      const tam = makeParkTam(nodeExecutionRepo);
+      const rt = buildRuntime(tam);
+      const { workflow } = buildWorkflow(SPACE_ID);
+      const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Stale Stamp Run');
+      const task = tasks[0];
+      await rt.executeTick();
+      await rt.parkStoppedWorkflowTask(SPACE_ID, task.id);
+      taskRepo.updateTask(task.id, {
+        reportedStatus: 'done',
+        reportedSummary: 'stale completion',
+        pendingCompletionReason: 'end_node',
+      });
+
+      const recovered = await rt.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+
+      expect(recovered.task.status).toBe('in_progress');
+      const after = taskRepo.getTask(task.id);
+      expect(after?.reportedStatus).toBeNull();
+      expect(after?.reportedSummary).toBeNull();
+      expect(after?.pendingCompletionReason).toBeNull();
+    });
   });
 
   describe('stopped-task guards', () => {
