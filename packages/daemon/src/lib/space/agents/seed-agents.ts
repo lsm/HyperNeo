@@ -23,7 +23,21 @@ const RESEARCH_TOOLS = PERMISSIVE_TOOLS;
 
 const REVIEWER_TOOLS: string[] = [
   'Read',
-  'Bash',
+  'Bash(gh pr view:*)',
+  'Bash(gh pr diff:*)',
+  'Bash(gh pr checks:*)',
+  'Bash(gh api graphql:*)',
+  'Bash(gh api repos:*)',
+  'Bash(jq:*)',
+  'Bash(mktemp:*)',
+  'Bash(echo:*)',
+  'Bash(cat:*)',
+  'Bash(test:*)',
+  'Bash(head:*)',
+  'Bash(tr:*)',
+  'Bash(base64:*)',
+  'Bash(trap:*)',
+  'Bash(exit:*)',
   'Grep',
   'Glob',
   'WebFetch',
@@ -144,7 +158,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
     handle: 'reviewer',
     description:
       'Code review specialist. Reviews pull requests for correctness, style, and test coverage. ' +
-      'Has bash for read-only inspection and posts reviews via the gh CLI.',
+      'Bash is permission-scoped to read-only gh PR inspection and review posting.',
     tools: REVIEWER_TOOLS,
     customPrompt: REVIEWER_CUSTOM_PROMPT,
   },

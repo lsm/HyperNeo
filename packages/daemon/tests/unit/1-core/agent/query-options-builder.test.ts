@@ -1,4 +1,3 @@
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
@@ -14,15 +13,16 @@ import {
   SDK_TRANSCRIPT_RETENTION_DAYS,
   withSdkTranscriptRetention,
 } from '../../../../src/lib/agent/sdk-transcript-retention';
+import { setModelsCache } from '../../../../src/lib/model-service';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
-import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../../../../src/lib/space/agents/long-horizon-agent-tools';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
+import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../../../../src/lib/space/agents/long-horizon-agent-tools';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { SkillRepository } from '../../../../src/storage/repositories/skill-repository';
 import { createTables } from '../../../../src/storage/schema';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { noOpReactiveDb } from '../../../helpers/reactive-database';
-import { setModelsCache } from '../../../../src/lib/model-service';
 
 describe('QueryOptionsBuilder', () => {
   let builder: QueryOptionsBuilder;
@@ -1294,6 +1294,35 @@ describe('QueryOptionsBuilder', () => {
       expect(options.hooks?.PreToolUse?.[0]?.matcher).toBe('AskUserQuestion');
       expect(options.hooks?.PreToolUse?.[0]?.hooks[0]).toBe(auqHook);
       expect(options.hooks?.PreToolUse?.[1]?.matcher).toBeUndefined();
+    });
+
+    it('installs a Bash-matcher scope hook from scoped Bash allowedTools entries', async () => {
+      mockSession.config.allowedTools = ['Task', 'Bash(gh pr view:*)', 'Bash(jq:*)'];
+      const options = await builder.build();
+
+      const bashEntry = options.hooks?.PreToolUse?.find((entry) => entry.matcher === 'Bash');
+      expect(bashEntry).toBeDefined();
+      expect(bashEntry?.hooks).toHaveLength(1);
+      const scopeHook = bashEntry?.hooks[0];
+      const denied = (await scopeHook?.({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: { command: 'bun test' },
+      } as never)) as { hookSpecificOutput: { permissionDecision: string } };
+      expect(denied.hookSpecificOutput.permissionDecision).toBe('deny');
+      const allowed = await scopeHook?.({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: { command: 'gh pr view 123 --json id' },
+      } as never);
+      expect(allowed).toEqual({});
+    });
+
+    it('adds no Bash scope hook when allowedTools has no scoped Bash entries', async () => {
+      mockSession.config.allowedTools = ['Task', 'TaskOutput'];
+      const options = await builder.build();
+
+      expect(options.hooks?.PreToolUse?.find((entry) => entry.matcher === 'Bash')).toBeUndefined();
     });
 
     it('getCurrentPermissionMode re-resolves the live mode for the deferred-switch staleness guard', async () => {

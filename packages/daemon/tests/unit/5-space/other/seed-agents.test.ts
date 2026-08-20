@@ -1,7 +1,7 @@
-import { Database } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { KNOWN_TOOLS, type SpaceWorkerAgent } from '@hyperneo/shared';
 import { setModelsCache } from '../../../../src/lib/model-service';
+import { computeAgentTemplateHash } from '../../../../src/lib/space/agents/agent-template-hash';
 import {
   getPresetAgentTemplates,
   isPristineRetiredPrMergerRow,
@@ -13,9 +13,9 @@ import {
   SUB_SESSION_FEATURES,
   seedPresetAgents,
 } from '../../../../src/lib/space/agents/seed-agents';
-import { computeAgentTemplateHash } from '../../../../src/lib/space/agents/agent-template-hash';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema';
 
 describe('seedPresetAgents', () => {
@@ -65,12 +65,16 @@ describe('seedPresetAgents', () => {
     }
   });
 
-  it('reviewer has Bash for read-only inspection + Cron, but NO Write/Edit (restrained review role)', async () => {
+  it('reviewer has scoped Bash read-only gh patterns + Cron, but NO bare Bash or Write/Edit (restrained review role)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
     expect(reviewer).toBeDefined();
-    expect(reviewer?.tools).toContain('Bash');
+    expect(reviewer?.tools).not.toContain('Bash');
+    expect(reviewer?.tools).toContain('Bash(gh pr view:*)');
+    expect(reviewer?.tools).toContain('Bash(gh pr diff:*)');
+    expect(reviewer?.tools).toContain('Bash(gh pr checks:*)');
+    expect(reviewer?.tools).toContain('Bash(gh api graphql:*)');
     expect(reviewer?.tools).toContain('Read');
     expect(reviewer?.tools).toContain('CronCreate');
     expect(reviewer?.tools).toContain('CronDelete');
@@ -79,6 +83,35 @@ describe('seedPresetAgents', () => {
     expect(reviewer?.tools).not.toContain('Edit');
     expect(reviewer?.customPrompt).toContain('Reviewer System Contract');
     expect(reviewer?.customPrompt).toContain('addPullRequestReview');
+  });
+
+  it('reviewer Bash entries are scoped command patterns only — no unscoped shell', async () => {
+    const { seeded } = await seedPresetAgents('space-1', manager);
+    const reviewer = seeded.find((a) => a.name === 'Reviewer');
+    const bashEntries = (reviewer?.tools ?? []).filter((tool) => tool.startsWith('Bash'));
+
+    expect(bashEntries.length).toBeGreaterThan(0);
+    for (const entry of bashEntries) {
+      expect(entry).toMatch(/^Bash\((.+):\*\)$/);
+    }
+    expect(reviewer?.tools).toContain('Bash(jq:*)');
+    expect(reviewer?.tools).toContain('Bash(mktemp:*)');
+    expect(reviewer?.tools).toContain('Bash(echo:*)');
+    expect(reviewer?.tools).toContain('Bash(cat:*)');
+    expect(reviewer?.tools).toContain('Bash(test:*)');
+    expect(reviewer?.tools).toContain('Bash(head:*)');
+    expect(reviewer?.tools).toContain('Bash(tr:*)');
+    expect(reviewer?.tools).toContain('Bash(base64:*)');
+  });
+
+  it('reviewer contract states the Bash scoping is enforced by the permission layer', async () => {
+    const { seeded } = await seedPresetAgents('space-1', manager);
+    const reviewer = seeded.find((a) => a.name === 'Reviewer');
+
+    expect(reviewer?.customPrompt).toContain('scoped by the permission layer');
+    expect(reviewer?.customPrompt).toContain('that is the boundary working as designed');
+    expect(reviewer?.customPrompt).toContain('do NOT retry with command variants');
+    expect(reviewer?.customPrompt).not.toContain('there is no tool guard enforcing it');
   });
 
   it('reviewer round model pins broad reviews to rounds 1-2 and delta reviews to rounds 3+', async () => {
@@ -96,13 +129,13 @@ describe('seedPresetAgents', () => {
     expect(reviewer?.customPrompt).not.toContain('the delta diff in rounds 2+');
   });
 
-  it('Reviewer is the designated inspection-and-review agent (Bash present, no Write/Edit)', async () => {
+  it('Reviewer is the designated inspection-and-review agent (scoped Bash present, no Write/Edit)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
     expect(reviewer).toBeDefined();
     expect(reviewer?.handle).toBe('reviewer');
-    expect(reviewer?.tools).toContain('Bash');
+    expect(reviewer?.tools).toContain('Bash(gh pr view:*)');
     expect(reviewer?.tools).toContain('Read');
     expect(reviewer?.tools).not.toContain('Write');
     expect(reviewer?.tools).not.toContain('Edit');
@@ -389,7 +422,21 @@ describe('preset agent exact definitions', () => {
   ];
   const EXPECTED_REVIEWER_TOOLS = [
     'Read',
-    'Bash',
+    'Bash(gh pr view:*)',
+    'Bash(gh pr diff:*)',
+    'Bash(gh pr checks:*)',
+    'Bash(gh api graphql:*)',
+    'Bash(gh api repos:*)',
+    'Bash(jq:*)',
+    'Bash(mktemp:*)',
+    'Bash(echo:*)',
+    'Bash(cat:*)',
+    'Bash(test:*)',
+    'Bash(head:*)',
+    'Bash(tr:*)',
+    'Bash(base64:*)',
+    'Bash(trap:*)',
+    'Bash(exit:*)',
     'Grep',
     'Glob',
     'WebFetch',
@@ -434,7 +481,7 @@ describe('preset agent exact definitions', () => {
     expect(research.tools).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('Reviewer has exact REVIEWER_TOOLS (read-only + Bash + Task/* + Cron*, no Write/Edit)', async () => {
+  it('Reviewer has exact REVIEWER_TOOLS (read-only + scoped gh Bash + Task/* + Cron*, no bare Bash/Write/Edit)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
     expect(reviewer.tools).toEqual(EXPECTED_REVIEWER_TOOLS);
@@ -553,7 +600,7 @@ describe('preset agent exact definitions', () => {
         'Research agent. Investigates topics, gathers information, writes findings to docs, and opens pull requests with research results.',
       Reviewer:
         'Code review specialist. Reviews pull requests for correctness, style, and test coverage. ' +
-        'Has bash for read-only inspection and posts reviews via the gh CLI.',
+        'Bash is permission-scoped to read-only gh PR inspection and review posting.',
       QA: 'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
     };
 
@@ -578,7 +625,21 @@ describe('PRESET_AGENT_TOOLS export', () => {
   ];
   const EXPECTED_REVIEWER_TOOLS = [
     'Read',
-    'Bash',
+    'Bash(gh pr view:*)',
+    'Bash(gh pr diff:*)',
+    'Bash(gh pr checks:*)',
+    'Bash(gh api graphql:*)',
+    'Bash(gh api repos:*)',
+    'Bash(jq:*)',
+    'Bash(mktemp:*)',
+    'Bash(echo:*)',
+    'Bash(cat:*)',
+    'Bash(test:*)',
+    'Bash(head:*)',
+    'Bash(tr:*)',
+    'Bash(base64:*)',
+    'Bash(trap:*)',
+    'Bash(exit:*)',
     'Grep',
     'Glob',
     'WebFetch',
@@ -620,7 +681,7 @@ describe('PRESET_AGENT_TOOLS export', () => {
     expect(PRESET_AGENT_TOOLS.research).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('reviewer role maps to REVIEWER_TOOLS (read-only + Bash + Task/* + Cron*, no Write/Edit)', () => {
+  it('reviewer role maps to REVIEWER_TOOLS (read-only + scoped gh Bash + Task/* + Cron*, no bare Bash)', () => {
     expect(PRESET_AGENT_TOOLS.reviewer).toEqual(EXPECTED_REVIEWER_TOOLS);
   });
 

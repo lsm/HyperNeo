@@ -2,25 +2,25 @@ import { describe, expect, it, mock } from 'bun:test';
 import type {
   EvolutionLesson,
   Space,
-  SpaceWorkerAgent,
   SpaceGoal,
   SpaceTask,
+  SpaceWorkerAgent,
   SpaceWorkflow,
   SpaceWorkflowRun,
 } from '@hyperneo/shared';
-import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import {
   buildCustomAgentSystemPrompt,
   buildCustomAgentTaskMessage,
-  expandPrompt,
+  type CustomAgentConfig,
   createCustomAgentInit,
+  expandPrompt,
   resolveAgentInit,
   resolveCustomAgentPrompt,
-  type CustomAgentConfig,
   type SlotOverrides,
 } from '../../../../src/lib/space/agents/custom-agent';
-import { CODING_WORKFLOW } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { REVIEWER_SYSTEM_CONTRACT } from '../../../../src/lib/space/agents/system-contracts';
+import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
+import { CODING_WORKFLOW } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 
 function makeAgent(overrides?: Partial<SpaceWorkerAgent>): SpaceWorkerAgent {
   return {
@@ -356,6 +356,35 @@ describe('buildCustomAgentTaskMessage', () => {
 
     const head = message.slice(0, 500);
     expect(head).toContain('Implement passwordless auth end-to-end.');
+  });
+
+  it('labels the Verification section implementer-facing in the delivered description', () => {
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        task: makeTask({
+          description:
+            'Implement the scoped-bash change.\n\n## Verification\n\n`./scripts/test-daemon.sh` and `bun run check`.',
+        }),
+      })
+    );
+
+    expect(message).toContain(
+      '## Verification (for the implementer; the reviewer validates by reading, CI validates by running)'
+    );
+    expect(message).not.toMatch(/^## Verification$/m);
+  });
+
+  it('leaves descriptions without a Verification heading unchanged', () => {
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        task: makeTask({
+          description: 'Plain description with no verification footer.',
+        }),
+      })
+    );
+
+    expect(message).toContain('Plain description with no verification footer.');
+    expect(message).not.toContain('for the implementer; the reviewer validates by reading');
   });
 
   it('renders linked goal state when provided', () => {

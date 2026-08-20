@@ -1,19 +1,19 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync, copyFileSync } from 'node:fs';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
+import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
+import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import {
-  runMigration184,
-  OLD_REVIEWER_PROMPT,
-  OLD_REVIEWER_PROMPT_PRE_2365,
   OLD_REVIEWER_DESCRIPTION,
   OLD_REVIEWER_DESCRIPTION_PRE_2365,
+  OLD_REVIEWER_PROMPT,
+  OLD_REVIEWER_PROMPT_PRE_2365,
   OLD_REVIEWER_TOOLS,
   OLD_REVIEWER_TOOLS_PRE_2365,
+  runMigration184,
 } from '../../../../../src/storage/schema/m184-backfill-reviewer-bash-tools.ts';
-import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
-import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
+import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 
 interface AgentRow {
   id: string;
@@ -133,7 +133,7 @@ describe('migration 184 — reviewer bash tool backfill', () => {
 
     const row = getAgentRow('agent-reviewer');
     const tools = parseTools(row as unknown as AgentRow);
-    expect(tools).toContain('Bash');
+    expect(tools).toContain('Bash(gh pr view:*)');
     expect(tools).toContain('CronCreate');
     expect(tools).toContain('CronDelete');
     expect(tools).toContain('CronList');
@@ -167,7 +167,7 @@ describe('migration 184 — reviewer bash tool backfill', () => {
     runMigration184(db);
 
     const row = getAgentRow('agent-reviewer-pre2365');
-    expect(parseTools(row as unknown as AgentRow)).toContain('Bash');
+    expect(parseTools(row as unknown as AgentRow)).toContain('Bash(gh pr view:*)');
     expect((row as unknown as AgentRow).custom_prompt).toBe(REVIEWER_PRESET.customPrompt);
     expect((row as unknown as AgentRow).custom_prompt).not.toContain('Verify goal alignment');
     expect((row as unknown as AgentRow).template_hash).toBe(
