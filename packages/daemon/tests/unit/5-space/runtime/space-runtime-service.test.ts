@@ -1212,6 +1212,85 @@ describe('SpaceRuntimeService', () => {
       );
     });
 
+    test('long-horizon event sessions forward scoped Bash entries so the scope hook installs', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const createdSession = {
+        ...makeSession(),
+        getSessionData: mock(() => ({
+          id: sessionId,
+          metadata: {},
+          config: {},
+        })),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(null);
+      (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mockImplementation(async () => sessionId);
+      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(createdSession);
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          handle: 'scoped-agent',
+          displayName: 'Scoped Agent',
+          templateKey: 'migration.legacy_space_agent',
+          status: 'active',
+          sessionId: null,
+          instructions: 'Read-only gh inspection only.',
+          autonomyLevel: null,
+          model: null,
+          thinkingLevel: null,
+          provider: null,
+          settingSources: null,
+          toolPermissions: { tools: ['Read', 'Bash(gh pr view:*)', 'Bash(jq:*)'] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const { reactiveDb, saveUserMessage } = buildDurableDeliveryReactiveDb();
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
+        longHorizonAgentRepo,
+      });
+
+      const result = await (
+        svc as unknown as {
+          deliverLongHorizonExternalEvent(args: {
+            spaceId: string;
+            agentId: string;
+            message: string;
+            idempotencyKey: string;
+          }): Promise<{ delivered: boolean }>;
+        }
+      ).deliverLongHorizonExternalEvent({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'event payload',
+        idempotencyKey: 'delivery-1',
+      });
+
+      expect(result).toEqual({ delivered: true });
+      expect(sessionManager.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            allowedTools: ['Bash(gh pr view:*)', 'Bash(jq:*)'],
+            disallowedTools: ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'],
+          }),
+        })
+      );
+      expect(saveUserMessage).toHaveBeenCalledWith(
+        sessionId,
+        expect.objectContaining({ uuid: 'delivery-1', type: 'user' }),
+        'enqueued'
+      );
+    });
+
     test('long-horizon event sessions leave model unset for custom provider defaults', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
       const createdSession = {

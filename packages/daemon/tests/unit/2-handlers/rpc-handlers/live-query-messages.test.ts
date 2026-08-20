@@ -83,24 +83,29 @@ function insertDeliveryJob(
     messageUuid: string;
     status?: 'pending' | 'processing' | 'completed' | 'failed' | 'dead';
     retryCount?: number;
+    maxRetries?: number;
+    runAt?: number;
+    batchUuids?: string[];
     role?: 'turn' | 'steer';
   }
 ): void {
   db.prepare(
     `INSERT INTO job_queue
        (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
-     VALUES (?, 'message_delivery', ?, ?, ?, 8, ?, ?)`
+     VALUES (?, 'message_delivery', ?, ?, ?, ?, ?, ?)`
   ).run(
     args.id,
     args.status ?? 'pending',
     JSON.stringify({
       sessionId: args.sessionId,
       messageUuid: args.messageUuid,
+      batchUuids: args.batchUuids,
       role: args.role ?? 'turn',
       origin: 'chat',
     }),
     args.retryCount ?? 0,
-    Date.now(),
+    args.maxRetries ?? 8,
+    args.runAt ?? Date.now(),
     Date.now()
   );
 }
@@ -837,6 +842,13 @@ describe('messages.bySession — SQL behavior', () => {
     expect(plan).not.toContain('SCAN sdk_messages USING');
   });
 
+  test('materialises active delivery retries once through the session index', () => {
+    const plan = queryPlan(db, 's1', 200);
+    expect(plan).toContain('MATERIALIZE active_delivery_jobs');
+    expect(plan).toContain('idx_message_delivery_session_active');
+    expect(plan.match(/CORRELATED SCALAR SUBQUERY/g) ?? []).toHaveLength(0);
+  });
+
   test('uses the materialised parent_tool_use_id index for subagent lookups', () => {
     const plan = queryPlan(db, 's1', 200);
     expect(plan).toContain('idx_sdk_messages_parent_tool_use_id');
@@ -1095,6 +1107,8 @@ describe('messages.bySession — mapRow', () => {
       messageUuid: 'u-enq',
       status: 'pending',
       retryCount: 1,
+      maxRetries: 6,
+      runAt: 1_700_000_000_001,
     });
     insertDeliveryJob(db, {
       id: 'job-sub',
@@ -1102,12 +1116,68 @@ describe('messages.bySession — mapRow', () => {
       messageUuid: 'u-sub',
       status: 'processing',
       retryCount: 2,
+      maxRetries: 7,
+      runAt: 1_700_000_000_002,
       role: 'steer',
     });
 
     byUuid = new Map(query(db, 's1', 10).map((r) => [r.uuid as string, r]));
-    expect(byUuid.get('u-enq')!.deliveryStatus).toBe('retrying');
-    expect(byUuid.get('u-sub')!.deliveryStatus).toBe('retrying');
+    expect(byUuid.get('u-enq')).toMatchObject({
+      deliveryStatus: 'retrying',
+      deliveryRetry: { count: 1, runAt: 1_700_000_000_001, maxRetries: 6 },
+    });
+    expect(byUuid.get('u-sub')).toMatchObject({
+      deliveryStatus: 'retrying',
+      deliveryRetry: { count: 2, runAt: 1_700_000_000_002, maxRetries: 7 },
+    });
+  });
+
+  test('uses the highest retry count for canonical and batch-owned messages', () => {
+    insertSdkMessage(db, {
+      id: 'm-batch',
+      sessionId: 's1',
+      messageType: 'user',
+      sdkMessage: { type: 'user', uuid: 'u-batch', message: { content: 'batched' } },
+      timestamp: '2024-01-01 00:00:01',
+      sendStatus: 'enqueued',
+    });
+    insertSdkMessage(db, {
+      id: 'm-batch-only',
+      sessionId: 's1',
+      messageType: 'user',
+      sdkMessage: { type: 'user', uuid: 'u-batch-only', message: { content: 'batched only' } },
+      timestamp: '2024-01-01 00:00:02',
+      sendStatus: 'enqueued',
+    });
+    insertDeliveryJob(db, {
+      id: 'job-batch',
+      sessionId: 's1',
+      messageUuid: 'u-kickoff',
+      batchUuids: ['u-batch', 'u-batch-only'],
+      retryCount: 2,
+      maxRetries: 5,
+      runAt: 1_700_000_000_002,
+      role: 'steer',
+    });
+    insertDeliveryJob(db, {
+      id: 'job-direct',
+      sessionId: 's1',
+      messageUuid: 'u-batch',
+      retryCount: 4,
+      maxRetries: 9,
+      runAt: 1_700_000_000_004,
+      role: 'steer',
+    });
+
+    const byUuid = new Map(query(db, 's1', 10).map((row) => [row.uuid as string, row]));
+    expect(byUuid.get('u-batch')).toMatchObject({
+      deliveryStatus: 'retrying',
+      deliveryRetry: { count: 4, runAt: 1_700_000_000_004, maxRetries: 9 },
+    });
+    expect(byUuid.get('u-batch-only')).toMatchObject({
+      deliveryStatus: 'retrying',
+      deliveryRetry: { count: 2, runAt: 1_700_000_000_002, maxRetries: 5 },
+    });
   });
 
   test('a delivery job with retry_count 0 does not mark the message retrying', () => {

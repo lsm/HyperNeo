@@ -6,6 +6,7 @@ import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
 import { runMigration184 as runMigration184External } from './m184-backfill-reviewer-bash-tools';
 import { runMigration185 as runMigration185External } from './m185-workflow-event-subscriptions';
+import { runMigration196 as runMigration196External } from './m196-scope-reviewer-bash-patterns';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -427,6 +428,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(194), () => runMigration194(db));
 
   run(migrationMarkerKey(195), () => runMigration195(db));
+
+  run(migrationMarkerKey(196), () => runMigration196(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -9336,6 +9339,10 @@ export function runMigration184(db: BunDatabase): void {
 
 export function runMigration185(db: BunDatabase): void {
   runMigration185External(db);
+}
+
+export function runMigration196(db: BunDatabase): void {
+  runMigration196External(db);
 }
 
 export function runMigration186(db: BunDatabase): void {
