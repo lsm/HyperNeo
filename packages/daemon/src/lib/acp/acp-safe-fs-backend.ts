@@ -67,6 +67,10 @@ function throwFsError(operation: string, path: string): never {
   throw new Error(`Unable to ${operation} ACP filesystem path: ${path}`);
 }
 
+export function isSafeFsSupported(): boolean {
+  return process.platform === 'darwin' || process.platform === 'linux';
+}
+
 function platformLibraryCandidates(): string[] {
   if (process.platform === 'darwin') return ['/usr/lib/libSystem.B.dylib'];
   if (process.platform !== 'linux') return [];

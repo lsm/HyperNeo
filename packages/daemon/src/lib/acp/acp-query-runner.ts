@@ -46,7 +46,11 @@ import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from './acp-c
 import { getAcpProcessTreeOwner } from './acp-process-tree';
 import { AcpQueryAdapter } from './acp-query-adapter';
 import { AcpTerminalManager } from './acp-terminal-manager';
-import { readFileWithinWorkspace, writeFileWithinWorkspace } from './acp-safe-fs';
+import {
+  isSafeFsSupported,
+  readFileWithinWorkspace,
+  writeFileWithinWorkspace,
+} from './acp-safe-fs';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
@@ -683,13 +687,17 @@ export class AcpQueryRunner {
                 manager.waitForExit(params),
               onTerminalKill: (params: AcpTerminalKillParams) => manager.kill(params),
               onTerminalRelease: (params: AcpTerminalReleaseParams) => manager.release(params),
-              onFsRead: (params: AcpFsReadParams) => this.handleFsRead(params, workspace),
-              onFsWrite: async (params: AcpFsWriteParams) =>
-                this.handleFsWrite(
-                  await authorizeAcpFsWrite(params, canUseTool, abortController.signal),
-                  workspace,
-                  abortController.signal
-                ),
+              ...(isSafeFsSupported()
+                ? {
+                    onFsRead: (params: AcpFsReadParams) => this.handleFsRead(params, workspace),
+                    onFsWrite: async (params: AcpFsWriteParams) =>
+                      this.handleFsWrite(
+                        await authorizeAcpFsWrite(params, canUseTool, abortController.signal),
+                        workspace,
+                        abortController.signal
+                      ),
+                  }
+                : {}),
             };
           })()
         : {};

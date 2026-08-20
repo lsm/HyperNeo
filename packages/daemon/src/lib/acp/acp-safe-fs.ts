@@ -1,5 +1,7 @@
 import type { SafeFsBackendModule, SafeFsReadOptions } from './acp-safe-fs-backend';
 
+export { isSafeFsSupported } from './acp-safe-fs-backend';
+
 let backendPromise: Promise<SafeFsBackendModule> | undefined;
 
 function getSafeFsBackend(): Promise<SafeFsBackendModule> {
