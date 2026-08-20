@@ -419,6 +419,11 @@ export class SDKMessageRepository {
   }
 
   private resolveTaskIdForSession(sessionId: string): string | null {
+    if (this.reactiveDb) return this.reactiveDb.resolveTaskIdForSession(sessionId);
+    return this.resolveTaskIdFromSessionsRow(sessionId);
+  }
+
+  private resolveTaskIdFromSessionsRow(sessionId: string): string | null {
     try {
       if (
         !this.tableExists('sessions') ||

@@ -31,6 +31,7 @@ export interface ReactiveDatabase {
   commitTransaction(): void;
   abortTransaction(): void;
   notifyChange(table: string, scope?: TableChangeScope): void;
+  resolveTaskIdForSession(sessionId: string): string | null;
 }
 
 interface MethodMapping {
@@ -38,7 +39,25 @@ interface MethodMapping {
   extractScope?: (args: unknown[], db: Database) => TableChangeScope;
 }
 
-function resolveTaskIdForSession(db: Database, sessionId: string): string | undefined {
+const TASK_SESSION_TYPES = ['space_task_agent', 'worker'];
+const SESSION_TABLE_WRITE_METHODS = new Set(['createSession', 'updateSession', 'deleteSession']);
+
+const taskIdCacheByDb = new WeakMap<Database, Map<string, string | null>>();
+
+function taskIdCacheFor(db: Database): Map<string, string | null> {
+  let cache = taskIdCacheByDb.get(db);
+  if (!cache) {
+    cache = new Map();
+    taskIdCacheByDb.set(db, cache);
+  }
+  return cache;
+}
+
+function resolveTaskIdForSession(db: Database, sessionId: string): string | null {
+  const cache = taskIdCacheFor(db);
+  const cached = cache.get(sessionId);
+  if (cached !== undefined) return cached;
+  let taskId: string | null = null;
   try {
     const row = db
       .getDatabase()
@@ -53,11 +72,35 @@ function resolveTaskIdForSession(db: Database, sessionId: string): string | unde
 				 FROM sessions WHERE id = ?`
       )
       .get(sessionId) as { task_id: string | null; type: string | null } | undefined;
-    if (!row?.type || !['space_task_agent', 'worker'].includes(row.type)) return undefined;
-    return row.task_id ?? undefined;
+    taskId = row?.type && TASK_SESSION_TYPES.includes(row.type) ? (row.task_id ?? null) : null;
   } catch {
-    return undefined;
+    taskId = null;
   }
+  cache.set(sessionId, taskId);
+  return taskId;
+}
+
+function invalidateTaskIdForSession(db: Database, sessionId: string | undefined): void {
+  if (sessionId) taskIdCacheFor(db).delete(sessionId);
+}
+
+function sessionWriteInvalidatesTaskId(method: string, args: unknown[]): string | undefined {
+  const first = args[0];
+  if (typeof first === 'string') {
+    if (method === 'updateSession') {
+      const updates = args[1];
+      if (updates && typeof updates === 'object') {
+        const record = updates as { context?: unknown; type?: unknown };
+        if (!('context' in record) && record.type === undefined) return undefined;
+      }
+    }
+    return first;
+  }
+  if (first && typeof first === 'object') {
+    const id = (first as { id?: unknown }).id;
+    return typeof id === 'string' ? id : undefined;
+  }
+  return undefined;
 }
 
 function sessionScopeFromRow(row: {
@@ -116,7 +159,7 @@ function createSessionScope(_db: Database, session: unknown): TableChangeScope {
 
 function sdkMessageScope(db: Database, sessionId: unknown): TableChangeScope {
   if (typeof sessionId !== 'string') return {};
-  return { sessionId, taskId: resolveTaskIdForSession(db, sessionId) };
+  return { sessionId, taskId: resolveTaskIdForSession(db, sessionId) ?? undefined };
 }
 
 function messageIdsScope(db: Database, messageIds: unknown): TableChangeScope {
@@ -318,6 +361,9 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
 
       return function (this: Database, ...args: unknown[]) {
         const result = (value as (...a: unknown[]) => unknown).apply(target, args);
+        if (SESSION_TABLE_WRITE_METHODS.has(prop)) {
+          invalidateTaskIdForSession(target, sessionWriteInvalidatesTaskId(prop, args));
+        }
         const scope = mapping.extractScope?.(args, target);
         incrementAndEmit(mapping.table, scope);
         return result;
@@ -352,10 +398,14 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
       if (transactionDepth === 0) {
         pendingTables.clear();
         pendingTableScopes.clear();
+        taskIdCacheFor(db).clear();
       }
     },
     notifyChange(table: string, scope?: TableChangeScope): void {
       incrementAndEmit(table, scope);
+    },
+    resolveTaskIdForSession(sessionId: string): string | null {
+      return resolveTaskIdForSession(db, sessionId);
     },
   };
   return reactiveDb as ReactiveDatabase;
