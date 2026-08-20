@@ -1902,6 +1902,70 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('switches to the refreshed OAuth scope before failed discovery returns', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const staleToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-old' },
+      });
+      const refreshedToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-new' },
+        jti: 'refreshed-scope',
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: staleToken,
+        refresh: 'refresh-token',
+        accountId: 'acct-old',
+        expires: Date.now() + 60_000,
+      });
+      const catalogFetch = mock(async () => {
+        throw new Error('catalog offline');
+      }) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            access_token: refreshedToken,
+            refresh_token: 'next-refresh-token',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, catalogFetch);
+        (
+          provider as unknown as { replaceCatalog: (entries: unknown[], scope: unknown) => void }
+        ).replaceCatalog(
+          [
+            {
+              info: {
+                id: 'gpt-old-account-only',
+                name: 'Old Account Only',
+                family: 'gpt',
+                provider: 'anthropic-codex',
+                contextWindow: 128000,
+              },
+              visibility: 'list',
+            },
+          ],
+          {
+            source: 'chatgpt_oauth',
+            credentialId: 'acct-old',
+            accountId: 'acct-old',
+            isFedrampAccount: false,
+          }
+        );
+
+        const models = await provider.getModels();
+
+        expect(models.map((model) => model.id)).not.toContain('gpt-old-account-only');
+        expect(models.map((model) => model.id)).toContain('gpt-5.6-sol');
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
     it.skipIf(!isBun)('clamps thinking to a discovered model reasoning level', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       writeHyperNeoAuth(hyperneoDir, {

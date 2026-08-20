@@ -980,6 +980,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         if (refreshedAuth) {
           this.updateBridgeAuth(auth, refreshedAuth);
           auth = refreshedAuth;
+          this.ensureCatalogForScope(this.authScope(auth));
         }
       }
     }
@@ -1008,6 +1009,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         this.updateBridgeAuth(auth, refreshedAuth);
         auth = refreshedAuth;
         scope = this.authScope(auth);
+        this.ensureCatalogForScope(scope);
         try {
           response = await this.requestModelCatalog(auth);
         } catch (error) {

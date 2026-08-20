@@ -1565,20 +1565,30 @@ export function createOpenAIResponsesBridgeServer(
       const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
       let openAIResponse: Response;
       try {
+        const requestAuth = activeAuth;
+        const requestResolvedAuth = resolvedAuth;
         openAIResponse = await fetchImpl(upstreamUrl, {
           method: 'POST',
-          headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
+          headers: buildOpenAIHeaders(requestAuth, requestResolvedAuth),
           body: JSON.stringify(requestBody),
         });
         if (openAIResponse.status === 401) {
-          const refreshed = await refreshOpenAIResponsesAuth(activeAuth);
-          if (refreshed) {
-            resolvedAuth = refreshed;
+          if (activeAuth !== requestAuth || resolvedAuth !== requestResolvedAuth) {
             openAIResponse = await fetchImpl(upstreamUrl, {
               method: 'POST',
               headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
               body: JSON.stringify(requestBody),
             });
+          } else {
+            const refreshed = await refreshOpenAIResponsesAuth(requestAuth);
+            if (refreshed) {
+              resolvedAuth = refreshed;
+              openAIResponse = await fetchImpl(upstreamUrl, {
+                method: 'POST',
+                headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
+                body: JSON.stringify(requestBody),
+              });
+            }
           }
         }
         if (continuation && !openAIResponse.ok && openAIResponse.status === 400) {
