@@ -275,12 +275,13 @@ describe('SpaceTasks', () => {
       makeTask('t5', 'done'),
       makeTask('t6', 'cancelled'),
       makeTask('t7', 'archived'),
+      makeTask('t8', 'stopped'),
     ];
     const { container } = render(<SpaceTasks spaceId="space-1" />);
     const buttons = container.querySelectorAll('button');
     const text = Array.from(buttons).map((b) => b.textContent ?? '');
 
-    expect(text.some((t) => t?.includes('Active') && t?.includes('2'))).toBe(true);
+    expect(text.some((t) => t?.includes('Active') && t?.includes('3'))).toBe(true);
     expect(text.some((t) => t?.includes('Action') && t?.includes('2'))).toBe(true);
     expect(text.some((t) => t?.includes('Completed') && t?.includes('3'))).toBe(true);
     expect(text.some((t) => t?.includes('Archived'))).toBe(false);
@@ -396,6 +397,27 @@ describe('SpaceTasks', () => {
 
     expect(getByText(/In Progress \(1\)/)).toBeTruthy();
     expect(queryByText(/Open \(/)).toBeNull();
+  });
+
+  it("surfaces 'stopped' tasks inside the active tab as their own Stopped group", async () => {
+    mockTasks.value = [makeTask('t1', 'stopped')];
+    const { findByText, getByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);
+    expect(await findByText('Task t1')).toBeTruthy();
+    expect(getByText(/Stopped \(1\)/)).toBeTruthy();
+    expect(queryByText(/Open \(/)).toBeNull();
+  });
+
+  it('renders the Stopped group with its own gray accent, distinct from In Progress amber', () => {
+    mockTasks.value = [makeTask('t1', 'in_progress'), makeTask('t2', 'stopped')];
+    const { getByText } = render(<SpaceTasks spaceId="space-1" />);
+
+    const groupDot = (heading: HTMLElement) =>
+      heading.parentElement?.querySelector('span.rounded-full');
+
+    expect(getByText(/In Progress \(1\)/)).toBeTruthy();
+    expect(getByText(/Stopped \(1\)/)).toBeTruthy();
+    expect(groupDot(getByText(/In Progress \(1\)/))?.className).toContain('bg-amber-300/80');
+    expect(groupDot(getByText(/Stopped \(1\)/))?.className).toContain('bg-gray-400/80');
   });
 
   describe('Dependency badges', () => {
@@ -551,6 +573,7 @@ describe('SpaceTasks', () => {
       'blocked',
       'cancelled',
       'archived',
+      'stopped',
     ];
 
     it('TAB_PREDICATES.active and isActiveTask classify every status identically', () => {
@@ -575,6 +598,7 @@ describe('SpaceTasks', () => {
         makeTask('t-blocked', 'blocked'),
         makeTask('t-cancelled', 'cancelled'),
         makeTask('t-archived', 'archived'),
+        makeTask('t-stopped', 'stopped'),
       ];
 
       const sidebarIds = fixture
@@ -588,7 +612,7 @@ describe('SpaceTasks', () => {
 
       expect(tasksViewIds).toEqual(sidebarIds);
       expect(sidebarIds).toEqual(
-        ['t-approved-1', 't-approved-2', 't-inprog', 't-open-1', 't-open-2'].sort()
+        ['t-approved-1', 't-approved-2', 't-inprog', 't-open-1', 't-open-2', 't-stopped'].sort()
       );
     });
   });
