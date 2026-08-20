@@ -153,10 +153,10 @@ export interface ProviderHandlerDeps {
 
 function providerCatalogSignature(provider: Provider): string {
   const scope = provider.getModelCatalogScope?.() ?? '';
-  const modelIds = (provider.getCachedModels?.() ?? [])
-    .map((model: { id: string }) => model.id)
+  const serialized = (provider.getCachedModels?.() ?? [])
+    .map((model: { id: string }) => JSON.stringify(model))
     .sort();
-  return `${scope}|${modelIds.join(',')}`;
+  return `${scope}|${serialized.join(',')}`;
 }
 
 async function clearCacheAndNotifyProvidersChanged(

@@ -818,6 +818,59 @@ describe('Provider RPC handlers', () => {
       });
     });
 
+    it('clears the global model cache when a health check changes model metadata', async () => {
+      const created = repo.createProvider({
+        providerId: 'metadata-drift-provider',
+        displayName: 'Metadata Drift Provider',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      let contextWindow = 100000;
+      getProviderRegistry().register({
+        id: 'metadata-drift-provider',
+        displayName: 'Metadata Drift Provider',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        getCachedModels: () => [
+          {
+            id: 'drift-model',
+            name: 'Drift Model',
+            family: 'test',
+            provider: 'metadata-drift-provider',
+            contextWindow,
+          },
+        ],
+        healthCheck: async () => {
+          contextWindow = 200000;
+        },
+        ownsModel: () => true,
+        getModelForTier: () => 'default',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+      const { setModelsCache, getModelsCache, clearModelsCache } = await import(
+        '../../../../src/lib/model-service'
+      );
+      clearModelsCache();
+      setModelsCache(new Map([['global', []]]));
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.test')!({ id: created.id }, {})) as {
+        healthy: boolean;
+      };
+
+      expect(result.healthy).toBe(true);
+      expect(getModelsCache().has('global')).toBe(false);
+      clearModelsCache();
+    });
+
     it('keeps the global model cache when a health check leaves the catalog unchanged', async () => {
       const created = repo.createProvider({
         providerId: 'stable-provider',
