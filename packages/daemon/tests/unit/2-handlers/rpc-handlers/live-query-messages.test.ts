@@ -189,6 +189,10 @@ describe('messages.bySession — registry metadata', () => {
   test('messages.bySession has a mapRow function', () => {
     expect(typeof NAMED_QUERY_REGISTRY.get('messages.bySession')!.mapRow).toBe('function');
   });
+
+  test('messages.bySession debounces SDK-message changes to bound re-evaluation frequency', () => {
+    expect(NAMED_QUERY_REGISTRY.get('messages.bySession')!.debounceMs).toBe(250);
+  });
 });
 
 describe('messages.bySession — SQL behavior', () => {
