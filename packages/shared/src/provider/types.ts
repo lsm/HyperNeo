@@ -78,6 +78,8 @@ export interface Provider {
 
   getCachedModels?(): ModelInfo[] | null;
 
+  getModelCatalogScope?(): string | undefined;
+
   healthCheck?(): Promise<void>;
 
   ownsModel(modelId: string): boolean;

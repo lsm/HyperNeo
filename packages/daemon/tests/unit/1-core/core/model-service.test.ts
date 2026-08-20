@@ -1409,6 +1409,40 @@ describe('Model Service', () => {
       expect(getAvailableModels('global')).toContainEqual(recoveredModel);
     });
 
+    it('should drop stale models when a provider credential scope changes', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const staleModel = {
+        id: 'old-scope-model',
+        name: 'Old Scope Model',
+        family: 'test',
+        provider: 'scope-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const newScopeModel = {
+        ...staleModel,
+        id: 'new-scope-model',
+        name: 'New Scope Model',
+      };
+      let catalogScope = 'scope-a';
+      getProviderRegistry().register({
+        id: 'scope-provider',
+        getModelCatalogScope: () => catalogScope,
+        refreshModels: async () => {
+          catalogScope = 'scope-b';
+          throw new Error('offline');
+        },
+        getCachedModels: () => [newScopeModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      setModelsCache(new Map([['global', [staleModel]]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual([newScopeModel]);
+    });
+
     it('should retry after every provider fails with a populated cache', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];

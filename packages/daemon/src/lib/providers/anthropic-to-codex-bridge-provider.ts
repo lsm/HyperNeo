@@ -56,6 +56,11 @@ interface StoredCredentials {
   isFedrampAccount?: boolean;
 }
 
+interface StoredOauthRefreshResult {
+  credentials?: StoredCredentials;
+  definitive: boolean;
+}
+
 export interface OpenAIOAuthToken {
   access_token: string;
   refresh_token: string;
@@ -221,7 +226,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private cachedApiKey: string | undefined = undefined;
 
-  private readonly oauthRefreshes = new Map<string, Promise<StoredCredentials | undefined>>();
+  private readonly oauthRefreshes = new Map<string, Promise<StoredOauthRefreshResult>>();
 
   private activeOAuthFlow: {
     state: string;
@@ -625,7 +630,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       isFedrampAccount:
         credentials.isFedrampAccount ?? this.extractIsFedrampAccount(credentials.access),
       refreshAuthTokens: async () => {
-        const refreshed = await this.refreshStoredOauthCredentials();
+        const { credentials: refreshed } = await this.refreshStoredOauthCredentials();
         if (!refreshed?.access) return null;
         const refreshedAccountId = refreshed.accountId ?? this.extractAccountId(refreshed.access);
         if (!refreshedAccountId) return null;
@@ -693,9 +698,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       .digest('hex');
   }
 
-  private async refreshStoredOauthCredentials(): Promise<StoredCredentials | undefined> {
+  private async refreshStoredOauthCredentials(): Promise<StoredOauthRefreshResult> {
     const credentials = await this.loadCredentials();
-    if (!credentials || credentials.type !== 'oauth' || !credentials.refresh) return undefined;
+    if (!credentials || credentials.type !== 'oauth' || !credentials.refresh) {
+      return { definitive: true };
+    }
 
     const refreshToken = credentials.refresh;
     const key = this.oauthCredentialKey(credentials);
@@ -719,7 +726,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     credentials: StoredCredentials,
     refreshToken: string,
     credentialKey: string
-  ): Promise<StoredCredentials | undefined> {
+  ): Promise<StoredOauthRefreshResult> {
     const result = await this.tryRefreshCodexToken(refreshToken);
     if (!result.ok) {
       if (result.definitive && this.credentialsStillMatch(credentialKey)) {
@@ -732,10 +739,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           'AnthropicToCodexBridgeProvider: OAuth token refresh transient failure — preserving credentials'
         );
       }
-      return undefined;
+      return { definitive: result.definitive };
     }
 
-    if (!this.credentialsStillMatch(credentialKey)) return undefined;
+    if (!this.credentialsStillMatch(credentialKey)) return { definitive: false };
 
     const newCreds: StoredCredentials = {
       type: 'oauth',
@@ -756,12 +763,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       } else {
         await this.logout();
       }
-      return undefined;
+      return { definitive: false };
     }
     this.cachedCredentials = newCreds;
     this.cachedBridgeAuth = this.toBridgeAuth(newCreds) ?? null;
     this.cachedApiKey = newCreds.access ?? '';
-    return newCreds;
+    return { credentials: newCreds, definitive: false };
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
@@ -1022,16 +1029,19 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (!credentials?.expires || Date.now() < credentials.expires - 5 * 60 * 1000) {
       return initialAuth;
     }
-    const refreshed = await this.refreshStoredOauthCredentials();
+    const { credentials: refreshed, definitive } = await this.refreshStoredOauthCredentials();
     const refreshedAuth = refreshed ? this.toBridgeAuth(refreshed) : undefined;
     if (refreshedAuth) {
       this.updateBridgeAuth(initialAuth, refreshedAuth);
       return refreshedAuth;
     }
-    if (!this.resolveBridgeAuth()) {
-      throw new Error('Codex credentials unavailable after OAuth refresh');
+    const currentAuth = this.resolveBridgeAuth();
+    if (!currentAuth) {
+      throw Object.assign(new Error('Codex credentials unavailable after OAuth refresh'), {
+        definitiveAuthFailure: definitive,
+      });
     }
-    return initialAuth;
+    return currentAuth.apiKey === initialAuth.apiKey ? initialAuth : currentAuth;
   }
 
   private async fetchModelCatalog(
@@ -1082,9 +1092,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           return;
         }
       } else {
-        const credentials = await this.loadCredentials();
-        const canRefresh = credentials?.type === 'oauth' && Boolean(credentials.refresh);
-        const refreshed = await this.refreshStoredOauthCredentials();
+        const refreshResult = await this.refreshStoredOauthCredentials();
+        const refreshed = refreshResult.credentials;
         const refreshedAuth = refreshed ? this.toBridgeAuth(refreshed) : undefined;
         if (refreshedAuth?.source === 'chatgpt_oauth') {
           this.updateBridgeAuth(auth, refreshedAuth);
@@ -1104,7 +1113,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           }
         } else {
           oauthRefreshFailedWithPreservedCredentials =
-            canRefresh && this.resolveBridgeAuth() !== undefined;
+            !refreshResult.definitive && this.resolveBridgeAuth() !== undefined;
         }
       }
     }
@@ -1200,6 +1209,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return this.catalogEntries
       .filter((entry) => entry.visibility === 'list')
       .map((entry) => ({ ...entry.info }));
+  }
+
+  getModelCatalogScope(): string | undefined {
+    return this.activeCatalogScope ? this.scopeKey(this.activeCatalogScope) : undefined;
   }
 
   private async loadModels(strict: boolean): Promise<ModelInfo[]> {
@@ -1594,7 +1607,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (!credentials?.refresh) return false;
 
     const result = await this.refreshStoredOauthCredentials();
-    return result !== undefined;
+    return result.credentials !== undefined;
   }
 
   async logout(): Promise<void> {

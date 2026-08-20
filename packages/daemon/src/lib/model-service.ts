@@ -109,12 +109,13 @@ function reconcileProviderModels(
   models: ModelInfo[],
   previousModels: ModelInfo[] | undefined,
   failedProviderIds: Set<string>,
-  rejectedProviderIds: Set<string>
+  rejectedProviderIds: Set<string>,
+  changedProviderIds: Set<string>
 ): ModelInfo[] {
   const modelMap = new Map(models.map((model) => [`${model.provider}:${model.id}`, model]));
   if (previousModels) {
     for (const model of previousModels) {
-      if (failedProviderIds.has(model.provider)) {
+      if (failedProviderIds.has(model.provider) && !changedProviderIds.has(model.provider)) {
         modelMap.set(`${model.provider}:${model.id}`, model);
       }
     }
@@ -178,13 +179,15 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 
   const refreshPromise = (async () => {
     try {
-      const { models, failedProviderIds, rejectedProviderIds } = await loadModelsFromProviders();
+      const { models, failedProviderIds, rejectedProviderIds, changedProviderIds } =
+        await loadModelsFromProviders();
       if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) return;
       const mergedModels = reconcileProviderModels(
         models.length > 0 ? mergeWithFallbackModels(models) : [],
         previousModels,
         failedProviderIds,
-        rejectedProviderIds
+        rejectedProviderIds,
+        changedProviderIds
       );
       modelsCache.set(cacheKey, mergedModels);
       if (failedProviderIds.size === 0) {
@@ -216,6 +219,7 @@ interface ProviderModelLoadResult {
   models: ModelInfo[];
   failedProviderIds: Set<string>;
   rejectedProviderIds: Set<string>;
+  changedProviderIds: Set<string>;
 }
 
 async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
@@ -230,32 +234,37 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
 
   const results = await Promise.allSettled(
     providers.map(async (provider) => {
+      const previousScope = provider.getModelCatalogScope?.();
       const available = await provider.isAvailable();
-      if (!available) return { available, models: [], failed: false, rejected: false };
+      if (!available) {
+        return { available, models: [], failed: false, rejected: false, scopeChanged: false };
+      }
       if (!provider.refreshModels) {
         return {
           available,
           models: await provider.getModels(),
           failed: false,
           rejected: false,
+          scopeChanged: false,
         };
       }
       try {
-        return {
-          available,
-          models: await provider.refreshModels(),
-          failed: false,
-          rejected: false,
-        };
+        const models = await provider.refreshModels();
+        return { available, models, failed: false, rejected: false, scopeChanged: false };
       } catch (error) {
         const definitiveAuthFailure = Boolean(
           (error as ProviderModelRefreshError).definitiveAuthFailure
         );
+        const currentScope = provider.getModelCatalogScope?.();
         return {
           available,
           models: definitiveAuthFailure ? [] : (provider.getCachedModels?.() ?? []),
           failed: !definitiveAuthFailure,
           rejected: definitiveAuthFailure,
+          scopeChanged:
+            previousScope !== undefined &&
+            currentScope !== undefined &&
+            previousScope !== currentScope,
         };
       }
     })
@@ -264,6 +273,7 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
   const models: ModelInfo[] = [];
   const failedProviderIds = new Set<string>();
   const rejectedProviderIds = new Set<string>();
+  const changedProviderIds = new Set<string>();
   results.forEach((result, index) => {
     if (result.status === 'rejected') {
       failedProviderIds.add(providers[index].id);
@@ -271,10 +281,11 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
       models.push(...result.value.models);
       if (result.value.failed) failedProviderIds.add(providers[index].id);
       if (result.value.rejected) rejectedProviderIds.add(providers[index].id);
+      if (result.value.scopeChanged) changedProviderIds.add(providers[index].id);
     }
   });
 
-  return { models, failedProviderIds, rejectedProviderIds };
+  return { models, failedProviderIds, rejectedProviderIds, changedProviderIds };
 }
 
 function isCacheStale(cacheKey: string): boolean {
@@ -310,12 +321,14 @@ export async function initializeModels(): Promise<void> {
   await waitForOptionalProviderRegistration();
 
   try {
-    const { models, failedProviderIds, rejectedProviderIds } = await loadModelsFromProviders();
+    const { models, failedProviderIds, rejectedProviderIds, changedProviderIds } =
+      await loadModelsFromProviders();
     const mergedModels = reconcileProviderModels(
       mergeWithFallbackModels(models),
       undefined,
       failedProviderIds,
-      rejectedProviderIds
+      rejectedProviderIds,
+      changedProviderIds
     );
     modelsCache.set(cacheKey, mergedModels);
     if (failedProviderIds.size === 0) {
@@ -401,7 +414,8 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
       if (signal?.aborted) {
         return;
       }
-      const { models, failedProviderIds, rejectedProviderIds } = await loadModelsFromProviders();
+      const { models, failedProviderIds, rejectedProviderIds, changedProviderIds } =
+        await loadModelsFromProviders();
       if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
         return;
       }
@@ -409,7 +423,8 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
         models.length > 0 ? mergeWithFallbackModels(models) : [],
         previousModels,
         failedProviderIds,
-        rejectedProviderIds
+        rejectedProviderIds,
+        changedProviderIds
       );
       modelsCache.set(cacheKey, mergedModels);
       if (failedProviderIds.size === 0) {

@@ -2481,6 +2481,112 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('marks proactive OAuth logout as a definitive rejection', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'stale-access-token',
+        refresh: 'invalid-refresh-token',
+        accountId: 'acct-definitive',
+        expires: Date.now() - 60_000,
+      });
+      const catalogFetch = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('{"error":"invalid_grant"}', {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, catalogFetch);
+
+        const error: Error & { definitiveAuthFailure?: boolean } = await provider
+          .refreshModels()
+          .catch((err: Error & { definitiveAuthFailure?: boolean }) => err);
+
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toBe('Codex credentials unavailable after OAuth refresh');
+        expect(error.definitiveAuthFailure).toBe(true);
+        expect(catalogFetch).not.toHaveBeenCalled();
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
+    it('adopts replacement credentials after a superseded proactive refresh', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const staleToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-old' },
+      });
+      const rotatedToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-old' },
+        jti: 'rotated',
+      });
+      const replacementToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-new' },
+        jti: 'replacement',
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: staleToken,
+        refresh: 'refresh-token',
+        accountId: 'acct-old',
+        expires: Date.now() - 60_000,
+      });
+      let resolveRefresh: ((response: Response) => void) | undefined;
+      const refreshResponse = new Promise<Response>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      const catalogFetch = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-new-account' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch').mockImplementationOnce(
+        async () => refreshResponse
+      );
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, catalogFetch);
+
+        const modelsPromise = provider.getModels();
+        await vi.waitFor(() => expect(refreshFetch).toHaveBeenCalledTimes(1));
+        provider.setCredentials({
+          type: 'oauth',
+          accessToken: replacementToken,
+          refreshToken: 'new-refresh-token',
+          raw: { accountId: 'acct-new' },
+        });
+        resolveRefresh?.(
+          new Response(
+            JSON.stringify({
+              access_token: rotatedToken,
+              refresh_token: 'next-refresh-token',
+              expires_in: 3600,
+              token_type: 'Bearer',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        );
+
+        const models = await modelsPromise;
+        expect(models.map((model) => model.id)).toEqual(['gpt-new-account']);
+        const [, init] = (catalogFetch as ReturnType<typeof mock>).mock.calls[0] as [
+          URL,
+          RequestInit,
+        ];
+        const headers = new Headers(init.headers);
+        expect(headers.get('authorization')).toBe(`Bearer ${replacementToken}`);
+        expect(headers.get('ChatGPT-Account-ID')).toBe('acct-new');
+        expect(provider.ownsModel('gpt-new-account')).toBe(true);
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
     it('switches to the refreshed OAuth scope before failed discovery returns', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const staleToken = makeJwt({
