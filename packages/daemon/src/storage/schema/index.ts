@@ -2,7 +2,7 @@ import type { Database as BunDatabase } from '../sqlite-compat';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { createWorkflowEventSubscriptionTables } from './workflow-event-subscriptions';
-import { createSessionCounters } from './session-counters';
+import { backfillSessionCounters, createSessionCounters } from './session-counters';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 // knip-ignore-next-line
@@ -769,6 +769,7 @@ export function createTables(db: BunDatabase): void {
   createLongHorizonAgentTables(db);
   createWorkflowEventSubscriptionTables(db);
   createSessionCounters(db);
+  backfillSessionCounters(db);
 
   createIndexes(db);
 }

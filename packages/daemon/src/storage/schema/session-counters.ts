@@ -13,17 +13,21 @@ export const SESSION_COUNTERS_TABLE_SQL = `
   INSERT OR IGNORE INTO session_counters (id, total_count, archived_count) VALUES (1, 0, 0);
 `;
 
-const HUMAN_SESSION_PREDICATE =
-  "type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')" +
-  " AND json_extract(session_context, '$.roomId') IS NULL" +
-  " AND json_extract(session_context, '$.spaceId') IS NULL";
+export function humanSessionPredicate(rowPrefix: string): string {
+  const p = rowPrefix ? `${rowPrefix}.` : '';
+  const ctx = `${p}session_context`;
+  return (
+    `${p}type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')` +
+    ` AND CASE WHEN json_valid(${ctx}) THEN (json_extract(${ctx}, '$.roomId') IS NULL AND json_extract(${ctx}, '$.spaceId') IS NULL) ELSE 1 END`
+  );
+}
 
 function isHuman(rowPrefix: string): string {
-  return `CASE WHEN ${rowPrefix}.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent') AND json_extract(${rowPrefix}.session_context, '$.roomId') IS NULL AND json_extract(${rowPrefix}.session_context, '$.spaceId') IS NULL THEN 1 ELSE 0 END`;
+  return `CASE WHEN ${humanSessionPredicate(rowPrefix)} THEN 1 ELSE 0 END`;
 }
 
 function isHumanArchived(rowPrefix: string): string {
-  return `CASE WHEN ${rowPrefix}.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent') AND json_extract(${rowPrefix}.session_context, '$.roomId') IS NULL AND json_extract(${rowPrefix}.session_context, '$.spaceId') IS NULL AND ${rowPrefix}.status = 'archived' THEN 1 ELSE 0 END`;
+  return `CASE WHEN ${humanSessionPredicate(rowPrefix)} AND ${rowPrefix}.status = 'archived' THEN 1 ELSE 0 END`;
 }
 
 export function createSessionCounters(db: BunDatabase): void {
@@ -66,9 +70,9 @@ export function createSessionCounters(db: BunDatabase): void {
 export function backfillSessionCounters(db: BunDatabase): void {
   db.exec(`
     UPDATE session_counters SET
-      total_count = (SELECT COUNT(*) FROM sessions WHERE ${HUMAN_SESSION_PREDICATE}),
+      total_count = (SELECT COUNT(*) FROM sessions WHERE ${humanSessionPredicate('')}),
       archived_count = (
-        SELECT COUNT(*) FROM sessions WHERE ${HUMAN_SESSION_PREDICATE} AND status = 'archived'
+        SELECT COUNT(*) FROM sessions WHERE ${humanSessionPredicate('')} AND status = 'archived'
       )
     WHERE id = 1
   `);

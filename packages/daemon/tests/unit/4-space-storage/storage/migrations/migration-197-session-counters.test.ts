@@ -7,12 +7,8 @@ import { runMigration197 } from '../../../../../src/storage/schema/m197-session-
 import {
   SESSION_COUNTERS_TABLE_SQL,
   createSessionCounters,
+  humanSessionPredicate,
 } from '../../../../../src/storage/schema/session-counters';
-
-const HUMAN_PREDICATE =
-  "type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')" +
-  " AND json_extract(session_context, '$.roomId') IS NULL" +
-  " AND json_extract(session_context, '$.spaceId') IS NULL";
 
 function tableExists(db: BunDatabase, name: string): boolean {
   return !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name = ?`).get(name);
@@ -26,14 +22,13 @@ function counters(db: BunDatabase): { total: number; archived: number } {
 }
 
 function liveCount(db: BunDatabase): { total: number; archived: number } {
+  const predicate = humanSessionPredicate('');
   const total = (
-    db.prepare(`SELECT COUNT(*) AS c FROM sessions WHERE ${HUMAN_PREDICATE}`).get() as { c: number }
+    db.prepare(`SELECT COUNT(*) AS c FROM sessions WHERE ${predicate}`).get() as { c: number }
   ).c;
   const archived = (
     db
-      .prepare(
-        `SELECT COUNT(*) AS c FROM sessions WHERE ${HUMAN_PREDICATE} AND status = 'archived'`
-      )
+      .prepare(`SELECT COUNT(*) AS c FROM sessions WHERE ${predicate} AND status = 'archived'`)
       .get() as { c: number }
   ).c;
   return { total, archived };
@@ -146,6 +141,17 @@ describe('session_counters: maintained total/archived counts', () => {
       expect(() => runMigration197(db)).not.toThrow();
       expect(tableExists(db, 'session_counters')).toBe(false);
     });
+
+    test('backfill tolerates a corrupt (non-JSON) session_context row', () => {
+      createSessionsTable(db);
+      insertSession(db, 'h1', 'worker', 'active', null);
+      insertSession(db, 'corrupt', 'worker', 'active', 'not-json');
+      insertSession(db, 'sp1', 'room_chat', 'active', '{"roomId":"r-1"}');
+
+      expect(() => runMigration197(db)).not.toThrow();
+      expect(counters(db)).toEqual({ total: 2, archived: 0 });
+      expectCounters(db);
+    });
   });
 
   describe('trigger maintenance on a fresh DB', () => {
@@ -178,6 +184,18 @@ describe('session_counters: maintained total/archived counts', () => {
       insertSession(db, 'h2', 'worker', 'archived', null);
       expectCounters(db);
       db.prepare(`DELETE FROM sessions WHERE id = 'h2'`).run();
+      expectCounters(db);
+    });
+
+    test('deleting excluded sessions leaves totals unchanged', () => {
+      insertSession(db, 'h1', 'worker', 'active', null);
+      insertSession(db, 'sp1', 'worker', 'active', '{"spaceId":"sp-1"}');
+      insertSession(db, 'rm1', 'room_chat', 'active', '{"roomId":"r-1"}');
+      expectCounters(db);
+
+      db.prepare(`DELETE FROM sessions WHERE id = 'sp1'`).run();
+      expectCounters(db);
+      db.prepare(`DELETE FROM sessions WHERE id = 'rm1'`).run();
       expectCounters(db);
     });
 
@@ -236,6 +254,19 @@ describe('session_counters: maintained total/archived counts', () => {
       db.exec(SESSION_COUNTERS_TABLE_SQL);
       expect(tableExists(db, 'session_counters')).toBe(true);
       expect(counters(db)).toEqual({ total: 0, archived: 0 });
+    });
+
+    test('triggers tolerate a corrupt (non-JSON) session_context row', () => {
+      createSessionsTable(db);
+      createSessionCounters(db);
+      insertSession(db, 'corrupt', 'worker', 'active', 'not-json');
+      expectCounters(db);
+
+      db.prepare(`UPDATE sessions SET status = 'archived' WHERE id = 'corrupt'`).run();
+      expectCounters(db);
+
+      db.prepare(`DELETE FROM sessions WHERE id = 'corrupt'`).run();
+      expectCounters(db);
     });
 
     test('createSessionCounters is idempotent', () => {

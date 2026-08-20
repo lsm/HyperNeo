@@ -19,6 +19,7 @@ import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
 import type { TableChangeScope } from '../../storage/reactive-database';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat';
+import { humanSessionPredicate } from '../../storage/schema/session-counters';
 import { Logger } from '../logger';
 import { mapActiveTurnEntryRow } from './activity-preview';
 
@@ -2724,9 +2725,7 @@ SELECT
   s.type as type,
   s.session_context as session_context
 FROM sessions s
-WHERE s.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
-  AND json_extract(s.session_context, '$.roomId') IS NULL
-  AND json_extract(s.session_context, '$.spaceId') IS NULL
+WHERE ${humanSessionPredicate('s')}
   AND (s.status != 'archived' OR ?1 = 1)
 ORDER BY s.last_active_at DESC, s.id DESC
 `.trim();
@@ -3484,7 +3483,6 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
       paramCount: 1,
       debounceMs: DEBOUNCE_SESSION_LIST_MS,
       mapRow: mapSessionRow,
-      mapResult: () => undefined,
     },
   ],
 ]);
