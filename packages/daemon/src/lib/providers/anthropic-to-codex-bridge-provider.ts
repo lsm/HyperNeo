@@ -189,7 +189,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private readonly modelRefreshes = new Map<string, Promise<void>>();
 
+  private readonly sessionModelIds = new Map<string, string>();
+
   private forceModelRefresh = false;
+
+  private discoveryError: Error | undefined;
 
   private cachedCredentials: StoredCredentials | null = null;
   private readonly credentialListeners = new Set<
@@ -840,6 +844,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     });
   }
 
+  private setDiscoveryError(message: string): void {
+    this.discoveryError = new Error(message);
+    logger.warn(message);
+  }
+
   private async fetchModelCatalog(
     initialAuth: OpenAIResponsesBridgeAuth,
     revalidate: boolean
@@ -863,7 +872,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       response = await this.requestModelCatalog(auth, matchingCache?.etag);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      logger.warn(`AnthropicToCodexBridgeProvider: model discovery failed: ${detail}`);
+      this.setDiscoveryError(`AnthropicToCodexBridgeProvider: model discovery failed: ${detail}`);
       return;
     }
 
@@ -874,11 +883,15 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       if (refreshedAuth?.source === 'chatgpt_oauth') {
         auth = refreshedAuth;
         scope = this.authScope(auth);
-        response = await this.requestModelCatalog(auth).catch((error) => {
+        try {
+          response = await this.requestModelCatalog(auth);
+        } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
-          logger.warn(`AnthropicToCodexBridgeProvider: model discovery retry failed: ${detail}`);
-          return new Response(null, { status: 503 });
-        });
+          this.setDiscoveryError(
+            `AnthropicToCodexBridgeProvider: model discovery retry failed: ${detail}`
+          );
+          return;
+        }
       }
     }
 
@@ -889,6 +902,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
     if (response.status === 304 && matchingCache) {
       if (!this.currentScopeMatches(scope)) return;
+      this.discoveryError = undefined;
       const cache = { ...matchingCache, fetchedAt: new Date().toISOString() };
       this.modelCache = cache;
       this.activateCachedCatalog(scope);
@@ -900,7 +914,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
-      logger.warn(`AnthropicToCodexBridgeProvider: model discovery HTTP ${response.status}`);
+      const message = `AnthropicToCodexBridgeProvider: model discovery HTTP ${response.status}`;
+      if (response.status >= 500) {
+        this.setDiscoveryError(message);
+      } else {
+        logger.warn(message);
+      }
       return;
     }
 
@@ -917,6 +936,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     }
     if (!this.currentScopeMatches(scope)) return;
 
+    this.discoveryError = undefined;
     this.replaceCatalog(entries, scope);
     const cache: CodexModelCache = {
       schemaVersion: CODEX_MODEL_CACHE_SCHEMA_VERSION,
@@ -969,6 +989,13 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       .map((entry) => ({ ...entry.info }));
   }
 
+  async healthCheck(): Promise<void> {
+    this.discoveryError = undefined;
+    this.clearModelCache();
+    await this.getModels();
+    if (this.discoveryError) throw this.discoveryError;
+  }
+
   ownsModel(modelId: string): boolean {
     return this.catalogEntries.some(
       ({ info }) =>
@@ -978,6 +1005,14 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   translateModelIdForSdk(_modelId: string): string {
     return 'default';
+  }
+
+  getModelThinkingMode(modelId: string): 'off' | 'granular' | undefined {
+    const entry = this.catalogEntries.find(
+      ({ info }) =>
+        info.id === modelId || info.alias === modelId || info.providerAliases?.includes(modelId)
+    );
+    return entry?.info.thinkingModes === 'off' ? 'off' : entry ? 'granular' : undefined;
   }
 
   getModelForTier(tier: ModelTier): string | undefined {
@@ -1046,6 +1081,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       resolvedId;
 
     bridgeServer.setSessionModelConfig?.(sessionId, sdkModelId, resolvedId);
+    this.sessionModelIds.set(sessionId, resolvedId);
 
     return {
       envVars: {
@@ -1078,6 +1114,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const bridgeServer = this.bridgeServers.get(`responses:${this.bridgeAuthCacheKey(auth)}`);
     if (!bridgeServer?.setSessionThinkingConfig) return;
 
+    const modelId = this.sessionModelIds.get(sessionId);
+    if (modelId && this.getModelThinkingMode(modelId) === 'off') {
+      bridgeServer.setSessionThinkingConfig(sessionId, undefined);
+      return;
+    }
+
     const tokens = THINKING_LEVEL_TOKENS[thinkingLevel as keyof typeof THINKING_LEVEL_TOKENS];
     if (tokens === undefined) {
       bridgeServer.setSessionThinkingConfig(sessionId, undefined);
@@ -1092,6 +1134,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   stopAllBridgeServers(): void {
     this.resetBridgeServers();
+    this.sessionModelIds.clear();
     this.cachedCredentials = null;
     this.cachedBridgeAuth = undefined;
     this.cachedApiKey = undefined;

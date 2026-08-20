@@ -719,6 +719,45 @@ describe('Provider RPC handlers', () => {
       expect(result.healthy).toBe(true);
     });
 
+    it('uses the provider health check when available', async () => {
+      const created = repo.createProvider({
+        providerId: 'probe-provider',
+        displayName: 'Probe Provider',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const healthCheck = mock(async () => {
+        throw new Error('catalog endpoint unavailable');
+      });
+      getProviderRegistry().register({
+        id: 'probe-provider',
+        displayName: 'Probe Provider',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        healthCheck,
+        ownsModel: () => true,
+        getModelForTier: () => 'default',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.test')!({ id: created.id }, {})) as {
+        healthy: boolean;
+        error: string;
+      };
+
+      expect(result).toEqual({ healthy: false, error: 'catalog endpoint unavailable' });
+      expect(healthCheck).toHaveBeenCalledTimes(1);
+    });
+
     it('returns unhealthy for missing provider', async () => {
       const created = repo.createProvider({
         providerId: 'missing',
@@ -780,6 +819,48 @@ describe('Provider RPC handlers', () => {
       expect(anthropic?.healthy).toBe(true);
       expect(openrouter?.healthy).toBe(false);
       expect(openrouter?.error).toBe('Not registered');
+    });
+
+    it('uses provider health checks during batch checks', async () => {
+      repo.createProvider({
+        providerId: 'probe-provider',
+        displayName: 'Probe Provider',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const healthCheck = mock(async () => {
+        throw new Error('catalog endpoint unavailable');
+      });
+      getProviderRegistry().register({
+        id: 'probe-provider',
+        displayName: 'Probe Provider',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        healthCheck,
+        ownsModel: () => true,
+        getModelForTier: () => 'default',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.healthCheck')!({}, {})) as {
+        results: Array<{ providerId: string; healthy: boolean; error?: string }>;
+      };
+
+      expect(result.results[0]).toEqual({
+        providerId: 'probe-provider',
+        healthy: false,
+        error: 'catalog endpoint unavailable',
+      });
+      expect(healthCheck).toHaveBeenCalledTimes(1);
     });
 
     it('returns unhealthy when provider is not available', async () => {

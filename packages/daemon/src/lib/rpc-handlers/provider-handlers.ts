@@ -373,7 +373,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         });
         return { healthy: false, error: 'Provider not available' };
       }
-      await provider.getModels();
+      if (provider.healthCheck) {
+        await provider.healthCheck();
+      } else {
+        await provider.getModels();
+      }
       providerRepo.updateProvider(data.id, {
         healthStatus: 'healthy',
         lastHealthCheckAt: Date.now(),
@@ -411,7 +415,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             });
             return { providerId: record.providerId, healthy: false, error: 'Not available' };
           }
-          await provider.getModels();
+          if (provider.healthCheck) {
+            await provider.healthCheck();
+          } else {
+            await provider.getModels();
+          }
           providerRepo.updateProvider(record.id, {
             healthStatus: 'healthy',
             lastHealthCheckAt: Date.now(),

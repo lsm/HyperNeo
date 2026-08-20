@@ -70,6 +70,8 @@ export interface Provider {
 
   getModels(): Promise<ModelInfo[]>;
 
+  healthCheck?(): Promise<void>;
+
   ownsModel(modelId: string): boolean;
 
   getModelForTier(tier: ModelTier): string | undefined;

@@ -1025,6 +1025,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const models = await provider.getModels();
 
       expect(models.map((model) => model.id)).toEqual(['gpt-5.4', 'o3']);
+      expect(provider.getModelThinkingMode('gpt-5.4')).toBe('granular');
+      expect(provider.getModelThinkingMode('o3')).toBe('off');
     });
 
     it('fetches rich models from the ChatGPT Codex backend for OAuth tokens', async () => {
@@ -1112,6 +1114,35 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const models = await provider.getModels();
 
       expect(models.map((model) => model.id)).toContain('gpt-5.6-sol');
+      await expect(provider.healthCheck()).rejects.toThrow('model discovery failed: ECONNREFUSED');
+    });
+
+    it('reports 5xx discovery responses as unhealthy while retaining fallback models', async () => {
+      const fetchImpl = mock(
+        async () => new Response('unavailable', { status: 503 })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toContain('gpt-5.6-sol');
+      await expect(provider.healthCheck()).rejects.toThrow('model discovery HTTP 503');
+    });
+
+    it('clears discovery health failures after a successful probe', async () => {
+      const fetchImpl = mock()
+        .mockRejectedValueOnce(new Error('ECONNRESET'))
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data: [{ id: 'gpt-healthy' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      await provider.getModels();
+
+      await expect(provider.healthCheck()).resolves.toBeUndefined();
     });
 
     it('caches a successful model list so repeated calls do not refetch', async () => {
@@ -2050,6 +2081,39 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       expect(resp.status).toBe(200);
       expect(captured.body?.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
+
+      fetchSpy.mockRestore();
+      p.stopAllBridgeServers();
+    });
+
+    it('does not send reasoning for a discovered non-reasoning model', async () => {
+      const captured = { body: undefined as Record<string, unknown> | undefined };
+      const fetchSpy = mockUpstreamFetch(captured);
+      const catalogFetch = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'o3' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      const p = makeProvider({ OPENAI_API_KEY: 'sk-test' }, undefined, undefined, catalogFetch);
+      await p.getModels();
+      const cfg = p.buildSdkConfig('o3', { sessionId: 'sess-no-reasoning' });
+
+      p.setSessionThinkingConfig('sess-no-reasoning', 'think32k');
+
+      const resp = await fetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test' },
+        body: JSON.stringify({
+          model: 'o3',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'Say hi.' }],
+        }),
+      });
+
+      expect(resp.status).toBe(200);
+      expect(captured.body?.reasoning).toBeUndefined();
 
       fetchSpy.mockRestore();
       p.stopAllBridgeServers();
