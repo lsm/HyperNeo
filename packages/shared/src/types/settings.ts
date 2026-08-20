@@ -104,6 +104,8 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 
   coordinatorMode?: boolean;
 
+  sdkMessageRetentionDays?: number;
+
   maxConcurrentWorkers?: number;
 
   fallbackModels?: FallbackModelEntry[];

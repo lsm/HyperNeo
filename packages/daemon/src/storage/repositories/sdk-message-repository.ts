@@ -1,15 +1,13 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
-import { generateUUID, sendStatusToDeliveryStatus } from '@hyperneo/shared';
 import type {
+  ChatMessage,
+  HyperNeoActionMessage,
   MessageContent,
   MessageDeliveryStatus,
   MessageOrigin,
-  HyperNeoActionMessage,
-  ChatMessage,
 } from '@hyperneo/shared';
+import { generateUUID, sendStatusToDeliveryStatus } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import type { ReactiveDatabase } from '../reactive-database';
 import { Logger } from '../../lib/logger';
 import {
   buildFtsQuery,
@@ -19,6 +17,8 @@ import {
   type MessageSearchResponse,
   type MessageSearchResult,
 } from '../message-search';
+import type { ReactiveDatabase } from '../reactive-database';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import type { SQLiteValue } from '../types';
 
 export type SendStatus = 'deferred' | 'enqueued' | 'submitted' | 'consumed' | 'failed';
@@ -1365,6 +1365,74 @@ export class SDKMessageRepository {
     if (badgeChanged) this.notifySessionsChanged(sessionId);
     for (const row of rows) this.deleteMessageSearchRow(row.id);
     return deleted;
+  }
+
+  deleteExpiredArchivedSessionMessages(params: { olderThanIso: string; batchLimit: number }): {
+    deleted: number;
+    affectedSessions: string[];
+    hasMore: boolean;
+  } {
+    if (params.batchLimit <= 0) {
+      return { deleted: 0, affectedSessions: [], hasMore: false };
+    }
+    if (!this.tableExists('sessions') || !this.tableExists('job_queue')) {
+      return { deleted: 0, affectedSessions: [], hasMore: false };
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT sm.id, sm.session_id, sm.sdk_uuid
+           FROM sdk_messages sm
+           JOIN sessions s ON s.id = sm.session_id
+          WHERE s.status = 'archived'
+            AND COALESCE(s.type, 'worker') = 'worker'
+            AND sm.session_id NOT LIKE '%:%'
+            AND COALESCE(json_extract(s.session_context, '$.taskId'), '') = ''
+            AND sm.timestamp < ?
+            AND COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed')
+            AND NOT EXISTS (
+              SELECT 1 FROM job_queue jq
+               WHERE jq.queue = 'message_delivery'
+                 AND jq.status IN ('pending', 'processing')
+                 AND json_extract(jq.payload, '$.sessionId') = sm.session_id
+            )
+          LIMIT ?`
+      )
+      .all(params.olderThanIso, params.batchLimit) as Array<{
+      id: string;
+      session_id: string;
+      sdk_uuid: string | null;
+    }>;
+    if (rows.length === 0) return { deleted: 0, affectedSessions: [], hasMore: false };
+
+    const deleteMessage = this.db.prepare(`DELETE FROM sdk_messages WHERE id = ?`);
+    const deleteSearchRow = this.hasMessageSearchIndex()
+      ? this.db.prepare(
+          `DELETE FROM message_search_content WHERE kind = 'message' AND source_id = ?`
+        )
+      : null;
+    const affectedSessions = new Set<string>();
+    let deleted = 0;
+    this.db.transaction(() => {
+      for (const row of rows) {
+        if (deleteMessage.run(row.id).changes === 0) continue;
+        deleted++;
+        affectedSessions.add(row.session_id);
+        deleteSearchRow?.run(row.id);
+        if (row.sdk_uuid) this.clearDeliveryTurnEnd(row.session_id, row.sdk_uuid);
+      }
+    })();
+
+    for (const sessionId of affectedSessions) {
+      if (this.supportsVisibleMessageCount()) this.recomputeVisibleMessageCount(sessionId);
+      this.notifySessionsChanged(sessionId);
+      this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
+    }
+
+    return {
+      deleted,
+      affectedSessions: Array.from(affectedSessions),
+      hasMore: deleted >= params.batchLimit,
+    };
   }
 
   getUserMessages(sessionId: string): Array<{ uuid: string; timestamp: number; content: string }> {
