@@ -305,6 +305,24 @@ describe('DatabaseCore', () => {
 
       expect(listBackups()).toHaveLength(1);
     });
+
+    it('should fall back to the default bound for partially numeric values like 1GB', async () => {
+      process.env[envKey] = '1GB';
+
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      expect(listBackups()).toHaveLength(1);
+    });
+
+    it('should fall back to the default bound for negative values', async () => {
+      process.env[envKey] = '-1';
+
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      expect(listBackups()).toHaveLength(1);
+    });
   });
 
   describe('in-memory database', () => {

@@ -10,8 +10,8 @@ const DEFAULT_MIGRATION_BACKUP_MAX_BYTES = 1024 * 1024 * 1024;
 function getMigrationBackupMaxBytes(): number {
   const raw = process.env.HYPERNEO_DB_MIGRATION_BACKUP_MAX_BYTES;
   if (!raw) return DEFAULT_MIGRATION_BACKUP_MAX_BYTES;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MIGRATION_BACKUP_MAX_BYTES;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : DEFAULT_MIGRATION_BACKUP_MAX_BYTES;
 }
 
 export class DatabaseCore {

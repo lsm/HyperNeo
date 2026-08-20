@@ -88,13 +88,20 @@ minutes for a 31 GB DB on comparable storage).
 ### 5) Refresh planner statistics
 
 ```bash
-time sqlite3 "$DB" "PRAGMA optimize;"
+time sqlite3 "$DB" "PRAGMA optimize=0x10002;"
 ```
 
-`PRAGMA optimize` selectively runs `ANALYZE` on tables whose stats are missing or stale
-(and samples a bounded number of rows, so it stays fast even on multi-million-row tables).
-The daemon also runs `PRAGMA optimize` on every clean shutdown, so this manual step only
-matters after killed daemons or right after a VACUUM.
+Use the one-shot form `PRAGMA optimize=0x10002`: bit `0x10000` makes this fresh sqlite3
+connection consider **all** tables (a plain `PRAGMA optimize` only considers tables the
+connection itself has queried, so it can leave existing stale `sqlite_stat1` rows alone —
+verified: after 15x row growth on a fresh connection, plain left the stats at the old
+count while `0x10002` refreshed them), and bit `0x00002` runs `ANALYZE` on tables that
+are missing stats or whose row counts changed roughly 10-fold. ANALYZE samples a bounded
+number of rows, so this stays fast even on multi-million-row tables.
+
+The daemon runs plain `PRAGMA optimize` on every clean shutdown — the periodic,
+connection-aware form SQLite recommends for long-lived connections — so this manual step
+only matters after killed daemons or right after a VACUUM.
 
 A full `ANALYZE` is **not** part of the routine: on the 3.69 M-row production clone it
 ran for minutes without completing. Only run it if query plans remain bad after
@@ -121,7 +128,8 @@ pre-vacuum backup copy to reclaim its disk.
 
 ## What is handled automatically
 
-- **Stats:** `PRAGMA optimize` on every clean daemon shutdown
+- **Stats:** plain `PRAGMA optimize` on every clean daemon shutdown — the periodic,
+  connection-aware form SQLite recommends for long-lived connections
   (`packages/daemon/src/storage/database-core.ts`, `DatabaseCore.close()`).
 - **WAL growth:** SQLite's default auto-checkpoint keeps the WAL bounded during operation,
   and clean shutdown truncates it.
@@ -144,12 +152,15 @@ backup manually (step 3 above) while the daemon is stopped.
 
 The bound is controlled by `HYPERNEO_DB_MIGRATION_BACKUP_MAX_BYTES`:
 
-| Value       | Behavior                                              |
-| ----------- | ---------------------------------------------------- |
-| unset       | skip the migration backup above 1 GiB (default)      |
-| `1073741824`| same as unset (explicit 1 GiB)                        |
-| `0`         | always create migration backups, regardless of size   |
-| other bytes | custom bound; invalid values fall back to 1 GiB       |
+| Value        | Behavior                                                |
+| ------------ | ------------------------------------------------------ |
+| unset        | skip the migration backup above 1 GiB (default)        |
+| `1073741824` | same as unset (explicit 1 GiB)                          |
+| `0`          | always create migration backups, regardless of size     |
+| other number | custom bound in bytes (whole non-negative number)       |
+
+Values that are not whole non-negative numbers (including partially numeric ones like
+`1GB`) fall back to the 1 GiB default.
 
 ## Measured reference numbers
 
@@ -160,8 +171,9 @@ sqlite 3.50.2). Clone built with the daemon's own schema: 30,000 `sdk_messages` 
 | Step                      | Duration | Result                                        |
 | ------------------------- | -------- | --------------------------------------------- |
 | `.backup` of 263 MB       | 1.1 s    | consistent 263 MB snapshot                    |
-| `VACUUM`                  | 2.0 s    | 263 MB → 157 MB, freelist 26,665 → 0          |
-| `PRAGMA optimize`         | 0.02 s   | `sqlite_stat1` 0 → 20 entries                 |
+| `VACUUM`                  | 2.5 s    | 263 MB → 157 MB, freelist 26,665 → 0          |
+| shutdown `PRAGMA optimize`| ~0       | `sqlite_stat1` 0 → 20 entries (in daemon close) |
+| `PRAGMA optimize=0x10002` | 0.02 s   | `sqlite_stat1` 20 → 27 (covers unqueried tables) |
 | full `ANALYZE` (18k rows) | 0.04 s   | 42 entries (minutes at production row counts) |
 | `PRAGMA integrity_check`  | 0.3 s    | ok                                            |
 | daemon reopen after VACUUM| —        | schema, rows, FTS table, payloads intact      |
