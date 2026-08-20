@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -606,6 +606,12 @@ describe('AcpQueryRunner', () => {
       await expect(
         constructorOptions[0].onFsRead?.({
           sessionId: 'acp-session-1',
+          path: join(await realpath(workspace), 'inside.txt'),
+        })
+      ).resolves.toEqual({ content: 'one\ntwo\nthree\nfour' });
+      await expect(
+        constructorOptions[0].onFsRead?.({
+          sessionId: 'acp-session-1',
           path: outside,
         })
       ).rejects.toThrow('escapes workspace');
@@ -885,38 +891,38 @@ describe('AcpQueryRunner', () => {
     expect(result).toEqual({ outcome: { outcome: 'cancelled' } });
   });
 
-  test('gates terminal creation and wires terminal callbacks', async () => {
-    const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture();
+  test('prompts before terminal creation', async () => {
+    const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture({
+      canUseTool: async (_toolName, input) => {
+        const question = (input.questions as Array<{ question: string }>)[0].question;
+        return { behavior: 'allow', updatedInput: { answers: { [question]: 'Allow once' } } };
+      },
+    });
 
     await runner.start();
     await ctx.queryPromise;
 
-    const terminal = await constructorOptions[0].onTerminalCreate?.({
-      sessionId: 'acp-session-1',
-      command: process.execPath,
-      args: ['-e', 'process.stdout.write("ok")'],
-    });
-    expect(canUseTool).toHaveBeenCalledWith(
-      'Bash',
-      { command: `${process.execPath} -e 'process.stdout.write("ok")'` },
-      expect.objectContaining({ displayName: 'ACP terminal command' })
-    );
-    expect(terminal?.terminalId).toBeString();
-    const exit = await constructorOptions[0].onTerminalWaitForExit?.({
-      sessionId: 'acp-session-1',
-      terminalId: terminal!.terminalId,
-    });
-    expect(exit?.exitCode).toBe(0);
-    expect(
-      await constructorOptions[0].onTerminalOutput?.({
+    await expect(
+      constructorOptions[0].onTerminalCreate?.({
         sessionId: 'acp-session-1',
-        terminalId: terminal!.terminalId,
+        command: process.execPath,
+        args: ['-e', 'process.exit(0)'],
       })
-    ).toMatchObject({ output: 'ok', exitStatus: { exitCode: 0 } });
-    await constructorOptions[0].onTerminalRelease?.({
-      sessionId: 'acp-session-1',
-      terminalId: terminal!.terminalId,
-    });
+    ).rejects.toThrow('ACP terminal manager has been disposed');
+    expect(canUseTool).toHaveBeenCalledWith(
+      'AskUserQuestion',
+      expect.objectContaining({
+        questions: [
+          expect.objectContaining({
+            question: `Allow terminal command ${process.execPath} -e 'process.exit(0)'?`,
+            header: 'ACP approval',
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        displayName: `terminal command ${process.execPath} -e 'process.exit(0)'`,
+      })
+    );
   });
 
   test('rejects terminal cwd and environment overrides before permission checks', async () => {
@@ -958,7 +964,27 @@ describe('AcpQueryRunner', () => {
         command: process.execPath,
         args: ['-e', 'process.exit(0)'],
       })
-    ).rejects.toThrow('Denied');
+    ).rejects.toThrow('ACP terminal command denied');
+  });
+
+  test('does not create terminals when the explicit deny option is selected', async () => {
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      canUseTool: async (_toolName, input) => {
+        const question = (input.questions as Array<{ question: string }>)[0].question;
+        return { behavior: 'allow', updatedInput: { answers: { [question]: 'Deny' } } };
+      },
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    await expect(
+      constructorOptions[0].onTerminalCreate?.({
+        sessionId: 'acp-session-1',
+        command: process.execPath,
+        args: ['-e', 'process.exit(0)'],
+      })
+    ).rejects.toThrow('ACP terminal command denied');
   });
 
   test('persists new ACP session ids', async () => {

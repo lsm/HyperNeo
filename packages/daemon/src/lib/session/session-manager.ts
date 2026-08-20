@@ -532,6 +532,26 @@ export class SessionManager {
     this.sessionCache.remove(sessionId);
   }
 
+  async interruptProviderSessions(providerId: string): Promise<void> {
+    const sessionIds = new Set(
+      this.db
+        .listSessions({ includeArchived: true, includeSpaceSessions: true })
+        .filter((session) => session.config.provider === providerId)
+        .map((session) => session.id)
+    );
+    for (const [sessionId, agentSession] of this.sessionCache.entries()) {
+      if (agentSession.getSessionData().config.provider === providerId) {
+        sessionIds.add(sessionId);
+      }
+    }
+    await Promise.all(
+      Array.from(sessionIds, async (sessionId) => {
+        this.db.updateSession(sessionId, { acpSessionId: undefined });
+        await this.interruptInMemorySession(sessionId);
+      })
+    );
+  }
+
   getActiveSessions(): number {
     return this.sessionCache.getActiveCount();
   }

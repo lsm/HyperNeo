@@ -58,7 +58,7 @@ describe('defaultAcpCommandProbe', () => {
         args: ['acp', '--help'],
         options: {
           env: { PATH: '/safe/bin', HOME: '/safe/home' },
-          stdio: ['ignore', 'pipe', 'pipe'],
+          stdio: ['ignore', 'ignore', 'ignore'],
         },
       },
     ]);

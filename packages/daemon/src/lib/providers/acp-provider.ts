@@ -13,6 +13,7 @@ import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
 const ACP_CONTEXT_WINDOW_ENV_VAR = 'HYPERNEO_ACP_CONTEXT_WINDOW';
 const ACP_PROBE_TIMEOUT_MS = 5000;
+const ACP_PROBE_KILL_TIMEOUT_MS = 1000;
 
 export type AcpCommandProbe = (command: string, timeoutMs?: number) => Promise<void>;
 
@@ -28,24 +29,34 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
   const { command, args } = parseAcpCommand(commandLine);
   return new Promise<void>((resolve, reject) => {
     let settled = false;
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
     const child = spawn(command, [...args, '--help'], {
       env: buildAcpSafeEnv(),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'ignore', 'ignore'],
     });
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const settle = (callback: () => void) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       callback();
     };
-    const timer = setTimeout(() => {
+    const clearKillTimer = () => {
+      if (!killTimer) return;
+      clearTimeout(killTimer);
+      killTimer = null;
+    };
+    timer = setTimeout(() => {
       child.kill('SIGTERM');
+      killTimer = setTimeout(() => child.kill('SIGKILL'), ACP_PROBE_KILL_TIMEOUT_MS);
+      killTimer.unref();
       settle(() =>
         reject(new Error(`ACP command '${command}' probe timed out after ${timeoutMs}ms`))
       );
     }, timeoutMs);
 
     child.on('error', (err: NodeJS.ErrnoException) => {
+      clearKillTimer();
       settle(() => {
         if (err.code === 'ENOENT') {
           reject(new Error(`ACP command '${command}' not found in PATH`));
@@ -55,6 +66,7 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
       });
     });
     child.on('exit', (code, signal) => {
+      clearKillTimer();
       settle(() => {
         if (code === 0) {
           resolve();

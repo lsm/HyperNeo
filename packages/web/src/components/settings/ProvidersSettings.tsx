@@ -60,10 +60,12 @@ function readAcpModels(provider: EnrichedProvider): AcpConfiguredModel[] {
   try {
     const parsed = JSON.parse(provider.configJson) as { models?: unknown };
     if (!Array.isArray(parsed.models)) return [];
-    return parsed.models.filter(
-      (model): model is AcpConfiguredModel =>
-        !!model && typeof model === 'object' && typeof (model as AcpConfiguredModel).id === 'string'
-    );
+    return parsed.models.flatMap((model) => {
+      if (!model || typeof model !== 'object') return [];
+      const { id, name } = model as { id?: unknown; name?: unknown };
+      if (typeof id !== 'string') return [];
+      return [{ id, ...(typeof name === 'string' ? { name } : {}) }];
+    });
   } catch {
     return [];
   }

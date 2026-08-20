@@ -136,11 +136,29 @@ describe('AcpTerminalManager', () => {
     } else {
       expect(processKill).toHaveBeenCalledWith(-spawned[0].pid, 'SIGTERM');
     }
-    expect(await manager.output(params(terminalId))).toEqual({
-      output: '',
-      truncated: false,
-      exitStatus: { exitCode: null, signal: null },
-    });
+    await expect(manager.output(params(terminalId))).rejects.toThrow(
+      `Unknown or released ACP terminal: ${terminalId}`
+    );
+  });
+
+  test('rejects operations for unknown terminal ids', async () => {
+    const manager = new AcpTerminalManager();
+    const unknown = params('unknown');
+
+    await expect(manager.output(unknown)).rejects.toThrow('Unknown or released ACP terminal');
+    await expect(manager.waitForExit(unknown)).rejects.toThrow('Unknown or released ACP terminal');
+    await expect(manager.kill(unknown)).rejects.toThrow('Unknown or released ACP terminal');
+    await expect(manager.release(unknown)).rejects.toThrow('Unknown or released ACP terminal');
+  });
+
+  test('rejects terminal creation after disposal', async () => {
+    const manager = new AcpTerminalManager();
+    manager.dispose();
+
+    await expect(manager.create({ sessionId: 'session-1', command: 'command' })).rejects.toThrow(
+      'ACP terminal manager has been disposed'
+    );
+    expect(spawnCalls).toHaveLength(0);
   });
 
   test('clamps output limits', async () => {

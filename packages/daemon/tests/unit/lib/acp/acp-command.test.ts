@@ -11,6 +11,17 @@ describe('parseAcpCommand', () => {
     });
   });
 
+  test('preserves Windows path separators', () => {
+    expect(parseAcpCommand('C:\\Tools\\devin.exe acp')).toEqual({
+      command: 'C:\\Tools\\devin.exe',
+      args: ['acp'],
+    });
+    expect(parseAcpCommand('"C:\\Program Files\\Devin\\devin.exe" acp')).toEqual({
+      command: 'C:\\Program Files\\Devin\\devin.exe',
+      args: ['acp'],
+    });
+  });
+
   test('rejects empty commands', () => {
     expect(() => parseAcpCommand('   ')).toThrow('Invalid ACP command: command is empty');
   });

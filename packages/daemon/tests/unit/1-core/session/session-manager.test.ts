@@ -505,6 +505,40 @@ describe('SessionManager', () => {
       expect(mockDb.deleteSession).not.toHaveBeenCalled();
     });
 
+    it('clears and interrupts persisted and cached provider sessions', async () => {
+      const persisted = {
+        id: 'persisted-acp',
+        config: { provider: 'acp' },
+        acpSessionId: 'remote-session',
+      } as Session;
+      (mockDb.listSessions as ReturnType<typeof mock>).mockReturnValue([
+        persisted,
+        { id: 'anthropic', config: { provider: 'anthropic' } } as Session,
+      ]);
+      const cachedSession = {
+        id: 'cached-acp',
+        config: { provider: 'acp' },
+      } as Session;
+      const cachedAgent = {
+        getSessionData: mock(() => cachedSession),
+        cleanup: mock(async () => {}),
+        getTrackedAgentRootPidsSplit: mock(() => ({ live: [], exited: [] })),
+        getExitedRootPidTimestamps: mock(() => new Map<number, number>()),
+      } as unknown as AgentSession;
+      sessionManager.registerSession(cachedAgent);
+
+      await sessionManager.interruptProviderSessions('acp');
+
+      expect(mockDb.updateSession).toHaveBeenCalledWith('persisted-acp', {
+        acpSessionId: undefined,
+      });
+      expect(mockDb.updateSession).toHaveBeenCalledWith('cached-acp', {
+        acpSessionId: undefined,
+      });
+      expect(cachedAgent.cleanup).toHaveBeenCalledTimes(1);
+      expect(sessionManager.getCachedSession('cached-acp')).toBeNull();
+    });
+
     it('preserves exited root PIDs after cache eviction for watchdog ownership', async () => {
       const mockSession: Session = {
         id: 'session-with-pids',

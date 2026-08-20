@@ -13,7 +13,7 @@ import { getProviderRegistry } from '../providers/registry.js';
 import { markBuiltInProviderDisabled } from '../providers/factory.js';
 import { AcpProvider } from '../providers/acp-provider.js';
 import { fetchAcpModels } from '../acp/acp-model-fetcher.js';
-import { parseAcpCommand } from '../acp/acp-command.js';
+import { getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SessionManager } from '../session/session-manager';
@@ -153,7 +153,7 @@ export interface ProviderHandlerDeps {
   providerRepo: ProviderRepository;
   credentialManager: ProviderCredentialManager;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
-  sessionManager?: Pick<SessionManager, 'listSessions' | 'updateSession'>;
+  sessionManager?: Pick<SessionManager, 'interruptProviderSessions'>;
   clearPersistedAcpSessionIds?: () => void;
 }
 
@@ -182,19 +182,24 @@ function validateAcpConfigCommand(configJson: string | undefined): string | unde
   return parsed.command;
 }
 
-async function clearAcpSessionIds(
-  sessionManager: Pick<SessionManager, 'listSessions' | 'updateSession'> | undefined
+async function invalidateAcpSessions(
+  sessionManager: Pick<SessionManager, 'interruptProviderSessions'> | undefined,
+  clearPersistedAcpSessionIds: (() => void) | undefined
 ): Promise<void> {
-  if (!sessionManager) return;
-  const sessions = sessionManager.listSessions({
-    includeArchived: true,
-    includeSpaceSessions: true,
-  });
-  await Promise.all(
-    sessions
-      .filter((session) => session.config.provider === 'acp' && session.acpSessionId)
-      .map((session) => sessionManager.updateSession(session.id, { acpSessionId: undefined }))
-  );
+  await sessionManager?.interruptProviderSessions('acp');
+  clearPersistedAcpSessionIds?.();
+}
+
+function acpCommandsDiffer(
+  previousCommand: string | undefined,
+  nextCommand: string | undefined
+): boolean {
+  if (!previousCommand || !nextCommand) return previousCommand !== nextCommand;
+  try {
+    return getAcpCommandIdentity(previousCommand) !== getAcpCommandIdentity(nextCommand);
+  } catch {
+    return previousCommand !== nextCommand;
+  }
 }
 
 async function clearCacheAndNotifyProvidersChanged(
@@ -247,6 +252,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       if (record.providerId !== 'acp')
         throw new Error(`Provider ${data.id} is not an ACP provider`);
       if (data.command !== undefined) {
+        if (typeof data.command !== 'string') throw new Error('ACP command must be a string');
         if (!data.command.trim()) throw new Error('ACP command is required');
         if (data.command.length > MAX_JSON_FIELD_LEN)
           throw new Error(`ACP command must be ≤ ${MAX_JSON_FIELD_LEN} chars`);
@@ -274,9 +280,17 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         data.params.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
       return lock(async () => {
         validateCreateParams(data.params);
-        if (data.params.providerId === 'acp') {
-          validateAcpConfigCommand(data.params.configJson);
-        }
+        const newAcpCommand =
+          data.params.providerId === 'acp'
+            ? validateAcpConfigCommand(data.params.configJson)
+            : undefined;
+        const registeredAcpProvider = getProviderRegistry().get('acp');
+        const previousAcpCommand =
+          data.params.providerId === 'acp'
+            ? registeredAcpProvider instanceof AcpProvider
+              ? registeredAcpProvider.getAcpCommand()
+              : process.env.HYPERNEO_ACP_COMMAND
+            : undefined;
         const record = providerRepo.createProvider(data.params);
 
         try {
@@ -302,6 +316,13 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             data.credentials
           );
           await syncProviderToRegistry(record, creds);
+          if (
+            record.isEnabled &&
+            newAcpCommand !== undefined &&
+            acpCommandsDiffer(previousAcpCommand, newAcpCommand)
+          ) {
+            await invalidateAcpSessions(sessionManager, clearPersistedAcpSessionIds);
+          }
         } catch (err) {
           providerRepo.deleteProvider(record.id);
           rethrowKeychainError(err, 'create', record.providerId);
@@ -363,12 +384,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           const acpCommandChanged =
             existing.providerId === 'acp' &&
             updates.configJson !== undefined &&
-            readAcpCommand(existing.configJson) !== updatedAcpCommand;
+            acpCommandsDiffer(readAcpCommand(existing.configJson), updatedAcpCommand);
           const record = providerRepo.updateProvider(data.id, updates);
           if (!record) throw new Error(`Provider ${data.id} not found`);
           if (acpCommandChanged) {
-            clearPersistedAcpSessionIds?.();
-            await clearAcpSessionIds(sessionManager);
+            await invalidateAcpSessions(sessionManager, clearPersistedAcpSessionIds);
           }
 
           const shouldResync =

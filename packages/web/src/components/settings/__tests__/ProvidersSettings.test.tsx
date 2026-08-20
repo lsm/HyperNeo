@@ -378,6 +378,28 @@ describe('ProvidersSettings', () => {
     await waitFor(() => expect(container.textContent).toContain('No command set'));
   });
 
+  it('falls back to ACP model ids for malformed names', async () => {
+    const provider = createMockProvider('acp-1', 'acp', {
+      displayName: 'ACP Agent',
+      authType: 'none',
+      configJson: JSON.stringify({
+        command: 'devin acp',
+        models: [{ id: 'devin-model', name: { invalid: true } }],
+      }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+
+    await waitFor(() => expect(container.textContent).toContain('devin-model'));
+    fireEvent.click(screen.getByText('Edit'));
+    expect(screen.getByTestId('acp-editor-modal').textContent).toContain(
+      'acp-1:devin acp:devin-model'
+    );
+  });
+
   it('toggles provider enabled state', async () => {
     const providers = [
       createMockProvider('1', 'anthropic', { displayName: 'Anthropic', isEnabled: true }),

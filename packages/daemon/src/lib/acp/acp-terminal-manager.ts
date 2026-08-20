@@ -35,6 +35,7 @@ interface TerminalSession {
 
 export class AcpTerminalManager {
   private sessions = new Map<string, TerminalSession>();
+  private disposed = false;
 
   constructor(
     private readonly baseEnv: Record<string, string> = {},
@@ -43,6 +44,7 @@ export class AcpTerminalManager {
   ) {}
 
   async create(params: AcpTerminalCreateParams): Promise<AcpTerminalCreateResult> {
+    if (this.disposed) throw new Error('ACP terminal manager has been disposed');
     if (params.cwd != null || (params.env?.length ?? 0) > 0) {
       throw new Error('ACP terminal cwd and environment overrides are not supported');
     }
@@ -119,11 +121,7 @@ export class AcpTerminalManager {
   }
 
   async output(params: AcpTerminalOutputParams): Promise<AcpTerminalOutputResult> {
-    const session = this.sessions.get(params.terminalId);
-    if (!session) {
-      return { output: '', truncated: false, exitStatus: { exitCode: null, signal: null } };
-    }
-
+    const session = this.getSession(params.terminalId);
     const output = Buffer.concat(session.outputChunks, session.outputByteLength).toString('utf-8');
 
     return {
@@ -136,11 +134,7 @@ export class AcpTerminalManager {
   }
 
   async waitForExit(params: AcpTerminalWaitForExitParams): Promise<AcpTerminalWaitForExitResult> {
-    const session = this.sessions.get(params.terminalId);
-    if (!session) {
-      return { exitCode: null, signal: null };
-    }
-
+    const session = this.getSession(params.terminalId);
     if (session.exited) {
       return { exitCode: session.exitCode, signal: session.exitSignal };
     }
@@ -151,8 +145,8 @@ export class AcpTerminalManager {
   }
 
   async kill(params: AcpTerminalKillParams): Promise<AcpTerminalKillResult> {
-    const session = this.sessions.get(params.terminalId);
-    if (session && !session.killed && !session.exited) {
+    const session = this.getSession(params.terminalId);
+    if (!session.killed && !session.exited) {
       session.killed = true;
       this.signalProcess(session.process, 'SIGTERM');
       session.killTimer = setTimeout(() => {
@@ -167,8 +161,8 @@ export class AcpTerminalManager {
   }
 
   async release(params: AcpTerminalReleaseParams): Promise<AcpTerminalReleaseResult> {
-    const session = this.sessions.get(params.terminalId);
-    if (session && !session.released) {
+    const session = this.getSession(params.terminalId);
+    if (!session.released) {
       session.released = true;
       await this.kill(params);
     }
@@ -177,6 +171,8 @@ export class AcpTerminalManager {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     for (const [terminalId, session] of this.sessions) {
       if (!session.exited) {
         session.killed = true;
@@ -192,6 +188,12 @@ export class AcpTerminalManager {
       session.released = true;
       this.sessions.delete(terminalId);
     }
+  }
+
+  private getSession(terminalId: string): TerminalSession {
+    const session = this.sessions.get(terminalId);
+    if (!session) throw new Error(`Unknown or released ACP terminal: ${terminalId}`);
+    return session;
   }
 
   private signalProcess(child: ChildProcess, signal: NodeJS.Signals): void {

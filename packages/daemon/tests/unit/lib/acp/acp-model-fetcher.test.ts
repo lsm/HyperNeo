@@ -119,6 +119,7 @@ describe('fetchAcpModels', () => {
     try {
       await fetchAcpModels(new AcpProvider(), { command: 'devin acp', cwd: '/tmp' });
       expect(clientOptions?.env?.UNRELATED_PROVIDER_TOKEN).toBeUndefined();
+      expect(clientOptions?.replaceEnv).toBe(true);
     } finally {
       if (originalSecret === undefined) delete process.env.UNRELATED_PROVIDER_TOKEN;
       else process.env.UNRELATED_PROVIDER_TOKEN = originalSecret;

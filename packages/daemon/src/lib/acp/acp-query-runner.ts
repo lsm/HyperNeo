@@ -301,25 +301,26 @@ async function authorizeAcpTerminalCreate(
       ? parseAcpCommand(params.command)
       : { command: params.command, args: params.args };
   const command = [parsed.command, ...parsed.args].map(shellQuote).join(' ');
-  const controller = new AbortController();
-  const result = await canUseTool(
-    'Bash',
-    { command },
+  const permission = await handleAcpPermissionRequest(
     {
-      signal: controller.signal,
-      toolUseID: generateUUID(),
-      title: command,
-      displayName: 'ACP terminal command',
-      description: params.cwd ?? undefined,
-      requestId: generateUUID(),
-    }
+      sessionId: params.sessionId,
+      toolCall: {
+        toolCallId: generateUUID(),
+        title: `terminal command ${command}`,
+        kind: 'execute',
+      },
+      options: [
+        { optionId: 'allow-terminal', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'deny-terminal', name: 'Deny', kind: 'reject_once' },
+      ],
+    },
+    canUseTool
   );
-  if (!result || result.behavior === 'deny') {
-    throw new Error(result?.message ?? 'ACP terminal command denied');
-  }
-  const updatedCommand = result.updatedInput?.command;
-  if (typeof updatedCommand === 'string' && updatedCommand !== command) {
-    throw new Error('ACP terminal command modifications are not supported');
+  if (
+    permission.outcome.outcome !== 'selected' ||
+    permission.outcome.optionId !== 'allow-terminal'
+  ) {
+    throw new Error('ACP terminal command denied');
   }
   return {
     ...params,
@@ -813,6 +814,8 @@ export class AcpQueryRunner {
         createdAcpSessionDuringRun,
         receivedAcpMessageDuringRun,
         async () => {
+          terminalManager?.dispose();
+          terminalManager = null;
           await proxyBridge?.close();
           proxyBridge = null;
         },
@@ -1051,11 +1054,8 @@ export class AcpQueryRunner {
     const { realpath } = await import('node:fs/promises');
     const { dirname, resolve } = await import('node:path');
     const workspacePath = await realpath(workspace);
-    const requestedPath = resolve(
-      workspacePath,
-      isAbsolute(path) ? relative(resolve(workspace), path) : path
-    );
-    this.assertWorkspacePath(requestedPath, workspacePath, path);
+    const requestedPath = isAbsolute(path) ? resolve(path) : resolve(workspacePath, path);
+    if (!isAbsolute(path)) this.assertWorkspacePath(requestedPath, workspacePath, path);
 
     let existingPath = requestedPath;
     let resolvedPath: string | undefined;
@@ -1069,9 +1069,8 @@ export class AcpQueryRunner {
     if (!resolvedPath) {
       throw new Error(`Unable to resolve ACP filesystem path: ${path}`);
     }
-    this.assertWorkspacePath(resolvedPath, workspacePath, path);
 
-    const targetPath = await realpath(requestedPath).catch(() => requestedPath);
+    const targetPath = resolve(resolvedPath, relative(existingPath, requestedPath));
     this.assertWorkspacePath(targetPath, workspacePath, path);
     return targetPath;
   }

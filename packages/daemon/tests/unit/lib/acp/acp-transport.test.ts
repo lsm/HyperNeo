@@ -15,6 +15,17 @@ describe('buildAcpProcessEnv', () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
   });
+
+  it('does not inherit ambient variables when replacing the process environment', () => {
+    const originalSecret = process.env.UNRELATED_PROVIDER_TOKEN;
+    process.env.UNRELATED_PROVIDER_TOKEN = 'secret';
+    try {
+      expect(buildAcpProcessEnv({ PATH: '/safe/bin' }, true)).toEqual({ PATH: '/safe/bin' });
+    } finally {
+      if (originalSecret === undefined) delete process.env.UNRELATED_PROVIDER_TOKEN;
+      else process.env.UNRELATED_PROVIDER_TOKEN = originalSecret;
+    }
+  });
 });
 
 describe('AcpTransport.sendRequest onSubmitted', () => {

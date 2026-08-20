@@ -25,6 +25,7 @@ export async function fetchAcpModels(
     args,
     cwd: workspace,
     env: buildAcpDiscoveryEnv(),
+    replaceEnv: true,
     requestTimeoutMs: FETCH_REQUEST_TIMEOUT_MS,
   });
   try {

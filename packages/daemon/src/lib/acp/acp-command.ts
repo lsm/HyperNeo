@@ -30,7 +30,9 @@ export function parseAcpCommand(commandLine: string): { command: string; args: s
   let quote: 'single' | 'double' | null = null;
   let escaping = false;
 
-  for (const char of commandLine.trim()) {
+  const trimmedCommand = commandLine.trim();
+  for (let index = 0; index < trimmedCommand.length; index++) {
+    const char = trimmedCommand[index];
     if (escaping) {
       current += char;
       escaping = false;
@@ -38,7 +40,15 @@ export function parseAcpCommand(commandLine: string): { command: string; args: s
     }
 
     if (char === '\\') {
-      escaping = true;
+      const next = trimmedCommand[index + 1];
+      if (
+        next !== undefined &&
+        (/\s/.test(next) || next === "'" || next === '"' || next === '\\')
+      ) {
+        escaping = true;
+      } else {
+        current += char;
+      }
       continue;
     }
 

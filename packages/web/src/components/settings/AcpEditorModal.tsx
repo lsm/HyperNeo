@@ -27,6 +27,7 @@ export function AcpEditorModal({
 }: AcpEditorModalProps) {
   const [command, setCommand] = useState(initialCommand);
   const [models, setModels] = useState<AcpConfiguredModel[]>(initialModels);
+  const [modelsCommand, setModelsCommand] = useState(initialCommand.trim());
   const [fetchedModels, setFetchedModels] = useState<AcpConfiguredModel[] | null>(null);
   const [fetchedCommand, setFetchedCommand] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -51,8 +52,9 @@ export function AcpEditorModal({
     try {
       const trimmedCommand = command.trim();
       const { models: fetched } = await fetchAcpModels(providerId, trimmedCommand);
-      if (trimmedCommand !== initialCommand.trim()) {
+      if (trimmedCommand !== modelsCommand) {
         setModels([]);
+        setModelsCommand(trimmedCommand);
       }
       setFetchedModels(fetched);
       setFetchedCommand(trimmedCommand);
@@ -91,7 +93,11 @@ export function AcpEditorModal({
       await updateProvider(providerId, {
         configJson: JSON.stringify({
           command: trimmedCommand,
-          models: commandChanged && fetchedCommand !== trimmedCommand ? [] : models,
+          models:
+            modelsCommand === trimmedCommand &&
+            (!commandChanged || fetchedCommand === trimmedCommand)
+              ? models
+              : [],
         }),
       });
       toast.success(`${providerName} updated`);
