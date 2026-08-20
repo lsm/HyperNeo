@@ -143,7 +143,10 @@ describe('AcpMessageTranslator', () => {
     const emptyUpdate = translator.processUpdate({
       ...toolCallUpdate('tc-6', undefined),
       status: 'in_progress',
-      content: [{ type: 'content', content: { type: 'text', text: ' output' } }],
+      content: [
+        { type: 'content', content: { type: 'text', text: 'partial' } },
+        { type: 'content', content: { type: 'text', text: ' output' } },
+      ],
     });
     expect(emptyUpdate.length).toBe(0);
 

@@ -97,9 +97,7 @@ export class AcpMessageTranslator {
         const accumulated = {
           ...previous,
           ...update,
-          content: update.content
-            ? [...(previous?.content ?? []), ...update.content]
-            : previous?.content,
+          content: update.content ?? previous?.content,
           rawOutput: update.rawOutput !== undefined ? update.rawOutput : previous?.rawOutput,
         };
         const terminal = update.status === 'completed' || update.status === 'failed';

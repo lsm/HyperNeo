@@ -77,6 +77,7 @@ export async function writeFileWithinWorkspace(
     if (fileFd < 0) throwFsError('open', fileName);
 
     try {
+      if (signal.aborted) throw new Error('ACP filesystem write cancelled');
       if (libc.symbols.ftruncate(fileFd, 0) !== 0) throwFsError('truncate', fileName);
       const data = Buffer.from(content);
       let offset = 0;

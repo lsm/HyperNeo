@@ -511,6 +511,48 @@ describe('Provider RPC handlers', () => {
       expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
     });
 
+    it('preserves ACP sessions when re-enabling an unchanged disabled provider', async () => {
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'devin acp', models: [] }),
+      });
+      const handlers = setup();
+
+      await handlers.get('providers.update')!({ id: created.id, params: { isEnabled: false } }, {});
+      sessionManager.interruptProviderSessions.mockClear();
+      clearPersistedAcpSessionIds.mockClear();
+      await handlers.get('providers.update')!({ id: created.id, params: { isEnabled: true } }, {});
+
+      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
+    });
+
+    it('defers ACP command invalidation while the provider remains disabled', async () => {
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        isEnabled: false,
+        configJson: JSON.stringify({ command: 'old acp', models: [] }),
+      });
+      const handlers = setup();
+
+      await handlers.get('providers.update')!(
+        {
+          id: created.id,
+          params: { configJson: JSON.stringify({ command: 'new acp', models: [] }) },
+        },
+        {}
+      );
+
+      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
+    });
+
     it('rejects invalid ACP commands before persisting or mutating the provider', async () => {
       const originalConfig = JSON.stringify({ command: 'devin acp', models: [] });
       const created = repo.createProvider({

@@ -190,6 +190,7 @@ export class QueryLifecycleManager {
     const noPidProcessSnapshot = this.ctx.snapshotNoPidTrackedProcesses?.() ?? [];
 
     messageQueue.stop();
+    this.ctx.queryAbortController?.abort();
 
     const queryObject = this.ctx.queryObject;
     if (queryObject && typeof queryObject.interrupt === 'function') {

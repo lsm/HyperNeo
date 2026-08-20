@@ -394,9 +394,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             existing.providerId === 'acp' &&
             existing.isEnabled === false &&
             updates.isEnabled === true &&
+            liveAcpCommand !== undefined &&
             acpCommandsDiffer(liveAcpCommand, readAcpCommand(existing.configJson));
           const acpCommandChanged =
             existing.providerId === 'acp' &&
+            existing.isEnabled !== false &&
             updates.configJson !== undefined &&
             acpCommandsDiffer(readAcpCommand(existing.configJson), updatedAcpCommand);
           const record = providerRepo.updateProvider(data.id, updates);

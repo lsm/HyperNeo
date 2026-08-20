@@ -643,6 +643,22 @@ describe('AcpQueryRunner', () => {
           path: outside,
         })
       ).rejects.toThrow('escapes workspace');
+      const large = join(workspace, 'large.txt');
+      await writeFile(large, 'x'.repeat(4 * 1024 * 1024 + 1));
+      await expect(
+        constructorOptions[0].onFsRead?.({
+          sessionId: 'acp-session-1',
+          path: large,
+        })
+      ).rejects.toThrow('ACP filesystem read exceeds');
+      await expect(
+        constructorOptions[0].onFsRead?.({
+          sessionId: 'acp-session-1',
+          path: large,
+          line: 1,
+          limit: 0,
+        })
+      ).resolves.toEqual({ content: '' });
       await expect(
         constructorOptions[0].onFsWrite?.({
           sessionId: 'acp-session-1',

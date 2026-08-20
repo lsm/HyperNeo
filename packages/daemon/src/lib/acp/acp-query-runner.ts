@@ -50,6 +50,7 @@ import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
+const MAX_FS_READ_BYTES = 4 * 1024 * 1024;
 
 function getStartupTimeoutMs(): number {
   const raw = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
@@ -1073,16 +1074,35 @@ export class AcpQueryRunner {
   }
 
   private async handleFsRead(params: AcpFsReadParams, workspace: string): Promise<AcpFsReadResult> {
-    const { readFile } = await import('node:fs/promises');
+    const { createReadStream } = await import('node:fs');
+    const { createInterface } = await import('node:readline');
     const filePath = await this.resolveWorkspacePath(params.path, workspace);
-    const content = await readFile(filePath, 'utf-8');
     const start = Math.max(0, (params.line ?? 1) - 1);
-    const limit = params.limit ?? undefined;
-    if (start === 0 && limit === undefined) return { content };
-    const lines = content.split('\n');
-    return {
-      content: lines.slice(start, limit === undefined ? undefined : start + limit).join('\n'),
-    };
+    const end = params.limit == null ? Number.POSITIVE_INFINITY : start + params.limit;
+    const stream = createReadStream(filePath, { encoding: 'utf-8' });
+    const lines = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
+    const selected: string[] = [];
+    let bytes = 0;
+    let line = 0;
+
+    try {
+      for await (const content of lines) {
+        if (line >= end) break;
+        if (line >= start) {
+          bytes += Buffer.byteLength(content) + (selected.length > 0 ? 1 : 0);
+          if (bytes > MAX_FS_READ_BYTES) {
+            throw new Error(`ACP filesystem read exceeds ${MAX_FS_READ_BYTES} bytes`);
+          }
+          selected.push(content);
+        }
+        line++;
+      }
+    } finally {
+      lines.close();
+      stream.destroy();
+    }
+
+    return { content: selected.join('\n') };
   }
 
   private async handleFsWrite(

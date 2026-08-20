@@ -169,6 +169,24 @@ describe('QueryLifecycleManager', () => {
       expect(stopSpy).toHaveBeenCalled();
     });
 
+    test('aborts the active query before waiting for it to stop', async () => {
+      const abortController = new AbortController();
+      let observedAbort = false;
+      mockContext.queryAbortController = abortController;
+      mockContext.queryPromise = new Promise((resolve) => {
+        abortController.signal.addEventListener('abort', () => {
+          observedAbort = true;
+          resolve();
+        });
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.stop();
+
+      expect(observedAbort).toBe(true);
+      expect(abortController.signal.aborted).toBe(true);
+    });
+
     test('interrupts query when transport is ready', async () => {
       let interruptCalled = false;
       mockContext.queryObject = {
