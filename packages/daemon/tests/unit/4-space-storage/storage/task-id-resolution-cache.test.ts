@@ -231,4 +231,58 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
     reactiveDb.db.saveSDKMessage('s-task', assistantMessage('three'));
     expect(taskResolutions).toBe(3);
   });
+
+  test('a transient resolution failure is not memoized', () => {
+    reactiveDb.db.createSession(makeSession('s-task', 'worker', { taskId: 'task-1' }));
+    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
+    expect(taskResolutions).toBe(1);
+
+    reactiveDb.db.updateSession('s-task', { context: { spaceId: 'space-1', taskId: 'task-1' } });
+
+    const countingPrepare = bunDb.prepare.bind(bunDb);
+    let failOnce = true;
+    bunDb.prepare = ((sql: string, ...rest: unknown[]) => {
+      if (failOnce && TASK_RESOLUTION_SQL.test(sql)) {
+        failOnce = false;
+        throw new Error('simulated resolution failure');
+      }
+      return countingPrepare(sql, ...rest);
+    }) as typeof bunDb.prepare;
+
+    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
+    expect(taskIdsOf('s-task')).toEqual([{ task_id: 'task-1' }, { task_id: null }]);
+
+    bunDb.prepare = countingPrepare;
+    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('three'));
+    expect(taskIdsOf('s-task')).toEqual([
+      { task_id: 'task-1' },
+      { task_id: null },
+      { task_id: 'task-1' },
+    ]);
+  });
+
+  test('a failing session write still invalidates the cached taskId', () => {
+    reactiveDb.db.createSession(makeSession('s-task', 'worker', { taskId: 'task-1' }));
+    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
+    expect(taskResolutions).toBe(1);
+
+    const countingPrepare = bunDb.prepare.bind(bunDb);
+    let failOnce = true;
+    bunDb.prepare = ((sql: string, ...rest: unknown[]) => {
+      if (failOnce && /UPDATE sessions/.test(sql)) {
+        failOnce = false;
+        throw new Error('simulated session write failure');
+      }
+      return countingPrepare(sql, ...rest);
+    }) as typeof bunDb.prepare;
+
+    expect(() =>
+      reactiveDb.db.updateSession('s-task', { context: { taskId: 'task-2' } })
+    ).toThrow();
+
+    bunDb.prepare = countingPrepare;
+    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
+    expect(taskResolutions).toBe(2);
+    expect(taskIdsOf('s-task')).toEqual([{ task_id: 'task-1' }, { task_id: 'task-1' }]);
+  });
 });

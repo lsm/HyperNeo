@@ -8,5 +8,6 @@ export const noOpReactiveDb: ReactiveDatabase = {
   beginTransaction: () => {},
   commitTransaction: () => {},
   abortTransaction: () => {},
+  resolveTaskIdForSession: () => null,
   db: null as never,
 };

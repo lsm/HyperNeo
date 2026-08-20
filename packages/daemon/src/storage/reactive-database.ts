@@ -57,7 +57,6 @@ function resolveTaskIdForSession(db: Database, sessionId: string): string | null
   const cache = taskIdCacheFor(db);
   const cached = cache.get(sessionId);
   if (cached !== undefined) return cached;
-  let taskId: string | null = null;
   try {
     const row = db
       .getDatabase()
@@ -72,12 +71,13 @@ function resolveTaskIdForSession(db: Database, sessionId: string): string | null
 				 FROM sessions WHERE id = ?`
       )
       .get(sessionId) as { task_id: string | null; type: string | null } | undefined;
-    taskId = row?.type && TASK_SESSION_TYPES.includes(row.type) ? (row.task_id ?? null) : null;
+    const taskId =
+      row?.type && TASK_SESSION_TYPES.includes(row.type) ? (row.task_id ?? null) : null;
+    cache.set(sessionId, taskId);
+    return taskId;
   } catch {
-    taskId = null;
+    return null;
   }
-  cache.set(sessionId, taskId);
-  return taskId;
 }
 
 function invalidateTaskIdForSession(db: Database, sessionId: string | undefined): void {
@@ -360,10 +360,10 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
       }
 
       return function (this: Database, ...args: unknown[]) {
-        const result = (value as (...a: unknown[]) => unknown).apply(target, args);
         if (SESSION_TABLE_WRITE_METHODS.has(prop)) {
           invalidateTaskIdForSession(target, sessionWriteInvalidatesTaskId(prop, args));
         }
+        const result = (value as (...a: unknown[]) => unknown).apply(target, args);
         const scope = mapping.extractScope?.(args, target);
         incrementAndEmit(mapping.table, scope);
         return result;
