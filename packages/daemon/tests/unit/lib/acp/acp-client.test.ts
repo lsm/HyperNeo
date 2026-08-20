@@ -248,6 +248,34 @@ describe('AcpClient', () => {
     ]);
   });
 
+  test('canCloseSession detects null-valued close capability and closes the session', async () => {
+    const client = new AcpClient({ command: 'acp-agent' });
+    const transport = lastMockTransport!;
+
+    const initPromise = client.initialize();
+    transport.resolveRequest(1, {
+      protocolVersion: 1,
+      agentInfo: { name: 'a', version: '1' },
+      agentCapabilities: { sessionCapabilities: { close: null } },
+    });
+    await initPromise;
+
+    expect(client.canCloseSession()).toBe(true);
+
+    const createPromise = client.createSession('/tmp/project');
+    transport.resolveRequest(2, { sessionId: 'sess-temp', configOptions: [] });
+    await createPromise;
+
+    const closePromise = client.closeSession();
+    transport.resolveRequest(3, {});
+    await closePromise;
+
+    expect(transport.sendRequest.mock.calls[2]).toEqual([
+      'session/close',
+      { sessionId: 'sess-temp' },
+    ]);
+  });
+
   test('sendPrompt yields session/update notifications', async () => {
     const client = new AcpClient({ command: 'acp-agent' });
     const transport = lastMockTransport!;

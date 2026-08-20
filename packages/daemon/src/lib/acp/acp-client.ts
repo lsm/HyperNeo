@@ -252,7 +252,8 @@ export class AcpClient {
   }
 
   canCloseSession(): boolean {
-    return !!this.agentCapabilities?.sessionCapabilities?.close;
+    const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
+    return !!sessionCapabilities && 'close' in sessionCapabilities;
   }
 
   async closeSession(): Promise<void> {
