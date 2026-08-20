@@ -2147,6 +2147,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
       expect(taskRepo.getTask(tasks[0].id)?.status).toBe('open');
+      expect(rt.getExecutor(run.id)).toBeDefined();
       expect(nodeExecutionRepo.listByWorkflowRun(run.id)).toHaveLength(0);
     });
 
