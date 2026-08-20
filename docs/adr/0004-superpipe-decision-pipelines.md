@@ -173,6 +173,8 @@ async deciders carry a proof obligation (microtask-profile sensitivity).
   (`deliverExternalEventToWorkflowTarget` and helpers).
 - Parity harness:
   `packages/daemon/tests/unit/5-space/runtime/space-runtime-external-event-admission-parity.test.ts`
+- Benchmark: `packages/daemon/scripts/benchmark/decision-pipeline.ts` (`bun run
+  packages/daemon/scripts/benchmark/decision-pipeline.ts` from the repository root).
 - Pilot PRs: #2578, #2582, #2589, #2591 (branch `superpipe-pilot-1`).
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.
