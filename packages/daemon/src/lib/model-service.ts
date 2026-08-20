@@ -304,11 +304,13 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
   const rejectedProviderIds = new Set<string>();
   const changedProviderIds = new Set<string>();
   let availableProviderCount = 0;
+  const availableProviders: Provider[] = [];
   results.forEach((result, index) => {
     if (result.status === 'rejected') {
       failedProviderIds.add(providers[index].id);
     } else if (result.value.available) {
       availableProviderCount += 1;
+      availableProviders.push(providers[index]);
       models.push(...result.value.models);
       if (result.value.failed) failedProviderIds.add(providers[index].id);
       if (result.value.rejected) rejectedProviderIds.add(providers[index].id);
@@ -328,7 +330,7 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
   });
 
   let minCatalogExpiry: number | undefined;
-  for (const provider of providers) {
+  for (const provider of availableProviders) {
     const expiry = provider.getModelCacheExpiresAt?.();
     if (expiry !== undefined && (minCatalogExpiry === undefined || expiry < minCatalogExpiry)) {
       minCatalogExpiry = expiry;

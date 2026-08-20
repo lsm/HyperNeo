@@ -1519,6 +1519,49 @@ describe('Model Service', () => {
       expect(getAvailableModels('global')).toContainEqual(recoveredModel);
     });
 
+    it('ignores catalog expiry from providers that become unavailable', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const healthyModel = {
+        id: 'expiry-healthy-model',
+        name: 'Expiry Healthy Model',
+        family: 'test',
+        provider: 'expiry-healthy-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      let loggedOut = false;
+      let healthyCalls = 0;
+      registry.register({
+        id: 'expiry-healthy-provider',
+        getModels: async () => {
+          healthyCalls += 1;
+          return [healthyModel];
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register({
+        id: 'expiry-logged-out-provider',
+        getModels: async () => [],
+        refreshModels: async () => [],
+        getModelCacheExpiresAt: () => Date.now() - 1000,
+        isAvailable: async () => !loggedOut,
+      } as ProviderLike);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+      expect(getAvailableModels('global')).toEqual([healthyModel]);
+
+      loggedOut = true;
+      await refreshModels();
+
+      expect(healthyCalls).toBe(2);
+      getAvailableModels('global');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(healthyCalls).toBe(2);
+      expect(getAvailableModels('global')).toEqual([healthyModel]);
+    });
+
     it('refreshes in the background once a provider catalog expires', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
