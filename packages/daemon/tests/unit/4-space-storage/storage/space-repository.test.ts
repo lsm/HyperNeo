@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('SpaceRepository', () => {
@@ -478,6 +479,88 @@ describe('SpaceRepository', () => {
         )
         .all('needle') as Array<{ source_id: string }>;
       expect(rows.map((row) => row.source_id)).toEqual(['task-2']);
+    });
+
+    it('purges pending message rows for the deleted space', () => {
+      db.exec(`
+				CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
+					CREATE TABLE message_search_pending (message_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
+					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
+					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;
+					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); END;
+					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END
+			`);
+      const deleted = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+      const kept = repo.createSpace({ workspacePath: '/workspace/b', slug: 'b', name: 'B' });
+      const now = Date.now();
+      const iso = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO space_tasks (id, space_id, task_number, title, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+      ).run('task-deleted', deleted.id, 1, 'Deleted task', now, now);
+      db.prepare(
+        `INSERT INTO space_tasks (id, space_id, task_number, title, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+      ).run('task-kept', kept.id, 1, 'Kept task', now, now);
+      for (const sessionId of ['session-deleted', 'session-kept']) {
+        db.prepare(
+          `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata)
+					 VALUES (?, ?, ?, ?, 'active', '{}', '{}')`
+        ).run(sessionId, sessionId, iso, iso);
+      }
+      const insertMessage = db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, task_id)
+				 VALUES (?, ?, ?, ?, ?, ?, ?)`
+      );
+      insertMessage.run(
+        'msg-deleted',
+        'session-deleted',
+        'user',
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u-deleted',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'deleted space purge marker' }],
+          },
+        }),
+        iso,
+        'consumed',
+        'task-deleted'
+      );
+      insertMessage.run(
+        'msg-kept',
+        'session-kept',
+        'user',
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u-kept',
+          message: { role: 'user', content: [{ type: 'text', text: 'kept space marker' }] },
+        }),
+        iso,
+        'consumed',
+        'task-kept'
+      );
+      db.prepare(`INSERT INTO message_search_pending (message_id, created_at) VALUES (?, ?)`).run(
+        'msg-deleted',
+        now
+      );
+      db.prepare(`INSERT INTO message_search_pending (message_id, created_at) VALUES (?, ?)`).run(
+        'msg-kept',
+        now
+      );
+
+      repo.deleteSpace(deleted.id);
+
+      const pending = db.prepare(`SELECT message_id FROM message_search_pending`).all() as Array<{
+        message_id: string;
+      }>;
+      expect(pending.map((row) => row.message_id)).toEqual(['msg-kept']);
+
+      const sdkRepo = new SDKMessageRepository(db as any);
+      sdkRepo.flushMessageSearchIndex();
+      expect(sdkRepo.searchMessages({ query: 'deleted space purge' }).results).toEqual([]);
+      expect(sdkRepo.searchMessages({ query: 'kept space marker' }).results).toHaveLength(1);
     });
   });
 });

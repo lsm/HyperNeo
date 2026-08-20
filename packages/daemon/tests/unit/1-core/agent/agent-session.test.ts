@@ -1,17 +1,21 @@
-import { describe, expect, it, mock, beforeEach, afterEach, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type {
-  Session,
-  ContextInfo,
   AgentProcessingState,
-  SelectiveRewindResult,
-  RewindMode,
+  ContextInfo,
   McpServerConfig,
+  MessageHub,
+  RewindMode,
+  SelectiveRewindResult,
+  Session,
 } from '@hyperneo/shared';
-import { AgentSession } from '../../../../src/lib/agent/agent-session';
-import { waitForDeliveryConsumption } from '../../../../src/lib/agent/message-delivery';
-import type { Database } from '../../../../src/storage/database';
-import type { MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { AgentSession } from '../../../../src/lib/agent/agent-session';
+import {
+  MessageDeliveryRecoverableTurnError,
+  MessageDeliveryTerminalTurnError,
+  waitForDeliveryConsumption,
+} from '../../../../src/lib/agent/message-delivery';
+import type { Database } from '../../../../src/storage/database';
 import {
   createTestDb,
   createTestInternalEventBus,
@@ -1007,7 +1011,9 @@ describe('AgentSession', () => {
       await agentSession.stateManager.setProcessing('uuid-reopen');
       const live = agentSession.driveDeliveryTurn('uuid-reopen', 'hello', null, true, () => true);
       await agentSession.stateManager.setIdle();
-      await expect(live).rejects.toThrow('Turn ended without a response');
+      const error = await live.catch((caught) => caught);
+      expect(error).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
+      expect(error).toMatchObject({ message: 'Turn ended without a response' });
       expect(retrySpy).toHaveBeenCalledTimes(1);
 
       let claimAlive = true;
@@ -1023,6 +1029,143 @@ describe('AgentSession', () => {
       claimAlive = false;
       await agentSession.stateManager.setIdle();
       await expect(cancelled).rejects.toThrow();
+      expect(retrySpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('driveDeliveryTurn makes a terminal turn error non-retryable without reopening', async () => {
+      const retrySpy = mock(() => 'db-terminal');
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
+        hasTerminalResultAfter: mock(() => false),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryRetryableByUuid: retrySpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+
+      await agentSession.stateManager.setProcessing('uuid-terminal-error');
+      const drive = agentSession.driveDeliveryTurn('uuid-terminal-error', 'hello', null, true);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      (
+        agentSession as unknown as {
+          lastTerminalError: { error: Record<string, unknown>; at: number };
+        }
+      ).lastTerminalError = {
+        error: {
+          category: 'authentication',
+          code: 'UNAUTHORIZED',
+          message: 'provider rejected credentials',
+          userMessage: 'Sign in again',
+          recoverable: true,
+          timestamp: new Date().toISOString(),
+        },
+        at: Date.now(),
+      };
+      await agentSession.stateManager.setIdle();
+
+      const error = await drive.catch((caught) => caught);
+      expect(error).toBeInstanceOf(MessageDeliveryTerminalTurnError);
+      expect(error).toMatchObject({ message: 'Sign in again', category: 'authentication' });
+      expect(retrySpy).not.toHaveBeenCalled();
+    });
+
+    it('driveDeliveryTurn treats a non-retryable persisted error subtype as terminal', async () => {
+      const retrySpy = mock(() => 'db-terminal-subtype');
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
+        hasTerminalResultAfter: mock(() => false),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => 'error_max_budget_usd'),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryRetryableByUuid: retrySpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+
+      await agentSession.stateManager.setProcessing('uuid-terminal-subtype');
+      const drive = agentSession.driveDeliveryTurn('uuid-terminal-subtype', 'hello', null, true);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await agentSession.stateManager.setIdle();
+
+      const error = await drive.catch((caught) => caught);
+      expect(error).toBeInstanceOf(MessageDeliveryTerminalTurnError);
+      expect(error).toMatchObject({ category: 'error_max_budget_usd' });
+      expect(retrySpy).not.toHaveBeenCalled();
+    });
+
+    it('driveDeliveryTurn re-arms at most twice within the 250ms spurious turn-end grace', async () => {
+      let sendStatus = 'enqueued';
+      const retrySpy = mock(() => 'db-grace-cap');
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus })),
+        hasTerminalResultAfter: mock(() => false),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryConsumedByUuids: mock(() => {
+          sendStatus = 'consumed';
+          return [];
+        }),
+        markDeliveryRetryableByUuid: retrySpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: mock(() => Promise.resolve()),
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => false),
+        size: mock(() => 0),
+      };
+
+      await agentSession.stateManager.setProcessing('uuid-grace-cap');
+      const drive = agentSession.driveDeliveryTurn(
+        'uuid-grace-cap',
+        'hello',
+        null,
+        false,
+        () => true
+      );
+      let settled = false;
+      void drive.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      for (let fire = 0; fire < 3; fire++) {
+        await agentSession.stateManager.setIdle();
+        if (fire < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          expect(settled).toBe(false);
+          await agentSession.stateManager.setProcessing('uuid-grace-cap');
+        }
+      }
+
+      const error = await drive.catch((caught) => caught);
+      expect(error).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
       expect(retrySpy).toHaveBeenCalledTimes(1);
     });
 
@@ -1717,6 +1860,30 @@ describe('AgentSession', () => {
       expect(agentSession.isWaitingForInput()).toBe(true);
       unresolved = false;
       expect(agentSession.isWaitingForInput()).toBe(false);
+    });
+
+    it('reconcileStrandedDeliveries skips processing, queued, and waiting_for_input', async () => {
+      const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+      try {
+        const activeDeliveryMessageUuids = mock(() => new Set<string>());
+        mockDb.getJobQueueRepo = mock(() => ({ activeDeliveryMessageUuids }));
+
+        await agentSession.stateManager.setProcessing('msg-processing');
+        expect(await agentSession.reconcileStrandedDeliveries()).toBe(0);
+        await agentSession.stateManager.setQueued('msg-queued');
+        expect(await agentSession.reconcileStrandedDeliveries()).toBe(0);
+        await agentSession.stateManager.setWaitingForInput({
+          toolUseId: 'tool-waiting',
+          questions: [],
+        });
+        expect(await agentSession.reconcileStrandedDeliveries()).toBe(0);
+
+        expect(activeDeliveryMessageUuids).not.toHaveBeenCalled();
+      } finally {
+        if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+        else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+      }
     });
 
     it('handleModelSwitch should delegate to modelSwitchHandler', async () => {
@@ -4793,6 +4960,90 @@ describe('AgentSession', () => {
     });
   });
 
+  describe('reconcileStrandedDeliveries admission', () => {
+    const sessionId = 'sess-reconcile-admission';
+    let db: Database;
+    let agentSession: AgentSession;
+    let previousDeliveryV2: string | undefined;
+
+    beforeEach(async () => {
+      previousDeliveryV2 = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+      db = await createTestDb();
+      const session = createTestSession(sessionId);
+      db.createSession(session);
+      agentSession = new AgentSession(
+        session,
+        db,
+        {} as MessageHub,
+        await createTestInternalEventBus(),
+        mock(async () => 'test-api-key'),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { autoReplayPendingMessages: false }
+      );
+    });
+
+    afterEach(async () => {
+      await agentSession.cleanup();
+      db.close();
+      if (previousDeliveryV2 === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previousDeliveryV2;
+    });
+
+    it('idle admission re-enqueues a stranded enqueued delivery', async () => {
+      const uuid = 'msg-stranded-idle';
+      db.getSDKMessageRepo().saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid,
+          message: { role: 'user', content: 'recover me' },
+        } as unknown as SDKMessage,
+        'enqueued'
+      );
+
+      expect(await agentSession.reconcileStrandedDeliveries()).toBe(1);
+      expect(db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId)).toContain(uuid);
+    });
+
+    it('idle admission marks a stale submitted delivery failed and publishes the transition', async () => {
+      const uuid = 'msg-stale-submitted';
+      const repo = db.getSDKMessageRepo();
+      repo.saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid,
+          message: { role: 'user', content: 'stale submission' },
+        } as unknown as SDKMessage,
+        'enqueued'
+      );
+      repo.markDeliverySubmittedByUuids(sessionId, [uuid]);
+      const statusEvents: Array<{ messageIds: string[]; status: string }> = [];
+      const unsubscribe = agentSession.internalEventBus.subscribe(
+        'messages.statusChanged',
+        (event) => {
+          statusEvents.push(event);
+        },
+        { subscriberName: 'agent-session-reconcile-test' }
+      );
+
+      expect(await agentSession.reconcileStrandedDeliveries()).toBe(1);
+      await Promise.resolve();
+
+      expect(repo.getDeliveryContent(sessionId, uuid)?.sendStatus).toBe('failed');
+      expect(statusEvents).toContainEqual({
+        sessionId,
+        messageIds: [expect.any(String)],
+        status: 'failed',
+      });
+      unsubscribe();
+    });
+  });
+
   describe('driveDeliveryTurn — crash-window reclaim (task #946)', () => {
     let db: Database;
     let agentSession: AgentSession;
@@ -4856,7 +5107,7 @@ describe('AgentSession', () => {
       };
 
       let threw = false;
-      let outcome: unknown = undefined;
+      let outcome: unknown;
       try {
         outcome = await agentSession.driveDeliveryTurn(uuid, 'hi', null, true);
       } catch (err) {

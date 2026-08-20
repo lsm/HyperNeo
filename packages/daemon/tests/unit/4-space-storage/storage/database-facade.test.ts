@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { Session } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 function createTestSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -144,6 +145,57 @@ describe('Database Facade', () => {
       expect(created).toBeDefined();
       expect(created.repository).toBe('owner/repo');
       expect(created.title).toBe('Test Issue');
+    });
+  });
+
+  describe('message search indexing (deferred)', () => {
+    it('indexes saved messages via the startup flush after a restart', async () => {
+      db.close();
+      const first = new Database(dbPath, { messageSearchIndexFlushIntervalMs: 0 });
+      const reactiveDb1 = createReactiveDatabase(first);
+      await first.initialize(reactiveDb1);
+      first.createSession(createTestSession());
+      const message = {
+        type: 'user',
+        uuid: 'restart-uuid',
+        message: { role: 'user', content: [{ type: 'text', text: 'restart recovery marker' }] },
+      } as SDKMessage;
+      expect(first.saveSDKMessage('test-session-id', message)).toBe(true);
+      first.close();
+
+      db = new Database(dbPath, { messageSearchIndexFlushIntervalMs: 0 });
+      const reactiveDb2 = createReactiveDatabase(db);
+      await db.initialize(reactiveDb2);
+
+      const result = db.getSDKMessageRepo().searchMessages({ query: 'restart recovery' });
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].sessionId).toBe('test-session-id');
+    });
+
+    it('auto-flushes pending index updates on the configured interval', async () => {
+      db.close();
+      db = new Database(dbPath, { messageSearchIndexFlushIntervalMs: 20 });
+      const reactiveDbTimer = createReactiveDatabase(db);
+      await db.initialize(reactiveDbTimer);
+      db.createSession(createTestSession());
+      const message = {
+        type: 'user',
+        uuid: 'timer-uuid',
+        message: { role: 'user', content: [{ type: 'text', text: 'timer flush marker' }] },
+      } as SDKMessage;
+      expect(db.saveSDKMessage('test-session-id', message)).toBe(true);
+
+      const deadline = Date.now() + 3_000;
+      let searchable = false;
+      while (Date.now() < deadline) {
+        const result = db.getSDKMessageRepo().searchMessages({ query: 'timer flush' });
+        if (result.results.length > 0) {
+          searchable = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(searchable).toBe(true);
     });
   });
 });

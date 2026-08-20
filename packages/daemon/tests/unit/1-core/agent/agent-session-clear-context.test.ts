@@ -1,11 +1,11 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
-import type { Database } from '../../../../src/storage/database.ts';
 import type { MessageHub, Session } from '@hyperneo/shared';
+import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import type { Database } from '../../../../src/storage/database.ts';
 
 function makeEventBus(): InternalEventBus<DaemonInternalEventMap> {
   return {
@@ -101,6 +101,33 @@ describe('AgentSession.clearConversationContext', () => {
 
     await expect(session.clearConversationContext()).rejects.toThrow('queue closed');
     expect(releaseSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('KNOWN-BUG clear resolves on sent not on result after arming idle suppression', async () => {
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
+    const suppressSpy = spyOn(session.messageHandler, 'suppressIdleForNextResult');
+    session.messageQueue.start();
+    const messages = session.messageQueue.messageGenerator(session.session.id);
+
+    let resolved = false;
+    const clear = session.clearConversationContext().then(() => {
+      resolved = true;
+    });
+    const yielded = await messages.next();
+
+    expect(suppressSpy).toHaveBeenCalledTimes(1);
+    expect(yielded.done).toBe(false);
+    expect(yielded.value?.message.internal).toBe(true);
+    expect(yielded.value?.message.message.content).toEqual([{ type: 'text', text: '/clear' }]);
+    expect(resolved).toBe(false);
+
+    yielded.value?.onSent();
+    await clear;
+
+    expect(resolved).toBe(true);
+    session.messageQueue.stop();
+    await messages.return(undefined);
   });
 
   it('does not stop or restart the query (the SDK rotates the session in-stream)', async () => {
