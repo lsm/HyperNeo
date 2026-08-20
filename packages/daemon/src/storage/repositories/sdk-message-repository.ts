@@ -599,11 +599,11 @@ export class SDKMessageRepository {
           }
         }
         this.saveReplacementEdges(id, sessionId, taskId, message);
+        this.scheduleMessageSearchIndex(id);
         if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
       })();
       if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
       this.deleteSupersededMessageSearchRows(sessionId, message);
-      this.scheduleMessageSearchIndex(id);
       return true;
     } catch (error) {
       this.logger.error('[Database] Failed to save SDK message:', error);
@@ -1088,7 +1088,7 @@ export class SDKMessageRepository {
     const core = this.db.transaction(() =>
       this.saveUserMessageCore(sessionId, message, sendStatus, origin)
     )();
-    this.runPostSaveSideEffects(sessionId, core.id, message, core.countsTowardsBadge);
+    this.runPostSaveSideEffects(sessionId, core.id, core.countsTowardsBadge);
     return core.id;
   }
 
@@ -1146,19 +1146,14 @@ export class SDKMessageRepository {
     ];
     stmt.run(...values, conversationTurnIndex, extractSdkUuid(message));
     this.saveReplacementEdges(id, sessionId, taskId, message);
+    this.scheduleMessageSearchIndex(id);
     if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     return { id, countsTowardsBadge };
   }
 
-  runPostSaveSideEffects(
-    sessionId: string,
-    id: string,
-    message: SDKMessage,
-    countsTowardsBadge: boolean
-  ): void {
+  runPostSaveSideEffects(sessionId: string, id: string, countsTowardsBadge: boolean): void {
     this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
-    this.scheduleMessageSearchIndex(id);
   }
 
   getMessagesByStatus(
