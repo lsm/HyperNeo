@@ -3200,10 +3200,11 @@ export class TaskAgentManager {
 
   private hasUnconsumedPendingWork(sessionId: string): boolean {
     if (this.hasActiveDeliveryJob(sessionId)) return true;
-    const getPending = this.config.db.getMessagesByStatus;
-    if (typeof getPending !== 'function') return false;
+    const db = this.config.db;
+    if (typeof db.getMessagesByStatus !== 'function') return false;
     return (
-      getPending(sessionId, 'enqueued').length > 0 || getPending(sessionId, 'deferred').length > 0
+      db.getMessagesByStatus(sessionId, 'enqueued').length > 0 ||
+      db.getMessagesByStatus(sessionId, 'deferred').length > 0
     );
   }
 

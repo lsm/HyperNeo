@@ -75,6 +75,9 @@ function makeManager(opts: {
       saveUserMessage,
       getMessagesByStatus,
       updateMessageStatus,
+      sdkMessageRepo: {
+        getMessagesByStatus: () => [],
+      },
       getSDKMessageRepo: () => ({
         getDeliveryContent: () => opts.deliveryContent ?? null,
         reopenDeliveryByUuid,
@@ -751,5 +754,24 @@ describe('injectMessageIntoSession — no clear over unconsumed pending work (ta
     await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
 
     expect(session.clearMock).not.toHaveBeenCalled();
+  });
+
+  it('calls getMessagesByStatus as a bound method (this-dependent, like the real Database)', async () => {
+    const { manager, session } = makeManager({ slotResets: true });
+    session.getMessagesByStatus.mockImplementation(function (
+      this: { sdkMessageRepo: { getMessagesByStatus: (sid: string, status: string) => unknown[] } },
+      sid: string,
+      status: string
+    ) {
+      return this.sdkMessageRepo.getMessagesByStatus(sid, status);
+    });
+    indexSession(manager, liveSession(session));
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).resolves.toBeDefined();
+
+    expect(session.clearMock).toHaveBeenCalledTimes(1);
+    expect(session.saveUserMessage).toHaveBeenCalled();
   });
 });
