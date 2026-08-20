@@ -187,7 +187,7 @@ describe('planFlushDelivery', () => {
     });
   });
 
-  test('mixed content forces per-message delivery', () => {
+  test('mixed content forces per-message delivery and delivers the unflattenable message', () => {
     const result = planFlushDelivery({
       messages: [
         makeFlushMessage({ uuid: 'unflattenable', flattenedText: null }),
@@ -199,9 +199,18 @@ describe('planFlushDelivery', () => {
     });
     expect(result).toEqual({
       action: 'each',
-      deliver: ['a', 'b'],
-      skip: [{ uuid: 'unflattenable', ownership: 'not_flattenable' }],
+      deliver: ['unflattenable', 'a', 'b'],
+      skip: [],
     });
+  });
+
+  test('a lone unflattenable user message is delivered per message', () => {
+    const result = planFlushDelivery({
+      messages: [makeFlushMessage({ uuid: 'image-only', flattenedText: null })],
+      activeInJobQueue: new Set(),
+      pendingInMemoryUuids: new Set(),
+    });
+    expect(result).toEqual({ action: 'each', deliver: ['image-only'], skip: [] });
   });
 
   test('combined batched content over the char cap forces per-message delivery', () => {
@@ -267,11 +276,10 @@ describe('planFlushDelivery', () => {
     });
     expect(result).toEqual({
       action: 'each',
-      deliver: ['a', 'slash'],
+      deliver: ['a', 'unflattenable', 'slash'],
       skip: [
         { uuid: 'memory-owned', ownership: 'memory_queue' },
         { uuid: 'assistant', ownership: 'not_user_message' },
-        { uuid: 'unflattenable', ownership: 'not_flattenable' },
       ],
     });
   });

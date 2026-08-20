@@ -21,11 +21,7 @@ export interface FlushMessage {
   flattenedText: string | null;
 }
 
-export type FlushSkipOwnership =
-  | 'job_queue'
-  | 'memory_queue'
-  | 'not_user_message'
-  | 'not_flattenable';
+export type FlushSkipOwnership = 'job_queue' | 'memory_queue' | 'not_user_message';
 
 export interface FlushSkipEntry {
   uuid: string;
@@ -58,12 +54,8 @@ export function planFlushDelivery(args: {
       skip.push({ uuid: message.uuid, ownership: 'not_user_message' });
       continue;
     }
-    if (message.flattenedText === null) {
-      skip.push({ uuid: message.uuid, ownership: 'not_flattenable' });
-      continue;
-    }
     deliver.push(message.uuid);
-    deliverableTexts.push(message.flattenedText);
+    if (message.flattenedText !== null) deliverableTexts.push(message.flattenedText);
   }
   if (deliver.length === 0) return { action: 'noop' };
 
