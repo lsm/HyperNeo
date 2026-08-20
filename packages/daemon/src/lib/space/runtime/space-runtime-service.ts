@@ -10,7 +10,7 @@ import type {
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
-import { isRateOrUsageLimited } from '@hyperneo/shared';
+import { isRateOrUsageLimited, isScopedBashToolEntry } from '@hyperneo/shared';
 import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
 import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry';
 import { SpaceMessageResolver } from '../messaging-adapter';
@@ -485,6 +485,7 @@ export class SpaceRuntimeService {
       ? (agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
       : undefined;
     const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
+    const scopedBashToolEntries = customTools?.filter((tool) => isScopedBashToolEntry(tool));
     const agentKey = sanitizeLongTermAgentKey(agent.displayName);
 
     const model =
@@ -510,6 +511,10 @@ export class SpaceRuntimeService {
       },
       sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS],
       features: LONG_TERM_AGENT_SESSION_FEATURES,
+      allowedTools:
+        scopedBashToolEntries && scopedBashToolEntries.length > 0
+          ? scopedBashToolEntries
+          : undefined,
       disallowedTools: customDisallowedBuiltins.length > 0 ? customDisallowedBuiltins : undefined,
       agent: customDisallowedBuiltins.length > 0 ? agentKey : undefined,
       agents:
