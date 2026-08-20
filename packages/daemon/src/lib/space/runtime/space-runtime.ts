@@ -1715,6 +1715,14 @@ export class SpaceRuntime {
       this.clearQueuedDelivery(resolved, deliveryKey);
       return;
     }
+    if (decision.action === 'deferStoppedTask') {
+      this.queueHealthMetrics.recordPausedSpaceSkip();
+      store.markDeliveryFailed(payload.eventId, deliveryKey, {
+        terminal: false,
+        reason: 'deliveryMode:defer; task_stopped',
+      });
+      return;
+    }
     if (decision.action === 'deferPausedSpace') {
       this.queueHealthMetrics.recordPausedSpaceSkip();
       store.markDeliveryFailed(payload.eventId, deliveryKey, {
@@ -2093,6 +2101,11 @@ export class SpaceRuntime {
         this.clearQueuedDelivery(target, deliveryKey);
         return;
       }
+      if (taskDecision.action === 'hold') {
+        this.queueHealthMetrics.recordPausedSpaceSkip();
+        this.queueForPendingNode(target, event, deliveryKey, deliveryMode, createdAt);
+        return;
+      }
 
       await this.deliverToSession(target, event, deliveryKey, deliveryMode, createdAt);
       this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
@@ -2142,6 +2155,12 @@ export class SpaceRuntime {
           reason: taskDecision.reason,
         });
         store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
+        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
+        continue;
+      }
+      if (taskDecision.action === 'hold') {
+        this.queueHealthMetrics.recordPausedSpaceSkip();
+        this.preservePendingDigestItem(item);
         this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
         continue;
       }

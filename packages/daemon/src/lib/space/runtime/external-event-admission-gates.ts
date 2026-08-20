@@ -8,7 +8,10 @@ export interface WorkflowTargetKey {
   agentName: string;
 }
 
-export type ExternalEventTaskDecision = { action: 'deliver' } | { action: 'fail'; reason: string };
+export type ExternalEventTaskDecision =
+  | { action: 'deliver' }
+  | { action: 'hold' }
+  | { action: 'fail'; reason: string };
 
 export const DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS = 300_000;
 
@@ -91,6 +94,9 @@ export function prepareExternalEventTask(
   }
   if (task.status === 'cancelled' || task.status === 'archived' || task.status === 'done') {
     return { action: 'fail', reason: 'target_task_terminal' };
+  }
+  if (task.status === 'stopped') {
+    return { action: 'hold' };
   }
   return { action: 'deliver' };
 }

@@ -259,6 +259,15 @@ describe('prepareExternalEventTask', () => {
       reason: 'target_task_terminal',
     });
   });
+
+  test('holds when task is stopped', () => {
+    const result = prepareExternalEventTask(
+      makeTask({ status: 'stopped' }),
+      makeRun(),
+      makePayload()
+    );
+    expect(result).toEqual({ action: 'hold' });
+  });
 });
 
 describe('evaluateRequeueTaskLifecycle', () => {

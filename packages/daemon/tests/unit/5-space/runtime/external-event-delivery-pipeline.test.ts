@@ -66,6 +66,11 @@ describe('external-event delivery decision pipeline', () => {
         { action: 'failDelivery', reason: 'invalid_target_ownership' },
       ],
       [
+        'stopped task defers delivery',
+        { taskDecision: { action: 'hold' } },
+        { action: 'deferStoppedTask' },
+      ],
+      [
         'live session in a paused space defers without retry',
         { targetHasSession: true, targetSessionLive: true, targetSpacePaused: true },
         { action: 'deferPausedSpace' },
