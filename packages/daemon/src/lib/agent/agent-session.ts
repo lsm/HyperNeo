@@ -109,7 +109,14 @@ export interface AgentSessionRuntimeOptions {
   ) => Promise<{ success: boolean; error?: string }>;
 }
 
-import { isSDKResultSuccess, isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
+const CLEAR_CONFIRM_TIMEOUT_MS = 45_000;
+
+import {
+  isSDKResultMessage,
+  isSDKResultSuccess,
+  isSDKUserMessage,
+} from '@hyperneo/shared/sdk/type-guards';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { AcpQueryRunner } from '../acp/acp-query-runner';
 import { resolveModelAlias } from '../model-service';
 import { getProviderRegistry } from '../providers/factory.js';
@@ -238,6 +245,7 @@ export class AgentSession
   private forceKillTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
   private _isCleaningUp = false;
+  private contextResetPendingClearMessageId: string | null = null;
   private pendingResumeSessionAt: string | undefined;
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private reconcilerProvisioned = false;
@@ -253,6 +261,11 @@ export class AgentSession
   onMissingSpaceChatMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 
   onMissingMemberSpaceMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
+
+  onPrepareContextResetFlush?: (
+    sessionId: string,
+    pendingCount: number
+  ) => Promise<'prepared' | 'noop'>;
 
   get mcpEnablementRepo(): import('../../storage/repositories/mcp-enablement-repository').McpEnablementRepository {
     return this.db.mcpEnablement;
@@ -313,6 +326,28 @@ export class AgentSession
           this.outstandingToolUseIds.delete(data.toolUseId);
         },
         { subscriberName: 'AgentSession.stallWatchdogToolResult' }
+      )
+    );
+    this.deliveryErrorSubs.push(
+      this.internalEventBus.subscribe(
+        'sdk.message',
+        (data) => {
+          const payload = data as { sessionId?: string; message?: SDKMessage };
+          if (payload.sessionId !== this.session.id) return;
+          const message = payload.message;
+          if (!message || !isSDKResultMessage(message)) return;
+          const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
+            .parent_tool_use_id;
+          if (parentToolUseId !== null && parentToolUseId !== undefined) return;
+          const userMessageUuid = (message as { user_message_uuid?: string }).user_message_uuid;
+          if (
+            userMessageUuid !== undefined &&
+            userMessageUuid !== this.contextResetPendingClearMessageId
+          ) {
+            this.contextResetPendingClearMessageId = null;
+          }
+        },
+        { subscriberName: 'AgentSession.contextResetClearDisarm' }
       )
     );
     this.settingsManager = new SettingsManager(
@@ -740,7 +775,10 @@ export class AgentSession
     return await this.lifecycleManager.reset({ restartAfter: restartQuery });
   }
 
-  async clearConversationContext(): Promise<void> {
+  async clearConversationContext(options?: {
+    confirm?: boolean;
+    timeoutMs?: number;
+  }): Promise<void> {
     const pastSdkSessionIds = this.nextPastSdkSessionIds();
     const lastSdkCost = this.session.metadata?.lastSdkCost || 0;
     if (lastSdkCost > 0 || pastSdkSessionIds) {
@@ -756,12 +794,69 @@ export class AgentSession
 
     await this.lifecycleManager.ensureQueryStarted();
     this.messageHandler.suppressIdleForNextResult();
+    let messageId: string;
     try {
-      await this.messageQueue.enqueue('/clear', true);
+      messageId = await this.messageQueue.enqueue('/clear', true);
     } catch (err) {
       this.messageHandler.clearIdleSuppression();
       throw err;
     }
+    if (options?.confirm === false) return;
+    this.armContextResetClear(messageId);
+    await this.confirmClearResult(messageId, options?.timeoutMs ?? CLEAR_CONFIRM_TIMEOUT_MS);
+  }
+
+  hasPendingContextResetClear(): boolean {
+    return this.contextResetPendingClearMessageId !== null;
+  }
+
+  private armContextResetClear(messageId: string): void {
+    this.contextResetPendingClearMessageId = messageId;
+  }
+
+  private async confirmClearResult(messageId: string, timeoutMs: number): Promise<void> {
+    let unsub: () => void = () => {};
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      unsub();
+    };
+    const resultPromise = new Promise<void>((resolve) => {
+      unsub = this.internalEventBus.subscribe(
+        'sdk.message',
+        (data) => {
+          const payload = data as { sessionId?: string; message?: SDKMessage };
+          if (payload.sessionId !== this.session.id) return;
+          const message = payload.message;
+          if (!message || !isSDKResultMessage(message)) return;
+          const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
+            .parent_tool_use_id;
+          if (parentToolUseId !== null && parentToolUseId !== undefined) return;
+          const userMessageUuid = (message as { user_message_uuid?: string }).user_message_uuid;
+          if (userMessageUuid !== undefined && userMessageUuid !== messageId) return;
+          resolve();
+        },
+        { subscriberName: 'AgentSession.confirmClearResult' }
+      );
+      timer = setTimeout(() => {
+        this.messageHandler.clearIdleSuppression();
+        this.logger.warn(
+          `clearConversationContext: /clear result was not confirmed within ${timeoutMs}ms ` +
+            `for session ${this.session.id}; proceeding without clear confirmation`
+        );
+        resolve();
+      }, timeoutMs);
+    });
+    await resultPromise;
+    finish();
+  }
+
+  async prepareContextResetFlush(pendingCount: number): Promise<'prepared' | 'noop'> {
+    if (!this.onPrepareContextResetFlush) return 'noop';
+    return await this.onPrepareContextResetFlush(this.session.id, pendingCount);
   }
 
   private nextPastSdkSessionIds(): string[] | undefined {

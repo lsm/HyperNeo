@@ -1097,6 +1097,7 @@ export class TaskAgentManager {
     subSession.onMissingWorkflowMcpServers = async (cbSessionId: string, missing: string[]) => {
       await this.mcpSelfHeal(cbSessionId, missing);
     };
+    this.wireContextResetFlushHook(subSession);
 
     await subSession.startStreamingQuery();
 
@@ -1830,6 +1831,7 @@ export class TaskAgentManager {
     agentSession.onMissingWorkflowMcpServers = async (cbSessionId: string, missing: string[]) => {
       await this.mcpSelfHeal(cbSessionId, missing);
     };
+    this.wireContextResetFlushHook(agentSession);
 
     if (!this.subSessions.has(taskId)) {
       this.subSessions.set(taskId, new Map());
@@ -2719,6 +2721,32 @@ export class TaskAgentManager {
     return workflow?.nodes.find((node) => node.id === workflowNodeId)?.name ?? null;
   }
 
+  private wireContextResetFlushHook(agentSession: AgentSession): void {
+    agentSession.onPrepareContextResetFlush = async (sessionId: string, pendingCount: number) =>
+      this.prepareContextResetFlushForSession(sessionId, pendingCount);
+  }
+
+  async prepareContextResetFlushForSession(
+    sessionId: string,
+    _pendingCount: number
+  ): Promise<'prepared' | 'noop'> {
+    const session = this.agentSessionIndex.get(sessionId);
+    if (!session) return 'noop';
+    if (!session.session.sdkSessionId) return 'noop';
+    if (!this.slotResetsContextForSession(sessionId)) return 'noop';
+    if (session.hasPendingContextResetClear?.()) return 'noop';
+    try {
+      await session.clearConversationContext();
+      return 'prepared';
+    } catch (err) {
+      log.warn(
+        `TaskAgentManager: context-reset flush clear failed for session ${sessionId}: ` +
+          `${err instanceof Error ? err.message : String(err)} — flushing without clear`
+      );
+      return 'noop';
+    }
+  }
+
   private slotResetsContextForSession(sessionId: string): boolean {
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
     if (!execution?.workflowRunId || !execution.workflowNodeId) return false;
@@ -3006,6 +3034,8 @@ export class TaskAgentManager {
     this.subSessions.get(taskId)!.set(subSessionId, agentSession);
     this.agentSessionIndex.set(subSessionId, agentSession);
 
+    this.wireContextResetFlushHook(agentSession);
+
     this.config.sessionManager.registerSession(agentSession);
 
     this.registerCompletionCallback(subSessionId, async () => {
@@ -3168,6 +3198,15 @@ export class TaskAgentManager {
     return this.config.db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).size > 0;
   }
 
+  private hasUnconsumedPendingWork(sessionId: string): boolean {
+    if (this.hasActiveDeliveryJob(sessionId)) return true;
+    const getPending = this.config.db.getMessagesByStatus;
+    if (typeof getPending !== 'function') return false;
+    return (
+      getPending(sessionId, 'enqueued').length > 0 || getPending(sessionId, 'deferred').length > 0
+    );
+  }
+
   private async injectMessageIntoSession(
     session: AgentSession,
     message: string,
@@ -3249,7 +3288,8 @@ export class TaskAgentManager {
       !isBusy &&
       hasPriorContext &&
       this.slotResetsContextForSession(sessionId) &&
-      !this.hasActiveDeliveryJob(sessionId);
+      !this.hasUnconsumedPendingWork(sessionId) &&
+      !session.hasPendingContextResetClear?.();
     if (shouldClearContext) {
       try {
         await session.clearConversationContext();

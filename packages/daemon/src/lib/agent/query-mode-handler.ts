@@ -25,6 +25,7 @@ export interface QueryModeHandlerContext {
   };
 
   ensureQueryStarted(): Promise<void>;
+  prepareContextResetFlush?(pendingCount: number): Promise<'prepared' | 'noop'>;
 }
 
 export class QueryModeHandler {
@@ -43,6 +44,8 @@ export class QueryModeHandler {
       if (deferredMessages.length === 0) {
         return { success: true, messageCount: 0 };
       }
+
+      await this.ctx.prepareContextResetFlush?.(deferredMessages.length);
 
       const dbIds = deferredMessages.map((m) => m.dbId);
       db.updateMessageStatus(dbIds, 'enqueued');
@@ -132,6 +135,8 @@ export class QueryModeHandler {
       if (queuedMessages.length === 0) {
         return;
       }
+
+      await this.ctx.prepareContextResetFlush?.(queuedMessages.length);
 
       if (isMessageDeliveryV2Enabled()) {
         await this.deliverFlushUnderV2(queuedMessages, 'recovery');
