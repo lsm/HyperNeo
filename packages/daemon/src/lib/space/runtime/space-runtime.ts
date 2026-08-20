@@ -1728,17 +1728,11 @@ export class SpaceRuntime {
       return;
     }
     if (decision.action === 'deliverStaleSession') {
-      this.queueHealthMetrics.recordStaleSessionSkip();
-      await this.flushPendingNodeQueueAsync(resolved, deliveryKey, {
-        event: payload,
-        deliveryKey,
-        deliveryMode: 'defer',
-        createdAt: store.getById(payload.eventId)?.createdAt ?? Date.now(),
-      });
+      await this.deliverToStaleSessionTarget(resolved, payload, deliveryKey);
       return;
     }
     if (decision.action === 'queueForActivation') {
-      await this.queueDeliveryForActivation(decision, resolved, resolved, payload, deliveryKey);
+      await this.queueDeliveryForActivation(decision, resolved, payload, deliveryKey);
       return;
     }
     await this.deliverViaActivation(resolved, payload, deliveryKey);
@@ -1751,7 +1745,7 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store || !target.sessionId) return;
-    const createdAt = store.getById(payload.eventId)?.createdAt ?? Date.now();
+    const createdAt = this.externalEventCreatedAt(payload);
     await this.normalizeStaleInterruptedSession(target.sessionId);
     if (this.parkDeliveryForInterruptedSession(target, payload, deliveryKey, createdAt)) {
       return;
@@ -1764,27 +1758,46 @@ export class SpaceRuntime {
     });
   }
 
+  private async deliverToStaleSessionTarget(
+    target: WorkflowSubscriptionTarget,
+    payload: ExternalEventPublishedPayload,
+    deliveryKey: string
+  ): Promise<void> {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    this.queueHealthMetrics.recordStaleSessionSkip();
+    await this.flushPendingNodeQueueAsync(target, deliveryKey, {
+      event: payload,
+      deliveryKey,
+      deliveryMode: 'defer',
+      createdAt: this.externalEventCreatedAt(payload),
+    });
+  }
+
+  private externalEventCreatedAt(payload: ExternalEventPublishedPayload): number {
+    return this.config.externalEventStore?.getById(payload.eventId)?.createdAt ?? Date.now();
+  }
+
   private async queueDeliveryForActivation(
     decision: Extract<ExternalEventDeliveryDecision, { action: 'queueForActivation' }>,
-    queueTarget: WorkflowSubscriptionTarget,
-    retryTarget: WorkflowSubscriptionTarget,
+    target: WorkflowSubscriptionTarget,
     payload: ExternalEventPublishedPayload,
     deliveryKey: string
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
     this.queueForPendingNode(
-      queueTarget,
+      target,
       payload,
       deliveryKey,
       'defer',
-      store.getById(payload.eventId)?.createdAt ?? Date.now()
+      this.externalEventCreatedAt(payload)
     );
-    if (decision.retryUnlessPaused && (await this.isTargetSpacePausedOrStopped(retryTarget))) {
+    if (decision.retryUnlessPaused && (await this.isTargetSpacePausedOrStopped(target))) {
       return;
     }
     this.scheduleActivationRetry(
-      retryTarget,
+      target,
       payload,
       deliveryKey,
       decision.reason,
@@ -1831,7 +1844,7 @@ export class SpaceRuntime {
     const store = this.config.externalEventStore;
     if (!store) return;
     if (decision.action === 'queueForActivation') {
-      await this.queueDeliveryForActivation(decision, resolved, resolved, payload, deliveryKey);
+      await this.queueDeliveryForActivation(decision, resolved, payload, deliveryKey);
       return;
     }
     if (decision.action === 'deliverLiveSession') {
@@ -1839,13 +1852,7 @@ export class SpaceRuntime {
       return;
     }
     if (decision.action === 'deliverStaleSession') {
-      this.queueHealthMetrics.recordStaleSessionSkip();
-      await this.flushPendingNodeQueueAsync(activatedTarget!, deliveryKey, {
-        event: payload,
-        deliveryKey,
-        deliveryMode: 'defer',
-        createdAt: store.getById(payload.eventId)?.createdAt ?? Date.now(),
-      });
+      await this.deliverToStaleSessionTarget(activatedTarget!, payload, deliveryKey);
       return;
     }
     if (decision.action === 'deferNotActive') {
