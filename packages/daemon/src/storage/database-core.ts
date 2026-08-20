@@ -145,8 +145,10 @@ export class DatabaseCore {
   }
 
   private removePartialBackup(backupPath: string): void {
-    rmSync(backupPath, { force: true });
-    rmSync(`${backupPath}-wal`, { force: true });
+    try {
+      rmSync(backupPath, { force: true });
+      rmSync(`${backupPath}-wal`, { force: true });
+    } catch {}
   }
 
   private tryVacuumInto(backupPath: string): boolean {
@@ -174,6 +176,7 @@ export class DatabaseCore {
       copyFileSync(this.dbPath, backupPath);
     } catch (err) {
       this.logger.error('Failed to create migration backup:', err);
+      this.removePartialBackup(backupPath);
       return false;
     }
     if (!checkpointed && !this.copyWalSidecar(backupPath)) {
@@ -216,7 +219,9 @@ export class DatabaseCore {
         } catch {}
       }
       for (const name of entries) {
-        if (!name.endsWith('.db-wal') || kept.has(name.slice(0, -'-wal'.length))) continue;
+        if (!name.endsWith('.db-wal')) continue;
+        const base = name.slice(0, -'-wal'.length);
+        if (kept.has(base) || existsSync(join(backupDir, base))) continue;
         try {
           unlinkSync(join(backupDir, name));
         } catch {}

@@ -518,6 +518,7 @@ describe('DatabaseCore', () => {
       const now = Date.now() / 1000;
       const staleWalOwner = 'daemon-2026-01-01T00-00-00-000Z.db';
       const orphanWal = 'daemon-2025-12-31T00-00-00-000Z.db-wal';
+      const undeletable = 'daemon-2025-06-01T00-00-00-000Z.db';
       for (let i = 0; i < 4; i++) {
         const stale = join(backupDir, `daemon-2026-01-0${i + 1}T00-00-00-000Z.db`);
         writeFileSync(stale, 'stale');
@@ -527,14 +528,23 @@ describe('DatabaseCore', () => {
         utimesSync(stale, now - (5 - i) * 60, now - (5 - i) * 60);
       }
       writeFileSync(join(backupDir, orphanWal), 'orphan-wal');
+      mkdirSync(join(backupDir, undeletable));
+      writeFileSync(join(backupDir, undeletable, 'filler'), 'blocks unlink');
+      writeFileSync(join(backupDir, `${undeletable}-wal`), 'must survive with its database');
+      utimesSync(join(backupDir, undeletable), now - 270, now - 270);
 
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
 
-      const remaining = readdirSync(backupDir);
-      expect(remaining.filter((f) => f.endsWith('.db') && f.startsWith('daemon-'))).toHaveLength(3);
+      const remainingDbs = readdirSync(backupDir).filter(
+        (f) => f.endsWith('.db') && f.startsWith('daemon-')
+      );
+      expect(remainingDbs).toHaveLength(4);
+      expect(remainingDbs).toContain(undeletable);
+      expect(remainingDbs).not.toContain(staleWalOwner);
       expect(existsSync(join(backupDir, `${staleWalOwner}-wal`))).toBe(false);
       expect(existsSync(join(backupDir, orphanWal))).toBe(false);
+      expect(existsSync(join(backupDir, `${undeletable}-wal`))).toBe(true);
     });
   });
 
