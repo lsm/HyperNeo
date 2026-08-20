@@ -183,6 +183,17 @@ describe('AcpMessageTranslator', () => {
     expect(translator.flushToolResults()).toEqual([]);
   });
 
+  test('flushes empty results for interrupted output-less tool calls', () => {
+    translator.processUpdate(toolCall('tc-interrupted', 'Long tool', {}));
+
+    const results = translator.flushToolResults();
+
+    expect(results).toHaveLength(1);
+    expect(results[0].parent_tool_use_id).toBe('tc-interrupted');
+    expect(results[0].tool_use_result).toBe('');
+    expect(translator.flushToolResults()).toEqual([]);
+  });
+
   test('does not duplicate terminal tool results when flushing', () => {
     translator.processUpdate(toolCall('tc-complete', 'Complete tool', {}));
     translator.processUpdate({

@@ -178,9 +178,9 @@ export class AcpMessageTranslator {
   }
 
   flushToolResults(): SDKUserMessage[] {
-    const results = [...this.toolCallUpdates.values()]
-      .filter((update) => update.content !== undefined || update.rawOutput !== undefined)
-      .map((update) => this.translateToolResult(update));
+    const results = [...this.toolCallUpdates.values()].map((update) =>
+      this.translateToolResult(update)
+    );
     this.toolCallUpdates.clear();
     this.inProgressToolUseIds.clear();
     return results;
