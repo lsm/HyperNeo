@@ -1361,7 +1361,6 @@ export function createOpenAIResponsesBridgeServer(
       }
     }
     const knownModelIds = new Set(models.map((model) => model.id));
-    for (const alias of Object.keys(aliases ?? {})) knownModelIds.add(alias);
     for (const [key, modelId] of sessionModelAliasOverrides) {
       if (!knownModelIds.has(modelId)) sessionModelAliasOverrides.delete(key);
     }

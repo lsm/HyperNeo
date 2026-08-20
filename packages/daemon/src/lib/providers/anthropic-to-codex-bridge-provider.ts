@@ -1001,6 +1001,15 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   ): void {
     this.catalogEntries = entries;
     this.activeCatalogScope = scope;
+    const currentAuth = this.resolveBridgeAuth();
+    const currentKey = currentAuth
+      ? `responses:${this.bridgeAuthCacheKey(currentAuth)}`
+      : undefined;
+    for (const key of this.bridgeServers.keys()) {
+      if (currentKey !== undefined && key !== currentKey) {
+        this.stopBridgeServerByKey(key);
+      }
+    }
     for (const [key, server] of this.bridgeServers) {
       const authKey = key.slice('responses:'.length);
       const isChatgptOAuth = authKey.startsWith('chatgpt:');
@@ -1233,6 +1242,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       this.clearDiscoveryError(scope);
       const cache = { ...matchingCache, fetchedAt: new Date().toISOString() };
       this.modelCache = cache;
+      this.hydratedCacheEntries = this.catalogEntriesFromRemote(cache.models, scope.source);
       this.activateCachedCatalog(scope);
       await this.writeModelCache(cache).catch((error) =>
         logger.warn('AnthropicToCodexBridgeProvider: model cache write failed:', error)

@@ -1871,6 +1871,128 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('rehydrates 304 responses from their matching scope cache', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const tokenA = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-304-a' },
+      });
+      const tokenB = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-304-b' },
+      });
+      const seedFetch = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-scope-304-a' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', ETag: 'etag-a' },
+          })
+      ) as unknown as typeof fetch;
+      const seeder = makeProvider({}, hyperneoDir, tmpDir, seedFetch);
+      seeder.setCredentials({
+        type: 'oauth',
+        accessToken: tokenA,
+        refreshToken: 'refresh-a',
+        raw: { accountId: 'acct-304-a' },
+      });
+      await seeder.getModels();
+      seeder.stopAllBridgeServers();
+
+      const cachePath = path.join(hyperneoDir, 'openai-models-cache.json');
+      const staleCache = JSON.parse(readFileSync(cachePath, 'utf-8')) as Record<string, unknown>;
+      staleCache.fetchedAt = '2020-01-01T00:00:00.000Z';
+      writeFileSync(cachePath, JSON.stringify(staleCache), { mode: 0o600 });
+
+      let resolveA: ((response: Response) => void) | undefined;
+      const aRevalidation = new Promise<Response>((resolve) => {
+        resolveA = resolve;
+      });
+      let resolveB: ((response: Response) => void) | undefined;
+      const bDiscovery = new Promise<Response>((resolve) => {
+        resolveB = resolve;
+      });
+      const fetchImpl = mock()
+        .mockImplementationOnce(async () => aRevalidation)
+        .mockImplementationOnce(async () => bDiscovery) as unknown as typeof fetch;
+      provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+      provider.setCredentials({
+        type: 'oauth',
+        accessToken: tokenA,
+        refreshToken: 'refresh-a',
+        raw: { accountId: 'acct-304-a' },
+      });
+
+      const aRefresh = provider.getModels();
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+      provider.setCredentials({
+        type: 'oauth',
+        accessToken: tokenB,
+        refreshToken: 'refresh-b',
+        raw: { accountId: 'acct-304-b' },
+      });
+      const bRefresh = provider.getModels();
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
+      resolveB?.(
+        new Response(JSON.stringify({ data: [{ id: 'gpt-scope-304-b' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+      await bRefresh;
+      provider.setCredentials({
+        type: 'oauth',
+        accessToken: tokenA,
+        refreshToken: 'refresh-a',
+        raw: { accountId: 'acct-304-a' },
+      });
+      resolveA?.(new Response(null, { status: 304 }));
+
+      const models = await aRefresh;
+      expect(models.map((model) => model.id)).toEqual(['gpt-scope-304-a']);
+      expect(provider.ownsModel('gpt-scope-304-b')).toBe(false);
+    });
+
+    it('stops live bridge servers from a replaced credential scope', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const tokenA = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-live-a' },
+      });
+      const tokenB = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-live-b' },
+      });
+      const catalogFetch = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({}, hyperneoDir, tmpDir, catalogFetch);
+      provider.setCredentials({
+        type: 'oauth',
+        accessToken: tokenA,
+        refreshToken: 'refresh-a',
+        raw: { accountId: 'acct-live-a' },
+      });
+      const stopped: string[] = [];
+      const updatedModels: string[] = [];
+      const fakeServers = new Map<string, { stop: () => void; updateModels: () => void }>([
+        [
+          'responses:chatgpt:acct-live-a:standard',
+          {
+            stop: () => stopped.push('acct-live-a'),
+            updateModels: () => updatedModels.push('acct-live-a'),
+          },
+        ],
+      ]);
+      (provider as unknown as { bridgeServers: Map<string, unknown> }).bridgeServers = fakeServers;
+
+      provider.setCredentials({
+        type: 'oauth',
+        accessToken: tokenB,
+        refreshToken: 'refresh-b',
+        raw: { accountId: 'acct-live-b' },
+      });
+
+      expect(stopped).toEqual(['acct-live-a']);
+      expect(updatedModels).toEqual([]);
+      expect(fakeServers.size).toBe(0);
+    });
+
     it('does not let an older credential scope overwrite the persisted catalog', async () => {
       let releaseOldWrite: (() => void) | undefined;
       const oldWrite = new Promise<void>((resolve) => {
