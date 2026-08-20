@@ -168,6 +168,9 @@ export function extractReplacementEdges(message: SDKMessage): SDKMessageReplacem
 export class SDKMessageRepository {
   private logger = new Logger('Database');
 
+  private tableExistsCache = new Map<string, boolean>();
+  private tableColumnsCache = new Map<string, Set<string> | null>();
+
   constructor(
     private db: BunDatabase,
     private reactiveDb?: ReactiveDatabase
@@ -178,22 +181,37 @@ export class SDKMessageRepository {
   }
 
   private tableExists(tableName: string): boolean {
+    const cached = this.tableExistsCache.get(tableName);
+    if (cached !== undefined) return cached;
     try {
       const row = this.db.prepare(`SELECT name FROM sqlite_master WHERE name = ?`).get(tableName);
-      return !!row;
+      const exists = !!row;
+      this.tableExistsCache.set(tableName, exists);
+      return exists;
     } catch {
       return false;
     }
   }
 
   private tableHasColumn(tableName: string, columnName: string): boolean {
+    const columns = this.tableColumns(tableName);
+    return columns !== null && columns.has(columnName);
+  }
+
+  private tableColumns(tableName: string): Set<string> | null {
+    const cached = this.tableColumnsCache.get(tableName);
+    if (cached !== undefined) return cached;
     try {
       const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
         name?: string;
       }>;
-      return rows.some((row) => row.name === columnName);
+      const columns = new Set(
+        rows.map((row) => row.name).filter((name): name is string => name !== undefined)
+      );
+      this.tableColumnsCache.set(tableName, columns);
+      return columns;
     } catch {
-      return false;
+      return null;
     }
   }
 

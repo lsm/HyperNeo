@@ -3467,4 +3467,68 @@ describe('SDKMessageRepository', () => {
       expect(new Date(ts).getTime()).toBeGreaterThan(new Date('2020-01-01').getTime());
     });
   });
+
+  describe('schema introspection caching (perf E1)', () => {
+    function wrapIntrospectionCounter(db: Database) {
+      const originalPrepare = db.prepare.bind(db);
+      let count = 0;
+      (
+        db as unknown as {
+          prepare: (sql: string, ...args: unknown[]) => unknown;
+        }
+      ).prepare = (sql: string, ...args: unknown[]) => {
+        if (sql.includes('sqlite_master') || sql.includes('PRAGMA table_info')) count++;
+        return originalPrepare(sql, ...args);
+      };
+      return {
+        reset: () => {
+          count = 0;
+        },
+        count: () => count,
+      };
+    }
+
+    function resultMessage(): SDKMessage {
+      return {
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        result: 'done',
+        duration_ms: 1,
+        num_turns: 1,
+        total_cost_usd: 0,
+        usage: {},
+      } as unknown as SDKMessage;
+    }
+
+    it('performs zero schema-introspection queries on steady-state saves', () => {
+      createSearchIndex();
+      createSearchPolicyTables();
+      insertSession('session-1');
+      db.prepare(
+        `INSERT INTO space_tasks (id, space_id, task_number, status, completed_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run('task-1', 'space-1', 1, 'in_progress', null, Date.now());
+
+      const counter = wrapIntrospectionCounter(db);
+      repository.saveSDKMessage('session-1', createUserMessage('warmup user'));
+      repository.saveSDKMessage('session-1', resultMessage());
+
+      expect(counter.count()).toBeGreaterThan(0);
+      counter.reset();
+      repository.saveSDKMessage('session-1', createUserMessage('steady user'));
+      repository.saveSDKMessage('session-1', createAssistantMessage('steady assistant'));
+      repository.saveSDKMessage('session-1', resultMessage());
+
+      expect(counter.count()).toBe(0);
+
+      const bodies = db
+        .prepare(
+          `SELECT body FROM message_search_content WHERE kind = 'message' ORDER BY timestamp`
+        )
+        .all() as Array<{ body: string }>;
+      expect(bodies.some((row) => row.body.includes('steady user'))).toBe(true);
+      expect(bodies.some((row) => row.body.includes('steady assistant'))).toBe(true);
+    });
+  });
 });
