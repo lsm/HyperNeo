@@ -503,6 +503,31 @@ describe('Provider RPC handlers', () => {
       expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
     });
 
+    it('preserves ACP sessions when a command-less config update keeps the env command', async () => {
+      const provider = new AcpProvider({}, async () => {});
+      provider.setAcpCommand('mock-acp --stdio');
+      getProviderRegistry().register(provider);
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ models: [{ id: 'old-model' }] }),
+      });
+      const handlers = setup();
+
+      await handlers.get('providers.update')!(
+        {
+          id: created.id,
+          params: { configJson: JSON.stringify({ models: [{ id: 'new-model' }] }) },
+        },
+        {}
+      );
+
+      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
+    });
+
     it('preserves ACP sessions when re-enabling a stored override that differs from env', async () => {
       const provider = new AcpProvider({}, async () => {});
       provider.setAcpCommand('old acp');

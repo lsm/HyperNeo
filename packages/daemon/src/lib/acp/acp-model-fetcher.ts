@@ -25,8 +25,6 @@ export async function disposeAcpSessions(
     command,
     args,
     cwd: workspace,
-    env: buildAcpDiscoveryEnv(),
-    replaceEnv: true,
     requestTimeoutMs: FETCH_REQUEST_TIMEOUT_MS,
     processTreeOwner: owner,
   });
