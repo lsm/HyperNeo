@@ -165,12 +165,20 @@ function closeFile(symbols: LibcSymbols, fd: number): void {
 }
 
 function replacementMode(symbols: LibcSymbols, directoryFd: number, fileName: string): number {
-  const fileFd = symbols.openat(
+  let fileFd = symbols.openat(
     directoryFd,
     cString(fileName),
     constants.O_WRONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
     0
   );
+  if (fileFd < 0) {
+    fileFd = symbols.openat(
+      directoryFd,
+      cString(fileName),
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+      0
+    );
+  }
   if (fileFd < 0) return FILE_MODE;
 
   try {
