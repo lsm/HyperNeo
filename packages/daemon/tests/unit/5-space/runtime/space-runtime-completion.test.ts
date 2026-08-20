@@ -1861,6 +1861,41 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(task.reportedSummary).toBe('Computed terminal summary');
     });
 
+    test('primary result artifact wins over computed terminal summary', async () => {
+      const rt = makeRuntimeWithTam();
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Artifact Summary Precedence ${Date.now()}`,
+        description: '',
+        nodes: [{ id: 'artifact-precedence-end', name: 'End', agentId: AGENT_A }],
+        startNodeId: 'artifact-precedence-end',
+        endNodeId: 'artifact-precedence-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      artifactRepo.upsert({
+        id: 'artifact-summary-precedence',
+        runId: run.id,
+        nodeId: 'End',
+        artifactType: 'decision',
+        artifactKey: 'final',
+        data: { summary: 'Artifact summary' },
+      });
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'in_progress',
+        reportedStatus: 'done',
+      });
+      const executionId = seedNodeExec(db, run.id, 'artifact-precedence-end', 'End', 'idle');
+      nodeExecutionRepo.update(executionId, { result: 'Computed terminal summary' });
+
+      await rt.executeTick();
+
+      const task = taskRepo.getTask(tasks[0].id)!;
+      expect(task.result).toBe('Artifact summary');
+      expect(task.reportedSummary).toBe('Artifact summary');
+    });
+
     test('existing task result wins over reported summary without a fresh summary', async () => {
       const rt = makeRuntimeWithTam();
       const workflow = workflowManager.createWorkflow({
