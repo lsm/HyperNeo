@@ -179,6 +179,10 @@ export class Database {
     return this.sessionRepo.listSessionsBySpaceAgent(spaceId, agentId);
   }
 
+  clearAcpSessionIds(): void {
+    this.sessionRepo.clearAcpSessionIds();
+  }
+
   updateSession(id: string, updates: Partial<Session>): void {
     this.sessionRepo.updateSession(id, updates);
   }

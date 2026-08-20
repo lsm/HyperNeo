@@ -705,6 +705,28 @@ describe('SessionRepository', () => {
       expect(session?.acpSessionId).toBeUndefined();
     });
 
+    it('should clear persisted ACP session ids only for ACP providers', () => {
+      repository.createSession(
+        createDefaultSession({
+          id: 'acp-session',
+          config: { ...createDefaultSession().config, provider: 'acp' },
+          acpSessionId: 'remote-acp-session',
+        })
+      );
+      repository.createSession(
+        createDefaultSession({
+          id: 'other-session',
+          config: { ...createDefaultSession().config, provider: 'anthropic' },
+          acpSessionId: 'unrelated-session',
+        })
+      );
+
+      repository.clearAcpSessionIds();
+
+      expect(repository.getSession('acp-session')?.acpSessionId).toBeUndefined();
+      expect(repository.getSession('other-session')?.acpSessionId).toBe('unrelated-session');
+    });
+
     it('should update availableCommands', () => {
       repository.createSession(createDefaultSession());
 

@@ -7,6 +7,7 @@ import {
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
+import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
 import type { ProviderRepository } from '../../../../src/storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
@@ -133,12 +134,22 @@ describe('Provider RPC handlers', () => {
   let repo: ReturnType<typeof createMockProviderRepo>;
   let creds: ReturnType<typeof createMockCredentialManager>;
   let eventBus: ReturnType<typeof createMockInternalEventBus>;
+  let sessionManager: {
+    listSessions: ReturnType<typeof mock>;
+    updateSession: ReturnType<typeof mock>;
+  };
+  let clearPersistedAcpSessionIds: ReturnType<typeof mock>;
 
   beforeEach(() => {
     hubData = createMockMessageHub();
     repo = createMockProviderRepo();
     creds = createMockCredentialManager();
     eventBus = createMockInternalEventBus();
+    sessionManager = {
+      listSessions: mock(() => []),
+      updateSession: mock(async () => {}),
+    };
+    clearPersistedAcpSessionIds = mock(() => {});
     resetProviderRegistry();
     resetProviderFactory();
   });
@@ -154,6 +165,8 @@ describe('Provider RPC handlers', () => {
       providerRepo: repo,
       credentialManager: creds,
       internalEventBus: eventBus,
+      sessionManager: sessionManager as never,
+      clearPersistedAcpSessionIds,
     });
     return hubData.handlers;
   }
@@ -180,6 +193,40 @@ describe('Provider RPC handlers', () => {
       };
       expect(result.providers.length).toBe(1);
       expect(result.providers[0].providerId).toBe('anthropic');
+    });
+  });
+
+  describe('providers.fetchAcpModels', () => {
+    it('rejects unknown and non-ACP providers', async () => {
+      const anthropic = repo.createProvider({
+        providerId: 'anthropic',
+        displayName: 'Anthropic',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.fetchAcpModels')!({ id: 'missing', command: 'devin acp' }, {})
+      ).rejects.toThrow('Provider missing not found');
+      await expect(
+        handlers.get('providers.fetchAcpModels')!({ id: anthropic.id, command: 'devin acp' }, {})
+      ).rejects.toThrow('is not an ACP provider');
+    });
+
+    it('rejects empty command overrides before discovery', async () => {
+      const acp = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      getProviderRegistry().register(new AcpProvider({}, async () => {}));
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.fetchAcpModels')!({ id: acp.id, command: '   ' }, {})
+      ).rejects.toThrow('ACP command is required');
     });
   });
 
@@ -323,6 +370,72 @@ describe('Provider RPC handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.provider.displayName).toBe('Anthropic Inc');
+    });
+
+    it('clears active ACP session ids when the command changes', async () => {
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'old acp', models: [{ id: 'old-model' }] }),
+      });
+      sessionManager.listSessions.mockImplementation(() => [
+        {
+          id: 'acp-session',
+          config: { provider: 'acp' },
+          acpSessionId: 'remote-session',
+        },
+        {
+          id: 'anthropic-session',
+          config: { provider: 'anthropic' },
+          acpSessionId: 'unrelated',
+        },
+      ]);
+      const handlers = setup();
+
+      await handlers.get('providers.update')!(
+        {
+          id: created.id,
+          params: {
+            configJson: JSON.stringify({ command: 'new acp', models: [] }),
+          },
+        },
+        {}
+      );
+
+      expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
+      expect(sessionManager.updateSession).toHaveBeenCalledTimes(1);
+      expect(sessionManager.updateSession).toHaveBeenCalledWith('acp-session', {
+        acpSessionId: undefined,
+      });
+    });
+
+    it('preserves ACP session ids for model-only configuration changes', async () => {
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'devin acp', models: [{ id: 'old-model' }] }),
+      });
+      sessionManager.listSessions.mockImplementation(() => [
+        { id: 'acp-session', config: { provider: 'acp' }, acpSessionId: 'remote-session' },
+      ]);
+      const handlers = setup();
+
+      await handlers.get('providers.update')!(
+        {
+          id: created.id,
+          params: {
+            configJson: JSON.stringify({ command: 'devin acp', models: [{ id: 'new-model' }] }),
+          },
+        },
+        {}
+      );
+
+      expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
+      expect(sessionManager.updateSession).not.toHaveBeenCalled();
     });
 
     it('emits providers.changed after update', async () => {
@@ -719,6 +832,29 @@ describe('Provider RPC handlers', () => {
       expect(result.healthy).toBe(true);
     });
 
+    it('probes ACP providers even when curated models are cached', async () => {
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const provider = new AcpProvider({}, async () => {
+        throw new Error('command unavailable');
+      });
+      provider.setAcpCommand('broken acp');
+      provider.setAcpModels([{ id: 'cached-model' }]);
+      getProviderRegistry().register(provider);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.test')!({ id: created.id }, {})) as {
+        healthy: boolean;
+        error?: string;
+      };
+
+      expect(result).toEqual({ healthy: false, error: 'command unavailable' });
+    });
+
     it('returns unhealthy for missing provider', async () => {
       const created = repo.createProvider({
         providerId: 'missing',
@@ -780,6 +916,30 @@ describe('Provider RPC handlers', () => {
       expect(anthropic?.healthy).toBe(true);
       expect(openrouter?.healthy).toBe(false);
       expect(openrouter?.error).toBe('Not registered');
+    });
+
+    it('probes curated ACP providers during bulk health checks', async () => {
+      repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const provider = new AcpProvider({}, async () => {
+        throw new Error('command unavailable');
+      });
+      provider.setAcpCommand('broken acp');
+      provider.setAcpModels([{ id: 'cached-model' }]);
+      getProviderRegistry().register(provider);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.healthCheck')!({}, {})) as {
+        results: Array<{ providerId: string; healthy: boolean; error?: string }>;
+      };
+
+      expect(result.results).toEqual([
+        { providerId: 'acp', healthy: false, error: 'command unavailable' },
+      ]);
     });
 
     it('returns unhealthy when provider is not available', async () => {

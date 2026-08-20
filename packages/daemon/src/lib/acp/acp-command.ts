@@ -1,3 +1,8 @@
+export function getAcpCommandIdentity(commandLine: string): string {
+  const { command, args } = parseAcpCommand(commandLine);
+  return JSON.stringify([command, ...args]);
+}
+
 export function parseAcpCommand(commandLine: string): { command: string; args: string[] } {
   const tokens: string[] = [];
   let current = '';
@@ -39,11 +44,11 @@ export function parseAcpCommand(commandLine: string): { command: string; args: s
 
   if (escaping) current += '\\';
   if (quote) {
-    throw new Error('Invalid HYPERNEO_ACP_COMMAND: unmatched quote');
+    throw new Error('Invalid ACP command: unmatched quote');
   }
   if (current) tokens.push(current);
   if (tokens.length === 0) {
-    throw new Error('Invalid HYPERNEO_ACP_COMMAND: command is empty');
+    throw new Error('Invalid ACP command: command is empty');
   }
 
   return { command: tokens[0], args: tokens.slice(1) };

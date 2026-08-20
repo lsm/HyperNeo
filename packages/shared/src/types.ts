@@ -319,6 +319,7 @@ export interface SessionMetadata {
   lastSdkCost?: number;
   costBaseline?: number;
   acpInstructionsSent?: boolean;
+  acpCommandIdentity?: string;
   pastSdkSessionIds?: string[];
   acpContextUsageEstimate?: number;
   worktreeChoice?: {

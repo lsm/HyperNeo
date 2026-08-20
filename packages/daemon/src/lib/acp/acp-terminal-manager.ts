@@ -12,14 +12,18 @@ import type {
   AcpTerminalReleaseResult,
 } from '@hyperneo/shared';
 import { Logger } from '../logger';
+import { parseAcpCommand } from './acp-command';
 
 const logger = new Logger('AcpTerminalManager');
-const TERMINAL_WAIT_TIMEOUT_MS = 120_000;
+const DEFAULT_OUTPUT_BYTE_LIMIT = 1024 * 1024;
+const MAX_OUTPUT_BYTE_LIMIT = 4 * 1024 * 1024;
 
 interface TerminalSession {
   process: ChildProcess;
-  output: Buffer;
+  outputChunks: Buffer[];
+  outputByteLength: number;
   outputByteLimit: number;
+  outputTruncated: boolean;
   exitCode: number | null;
   exitSignal: string | null;
   exited: boolean;
@@ -34,29 +38,38 @@ export class AcpTerminalManager {
 
   constructor(
     private readonly baseEnv: Record<string, string> = {},
+    private readonly defaultCwd?: string,
     private readonly processKill: (pid: number, signal: NodeJS.Signals) => void = process.kill
   ) {}
 
   async create(params: AcpTerminalCreateParams): Promise<AcpTerminalCreateResult> {
-    const terminalId = `term-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    const { command, args = [], cwd, env, outputByteLimit } = params;
-
-    const processEnv: NodeJS.ProcessEnv = { ...this.baseEnv };
-    for (const entry of env ?? []) {
-      processEnv[entry.name] = entry.value;
+    if (params.cwd != null || (params.env?.length ?? 0) > 0) {
+      throw new Error('ACP terminal cwd and environment overrides are not supported');
     }
+    const terminalId = `term-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const { outputByteLimit } = params;
+    const parsed =
+      params.args === undefined
+        ? parseAcpCommand(params.command)
+        : { command: params.command, args: params.args };
 
-    const child = spawn(command, args, {
-      cwd: cwd ?? undefined,
-      env: processEnv,
+    const child = spawn(parsed.command, parsed.args, {
+      cwd: this.defaultCwd,
+      env: this.baseEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     });
 
+    const requestedOutputByteLimit =
+      typeof outputByteLimit === 'number' && Number.isFinite(outputByteLimit)
+        ? outputByteLimit
+        : DEFAULT_OUTPUT_BYTE_LIMIT;
     const session: TerminalSession = {
       process: child,
-      output: Buffer.alloc(0),
-      outputByteLimit: outputByteLimit ?? 1024 * 1024,
+      outputChunks: [],
+      outputByteLength: 0,
+      outputByteLimit: Math.min(MAX_OUTPUT_BYTE_LIMIT, Math.max(1, requestedOutputByteLimit)),
+      outputTruncated: false,
       exitCode: null,
       exitSignal: null,
       exited: false,
@@ -70,6 +83,7 @@ export class AcpTerminalManager {
     child.stderr?.on('data', (chunk: Buffer) => this.appendOutput(terminalId, chunk));
 
     child.on('close', (code, signal) => {
+      if (session.exited) return;
       session.exitCode = code ?? null;
       session.exitSignal = signal ?? null;
       session.exited = true;
@@ -93,7 +107,7 @@ export class AcpTerminalManager {
         session.killTimer = null;
       }
       const message = `Process error: ${err.message}\n`;
-      session.output = Buffer.concat([session.output, Buffer.from(message)]);
+      this.appendOutput(terminalId, Buffer.from(message));
       for (const waiter of session.exitWaiters) {
         waiter({ exitCode: 1, signal: null });
       }
@@ -110,15 +124,11 @@ export class AcpTerminalManager {
       return { output: '', truncated: false, exitStatus: { exitCode: null, signal: null } };
     }
 
-    const buffer = session.output;
-    const truncated = buffer.length > session.outputByteLimit;
-    const output = truncated
-      ? buffer.subarray(buffer.length - session.outputByteLimit).toString('utf-8')
-      : buffer.toString('utf-8');
+    const output = Buffer.concat(session.outputChunks, session.outputByteLength).toString('utf-8');
 
     return {
       output,
-      truncated,
+      truncated: session.outputTruncated,
       exitStatus: session.exited
         ? { exitCode: session.exitCode, signal: session.exitSignal }
         : null,
@@ -135,22 +145,8 @@ export class AcpTerminalManager {
       return { exitCode: session.exitCode, signal: session.exitSignal };
     }
 
-    return new Promise((resolve, reject) => {
-      const wrapped = (value: { exitCode: number | null; signal: string | null }) => {
-        clearTimeout(timer);
-        resolve(value);
-      };
-      const timer = setTimeout(() => {
-        session.exitWaiters = session.exitWaiters.filter((w) => w !== wrapped);
-        this.kill(params);
-        reject(
-          new Error(
-            `Terminal ${params.terminalId} did not exit within ${TERMINAL_WAIT_TIMEOUT_MS}ms`
-          )
-        );
-      }, TERMINAL_WAIT_TIMEOUT_MS);
-
-      session.exitWaiters.push(wrapped);
+    return new Promise((resolve) => {
+      session.exitWaiters.push(resolve);
     });
   }
 
@@ -165,6 +161,7 @@ export class AcpTerminalManager {
           this.signalProcess(session.process, 'SIGKILL');
         }
       }, 5000);
+      session.killTimer.unref();
     }
     return {};
   }
@@ -190,6 +187,7 @@ export class AcpTerminalManager {
             this.signalProcess(session.process, 'SIGKILL');
           }
         }, 5000);
+        session.killTimer.unref();
       }
       session.released = true;
       this.sessions.delete(terminalId);
@@ -209,9 +207,26 @@ export class AcpTerminalManager {
   private appendOutput(terminalId: string, chunk: Buffer): void {
     const session = this.sessions.get(terminalId);
     if (!session) return;
-    session.output = Buffer.concat([session.output, chunk]);
-    if (session.output.length > session.outputByteLimit * 2) {
-      session.output = session.output.slice(-session.outputByteLimit * 2);
+    if (chunk.length >= session.outputByteLimit) {
+      session.outputChunks = [chunk.subarray(chunk.length - session.outputByteLimit)];
+      session.outputByteLength = session.outputByteLimit;
+      session.outputTruncated = true;
+      return;
+    }
+
+    session.outputChunks.push(chunk);
+    session.outputByteLength += chunk.length;
+    while (session.outputByteLength > session.outputByteLimit) {
+      const overflow = session.outputByteLength - session.outputByteLimit;
+      const first = session.outputChunks[0];
+      session.outputTruncated = true;
+      if (first.length <= overflow) {
+        session.outputChunks.shift();
+        session.outputByteLength -= first.length;
+      } else {
+        session.outputChunks[0] = first.subarray(overflow);
+        session.outputByteLength -= overflow;
+      }
     }
   }
 }

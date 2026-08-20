@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
-import { removeProviderFromRegistry } from '../../../../src/lib/providers/provider-sync';
+import {
+  parseAcpConfig,
+  removeProviderFromRegistry,
+  syncProviderToRegistry,
+} from '../../../../src/lib/providers/provider-sync';
+import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
+import type { ProviderRecord } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 
 function createMockProvider(overrides: Partial<Provider> = {}): Provider {
@@ -15,6 +21,65 @@ function createMockProvider(overrides: Partial<Provider> = {}): Provider {
     ...overrides,
   } as Provider;
 }
+
+describe('ACP provider sync', () => {
+  beforeEach(() => {
+    resetProviderFactory();
+    resetProviderRegistry();
+  });
+
+  afterEach(() => {
+    resetProviderFactory();
+    resetProviderRegistry();
+  });
+
+  it('parses valid command and model configuration', () => {
+    expect(
+      parseAcpConfig(
+        JSON.stringify({
+          command: 'devin acp',
+          models: [
+            { id: 'model-a', name: 'Model A' },
+            { id: 'model-b', name: 42 },
+            null,
+            { name: 'missing id' },
+          ],
+        })
+      )
+    ).toEqual({
+      command: 'devin acp',
+      models: [{ id: 'model-a', name: 'Model A' }, { id: 'model-b' }],
+    });
+  });
+
+  it('falls back to empty configuration for malformed JSON', () => {
+    expect(parseAcpConfig('{invalid')).toEqual({});
+  });
+
+  it('applies persisted ACP command and models to the registered provider', async () => {
+    const provider = new AcpProvider({}, async () => {});
+    getProviderRegistry().register(provider);
+    const record = {
+      id: 'acp-record',
+      providerId: 'acp',
+      displayName: 'ACP Agent',
+      kind: 'built_in',
+      authType: 'none',
+      isEnabled: true,
+      isDefault: false,
+      sortOrder: 0,
+      configJson: JSON.stringify({ command: 'devin acp', models: [{ id: 'model-a' }] }),
+      healthStatus: 'unknown',
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies ProviderRecord;
+
+    await syncProviderToRegistry(record);
+
+    expect(provider.getAcpCommand()).toBe('devin acp');
+    expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['model-a']);
+  });
+});
 
 describe('removeProviderFromRegistry', () => {
   beforeEach(() => {

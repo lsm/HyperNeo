@@ -79,6 +79,27 @@ vi.mock('../OAuthModal.tsx', () => ({
   ),
 }));
 
+vi.mock('../AcpEditorModal.tsx', () => ({
+  AcpEditorModal: ({
+    providerId,
+    command,
+    models,
+    onClose,
+  }: {
+    providerId: string;
+    command: string;
+    models: Array<{ id: string }>;
+    onClose: () => void;
+  }) => (
+    <div data-testid="acp-editor-modal">
+      <span>{`${providerId}:${command}:${models.map((model) => model.id).join(',')}`}</span>
+      <button data-testid="acp-editor-close" onClick={onClose}>
+        Close
+      </button>
+    </div>
+  ),
+}));
+
 vi.mock('../AddProviderModal.tsx', () => ({
   AddProviderModal: ({
     onClose,
@@ -315,6 +336,46 @@ describe('ProvidersSettings', () => {
       expect(container.textContent).toContain('Authentication');
       expect(container.textContent).toContain('Health');
     });
+  });
+
+  it('renders ACP configuration and opens the editor', async () => {
+    const provider = createMockProvider('acp-1', 'acp', {
+      displayName: 'ACP Agent',
+      authType: 'none',
+      configJson: JSON.stringify({
+        command: 'devin acp',
+        models: [{ id: 'devin-model', name: 'Devin Model' }],
+      }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    await waitFor(() => expect(container.textContent).toContain('devin acp'));
+    expect(container.textContent).toContain('Devin Model');
+
+    fireEvent.click(screen.getByText('Edit'));
+    expect(screen.getByTestId('acp-editor-modal').textContent).toContain(
+      'acp-1:devin acp:devin-model'
+    );
+    fireEvent.click(screen.getByTestId('acp-editor-close'));
+    expect(screen.queryByTestId('acp-editor-modal')).toBeNull();
+  });
+
+  it('handles malformed ACP configuration', async () => {
+    const provider = createMockProvider('acp-1', 'acp', {
+      displayName: 'ACP Agent',
+      authType: 'none',
+      configJson: '{invalid',
+    });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+
+    await waitFor(() => expect(container.textContent).toContain('No command set'));
   });
 
   it('toggles provider enabled state', async () => {

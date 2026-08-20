@@ -8,7 +8,7 @@ import type {
 } from '@hyperneo/shared/provider';
 import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
 import { spawn } from 'node:child_process';
-import { parseAcpCommand } from '../acp/acp-command';
+import { getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command';
 
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
 const ACP_CONTEXT_WINDOW_ENV_VAR = 'HYPERNEO_ACP_CONTEXT_WINDOW';
@@ -112,6 +112,7 @@ export class AcpProvider implements Provider {
   ];
 
   private cachedModels: ModelInfo[] | null = null;
+  private cachedModelsCommandIdentity: string | undefined;
 
   private lastProbeAt = 0;
   private lastProbeKey: string | undefined;
@@ -134,10 +135,13 @@ export class AcpProvider implements Provider {
   }
 
   setAcpCommand(command: string | undefined): void {
+    const previousIdentity = this.getCommandIdentity();
     this.commandOverride = command;
     this.lastProbeKey = undefined;
     this.lastProbeAt = 0;
-    this.rebuildModelsFromCurated();
+    if (this.getCommandIdentity() !== previousIdentity) {
+      this.rebuildModelsFromCurated();
+    }
   }
 
   setAcpModels(models: AcpConfiguredModel[] | undefined): void {
@@ -145,8 +149,14 @@ export class AcpProvider implements Provider {
     this.rebuildModelsFromCurated();
   }
 
+  private getCommandIdentity(): string | undefined {
+    const command = this.getAcpCommand();
+    return command ? getAcpCommandIdentity(command) : undefined;
+  }
+
   private rebuildModelsFromCurated(): void {
-    if (this.curatedModels && this.curatedModels.length > 0) {
+    const commandIdentity = this.getCommandIdentity();
+    if (commandIdentity && this.curatedModels && this.curatedModels.length > 0) {
       this.cachedModels = this.curatedModels.map((model) => ({
         id: model.id,
         name: model.name ?? model.id,
@@ -159,8 +169,10 @@ export class AcpProvider implements Provider {
         available: true,
         preferContextWindowMetadata: false,
       }));
+      this.cachedModelsCommandIdentity = commandIdentity;
     } else {
       this.cachedModels = null;
+      this.cachedModelsCommandIdentity = undefined;
     }
   }
 
@@ -177,7 +189,7 @@ export class AcpProvider implements Provider {
     };
   }
 
-  private async verifyCommandAvailable(): Promise<void> {
+  async verifyCommandAvailable(): Promise<void> {
     const command = this.getAcpCommand();
     if (!command) {
       throw new Error('HYPERNEO_ACP_COMMAND not set');
@@ -191,12 +203,20 @@ export class AcpProvider implements Provider {
   }
 
   async getModels(): Promise<ModelInfo[]> {
+    const commandIdentity = this.getCommandIdentity();
+    if (!commandIdentity) {
+      this.clearModelCache();
+      return [];
+    }
+    if (this.cachedModelsCommandIdentity !== commandIdentity) {
+      this.rebuildModelsFromCurated();
+    }
+
+    await this.verifyCommandAvailable();
+
     if (this.cachedModels) {
       return this.cachedModels;
     }
-    if (!this.isAvailable()) return [];
-
-    await this.verifyCommandAvailable();
 
     const contextWindow = this.getContextWindow();
     return AcpProvider.MODELS.map((model) => ({
@@ -207,6 +227,7 @@ export class AcpProvider implements Provider {
 
   setCachedModels(models: ModelInfo[]): void {
     this.cachedModels = models;
+    this.cachedModelsCommandIdentity = this.getCommandIdentity();
   }
 
   getCachedModels(): ModelInfo[] | null {
@@ -233,6 +254,7 @@ export class AcpProvider implements Provider {
       available: true,
       preferContextWindowMetadata: false,
     }));
+    this.cachedModelsCommandIdentity = this.getCommandIdentity();
   }
 
   clearModelCache(): void {

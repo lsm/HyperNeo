@@ -237,13 +237,33 @@ describe('AcpMessageTranslator', () => {
     expect(translator.getContextUsage()).toEqual({ used: 0, size: 200000 });
   });
 
-  test('ignores available commands updates', () => {
-    expect(
-      translator.processUpdate({
-        sessionUpdate: 'available_commands_update',
-        availableCommands: [],
-      } as never)
-    ).toEqual([]);
+  test('translates available commands updates', () => {
+    translator.processUpdate(agentChunk('Before'));
+
+    const messages = translator.processUpdate({
+      sessionUpdate: 'available_commands_update',
+      availableCommands: [
+        {
+          name: 'review',
+          description: 'Review the current changes',
+          input: { hint: '[path]' },
+        },
+      ],
+    } as never);
+
+    expect(messages[0].type).toBe('assistant');
+    expect(messages[1]).toMatchObject({
+      type: 'system',
+      subtype: 'commands_changed',
+      session_id: 'test-session',
+      commands: [
+        {
+          name: 'review',
+          description: 'Review the current changes',
+          argumentHint: '[path]',
+        },
+      ],
+    });
   });
 });
 

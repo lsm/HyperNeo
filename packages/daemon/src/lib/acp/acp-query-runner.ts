@@ -16,6 +16,7 @@ import type {
   AcpFsWriteParams,
   AcpFsWriteResult,
   AcpMcpServerConfig,
+  AcpTerminalCreateParams,
   AcpPermissionRequest,
   AcpPermissionResponseResult,
 } from '@hyperneo/shared/acp';
@@ -36,7 +37,7 @@ import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy';
-import { parseAcpCommand } from './acp-command';
+import { getAcpCommandIdentity, parseAcpCommand } from './acp-command';
 import { AcpClient, type AcpClientOptions } from './acp-client';
 import { AcpQueryAdapter } from './acp-query-adapter';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
@@ -284,6 +285,51 @@ function acpPermissionQuestionInput(params: AcpPermissionRequest): Record<string
   };
 }
 
+function shellQuote(value: string): string {
+  return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+async function authorizeAcpTerminalCreate(
+  params: AcpTerminalCreateParams,
+  canUseTool: CanUseTool
+): Promise<AcpTerminalCreateParams> {
+  if (params.cwd != null || (params.env?.length ?? 0) > 0) {
+    throw new Error('ACP terminal cwd and environment overrides are not supported');
+  }
+  const parsed =
+    params.args === undefined
+      ? parseAcpCommand(params.command)
+      : { command: params.command, args: params.args };
+  const command = [parsed.command, ...parsed.args].map(shellQuote).join(' ');
+  const controller = new AbortController();
+  const result = await canUseTool(
+    'Bash',
+    { command },
+    {
+      signal: controller.signal,
+      toolUseID: generateUUID(),
+      title: command,
+      displayName: 'ACP terminal command',
+      description: params.cwd ?? undefined,
+      requestId: generateUUID(),
+    }
+  );
+  if (!result || result.behavior === 'deny') {
+    throw new Error(result?.message ?? 'ACP terminal command denied');
+  }
+  const updatedCommand = result.updatedInput?.command;
+  if (typeof updatedCommand === 'string' && updatedCommand !== command) {
+    throw new Error('ACP terminal command modifications are not supported');
+  }
+  return {
+    ...params,
+    command: parsed.command,
+    args: parsed.args,
+    cwd: undefined,
+    env: undefined,
+  };
+}
+
 async function handleAcpPermissionRequest(
   params: AcpPermissionRequest,
   canUseTool: CanUseTool
@@ -455,6 +501,29 @@ export class AcpQueryRunner {
         throw new Error('Set HYPERNEO_ACP_COMMAND to enable ACP agents.');
       }
       const { command, args } = parseAcpCommand(acpCommand);
+      const commandIdentity = getAcpCommandIdentity(acpCommand);
+      if (
+        session.acpSessionId &&
+        session.metadata?.acpCommandIdentity &&
+        session.metadata.acpCommandIdentity !== commandIdentity
+      ) {
+        session.acpSessionId = undefined;
+        session.metadata = {
+          ...session.metadata,
+          acpCommandIdentity: commandIdentity,
+          acpInstructionsSent: undefined,
+        };
+        this.ctx.db.updateSession(session.id, {
+          acpSessionId: undefined,
+          metadata: session.metadata,
+        });
+      } else if (session.metadata?.acpCommandIdentity !== commandIdentity) {
+        session.metadata = {
+          ...session.metadata,
+          acpCommandIdentity: commandIdentity,
+        };
+        this.ctx.db.updateSession(session.id, { metadata: session.metadata });
+      }
       const preCleanupAuth = {
         ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
         CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
@@ -544,7 +613,8 @@ export class AcpQueryRunner {
       }
 
       const runTerminalManager = new AcpTerminalManager(
-        acpEnv as Record<string, string> | undefined
+        acpEnv as Record<string, string> | undefined,
+        cwd
       );
       terminalManager = runTerminalManager;
       client = this.createAcpClient({
@@ -556,7 +626,8 @@ export class AcpQueryRunner {
           this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
         onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
         onPermissionRequest: (params) => handleAcpPermissionRequest(params, canUseTool),
-        onTerminalCreate: (params) => runTerminalManager.create(params),
+        onTerminalCreate: async (params) =>
+          runTerminalManager.create(await authorizeAcpTerminalCreate(params, canUseTool)),
         onTerminalOutput: (params) => runTerminalManager.output(params),
         onTerminalWaitForExit: (params) => runTerminalManager.waitForExit(params),
         onTerminalKill: (params) => runTerminalManager.kill(params),

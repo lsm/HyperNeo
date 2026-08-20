@@ -85,6 +85,18 @@ export class SessionRepository {
     return rows.map((r) => this.rowToSession(r));
   }
 
+  clearAcpSessionIds(): void {
+    this.db
+      .prepare(
+        `UPDATE sessions
+         SET acp_session_id = NULL
+         WHERE acp_session_id IS NOT NULL
+           AND json_valid(config)
+           AND json_extract(config, '$.provider') = 'acp'`
+      )
+      .run();
+  }
+
   updateSession(id: string, updates: Partial<Session>): void {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];

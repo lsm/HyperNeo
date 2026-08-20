@@ -15,6 +15,7 @@ import { AcpProvider } from '../providers/acp-provider.js';
 import { fetchAcpModels } from '../acp/acp-model-fetcher.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import type { SessionManager } from '../session/session-manager';
 import { Logger } from '../logger';
 
 const log = new Logger('provider-handlers');
@@ -151,6 +152,33 @@ export interface ProviderHandlerDeps {
   providerRepo: ProviderRepository;
   credentialManager: ProviderCredentialManager;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+  sessionManager?: Pick<SessionManager, 'listSessions' | 'updateSession'>;
+  clearPersistedAcpSessionIds?: () => void;
+}
+
+function readAcpCommand(configJson: string | undefined): string | undefined {
+  if (!configJson) return undefined;
+  try {
+    const parsed = JSON.parse(configJson) as { command?: unknown };
+    return typeof parsed.command === 'string' ? parsed.command : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function clearAcpSessionIds(
+  sessionManager: Pick<SessionManager, 'listSessions' | 'updateSession'> | undefined
+): Promise<void> {
+  if (!sessionManager) return;
+  const sessions = sessionManager.listSessions({
+    includeArchived: true,
+    includeSpaceSessions: true,
+  });
+  await Promise.all(
+    sessions
+      .filter((session) => session.config.provider === 'acp' && session.acpSessionId)
+      .map((session) => sessionManager.updateSession(session.id, { acpSessionId: undefined }))
+  );
 }
 
 async function clearCacheAndNotifyProvidersChanged(
@@ -162,7 +190,14 @@ async function clearCacheAndNotifyProvidersChanged(
 }
 
 export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
-  const { messageHub, providerRepo, credentialManager, internalEventBus } = deps;
+  const {
+    messageHub,
+    providerRepo,
+    credentialManager,
+    internalEventBus,
+    sessionManager,
+    clearPersistedAcpSessionIds,
+  } = deps;
 
   messageHub.onRequest('providers.list', async () => {
     const records = providerRepo.listProviders();
@@ -195,6 +230,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       if (!record) throw new Error(`Provider ${data.id} not found`);
       if (record.providerId !== 'acp')
         throw new Error(`Provider ${data.id} is not an ACP provider`);
+      if (data.command !== undefined) {
+        if (!data.command.trim()) throw new Error('ACP command is required');
+        if (data.command.length > MAX_JSON_FIELD_LEN)
+          throw new Error(`ACP command must be ≤ ${MAX_JSON_FIELD_LEN} chars`);
+      }
       const registered = getProviderRegistry().get('acp');
       const provider = registered instanceof AcpProvider ? registered : new AcpProvider();
       const models = await fetchAcpModels(provider, { command: data.command });
@@ -297,8 +337,16 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             }
           }
 
+          const acpCommandChanged =
+            existing.providerId === 'acp' &&
+            updates.configJson !== undefined &&
+            readAcpCommand(existing.configJson) !== readAcpCommand(updates.configJson);
           const record = providerRepo.updateProvider(data.id, updates);
           if (!record) throw new Error(`Provider ${data.id} not found`);
+          if (acpCommandChanged) {
+            clearPersistedAcpSessionIds?.();
+            await clearAcpSessionIds(sessionManager);
+          }
 
           const shouldResync =
             data.credentials !== undefined ||
@@ -389,6 +437,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         });
         return { healthy: false, error: 'Provider not available' };
       }
+      if (provider instanceof AcpProvider) {
+        await provider.verifyCommandAvailable();
+      }
       await provider.getModels();
       providerRepo.updateProvider(data.id, {
         healthStatus: 'healthy',
@@ -426,6 +477,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
               lastHealthCheckAt: Date.now(),
             });
             return { providerId: record.providerId, healthy: false, error: 'Not available' };
+          }
+          if (provider instanceof AcpProvider) {
+            await provider.verifyCommandAvailable();
           }
           await provider.getModels();
           providerRepo.updateProvider(record.id, {

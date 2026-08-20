@@ -1,6 +1,7 @@
 import type { UUID } from 'crypto';
 import type {
   SDKAssistantMessage,
+  SDKCommandsChangedMessage,
   SDKToolProgressMessage,
   SDKResultMessage,
   SDKMessage,
@@ -111,7 +112,7 @@ export class AcpMessageTranslator {
       case 'session_info_update':
         return [...this.flush(), this.translateSyntheticAssistant('Session info', update)];
       case 'available_commands_update':
-        return [...this.flush()];
+        return [...this.flush(), this.translateAvailableCommands(update.availableCommands)];
       case 'usage_update':
         this.reportedContextUsage = update.used;
         this.contextWindow = update.size;
@@ -258,6 +259,22 @@ export class AcpMessageTranslator {
       this.thinkingBuffer += update.content.text;
       this.outputTokenEstimate += estimateTokens(update.content.text);
     }
+  }
+
+  private translateAvailableCommands(
+    commands: Array<{ name: string; description: string; input?: { hint: string } | null }>
+  ): SDKCommandsChangedMessage {
+    return {
+      type: 'system',
+      subtype: 'commands_changed',
+      commands: commands.map((command) => ({
+        name: command.name,
+        description: command.description,
+        argumentHint: command.input?.hint ?? '',
+      })),
+      uuid: generateUUID() as UUID,
+      session_id: this.sessionId,
+    };
   }
 
   private translateSyntheticAssistant(label: string, payload: unknown): SDKAssistantMessage {

@@ -32,6 +32,7 @@ export function AcpEditorModal({
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const commandChanged = command.trim() !== initialCommand.trim();
 
   const existingModelIds = new Set(models.map((m) => m.id));
   const selectableFetched = fetchedModels?.filter((m) => !existingModelIds.has(m.id)) ?? [];
@@ -81,7 +82,10 @@ export function AcpEditorModal({
     setError(null);
     try {
       await updateProvider(providerId, {
-        configJson: JSON.stringify({ command: trimmedCommand, models }),
+        configJson: JSON.stringify({
+          command: trimmedCommand,
+          models: commandChanged ? [] : models,
+        }),
       });
       toast.success(`${providerName} updated`);
       onSaved();
@@ -97,7 +101,12 @@ export function AcpEditorModal({
       <div class="bg-dark-850 border border-dark-600 rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
         <div class="flex items-center justify-between px-4 py-3 border-b border-dark-700">
           <h3 class="text-sm font-semibold text-gray-100">Edit {providerName}</h3>
-          <button type="button" onClick={onClose} class="p-1 rounded hover:bg-dark-700">
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            class="p-1 rounded hover:bg-dark-700"
+          >
             <svg
               class="w-4 h-4 text-gray-400"
               fill="none"
@@ -129,8 +138,6 @@ export function AcpEditorModal({
             </span>
           </label>
 
-          {error && <p class="text-xs text-red-400">{error}</p>}
-
           <div class="space-y-2">
             <div class="flex items-center justify-between">
               <h4 class="text-xs font-semibold uppercase tracking-wider text-gray-400">Models</h4>
@@ -152,7 +159,12 @@ export function AcpEditorModal({
                     {fetchedModels.length} model{fetchedModels.length === 1 ? '' : 's'} found
                   </span>
                   {selectableFetched.length > 0 && (
-                    <Button size="xs" variant="primary" onClick={addSelected}>
+                    <Button
+                      size="xs"
+                      variant="primary"
+                      onClick={addSelected}
+                      disabled={selectedIds.length === 0}
+                    >
                       Add selected
                     </Button>
                   )}
@@ -172,7 +184,7 @@ export function AcpEditorModal({
                           onChange={() => toggleSelected(m.id)}
                           class="rounded border-dark-600 bg-dark-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
                         />
-                        <span class="font-mono">{m.id}</span>
+                        <span class="font-mono break-all">{m.id}</span>
                         {m.name && m.name !== m.id && <span class="text-gray-500">{m.name}</span>}
                       </label>
                     ))}
@@ -192,7 +204,7 @@ export function AcpEditorModal({
                     key={m.id}
                     class="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-dark-900/60 px-3 py-1.5"
                   >
-                    <span class="flex-1 font-mono text-xs text-gray-200">{m.id}</span>
+                    <span class="flex-1 font-mono text-xs text-gray-200 break-all">{m.id}</span>
                     {m.name && m.name !== m.id && (
                       <span class="text-xs text-gray-500">{m.name}</span>
                     )}
@@ -218,7 +230,8 @@ export function AcpEditorModal({
           </div>
         </div>
 
-        <div class="px-4 py-3 border-t border-dark-700 flex items-center justify-end gap-2">
+        <div class="px-4 py-3 border-t border-dark-700 flex items-center gap-2">
+          {error && <p class="mr-auto text-xs text-red-400">{error}</p>}
           <Button size="sm" variant="ghost" onClick={onClose}>
             Cancel
           </Button>

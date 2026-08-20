@@ -885,6 +885,82 @@ describe('AcpQueryRunner', () => {
     expect(result).toEqual({ outcome: { outcome: 'cancelled' } });
   });
 
+  test('gates terminal creation and wires terminal callbacks', async () => {
+    const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture();
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    const terminal = await constructorOptions[0].onTerminalCreate?.({
+      sessionId: 'acp-session-1',
+      command: process.execPath,
+      args: ['-e', 'process.stdout.write("ok")'],
+    });
+    expect(canUseTool).toHaveBeenCalledWith(
+      'Bash',
+      { command: `${process.execPath} -e 'process.stdout.write("ok")'` },
+      expect.objectContaining({ displayName: 'ACP terminal command' })
+    );
+    expect(terminal?.terminalId).toBeString();
+    const exit = await constructorOptions[0].onTerminalWaitForExit?.({
+      sessionId: 'acp-session-1',
+      terminalId: terminal!.terminalId,
+    });
+    expect(exit?.exitCode).toBe(0);
+    expect(
+      await constructorOptions[0].onTerminalOutput?.({
+        sessionId: 'acp-session-1',
+        terminalId: terminal!.terminalId,
+      })
+    ).toMatchObject({ output: 'ok', exitStatus: { exitCode: 0 } });
+    await constructorOptions[0].onTerminalRelease?.({
+      sessionId: 'acp-session-1',
+      terminalId: terminal!.terminalId,
+    });
+  });
+
+  test('rejects terminal cwd and environment overrides before permission checks', async () => {
+    const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture();
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    await expect(
+      constructorOptions[0].onTerminalCreate?.({
+        sessionId: 'acp-session-1',
+        command: 'git',
+        args: ['status'],
+        cwd: '/tmp',
+      })
+    ).rejects.toThrow('ACP terminal cwd and environment overrides are not supported');
+    await expect(
+      constructorOptions[0].onTerminalCreate?.({
+        sessionId: 'acp-session-1',
+        command: 'git',
+        args: ['status'],
+        env: [{ name: 'PATH', value: '/tmp/bin' }],
+      })
+    ).rejects.toThrow('ACP terminal cwd and environment overrides are not supported');
+    expect(canUseTool).not.toHaveBeenCalled();
+  });
+
+  test('does not create terminals denied by the permission callback', async () => {
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      canUseTool: async () => ({ behavior: 'deny', message: 'Denied' }),
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    await expect(
+      constructorOptions[0].onTerminalCreate?.({
+        sessionId: 'acp-session-1',
+        command: process.execPath,
+        args: ['-e', 'process.exit(0)'],
+      })
+    ).rejects.toThrow('Denied');
+  });
+
   test('persists new ACP session ids', async () => {
     const { runner, ctx, mockClient } = createRunnerFixture();
 
@@ -932,6 +1008,70 @@ describe('AcpQueryRunner', () => {
       acpSessionId: expect.any(String),
     });
     expect(client.sendPrompt.mock.calls[0][0]).toEqual([{ type: 'text', text: 'hello' }]);
+  });
+
+  test('creates a new ACP session when the persisted command identity changes', async () => {
+    const client = createMockClient();
+    client.canLoadSession.mockImplementation(() => true);
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: {
+        acpSessionId: 'persisted-acp-session',
+        metadata: {
+          acpCommandIdentity: JSON.stringify(['old-acp', '--stdio']),
+          acpInstructionsSent: true,
+        },
+      } as Partial<Session>,
+      queryOptions: {
+        cwd: '/tmp/acp-session',
+        mcpServers: {},
+        systemPrompt: { type: 'preset', preset: 'none', append: 'Follow current rules.' },
+      },
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(client.loadSession).not.toHaveBeenCalled();
+    expect(client.resumeSession).not.toHaveBeenCalled();
+    expect(client.createSession).toHaveBeenCalledWith('/tmp/acp-session', []);
+    expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
+      acpSessionId: undefined,
+      metadata: expect.objectContaining({
+        acpCommandIdentity: JSON.stringify(['mock-acp', '--stdio']),
+      }),
+    });
+    expect(ctx.session.metadata.acpInstructionsSent).toBe(true);
+    expect(client.sendPrompt.mock.calls[0][0]).toEqual([
+      {
+        type: 'text',
+        text: 'HyperNeo session instructions:\n\nFollow current rules.',
+      },
+      { type: 'text', text: 'hello' },
+    ]);
+  });
+
+  test('preserves an existing ACP session while adopting a legacy command identity', async () => {
+    const client = createMockClient();
+    client.canLoadSession.mockImplementation(() => true);
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: {
+        acpSessionId: 'persisted-acp-session',
+        metadata: { messageCount: 2 },
+      } as Partial<Session>,
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(client.loadSession).toHaveBeenCalledWith(
+      'persisted-acp-session',
+      '/tmp/acp-session',
+      []
+    );
+    expect(client.createSession).not.toHaveBeenCalled();
+    expect(ctx.session.metadata.acpCommandIdentity).toBe(JSON.stringify(['mock-acp', '--stdio']));
   });
 
   test('falls back to resume when ACP session load fails', async () => {
