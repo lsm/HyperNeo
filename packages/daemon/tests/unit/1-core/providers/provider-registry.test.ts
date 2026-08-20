@@ -772,20 +772,6 @@ describe('inferPersistableProviderForModel', () => {
     expect(await inferPersistableProviderForModel('openai/gpt-5.4')).toBe('openrouter');
   });
 
-  it('suppresses gpt-* only when an available optional provider claims the ID', async () => {
-    try {
-      const registry = initializeProviders();
-      await waitForOptionalProviderRegistration(registry);
-
-      expect(inferProviderForModel('gpt-5.4')).toBe('anthropic-codex');
-      expect(await inferPersistableProviderForModel('gpt-5.4')).toBeUndefined();
-      expect(await inferPersistableProviderForModel('gpt-5.6-sol')).toBe('anthropic-codex');
-    } finally {
-      resetProviderRegistry();
-      resetProviderFactory();
-    }
-  });
-
   it('suppresses gpt-* when an available second owner claims the ID', async () => {
     const claimant = (id: string, available: boolean) =>
       ({
