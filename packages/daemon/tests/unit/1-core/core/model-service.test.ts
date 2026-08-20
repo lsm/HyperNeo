@@ -1239,9 +1239,14 @@ describe('Model Service', () => {
         name: 'Provider Recovered Model',
       };
       let failRefresh = true;
+      let getModelsCalls = 0;
       registry.register({
         id: 'failed-provider',
-        getModels: async () => (failRefresh ? [fallbackModel] : [recoveredModel]),
+        getModels: async () => {
+          getModelsCalls += 1;
+          return failRefresh ? [fallbackModel] : [recoveredModel];
+        },
+        getCachedModels: () => [fallbackModel],
         refreshModels: async () => {
           if (failRefresh) throw new Error('offline');
           return [recoveredModel];
@@ -1253,6 +1258,7 @@ describe('Model Service', () => {
       await refreshModels();
 
       expect(getModelsCache().get('global')).toContainEqual(fallbackModel);
+      expect(getModelsCalls).toBe(0);
 
       failRefresh = false;
       getAvailableModels('global');

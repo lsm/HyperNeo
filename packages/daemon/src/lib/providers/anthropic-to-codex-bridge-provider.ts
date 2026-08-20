@@ -1003,12 +1003,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
     if (response.status === 401 && auth.source === 'chatgpt_oauth') {
       await response.body?.cancel().catch(() => undefined);
-      const refreshed = await this.refreshStoredOauthCredentials();
-      const refreshedAuth = refreshed ? this.toBridgeAuth(refreshed) : undefined;
-      if (refreshedAuth?.source === 'chatgpt_oauth') {
-        this.updateBridgeAuth(auth, refreshedAuth);
-        auth = refreshedAuth;
-        scope = this.authScope(auth);
+      const currentAuth = await this.getBridgeAuth();
+      const currentScope = currentAuth ? this.authScope(currentAuth) : undefined;
+      if (currentAuth && currentScope && !this.sameScope(scope, currentScope)) {
+        auth = currentAuth;
+        scope = currentScope;
         this.ensureCatalogForScope(scope);
         try {
           response = await this.requestModelCatalog(auth);
@@ -1019,6 +1018,25 @@ export class AnthropicToCodexBridgeProvider implements Provider {
             scope
           );
           return;
+        }
+      } else {
+        const refreshed = await this.refreshStoredOauthCredentials();
+        const refreshedAuth = refreshed ? this.toBridgeAuth(refreshed) : undefined;
+        if (refreshedAuth?.source === 'chatgpt_oauth') {
+          this.updateBridgeAuth(auth, refreshedAuth);
+          auth = refreshedAuth;
+          scope = this.authScope(auth);
+          this.ensureCatalogForScope(scope);
+          try {
+            response = await this.requestModelCatalog(auth);
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            this.setDiscoveryError(
+              `AnthropicToCodexBridgeProvider: model discovery retry failed: ${detail}`,
+              scope
+            );
+            return;
+          }
         }
       }
     }
@@ -1098,6 +1116,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return this.loadModels(true);
   }
 
+  getCachedModels(): ModelInfo[] {
+    return this.catalogEntries
+      .filter((entry) => entry.visibility === 'list')
+      .map((entry) => ({ ...entry.info }));
+  }
+
   private async loadModels(strict: boolean): Promise<ModelInfo[]> {
     const auth = await this.getBridgeAuth();
     if (!auth) return [];
@@ -1132,9 +1156,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       }
     }
     if (strict && this.discoveryError) throw this.discoveryError;
-    return this.catalogEntries
-      .filter((entry) => entry.visibility === 'list')
-      .map((entry) => ({ ...entry.info }));
+    return this.getCachedModels();
   }
 
   async healthCheck(): Promise<void> {

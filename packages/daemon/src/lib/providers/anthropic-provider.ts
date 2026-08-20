@@ -148,6 +148,10 @@ export class AnthropicProvider implements Provider {
     return models;
   }
 
+  getCachedModels(): ModelInfo[] {
+    return this.modelCache ?? [];
+  }
+
   private async loadModelsFromSdk(timeout: number = 10000): Promise<ModelInfo[]> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const env = this.buildSdkConfig().envVars;

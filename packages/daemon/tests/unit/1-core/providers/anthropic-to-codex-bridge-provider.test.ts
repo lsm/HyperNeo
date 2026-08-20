@@ -1489,6 +1489,63 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(provider.ownsModel('codex-5.6')).toBe(true);
     });
 
+    it('retries stale OAuth 401s with replacement credentials without refreshing them', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const oldAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-old' },
+      });
+      const replacementAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-new' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: oldAccess,
+        refresh: 'old-refresh-token',
+        accountId: 'acct-old',
+      });
+      let resolveOld: ((response: Response) => void) | undefined;
+      const oldResponse = new Promise<Response>((resolve) => {
+        resolveOld = resolve;
+      });
+      const fetchImpl = mock()
+        .mockImplementationOnce(async () => oldResponse)
+        .mockImplementationOnce(
+          async () =>
+            new Response(JSON.stringify({ data: [{ id: 'gpt-new-account' }] }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+        ) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch');
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+        const oldModels = provider.getModels();
+        await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+        provider.setCredentials({
+          type: 'oauth',
+          accessToken: replacementAccess,
+          refreshToken: 'new-refresh-token',
+          raw: { accountId: 'acct-new' },
+        });
+        resolveOld?.(new Response('unauthorized', { status: 401 }));
+
+        await expect(oldModels).resolves.toEqual([
+          expect.objectContaining({ id: 'gpt-new-account' }),
+        ]);
+        expect(refreshFetch).not.toHaveBeenCalled();
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+        const [, retryInit] = (fetchImpl as ReturnType<typeof mock>).mock.calls[1] as [
+          URL,
+          RequestInit,
+        ];
+        const headers = new Headers(retryInit.headers);
+        expect(headers.get('authorization')).toBe(`Bearer ${replacementAccess}`);
+        expect(headers.get('ChatGPT-Account-ID')).toBe('acct-new');
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
     it('ignores discovery failures from a replaced credential scope', async () => {
       let rejectOld: ((error: Error) => void) | undefined;
       const oldRequest = new Promise<Response>((_resolve, reject) => {

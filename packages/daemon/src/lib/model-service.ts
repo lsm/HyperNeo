@@ -226,7 +226,7 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
       try {
         return { available, models: await provider.refreshModels(), failed: false };
       } catch {
-        return { available, models: await provider.getModels(), failed: true };
+        return { available, models: provider.getCachedModels?.() ?? [], failed: true };
       }
     })
   );

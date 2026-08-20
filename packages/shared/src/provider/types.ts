@@ -72,6 +72,8 @@ export interface Provider {
 
   refreshModels?(): Promise<ModelInfo[]>;
 
+  getCachedModels?(): ModelInfo[] | null;
+
   healthCheck?(): Promise<void>;
 
   ownsModel(modelId: string): boolean;
