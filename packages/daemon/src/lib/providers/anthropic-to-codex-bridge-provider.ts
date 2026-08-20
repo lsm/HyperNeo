@@ -1014,25 +1014,31 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     logger.warn(message);
   }
 
+  private async refreshExpiringOauthAuth(
+    initialAuth: OpenAIResponsesBridgeAuth
+  ): Promise<OpenAIResponsesBridgeAuth> {
+    if (initialAuth.source !== 'chatgpt_oauth') return initialAuth;
+    const credentials = await this.loadCredentials();
+    if (!credentials?.expires || Date.now() < credentials.expires - 5 * 60 * 1000) {
+      return initialAuth;
+    }
+    const refreshed = await this.refreshStoredOauthCredentials();
+    const refreshedAuth = refreshed ? this.toBridgeAuth(refreshed) : undefined;
+    if (refreshedAuth) {
+      this.updateBridgeAuth(initialAuth, refreshedAuth);
+      return refreshedAuth;
+    }
+    if (!this.resolveBridgeAuth()) {
+      throw new Error('Codex credentials unavailable after OAuth refresh');
+    }
+    return initialAuth;
+  }
+
   private async fetchModelCatalog(
     initialAuth: OpenAIResponsesBridgeAuth,
     revalidate: boolean
   ): Promise<void> {
     let auth = initialAuth;
-    if (auth.source === 'chatgpt_oauth') {
-      const credentials = await this.loadCredentials();
-      if (credentials?.expires && Date.now() >= credentials.expires - 5 * 60 * 1000) {
-        const refreshed = await this.refreshStoredOauthCredentials();
-        const refreshedAuth = refreshed ? this.toBridgeAuth(refreshed) : undefined;
-        if (refreshedAuth) {
-          this.updateBridgeAuth(auth, refreshedAuth);
-          auth = refreshedAuth;
-          this.ensureCatalogForScope(this.authScope(auth));
-        } else if (!this.resolveBridgeAuth()) {
-          throw new Error('Codex credentials unavailable after OAuth refresh');
-        }
-      }
-    }
     let scope = this.authScope(auth);
     const matchingCache =
       revalidate && this.modelCache && this.cacheMatchesScope(this.modelCache, scope)
@@ -1182,8 +1188,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   private async loadModels(strict: boolean): Promise<ModelInfo[]> {
-    const auth = await this.getBridgeAuth();
-    if (!auth) return [];
+    const initialAuth = await this.getBridgeAuth();
+    if (!initialAuth) return [];
+    const auth = await this.refreshExpiringOauthAuth(initialAuth);
     const scope = this.authScope(auth);
     this.ensureCatalogForScope(scope);
     if (

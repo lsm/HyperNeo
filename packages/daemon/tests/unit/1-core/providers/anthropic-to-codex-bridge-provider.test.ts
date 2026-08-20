@@ -2422,6 +2422,65 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('joins concurrent discovery after proactive OAuth scope changes', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const staleToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-old' },
+      });
+      const refreshedToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-new' },
+        jti: 'refreshed-scope',
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: staleToken,
+        refresh: 'refresh-token',
+        accountId: 'acct-old',
+        expires: Date.now() + 60_000,
+      });
+      let resolveCatalog: ((response: Response) => void) | undefined;
+      const catalogResponse = new Promise<Response>((resolve) => {
+        resolveCatalog = resolve;
+      });
+      const catalogFetch = mock(async () => catalogResponse) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            access_token: refreshedToken,
+            refresh_token: 'next-refresh-token',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, catalogFetch);
+
+        const firstModels = provider.getModels();
+        await vi.waitFor(() => expect(refreshFetch).toHaveBeenCalledTimes(1));
+        const secondModels = provider.getModels();
+        await vi.waitFor(() => expect(catalogFetch).toHaveBeenCalledTimes(1));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(catalogFetch).toHaveBeenCalledTimes(1);
+        resolveCatalog?.(
+          new Response(JSON.stringify({ data: [{ id: 'gpt-refreshed-scope' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        );
+
+        await expect(Promise.all([firstModels, secondModels])).resolves.toEqual([
+          [expect.objectContaining({ id: 'gpt-refreshed-scope' })],
+          [expect.objectContaining({ id: 'gpt-refreshed-scope' })],
+        ]);
+        expect(refreshFetch).toHaveBeenCalledTimes(1);
+        expect(catalogFetch).toHaveBeenCalledTimes(1);
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
     it('switches to the refreshed OAuth scope before failed discovery returns', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const staleToken = makeJwt({
