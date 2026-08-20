@@ -4825,6 +4825,82 @@ describe('openai-responses-bridge server', () => {
     expect(thirdInput.some((item) => item.type === 'reasoning')).toBe(false);
   });
 
+  it.skipIf(!isBun)('excludes cached reasoning from non-reasoning model token counts', async () => {
+    let requestCount = 0;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models: [
+        { ...models[0], supported_reasoning_efforts: ['low', 'medium', 'high'] },
+        {
+          ...models[0],
+          id: 'gpt-no-reasoning',
+          display_name: 'GPT No Reasoning',
+          supported_reasoning_efforts: [],
+        },
+      ],
+      fetchImpl: async () => {
+        requestCount++;
+        return sse([
+          {
+            event: 'response.output_text.delta',
+            data: { type: 'response.output_text.delta', delta: `Response ${requestCount}.` },
+          },
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: {
+                id: `resp_${requestCount}`,
+                usage: { input_tokens: 5, output_tokens: 1 },
+                output:
+                  requestCount === 1
+                    ? [{ type: 'reasoning', encrypted_content: 'a'.repeat(100) }]
+                    : [],
+              },
+            },
+          },
+        ]);
+      },
+    });
+
+    const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'First.' }],
+        thinking: { type: 'enabled', budget_tokens: 16000 },
+      }),
+    });
+    await readSSEEvents(first.body);
+
+    const nextBody = {
+      model: 'gpt-no-reasoning',
+      max_tokens: 128,
+      messages: [
+        { role: 'assistant', content: 'Response 1.' },
+        { role: 'user', content: 'Second.' },
+      ],
+    };
+    const countResponse = await fetch(`http://127.0.0.1:${server.port}/v1/messages/count_tokens`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(nextBody),
+    });
+    const count = (await countResponse.json()) as { input_tokens: number };
+    const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(nextBody),
+    });
+    const events = await readSSEEvents(second.body);
+    const messageStart = messageStartEvent(events);
+    const message = messageStart?.message as { usage?: { input_tokens?: number } } | undefined;
+
+    expect(count.input_tokens).toBe(message?.usage?.input_tokens);
+  });
+
   it.skipIf(!isBun)('reports reasoning_tokens in message_delta usage', async () => {
     server = createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },

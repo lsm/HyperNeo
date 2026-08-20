@@ -1111,7 +1111,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       expect(models.map((model) => model.id)).toEqual(['gpt-5.4', 'o3']);
       expect(provider.getModelThinkingMode('gpt-5.4')).toBe('granular');
-      expect(provider.getModelThinkingMode('o3')).toBe('off');
+      expect(provider.getModelThinkingMode('o3')).toBe('granular');
     });
 
     it('fetches rich models from the ChatGPT Codex backend for OAuth tokens', async () => {
@@ -1263,12 +1263,105 @@ describe('AnthropicToCodexBridgeProvider', () => {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
           })
-        ) as unknown as typeof fetch;
+        )
+        .mockResolvedValueOnce(new Response(null, { status: 200 })) as unknown as typeof fetch;
       provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
 
       await provider.getModels();
 
       await expect(provider.healthCheck()).resolves.toBeUndefined();
+    });
+
+    it('probes API-key Responses access after successful discovery', async () => {
+      const fetchImpl = mock()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data: [{ id: 'o3' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        )
+        .mockResolvedValueOnce(new Response(null, { status: 200 })) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      await expect(provider.healthCheck()).resolves.toBeUndefined();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      const [url, init] = (fetchImpl.mock.calls[1] as [URL, RequestInit]) ?? [];
+      expect(String(url)).toBe('https://api.openai.com/v1/responses');
+      expect(init.method).toBe('POST');
+      expect(new Headers(init.headers).get('authorization')).toBe('Bearer sk-env-key');
+      expect(JSON.parse(String(init.body))).toEqual({
+        model: 'o3',
+        input: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: '.' }],
+          },
+        ],
+        max_output_tokens: 1,
+      });
+    });
+
+    it('reports failed Responses access after successful discovery', async () => {
+      const fetchImpl = mock()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data: [{ id: 'gpt-4.1' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        )
+        .mockResolvedValueOnce(
+          new Response('forbidden', { status: 403 })
+        ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      await expect(provider.healthCheck()).rejects.toThrow(
+        'Codex Responses probe failed (HTTP 403)'
+      );
+      expect(provider.ownsModel('gpt-4.1')).toBe(true);
+    });
+
+    it('filters Chat Completions-only models from API-key discovery', async () => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [
+                { id: 'gpt-3.5-turbo-0125' },
+                { id: 'gpt-4' },
+                { id: 'gpt-4-turbo' },
+                { id: 'gpt-4o' },
+                { id: 'gpt-4.1' },
+                { id: 'o3' },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(['o3', 'gpt-4.1', 'gpt-4o']);
+    });
+
+    it('selects deterministic capability-aware API-key tier fallbacks', async () => {
+      const modelIds = ['gpt-4.1-mini', 'gpt-4o', 'o3', 'gpt-4.1'];
+      const fetchImpl = mock(
+        async () =>
+          new Response(JSON.stringify({ data: modelIds.map((id) => ({ id })) }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      await provider.getModels();
+
+      expect(provider.getModelForTier('haiku')).toBe('gpt-4.1-mini');
+      expect(provider.getModelForTier('opus')).toBe('o3');
+      expect(provider.getModelForTier('default')).toBe('gpt-4.1');
     });
 
     it('caches a successful model list so repeated calls do not refetch', async () => {
@@ -1373,7 +1466,29 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(models.map((model) => model.id)).toEqual(['gpt-valid']);
     });
 
-    it('rejects an oversized remote catalog and retains bundled models', async () => {
+    it('caps usable remote models after filtering the raw catalog', async () => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [
+                ...Array.from({ length: 501 }, (_, index) => ({
+                  id: `text-embedding-catalog-${index}`,
+                })),
+                { id: 'o3' },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(['o3']);
+    });
+
+    it('rejects an oversized usable remote catalog and retains bundled models', async () => {
       const fetchImpl = mock(
         async () =>
           new Response(
@@ -1389,7 +1504,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       expect(models.map((model) => model.id)).toContain('gpt-5.6-sol');
       expect(models.map((model) => model.id)).not.toContain('gpt-catalog-0');
-      await expect(provider.healthCheck()).rejects.toThrow(
+      await expect(provider.refreshModels()).rejects.toThrow(
         'model discovery returned no usable models'
       );
     });
@@ -2969,7 +3084,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
 
-    it('does not send reasoning for a discovered non-reasoning model', async () => {
+    it('infers reasoning for a discovered o-series model', async () => {
       const captured = { body: undefined as Record<string, unknown> | undefined };
       const fetchSpy = mockUpstreamFetch(captured);
       const catalogFetch = mock(
@@ -2996,7 +3111,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       });
 
       expect(resp.status).toBe(200);
-      expect(captured.body?.reasoning).toBeUndefined();
+      expect(captured.body?.reasoning).toEqual({ effort: 'high', summary: 'auto' });
 
       fetchSpy.mockRestore();
       p.stopAllBridgeServers();

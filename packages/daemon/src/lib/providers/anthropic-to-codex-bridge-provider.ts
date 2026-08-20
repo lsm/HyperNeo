@@ -834,40 +834,62 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     };
   }
 
+  private openAIBaseModelId(modelId: string): string | undefined {
+    return modelId.startsWith('ft:') ? modelId.split(':')[1] : modelId;
+  }
+
   private isOpenAIResponsesModel(modelId: string): boolean {
-    const baseModelId = modelId.startsWith('ft:') ? modelId.split(':')[1] : modelId;
+    const baseModelId = this.openAIBaseModelId(modelId);
     if (!baseModelId || !/^(?:gpt-|o\d|codex-)/.test(baseModelId)) return false;
+    if (/^(?:gpt-3\.5-turbo|gpt-4(?:-|$))/.test(baseModelId)) return false;
     return !/(?:audio|embedding|image|instruct|moderation|realtime|search|transcri|tts|whisper)/i.test(
       baseModelId
     );
   }
 
-  private parseOpenAIRemoteModel(value: unknown, priority: number): CodexRemoteModel | undefined {
+  private openAIReasoningEfforts(modelId: string): OpenAIResponsesReasoningEffort[] | undefined {
+    if (resolveCodexBridgeModelId(modelId)) return this.bundledReasoningEfforts(modelId);
+    const baseModelId = this.openAIBaseModelId(modelId);
+    return baseModelId && /^o(?:1|3|4)(?:-|$)/.test(baseModelId)
+      ? ['low', 'medium', 'high']
+      : undefined;
+  }
+
+  private openAIModelPriority(modelId: string): number {
+    const knownOrder = ANTHROPIC_CODEX_MODELS.findIndex(({ id }) => id === modelId);
+    if (knownOrder >= 0) return knownOrder;
+    const baseModelId = this.openAIBaseModelId(modelId) ?? modelId;
+    if (this.openAIReasoningEfforts(modelId)?.length) return 100;
+    if (/(?:^|[-.])(?:mini|nano)(?:$|[-.])/.test(baseModelId)) return 200;
+    return 150;
+  }
+
+  private parseOpenAIRemoteModel(value: unknown): CodexRemoteModel | undefined {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
     const record = value as Record<string, unknown>;
-    if (!this.isModelId(record.id)) return undefined;
-    const supportedInApi = this.isOpenAIResponsesModel(record.id);
+    if (!this.isModelId(record.id) || !this.isOpenAIResponsesModel(record.id)) return undefined;
+    const supportedReasoningEfforts = this.openAIReasoningEfforts(record.id);
     return {
       slug: record.id,
       displayName: record.id,
       visibility: 'list',
-      supportedInApi,
-      ...(resolveCodexBridgeModelId(record.id)
-        ? { supportedReasoningEfforts: this.bundledReasoningEfforts(record.id) }
-        : {}),
-      priority,
+      supportedInApi: true,
+      ...(supportedReasoningEfforts ? { supportedReasoningEfforts } : {}),
+      priority: this.openAIModelPriority(record.id),
     };
   }
 
   private parseRemoteModelList(
     values: unknown[],
-    parse: (value: unknown, index: number) => CodexRemoteModel | undefined
+    parse: (value: unknown) => CodexRemoteModel | undefined
   ): CodexRemoteModel[] | undefined {
-    if (values.length > CODEX_MODEL_CATALOG_MAX_LENGTH) return undefined;
-    const models = values.flatMap((value, index) => {
-      const model = parse(value, index);
-      return model ? [model] : [];
-    });
+    const models: CodexRemoteModel[] = [];
+    for (const value of values) {
+      const model = parse(value);
+      if (!model) continue;
+      models.push(model);
+      if (models.length > CODEX_MODEL_CATALOG_MAX_LENGTH) return undefined;
+    }
     return models.length > 0 ? models : undefined;
   }
 
@@ -878,9 +900,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       return this.parseRemoteModelList(record.models, (model) => this.parseCodexRemoteModel(model));
     }
     if (Array.isArray(record.data)) {
-      return this.parseRemoteModelList(record.data, (model, priority) =>
-        this.parseOpenAIRemoteModel(model, priority)
-      );
+      return this.parseRemoteModelList(record.data, (model) => this.parseOpenAIRemoteModel(model));
     }
     return undefined;
   }
@@ -1180,9 +1200,43 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return this.getCachedModels();
   }
 
+  private async probeResponses(auth: OpenAIResponsesBridgeAuth, modelId: string): Promise<void> {
+    const baseUrl =
+      auth.source === 'chatgpt_oauth'
+        ? 'https://chatgpt.com/backend-api/codex'
+        : 'https://api.openai.com/v1';
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      authorization: `Bearer ${auth.apiKey}`,
+    };
+    if (auth.source === 'chatgpt_oauth') {
+      if (auth.accountId) headers['ChatGPT-Account-ID'] = auth.accountId;
+      if (auth.isFedrampAccount) headers['X-OpenAI-Fedramp'] = 'true';
+    }
+    const body: Record<string, unknown> = {
+      model: modelId,
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: '.' }] }],
+      ...(auth.source === 'chatgpt_oauth'
+        ? { instructions: 'You are a concise assistant.', store: false, stream: true }
+        : { max_output_tokens: 1 }),
+    };
+    const response = await this.fetchImpl(`${baseUrl}/responses`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(CODEX_MODEL_FETCH_TIMEOUT_MS),
+    });
+    await response.body?.cancel().catch(() => undefined);
+    if (!response.ok) throw new Error(`Codex Responses probe failed (HTTP ${response.status})`);
+  }
+
   async healthCheck(): Promise<void> {
     this.discoveryError = undefined;
     await this.refreshModels();
+    const auth = await this.getBridgeAuth();
+    const modelId = this.getModelForTier('default');
+    if (!auth || !modelId) throw new Error('Codex credentials or models unavailable');
+    await this.probeResponses(auth, modelId);
   }
 
   ownsModel(modelId: string): boolean {
@@ -1212,13 +1266,21 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       default: 'gpt-5.6-terra',
     };
     const preferredId = preferred[tier];
-    if (
-      this.catalogEntries.some(
-        ({ info, visibility }) => info.id === preferredId && visibility === 'list'
-      )
-    )
-      return preferredId;
-    return this.catalogEntries.find(({ visibility }) => visibility === 'list')?.info.id;
+    const listed = this.catalogEntries.filter(({ visibility }) => visibility === 'list');
+    if (listed.some(({ info }) => info.id === preferredId)) return preferredId;
+    const isSmall = ({ info }: CodexCatalogEntry) =>
+      /(?:^|[-.])(?:mini|nano)(?:$|[-.])/.test(info.id);
+    const isReasoning = ({ supportedReasoningEfforts }: CodexCatalogEntry) =>
+      Boolean(supportedReasoningEfforts?.length);
+    const candidates =
+      tier === 'haiku'
+        ? listed.filter(isSmall)
+        : tier === 'opus'
+          ? listed.filter((entry) => isReasoning(entry) && !isSmall(entry))
+          : listed.filter((entry) => !isSmall(entry));
+    return (candidates.length > 0 ? candidates : listed)
+      .map(({ info }) => info.id)
+      .sort((left, right) => left.localeCompare(right))[0];
   }
 
   buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {

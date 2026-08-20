@@ -1476,7 +1476,16 @@ export function createOpenAIResponsesBridgeServer(
       if (route.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
         try {
           const body = (await req.json()) as AnthropicRequest;
-          const storedReasoning = sessionReasoningItems.get(route.sessionId)?.items;
+          let model = resolveModelId(body.model, modelAliases);
+          const sessionModelOverride = sessionModelAliasOverrides.get(
+            sessionModelKey(route.sessionId, body.model)
+          );
+          if (sessionModelOverride) model = sessionModelOverride;
+          const supportedReasoningEfforts = reasoningEffortsByModelId.get(model);
+          const storedReasoning =
+            supportedReasoningEfforts?.length === 0
+              ? undefined
+              : sessionReasoningItems.get(route.sessionId)?.items;
           let continuation = resolveContinuation(route.sessionId, body.messages, continuations);
           if (storedReasoning && storedReasoning.length > 0) {
             continuation = undefined;
