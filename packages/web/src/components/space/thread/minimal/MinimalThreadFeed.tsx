@@ -275,6 +275,11 @@ function isFoldedSystemStatusRow(
   return consumedStatusRowIds.has(String(row.id));
 }
 
+function isHiddenStandaloneStatusRow(row: ParsedThreadRow): boolean {
+  const parsed = parseSystemStatusRow(row);
+  return !!parsed && !parsed.isClear && parsed.status !== 'compacting';
+}
+
 function rosterEntriesFromSummary(
   summary: ActiveTurnSummary | undefined,
   maxEntries: number
@@ -894,6 +899,7 @@ function buildOperationalSystemTurn(
     const statusValue = (message as { status?: unknown }).status;
     if (statusValue === null) return null;
     if (consumedStatusRowIds && consumedStatusRowIds.has(String(row.id))) return null;
+    if (statusValue !== 'compacting') return null;
   }
   if (subtype === 'hook_started' || subtype === 'hook_progress' || subtype === 'hook_response') {
     return null;
@@ -1214,7 +1220,7 @@ function buildFeedTurns(
     };
     for (const row of block.rows) {
       if (isFoldedSystemStatusRow(row, consumedStatusRowIds)) continue;
-      if (parseSystemStatusRow(row)?.isClear) continue;
+      if (parseSystemStatusRow(row)?.isClear || isHiddenStandaloneStatusRow(row)) continue;
       if (buildCompactBoundaryTurn(row) || isUserRow(row)) {
         flush();
         continue;
@@ -1305,7 +1311,7 @@ function buildFeedTurns(
 
     for (const row of block.rows) {
       if (isFoldedSystemStatusRow(row, consumedStatusRowIds)) continue;
-      if (parseSystemStatusRow(row)?.isClear) continue;
+      if (parseSystemStatusRow(row)?.isClear || isHiddenStandaloneStatusRow(row)) continue;
       const compactBoundaryTurn = buildCompactBoundaryTurn(row);
       if (compactBoundaryTurn) {
         flushAgent();

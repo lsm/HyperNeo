@@ -3820,7 +3820,7 @@ describe('MinimalThreadFeed', () => {
     expect(statusEntries.some((el) => el.dataset.rosterKind === 'status')).toBe(false);
   });
 
-  it('does not consume a status row when there is no fold target', () => {
+  it('drops a requesting status row when there is no fold target', () => {
     const t = Date.now();
     const rows = [
       makeRow({
@@ -3834,10 +3834,60 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
 
+    expect(screen.queryByTestId('minimal-thread-system')).toBeNull();
+    expect(screen.queryByTestId('minimal-thread-roster-entry')).toBeNull();
+  });
+
+  it('does not count an unmatched requesting status as part of a completed turn', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t,
+        message: assistantText('a1', 'done'),
+      }),
+      makeRow({
+        id: 's1',
+        label: 'Coder Agent',
+        createdAt: t + 10_000,
+        messageType: 'system',
+        message: statusMessage('s1', 'requesting', 'other-session'),
+        sessionId: 'other-session',
+      }),
+      makeRow({
+        id: 'r1',
+        label: 'Coder Agent',
+        createdAt: t + 20_000,
+        message: resultMessage('r1', 'done'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} />);
+
+    const turn = screen.getByTestId('minimal-thread-turn');
+    expect(turn.textContent).toContain('2 messages');
+    expect(turn.textContent).not.toContain('3 messages');
+    expect(screen.queryByTestId('minimal-thread-system')).toBeNull();
+  });
+
+  it('still renders a standalone compacting status row when there is no fold target', () => {
+    const t = Date.now();
+    const rows = [
+      makeRow({
+        id: 's1',
+        label: 'Coder Agent',
+        createdAt: t,
+        messageType: 'system',
+        message: statusMessage('s1', 'compacting'),
+      }),
+    ];
+
+    render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
+
     const systemRows = screen.getAllByTestId('minimal-thread-system');
     expect(systemRows).toHaveLength(1);
-    expect(systemRows[0].textContent).toContain('Requesting');
-    expect(screen.queryByTestId('minimal-thread-status-pill')).toBeNull();
+    expect(systemRows[0].textContent).toContain('Compacting');
   });
 
   it('does not fold a status row from a different session onto the active rail', () => {
@@ -3862,9 +3912,7 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
 
-    const systemRows = screen.getAllByTestId('minimal-thread-system');
-    expect(systemRows).toHaveLength(1);
-    expect(systemRows[0].textContent).toContain('Requesting');
+    expect(screen.queryByTestId('minimal-thread-system')).toBeNull();
 
     const pill = screen.getByTestId('minimal-thread-status-pill');
     expect(pill.dataset.status).toBe('Running…');
