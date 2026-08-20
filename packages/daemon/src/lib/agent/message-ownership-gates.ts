@@ -60,7 +60,7 @@ export function planFlushDelivery(args: {
   if (deliver.length === 0) return { action: 'noop' };
 
   const allBatchable = args.messages
-    .filter((message) => message.isUserMessage)
+    .filter((message) => message.isUserMessage && !args.pendingInMemoryUuids.has(message.uuid))
     .every((message) => message.flattenedText !== null && !message.flattenedText.startsWith('/'));
   if (
     deliver.length >= 2 &&

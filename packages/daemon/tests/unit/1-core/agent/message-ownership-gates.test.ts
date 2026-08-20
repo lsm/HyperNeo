@@ -170,7 +170,7 @@ describe('planFlushDelivery', () => {
     });
   });
 
-  test('an owned slash command still forces per-message delivery for the rest', () => {
+  test('a job-queue-owned slash command still forces per-message delivery for the rest', () => {
     const result = planFlushDelivery({
       messages: [
         makeFlushMessage({ uuid: 'owned-slash', flattenedText: '/compact' }),
@@ -185,6 +185,32 @@ describe('planFlushDelivery', () => {
       deliver: ['a', 'b'],
       skip: [{ uuid: 'owned-slash', ownership: 'job_queue' }],
     });
+  });
+
+  test('a memory-queue-owned slash command does not break batching of the rest', () => {
+    const result = planFlushDelivery({
+      messages: [
+        makeFlushMessage({ uuid: 'owned-slash', flattenedText: '/compact' }),
+        makeFlushMessage({ uuid: 'a' }),
+        makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
+      ],
+      activeInJobQueue: new Set(),
+      pendingInMemoryUuids: new Set(['owned-slash']),
+    });
+    expect(result).toEqual({ action: 'batch', uuids: ['a', 'b'] });
+  });
+
+  test('a memory-queue-owned unflattenable message does not break batching of the rest', () => {
+    const result = planFlushDelivery({
+      messages: [
+        makeFlushMessage({ uuid: 'owned-image', flattenedText: null }),
+        makeFlushMessage({ uuid: 'a' }),
+        makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
+      ],
+      activeInJobQueue: new Set(),
+      pendingInMemoryUuids: new Set(['owned-image']),
+    });
+    expect(result).toEqual({ action: 'batch', uuids: ['a', 'b'] });
   });
 
   test('mixed content forces per-message delivery and delivers the unflattenable message', () => {
