@@ -27,6 +27,7 @@ function makeManager(opts: {
   hasActiveDeliveryJob?: boolean;
   deliveryContent?: { sendStatus: string };
   parentTaskStatus?: string;
+  reopenDbId?: string;
 }): {
   manager: TaskAgentManager;
   session: Record<string, ReturnType<typeof mock>>;
@@ -43,8 +44,9 @@ function makeManager(opts: {
       return { id: 'job-1' };
     }
   );
-  const reopenDeliveryByUuid = mock(() => null);
+  const reopenDeliveryByUuid = mock(() => opts.reopenDbId ?? null);
   const markDeliveryDeferredByUuid = mock(() => null);
+  const publishStatusChanged = mock(async () => {});
 
   function makeSession(o: MockSessionOptions) {
     return {
@@ -86,7 +88,7 @@ function makeManager(opts: {
     },
     internalEventBus: {
       subscribe: mock(() => () => {}),
-      publish: mock(() => {}),
+      publish: publishStatusChanged,
     },
     nodeExecutionRepo: {
       getByAgentSessionId: mock(() => ({
@@ -126,6 +128,7 @@ function makeManager(opts: {
       jobQueueEnqueue,
       reopenDeliveryByUuid,
       markDeliveryDeferredByUuid,
+      publishStatusChanged,
     },
   };
 }
@@ -607,5 +610,67 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(status).toBe('deferred');
     expect(origin).toBeUndefined();
     expect(session.enqueueMock).not.toHaveBeenCalled();
+  });
+
+  it('a deferred injection into a busy session publishes messages.statusChanged', async () => {
+    const { manager, session } = makeManager({});
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'processing' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      'queue for next turn',
+      false,
+      undefined,
+      'defer'
+    );
+
+    expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
+      sessionId: SESSION_ID,
+      messageIds: ['db-id'],
+      status: 'deferred',
+    });
+  });
+
+  it('a fresh enqueued injection publishes messages.statusChanged', async () => {
+    const { manager, session } = makeManager({});
+    indexSession(manager, liveSession(session));
+
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
+      sessionId: SESSION_ID,
+      messageIds: ['db-id'],
+      status: 'enqueued',
+    });
+  });
+
+  it('a failed-row retry publishes reopen and deferred status changes', async () => {
+    const { manager, session } = makeManager({
+      deliveryContent: { sendStatus: 'failed' },
+      reopenDbId: 'db-id',
+    });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'rate_limit_cooldown' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    const statuses = session.publishStatusChanged.mock.calls
+      .filter(([event]) => event === 'messages.statusChanged')
+      .map(([, payload]) => (payload as { status: string }).status);
+    expect(statuses).toContain('enqueued');
+    expect(statuses).toContain('deferred');
   });
 });
