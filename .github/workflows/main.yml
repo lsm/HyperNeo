@@ -94,6 +94,9 @@ jobs:
       - name: Test space task RPC handler gate
         run: bun run test:space-task-handler-gate
 
+      - name: Test strip-comments argument handling
+        run: bun run test:strip-comments
+
       - name: Run linter
         id: lint
         run: bun run lint
