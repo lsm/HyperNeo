@@ -37,6 +37,7 @@ export function planFlushDelivery(args: {
   messages: FlushMessage[];
   activeInJobQueue: ReadonlySet<string>;
   pendingInMemoryUuids: ReadonlySet<string>;
+  activeTurnInJobQueue: boolean;
 }): FlushDeliveryPlan {
   const deliver: string[] = [];
   const deliverableTexts: string[] = [];
@@ -60,17 +61,24 @@ export function planFlushDelivery(args: {
   if (deliver.length === 0) return { action: 'noop' };
 
   const allBatchable = args.messages
-    .filter((message) => message.isUserMessage && !args.pendingInMemoryUuids.has(message.uuid))
+    .filter(
+      (message) =>
+        message.isUserMessage &&
+        (!args.pendingInMemoryUuids.has(message.uuid) || args.activeInJobQueue.has(message.uuid))
+    )
     .every(
       (message) =>
         message.flattenedText !== null &&
         !message.flattenedText.startsWith('/') &&
         !args.activeInJobQueue.has(message.uuid)
     );
+  const wrapperChars = buildBatchedDeliveryContent(deliverableTexts.map(() => '')).length;
+  const combinedChars = deliverableTexts.reduce((sum, text) => sum + text.length, 0) + wrapperChars;
   if (
     deliver.length >= 2 &&
     allBatchable &&
-    buildBatchedDeliveryContent(deliverableTexts).length <= BATCH_DELIVERY_MAX_CHARS
+    !args.activeTurnInJobQueue &&
+    combinedChars <= BATCH_DELIVERY_MAX_CHARS
   ) {
     return { action: 'batch', uuids: deliver };
   }

@@ -53,6 +53,7 @@ describe('planFlushDelivery', () => {
         messages: [],
         activeInJobQueue: new Set(),
         pendingInMemoryUuids: new Set(),
+        activeTurnInJobQueue: false,
       })
     ).toEqual({
       action: 'noop',
@@ -67,6 +68,7 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(['job-owned']),
       pendingInMemoryUuids: new Set(['memory-owned']),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'noop' });
   });
@@ -80,6 +82,7 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(['job-owned']),
       pendingInMemoryUuids: new Set(['memory-owned']),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
@@ -96,6 +99,7 @@ describe('planFlushDelivery', () => {
       messages: [makeFlushMessage({ uuid: 'contested' })],
       activeInJobQueue: new Set(['contested']),
       pendingInMemoryUuids: new Set(['contested']),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'noop' });
   });
@@ -109,6 +113,7 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(),
       pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'batch',
@@ -125,6 +130,7 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(),
       pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'batch', uuids: ['first', 'second', 'third'] });
   });
@@ -134,6 +140,7 @@ describe('planFlushDelivery', () => {
       messages: [makeFlushMessage({ uuid: 'solo' })],
       activeInJobQueue: new Set(),
       pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'each', deliver: ['solo'], skip: [] });
   });
@@ -147,6 +154,7 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(['job-owned']),
       pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
@@ -163,6 +171,7 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(),
       pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
@@ -179,6 +188,7 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(['job-owned']),
       pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
@@ -196,12 +206,61 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(['owned-slash']),
       pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
       deliver: ['a', 'b'],
       skip: [{ uuid: 'owned-slash', ownership: 'job_queue' }],
     });
+  });
+
+  test('a message owned by both queues forces per-message delivery despite memory filtering', () => {
+    const result = planFlushDelivery({
+      messages: [
+        makeFlushMessage({ uuid: 'contested', flattenedText: 'durable' }),
+        makeFlushMessage({ uuid: 'a' }),
+        makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
+      ],
+      activeInJobQueue: new Set(['contested']),
+      pendingInMemoryUuids: new Set(['contested']),
+      activeTurnInJobQueue: false,
+    });
+    expect(result).toEqual({
+      action: 'each',
+      deliver: ['a', 'b'],
+      skip: [{ uuid: 'contested', ownership: 'job_queue' }],
+    });
+  });
+
+  test('an active turn outside the flush forces per-message delivery', () => {
+    const result = planFlushDelivery({
+      messages: [
+        makeFlushMessage({ uuid: 'a' }),
+        makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
+      ],
+      activeInJobQueue: new Set(['unrelated-active-turn']),
+      pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: true,
+    });
+    expect(result).toEqual({
+      action: 'each',
+      deliver: ['a', 'b'],
+      skip: [],
+    });
+  });
+
+  test('an active steer outside the flush does not block batching', () => {
+    const result = planFlushDelivery({
+      messages: [
+        makeFlushMessage({ uuid: 'a' }),
+        makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
+      ],
+      activeInJobQueue: new Set(['unrelated-active-steer']),
+      pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: false,
+    });
+    expect(result).toEqual({ action: 'batch', uuids: ['a', 'b'] });
   });
 
   test('a memory-queue-owned slash command does not break batching of the rest', () => {
@@ -213,6 +272,7 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(),
       pendingInMemoryUuids: new Set(['owned-slash']),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'batch', uuids: ['a', 'b'] });
   });
@@ -226,6 +286,7 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(),
       pendingInMemoryUuids: new Set(['owned-image']),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'batch', uuids: ['a', 'b'] });
   });
@@ -239,6 +300,7 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(),
       pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
@@ -252,6 +314,7 @@ describe('planFlushDelivery', () => {
       messages: [makeFlushMessage({ uuid: 'image-only', flattenedText: null })],
       activeInJobQueue: new Set(),
       pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'each', deliver: ['image-only'], skip: [] });
   });
@@ -265,6 +328,7 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(),
       pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
@@ -283,8 +347,46 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(),
       pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'batch', uuids: ['cap-1', 'cap-2'] });
+  });
+
+  test('combined content measurement matches the batched builder across message counts', () => {
+    for (const count of [2, 9, 10, 11, 101]) {
+      const overhead = buildBatchedDeliveryContent(Array.from({ length: count }, () => '')).length;
+      const budget = BATCH_DELIVERY_MAX_CHARS - overhead;
+      const base = Math.floor(budget / count);
+      const texts = Array.from({ length: count }, (_, i) =>
+        'x'.repeat(i === count - 1 ? budget - base * (count - 1) : base)
+      );
+      const atCap = planFlushDelivery({
+        messages: texts.map((text, i) => makeFlushMessage({ uuid: `m-${i}`, flattenedText: text })),
+        activeInJobQueue: new Set(),
+        pendingInMemoryUuids: new Set(),
+        activeTurnInJobQueue: false,
+      });
+      expect(atCap).toEqual({
+        action: 'batch',
+        uuids: texts.map((_, i) => `m-${i}`),
+      });
+      const overCap = planFlushDelivery({
+        messages: [
+          ...texts
+            .slice(0, -1)
+            .map((text, i) => makeFlushMessage({ uuid: `m-${i}`, flattenedText: text })),
+          makeFlushMessage({ uuid: 'm-last', flattenedText: `${texts[count - 1]}y` }),
+        ],
+        activeInJobQueue: new Set(),
+        pendingInMemoryUuids: new Set(),
+        activeTurnInJobQueue: false,
+      });
+      expect(overCap).toEqual({
+        action: 'each',
+        deliver: texts.map((_, i) => (i === count - 1 ? 'm-last' : `m-${i}`)),
+        skip: [],
+      });
+    }
   });
 
   test('combined batched content one char over the cap forces per-message delivery', () => {
@@ -297,6 +399,7 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(),
       pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
@@ -316,6 +419,7 @@ describe('planFlushDelivery', () => {
       ],
       activeInJobQueue: new Set(),
       pendingInMemoryUuids: new Set(['memory-owned']),
+      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
