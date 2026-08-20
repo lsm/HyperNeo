@@ -102,7 +102,12 @@ export class DatabaseCore {
     const backupDir = join(dir, 'backups');
 
     if (!existsSync(backupDir)) {
-      mkdirSync(backupDir, { recursive: true });
+      try {
+        mkdirSync(backupDir, { recursive: true });
+      } catch (err) {
+        this.logger.error('Failed to create migration backup directory:', err);
+        return;
+      }
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -189,8 +194,9 @@ export class DatabaseCore {
 
   private cleanupOldBackups(backupDir: string, keepCount: number): void {
     try {
-      const files = readdirSync(backupDir)
-        .filter((f) => f.startsWith('daemon-') && f.endsWith('.db'))
+      const entries = readdirSync(backupDir).filter((f) => f.startsWith('daemon-'));
+      const databases = entries
+        .filter((f) => f.endsWith('.db'))
         .map((f) => ({
           name: f,
           path: join(backupDir, f),
@@ -198,12 +204,17 @@ export class DatabaseCore {
         }))
         .sort((a, b) => b.mtime - a.mtime);
 
-      for (const file of files.slice(keepCount)) {
+      const kept = new Set(databases.slice(0, keepCount).map((f) => f.name));
+
+      for (const file of databases.slice(keepCount)) {
         try {
           unlinkSync(file.path);
         } catch {}
+      }
+      for (const name of entries) {
+        if (!name.endsWith('.db-wal') || kept.has(name.slice(0, -'-wal'.length))) continue;
         try {
-          unlinkSync(`${file.path}-wal`);
+          unlinkSync(join(backupDir, name));
         } catch {}
       }
     } catch {}

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
-  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -445,10 +444,9 @@ describe('DatabaseCore', () => {
       }
     });
 
-    it('should complete initialization without a backup when the backup directory is unwritable', async () => {
+    it('should complete initialization without a backup when the backup directory is unusable', async () => {
       const backupDir = join(testDir, 'backups');
-      mkdirSync(backupDir, { recursive: true });
-      chmodSync(backupDir, 0o500);
+      writeFileSync(backupDir, 'not a directory');
 
       configureLogger({ level: LogLevel.INFO });
       const errors: string[] = [];
@@ -462,10 +460,13 @@ describe('DatabaseCore', () => {
       } finally {
         unsubscribe();
         configureLogger({ level: LogLevel.SILENT });
-        chmodSync(backupDir, 0o700);
       }
 
-      expect(listBackups()).toHaveLength(0);
+      let backups: string[] = [];
+      try {
+        backups = readdirSync(backupDir).filter((f) => f.startsWith('daemon-'));
+      } catch {}
+      expect(backups).toHaveLength(0);
       expect(errors).toHaveLength(1);
     });
 
@@ -474,6 +475,7 @@ describe('DatabaseCore', () => {
       mkdirSync(backupDir, { recursive: true });
       const now = Date.now() / 1000;
       const staleWalOwner = 'daemon-2026-01-01T00-00-00-000Z.db';
+      const orphanWal = 'daemon-2025-12-31T00-00-00-000Z.db-wal';
       for (let i = 0; i < 4; i++) {
         const stale = join(backupDir, `daemon-2026-01-0${i + 1}T00-00-00-000Z.db`);
         writeFileSync(stale, 'stale');
@@ -482,6 +484,7 @@ describe('DatabaseCore', () => {
         }
         utimesSync(stale, now - (5 - i) * 60, now - (5 - i) * 60);
       }
+      writeFileSync(join(backupDir, orphanWal), 'orphan-wal');
 
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
@@ -489,6 +492,7 @@ describe('DatabaseCore', () => {
       const remaining = readdirSync(backupDir);
       expect(remaining.filter((f) => f.endsWith('.db') && f.startsWith('daemon-'))).toHaveLength(3);
       expect(existsSync(join(backupDir, `${staleWalOwner}-wal`))).toBe(false);
+      expect(existsSync(join(backupDir, orphanWal))).toBe(false);
     });
   });
 
