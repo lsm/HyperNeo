@@ -743,7 +743,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
     await this.saveCredentials(newCreds);
     if (!this.credentialsStillMatch(credentialKey)) {
-      if (this.cachedCredentials) await this.saveCredentials(this.cachedCredentials);
+      if (this.cachedCredentials) {
+        await this.saveCredentials(this.cachedCredentials);
+      } else {
+        await this.logout();
+      }
       return undefined;
     }
     this.cachedCredentials = newCreds;

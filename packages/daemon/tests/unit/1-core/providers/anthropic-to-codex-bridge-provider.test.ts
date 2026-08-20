@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -2389,6 +2390,46 @@ describe('AnthropicToCodexBridgeProvider', () => {
       };
       expect(saved.openai.access).toBe(oldAccess);
       expect(saved.openai.refresh).toBe('old-refresh-token');
+      p.stopAllBridgeServers();
+    });
+
+    it('does not let an in-flight refresh restore credentials after logout', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const refreshedAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-logout' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'stale-access-token',
+        refresh: 'logout-refresh-token',
+        expires: Date.now() - 60_000,
+        accountId: 'acct-logout',
+      });
+      let resolveRefresh: ((response: Response) => void) | undefined;
+      const refreshResponse = new Promise<Response>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      fetchSpy.mockImplementationOnce(async () => refreshResponse);
+      const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
+
+      const refresh = p.refreshToken();
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+      await p.logout();
+      resolveRefresh?.(
+        new Response(
+          JSON.stringify({
+            access_token: refreshedAccess,
+            refresh_token: 'rotated-logout-refresh-token',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      await expect(refresh).resolves.toBe(false);
+      expect(await p.getApiKey()).toBeUndefined();
+      expect(existsSync(path.join(hyperneoDir, 'auth.json'))).toBe(false);
       p.stopAllBridgeServers();
     });
 
