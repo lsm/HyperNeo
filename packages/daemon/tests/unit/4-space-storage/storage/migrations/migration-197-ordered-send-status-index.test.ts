@@ -111,7 +111,7 @@ describe('Migration 197: ordered sdk_messages (session_id, send_status, timestam
       );
       const joined = plan.join(' | ');
       expect(joined).toContain('idx_sdk_messages_send_status_timestamp');
-      expect(joined).not.toContain('USE TEMP B-TREE FOR ORDER BY');
+      expect(joined).not.toMatch(/USE TEMP B-TREE/);
       expect(joined).not.toMatch(/SCAN sdk_messages/);
     });
 
