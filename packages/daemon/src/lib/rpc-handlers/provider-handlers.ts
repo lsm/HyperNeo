@@ -160,6 +160,7 @@ export interface ProviderHandlerDeps {
   >;
   clearPersistedAcpSessionIds?: () => void;
   listPersistedAcpSessionIds?: () => Array<{ sessionId: string; acpSessionId: string }>;
+  disposeAcpSessions?: typeof disposeAcpSessions;
 }
 
 function readAcpCommand(configJson: string | undefined): string | undefined {
@@ -187,19 +188,16 @@ function validateAcpConfigCommand(configJson: string | undefined): string | unde
   return parsed.command;
 }
 
-async function disposePersistedAcpSessions(
+async function disposeAcpSessionIds(
   previousCommand: string | undefined,
-  listPersistedAcpSessionIds?: () => Array<{ sessionId: string; acpSessionId: string }>
+  sessionIds: string[],
+  dispose: typeof disposeAcpSessions = disposeAcpSessions
 ): Promise<void> {
-  if (!previousCommand || !listPersistedAcpSessionIds) return;
-  const sessionIds = listPersistedAcpSessionIds().map((entry) => entry.acpSessionId);
-  if (sessionIds.length === 0) return;
+  if (!previousCommand || sessionIds.length === 0) return;
   const disposeController = new AbortController();
   const disposeTimer = setTimeout(() => disposeController.abort(), ACP_DISPOSE_TIMEOUT_MS);
   disposeTimer.unref();
-  await disposeAcpSessions(previousCommand, sessionIds, undefined, disposeController.signal).catch(
-    () => {}
-  );
+  await dispose(previousCommand, sessionIds, undefined, disposeController.signal).catch(() => {});
   clearTimeout(disposeTimer);
 }
 
@@ -207,10 +205,12 @@ async function invalidateAcpSessions(
   sessionManager: Pick<SessionManager, 'interruptProviderSessions'> | undefined,
   clearPersistedAcpSessionIds: (() => void) | undefined,
   previousCommand: string | undefined,
-  listPersistedAcpSessionIds?: () => Array<{ sessionId: string; acpSessionId: string }>
+  listPersistedAcpSessionIds?: () => Array<{ sessionId: string; acpSessionId: string }>,
+  dispose: typeof disposeAcpSessions = disposeAcpSessions
 ): Promise<void> {
-  await disposePersistedAcpSessions(previousCommand, listPersistedAcpSessionIds);
+  const sessionIds = listPersistedAcpSessionIds?.().map((entry) => entry.acpSessionId) ?? [];
   clearPersistedAcpSessionIds?.();
+  await disposeAcpSessionIds(previousCommand, sessionIds, dispose);
   await sessionManager?.interruptProviderSessions('acp');
 }
 
@@ -243,6 +243,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     sessionManager,
     clearPersistedAcpSessionIds,
     listPersistedAcpSessionIds,
+    disposeAcpSessions: disposeAcpSessionsOverride,
   } = deps;
 
   messageHub.onRequest('providers.list', async () => {
@@ -350,7 +351,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
                 sessionManager,
                 clearPersistedAcpSessionIds,
                 previousAcpCommand,
-                listPersistedAcpSessionIds
+                listPersistedAcpSessionIds,
+                disposeAcpSessionsOverride
               );
             }
           }
@@ -425,21 +427,25 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             updates.isEnabled === true &&
             updates.configJson !== undefined &&
             acpCommandsDiffer(effectiveAcpCommandBeforeEnable, updatedAcpCommand);
+          const envAcpCommand = process.env.HYPERNEO_ACP_COMMAND;
           const acpCommandChanged =
             existing.providerId === 'acp' &&
             updates.configJson !== undefined &&
-            acpCommandsDiffer(effectiveAcpCommandBeforeEnable, updatedAcpCommand ?? liveAcpCommand);
+            acpCommandsDiffer(effectiveAcpCommandBeforeEnable, updatedAcpCommand ?? envAcpCommand);
           const record = providerRepo.updateProvider(data.id, updates);
           if (!record) throw new Error(`Provider ${data.id} not found`);
           const shouldInvalidateAcpSessions =
             (acpCommandChanged || enablingChangedAcpCommand) &&
             !(acpCommandChanged && existing.isEnabled === false && updates.isEnabled !== true);
           if (acpCommandChanged && existing.isEnabled === false && updates.isEnabled !== true) {
-            await disposePersistedAcpSessions(
-              effectiveAcpCommandBeforeEnable,
-              listPersistedAcpSessionIds
-            );
+            const sessionIds =
+              listPersistedAcpSessionIds?.().map((entry) => entry.acpSessionId) ?? [];
             clearPersistedAcpSessionIds?.();
+            await disposeAcpSessionIds(
+              effectiveAcpCommandBeforeEnable,
+              sessionIds,
+              disposeAcpSessionsOverride
+            );
           }
 
           const shouldResync =
@@ -475,7 +481,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
               sessionManager,
               clearPersistedAcpSessionIds,
               effectiveAcpCommandBeforeEnable,
-              listPersistedAcpSessionIds
+              listPersistedAcpSessionIds,
+              disposeAcpSessionsOverride
             );
           }
 
