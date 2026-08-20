@@ -36,7 +36,6 @@ const REVIEWER_TOOLS: string[] = [
   'Bash(head:*)',
   'Bash(tr:*)',
   'Bash(base64:*)',
-  'Bash(trap:*)',
   'Bash(exit:*)',
   'Grep',
   'Glob',

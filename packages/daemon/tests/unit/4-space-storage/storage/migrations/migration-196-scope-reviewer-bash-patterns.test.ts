@@ -286,4 +286,11 @@ describe('migration 196 — reviewer scoped bash tool patterns', () => {
     expect(PRE_SCOPE_REVIEWER_PROMPT).not.toContain('scoped by the permission layer');
     expect(PRE_SCOPE_REVIEWER_DESCRIPTION).toContain('Has bash for read-only inspection');
   });
+
+  test('pre-scope prompt constant is the evaluated contract, not template-literal source', () => {
+    expect(PRE_SCOPE_REVIEWER_PROMPT).not.toContain('\\`');
+    expect(PRE_SCOPE_REVIEWER_PROMPT).toContain('`gh pr view`');
+    expect(PRE_SCOPE_REVIEWER_PROMPT).toContain('`addPullRequestReview`');
+    expect(PRE_SCOPE_REVIEWER_PROMPT.startsWith('## Reviewer System Contract')).toBe(true);
+  });
 });

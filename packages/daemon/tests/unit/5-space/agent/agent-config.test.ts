@@ -256,7 +256,6 @@ describe('createCustomAgentInit — sub-session features', () => {
       'Bash(head:*)',
       'Bash(tr:*)',
       'Bash(base64:*)',
-      'Bash(trap:*)',
       'Bash(exit:*)',
     ]);
     expect(init.agent).toBeUndefined();

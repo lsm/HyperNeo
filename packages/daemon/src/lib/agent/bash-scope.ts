@@ -123,13 +123,14 @@ function extractBacktick(text: string, startIndex: number): BalancedSpan {
   return { content: text.slice(startIndex + 1), end: n };
 }
 
-interface HeredocSpan {
-  end: number;
+interface HeredocMarker {
   found: boolean;
   quoted: boolean;
+  markerEnd: number;
+  bodyEnd: number;
 }
 
-function extractHeredocSpan(text: string, start: number): HeredocSpan {
+function extractHeredocSpan(text: string, start: number): HeredocMarker {
   const n = text.length;
   let i = start;
   const dashed = text[i] === '-';
@@ -146,7 +147,8 @@ function extractHeredocSpan(text: string, start: number): HeredocSpan {
     i++;
   }
   if (quote && text[i] === quote) i++;
-  if (!delimiter) return { end: start, found: false, quoted: false };
+  if (!delimiter) return { found: false, quoted: false, markerEnd: i, bodyEnd: i };
+  const markerEnd = i;
   while (i < n && text[i] !== '\n') i++;
   if (i < n) i++;
   while (i < n) {
@@ -155,18 +157,35 @@ function extractHeredocSpan(text: string, start: number): HeredocSpan {
     const line = text.slice(i, lineEnd);
     const candidate = dashed ? line.replace(/^\t+/, '') : line;
     if (candidate.trim() === delimiter) {
-      return { end: lineEnd + 1, found: true, quoted: quote !== '' };
+      return { found: true, quoted: quote !== '', markerEnd, bodyEnd: lineEnd + 1 };
     }
     i = lineEnd + 1;
   }
-  return { end: n, found: true, quoted: quote !== '' };
+  return { found: true, quoted: quote !== '', markerEnd, bodyEnd: n };
 }
 
-function stripLeadingAssignments(segment: string): string {
+const DENIED_ASSIGNMENT_NAMES = new Set([
+  'PATH',
+  'ENV',
+  'BASH_ENV',
+  'SHELLOPTS',
+  'BASHOPTS',
+  'IFS',
+  'SHELL',
+  'CDPATH',
+  'LD_LIBRARY_PATH',
+  'LD_PRELOAD',
+  'DYLD_LIBRARY_PATH',
+  'DYLD_INSERT_LIBRARIES',
+  'PS4',
+]);
+
+function stripLeadingAssignments(segment: string): string | null {
   let s = segment;
   for (;;) {
     const match = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/.exec(s);
     if (!match) return s;
+    if (DENIED_ASSIGNMENT_NAMES.has(match[1])) return null;
     let rest = match[2];
     if (rest.startsWith('"') || rest.startsWith("'")) {
       const close = rest.indexOf(rest[0], 1);
@@ -189,7 +208,9 @@ function segmentHasAllowedHead(segment: string, prefixes: readonly string[]): bo
     .replace(/[})]+$/, '')
     .trim();
   if (!s) return true;
-  s = stripLeadingAssignments(s);
+  const stripped = stripLeadingAssignments(s);
+  if (stripped === null) return false;
+  s = stripped;
   if (!s) return true;
   for (const prefix of prefixes) {
     if (s === prefix) return true;
@@ -220,6 +241,7 @@ function checkCommandText(text: string, prefixes: readonly string[]): boolean {
   let i = 0;
   let current = '';
   let lineHasContent = false;
+  let pendingHeredoc: HeredocMarker | null = null;
   let ok = true;
 
   const flush = (): boolean => {
@@ -228,6 +250,13 @@ function checkCommandText(text: string, prefixes: readonly string[]): boolean {
     lineHasContent = false;
     if (!segmentHasAllowedHead(segment, prefixes)) ok = false;
     return ok;
+  };
+
+  const skipPendingHeredocBody = (): number => {
+    if (!pendingHeredoc) return -1;
+    const bodyEnd = pendingHeredoc.bodyEnd;
+    pendingHeredoc = null;
+    return bodyEnd;
   };
 
   while (i < n) {
@@ -278,26 +307,31 @@ function checkCommandText(text: string, prefixes: readonly string[]): boolean {
     if (ch === '$' && text[i + 1] === '(') {
       const span = extractBalancedParen(text, i + 1);
       if (!checkCommandText(span.content, prefixes)) ok = false;
+      current += '$()';
+      lineHasContent = true;
       i = span.end;
       continue;
     }
     if (ch === '`') {
       const span = extractBacktick(text, i);
       if (!checkCommandText(span.content, prefixes)) ok = false;
+      current += '``';
+      lineHasContent = true;
       i = span.end;
       continue;
     }
     if (ch === '<' && text[i + 1] === '<' && text[i + 2] !== '<') {
-      const spanStart = i + 2;
-      const span = extractHeredocSpan(text, spanStart);
-      current += '<<HEREDOC';
+      const span = extractHeredocSpan(text, i + 2);
       if (!span.found) {
+        current += '<<';
         lineHasContent = true;
-      } else {
-        if (!span.quoted) ok = false;
-        flush();
+        i += 2;
+        continue;
       }
-      i = span.end;
+      current += '<<HEREDOC';
+      if (!span.quoted) ok = false;
+      pendingHeredoc = span;
+      i = span.markerEnd;
       continue;
     }
     if (ch === '<' && text[i + 1] === '<' && text[i + 2] === '<') {
@@ -310,12 +344,15 @@ function checkCommandText(text: string, prefixes: readonly string[]): boolean {
       let lineEnd = text.indexOf('\n', i);
       if (lineEnd === -1) lineEnd = n;
       flush();
-      i = lineEnd + 1;
+      const bodyEnd = skipPendingHeredocBody();
+      i = bodyEnd === -1 ? lineEnd + 1 : bodyEnd;
       continue;
     }
     if (ch === ';' || ch === '\n') {
+      const isLineEnd = ch === '\n';
       flush();
-      i++;
+      const bodyEnd = isLineEnd ? skipPendingHeredocBody() : -1;
+      i = bodyEnd === -1 ? i + 1 : bodyEnd;
       continue;
     }
     if (ch === '&') {
