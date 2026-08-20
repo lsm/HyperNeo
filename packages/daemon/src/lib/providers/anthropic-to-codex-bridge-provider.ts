@@ -157,6 +157,7 @@ const CODEX_MODEL_FETCH_TIMEOUT_MS = 5000;
 const CODEX_COMPAT_CLIENT_VERSION = '0.148.0';
 const CODEX_MODEL_DISPLAY_NAME_MAX_LENGTH = 500;
 const CODEX_MODEL_DESCRIPTION_MAX_LENGTH = 4000;
+const CODEX_MODEL_CATALOG_MAX_LENGTH = 500;
 const CODEX_REASONING_EFFORTS = new Set<OpenAIResponsesReasoningEffort>([
   'low',
   'medium',
@@ -857,6 +858,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     values: unknown[],
     parse: (value: unknown, index: number) => CodexRemoteModel | undefined
   ): CodexRemoteModel[] | undefined {
+    if (values.length > CODEX_MODEL_CATALOG_MAX_LENGTH) return undefined;
     const models = values.flatMap((value, index) => {
       const model = parse(value, index);
       return model ? [model] : [];

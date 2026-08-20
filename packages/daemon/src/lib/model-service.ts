@@ -26,6 +26,8 @@ const cacheTimestamps = new Map<string, number>();
 
 const CACHE_TTL = 4 * 60 * 60 * 1000;
 
+const FAILED_REFRESH_COOLDOWN_MS = 30_000;
+
 const FALLBACK_MODELS: ModelInfo[] = [
   {
     id: 'sonnet',
@@ -120,6 +122,8 @@ function retainFailedProviderModels(
 
 const refreshInProgress = new Map<string, Promise<void>>();
 
+const backgroundRefreshFailures = new Map<string, number>();
+
 const cacheGeneration = new Map<string, number>();
 
 const refreshedMissingProviders = new Set<string>();
@@ -156,7 +160,11 @@ function getAvailableProviders(): Provider[] {
 }
 
 async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
-  if (refreshInProgress.has(cacheKey)) {
+  const lastFailure = backgroundRefreshFailures.get(cacheKey);
+  if (
+    refreshInProgress.has(cacheKey) ||
+    (lastFailure !== undefined && Date.now() - lastFailure < FAILED_REFRESH_COOLDOWN_MS)
+  ) {
     return;
   }
 
@@ -176,12 +184,17 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
         modelsCache.set(cacheKey, mergedModels);
         if (failedProviderIds.size === 0) {
           cacheTimestamps.set(cacheKey, Date.now());
+          backgroundRefreshFailures.delete(cacheKey);
         } else {
           cacheTimestamps.delete(cacheKey);
+          backgroundRefreshFailures.set(cacheKey, Date.now());
         }
       } else if (failedProviderIds.size === 0) {
         modelsCache.set(cacheKey, []);
         cacheTimestamps.set(cacheKey, Date.now());
+        backgroundRefreshFailures.delete(cacheKey);
+      } else {
+        backgroundRefreshFailures.set(cacheKey, Date.now());
       }
       /* v8 ignore next 2 */
     } catch {
@@ -284,6 +297,7 @@ export async function initializeModels(): Promise<void> {
       modelsCache.set(cacheKey, mergedModels);
       if (failedProviderIds.size === 0) {
         cacheTimestamps.set(cacheKey, Date.now());
+        backgroundRefreshFailures.delete(cacheKey);
       } else {
         cacheTimestamps.delete(cacheKey);
       }
@@ -312,6 +326,7 @@ export function clearModelsCache(cacheKey?: string): void {
     const hadInFlight = refreshInProgress.has(cacheKey);
     modelsCache.delete(cacheKey);
     cacheTimestamps.delete(cacheKey);
+    backgroundRefreshFailures.delete(cacheKey);
     refreshInProgress.delete(cacheKey);
     if (hadInFlight || cacheGeneration.has(cacheKey)) {
       cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
@@ -320,6 +335,7 @@ export function clearModelsCache(cacheKey?: string): void {
     const inFlightKeys = new Set(refreshInProgress.keys());
     modelsCache.clear();
     cacheTimestamps.clear();
+    backgroundRefreshFailures.clear();
     refreshInProgress.clear();
     clearProviderModelCaches();
     for (const key of inFlightKeys) {
@@ -385,6 +401,7 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
       }
       if (failedProviderIds.size === 0) {
         cacheTimestamps.set(cacheKey, Date.now());
+        backgroundRefreshFailures.delete(cacheKey);
       } else {
         cacheTimestamps.delete(cacheKey);
       }
@@ -419,6 +436,7 @@ export function getModelsCache(): Map<string, ModelInfo[]> {
 export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: number): void {
   modelsCache.clear();
   cacheTimestamps.clear();
+  backgroundRefreshFailures.clear();
   const ts = timestamp ?? Date.now();
   for (const [key, models] of cache.entries()) {
     modelsCache.set(key, models);

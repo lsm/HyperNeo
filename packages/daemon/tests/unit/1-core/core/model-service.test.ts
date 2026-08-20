@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import {
   getAvailableModels,
   getModelInfo,
@@ -18,6 +18,14 @@ import {
 import type { ModelInfo } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  while (!predicate()) {
+    if (performance.now() >= deadline) throw new Error('Timed out waiting for condition');
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
 
 describe('Model Service', () => {
   const mockModels: ModelInfo[] = [
@@ -585,6 +593,72 @@ describe('Model Service', () => {
 
       expect(models1).toEqual(models2);
       expect(models1.length).toBe(3);
+    });
+
+    it('throttles automatic retries after a partial refresh failure', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const healthyModel = {
+        id: 'cooldown-healthy',
+        name: 'Cooldown Healthy',
+        family: 'test',
+        provider: 'cooldown-healthy-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      let failedCalls = 0;
+      registry.register({
+        id: 'cooldown-healthy-provider',
+        getModels: async () => [healthyModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register({
+        id: 'cooldown-failed-provider',
+        getModels: async () => {
+          failedCalls += 1;
+          throw new Error('offline');
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      let now = 100_000;
+      const dateSpy = spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        setModelsCache(new Map([['global', mockModels]]), now - 5 * 60 * 60 * 1000);
+
+        getAvailableModels('global');
+        await waitFor(() => failedCalls === 1);
+        getAvailableModels('global');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(failedCalls).toBe(1);
+
+        now += 30_000;
+        getAvailableModels('global');
+        await waitFor(() => failedCalls === 2);
+      } finally {
+        dateSpy.mockRestore();
+      }
+    });
+
+    it('installs and caches an empty catalog from a background refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      let calls = 0;
+      getProviderRegistry().register({
+        id: 'background-empty-provider',
+        getModels: async () => {
+          calls += 1;
+          return [];
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]), Date.now() - 5 * 60 * 60 * 1000);
+
+      getAvailableModels('global');
+      await waitFor(() => getModelsCache().get('global')?.length === 0);
+      getAvailableModels('global');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(calls).toBe(1);
     });
   });
 
@@ -1384,7 +1458,8 @@ describe('Model Service', () => {
       const { refreshModels } = await import('../../../../src/lib/model-service');
       await refreshModels();
 
-      expect(getAvailableModels('global')).toEqual([currentHealthy, staleFailed]);
+      await waitFor(() => getModelsCache().get('global')?.[0]?.id === currentHealthy.id);
+      expect(getModelsCache().get('global')).toEqual([currentHealthy, staleFailed]);
 
       const recoveredFailed = {
         ...staleFailed,

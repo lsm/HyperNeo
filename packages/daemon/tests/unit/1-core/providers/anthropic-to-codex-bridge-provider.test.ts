@@ -888,8 +888,15 @@ describe('AnthropicToCodexBridgeProvider', () => {
   });
 
   describe('ownsModel()', () => {
+    let tmpDir: string;
+
     beforeEach(() => {
-      provider = makeProvider({}, undefined, undefined);
+      tmpDir = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-owns-model-test-'));
+      provider = makeProvider({}, tmpDir, tmpDir);
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
     });
 
     it('owns models explicitly listed in the catalogue', () => {
@@ -1300,6 +1307,34 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
+    it('coalesces concurrent credential rejections and rejects both callers', async () => {
+      let resolveFetch: ((response: Response) => void) | undefined;
+      const rejectedResponse = new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+      const fetchImpl = mock(async () => rejectedResponse) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'bad-key' }, tmpDir, tmpDir, fetchImpl);
+
+      const first = provider.getModels();
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+      const second = provider.getModels();
+      resolveFetch?.(new Response('unauthorized', { status: 401 }));
+
+      const results = await Promise.allSettled([first, second]);
+
+      expect(results).toEqual([
+        expect.objectContaining({
+          status: 'rejected',
+          reason: expect.objectContaining({ message: 'Codex credentials rejected (HTTP 401)' }),
+        }),
+        expect.objectContaining({
+          status: 'rejected',
+          reason: expect.objectContaining({ message: 'Codex credentials rejected (HTTP 401)' }),
+        }),
+      ]);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
     it('keeps valid rich models when another entry has unsupported schema', async () => {
       const fetchImpl = mock(
         async () =>
@@ -1336,6 +1371,27 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const models = await provider.getModels();
 
       expect(models.map((model) => model.id)).toEqual(['gpt-valid']);
+    });
+
+    it('rejects an oversized remote catalog and retains bundled models', async () => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: Array.from({ length: 501 }, (_, index) => ({ id: `gpt-catalog-${index}` })),
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toContain('gpt-5.6-sol');
+      expect(models.map((model) => model.id)).not.toContain('gpt-catalog-0');
+      await expect(provider.healthCheck()).rejects.toThrow(
+        'model discovery returned no usable models'
+      );
     });
 
     it('rejects oversized rich metadata without poisoning the persisted cache', async () => {
@@ -2872,7 +2928,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
             headers: { 'Content-Type': 'application/json' },
           })
       ) as unknown as typeof fetch;
-      const p = makeProvider({ OPENAI_API_KEY: 'sk-test' }, undefined, undefined, catalogFetch);
+      const p = makeProvider({ OPENAI_API_KEY: 'sk-test' }, tmpDir, tmpDir, catalogFetch);
       await p.getModels();
       const cfg = p.buildSdkConfig('o3', { sessionId: 'sess-no-reasoning' });
 
@@ -2942,7 +2998,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
               { status: 200, headers: { 'Content-Type': 'application/json' } }
             )
         ) as unknown as typeof fetch;
-        const p = makeProvider({ OPENAI_API_KEY: 'sk-test' }, undefined, undefined, catalogFetch);
+        const p = makeProvider({ OPENAI_API_KEY: 'sk-test' }, tmpDir, tmpDir, catalogFetch);
         try {
           await p.getModels();
           const session = { sessionId: 'mixed-capabilities' };
