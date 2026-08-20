@@ -5496,6 +5496,34 @@ describe('sessions.list reactive scope filter', () => {
     expect(diffs[1].rows).toHaveLength(0);
   });
 
+  test('visible session gaining a spaceId context re-runs and leaves the list', async () => {
+    reactiveDb.db.createSession(makeSession('human-1'));
+    const diffs: QueryDiff<Record<string, unknown>>[] = [];
+    subscribeToList((diff) => diffs.push(diff));
+    await flush();
+    expect(diffs[0].rows).toHaveLength(1);
+
+    reactiveDb.db.updateSession('human-1', { context: { spaceId: 'space-1' } });
+    await flush();
+
+    expect(diffs).toHaveLength(2);
+    expect(diffs[1].rows).toHaveLength(0);
+  });
+
+  test('visible session changing to an excluded type re-runs and leaves the list', async () => {
+    reactiveDb.db.createSession(makeSession('human-1'));
+    const diffs: QueryDiff<Record<string, unknown>>[] = [];
+    subscribeToList((diff) => diffs.push(diff));
+    await flush();
+    expect(diffs[0].rows).toHaveLength(1);
+
+    reactiveDb.db.updateSession('human-1', { type: 'space_task_agent' });
+    await flush();
+
+    expect(diffs).toHaveLength(2);
+    expect(diffs[1].rows).toHaveLength(0);
+  });
+
   test('unscoped sessions-table events still re-run the list', async () => {
     const spy = spyOnEvaluate();
     subscribeToList(() => {});
