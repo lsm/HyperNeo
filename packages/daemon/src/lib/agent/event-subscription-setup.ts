@@ -102,8 +102,10 @@ export class EventSubscriptionSetup {
 
     const unsubQueryTrigger = internalEventBus.subscribe(
       'query.trigger',
-      async () => {
-        await queryModeHandler.handleQueryTrigger();
+      () => {
+        void queryModeHandler.handleQueryTrigger().catch((error) => {
+          this.logger.warn('query.trigger deferred replay failed:', error);
+        });
       },
       { sessionId, subscriberName: 'EventSubscriptionSetup.queryTrigger' }
     );

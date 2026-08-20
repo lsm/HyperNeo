@@ -409,6 +409,35 @@ describe('EventSubscriptionSetup', () => {
 
         expect(mockQueryModeHandler.handleQueryTrigger).toHaveBeenCalled();
       });
+
+      it('does not block the turn-end publish while the replay is in flight', async () => {
+        setup.setup();
+        let releaseReplay!: () => void;
+        const replayGate = new Promise<void>((resolve) => {
+          releaseReplay = resolve;
+        });
+        (mockQueryModeHandler.handleQueryTrigger as ReturnType<typeof mock>).mockImplementation(
+          async () => {
+            await replayGate;
+            return { success: true, messageCount: 1 };
+          }
+        );
+
+        const callback = registeredCallbacks.get('query.trigger')!;
+        const invoke = (async () => {
+          await callback({ sessionId: 'test-session-id' });
+        })();
+
+        const settled = await Promise.race([
+          invoke.then(() => 'resolved'),
+          new Promise((resolve) => setTimeout(() => resolve('pending'), 20)),
+        ]);
+        expect(settled).toBe('resolved');
+        expect(mockQueryModeHandler.handleQueryTrigger).toHaveBeenCalled();
+
+        releaseReplay();
+        await invoke;
+      });
     });
   });
 
