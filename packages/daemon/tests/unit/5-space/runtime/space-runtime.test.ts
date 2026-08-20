@@ -2649,10 +2649,10 @@ describe('SpaceRuntime', () => {
       const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
       let attempts = 0;
       const tam = makeRepairTam({
-        spawn: async (executionId) => {
+        spawn: async () => {
           attempts += 1;
           if (attempts === 1) throw new TransientSpawnError('rate cap still active');
-          return `session:${executionId}`;
+          throw new Error('ordinary spawn failure');
         },
       });
       const rt = buildRepairRuntime(tam, new PendingAgentMessageRepository(db));
@@ -2664,11 +2664,21 @@ describe('SpaceRuntime', () => {
       expect(taskRepo.getTask(tasks[0].id)!.status).toBe('in_progress');
 
       await rt.executeTick();
+      expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('pending');
+      expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+
+      await rt.executeTick();
+      expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('pending');
+      expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+
+      await rt.executeTick();
 
       const updated = nodeExecutionRepo.getById(execution.id)!;
-      expect(updated.status).toBe('in_progress');
-      expect(updated.agentSessionId).toBe(`session:${execution.id}`);
-      expect(attempts).toBe(2);
+      expect(updated.status).toBe('blocked');
+      expect(updated.result).toContain('ordinary spawn failure');
+      expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
+      expect(taskRepo.getTask(tasks[0].id)!.status).toBe('blocked');
+      expect(attempts).toBe(4);
     });
 
     test('spawn retry exhaustion blocks the run in the same tick', async () => {
