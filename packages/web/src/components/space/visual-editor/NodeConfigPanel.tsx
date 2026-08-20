@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useState, useEffect, useCallback, useLayoutEffect, useRef } from 'preact/hooks';
 import { useComputed } from '@preact/signals';
 import type {
   SpaceWorkerAgent,
@@ -687,16 +687,28 @@ function CustomPromptEditor({
   placeholder,
   rows = 6,
 }: CustomPromptEditorProps) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const value = extractOverrideValue(customPrompt);
+
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+
   return (
     <div class="space-y-1">
       <label class="text-xs font-medium text-gray-400">Custom Prompt</label>
       <textarea
+        ref={textareaRef}
         data-testid={testId}
-        value={extractOverrideValue(customPrompt)}
+        value={value}
         onInput={(e) => onChange((e.currentTarget as HTMLTextAreaElement).value)}
         rows={rows}
         placeholder={placeholder}
-        class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
+        style={{ minHeight: `${rows * 1.5}rem` }}
+        class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-none overflow-y-auto max-h-96"
       />
     </div>
   );
@@ -736,11 +748,14 @@ export function NodeConfigPanel({
   useEffect(() => {
     setConfirmingDelete(false);
     setPanelView({ kind: 'main' });
+  }, [step.localId]);
+
+  useEffect(() => {
     const normalized = normalizeNodeDraftThinkingLevel(step);
     if (normalized !== step) {
       onUpdate(normalized);
     }
-  }, [step, step.localId, onUpdate]);
+  }, [step, onUpdate]);
 
   useEffect(() => {
     if (selectedChannelRelation) {

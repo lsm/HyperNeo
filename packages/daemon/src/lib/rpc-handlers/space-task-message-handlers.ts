@@ -436,6 +436,9 @@ export function setupSpaceTaskMessageHandlers(
     if (task.spaceId !== params.spaceId) {
       throw new Error(`Task not found: ${params.taskId}`);
     }
+    if (task.status === 'stopped') {
+      throw new Error(`Task ${params.taskId} is stopped — resume it before sending messages`);
+    }
 
     if (params.target?.kind === 'node_agent' || params.target?.kind === 'generic') {
       const target =
@@ -595,6 +598,9 @@ export function setupSpaceTaskMessageHandlers(
       throw new Error(
         `Task ${params.taskId} is ${task.status} — activateNodeAgent requires an active task`
       );
+    }
+    if (task.status === 'stopped') {
+      throw new Error(`Task ${params.taskId} is stopped — resume it before activating agents`);
     }
 
     const workflowRunId = task.workflowRunId;

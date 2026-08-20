@@ -26,13 +26,23 @@ describe('VALID_TASK_TRANSITIONS', () => {
     ]);
   });
 
-  it('in_progress can transition to open, review, done, blocked, cancelled', () => {
+  it('in_progress can transition to review, done, blocked, cancelled, stopped', () => {
     expect(VALID_TASK_TRANSITIONS.in_progress).toEqual([
-      'open',
       'review',
       'done',
       'blocked',
       'cancelled',
+      'stopped',
+    ]);
+  });
+
+  it('review can transition to done, in_progress, cancelled, archived, stopped', () => {
+    expect(VALID_TASK_TRANSITIONS.review).toEqual([
+      'done',
+      'in_progress',
+      'cancelled',
+      'archived',
+      'stopped',
     ]);
   });
 
@@ -40,7 +50,7 @@ describe('VALID_TASK_TRANSITIONS', () => {
     expect(VALID_TASK_TRANSITIONS.done).toEqual(['in_progress', 'archived']);
   });
 
-  it('blocked can transition to open, in_progress, review, done, cancelled, archived', () => {
+  it('blocked adds stopped to its existing transition targets', () => {
     expect(VALID_TASK_TRANSITIONS.blocked).toEqual([
       'open',
       'in_progress',
@@ -48,7 +58,12 @@ describe('VALID_TASK_TRANSITIONS', () => {
       'done',
       'cancelled',
       'archived',
+      'stopped',
     ]);
+  });
+
+  it('stopped can transition back to in_progress, cancelled, and archived', () => {
+    expect(VALID_TASK_TRANSITIONS.stopped).toEqual(['in_progress', 'cancelled', 'archived']);
   });
 
   it('approved can transition to done, in_progress, archived, and cancelled', () => {
@@ -85,11 +100,31 @@ describe('getTransitionActions', () => {
   it('returns correct actions for in_progress status', () => {
     const actions = getTransitionActions('in_progress');
     expect(actions).toEqual([
-      { target: 'open', label: 'Pause' },
       { target: 'review', label: 'Submit for Review' },
       { target: 'done', label: 'Mark Done' },
       { target: 'blocked', label: 'Block' },
       { target: 'cancelled', label: 'Cancel' },
+      { target: 'stopped', label: 'Stop' },
+    ]);
+  });
+
+  it('returns Stop among the actions for review status', () => {
+    const actions = getTransitionActions('review');
+    expect(actions).toEqual([
+      { target: 'done', label: 'Approve' },
+      { target: 'in_progress', label: 'Reopen' },
+      { target: 'cancelled', label: 'Cancel' },
+      { target: 'archived', label: 'Archive' },
+      { target: 'stopped', label: 'Stop' },
+    ]);
+  });
+
+  it('returns Resume, Cancel, and Archive actions for stopped status', () => {
+    const actions = getTransitionActions('stopped');
+    expect(actions).toEqual([
+      { target: 'in_progress', label: 'Resume' },
+      { target: 'cancelled', label: 'Cancel' },
+      { target: 'archived', label: 'Archive' },
     ]);
   });
 
@@ -110,7 +145,28 @@ describe('getTransitionActions', () => {
       { target: 'done', label: 'Mark Done' },
       { target: 'cancelled', label: 'Cancel' },
       { target: 'archived', label: 'Archive' },
+      { target: 'stopped', label: 'Stop' },
     ]);
+  });
+
+  it('offers Stop from in_progress, blocked, and review', () => {
+    for (const status of ['in_progress', 'blocked', 'review'] as const) {
+      expect(getTransitionActions(status).some((a) => a.target === 'stopped')).toBe(true);
+    }
+  });
+
+  it('offers Resume from stopped', () => {
+    expect(getTransitionActions('stopped').some((a) => a.label === 'Resume')).toBe(true);
+  });
+
+  it('no status offers a Pause action anymore', () => {
+    for (const status of Object.keys(VALID_TASK_TRANSITIONS) as SpaceTaskStatus[]) {
+      for (const action of getTransitionActions(status)) {
+        expect(action.label).not.toBe('Pause');
+      }
+    }
+    expect(VALID_TASK_TRANSITIONS.in_progress).not.toContain('open');
+    expect(Object.keys(TRANSITION_LABELS)).not.toContain('in_progress->open');
   });
 
   it('returns correct actions for cancelled status', () => {
@@ -148,6 +204,7 @@ describe('TaskStatusActions component', () => {
     'blocked',
     'cancelled',
     'archived',
+    'stopped',
   ];
 
   it.each(allStatuses)('renders correct buttons for %s status', (status) => {
@@ -183,6 +240,27 @@ describe('TaskStatusActions component', () => {
     );
     fireEvent.click(getByTestId('task-action-cancelled'));
     expect(onTransition).toHaveBeenCalledWith('cancelled');
+  });
+
+  it('calls onTransition with stopped when Stop clicked on in_progress', () => {
+    const onTransition = vi.fn();
+    const { getByTestId } = render(
+      <TaskStatusActions status="in_progress" onTransition={onTransition} />
+    );
+    fireEvent.click(getByTestId('task-action-stopped'));
+    expect(onTransition).toHaveBeenCalledWith('stopped');
+  });
+
+  it('renders Resume, Cancel, and Archive buttons for stopped status', () => {
+    const onTransition = vi.fn();
+    const { container, getByTestId } = render(
+      <TaskStatusActions status="stopped" onTransition={onTransition} />
+    );
+    const buttons = container.querySelectorAll('button');
+    expect(buttons.length).toBe(3);
+    expect(getByTestId('task-action-in_progress').textContent).toBe('Resume');
+    expect(getByTestId('task-action-cancelled').textContent).toBe('Cancel');
+    expect(getByTestId('task-action-archived').textContent).toBe('Archive');
   });
 
   it('disables all buttons when disabled prop is true', () => {

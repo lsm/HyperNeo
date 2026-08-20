@@ -7,7 +7,12 @@ export function isActionRequired(task: ActionRequiredTaskInput): boolean {
 }
 
 export function isActiveTask(task: ActionRequiredTaskInput): boolean {
-  return task.status === 'open' || task.status === 'in_progress' || task.status === 'approved';
+  return (
+    task.status === 'open' ||
+    task.status === 'in_progress' ||
+    task.status === 'approved' ||
+    task.status === 'stopped'
+  );
 }
 
 export function isDraftTask(task: ActionRequiredTaskInput): boolean {

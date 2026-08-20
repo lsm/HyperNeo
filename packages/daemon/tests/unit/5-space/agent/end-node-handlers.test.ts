@@ -830,6 +830,42 @@ describe('createEndNodeHandlers — submit_for_approval', () => {
     expect(t?.pendingCompletionReason).toBeNull();
   });
 
+  test('submits a stopped task for approval through the shared review path', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    ctx.taskRepo.updateTask(task.id, { status: 'stopped' });
+    const { onSubmitForApproval } = createEndNodeHandlers(makeDeps(ctx, task.id));
+
+    const out = await onSubmitForApproval({ reason: 'ready' });
+    const parsed = JSON.parse(out.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
+  });
+
+  test('approves completion of a stopped task through the shared approve path', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    ctx.taskRepo.updateTask(task.id, { status: 'stopped' });
+    const { onApproveTask } = createEndNodeHandlers(makeDeps(ctx, task.id));
+
+    const out = await onApproveTask({});
+    const parsed = JSON.parse(out.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    const t = ctx.taskRepo.getTask(task.id);
+    expect(t?.status).toBe('stopped');
+    expect(t?.reportedStatus).toBe('done');
+  });
+
   test('succeeds regardless of space autonomy level', async () => {
     const task = ctx.taskRepo.createTask({
       spaceId: ctx.spaceId,

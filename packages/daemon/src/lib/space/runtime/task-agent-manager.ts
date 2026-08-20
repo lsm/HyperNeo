@@ -52,6 +52,12 @@ export interface SubSessionMemberInfo {
   agentName?: string;
   nodeId?: string;
 }
+
+export interface VerifiedSessionStop {
+  sessionId: string;
+  stopped: boolean;
+  detail?: string;
+}
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import {
   createEndNodeHandlers,
@@ -250,6 +256,10 @@ interface RateLimitSessionEntry {
 }
 
 const RATE_LIMIT_FALLBACK_RESET_AT_MS = 60 * 60 * 1000;
+
+const VERIFIED_STOP_PROCESS_EXIT_SETTLE_MS = 500;
+
+const VERIFIED_STOP_ESCALATION_FORCE_KILL_MS = 2000;
 
 interface SpawnTaskAgentOptions {
   kickoff?: boolean;
@@ -2170,6 +2180,149 @@ export class TaskAgentManager {
       });
   }
 
+  getSubSessionIdsForTasks(taskIds: string[]): string[] {
+    const ids: string[] = [];
+    for (const taskId of taskIds) {
+      const nodeMap = this.subSessions.get(taskId);
+      if (!nodeMap) continue;
+      for (const sessionId of nodeMap.keys()) ids.push(sessionId);
+    }
+    return ids;
+  }
+
+  async stopSessionsVerified(sessionIds: string[]): Promise<VerifiedSessionStop[]> {
+    return Promise.all(
+      sessionIds.map((sessionId) =>
+        this.stopSessionVerified(sessionId).catch((err) => ({
+          sessionId,
+          stopped: false,
+          detail: `verified stop crashed: ${err instanceof Error ? err.message : String(err)}`,
+        }))
+      )
+    );
+  }
+
+  private async stopSessionVerified(sessionId: string): Promise<VerifiedSessionStop> {
+    this.cancellingSessions.add(sessionId);
+    try {
+      const session =
+        this.agentSessionIndex.get(sessionId) ??
+        this.config.sessionManager?.getCachedSession(sessionId) ??
+        null;
+      this.agentSessionIndex.delete(sessionId);
+
+      if (!session) {
+        try {
+          await this.config.sessionManager?.unregisterSession?.(sessionId);
+        } catch (err) {
+          log.warn(
+            `TaskAgentManager.stopSessionsVerified: failed to unregister missing session ${sessionId}:`,
+            err
+          );
+        }
+        return { sessionId, stopped: true, detail: 'no in-memory session; unregistered' };
+      }
+
+      const notes: string[] = [];
+
+      try {
+        await this.stopSessionPreserveDb(sessionId, session, { strict: true });
+      } catch (err) {
+        notes.push(`interrupt failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      let verdict = await this.inspectSessionDown(session);
+      if (!verdict.down) {
+        log.warn(
+          `TaskAgentManager.stopSessionsVerified: session ${sessionId} still alive after interrupt (${verdict.reason}); retrying once`
+        );
+        try {
+          await this.stopSessionPreserveDb(sessionId, session, { strict: true });
+        } catch (err) {
+          notes.push(`retry interrupt failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        verdict = await this.inspectSessionDown(session);
+        if (verdict.down) notes.push('first interrupt did not land; stopped on retry');
+      }
+
+      if (!verdict.down) {
+        log.warn(
+          `TaskAgentManager.stopSessionsVerified: session ${sessionId} survived interrupt retry (${verdict.reason}); escalating to tracked process termination`
+        );
+        notes.push(`escalated after verification failure (${verdict.reason})`);
+        try {
+          session.terminateTrackedAgentProcesses({
+            forceDelayMs: VERIFIED_STOP_ESCALATION_FORCE_KILL_MS,
+          });
+        } catch (err) {
+          notes.push(`escalation failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        verdict = await this.inspectSessionDown(session);
+      }
+
+      this.detachSessionBookkeeping(sessionId);
+
+      try {
+        await this.config.sessionManager?.unregisterSession?.(sessionId);
+      } catch (err) {
+        notes.push(`unregister failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      if (verdict.down) {
+        return notes.length > 0
+          ? { sessionId, stopped: true, detail: notes.join('; ') }
+          : { sessionId, stopped: true };
+      }
+      return {
+        sessionId,
+        stopped: false,
+        detail: [...notes, `still alive: ${verdict.reason}`].join('; '),
+      };
+    } finally {
+      this.cancellingSessions.delete(sessionId);
+    }
+  }
+
+  private async inspectSessionDown(
+    session: AgentSession
+  ): Promise<{ down: boolean; reason?: string }> {
+    const status = session.getProcessingState().status;
+    if (status !== 'idle' && status !== 'interrupted') {
+      return { down: false, reason: `processing state '${status}'` };
+    }
+    if (session.isInterruptInProgress()) {
+      return { down: false, reason: 'interrupt still in progress' };
+    }
+    await this.awaitSessionProcessExit(session, VERIFIED_STOP_PROCESS_EXIT_SETTLE_MS);
+    const livePids = session.getTrackedAgentRootPidsSplit().live;
+    if (livePids.length > 0) {
+      return { down: false, reason: `live SDK process pid(s) ${livePids.join(', ')}` };
+    }
+    return { down: true };
+  }
+
+  private async awaitSessionProcessExit(session: AgentSession, timeoutMs: number): Promise<void> {
+    const exitPromise = session.processExitedPromise;
+    if (!exitPromise) return;
+    await Promise.race([
+      exitPromise,
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  }
+
+  private detachSessionBookkeeping(sessionId: string): void {
+    for (const [, nodeMap] of this.subSessions) nodeMap.delete(sessionId);
+    this.completionCallbacks.delete(sessionId);
+    const unsub = this.sessionListeners.get(sessionId);
+    if (unsub) {
+      unsub();
+      this.sessionListeners.delete(sessionId);
+    }
+  }
+
   async interruptBySessionId(agentSessionId: string): Promise<void> {
     const session = this.agentSessionIndex.get(agentSessionId);
     if (!session) return;
@@ -2648,6 +2801,17 @@ export class TaskAgentManager {
   private async rehydrateSubSessionsForRun(workflowRunId: string | null): Promise<void> {
     if (!workflowRunId) return;
 
+    const parentTask = this.config.taskRepo.listByWorkflowRun(workflowRunId)[0];
+    if (parentTask) {
+      const space = await this.config.spaceManager.getSpace(parentTask.spaceId);
+      if (space?.stopped) {
+        log.info(
+          `TaskAgentManager.rehydrateSubSessionsForRun: skipping run ${workflowRunId} because space ${parentTask.spaceId} is stopped`
+        );
+        return;
+      }
+    }
+
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
     for (const execution of executions) {
       const subSessionId = execution.agentSessionId;
@@ -2741,7 +2905,11 @@ export class TaskAgentManager {
     const taskId = parentTask.id;
     const spaceId = parentTask.spaceId;
 
-    if (parentTask.status === 'cancelled' || parentTask.status === 'archived') {
+    if (
+      parentTask.status === 'cancelled' ||
+      parentTask.status === 'archived' ||
+      parentTask.status === 'stopped'
+    ) {
       log.warn(
         `TaskAgentManager.rehydrateSubSession: refusing to rehydrate session ${subSessionId} — parent task ${taskId} is ${parentTask.status}`
       );

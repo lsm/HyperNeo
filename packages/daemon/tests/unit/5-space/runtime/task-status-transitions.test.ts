@@ -542,17 +542,21 @@ describe('SpaceTaskManager.setTaskStatus — stopped preserves task provenance (
     expect(stopped.result).toBe('partial run before cap');
   });
 
-  test('stopped → in_progress resume keeps the parked result and reportedSummary', async () => {
+  test('stopped → in_progress resume clears the parked outcome fields', async () => {
     const task = createTask('in_progress');
     taskRepo.updateTask(task.id, {
       result: 'parked work',
       reportedSummary: 'parked summary',
+      reportedStatus: 'done',
+      blockReason: 'parked reason',
     });
     await taskManager.setTaskStatus(task.id, 'stopped');
     const resumed = await taskManager.setTaskStatus(task.id, 'in_progress');
     expect(resumed.status).toBe('in_progress');
-    expect(resumed.result).toBe('parked work');
-    expect(resumed.reportedSummary).toBe('parked summary');
+    expect(resumed.result).toBeNull();
+    expect(resumed.reportedSummary).toBeNull();
+    expect(resumed.reportedStatus).toBeNull();
+    expect(resumed.blockReason).toBeNull();
   });
 
   test('approved → stopped is rejected by the transition validator', async () => {

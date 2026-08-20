@@ -64,6 +64,7 @@ export function isWorkflowRecoveryTransition(
     (from === 'done' && to === 'in_progress') ||
     (from === 'blocked' && (to === 'open' || to === 'in_progress')) ||
     (from === 'cancelled' && (to === 'open' || to === 'in_progress')) ||
+    (from === 'stopped' && to === 'in_progress') ||
     (isRateOrUsageLimited(from) && to === 'in_progress')
   );
 }

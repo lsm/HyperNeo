@@ -552,7 +552,7 @@ export function SpaceTaskPane({
     [activityMembers]
   );
   const hasUnifiedWorkflowThread = spaceStore.hasTaskMessageActivity(task.id) !== false;
-  const showInlineComposer = !isTerminalTask;
+  const showInlineComposer = !isTerminalTask && task.status !== 'stopped';
 
   useLayoutEffect(() => {
     if (!showInlineComposer) {
@@ -579,7 +579,7 @@ export function SpaceTaskPane({
     return () => resizeObserver.disconnect();
   }, [showInlineComposer, taskComposerElement, threadSendError]);
 
-  const canSendThreadMessage = !isTerminalTask && !sendingThread && composerTargets.length > 0;
+  const canSendThreadMessage = showInlineComposer && !sendingThread && composerTargets.length > 0;
 
   const dropFilesRef = useRef<FileDropHandler | null>(null);
   const registerDropTarget = useCallback((fn: FileDropHandler | null) => {
@@ -800,16 +800,17 @@ export function SpaceTaskPane({
 
     switch (outcome.type) {
       case 'open_session': {
-        const currentIsTerminal =
+        const currentOverlayReadonly =
           currentTask.status === 'done' ||
           currentTask.status === 'cancelled' ||
-          currentTask.status === 'archived';
+          currentTask.status === 'archived' ||
+          currentTask.status === 'stopped';
         const taskContext = {
           taskId: currentTask.id,
           agentName: outcome.session.agentName,
           workflowNodeId: nodeId,
           sessionId: outcome.session.sessionId,
-          ...(currentIsTerminal ? { readonly: true } : {}),
+          ...(currentOverlayReadonly ? { readonly: true } : {}),
           ...(outcome.session.nodeExecutionId
             ? { nodeExecutionId: outcome.session.nodeExecutionId }
             : {}),
@@ -826,7 +827,8 @@ export function SpaceTaskPane({
         if (
           currentTask.status === 'done' ||
           currentTask.status === 'cancelled' ||
-          currentTask.status === 'archived'
+          currentTask.status === 'archived' ||
+          currentTask.status === 'stopped'
         ) {
           setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: [] });
           return;
@@ -841,7 +843,8 @@ export function SpaceTaskPane({
         if (
           currentTask.status === 'done' ||
           currentTask.status === 'cancelled' ||
-          currentTask.status === 'archived'
+          currentTask.status === 'archived' ||
+          currentTask.status === 'stopped'
         ) {
           setNodeChoice({
             taskId: currentTask.id,
@@ -878,7 +881,7 @@ export function SpaceTaskPane({
       } = {
         taskId: task.id,
         agentName: choice.agentName,
-        ...(isTerminalTask ? { readonly: true } : {}),
+        ...(isTerminalTask || task.status === 'stopped' ? { readonly: true } : {}),
         ...(clickedNodeId ? { workflowNodeId: clickedNodeId } : {}),
         ...(choice.nodeExecutionId ? { nodeExecutionId: choice.nodeExecutionId } : {}),
       };
@@ -904,7 +907,7 @@ export function SpaceTaskPane({
           );
           if (!currentWorkerForSlot) return;
           liveSessionId = task.postApprovalSessionId;
-        } else if (isTerminalTask) {
+        } else if (isTerminalTask || task.status === 'stopped') {
           liveSessionId = choice.sessionId;
           pushOverlayHistory(liveSessionId, choice.label, undefined, {
             taskId: task.id,
@@ -1065,7 +1068,7 @@ export function SpaceTaskPane({
       .map((m) => `${m.nodeExecution?.nodeId}|${m.role}`)
   );
   const declaredAgentSlots: Array<{ name: string; nodeName: string; nodeId: string }> = [];
-  if (workflow) {
+  if (workflow && task.status !== 'stopped') {
     for (const node of workflow.nodes) {
       for (const agent of node.agents) {
         if (activeNodeSlots.has(`${node.id}|${agent.name}`)) continue;
@@ -1372,6 +1375,25 @@ export function SpaceTaskPane({
                 bottomClass="bottom-[var(--task-composer-offset)]"
                 autoScroll={autoScrollEnabled}
               />
+            )}
+
+            {task.status === 'stopped' && (
+              <div
+                class="flex-shrink-0 border-t border-white/10 bg-black/10 px-4 py-2 text-center text-xs text-gray-400"
+                data-testid="task-stopped-footer"
+                role="status"
+              >
+                Task stopped — resume it to continue working with its agents.
+              </div>
+            )}
+            {!showInlineComposer && threadSendError && (
+              <div
+                class="flex-shrink-0 border-t border-red-400/30 bg-red-500/10 px-4 py-2 text-center text-xs text-red-300"
+                data-testid="task-pane-transition-error"
+                role="alert"
+              >
+                {threadSendError}
+              </div>
             )}
 
             {showInlineComposer && (

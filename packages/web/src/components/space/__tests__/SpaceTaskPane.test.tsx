@@ -484,6 +484,39 @@ describe('SpaceTaskPane — composer', () => {
     expect(mockSendTaskMessage).not.toHaveBeenCalled();
   });
 
+  it('hides the composer for stopped tasks while live tasks keep it', () => {
+    setupTaskWithActivity({ status: 'stopped' });
+    const stopped = render(<SpaceTaskPane taskId="task-1" />);
+    expect(stopped.queryByTestId('task-session-chat-composer')).toBeNull();
+    expect(stopped.getByTestId('task-stopped-footer')).toBeTruthy();
+    stopped.unmount();
+
+    setupTaskWithActivity({ status: 'in_progress' });
+    const live = render(<SpaceTaskPane taskId="task-1" />);
+    expect(live.getByTestId('task-session-chat-composer')).toBeTruthy();
+    expect(live.queryByTestId('task-stopped-footer')).toBeNull();
+  });
+
+  it('surfaces transition errors outside the composer for stopped tasks', async () => {
+    mockTasks.value = [
+      makeTask({
+        status: 'stopped',
+        workflowRunId: 'run-1',
+        taskAgentSessionId: 'session-abc',
+      }),
+    ];
+    mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', status: 'blocked' })];
+    mockRecoverWorkflowTask.mockRejectedValueOnce(new Error('Run cannot be recovered'));
+    const { getByTestId, getByText, findByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Resume workflow'));
+
+    const error = await findByTestId('task-pane-transition-error');
+    expect(error.textContent).toContain('Run cannot be recovered');
+    expect(error.getAttribute('role')).toBe('alert');
+  });
+
   it.skip('disables textarea while send is in flight and re-enables after completion', async () => {
     let resolveSend: () => void;
     const sendPromise = new Promise<void>((resolve) => {
@@ -913,6 +946,71 @@ describe('SpaceTaskPane — canvas toggle', () => {
         'reviewer',
         'node-2'
       );
+    });
+
+    it('opens canvas node sessions read-only for stopped tasks', () => {
+      setupMultiNodeWorkflow(
+        [{ id: 'node-1', name: 'Coding', agents: [{ name: 'coder', agentId: 'a-coder' }] }],
+        { status: 'stopped' }
+      );
+      mockNodeExecutions.value = [
+        {
+          id: 'exec-coder',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-1',
+          agentName: 'coder',
+          agentId: 'a-coder',
+          agentSessionId: 'session-coder',
+          status: 'in_progress',
+        } as NodeExecution,
+      ];
+      mockTaskActivity.value = new Map([
+        ['task-1', [activityFor('node-1', 'coder', 'session-coder')]],
+      ]);
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+
+      mockWorkflowCanvasOnNodeClick('node-1', 'Coding', ['coder']);
+
+      expect(mockPushOverlayHistory).toHaveBeenCalledWith(
+        'session-coder',
+        'coder',
+        undefined,
+        expect.objectContaining({ taskId: 'task-1', readonly: true })
+      );
+    });
+
+    it('does not offer pending-agent activation from the canvas for stopped tasks', () => {
+      setupMultiNodeWorkflow(
+        [
+          { id: 'node-1', name: 'Coding', agents: [{ name: 'coder', agentId: 'a-coder' }] },
+          { id: 'node-2', name: 'Review', agents: [{ name: 'reviewer', agentId: 'a-reviewer' }] },
+        ],
+        { status: 'stopped' }
+      );
+      mockNodeExecutions.value = [
+        {
+          id: 'exec-coder',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-1',
+          agentName: 'coder',
+          agentId: 'a-coder',
+          agentSessionId: 'session-coder',
+          status: 'in_progress',
+        } as NodeExecution,
+      ];
+      mockTaskActivity.value = new Map([
+        ['task-1', [activityFor('node-1', 'coder', 'session-coder')]],
+      ]);
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+      mockPushOverlayHistoryForPendingAgent.mockClear();
+      mockPushOverlayHistory.mockClear();
+
+      mockWorkflowCanvasOnNodeClick('node-2', 'Review', ['reviewer']);
+
+      expect(mockPushOverlayHistoryForPendingAgent).not.toHaveBeenCalled();
+      expect(mockPushOverlayHistory).not.toHaveBeenCalled();
     });
 
     it('two nodes reusing the same slot name are disambiguated by node ID', () => {
@@ -1604,6 +1702,60 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(mockUpdateTask).not.toHaveBeenCalled();
   });
 
+  it('stops an in_progress workflow task with a plain updateTask call', async () => {
+    mockTasks.value = [
+      makeTask({
+        status: 'in_progress',
+        workflowRunId: 'run-1',
+        taskAgentSessionId: 'session-abc',
+      }),
+    ];
+    mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', status: 'in_progress' })];
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Stop'));
+
+    await waitFor(() =>
+      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'stopped' })
+    );
+    expect(mockRecoverWorkflowTask).not.toHaveBeenCalled();
+    expect(mockCancelWorkflowRun).not.toHaveBeenCalled();
+  });
+
+  it('resumes a stopped workflow task through workflow recovery', async () => {
+    mockTasks.value = [
+      makeTask({
+        status: 'stopped',
+        workflowRunId: 'run-1',
+        taskAgentSessionId: 'session-abc',
+      }),
+    ];
+    mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', status: 'blocked' })];
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Resume workflow'));
+
+    await waitFor(() =>
+      expect(mockRecoverWorkflowTask).toHaveBeenCalledWith('task-1', 'in_progress')
+    );
+    expect(mockUpdateTask).not.toHaveBeenCalled();
+  });
+
+  it('resumes a stopped standalone task with a plain updateTask call', async () => {
+    mockTasks.value = [makeTask({ status: 'stopped', taskAgentSessionId: 'session-abc' })];
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Resume'));
+
+    await waitFor(() =>
+      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'in_progress' })
+    );
+    expect(mockRecoverWorkflowTask).not.toHaveBeenCalled();
+  });
+
   it('shows divider between activity members and transition actions', () => {
     mockTasks.value = [makeTask({ status: 'done', taskAgentSessionId: 'session-abc' })];
     mockTaskActivity.value = new Map([
@@ -2130,6 +2282,31 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
     expect(getByText('Open reviewer (Not started)')).toBeTruthy();
   });
 
+  it('omits pending-agent slots for stopped tasks — overlays cannot send anyway', async () => {
+    mockTasks.value = [
+      makeTask({
+        workflowRunId: 'run-1',
+        taskAgentSessionId: 'session-task',
+        status: 'stopped',
+      }),
+    ];
+    mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+    mockWorkflows.value = [makeWorkflowWithAgents(['coder', 'reviewer'])];
+    mockTaskActivity.value = new Map([
+      ['task-1', [makeActivityMember({ id: 'm1', label: 'Task Agent', state: 'active' })]],
+    ]);
+
+    const { getByTestId, getByText, queryByText } = render(
+      <SpaceTaskPane taskId="task-1" spaceId="space-1" />
+    );
+    await waitFor(() => expect(getByTestId('task-actions-menu-trigger')).toBeTruthy());
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+
+    expect(getByText('Open Task Agent (Active)')).toBeTruthy();
+    expect(queryByText(/Not started/)).toBeNull();
+    expect(mockPushOverlayHistoryForPendingAgent).not.toHaveBeenCalled();
+  });
+
   it('renders workflow-declared (Not started) agents as clickable and routes to a pending-agent overlay', async () => {
     mockTasks.value = [
       makeTask({
@@ -2602,6 +2779,20 @@ describe('SpaceTaskPane — view follows activity, not status', () => {
       label: 'draft task shows the task information view',
       status: 'draft',
       activity: 0,
+      expectThread: false,
+    },
+    {
+      label: 'stopped task with prior agent activity keeps the thread view',
+      status: 'stopped',
+      activity: 6,
+      workflowRunId: 'run-1',
+      expectThread: true,
+    },
+    {
+      label: 'stopped task that was never started shows the task information view',
+      status: 'stopped',
+      activity: 0,
+      workflowRunId: 'run-1',
       expectThread: false,
     },
   ];

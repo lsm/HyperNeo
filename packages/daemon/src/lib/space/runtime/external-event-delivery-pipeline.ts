@@ -6,6 +6,7 @@ export type ExternalEventDeliveryDecision =
   | { action: 'skipClaimConflict' }
   | { action: 'failDelivery'; reason: string }
   | { action: 'deferPausedSpace' }
+  | { action: 'deferStoppedTask' }
   | { action: 'deliverLiveSession' }
   | { action: 'deliverStaleSession' }
   | {
@@ -63,9 +64,9 @@ export function applySubscriptionGate(ctx: ExternalEventDeliveryCtx): ExternalEv
 }
 
 export function applyTaskAdmissionGate(ctx: ExternalEventDeliveryCtx): ExternalEventDeliveryCtx {
-  return ctx.taskDecision.action === 'deliver'
-    ? ctx
-    : decided(ctx, { action: 'failDelivery', reason: ctx.taskDecision.reason });
+  if (ctx.taskDecision.action === 'deliver') return ctx;
+  if (ctx.taskDecision.action === 'hold') return decided(ctx, { action: 'deferStoppedTask' });
+  return decided(ctx, { action: 'failDelivery', reason: ctx.taskDecision.reason });
 }
 
 export function applySessionRoutingGate(ctx: ExternalEventDeliveryCtx): ExternalEventDeliveryCtx {
