@@ -13,6 +13,27 @@ const mockClearAttachments = vi.fn(() => {});
 const mockRestoreAttachments = vi.fn(() => {});
 const mockGetImagesForSend = vi.fn(() => undefined);
 const mockRequest = vi.fn(async () => ({ messages: [] }));
+const mockEventHandlers = new Map<string, Array<(payload: unknown, context: unknown) => void>>();
+const mockOnEvent = vi.fn(
+  (method: string, handler: (payload: unknown, context: unknown) => void) => {
+    const existing = mockEventHandlers.get(method) ?? [];
+    existing.push(handler);
+    mockEventHandlers.set(method, existing);
+    return () => {
+      const handlers = mockEventHandlers.get(method);
+      if (handlers) {
+        const idx = handlers.indexOf(handler);
+        if (idx !== -1) handlers.splice(idx, 1);
+      }
+    };
+  }
+);
+
+function emitStatusChanged(sessionId: string) {
+  for (const handler of mockEventHandlers.get('messages.statusChanged') ?? []) {
+    handler({ sessionId }, { channel: 'global' });
+  }
+}
 
 function setQueueResponses({
   enqueued = [],
@@ -34,6 +55,7 @@ function setQueueResponses({
 
 vi.mock('../../lib/state.ts', () => ({
   globalSettings: { value: { voice: { enabled: false } } },
+  connectionState: { value: 'connected' },
   get isAgentWorking() {
     return {
       get value() {
@@ -108,7 +130,7 @@ vi.mock('../../hooks', () => ({
 
 vi.mock('../../lib/connection-manager', () => ({
   connectionManager: {
-    getHubIfConnected: () => ({ request: mockRequest }),
+    getHubIfConnected: () => ({ request: mockRequest, onEvent: mockOnEvent }),
   },
 }));
 
@@ -126,6 +148,8 @@ describe('MessageInput queue mode', () => {
     mockGetImagesForSend.mockClear();
     mockGetImagesForSend.mockReturnValue(undefined);
     mockRequest.mockClear();
+    mockOnEvent.mockClear();
+    mockEventHandlers.clear();
     setQueueResponses({});
 
     Object.defineProperty(window, 'matchMedia', {
@@ -450,5 +474,124 @@ describe('MessageInput queue mode', () => {
     });
 
     expect(container.querySelector('[data-testid="queue-overlay"]')).toBeNull();
+  });
+
+  function byStatusCallCount() {
+    return mockRequest.mock.calls.filter(([method]) => method === 'session.messages.byStatus')
+      .length;
+  }
+
+  it('does not poll while idle', async () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      const initialCalls = byStatusCallCount();
+      expect(initialCalls).toBe(2);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000);
+      });
+
+      expect(byStatusCallCount()).toBe(initialCalls);
+      expect(container.querySelector('[data-testid="queue-overlay"]')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refreshes the queue from messages.statusChanged events with a debounce', async () => {
+    vi.useFakeTimers();
+    try {
+      render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      mockRequest.mockClear();
+
+      await act(async () => {
+        emitStatusChanged('session-1');
+        emitStatusChanged('session-1');
+        emitStatusChanged('session-1');
+        await vi.advanceTimersByTimeAsync(299);
+      });
+      expect(byStatusCallCount()).toBe(0);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(byStatusCallCount()).toBe(2);
+
+      await act(async () => {
+        emitStatusChanged('other-session');
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(byStatusCallCount()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to a slow poll while the agent works and pauses when hidden', async () => {
+    vi.useFakeTimers();
+    const originalHidden = Object.getOwnPropertyDescriptor(document, 'hidden');
+    try {
+      mockAgentWorking.value = true;
+      render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      mockRequest.mockClear();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4999);
+      });
+      expect(byStatusCallCount()).toBe(0);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(byStatusCallCount()).toBe(2);
+
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000);
+      });
+      expect(byStatusCallCount()).toBe(2);
+
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(byStatusCallCount()).toBe(4);
+    } finally {
+      if (originalHidden) {
+        Object.defineProperty(document, 'hidden', originalHidden);
+      }
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops refreshing from events after unmount', async () => {
+    vi.useFakeTimers();
+    try {
+      const { unmount } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      mockRequest.mockClear();
+      unmount();
+
+      await act(async () => {
+        emitStatusChanged('session-1');
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(byStatusCallCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
