@@ -45,6 +45,17 @@ const DEBOUNCE_SESSION_LIST_MS = 150;
 const DEBOUNCE_SPACE_SESSIONS_MS = 150;
 const DEBOUNCE_SPACE_TASK_FEEDS_MS = 250;
 
+const SESSION_LIST_EXCLUDED_TYPES = new Set<string>([
+  'lobby',
+  'spaces_global',
+  'room_chat',
+  'planner',
+  'coder',
+  'leader',
+  'space_chat',
+  'space_task_agent',
+]);
+
 function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string, unknown> {
   const sourceType = row.sourceType;
   const groupId = String(row.groupId ?? '');
@@ -3512,6 +3523,13 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
           };
         }
         return { totalCount: 0, archivedCount: 0 };
+      },
+      buildScopeFilter: () => (scope) => {
+        if (scope.sessionType && SESSION_LIST_EXCLUDED_TYPES.has(scope.sessionType)) {
+          return false;
+        }
+        if (scope.roomId || scope.spaceId) return false;
+        return true;
       },
     },
   ],
