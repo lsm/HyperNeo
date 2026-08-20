@@ -113,6 +113,8 @@ export class DatabaseCore {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupPath = join(backupDir, `daemon-${timestamp}.db`);
 
+    this.cleanupOldBackups(backupDir, MIGRATION_BACKUP_RETENTION - 1);
+
     const startedAt = Date.now();
     const strategy = this.writeBackup(backupPath);
     if (strategy === null) return;

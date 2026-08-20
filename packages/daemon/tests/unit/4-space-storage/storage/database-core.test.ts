@@ -512,6 +512,38 @@ describe('DatabaseCore', () => {
       expect(errors).toHaveLength(1);
     });
 
+    it('should free room for a new backup before writing it', async () => {
+      const backupDir = join(testDir, 'backups');
+      mkdirSync(backupDir, { recursive: true });
+      const now = Date.now() / 1000;
+      for (let i = 0; i < 3; i++) {
+        const stale = join(backupDir, `daemon-2026-02-0${i + 1}T00-00-00-000Z.db`);
+        writeFileSync(stale, 'stale');
+        utimesSync(stale, now - (4 - i) * 60, now - (4 - i) * 60);
+      }
+
+      let listingAtWrite: string[] = [];
+      dbCore = new DatabaseCore(dbPath);
+      const internals = dbCore as unknown as Record<string, unknown>;
+      const originalWriteBackup = internals.writeBackup as (path: string) => string | null;
+      internals.writeBackup = (backupPath: string) => {
+        listingAtWrite = readdirSync(backupDir)
+          .filter((f) => f.endsWith('.db'))
+          .sort();
+        return originalWriteBackup.call(dbCore, backupPath);
+      };
+
+      await dbCore.initialize();
+
+      expect(listingAtWrite).toEqual([
+        'daemon-2026-02-02T00-00-00-000Z.db',
+        'daemon-2026-02-03T00-00-00-000Z.db',
+      ]);
+      const remaining = readdirSync(backupDir).filter((f) => f.endsWith('.db'));
+      expect(remaining).toHaveLength(3);
+      expect(remaining).toContain('daemon-2026-02-03T00-00-00-000Z.db');
+    });
+
     it('should prune expired backups together with their WAL sidecars', async () => {
       const backupDir = join(testDir, 'backups');
       mkdirSync(backupDir, { recursive: true });

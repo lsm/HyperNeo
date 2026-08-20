@@ -147,8 +147,9 @@ followed by a full VACUUM anyway), only returns trailing pages, and adds write o
 Before running schema migrations the daemon always writes a backup into
 `<db-dir>/backups/daemon-<timestamp>.db` — unconditionally, regardless of database size.
 A backup is only attempted when a migration is actually pending, so plain daemon restarts
-create no backups. The 3 most recent backups are kept (WAL sidecar files are pruned with
-their backups).
+create no backups. The 3 most recent backups are kept; room for the next backup is freed
+before it is written (retaining the two newest known-good backups meanwhile), and WAL
+sidecar files are pruned with their backups.
 
 The copy strategy is picked per attempt, fastest first, and logged
 (`Migration backup created via <strategy> in <ms>ms`):
