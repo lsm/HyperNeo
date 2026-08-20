@@ -16,15 +16,20 @@ const logger = new Logger('AcpTransport');
 
 export function buildAcpProcessEnv(
   env?: Record<string, string | undefined>,
-  replaceEnv = false
+  replaceEnv = false,
+  platform: NodeJS.Platform = process.platform
 ): NodeJS.ProcessEnv {
   const processEnv: NodeJS.ProcessEnv = replaceEnv ? {} : { ...process.env };
   for (const [key, value] of Object.entries(env ?? {})) {
-    if (value === undefined) {
-      delete processEnv[key];
+    if (platform === 'win32') {
+      const normalizedKey = key.toUpperCase();
+      for (const existingKey of Object.keys(processEnv)) {
+        if (existingKey.toUpperCase() === normalizedKey) delete processEnv[existingKey];
+      }
     } else {
-      processEnv[key] = value;
+      delete processEnv[key];
     }
+    if (value !== undefined) processEnv[key] = value;
   }
   return processEnv;
 }

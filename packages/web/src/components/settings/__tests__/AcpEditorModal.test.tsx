@@ -120,6 +120,35 @@ describe('AcpEditorModal', () => {
     });
   });
 
+  it('preserves curated models for equivalent command formatting', async () => {
+    mockUpdateProvider.mockResolvedValue({ success: true });
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command="devin acp 'model one'"
+        models={[{ id: 'existing-model' }]}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.input(screen.getByDisplayValue("devin acp 'model one'"), {
+      target: { value: 'devin  acp "model one"' },
+    });
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledWith('acp-1', {
+        configJson: JSON.stringify({
+          command: 'devin  acp "model one"',
+          models: [{ id: 'existing-model' }],
+        }),
+      });
+    });
+  });
+
   it('clears curated models when the command changes', async () => {
     mockUpdateProvider.mockResolvedValue({ success: true });
 
@@ -209,6 +238,28 @@ describe('AcpEditorModal', () => {
         configJson: JSON.stringify({ command: 'old acp', models: [] }),
       });
     });
+  });
+
+  it('reports when discovery returns no models', async () => {
+    mockFetchAcpModels.mockResolvedValue({ models: [] });
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command="devin acp"
+        models={[]}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.click(screen.getByText('Fetch models'));
+
+    await waitFor(() => {
+      expect(screen.getByText('The ACP agent reported no models.')).toBeTruthy();
+    });
+    expect(screen.queryByText('All fetched models are already added.')).toBeNull();
   });
 
   it('shows fetch errors in the footer', async () => {

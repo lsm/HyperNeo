@@ -1,12 +1,11 @@
-import type { UUID } from 'crypto';
-import { isAbsolute, relative } from 'node:path';
+import { isAbsolute, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
 import {
   generateUUID,
-  THINKING_LEVEL_TOKENS,
   type MessageContent,
   type Session,
+  THINKING_LEVEL_TOKENS,
 } from '@hyperneo/shared';
 import type {
   AcpConfigOption,
@@ -16,32 +15,33 @@ import type {
   AcpFsWriteParams,
   AcpFsWriteResult,
   AcpMcpServerConfig,
-  AcpTerminalCreateParams,
   AcpPermissionRequest,
   AcpPermissionResponseResult,
+  AcpTerminalCreateParams,
 } from '@hyperneo/shared/acp';
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
-import { ErrorCategory } from '../error-manager';
-import { getModelsCache, setModelsCache } from '../model-service';
-import { getProviderRegistry } from '../providers/factory';
-import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-service';
-import { AcpProvider } from '../providers/acp-provider';
-import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
+import type { UUID } from 'crypto';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery';
 import {
-  refreshQueryEnvFromProcess,
   type QueryRunnerContext,
+  refreshQueryEnvFromProcess,
   type TrackedAgentProcess,
 } from '../agent/query-runner';
+import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
+import { ErrorCategory } from '../error-manager';
+import { getModelsCache, setModelsCache } from '../model-service';
+import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-service';
+import { AcpProvider } from '../providers/acp-provider';
+import { getProviderRegistry } from '../providers/factory';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy';
-import { getAcpCommandIdentity, parseAcpCommand } from './acp-command';
 import { AcpClient, type AcpClientOptions } from './acp-client';
+import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from './acp-command';
 import { AcpQueryAdapter } from './acp-query-adapter';
-import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 import { AcpTerminalManager } from './acp-terminal-manager';
+import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
@@ -257,9 +257,9 @@ export function convertMcpServersForAcp(
 }
 
 function getAcpWorkspacePath(session: Session, queryOptions: Options): string {
-  return (
-    queryOptions.cwd ?? session.worktree?.worktreePath ?? session.workspacePath ?? process.cwd()
-  );
+  const workspace = queryOptions.cwd ?? session.worktree?.worktreePath ?? session.workspacePath;
+  if (!workspace) throw new Error('ACP filesystem access requires a configured workspace');
+  return workspace;
 }
 
 function acpPermissionQuestion(params: AcpPermissionRequest): string {
@@ -513,6 +513,7 @@ export class AcpQueryRunner {
           ...session.metadata,
           acpCommandIdentity: commandIdentity,
           acpInstructionsSent: undefined,
+          acpContextUsageEstimate: undefined,
         };
         this.ctx.db.updateSession(session.id, {
           acpSessionId: undefined,
@@ -613,10 +614,7 @@ export class AcpQueryRunner {
         acpEnv.CLAUDE_CODE_OAUTH_TOKEN = preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN;
       }
 
-      const runTerminalManager = new AcpTerminalManager(
-        acpEnv as Record<string, string> | undefined,
-        cwd
-      );
+      const runTerminalManager = new AcpTerminalManager(buildAcpSafeEnv(), cwd);
       terminalManager = runTerminalManager;
       client = this.createAcpClient({
         command,
@@ -922,7 +920,7 @@ export class AcpQueryRunner {
       await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
       if (isStartupTimeout && createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
-        this.persistAcpSessionId(undefined);
+        this.clearAcpSessionState();
       }
 
       const lastMsg = this._lastConsumedUserMessage;
@@ -1077,7 +1075,7 @@ export class AcpQueryRunner {
 
   private assertWorkspacePath(path: string, workspace: string, requestedPath: string): void {
     const relativePath = relative(workspace, path);
-    if (relativePath.startsWith('..') || isAbsolute(relativePath)) {
+    if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
       throw new Error(`ACP filesystem path escapes workspace: ${requestedPath}`);
     }
   }
@@ -1170,6 +1168,19 @@ export class AcpQueryRunner {
     if (session.acpSessionId === acpSessionId) return;
     session.acpSessionId = acpSessionId;
     db.updateSession(session.id, { acpSessionId });
+  }
+
+  private clearAcpSessionState(): void {
+    const { session, db } = this.ctx;
+    session.acpSessionId = undefined;
+    session.metadata = {
+      ...session.metadata,
+      acpContextUsageEstimate: undefined,
+    };
+    db.updateSession(session.id, {
+      acpSessionId: undefined,
+      metadata: session.metadata,
+    });
   }
 
   private persistAcpInstructionsSent(): void {

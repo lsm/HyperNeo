@@ -148,9 +148,14 @@ export class AcpProvider implements Provider {
   }
 
   setAcpCommand(command: string | undefined): void {
-    const previousIdentity = this.getCommandIdentity();
     const nextCommand = command ?? this.env.HYPERNEO_ACP_COMMAND;
     const nextIdentity = nextCommand ? getAcpCommandIdentity(nextCommand) : undefined;
+    let previousIdentity: string | undefined;
+    try {
+      previousIdentity = this.getCommandIdentity();
+    } catch {
+      previousIdentity = undefined;
+    }
     this.commandOverride = command;
     this.lastProbeKey = undefined;
     this.lastProbeAt = 0;

@@ -1,18 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { z } from 'zod';
 import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
-import type { Database } from '../../../../src/storage/database';
-import type { ErrorManager } from '../../../../src/lib/error-manager';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
-import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import type { Logger } from '../../../../src/lib/logger';
-import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
-import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
-import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
+import { z } from 'zod';
 import type { AcpClient, AcpClientOptions } from '../../../../src/lib/acp/acp-client';
 import {
   AcpQueryRunner,
@@ -20,8 +12,16 @@ import {
   parseAcpCommand,
 } from '../../../../src/lib/acp/acp-query-runner';
 import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
+import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
+import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
+import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
+import type { ErrorManager } from '../../../../src/lib/error-manager';
+import type { Logger } from '../../../../src/lib/logger';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import type { Database } from '../../../../src/storage/database';
 
 function createMockClient() {
   return {
@@ -628,6 +628,12 @@ describe('AcpQueryRunner', () => {
         content: 'written',
       });
       expect(await readFile(join(workspace, 'nested', 'written.txt'), 'utf-8')).toBe('written');
+      await constructorOptions[0].onFsWrite?.({
+        sessionId: 'acp-session-1',
+        path: '..hidden/written.txt',
+        content: 'hidden',
+      });
+      expect(await readFile(join(workspace, '..hidden', 'written.txt'), 'utf-8')).toBe('hidden');
 
       const link = join(workspace, 'outside-link');
       await symlink(root, link);
@@ -640,6 +646,26 @@ describe('AcpQueryRunner', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  test('fails closed when ACP filesystem callbacks have no configured workspace', async () => {
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      session: { workspacePath: undefined },
+      queryOptions: { mcpServers: {} },
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(constructorOptions).toHaveLength(0);
+    expect(ctx.errorManager.handleError).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({ message: 'ACP filesystem access requires a configured workspace' }),
+      'system',
+      undefined,
+      expect.anything(),
+      expect.objectContaining({ providerId: 'acp' })
+    );
   });
 
   test('publishes query.trigger on normal turn completion to replay deferred rows', async () => {
@@ -808,6 +834,74 @@ describe('AcpQueryRunner', () => {
 
     expect(constructorOptions[0].env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-acp-token');
     expect(constructorOptions[0].env?.CLAUDE_CODE_OAUTH_TOKEN).toBe('acp-oauth-token');
+  });
+
+  test('uses an allowlisted environment for ACP terminal commands', async () => {
+    const previousGithubToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'github-secret';
+    process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-acp-token';
+    let releasePrompt: (() => void) | undefined;
+    let markPromptStarted: (() => void) | undefined;
+    const promptStarted = new Promise<void>((resolve) => {
+      markPromptStarted = resolve;
+    });
+    const promptReleased = new Promise<void>((resolve) => {
+      releasePrompt = resolve;
+    });
+    const client = createMockClient();
+    client.sendPrompt = mock(async function* (
+      _prompt: unknown,
+      callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+    ) {
+      callbacks?.onSubmitted?.();
+      callbacks?.onAccepted?.();
+      markPromptStarted?.();
+      await promptReleased;
+      yield {
+        sessionId: 'acp-session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'done' },
+        },
+      };
+    });
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      client,
+      canUseTool: async (_toolName, input) => {
+        const question = (input.questions as Array<{ question: string }>)[0].question;
+        return { behavior: 'allow', updatedInput: { answers: { [question]: 'Allow once' } } };
+      },
+    });
+
+    try {
+      await runner.start();
+      await promptStarted;
+      const created = await constructorOptions[0].onTerminalCreate?.({
+        sessionId: 'acp-session-1',
+        command: process.execPath,
+        args: ['-e', 'console.log(JSON.stringify(process.env))'],
+      });
+      if (!created) throw new Error('ACP terminal was not created');
+      await constructorOptions[0].onTerminalWaitForExit?.({
+        sessionId: 'acp-session-1',
+        terminalId: created.terminalId,
+      });
+      const output = await constructorOptions[0].onTerminalOutput?.({
+        sessionId: 'acp-session-1',
+        terminalId: created.terminalId,
+      });
+      if (!output) throw new Error('ACP terminal output was not returned');
+      const terminalEnv = JSON.parse(output.output.trim()) as Record<string, string>;
+
+      expect(terminalEnv.PATH).toBe(process.env.PATH);
+      expect(terminalEnv.GITHUB_TOKEN).toBeUndefined();
+      expect(terminalEnv.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    } finally {
+      releasePrompt?.();
+      await ctx.queryPromise;
+      if (previousGithubToken === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = previousGithubToken;
+    }
   });
 
   test('maps ACP permission requests through AskUserQuestion approval callback', async () => {
@@ -1046,6 +1140,7 @@ describe('AcpQueryRunner', () => {
         metadata: {
           acpCommandIdentity: JSON.stringify(['old-acp', '--stdio']),
           acpInstructionsSent: true,
+          acpContextUsageEstimate: 12000,
         },
       } as Partial<Session>,
       queryOptions: {
@@ -1065,6 +1160,7 @@ describe('AcpQueryRunner', () => {
       acpSessionId: undefined,
       metadata: expect.objectContaining({
         acpCommandIdentity: JSON.stringify(['mock-acp', '--stdio']),
+        acpContextUsageEstimate: undefined,
       }),
     });
     expect(ctx.session.metadata.acpInstructionsSent).toBe(true);

@@ -711,6 +711,7 @@ describe('SessionRepository', () => {
           id: 'acp-session',
           config: { ...createDefaultSession().config, provider: 'acp' },
           acpSessionId: 'remote-acp-session',
+          metadata: { acpContextUsageEstimate: 12000, preserved: true },
         })
       );
       repository.createSession(
@@ -723,7 +724,10 @@ describe('SessionRepository', () => {
 
       repository.clearAcpSessionIds();
 
-      expect(repository.getSession('acp-session')?.acpSessionId).toBeUndefined();
+      expect(repository.getSession('acp-session')).toMatchObject({
+        acpSessionId: undefined,
+        metadata: { preserved: true },
+      });
       expect(repository.getSession('other-session')?.acpSessionId).toBe('unrelated-session');
     });
 

@@ -179,6 +179,10 @@ export class ModelSwitchHandler {
         session.config.provider = nextProvider;
         if (clearAcpSessionId) {
           session.acpSessionId = undefined;
+          session.metadata = {
+            ...session.metadata,
+            acpContextUsageEstimate: undefined,
+          };
         }
         if (clearSdkSessionState) {
           session.sdkSessionId = undefined;
@@ -189,7 +193,7 @@ export class ModelSwitchHandler {
             model: resolvedModel,
             provider: nextProvider,
           } as SessionConfig,
-          ...(clearAcpSessionId ? { acpSessionId: undefined } : {}),
+          ...(clearAcpSessionId ? { acpSessionId: undefined, metadata: session.metadata } : {}),
           ...(clearSdkSessionState ? { sdkSessionId: undefined, sdkOriginPath: undefined } : {}),
         });
 
@@ -207,6 +211,10 @@ export class ModelSwitchHandler {
         session.config.provider = nextProvider;
         if (clearAcpSessionId) {
           session.acpSessionId = undefined;
+          session.metadata = {
+            ...session.metadata,
+            acpContextUsageEstimate: undefined,
+          };
         }
         if (clearSdkSessionState) {
           session.sdkSessionId = undefined;
@@ -217,7 +225,7 @@ export class ModelSwitchHandler {
             model: resolvedModel,
             provider: nextProvider,
           } as SessionConfig,
-          ...(clearAcpSessionId ? { acpSessionId: undefined } : {}),
+          ...(clearAcpSessionId ? { acpSessionId: undefined, metadata: session.metadata } : {}),
           ...(clearSdkSessionState ? { sdkSessionId: undefined, sdkOriginPath: undefined } : {}),
         });
 

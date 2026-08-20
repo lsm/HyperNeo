@@ -138,6 +138,14 @@ describe('AcpProvider', () => {
       provider.setAcpCommand('fixed acp');
       expect(provider.getAcpCommand()).toBe('fixed acp');
     });
+
+    it('should replace a malformed ambient command with a valid override', () => {
+      process.env.HYPERNEO_ACP_COMMAND = "devin 'acp";
+
+      provider.setAcpCommand('fixed acp');
+
+      expect(provider.getAcpCommand()).toBe('fixed acp');
+    });
   });
 
   describe('setAcpModels', () => {

@@ -1085,9 +1085,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         const row = requireMutableSpaceSessionRow(args.session_id);
         if (
-          mySessionId &&
-          args.session_id !== mySessionId &&
-          (outboundSenderLevel !== 'space-agent' || myAgentId)
+          args.answer_question ||
+          (mySessionId &&
+            args.session_id !== mySessionId &&
+            (outboundSenderLevel !== 'space-agent' || myAgentId))
         ) {
           await requireSessionWriteAutonomy('send_session_message');
         }

@@ -1,3 +1,4 @@
+import { getAcpCommandIdentity } from '@hyperneo/shared/acp';
 import { useState } from 'preact/hooks';
 import { updateProvider, fetchAcpModels } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
@@ -17,6 +18,14 @@ interface AcpEditorModalProps {
   onSaved: () => void;
 }
 
+function acpCommandsEquivalent(left: string, right: string): boolean {
+  try {
+    return getAcpCommandIdentity(left) === getAcpCommandIdentity(right);
+  } catch {
+    return left.trim() === right.trim();
+  }
+}
+
 export function AcpEditorModal({
   providerId,
   providerName,
@@ -34,7 +43,7 @@ export function AcpEditorModal({
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const commandChanged = command.trim() !== initialCommand.trim();
+  const commandChanged = !acpCommandsEquivalent(command, initialCommand);
 
   const existingModelIds = new Set(models.map((m) => m.id));
   const selectableFetched = fetchedModels?.filter((m) => !existingModelIds.has(m.id)) ?? [];
@@ -52,7 +61,7 @@ export function AcpEditorModal({
     try {
       const trimmedCommand = command.trim();
       const { models: fetched } = await fetchAcpModels(providerId, trimmedCommand);
-      if (trimmedCommand !== modelsCommand) {
+      if (!acpCommandsEquivalent(trimmedCommand, modelsCommand)) {
         setModels([]);
         setModelsCommand(trimmedCommand);
       }
@@ -94,8 +103,9 @@ export function AcpEditorModal({
         configJson: JSON.stringify({
           command: trimmedCommand,
           models:
-            modelsCommand === trimmedCommand &&
-            (!commandChanged || fetchedCommand === trimmedCommand)
+            acpCommandsEquivalent(modelsCommand, trimmedCommand) &&
+            (!commandChanged ||
+              (fetchedCommand !== null && acpCommandsEquivalent(fetchedCommand, trimmedCommand)))
               ? models
               : [],
         }),
@@ -182,7 +192,9 @@ export function AcpEditorModal({
                     </Button>
                   )}
                 </div>
-                {selectableFetched.length === 0 ? (
+                {fetchedModels.length === 0 ? (
+                  <p class="text-xs text-gray-500 italic">The ACP agent reported no models.</p>
+                ) : selectableFetched.length === 0 ? (
                   <p class="text-xs text-gray-500 italic">All fetched models are already added.</p>
                 ) : (
                   <div class="max-h-40 overflow-y-auto space-y-1">

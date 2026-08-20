@@ -532,21 +532,40 @@ export class SessionManager {
     this.sessionCache.remove(sessionId);
   }
 
+  async interruptCachedProviderSessions(providerId: string): Promise<void> {
+    const sessionIds = Array.from(this.sessionCache.entries())
+      .filter(([, agentSession]) => agentSession.getSessionData().config.provider === providerId)
+      .map(([sessionId]) => sessionId);
+    await Promise.all(sessionIds.map((sessionId) => this.interruptInMemorySession(sessionId)));
+  }
+
   async interruptProviderSessions(providerId: string): Promise<void> {
-    const sessionIds = new Set(
-      this.db
-        .listSessions({ includeArchived: true, includeSpaceSessions: true })
-        .filter((session) => session.config.provider === providerId)
-        .map((session) => session.id)
-    );
+    const sessions = this.db
+      .listSessions({ includeArchived: true, includeSpaceSessions: true })
+      .filter((session) => session.config.provider === providerId);
+    const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+    const sessionIds = new Set(sessionsById.keys());
     for (const [sessionId, agentSession] of this.sessionCache.entries()) {
-      if (agentSession.getSessionData().config.provider === providerId) {
+      const session = agentSession.getSessionData();
+      if (session.config.provider === providerId) {
         sessionIds.add(sessionId);
+        if (!sessionsById.has(sessionId)) sessionsById.set(sessionId, session);
       }
     }
     await Promise.all(
       Array.from(sessionIds, async (sessionId) => {
-        this.db.updateSession(sessionId, { acpSessionId: undefined });
+        const session = sessionsById.get(sessionId);
+        this.db.updateSession(sessionId, {
+          acpSessionId: undefined,
+          ...(session?.metadata?.acpContextUsageEstimate !== undefined
+            ? {
+                metadata: {
+                  ...session.metadata,
+                  acpContextUsageEstimate: undefined,
+                },
+              }
+            : {}),
+        });
         await this.interruptInMemorySession(sessionId);
       })
     );

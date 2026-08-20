@@ -16,6 +16,20 @@ describe('buildAcpProcessEnv', () => {
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
   });
 
+  it('removes case-insensitive Windows variants before applying overrides', () => {
+    const originalToken = process.env.anthropic_auth_token;
+    process.env.anthropic_auth_token = 'secret';
+    try {
+      const env = buildAcpProcessEnv({ ANTHROPIC_AUTH_TOKEN: undefined }, false, 'win32');
+
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      expect(env.anthropic_auth_token).toBeUndefined();
+    } finally {
+      if (originalToken === undefined) delete process.env.anthropic_auth_token;
+      else process.env.anthropic_auth_token = originalToken;
+    }
+  });
+
   it('does not inherit ambient variables when replacing the process environment', () => {
     const originalSecret = process.env.UNRELATED_PROVIDER_TOKEN;
     process.env.UNRELATED_PROVIDER_TOKEN = 'secret';

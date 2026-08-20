@@ -81,10 +81,14 @@ export class QueryLifecycleManager {
       session.acpSessionId = undefined;
       updates.acpSessionId = undefined;
     }
-    if (session.metadata?.acpInstructionsSent) {
+    if (
+      session.metadata?.acpInstructionsSent ||
+      session.metadata?.acpContextUsageEstimate !== undefined
+    ) {
       session.metadata = {
         ...session.metadata,
         acpInstructionsSent: undefined,
+        acpContextUsageEstimate: undefined,
       };
       updates.metadata = session.metadata;
     }

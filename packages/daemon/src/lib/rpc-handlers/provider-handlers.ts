@@ -153,7 +153,10 @@ export interface ProviderHandlerDeps {
   providerRepo: ProviderRepository;
   credentialManager: ProviderCredentialManager;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
-  sessionManager?: Pick<SessionManager, 'interruptProviderSessions'>;
+  sessionManager?: Pick<
+    SessionManager,
+    'interruptCachedProviderSessions' | 'interruptProviderSessions'
+  >;
   clearPersistedAcpSessionIds?: () => void;
 }
 
@@ -400,6 +403,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
           if (shouldResync) {
             if (record.isEnabled === false) {
+              if (record.providerId === 'acp' && existing.isEnabled !== false) {
+                await sessionManager?.interruptCachedProviderSessions('acp');
+              }
               if (record.kind === 'built_in') {
                 markBuiltInProviderDisabled(record.providerId);
               }
@@ -441,6 +447,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
       if (record.kind === 'built_in') {
         providerRepo.updateProvider(data.id, { isEnabled: false });
+        if (record.providerId === 'acp' && record.isEnabled !== false) {
+          await sessionManager?.interruptCachedProviderSessions('acp');
+        }
         markBuiltInProviderDisabled(record.providerId);
       } else {
         providerRepo.deleteProvider(data.id);

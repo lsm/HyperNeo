@@ -1,5 +1,30 @@
 import { describe, expect, test } from 'bun:test';
-import { getAcpCommandIdentity, parseAcpCommand } from '../../../../src/lib/acp/acp-command';
+import {
+  buildAcpSafeEnv,
+  getAcpCommandIdentity,
+  parseAcpCommand,
+} from '../../../../src/lib/acp/acp-command';
+
+describe('buildAcpSafeEnv', () => {
+  test('preserves required Windows profile variables without unrelated secrets', () => {
+    expect(
+      buildAcpSafeEnv({
+        PATH: 'C:\\Windows\\System32',
+        USERPROFILE: 'C:\\Users\\devin',
+        APPDATA: 'C:\\Users\\devin\\AppData\\Roaming',
+        LOCALAPPDATA: 'C:\\Users\\devin\\AppData\\Local',
+        SYSTEMROOT: 'C:\\Windows',
+        GITHUB_TOKEN: 'secret',
+      })
+    ).toEqual({
+      PATH: 'C:\\Windows\\System32',
+      USERPROFILE: 'C:\\Users\\devin',
+      APPDATA: 'C:\\Users\\devin\\AppData\\Roaming',
+      LOCALAPPDATA: 'C:\\Users\\devin\\AppData\\Local',
+      SYSTEMROOT: 'C:\\Windows',
+    });
+  });
+});
 
 describe('parseAcpCommand', () => {
   test('parses quoted paths, quoted arguments, and escapes', () => {

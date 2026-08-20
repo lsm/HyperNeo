@@ -135,6 +135,7 @@ describe('Provider RPC handlers', () => {
   let creds: ReturnType<typeof createMockCredentialManager>;
   let eventBus: ReturnType<typeof createMockInternalEventBus>;
   let sessionManager: {
+    interruptCachedProviderSessions: ReturnType<typeof mock>;
     interruptProviderSessions: ReturnType<typeof mock>;
   };
   let clearPersistedAcpSessionIds: ReturnType<typeof mock>;
@@ -145,6 +146,7 @@ describe('Provider RPC handlers', () => {
     creds = createMockCredentialManager();
     eventBus = createMockInternalEventBus();
     sessionManager = {
+      interruptCachedProviderSessions: mock(async () => {}),
       interruptProviderSessions: mock(async () => {}),
     };
     clearPersistedAcpSessionIds = mock(() => {});
@@ -552,6 +554,23 @@ describe('Provider RPC handlers', () => {
       expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
     });
 
+    it('interrupts cached ACP sessions when disabling the provider', async () => {
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'devin acp', models: [] }),
+      });
+      const handlers = setup();
+
+      await handlers.get('providers.update')!({ id: created.id, params: { isEnabled: false } }, {});
+
+      expect(sessionManager.interruptCachedProviderSessions).toHaveBeenCalledWith('acp');
+      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
+    });
+
     it('emits providers.changed after update', async () => {
       const created = repo.createProvider({
         providerId: 'anthropic',
@@ -594,6 +613,22 @@ describe('Provider RPC handlers', () => {
       await expect(handlers.get('providers.delete')!({ id: 'missing' }, {})).rejects.toThrow(
         'not found'
       );
+    });
+
+    it('interrupts cached ACP sessions when deleting the built-in provider', async () => {
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const handlers = setup();
+
+      await handlers.get('providers.delete')!({ id: created.id }, {});
+
+      expect(sessionManager.interruptCachedProviderSessions).toHaveBeenCalledWith('acp');
+      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
     });
 
     it('emits providers.changed after deletion', async () => {

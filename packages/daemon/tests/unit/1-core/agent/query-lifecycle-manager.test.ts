@@ -598,7 +598,10 @@ describe('QueryLifecycleManager', () => {
     test('clears ACP resume state on reset when no query is running', async () => {
       mockContext.session.config.provider = 'acp';
       mockContext.session.acpSessionId = 'stale-acp-session';
-      mockContext.session.metadata = { acpInstructionsSent: true } as Session['metadata'];
+      mockContext.session.metadata = {
+        acpInstructionsSent: true,
+        acpContextUsageEstimate: 12000,
+      } as Session['metadata'];
       manager = new QueryLifecycleManager(mockContext);
 
       const result = await manager.reset();
@@ -606,11 +609,15 @@ describe('QueryLifecycleManager', () => {
       expect(result.success).toBe(true);
       expect(mockContext.session.acpSessionId).toBeUndefined();
       expect(mockContext.session.metadata.acpInstructionsSent).toBeUndefined();
+      expect(mockContext.session.metadata.acpContextUsageEstimate).toBeUndefined();
       expect(updateSessionSpy).toHaveBeenCalledWith(
         'test-session',
         expect.objectContaining({
           acpSessionId: undefined,
-          metadata: expect.objectContaining({ acpInstructionsSent: undefined }),
+          metadata: expect.objectContaining({
+            acpInstructionsSent: undefined,
+            acpContextUsageEstimate: undefined,
+          }),
         })
       );
     });
@@ -622,7 +629,10 @@ describe('QueryLifecycleManager', () => {
       mockContext.queryPromise = Promise.resolve();
       mockContext.session.config.provider = 'acp';
       mockContext.session.acpSessionId = 'stale-acp-session';
-      mockContext.session.metadata = { acpInstructionsSent: true } as Session['metadata'];
+      mockContext.session.metadata = {
+        acpInstructionsSent: true,
+        acpContextUsageEstimate: 12000,
+      } as Session['metadata'];
       manager = new QueryLifecycleManager(mockContext);
 
       const result = await manager.reset({ restartAfter: true });
@@ -630,11 +640,15 @@ describe('QueryLifecycleManager', () => {
       expect(result.success).toBe(true);
       expect(mockContext.session.acpSessionId).toBeUndefined();
       expect(mockContext.session.metadata.acpInstructionsSent).toBeUndefined();
+      expect(mockContext.session.metadata.acpContextUsageEstimate).toBeUndefined();
       expect(updateSessionSpy).toHaveBeenCalledWith(
         'test-session',
         expect.objectContaining({
           acpSessionId: undefined,
-          metadata: expect.objectContaining({ acpInstructionsSent: undefined }),
+          metadata: expect.objectContaining({
+            acpInstructionsSent: undefined,
+            acpContextUsageEstimate: undefined,
+          }),
         })
       );
       expect(startStreamingCalled).toBe(true);

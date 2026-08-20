@@ -59,6 +59,17 @@ const TEST_MODELS: ModelInfo[] = [
     available: true,
   },
   {
+    id: 'acp-default',
+    name: 'ACP Default',
+    alias: 'acp',
+    family: 'acp',
+    provider: 'acp',
+    contextWindow: 200000,
+    description: 'ACP model',
+    releaseDate: '2026-01-01',
+    available: true,
+  },
+  {
     id: 'glm-5',
     name: 'GLM-5',
     alias: 'glm',
@@ -393,6 +404,30 @@ describe('ModelSwitchHandler', () => {
 
         expect(result.success).toBe(true);
         expect(mockSession.config.provider).toBe('anthropic');
+      });
+
+      it('clears ACP resume and context usage state when switching providers', async () => {
+        mockSession.config.model = 'acp-default';
+        mockSession.config.provider = 'acp';
+        mockSession.acpSessionId = 'remote-acp-session';
+        mockSession.metadata = {
+          ...mockSession.metadata,
+          acpContextUsageEstimate: 12000,
+        };
+
+        handler = createHandler({ queryObject: null });
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+        expect(result.success).toBe(true);
+        expect(mockSession.acpSessionId).toBeUndefined();
+        expect(mockSession.metadata.acpContextUsageEstimate).toBeUndefined();
+        expect(updateSessionSpy).toHaveBeenCalledWith(
+          mockSession.id,
+          expect.objectContaining({
+            acpSessionId: undefined,
+            metadata: expect.objectContaining({ acpContextUsageEstimate: undefined }),
+          })
+        );
       });
     });
 
