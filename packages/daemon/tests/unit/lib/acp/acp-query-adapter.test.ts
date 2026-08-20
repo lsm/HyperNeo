@@ -303,11 +303,13 @@ describe('AcpQueryAdapter', () => {
     );
     const messages: SDKMessage[] = [];
 
-    await expect(async () => {
-      for await (const message of adapter) {
-        messages.push(message);
-      }
-    }).toThrow('prompt failed');
+    await expect(
+      (async () => {
+        for await (const message of adapter) {
+          messages.push(message);
+        }
+      })()
+    ).rejects.toThrow('prompt failed');
 
     expect(messages.map((message) => message.type)).toEqual(['tool_progress', 'user', 'result']);
     expect((messages[1] as { tool_use_result: unknown }).tool_use_result).toBe('partial output');
