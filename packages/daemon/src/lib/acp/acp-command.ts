@@ -1,3 +1,24 @@
+const ACP_SAFE_ENV_KEYS = [
+  'HOME',
+  'PATH',
+  'SHELL',
+  'TMPDIR',
+  'TEMP',
+  'TMP',
+  'USER',
+  'LOGNAME',
+  'LANG',
+  'LC_ALL',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+] as const;
+
+export function buildAcpSafeEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  return Object.fromEntries(
+    ACP_SAFE_ENV_KEYS.flatMap((key) => (env[key] === undefined ? [] : [[key, env[key]]]))
+  );
+}
+
 export function getAcpCommandIdentity(commandLine: string): string {
   const { command, args } = parseAcpCommand(commandLine);
   return JSON.stringify([command, ...args]);

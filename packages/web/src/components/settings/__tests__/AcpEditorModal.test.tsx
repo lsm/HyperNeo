@@ -144,6 +144,40 @@ describe('AcpEditorModal', () => {
     });
   });
 
+  it('persists models fetched and selected for a changed command', async () => {
+    mockFetchAcpModels.mockResolvedValue({
+      models: [{ id: 'new-model', name: 'New Model' }],
+    });
+    mockUpdateProvider.mockResolvedValue({ success: true });
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command="old acp"
+        models={[{ id: 'old-model' }]}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.input(screen.getByDisplayValue('old acp'), { target: { value: 'new acp' } });
+    fireEvent.click(screen.getByText('Fetch models'));
+    await waitFor(() => expect(screen.getByText('new-model')).toBeTruthy());
+    fireEvent.click(screen.getByText('new-model'));
+    fireEvent.click(screen.getByText('Add selected'));
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledWith('acp-1', {
+        configJson: JSON.stringify({
+          command: 'new acp',
+          models: [{ id: 'new-model', name: 'New Model' }],
+        }),
+      });
+    });
+  });
+
   it('shows fetch errors in the footer', async () => {
     mockFetchAcpModels.mockRejectedValue(new Error('Discovery failed'));
 

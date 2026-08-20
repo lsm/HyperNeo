@@ -1,5 +1,5 @@
 import { AcpClient } from './acp-client';
-import { parseAcpCommand } from './acp-command';
+import { buildAcpSafeEnv, parseAcpCommand } from './acp-command';
 import {
   flattenModelChoices,
   type AcpConfiguredModel,
@@ -7,26 +7,8 @@ import {
 } from '../providers/acp-provider';
 
 const FETCH_REQUEST_TIMEOUT_MS = 20000;
-const ACP_DISCOVERY_ENV_KEYS = [
-  'HOME',
-  'PATH',
-  'SHELL',
-  'TMPDIR',
-  'TEMP',
-  'TMP',
-  'USER',
-  'LOGNAME',
-  'LANG',
-  'LC_ALL',
-  'XDG_CONFIG_HOME',
-  'XDG_DATA_HOME',
-] as const;
 
-export function buildAcpDiscoveryEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  return Object.fromEntries(
-    ACP_DISCOVERY_ENV_KEYS.flatMap((key) => (env[key] === undefined ? [] : [[key, env[key]]]))
-  );
-}
+export const buildAcpDiscoveryEnv = buildAcpSafeEnv;
 
 export async function fetchAcpModels(
   provider: AcpProvider,

@@ -8,7 +8,7 @@ import type {
 } from '@hyperneo/shared/provider';
 import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
 import { spawn } from 'node:child_process';
-import { getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command';
+import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command';
 
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
 const ACP_CONTEXT_WINDOW_ENV_VAR = 'HYPERNEO_ACP_CONTEXT_WINDOW';
@@ -29,6 +29,7 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     const child = spawn(command, [...args, '--help'], {
+      env: buildAcpSafeEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const settle = (callback: () => void) => {

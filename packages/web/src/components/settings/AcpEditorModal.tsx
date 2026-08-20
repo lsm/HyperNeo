@@ -28,6 +28,7 @@ export function AcpEditorModal({
   const [command, setCommand] = useState(initialCommand);
   const [models, setModels] = useState<AcpConfiguredModel[]>(initialModels);
   const [fetchedModels, setFetchedModels] = useState<AcpConfiguredModel[] | null>(null);
+  const [fetchedCommand, setFetchedCommand] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -45,10 +46,16 @@ export function AcpEditorModal({
     setFetching(true);
     setError(null);
     setFetchedModels(null);
+    setFetchedCommand(null);
     setSelectedIds([]);
     try {
-      const { models: fetched } = await fetchAcpModels(providerId, command.trim());
+      const trimmedCommand = command.trim();
+      const { models: fetched } = await fetchAcpModels(providerId, trimmedCommand);
+      if (trimmedCommand !== initialCommand.trim()) {
+        setModels([]);
+      }
       setFetchedModels(fetched);
+      setFetchedCommand(trimmedCommand);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch models');
     } finally {
@@ -84,7 +91,7 @@ export function AcpEditorModal({
       await updateProvider(providerId, {
         configJson: JSON.stringify({
           command: trimmedCommand,
-          models: commandChanged ? [] : models,
+          models: commandChanged && fetchedCommand !== trimmedCommand ? [] : models,
         }),
       });
       toast.success(`${providerName} updated`);
