@@ -660,7 +660,7 @@ describe('AcpQueryRunner', () => {
     }
   });
 
-  test('fails closed when ACP filesystem callbacks have no configured workspace', async () => {
+  test('starts workspace-less ACP sessions without host filesystem or terminal callbacks', async () => {
     const { runner, ctx, constructorOptions } = createRunnerFixture({
       session: { workspacePath: undefined },
       queryOptions: { mcpServers: {} },
@@ -669,15 +669,16 @@ describe('AcpQueryRunner', () => {
     await runner.start();
     await ctx.queryPromise;
 
-    expect(constructorOptions).toHaveLength(0);
-    expect(ctx.errorManager.handleError).toHaveBeenCalledWith(
-      'session-1',
-      expect.objectContaining({ message: 'ACP filesystem access requires a configured workspace' }),
-      'system',
-      undefined,
-      expect.anything(),
-      expect.objectContaining({ providerId: 'acp' })
-    );
+    expect(constructorOptions).toHaveLength(1);
+    expect(constructorOptions[0]).toMatchObject({ cwd: process.cwd() });
+    expect(constructorOptions[0].onFsRead).toBeUndefined();
+    expect(constructorOptions[0].onFsWrite).toBeUndefined();
+    expect(constructorOptions[0].onTerminalCreate).toBeUndefined();
+    expect(constructorOptions[0].onTerminalOutput).toBeUndefined();
+    expect(constructorOptions[0].onTerminalWaitForExit).toBeUndefined();
+    expect(constructorOptions[0].onTerminalKill).toBeUndefined();
+    expect(constructorOptions[0].onTerminalRelease).toBeUndefined();
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
   });
 
   test('publishes query.trigger on normal turn completion to replay deferred rows', async () => {

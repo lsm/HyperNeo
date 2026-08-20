@@ -102,10 +102,13 @@ export function AcpEditorModal({
       await updateProvider(providerId, {
         configJson: JSON.stringify({
           command: trimmedCommand,
-          models:
-            acpCommandsEquivalent(modelsCommand, trimmedCommand) &&
-            (!commandChanged ||
-              (fetchedCommand !== null && acpCommandsEquivalent(fetchedCommand, trimmedCommand)))
+          models: !commandChanged
+            ? acpCommandsEquivalent(modelsCommand, initialCommand)
+              ? models
+              : initialModels
+            : acpCommandsEquivalent(modelsCommand, trimmedCommand) &&
+                fetchedCommand !== null &&
+                acpCommandsEquivalent(fetchedCommand, trimmedCommand)
               ? models
               : [],
         }),

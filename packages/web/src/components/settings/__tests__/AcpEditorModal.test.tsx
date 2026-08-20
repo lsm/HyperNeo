@@ -235,7 +235,10 @@ describe('AcpEditorModal', () => {
 
     await waitFor(() => {
       expect(mockUpdateProvider).toHaveBeenCalledWith('acp-1', {
-        configJson: JSON.stringify({ command: 'old acp', models: [] }),
+        configJson: JSON.stringify({
+          command: 'old acp',
+          models: [{ id: 'old-model' }],
+        }),
       });
     });
   });

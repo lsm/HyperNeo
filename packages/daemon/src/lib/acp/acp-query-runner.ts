@@ -18,6 +18,10 @@ import type {
   AcpPermissionRequest,
   AcpPermissionResponseResult,
   AcpTerminalCreateParams,
+  AcpTerminalKillParams,
+  AcpTerminalOutputParams,
+  AcpTerminalReleaseParams,
+  AcpTerminalWaitForExitParams,
 } from '@hyperneo/shared/acp';
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
@@ -256,10 +260,8 @@ export function convertMcpServersForAcp(
   });
 }
 
-function getAcpWorkspacePath(session: Session, queryOptions: Options): string {
-  const workspace = queryOptions.cwd ?? session.worktree?.worktreePath ?? session.workspacePath;
-  if (!workspace) throw new Error('ACP filesystem access requires a configured workspace');
-  return workspace;
+function getAcpWorkspacePath(session: Session, queryOptions: Options): string | undefined {
+  return queryOptions.cwd ?? session.worktree?.worktreePath ?? session.workspacePath ?? undefined;
 }
 
 function acpPermissionQuestion(params: AcpPermissionRequest): string {
@@ -547,7 +549,8 @@ export class AcpQueryRunner {
         (message) => logger.warn(message),
         proxyBridge
       );
-      const cwd = getAcpWorkspacePath(session, queryOptions);
+      const workspace = getAcpWorkspacePath(session, queryOptions);
+      const cwd = workspace ?? process.cwd();
       const startupTimeoutMs = getStartupTimeoutMs();
       const abortController = new AbortController();
       this.ctx.queryAbortController = abortController;
@@ -614,8 +617,23 @@ export class AcpQueryRunner {
         acpEnv.CLAUDE_CODE_OAUTH_TOKEN = preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN;
       }
 
-      const runTerminalManager = new AcpTerminalManager(buildAcpSafeEnv(), cwd);
-      terminalManager = runTerminalManager;
+      const hostCallbacks = workspace
+        ? (() => {
+            const manager = new AcpTerminalManager(buildAcpSafeEnv(), workspace);
+            terminalManager = manager;
+            return {
+              onTerminalCreate: async (params: AcpTerminalCreateParams) =>
+                manager.create(await authorizeAcpTerminalCreate(params, canUseTool)),
+              onTerminalOutput: (params: AcpTerminalOutputParams) => manager.output(params),
+              onTerminalWaitForExit: (params: AcpTerminalWaitForExitParams) =>
+                manager.waitForExit(params),
+              onTerminalKill: (params: AcpTerminalKillParams) => manager.kill(params),
+              onTerminalRelease: (params: AcpTerminalReleaseParams) => manager.release(params),
+              onFsRead: (params: AcpFsReadParams) => this.handleFsRead(params, workspace),
+              onFsWrite: (params: AcpFsWriteParams) => this.handleFsWrite(params, workspace),
+            };
+          })()
+        : {};
       client = this.createAcpClient({
         command,
         args,
@@ -625,14 +643,7 @@ export class AcpQueryRunner {
           this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
         onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
         onPermissionRequest: (params) => handleAcpPermissionRequest(params, canUseTool),
-        onTerminalCreate: async (params) =>
-          runTerminalManager.create(await authorizeAcpTerminalCreate(params, canUseTool)),
-        onTerminalOutput: (params) => runTerminalManager.output(params),
-        onTerminalWaitForExit: (params) => runTerminalManager.waitForExit(params),
-        onTerminalKill: (params) => runTerminalManager.kill(params),
-        onTerminalRelease: (params) => runTerminalManager.release(params),
-        onFsRead: (params) => this.handleFsRead(params, cwd),
-        onFsWrite: (params) => this.handleFsWrite(params, cwd),
+        ...hostCallbacks,
       });
 
       if (messageQueue.size() > 0) {

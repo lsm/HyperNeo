@@ -14,6 +14,9 @@ describe('buildAcpSafeEnv', () => {
         APPDATA: 'C:\\Users\\devin\\AppData\\Roaming',
         LOCALAPPDATA: 'C:\\Users\\devin\\AppData\\Local',
         SYSTEMROOT: 'C:\\Windows',
+        HTTPS_PROXY: 'http://proxy.internal:8080',
+        NODE_USE_ENV_PROXY: '1',
+        NODE_EXTRA_CA_CERTS: 'C:\\certs\\internal.pem',
         GITHUB_TOKEN: 'secret',
       })
     ).toEqual({
@@ -22,6 +25,9 @@ describe('buildAcpSafeEnv', () => {
       APPDATA: 'C:\\Users\\devin\\AppData\\Roaming',
       LOCALAPPDATA: 'C:\\Users\\devin\\AppData\\Local',
       SYSTEMROOT: 'C:\\Windows',
+      HTTPS_PROXY: 'http://proxy.internal:8080',
+      NODE_USE_ENV_PROXY: '1',
+      NODE_EXTRA_CA_CERTS: 'C:\\certs\\internal.pem',
     });
   });
 });
