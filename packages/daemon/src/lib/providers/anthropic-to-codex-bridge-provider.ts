@@ -218,7 +218,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private cachedApiKey: string | undefined = undefined;
 
-  private oauthRefresh: Promise<StoredCredentials | undefined> | undefined;
+  private readonly oauthRefreshes = new Map<string, Promise<StoredCredentials | undefined>>();
 
   private activeOAuthFlow: {
     state: string;
@@ -666,35 +666,64 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     }));
   }
 
-  private refreshStoredOauthCredentials(): Promise<StoredCredentials | undefined> {
-    if (this.oauthRefresh) return this.oauthRefresh;
-    const refresh = this.performOauthCredentialRefresh().finally(() => {
-      if (this.oauthRefresh === refresh) this.oauthRefresh = undefined;
-    });
-    this.oauthRefresh = refresh;
+  private oauthCredentialKey(credentials: StoredCredentials): string {
+    return crypto
+      .createHash('sha256')
+      .update(
+        [
+          credentials.type,
+          credentials.access ?? '',
+          credentials.refresh ?? '',
+          credentials.accountId ?? '',
+          credentials.isFedrampAccount ? 'fedramp' : 'standard',
+        ].join(':')
+      )
+      .digest('hex');
+  }
+
+  private async refreshStoredOauthCredentials(): Promise<StoredCredentials | undefined> {
+    const credentials = await this.loadCredentials();
+    if (!credentials || credentials.type !== 'oauth' || !credentials.refresh) return undefined;
+
+    const refreshToken = credentials.refresh;
+    const key = this.oauthCredentialKey(credentials);
+    const activeRefresh = this.oauthRefreshes.get(key);
+    if (activeRefresh) return activeRefresh;
+
+    const refresh = this.performOauthCredentialRefresh(credentials, refreshToken, key).finally(
+      () => {
+        if (this.oauthRefreshes.get(key) === refresh) this.oauthRefreshes.delete(key);
+      }
+    );
+    this.oauthRefreshes.set(key, refresh);
     return refresh;
   }
 
-  private async performOauthCredentialRefresh(): Promise<StoredCredentials | undefined> {
-    const credentials = await this.loadCredentials();
-    if (!credentials || credentials.type !== 'oauth' || !credentials.refresh) {
-      return undefined;
-    }
+  private credentialsStillMatch(key: string): boolean {
+    return this.cachedCredentials ? this.oauthCredentialKey(this.cachedCredentials) === key : false;
+  }
 
-    const result = await this.tryRefreshCodexToken(credentials.refresh);
+  private async performOauthCredentialRefresh(
+    credentials: StoredCredentials,
+    refreshToken: string,
+    credentialKey: string
+  ): Promise<StoredCredentials | undefined> {
+    const result = await this.tryRefreshCodexToken(refreshToken);
     if (!result.ok) {
-      if (result.definitive) {
+      if (result.definitive && this.credentialsStillMatch(credentialKey)) {
         logger.warn(
           'AnthropicToCodexBridgeProvider: OAuth token refresh failed — clearing stale credentials'
         );
         await this.logout();
-      } else {
+      } else if (!result.definitive) {
         logger.warn(
           'AnthropicToCodexBridgeProvider: OAuth token refresh transient failure — preserving credentials'
         );
       }
       return undefined;
     }
+
+    if (!this.credentialsStillMatch(credentialKey)) return undefined;
 
     const newCreds: StoredCredentials = {
       type: 'oauth',
@@ -709,6 +738,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     };
 
     await this.saveCredentials(newCreds);
+    if (!this.credentialsStillMatch(credentialKey)) {
+      if (this.cachedCredentials) await this.saveCredentials(this.cachedCredentials);
+      return undefined;
+    }
     this.cachedCredentials = newCreds;
     this.cachedBridgeAuth = this.toBridgeAuth(newCreds) ?? null;
     this.cachedApiKey = newCreds.access ?? '';
@@ -995,10 +1028,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
       const message = `AnthropicToCodexBridgeProvider: model discovery HTTP ${response.status}`;
-      if (response.status >= 500) {
-        this.setDiscoveryError(message);
-      } else {
+      if (response.status === 403) {
+        this.discoveryError = undefined;
         logger.warn(message);
+      } else {
+        this.setDiscoveryError(message);
       }
       return;
     }
@@ -1040,6 +1074,15 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   async getModels(): Promise<ModelInfo[]> {
+    return this.loadModels(false);
+  }
+
+  async refreshModels(): Promise<ModelInfo[]> {
+    this.clearModelCache();
+    return this.loadModels(true);
+  }
+
+  private async loadModels(strict: boolean): Promise<ModelInfo[]> {
     const auth = await this.getBridgeAuth();
     if (!auth) return [];
     const scope = this.authScope(auth);
@@ -1066,6 +1109,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         await refresh;
       }
     }
+    if (strict && this.discoveryError) throw this.discoveryError;
     return this.catalogEntries
       .filter((entry) => entry.visibility === 'list')
       .map((entry) => ({ ...entry.info }));
@@ -1073,9 +1117,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   async healthCheck(): Promise<void> {
     this.discoveryError = undefined;
-    this.clearModelCache();
-    await this.getModels();
-    if (this.discoveryError) throw this.discoveryError;
+    await this.refreshModels();
   }
 
   ownsModel(modelId: string): boolean {

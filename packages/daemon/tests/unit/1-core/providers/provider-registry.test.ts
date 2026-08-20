@@ -688,6 +688,26 @@ describe('inferProviderForModel', () => {
     expect(inferProviderForModel('ft:gpt-5.4:team:custom')).toBe('anthropic-codex');
   });
 
+  it('maps Codex prefixes before catch-all registry providers', () => {
+    try {
+      getProviderRegistry().register(
+        new (class extends MockProvider {
+          readonly id = 'anthropic' as const;
+          readonly displayName = 'Anthropic';
+          ownsModel(): boolean {
+            return true;
+          }
+        })()
+      );
+
+      expect(inferProviderForModel('o3')).toBe('anthropic-codex');
+      expect(inferProviderForModel('codex-mini-latest')).toBe('anthropic-codex');
+      expect(inferProviderForModel('ft:o3:team:custom')).toBe('anthropic-codex');
+    } finally {
+      resetProviderRegistry();
+    }
+  });
+
   it('defaults claude- models to anthropic', () => {
     expect(inferProviderForModel('claude-opus-4-6')).toBe('anthropic');
     expect(inferProviderForModel('claude-sonnet-4.6/preview')).toBe('anthropic');

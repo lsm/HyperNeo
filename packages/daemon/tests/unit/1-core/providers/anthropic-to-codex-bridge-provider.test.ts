@@ -1155,16 +1155,30 @@ describe('AnthropicToCodexBridgeProvider', () => {
       await expect(provider.healthCheck()).rejects.toThrow('model discovery failed: ECONNREFUSED');
     });
 
-    it('reports 5xx discovery responses as unhealthy while retaining fallback models', async () => {
+    it.each([
+      429, 503,
+    ])('reports HTTP %i discovery responses as unhealthy while retaining fallback models', async (status) => {
       const fetchImpl = mock(
-        async () => new Response('unavailable', { status: 503 })
+        async () => new Response('unavailable', { status })
       ) as unknown as typeof fetch;
       provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
 
       const models = await provider.getModels();
 
       expect(models.map((model) => model.id)).toContain('gpt-5.6-sol');
-      await expect(provider.healthCheck()).rejects.toThrow('model discovery HTTP 503');
+      await expect(provider.healthCheck()).rejects.toThrow(`model discovery HTTP ${status}`);
+    });
+
+    it('rejects strict model refresh failures while ordinary callers retain fallback models', async () => {
+      const fetchImpl = mock(
+        async () => new Response('unavailable', { status: 503 })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      await expect(provider.getModels()).resolves.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: 'gpt-5.6-sol' })])
+      );
+      await expect(provider.refreshModels()).rejects.toThrow('model discovery HTTP 503');
     });
 
     it.each([
@@ -2180,6 +2194,62 @@ describe('AnthropicToCodexBridgeProvider', () => {
         openai: { refresh: string };
       };
       expect(saved.openai.refresh).toBe('rotated-refresh-token');
+      p.stopAllBridgeServers();
+    });
+
+    it('does not let an old-account refresh overwrite replacement credentials', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const oldAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-old' },
+      });
+      const refreshedOldAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-old' },
+      });
+      const replacementAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-new' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: oldAccess,
+        refresh: 'old-refresh-token',
+        expires: Date.now() - 60_000,
+        accountId: 'acct-old',
+      });
+      let resolveRefresh: ((response: Response) => void) | undefined;
+      const refreshResponse = new Promise<Response>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      fetchSpy.mockImplementationOnce(async () => refreshResponse);
+      const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
+
+      const oldRefresh = p.refreshToken();
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+      p.setCredentials({
+        type: 'oauth',
+        accessToken: replacementAccess,
+        refreshToken: 'new-refresh-token',
+        expiresAt: Date.now() + 3600_000,
+        raw: { accountId: 'acct-new' },
+      });
+      resolveRefresh?.(
+        new Response(
+          JSON.stringify({
+            access_token: refreshedOldAccess,
+            refresh_token: 'rotated-old-refresh-token',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      await expect(oldRefresh).resolves.toBe(false);
+      expect(await p.getApiKey()).toBe(replacementAccess);
+      const saved = JSON.parse(readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')) as {
+        openai: { access: string; refresh: string };
+      };
+      expect(saved.openai.access).toBe(oldAccess);
+      expect(saved.openai.refresh).toBe('old-refresh-token');
       p.stopAllBridgeServers();
     });
 

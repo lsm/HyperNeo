@@ -182,6 +182,13 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
     return 'openrouter';
   }
 
+  if (/^gpt-oss:[1-9]\d{2,}b$/i.test(modelId)) return 'ollama-cloud';
+  if (modelId.startsWith('gpt-oss:')) return modelId.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
+
+  if (/^(?:gpt-|o\d|codex-|ft:(?:gpt-|o\d|codex-))/.test(normalizedModelId)) {
+    return 'anthropic-codex';
+  }
+
   const fromRegistry = getProviderRegistry().findProviderForModel(modelId)?.id;
   if (fromRegistry) return fromRegistry as ProviderIdStr;
   if (modelId.startsWith('glm-')) return 'glm';
@@ -190,11 +197,6 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
   if (modelId.endsWith(':cloud')) return 'ollama-cloud';
   if (/^qwen[\w.-]*:[1-9]\d{2,}b$/i.test(modelId)) return 'ollama-cloud';
   if (/^qwen[\w.-]*:/i.test(modelId)) return 'ollama';
-  if (/^gpt-oss:[1-9]\d{2,}b$/i.test(modelId)) return 'ollama-cloud';
-  if (modelId.startsWith('gpt-oss:')) return modelId.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
-  if (/^(?:gpt-|o\d|codex-|ft:(?:gpt-|o\d|codex-))/.test(normalizedModelId)) {
-    return 'anthropic-codex';
-  }
   return 'anthropic';
 }
 
