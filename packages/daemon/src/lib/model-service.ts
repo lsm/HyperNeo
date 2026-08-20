@@ -187,8 +187,11 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
         rejectedProviderIds,
         changedProviderIds,
         noProviderAvailable,
+        catalogExpiryAt: providerExpiry,
       } = await loadModelsFromProviders();
       if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) return;
+      if (providerExpiry === undefined) catalogExpiryAt.delete(cacheKey);
+      else catalogExpiryAt.set(cacheKey, providerExpiry);
       if (
         previousModels?.length &&
         models.length === 0 &&

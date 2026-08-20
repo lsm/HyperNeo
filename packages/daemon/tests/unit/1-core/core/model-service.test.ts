@@ -1553,6 +1553,10 @@ describe('Model Service', () => {
       getAvailableModels('global');
       await waitFor(() => refreshCalls === 2);
       expect(getAvailableModels('global')).toEqual([ttlModel]);
+
+      getAvailableModels('global');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(refreshCalls).toBe(2);
     });
 
     it('should drop stale models when a provider credential scope changes', async () => {
