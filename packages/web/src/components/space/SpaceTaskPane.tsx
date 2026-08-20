@@ -1065,7 +1065,7 @@ export function SpaceTaskPane({
       .map((m) => `${m.nodeExecution?.nodeId}|${m.role}`)
   );
   const declaredAgentSlots: Array<{ name: string; nodeName: string; nodeId: string }> = [];
-  if (workflow) {
+  if (workflow && task.status !== 'stopped') {
     for (const node of workflow.nodes) {
       for (const agent of node.agents) {
         if (activeNodeSlots.has(`${node.id}|${agent.name}`)) continue;
@@ -1372,6 +1372,25 @@ export function SpaceTaskPane({
                 bottomClass="bottom-[var(--task-composer-offset)]"
                 autoScroll={autoScrollEnabled}
               />
+            )}
+
+            {task.status === 'stopped' && (
+              <div
+                class="flex-shrink-0 border-t border-white/10 bg-black/10 px-4 py-2 text-center text-xs text-gray-400"
+                data-testid="task-stopped-footer"
+                role="status"
+              >
+                Task stopped — resume it to continue working with its agents.
+              </div>
+            )}
+            {!showInlineComposer && threadSendError && (
+              <div
+                class="flex-shrink-0 border-t border-red-400/30 bg-red-500/10 px-4 py-2 text-center text-xs text-red-300"
+                data-testid="task-pane-transition-error"
+                role="alert"
+              >
+                {threadSendError}
+              </div>
             )}
 
             {showInlineComposer && (

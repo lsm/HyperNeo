@@ -75,7 +75,7 @@ const TRANSITION_STYLES: Record<string, string> = {
   cancelled: 'text-red-300 hover:text-red-200',
   open: 'text-gray-300 hover:text-gray-100',
   archived: 'text-gray-400 hover:text-gray-300',
-  stopped: 'text-orange-300 hover:text-orange-200',
+  stopped: 'text-gray-300 hover:text-gray-100',
 };
 
 export function getTransitionActions(
