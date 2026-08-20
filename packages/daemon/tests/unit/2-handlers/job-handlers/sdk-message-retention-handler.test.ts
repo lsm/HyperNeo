@@ -176,6 +176,25 @@ describe('createSdkMessageRetentionHandler', () => {
     ).toEqual(['m-recent']);
   });
 
+  it('bounds an excessively large retention value without throwing', async () => {
+    settings = { sdkMessageRetentionDays: 1_000_000_000 };
+    const stubRepo = {
+      deleteExpiredArchivedSessionMessages: () => ({
+        deleted: 0,
+        affectedSessions: [],
+        hasMore: false,
+      }),
+    } as unknown as SDKMessageRepository;
+
+    const handler = createSdkMessageRetentionHandler({
+      getSettings: () => settings as never,
+      sdkMessageRepo: stubRepo,
+      jobQueue,
+    });
+
+    await expect(handler(fakeJob)).resolves.toMatchObject({ deleted: 0, hasMore: false });
+  });
+
   it('schedules the next run sooner when the batch limit is hit', async () => {
     settings = { sdkMessageRetentionDays: 30 };
     const stubRepo = {

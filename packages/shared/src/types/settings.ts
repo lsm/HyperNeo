@@ -3,6 +3,8 @@ import type { CustomEndpointConfig } from './custom-endpoint.ts';
 
 export const MAX_GITHUB_POLLING_INTERVAL_SECONDS = Math.floor(2_147_483_647 / 1000);
 
+export const MAX_SDK_MESSAGE_RETENTION_DAYS = 36_500;
+
 export type SettingSource = 'user' | 'project' | 'local';
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk';

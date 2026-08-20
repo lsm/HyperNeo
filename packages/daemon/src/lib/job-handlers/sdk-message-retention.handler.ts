@@ -1,4 +1,4 @@
-import type { GlobalSettings } from '@hyperneo/shared';
+import { type GlobalSettings, MAX_SDK_MESSAGE_RETENTION_DAYS } from '@hyperneo/shared';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
 import { SDK_MESSAGE_RETENTION } from '../job-queue-constants';
@@ -23,7 +23,8 @@ export function createSdkMessageRetentionHandler(options: {
       return { deleted: 0, nextRunAt, hasMore: false };
     }
 
-    const olderThanIso = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+    const boundedDays = Math.min(retentionDays, MAX_SDK_MESSAGE_RETENTION_DAYS);
+    const olderThanIso = new Date(Date.now() - boundedDays * 24 * 60 * 60 * 1000).toISOString();
     const { deleted, hasMore } = options.sdkMessageRepo.deleteExpiredArchivedSessionMessages({
       olderThanIso,
       batchLimit: RETENTION_BATCH_LIMIT,

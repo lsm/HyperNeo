@@ -1387,6 +1387,8 @@ export class SDKMessageRepository {
             AND COALESCE(s.type, 'worker') = 'worker'
             AND sm.session_id NOT LIKE '%:%'
             AND COALESCE(json_extract(s.session_context, '$.taskId'), '') = ''
+            AND COALESCE(json_extract(s.session_context, '$.spaceId'), '') = ''
+            AND COALESCE(json_extract(s.session_context, '$.roomId'), '') = ''
             AND sm.timestamp < ?
             AND COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed')
             AND NOT EXISTS (

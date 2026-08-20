@@ -1,5 +1,9 @@
 import type { PermissionMode, SettingSource, ThinkingLevel } from '@hyperneo/shared';
-import { MAX_GITHUB_POLLING_INTERVAL_SECONDS, normalizeThinkingLevel } from '@hyperneo/shared';
+import {
+  MAX_GITHUB_POLLING_INTERVAL_SECONDS,
+  MAX_SDK_MESSAGE_RETENTION_DAYS,
+  normalizeThinkingLevel,
+} from '@hyperneo/shared';
 import { useEffect, useState } from 'preact/hooks';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { globalSettings } from '../../lib/state.ts';
@@ -174,8 +178,10 @@ export function GeneralSettings() {
       days = 0;
     } else {
       days = Number(trimmed);
-      if (!Number.isInteger(days) || days < 0) {
-        toast.error('Message retention must be a whole number of days, or empty to disable');
+      if (!Number.isInteger(days) || days < 0 || days > MAX_SDK_MESSAGE_RETENTION_DAYS) {
+        toast.error(
+          `Message retention must be a whole number of days up to ${MAX_SDK_MESSAGE_RETENTION_DAYS}, or empty to disable`
+        );
         setLocalSdkMessageRetentionDays(current !== 0 ? String(current) : '');
         return;
       }

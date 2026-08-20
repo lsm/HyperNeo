@@ -248,13 +248,17 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
     expect(result.deleted).toBe(1);
   });
 
-  it('skips space and room sessions', () => {
+  it('skips space and room sessions, including ad-hoc members with worker type', () => {
     insertSession(db, 'space:room-1', { type: 'space_chat' });
     insertSession(db, 'worker1', { type: 'space_task_agent' });
     insertSession(db, 'worker2', { sessionContext: JSON.stringify({ taskId: 'task-1' }) });
+    insertSession(db, 'worker3', { sessionContext: JSON.stringify({ spaceId: 'space-1' }) });
+    insertSession(db, 'worker4', { sessionContext: JSON.stringify({ roomId: 'room-1' }) });
     insertMessage(db, { id: 'm1', sessionId: 'space:room-1', daysAgo: 60 });
     insertMessage(db, { id: 'm2', sessionId: 'worker1', daysAgo: 60 });
     insertMessage(db, { id: 'm3', sessionId: 'worker2', daysAgo: 60 });
+    insertMessage(db, { id: 'm4', sessionId: 'worker3', daysAgo: 60 });
+    insertMessage(db, { id: 'm5', sessionId: 'worker4', daysAgo: 60 });
 
     const result = repository.deleteExpiredArchivedSessionMessages({
       olderThanIso: iso(30),
