@@ -719,6 +719,39 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1050000');
     });
 
+    it('clamps bundled mini model reasoning to high', async () => {
+      const captured = { body: undefined as Record<string, unknown> | undefined };
+      const originalFetch = globalThis.fetch;
+      const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        if (String(input).startsWith('http://127.0.0.1:')) {
+          return originalFetch(input, init);
+        }
+        captured.body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(
+          'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":0},"output":[]}}\n\n',
+          { headers: { 'Content-Type': 'text/event-stream' } }
+        );
+      });
+      try {
+        const cfg = provider.buildSdkConfig('gpt-5.4-mini', { sessionId: 'bundled-mini' });
+        provider.setSessionThinkingConfig('bundled-mini', 'think32k');
+        const response = await originalFetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gpt-5.4-mini',
+            max_tokens: 128,
+            messages: [{ role: 'user', content: 'Think deeply.' }],
+          }),
+        });
+
+        expect(response.status).toBe(200);
+        expect(captured.body?.reasoning).toEqual({ effort: 'high', summary: 'auto' });
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
     it('keeps cross-tier fallback registrations isolated by SDK alias', async () => {
       const originalFetch = globalThis.fetch;
       let fetchSpy: ReturnType<typeof spyOn> | undefined;

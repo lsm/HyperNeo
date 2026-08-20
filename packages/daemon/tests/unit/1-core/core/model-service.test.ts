@@ -1088,7 +1088,7 @@ describe('Model Service', () => {
       expect(entryB?.provider).toBe('test-provider-b');
     });
 
-    it('should restore FALLBACK_MODELS when cache is empty and no providers are available', async () => {
+    it('should accept empty catalogs when available providers return no models', async () => {
       clearModelsCache();
       expect(getAvailableModels('global')).toEqual([]);
 
@@ -1109,14 +1109,10 @@ describe('Model Service', () => {
       const { refreshModels } = await import('../../../../src/lib/model-service');
       await refreshModels();
 
-      const models = getAvailableModels('global');
-      expect(models.length).toBeGreaterThan(0);
-      expect(models.some((m) => m.id === 'sonnet')).toBe(true);
-      expect(models.some((m) => m.id === 'opus')).toBe(true);
-      expect(models.some((m) => m.id === 'haiku')).toBe(true);
+      expect(getModelsCache().get('global')).toEqual([]);
     });
 
-    it('should preserve existing cache when refresh returns no models', async () => {
+    it('should accept a successful refresh with no models', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
       const registry = getProviderRegistry();
@@ -1133,8 +1129,23 @@ describe('Model Service', () => {
       const { refreshModels } = await import('../../../../src/lib/model-service');
       await refreshModels();
 
-      const models = getAvailableModels('global');
-      expect(models).toEqual(mockModels);
+      expect(getModelsCache().get('global')).toEqual([]);
+    });
+
+    it('should remove models when a provider becomes unavailable', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'logged-out-provider',
+        getModels: async () => mockModels,
+        isAvailable: async () => false,
+      } as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getModelsCache().get('global')).toEqual([]);
     });
 
     it('should accept a successful provider catalog shrink', async () => {

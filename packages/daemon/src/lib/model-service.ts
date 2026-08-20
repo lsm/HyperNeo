@@ -166,7 +166,8 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
   const refreshPromise = (async () => {
     try {
       const { models, failedProviderIds } = await loadModelsFromProviders();
-      if (models.length > 0 && (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart) {
+      if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) return;
+      if (models.length > 0) {
         const mergedModels = retainFailedProviderModels(
           mergeWithFallbackModels(models),
           previousModels,
@@ -178,6 +179,9 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
         } else {
           cacheTimestamps.delete(cacheKey);
         }
+      } else if (failedProviderIds.size === 0) {
+        modelsCache.set(cacheKey, []);
+        cacheTimestamps.set(cacheKey, Date.now());
       }
       /* v8 ignore next 2 */
     } catch {
@@ -227,10 +231,10 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
   const models: ModelInfo[] = [];
   const failedProviderIds = new Set<string>();
   results.forEach((result, index) => {
-    if (result.status === 'fulfilled' && result.value.available) {
-      models.push(...result.value.models);
-    } else {
+    if (result.status === 'rejected') {
       failedProviderIds.add(providers[index].id);
+    } else if (result.value.available) {
+      models.push(...result.value.models);
     }
   });
 
@@ -369,11 +373,14 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
         } else {
           cacheTimestamps.delete(cacheKey);
         }
+      } else if (failedProviderIds.size === 0) {
+        modelsCache.set(cacheKey, []);
+        cacheTimestamps.set(cacheKey, Date.now());
       } else if (!previousModels || previousModels.length === 0) {
         const registry = getProviderRegistry();
         const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
         modelsCache.set(cacheKey, filteredFallbacks);
-        cacheTimestamps.set(cacheKey, Date.now());
+        cacheTimestamps.delete(cacheKey);
       }
     } finally {
       refreshInProgress.delete(cacheKey);

@@ -163,6 +163,14 @@ const CODEX_REASONING_EFFORTS = new Set<OpenAIResponsesReasoningEffort>([
   'high',
   'xhigh',
 ]);
+const CODEX_XHIGH_MODEL_IDS = new Set([
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
+  'gpt-5.3-codex',
+  'gpt-5.4',
+  'gpt-5.5',
+]);
 
 export class AnthropicToCodexBridgeProvider implements Provider {
   readonly id = 'anthropic-codex';
@@ -255,7 +263,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return ANTHROPIC_CODEX_MODELS.map((info) => ({
       info: { ...info, thinkingModes: 'granular' },
       visibility: 'list',
-      supportedReasoningEfforts: [...CODEX_REASONING_EFFORTS],
+      supportedReasoningEfforts: [...CODEX_REASONING_EFFORTS].filter(
+        (effort) => effort !== 'xhigh' || CODEX_XHIGH_MODEL_IDS.has(info.id)
+      ),
     }));
   }
 
