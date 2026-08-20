@@ -123,10 +123,17 @@ function extractBacktick(text: string, startIndex: number): BalancedSpan {
   return { content: text.slice(startIndex + 1), end: n };
 }
 
-function extractHeredocSpan(text: string, start: number): BalancedSpan {
+interface HeredocSpan {
+  end: number;
+  found: boolean;
+  quoted: boolean;
+}
+
+function extractHeredocSpan(text: string, start: number): HeredocSpan {
   const n = text.length;
   let i = start;
-  if (text[i] === '-') i++;
+  const dashed = text[i] === '-';
+  if (dashed) i++;
   while (i < n && (text[i] === ' ' || text[i] === '\t')) i++;
   let quote = '';
   if (text[i] === '"' || text[i] === "'") {
@@ -139,18 +146,20 @@ function extractHeredocSpan(text: string, start: number): BalancedSpan {
     i++;
   }
   if (quote && text[i] === quote) i++;
-  if (!delimiter) return { content: '', end: start };
+  if (!delimiter) return { end: start, found: false, quoted: false };
   while (i < n && text[i] !== '\n') i++;
   if (i < n) i++;
   while (i < n) {
     let lineEnd = text.indexOf('\n', i);
     if (lineEnd === -1) lineEnd = n;
     const line = text.slice(i, lineEnd);
-    const candidate = text[start] === '-' ? line.replace(/^\t+/, '') : line;
-    if (candidate.trim() === delimiter) return { content: '', end: lineEnd + 1 };
+    const candidate = dashed ? line.replace(/^\t+/, '') : line;
+    if (candidate.trim() === delimiter) {
+      return { end: lineEnd + 1, found: true, quoted: quote !== '' };
+    }
     i = lineEnd + 1;
   }
-  return { content: '', end: n };
+  return { end: n, found: true, quoted: quote !== '' };
 }
 
 function stripLeadingAssignments(segment: string): string {
@@ -282,7 +291,12 @@ function checkCommandText(text: string, prefixes: readonly string[]): boolean {
       const spanStart = i + 2;
       const span = extractHeredocSpan(text, spanStart);
       current += '<<HEREDOC';
-      lineHasContent = span.end === spanStart;
+      if (!span.found) {
+        lineHasContent = true;
+      } else {
+        if (!span.quoted) ok = false;
+        flush();
+      }
       i = span.end;
       continue;
     }

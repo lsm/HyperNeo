@@ -6,7 +6,7 @@ import type {
   SpaceWorkerAgentPromotionDraft,
   ThinkingLevel,
 } from '@hyperneo/shared';
-import { KNOWN_TOOLS } from '@hyperneo/shared';
+import { isKnownToolEntry, isScopedBashToolEntry } from '@hyperneo/shared';
 import type { Database } from '../../storage';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
@@ -39,22 +39,25 @@ function deriveAgentName(session: Session): string {
 }
 
 function extractTools(session: Session): string[] | undefined {
-  const known = new Set<string>(KNOWN_TOOLS);
   const preset = session.config.sdkToolsPreset;
   if (Array.isArray(preset)) {
-    const tools = preset.filter((tool) => known.has(tool));
+    const tools = preset.filter((tool) => isKnownToolEntry(tool));
     return [...new Set(tools)];
   }
 
-  const disallowedTools = session.config.disallowedTools?.filter((tool) => known.has(tool)) ?? [];
+  const disallowedTools =
+    session.config.disallowedTools?.filter((tool) => isKnownToolEntry(tool)) ?? [];
   if (disallowedTools.length === 0) return undefined;
 
+  const hasScopedBash = (session.config.allowedTools ?? []).some((tool) =>
+    isScopedBashToolEntry(tool)
+  );
   const defaultTools = [
     'Read',
     'Write',
     'Edit',
     'MultiEdit',
-    'Bash',
+    ...(hasScopedBash ? [] : ['Bash']),
     'Grep',
     'Glob',
     'WebFetch',
@@ -68,7 +71,7 @@ function extractTools(session: Session): string[] | undefined {
     'ToolSearch',
   ];
   const preservedAllowedTools =
-    session.config.allowedTools?.filter((tool) => known.has(tool)) ?? [];
+    session.config.allowedTools?.filter((tool) => isKnownToolEntry(tool)) ?? [];
   const disallowed = new Set(disallowedTools);
   return [...new Set([...defaultTools, ...preservedAllowedTools])].filter(
     (tool) => !disallowed.has(tool)

@@ -335,6 +335,35 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.draft.tools).toContain('Read');
     });
 
+    it('keeps scoped Bash patterns and drops bare Bash when promoting a scoped session', async () => {
+      insertSession(db, {
+        id: 'session-scoped-bash',
+        type: 'space_chat',
+        context: { spaceId: 'space-1' },
+        config: {
+          model: 'claude-sonnet-4-5',
+          maxTokens: 4096,
+          temperature: 0,
+          sdkToolsPreset: { type: 'preset', preset: 'claude_code' },
+          allowedTools: ['Task', 'Bash(gh pr view:*)', 'Bash(jq:*)'],
+          disallowedTools: ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'],
+        },
+      });
+
+      const result = await call<{ draft: { tools?: string[] } }>(
+        hubData.handlers,
+        'spaceAgent.getPromotionDraft',
+        { spaceId: 'space-1', sessionId: 'session-scoped-bash' }
+      );
+
+      expect(result.draft.tools).toContain('Bash(gh pr view:*)');
+      expect(result.draft.tools).toContain('Bash(jq:*)');
+      expect(result.draft.tools).toContain('Task');
+      expect(result.draft.tools).not.toContain('Bash');
+      expect(result.draft.tools).not.toContain('Write');
+      expect(result.draft.tools).not.toContain('Edit');
+    });
+
     it('keeps the newest standing context when truncating long drafts', async () => {
       insertSession(db, {
         id: 'session-long-context',
