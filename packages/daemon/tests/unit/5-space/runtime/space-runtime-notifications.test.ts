@@ -561,6 +561,7 @@ describe('SpaceRuntime — notification events', () => {
       executionRepo.update(executionId, { startedAt: Date.now() });
       await runtime.executeTick();
       expect(taskRepo.getTask(tasks[0].id)?.status).toBe('in_progress');
+      expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
 
       executionRepo.update(executionId, { startedAt: Date.now() - 120_000 });
       await runtime.executeTick();
