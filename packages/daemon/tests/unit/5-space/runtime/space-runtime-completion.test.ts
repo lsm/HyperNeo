@@ -1920,6 +1920,8 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       await rt.executeTick();
 
       const task = taskRepo.getTask(tasks[0].id)!;
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      expect(task.status).toBe('done');
       expect(task.result).toBe('Existing task result');
       expect(task.reportedSummary).toBe('Reported task summary');
     });
