@@ -9,10 +9,15 @@ import { ChannelResolver } from './channel-resolver';
 import {
   buildNodeNameResolver,
   buildSlotToNodeMap,
+  decideNodeTargetDelivery,
+  foldAgentMessageResult,
   resolveNodeAgentTargets,
+  type AgentMessageResult,
 } from './agent-message-routing-gates';
 import { formatAgentMessage } from '../agent-message-envelope';
 import { ActivationError, type ChannelRouter } from './channel-router';
+
+export type { AgentMessageResult };
 
 export interface AgentMessageRouterConfig {
   nodeExecutionRepo: NodeExecutionRepository;
@@ -57,19 +62,6 @@ export interface AgentMessageParams {
   target: string | string[];
   message: string;
   data?: Record<string, unknown>;
-}
-
-export interface AgentMessageResult {
-  success: boolean | 'partial';
-  delivered: Array<{ agentName: string; sessionId: string }>;
-  failed: Array<{ agentName: string; sessionId: string; error: string }>;
-  reason?: string;
-  unauthorizedAgentNames?: string[];
-  permittedTargets?: string[];
-  notFoundAgentNames?: string[];
-  queued?: Array<{ agentName: string; messageId: string }>;
-  rateLimited?: boolean;
-  retryAfterMs?: number;
 }
 
 import { Logger } from '../../logger';
@@ -431,31 +423,7 @@ export class AgentMessageRouter {
       }
     }
 
-    if (notFound.length > 0 && delivered.length === 0 && failed.length === 0) {
-      return {
-        success: false,
-        delivered: [],
-        failed: [],
-        reason: `Could not deliver message to target agent(s): ${notFound.join(', ')}. The target is declared but no live session received the message.`,
-        queued: queued.length > 0 ? queued : undefined,
-        notFoundAgentNames: notFound,
-      };
-    }
-    if (delivered.length === 0 && queued.length === 0 && failed.length > 0) {
-      return {
-        success: false,
-        delivered,
-        failed,
-        notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
-      };
-    }
-    return {
-      success: failed.length > 0 ? 'partial' : true,
-      delivered,
-      failed,
-      queued: queued.length > 0 ? queued : undefined,
-      notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
-    };
+    return foldAgentMessageResult({ delivered, queued, failed, notFound });
   }
 
   async deliverMessage(params: AgentMessageParams): Promise<AgentMessageResult> {
@@ -550,6 +518,7 @@ export class AgentMessageRouter {
       }
     }
 
+    const permittedTargets = resolver.getPermittedTargets(fromNodeName);
     const resolution = resolveNodeAgentTargets({
       target,
       fromAgentName,
@@ -557,7 +526,7 @@ export class AgentMessageRouter {
       peerAgentNames: peers.map((m) => m.agentName),
       nodeGroups,
       declaredAgentNames: allDeclaredAgentNames,
-      permittedTargets: resolver.getPermittedTargets(fromNodeName),
+      permittedTargets,
       spaceAgentAvailable: Boolean(spaceAgentInjector && spaceId),
       canSend: (fromNode, toNode) => resolver.canSend(fromNode, toNode),
     });
@@ -645,7 +614,18 @@ export class AgentMessageRouter {
     const failed: Array<{ agentName: string; sessionId: string; error: string }> = [];
 
     for (const agentName of targetAgentNames) {
-      if (agentName === 'space-agent') {
+      const agentSessions = peers.filter((m) => m.agentName === agentName);
+      const decision = decideNodeTargetDelivery(agentName, {
+        isSpaceAgent: agentName === 'space-agent',
+        hasLiveSessions: agentSessions.length > 0,
+        queueCapable: Boolean(pendingMessageRepo && spaceId),
+        activatedTargets,
+        declaredAgentNames: allDeclaredAgentNames,
+        permittedTargets,
+        resolveNodeName,
+      });
+
+      if (decision === 'deliverToSpaceAgent') {
         if (!spaceAgentInjector || !spaceId) {
           notFound.push(agentName);
           continue;
@@ -677,22 +657,9 @@ export class AgentMessageRouter {
         continue;
       }
 
-      const agentSessions = peers.filter((m) => m.agentName === agentName);
-      if (agentSessions.length === 0) {
-        const isDeclaredOrActivated =
-          activatedTargets.has(agentName) ||
-          allDeclaredAgentNames.has(agentName) ||
-          resolver
-            .getPermittedTargets(fromNodeName)
-            .some(
-              (n) =>
-                n === agentName ||
-                resolveNodeName(n) === agentName ||
-                n === resolveNodeName(agentName)
-            );
-
-        if (isDeclaredOrActivated && pendingMessageRepo && spaceId) {
-          const rawMessage = formatAgentMessage({
+      if (decision === 'injectLiveSessions') {
+        for (const member of agentSessions) {
+          const envelopedMessage = formatAgentMessage({
             fromLevel: 'node-agent',
             fromAgentName,
             toLevel: 'node-agent',
@@ -702,45 +669,18 @@ export class AgentMessageRouter {
             nodeId: fromAgentName,
           });
           try {
-            const { record, deduped } = pendingMessageRepo.enqueue({
-              workflowRunId,
-              spaceId,
-              taskId: taskId ?? null,
-              sourceAgentName: fromAgentName,
-              targetKind: 'node_agent',
-              targetAgentName: agentName,
-              message: rawMessage,
-              idempotencyKey: JSON.stringify([fromSessionId, agentName, rawMessage]),
-              ttlMs: 60_000,
-              maxAttempts: 3,
-            });
-            queued.push({ agentName, messageId: record.id });
-            notFound.push(agentName);
-            log.info(
-              `[AgentMessageRouter] queued message ${record.id} for agent "${agentName}" ` +
-                `(run=${workflowRunId}, from=${fromAgentName})`
-            );
-            if (!deduped) onMessageQueued?.(agentName);
+            await messageInjector(member.sessionId, envelopedMessage);
+            delivered.push({ agentName, sessionId: member.sessionId });
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
-            log.warn(
-              `[AgentMessageRouter] failed to queue message for agent "${agentName}": ${errMsg}`
-            );
-            notFound.push(agentName);
+            failed.push({ agentName, sessionId: member.sessionId, error: errMsg });
           }
-        } else if (activatedTargets.has(agentName)) {
-          log.warn(
-            `[AgentMessageRouter] target "${agentName}" was activated but no pendingMessageRepo is configured — ` +
-              `message may not be delivered to the new session. Configure pendingMessageRepo to enable reliable delivery.`
-          );
-        } else {
-          notFound.push(agentName);
         }
         continue;
       }
 
-      for (const member of agentSessions) {
-        const envelopedMessage = formatAgentMessage({
+      if (decision === 'queueForActivation' && pendingMessageRepo && spaceId) {
+        const rawMessage = formatAgentMessage({
           fromLevel: 'node-agent',
           fromAgentName,
           toLevel: 'node-agent',
@@ -750,52 +690,47 @@ export class AgentMessageRouter {
           nodeId: fromAgentName,
         });
         try {
-          await messageInjector(member.sessionId, envelopedMessage);
-          delivered.push({ agentName, sessionId: member.sessionId });
+          const { record, deduped } = pendingMessageRepo.enqueue({
+            workflowRunId,
+            spaceId,
+            taskId: taskId ?? null,
+            sourceAgentName: fromAgentName,
+            targetKind: 'node_agent',
+            targetAgentName: agentName,
+            message: rawMessage,
+            idempotencyKey: JSON.stringify([fromSessionId, agentName, rawMessage]),
+            ttlMs: 60_000,
+            maxAttempts: 3,
+          });
+          queued.push({ agentName, messageId: record.id });
+          notFound.push(agentName);
+          log.info(
+            `[AgentMessageRouter] queued message ${record.id} for agent "${agentName}" ` +
+              `(run=${workflowRunId}, from=${fromAgentName})`
+          );
+          if (!deduped) onMessageQueued?.(agentName);
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
-          failed.push({ agentName, sessionId: member.sessionId, error: errMsg });
+          log.warn(
+            `[AgentMessageRouter] failed to queue message for agent "${agentName}": ${errMsg}`
+          );
+          notFound.push(agentName);
         }
+        continue;
       }
+
+      if (decision === 'activatedWithoutQueue') {
+        log.warn(
+          `[AgentMessageRouter] target "${agentName}" was activated but no pendingMessageRepo is configured — ` +
+            `message may not be delivered to the new session. Configure pendingMessageRepo to enable reliable delivery.`
+        );
+        continue;
+      }
+
+      notFound.push(agentName);
     }
 
-    if (notFound.length > 0 && delivered.length === 0 && failed.length === 0) {
-      return {
-        success: false,
-        delivered: [],
-        failed: [],
-        reason:
-          `Could not deliver message to target agent(s): ${notFound.join(', ')}. ` +
-          `The target is declared but no live session received the message.`,
-        queued: queued.length > 0 ? queued : undefined,
-        notFoundAgentNames: notFound,
-      };
-    }
-
-    if (delivered.length === 0 && queued.length === 0 && failed.length > 0) {
-      return {
-        success: false,
-        delivered,
-        failed,
-        notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
-      };
-    }
-    if (failed.length > 0) {
-      return {
-        success: 'partial',
-        delivered,
-        failed,
-        queued: queued.length > 0 ? queued : undefined,
-        notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
-      };
-    }
-    return {
-      success: true,
-      delivered,
-      failed,
-      queued: queued.length > 0 ? queued : undefined,
-      notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
-    };
+    return foldAgentMessageResult({ delivered, queued, failed, notFound });
   }
 }
 

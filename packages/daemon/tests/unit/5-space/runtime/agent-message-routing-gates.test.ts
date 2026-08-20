@@ -2,7 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildNodeNameResolver,
   buildSlotToNodeMap,
+  decideNodeTargetDelivery,
+  foldAgentMessageResult,
+  isDeclaredOrActivatedTarget,
   resolveNodeAgentTargets,
+  type NodeTargetDeliverySnapshot,
   type ResolveNodeAgentTargetsInput,
 } from '../../../../src/lib/space/runtime/agent-message-routing-gates';
 
@@ -351,5 +355,276 @@ describe('buildNodeNameResolver', () => {
     expect(resolveNodeName('reviewer')).toBe('Review');
     expect(resolveNodeName('Coding')).toBe('Coding');
     expect(resolveNodeName('unmapped')).toBe('unmapped');
+  });
+});
+
+function makeSnapshot(
+  overrides: Partial<NodeTargetDeliverySnapshot> = {}
+): NodeTargetDeliverySnapshot {
+  return {
+    isSpaceAgent: false,
+    hasLiveSessions: false,
+    queueCapable: true,
+    activatedTargets: new Set<string>(),
+    declaredAgentNames: new Set<string>(),
+    permittedTargets: [],
+    resolveNodeName: buildNodeNameResolver(buildSlotToNodeMap()),
+    ...overrides,
+  };
+}
+
+describe('isDeclaredOrActivatedTarget', () => {
+  test('activated targets count without any other declaration', () => {
+    expect(
+      isDeclaredOrActivatedTarget(
+        'reviewer',
+        makeSnapshot({ activatedTargets: new Set(['reviewer']) })
+      )
+    ).toBe(true);
+  });
+
+  test('declared agent names count without activation', () => {
+    expect(
+      isDeclaredOrActivatedTarget('reviewer', {
+        activatedTargets: new Set<string>(),
+        declaredAgentNames: new Set(['reviewer']),
+        permittedTargets: [],
+        resolveNodeName: buildNodeNameResolver(buildSlotToNodeMap()),
+      })
+    ).toBe(true);
+  });
+
+  test('accepts declared agent names as an array', () => {
+    expect(
+      isDeclaredOrActivatedTarget('reviewer', {
+        activatedTargets: new Set<string>(),
+        declaredAgentNames: ['reviewer'],
+        permittedTargets: [],
+        resolveNodeName: buildNodeNameResolver(buildSlotToNodeMap()),
+      })
+    ).toBe(true);
+  });
+
+  test('matches a permitted target equal to the agent name', () => {
+    expect(
+      isDeclaredOrActivatedTarget(
+        'reviewer',
+        makeSnapshot({ permittedTargets: ['reviewer', 'qa'] })
+      )
+    ).toBe(true);
+  });
+
+  test('matches when a permitted slot resolves to the agent-named node', () => {
+    expect(
+      isDeclaredOrActivatedTarget(
+        'reviewer',
+        makeSnapshot({
+          permittedTargets: ['critic'],
+          resolveNodeName: buildNodeNameResolver(buildSlotToNodeMap({ reviewer: ['critic'] })),
+        })
+      )
+    ).toBe(true);
+  });
+
+  test('matches when the agent slot resolves to a permitted node', () => {
+    expect(
+      isDeclaredOrActivatedTarget(
+        'reviewer',
+        makeSnapshot({
+          permittedTargets: ['Review'],
+          resolveNodeName: buildNodeNameResolver(buildSlotToNodeMap({ Review: ['reviewer'] })),
+        })
+      )
+    ).toBe(true);
+  });
+
+  test('returns false when no source declares the agent', () => {
+    expect(
+      isDeclaredOrActivatedTarget(
+        'ghost',
+        makeSnapshot({
+          activatedTargets: new Set(['other']),
+          declaredAgentNames: new Set(['other']),
+          permittedTargets: ['qa'],
+          resolveNodeName: buildNodeNameResolver(buildSlotToNodeMap({ Review: ['reviewer'] })),
+        })
+      )
+    ).toBe(false);
+  });
+});
+
+describe('decideNodeTargetDelivery', () => {
+  test('routes space-agent to the space-agent injector before any session lookup', () => {
+    expect(
+      decideNodeTargetDelivery(
+        'space-agent',
+        makeSnapshot({ isSpaceAgent: true, hasLiveSessions: true })
+      )
+    ).toBe('deliverToSpaceAgent');
+  });
+
+  test('routes agents with live sessions to session injection', () => {
+    expect(decideNodeTargetDelivery('reviewer', makeSnapshot({ hasLiveSessions: true }))).toBe(
+      'injectLiveSessions'
+    );
+  });
+
+  test('queues declared agents without live sessions when queueing is available', () => {
+    expect(
+      decideNodeTargetDelivery(
+        'reviewer',
+        makeSnapshot({ declaredAgentNames: new Set(['reviewer']) })
+      )
+    ).toBe('queueForActivation');
+  });
+
+  test('queues topology-declared agents resolved through the node-name resolver', () => {
+    expect(
+      decideNodeTargetDelivery(
+        'reviewer',
+        makeSnapshot({
+          permittedTargets: ['Review'],
+          resolveNodeName: buildNodeNameResolver(buildSlotToNodeMap({ Review: ['reviewer'] })),
+        })
+      )
+    ).toBe('queueForActivation');
+  });
+
+  test('prefers queueing over the activated-without-queue warning when both apply', () => {
+    expect(
+      decideNodeTargetDelivery(
+        'reviewer',
+        makeSnapshot({ activatedTargets: new Set(['reviewer']) })
+      )
+    ).toBe('queueForActivation');
+  });
+
+  test('warns for activated agents when queueing is unavailable', () => {
+    expect(
+      decideNodeTargetDelivery(
+        'reviewer',
+        makeSnapshot({ activatedTargets: new Set(['reviewer']), queueCapable: false })
+      )
+    ).toBe('activatedWithoutQueue');
+  });
+
+  test('reports not-found for declared agents when queueing is unavailable', () => {
+    expect(
+      decideNodeTargetDelivery(
+        'reviewer',
+        makeSnapshot({ declaredAgentNames: new Set(['reviewer']), queueCapable: false })
+      )
+    ).toBe('notFound');
+  });
+
+  test('reports not-found for agents no source declares even when queueing is available', () => {
+    expect(decideNodeTargetDelivery('ghost', makeSnapshot())).toBe('notFound');
+  });
+});
+
+describe('foldAgentMessageResult', () => {
+  test('not-found only results in failure with the exact reason and queued passthrough', () => {
+    const queued = [{ agentName: 'reviewer', messageId: 'msg_1' }];
+    expect(
+      foldAgentMessageResult({ delivered: [], queued, failed: [], notFound: ['reviewer'] })
+    ).toEqual({
+      success: false,
+      delivered: [],
+      failed: [],
+      reason:
+        `Could not deliver message to target agent(s): reviewer. ` +
+        `The target is declared but no live session received the message.`,
+      queued,
+      notFoundAgentNames: ['reviewer'],
+    });
+  });
+
+  test('not-found only without queued entries omits the queued field', () => {
+    expect(
+      foldAgentMessageResult({ delivered: [], queued: [], failed: [], notFound: ['a', 'b'] })
+    ).toEqual({
+      success: false,
+      delivered: [],
+      failed: [],
+      reason:
+        `Could not deliver message to target agent(s): a, b. ` +
+        `The target is declared but no live session received the message.`,
+      notFoundAgentNames: ['a', 'b'],
+    });
+  });
+
+  test('not-found with deliveries falls through to success', () => {
+    const delivered = [{ agentName: 'qa', sessionId: 's1' }];
+    expect(
+      foldAgentMessageResult({ delivered, queued: [], failed: [], notFound: ['reviewer'] })
+    ).toEqual({
+      success: true,
+      delivered,
+      failed: [],
+      notFoundAgentNames: ['reviewer'],
+    });
+  });
+
+  test('failed only without deliveries or queued entries results in failure', () => {
+    const failed = [{ agentName: 'reviewer', sessionId: 's1', error: 'boom' }];
+    expect(foldAgentMessageResult({ delivered: [], queued: [], failed, notFound: [] })).toEqual({
+      success: false,
+      delivered: [],
+      failed,
+    });
+  });
+
+  test('failed only with not-found entries keeps the not-found agent names', () => {
+    const failed = [{ agentName: 'reviewer', sessionId: 's1', error: 'boom' }];
+    expect(
+      foldAgentMessageResult({ delivered: [], queued: [], failed, notFound: ['ghost'] })
+    ).toEqual({
+      success: false,
+      delivered: [],
+      failed,
+      notFoundAgentNames: ['ghost'],
+    });
+  });
+
+  test('failed with queued entries but no deliveries is partial', () => {
+    const failed = [{ agentName: 'reviewer', sessionId: 's1', error: 'boom' }];
+    const queued = [{ agentName: 'ghost', messageId: 'msg_1' }];
+    expect(foldAgentMessageResult({ delivered: [], queued, failed, notFound: [] })).toEqual({
+      success: 'partial',
+      delivered: [],
+      failed,
+      queued,
+    });
+  });
+
+  test('failed with deliveries is partial', () => {
+    const delivered = [{ agentName: 'qa', sessionId: 's1' }];
+    const failed = [{ agentName: 'reviewer', sessionId: 's2', error: 'boom' }];
+    expect(foldAgentMessageResult({ delivered, queued: [], failed, notFound: [] })).toEqual({
+      success: 'partial',
+      delivered,
+      failed,
+    });
+  });
+
+  test('deliveries without failures succeed and pass queued entries through', () => {
+    const delivered = [{ agentName: 'qa', sessionId: 's1' }];
+    const queued = [{ agentName: 'ghost', messageId: 'msg_1' }];
+    expect(foldAgentMessageResult({ delivered, queued, failed: [], notFound: [] })).toEqual({
+      success: true,
+      delivered,
+      failed: [],
+      queued,
+    });
+  });
+
+  test('an empty delivery set succeeds', () => {
+    expect(foldAgentMessageResult({ delivered: [], queued: [], failed: [], notFound: [] })).toEqual(
+      {
+        success: true,
+        delivered: [],
+        failed: [],
+      }
+    );
   });
 });

@@ -110,3 +110,103 @@ export function resolveNodeAgentTargets(
 
   return { status: 'resolved', targetAgentNames };
 }
+
+export interface AgentMessageResult {
+  success: boolean | 'partial';
+  delivered: Array<{ agentName: string; sessionId: string }>;
+  failed: Array<{ agentName: string; sessionId: string; error: string }>;
+  reason?: string;
+  unauthorizedAgentNames?: string[];
+  permittedTargets?: string[];
+  notFoundAgentNames?: string[];
+  queued?: Array<{ agentName: string; messageId: string }>;
+  rateLimited?: boolean;
+  retryAfterMs?: number;
+}
+
+export interface FoldAgentMessageResultInput {
+  delivered: Array<{ agentName: string; sessionId: string }>;
+  queued: Array<{ agentName: string; messageId: string }>;
+  failed: Array<{ agentName: string; sessionId: string; error: string }>;
+  notFound: string[];
+}
+
+export function foldAgentMessageResult(input: FoldAgentMessageResultInput): AgentMessageResult {
+  const { delivered, queued, failed, notFound } = input;
+  if (notFound.length > 0 && delivered.length === 0 && failed.length === 0) {
+    return {
+      success: false,
+      delivered: [],
+      failed: [],
+      reason:
+        `Could not deliver message to target agent(s): ${notFound.join(', ')}. ` +
+        `The target is declared but no live session received the message.`,
+      queued: queued.length > 0 ? queued : undefined,
+      notFoundAgentNames: notFound,
+    };
+  }
+  if (delivered.length === 0 && queued.length === 0 && failed.length > 0) {
+    return {
+      success: false,
+      delivered,
+      failed,
+      notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
+    };
+  }
+  return {
+    success: failed.length > 0 ? 'partial' : true,
+    delivered,
+    failed,
+    queued: queued.length > 0 ? queued : undefined,
+    notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
+  };
+}
+
+export interface DeclaredOrActivatedInput {
+  activatedTargets: ReadonlySet<string>;
+  declaredAgentNames: ReadonlySet<string> | string[];
+  permittedTargets: string[];
+  resolveNodeName: (slotOrNode: string) => string;
+}
+
+export type NodeTargetDeliveryDecision =
+  | 'deliverToSpaceAgent'
+  | 'injectLiveSessions'
+  | 'queueForActivation'
+  | 'activatedWithoutQueue'
+  | 'notFound';
+
+export interface NodeTargetDeliverySnapshot extends DeclaredOrActivatedInput {
+  isSpaceAgent: boolean;
+  hasLiveSessions: boolean;
+  queueCapable: boolean;
+}
+
+export function isDeclaredOrActivatedTarget(
+  agentName: string,
+  input: DeclaredOrActivatedInput
+): boolean {
+  return (
+    input.activatedTargets.has(agentName) ||
+    new Set(input.declaredAgentNames).has(agentName) ||
+    input.permittedTargets.some(
+      (n) =>
+        n === agentName ||
+        input.resolveNodeName(n) === agentName ||
+        n === input.resolveNodeName(agentName)
+    )
+  );
+}
+
+export function decideNodeTargetDelivery(
+  agentName: string,
+  snapshot: NodeTargetDeliverySnapshot
+): NodeTargetDeliveryDecision {
+  if (snapshot.isSpaceAgent) return 'deliverToSpaceAgent';
+  if (snapshot.hasLiveSessions) return 'injectLiveSessions';
+  if (isDeclaredOrActivatedTarget(agentName, snapshot) && snapshot.queueCapable) {
+    return 'queueForActivation';
+  }
+  if (snapshot.activatedTargets.has(agentName)) return 'activatedWithoutQueue';
+  return 'notFound';
+}
