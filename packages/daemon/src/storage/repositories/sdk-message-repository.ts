@@ -402,9 +402,9 @@ export class SDKMessageRepository {
   }
 
   private deleteSupersededMessageSearchRows(sessionId: string, message: SDKMessage): void {
-    if (!this.hasMessageSearchIndex()) return;
     const supersededUuids = this.getSupersededMessageUuids(message);
     if (supersededUuids.length === 0) return;
+    if (!this.hasMessageSearchIndex()) return;
 
     const placeholders = supersededUuids.map(() => '?').join(',');
     this.db
@@ -415,6 +415,45 @@ export class SDKMessageRepository {
            AND message_id IN (${placeholders})`
       )
       .run(sessionId, ...supersededUuids);
+  }
+
+  private scheduleMessageSearchIndex(messageId: string): void {
+    if (!this.hasMessageSearchIndex()) return;
+    if (!this.tableExists('message_search_pending')) {
+      this.upsertMessageSearchRow(messageId);
+      return;
+    }
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO message_search_pending (message_id, created_at)
+         SELECT ?, ? WHERE EXISTS (SELECT 1 FROM sdk_messages WHERE id = ?)`
+      )
+      .run(messageId, Date.now(), messageId);
+  }
+
+  flushMessageSearchIndex(limit = 500): number {
+    if (!this.hasMessageSearchIndex()) return 0;
+    if (!this.tableExists('message_search_pending')) return 0;
+    const pending = this.db
+      .prepare(`SELECT message_id FROM message_search_pending ORDER BY created_at LIMIT ?`)
+      .all(limit) as Array<{ message_id: string }>;
+    if (pending.length === 0) return 0;
+    const deletePendingStmt = this.db.prepare(
+      `DELETE FROM message_search_pending WHERE message_id = ?`
+    );
+    let processed = 0;
+    for (const { message_id } of pending) {
+      try {
+        this.db.transaction(() => {
+          this.upsertMessageSearchRow(message_id);
+          deletePendingStmt.run(message_id);
+        })();
+      } catch (err) {
+        this.logger.warn('message search index flush failed, will retry next flush:', err);
+      }
+      processed++;
+    }
+    return processed;
   }
 
   private isMessageSuperseded(rowId: string, sessionId: string, sdkMessage: SDKMessage): boolean {
@@ -562,11 +601,11 @@ export class SDKMessageRepository {
           }
         }
         this.saveReplacementEdges(id, sessionId, taskId, message);
+        this.scheduleMessageSearchIndex(id);
         if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
       })();
       if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
       this.deleteSupersededMessageSearchRows(sessionId, message);
-      this.upsertMessageSearchRow(id);
       return true;
     } catch (error) {
       this.logger.error('[Database] Failed to save SDK message:', error);
@@ -1051,7 +1090,7 @@ export class SDKMessageRepository {
     const core = this.db.transaction(() =>
       this.saveUserMessageCore(sessionId, message, sendStatus, origin)
     )();
-    this.runPostSaveSideEffects(sessionId, core.id, message, core.countsTowardsBadge);
+    this.runPostSaveSideEffects(sessionId, core.id, core.countsTowardsBadge);
     return core.id;
   }
 
@@ -1109,19 +1148,14 @@ export class SDKMessageRepository {
     ];
     stmt.run(...values, conversationTurnIndex, extractSdkUuid(message));
     this.saveReplacementEdges(id, sessionId, taskId, message);
+    this.scheduleMessageSearchIndex(id);
     if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     return { id, countsTowardsBadge };
   }
 
-  runPostSaveSideEffects(
-    sessionId: string,
-    id: string,
-    message: SDKMessage,
-    countsTowardsBadge: boolean
-  ): void {
+  runPostSaveSideEffects(sessionId: string, id: string, countsTowardsBadge: boolean): void {
     this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
-    this.upsertMessageSearchRow(id);
   }
 
   getMessagesByStatus(
@@ -1319,14 +1353,14 @@ export class SDKMessageRepository {
       }
     })();
     for (const sid of changedSessions) this.notifySessionsChanged(sid);
-    for (const messageId of messageIds) this.upsertMessageSearchRow(messageId);
+    for (const messageId of messageIds) this.scheduleMessageSearchIndex(messageId);
   }
 
   updateMessageTimestamp(messageId: string, timestampMs?: number): void {
     const stmt = this.db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE id = ?`);
     const ts = timestampMs !== undefined ? new Date(timestampMs) : new Date();
     stmt.run(ts.toISOString(), messageId);
-    this.upsertMessageSearchRow(messageId);
+    this.scheduleMessageSearchIndex(messageId);
   }
 
   deletePendingUserMessage(
@@ -1954,7 +1988,7 @@ export class SDKMessageRepository {
       if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     })();
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
-    this.upsertMessageSearchRow(id);
+    this.scheduleMessageSearchIndex(id);
     return id;
   }
 
@@ -1977,7 +2011,7 @@ export class SDKMessageRepository {
       `UPDATE sdk_messages SET sdk_message = ? WHERE id = ? AND message_type = 'hyperneo_action'`
     );
     stmt.run(JSON.stringify(updated), rowId);
-    this.upsertMessageSearchRow(rowId);
+    this.scheduleMessageSearchIndex(rowId);
   }
 
   updateHyperNeoActionMessageByUuid(
@@ -2000,7 +2034,7 @@ export class SDKMessageRepository {
          AND sdk_uuid = ?`
     );
     stmt.run(JSON.stringify(updated), sessionId, messageUuid);
-    if (row) this.upsertMessageSearchRow(row.id);
+    if (row) this.scheduleMessageSearchIndex(row.id);
   }
 
   searchMessages(params: MessageSearchParams): MessageSearchResponse {

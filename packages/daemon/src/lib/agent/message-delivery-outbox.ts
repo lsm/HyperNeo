@@ -75,7 +75,6 @@ export function persistAndEnqueueDelivery(
     sdkMessageRepo.runPostSaveSideEffects(
       sessionId,
       result.core.id,
-      message,
       result.core.countsTowardsBadge
     );
   } catch {

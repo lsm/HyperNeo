@@ -4,6 +4,10 @@ import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-m
 import { classifyReclaimTermination } from '../../../../src/lib/agent/message-delivery';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { HyperNeoActionMessage } from '@hyperneo/shared';
+import type {
+  MessageSearchParams,
+  MessageSearchResponse,
+} from '../../../../src/storage/message-search';
 
 describe('SDKMessageRepository', () => {
   let db: Database;
@@ -115,6 +119,10 @@ describe('SDKMessageRepository', () => {
 				body TEXT,
 				timestamp INTEGER,
 				PRIMARY KEY (kind, source_id)
+			);
+			CREATE TABLE message_search_pending (
+				message_id TEXT PRIMARY KEY,
+				created_at INTEGER NOT NULL
 			);
 			CREATE VIRTUAL TABLE message_search_fts USING fts5(
 				title,
@@ -2369,6 +2377,7 @@ describe('SDKMessageRepository', () => {
       const flipped = repository.markDeliveryConsumedByUuid('session-1', 'search-msg');
       expect(flipped).not.toBeNull();
       const after = Date.now();
+      repository.flushMessageSearchIndex();
       const searchRow = db
         .prepare(
           `SELECT timestamp FROM message_search_content
@@ -3037,12 +3046,17 @@ describe('SDKMessageRepository', () => {
   });
 
   describe('searchMessages', () => {
+    function searchAfterFlush(params: MessageSearchParams): MessageSearchResponse {
+      repository.flushMessageSearchIndex();
+      return repository.searchMessages(params);
+    }
+
     it('returns scoped matches with snippets', () => {
       createSearchIndex();
       repository.saveSDKMessage('session-1', createUserMessage('alpha regression bug'));
       repository.saveSDKMessage('session-2', createUserMessage('alpha unrelated'));
 
-      const result = repository.searchMessages({ query: 'alpha', sessionId: 'session-1' });
+      const result = searchAfterFlush({ query: 'alpha', sessionId: 'session-1' });
 
       expect(result.results.length).toBe(1);
       expect(result.results[0].sessionId).toBe('session-1');
@@ -3053,7 +3067,7 @@ describe('SDKMessageRepository', () => {
       createSearchIndex();
       repository.saveSDKMessage('session-1', createUserMessage('ui marker'));
 
-      const result = repository.searchMessages({ query: 'ui' });
+      const result = searchAfterFlush({ query: 'ui' });
 
       expect(result.results).toEqual([]);
     });
@@ -3063,7 +3077,7 @@ describe('SDKMessageRepository', () => {
       repository.saveSDKMessage('session-1', createUserMessage('global comet marker'));
       repository.saveSDKMessage('session-2', createUserMessage('global comet marker'));
 
-      const result = repository.searchMessages({ query: 'comet' });
+      const result = searchAfterFlush({ query: 'comet' });
 
       expect(result.results.map((row) => row.sessionId).sort()).toEqual(['session-1', 'session-2']);
     });
@@ -3080,7 +3094,7 @@ describe('SDKMessageRepository', () => {
       repository.saveSDKMessage('session-1', createAssistantMessage('filter beacon current'));
       repository.saveSDKMessage('session-1', createUserMessage('filter beacon user'));
 
-      const result = repository.searchMessages({
+      const result = searchAfterFlush({
         query: 'beacon',
         messageType: 'assistant',
         from,
@@ -3102,7 +3116,7 @@ describe('SDKMessageRepository', () => {
         result: 'type marker result',
       } as SDKMessage);
 
-      const result = repository.searchMessages({ query: 'type marker' });
+      const result = searchAfterFlush({ query: 'type marker' });
 
       expect(result.results.map((row) => row.messageType)).toEqual(['assistant']);
     });
@@ -3132,7 +3146,7 @@ describe('SDKMessageRepository', () => {
       );
       repository.saveSDKMessage('archived-session', createUserMessage('policy marker archived'));
 
-      const result = repository.searchMessages({ query: 'policy marker' });
+      const result = searchAfterFlush({ query: 'policy marker' });
 
       expect(result.results.map((row) => row.sessionId).sort()).toEqual([
         'session-1',
@@ -3168,7 +3182,7 @@ describe('SDKMessageRepository', () => {
         'old-task'
       );
 
-      const result = repository.searchMessages({ query: 'stale runtime' });
+      const result = searchAfterFlush({ query: 'stale runtime' });
 
       expect(result.results).toEqual([]);
     });
@@ -3202,7 +3216,7 @@ describe('SDKMessageRepository', () => {
         createUserMessage('retention marker old')
       );
 
-      const result = repository.searchMessages({ query: 'retention marker' });
+      const result = searchAfterFlush({ query: 'retention marker' });
 
       expect(result.results.map((row) => row.sessionId)).toEqual([
         'space:space-1:task:recent:exec:exec-1',
@@ -3217,8 +3231,8 @@ describe('SDKMessageRepository', () => {
 				) VALUES ('task', ?, ?, ?, ?, ?, ?, ?)`
       ).run('task-1', 'task-1', 'space-1', 12, 'Orion title', 'Task description', Date.now());
 
-      const titleResult = repository.searchMessages({ query: 'orion' });
-      const bodyResult = repository.searchMessages({ query: 'description' });
+      const titleResult = searchAfterFlush({ query: 'orion' });
+      const bodyResult = searchAfterFlush({ query: 'description' });
 
       expect(titleResult.results).toHaveLength(1);
       expect(bodyResult.results).toHaveLength(1);
@@ -3238,7 +3252,7 @@ describe('SDKMessageRepository', () => {
         createUserMessage('refused searchable marker', 'refused-uuid')
       );
 
-      expect(repository.searchMessages({ query: 'refused searchable' }).results).toHaveLength(1);
+      expect(searchAfterFlush({ query: 'refused searchable' }).results).toHaveLength(1);
       repository.saveSDKMessage('session-1', {
         type: 'system',
         subtype: 'model_refusal_fallback',
@@ -3247,7 +3261,7 @@ describe('SDKMessageRepository', () => {
         session_id: 'session-1',
       } as unknown as SDKMessage);
 
-      expect(repository.searchMessages({ query: 'refused searchable' }).results).toEqual([]);
+      expect(searchAfterFlush({ query: 'refused searchable' }).results).toEqual([]);
     });
 
     it('keeps fallback-retracted messages out during search index rebuild', () => {
@@ -3269,7 +3283,7 @@ describe('SDKMessageRepository', () => {
         .get('hidden-uuid') as { id: string };
       repository.updateMessageTimestamp(hiddenRow.id);
 
-      expect(repository.searchMessages({ query: 'rebuild hidden' }).results).toEqual([]);
+      expect(searchAfterFlush({ query: 'rebuild hidden' }).results).toEqual([]);
     });
 
     it('removes superseded messages from search index', () => {
@@ -3279,7 +3293,7 @@ describe('SDKMessageRepository', () => {
         createUserMessage('superseded searchable marker', 'superseded-uuid')
       );
 
-      expect(repository.searchMessages({ query: 'superseded searchable' }).results).toHaveLength(1);
+      expect(searchAfterFlush({ query: 'superseded searchable' }).results).toHaveLength(1);
       repository.saveSDKMessage('session-1', {
         type: 'assistant',
         uuid: 'replacement-uuid',
@@ -3287,7 +3301,7 @@ describe('SDKMessageRepository', () => {
         message: { role: 'assistant', content: [{ type: 'text', text: 'replacement marker' }] },
       } as unknown as SDKMessage);
 
-      expect(repository.searchMessages({ query: 'superseded searchable' }).results).toEqual([]);
+      expect(searchAfterFlush({ query: 'superseded searchable' }).results).toEqual([]);
     });
 
     it('removes deleted messages from search index', () => {
@@ -3295,10 +3309,136 @@ describe('SDKMessageRepository', () => {
       const before = Date.now() - 1000;
       repository.saveSDKMessage('session-1', createUserMessage('temporary rollback marker'));
 
-      expect(repository.searchMessages({ query: 'rollback' }).results.length).toBe(1);
+      expect(searchAfterFlush({ query: 'rollback' }).results.length).toBe(1);
       repository.deleteMessagesAfter('session-1', before);
 
-      expect(repository.searchMessages({ query: 'rollback' }).results.length).toBe(0);
+      expect(searchAfterFlush({ query: 'rollback' }).results.length).toBe(0);
+    });
+
+    it('defers indexing until the pending queue is flushed', () => {
+      createSearchIndex();
+      repository.saveSDKMessage('session-1', createUserMessage('deferred window marker'));
+
+      expect(repository.searchMessages({ query: 'deferred window' }).results).toEqual([]);
+
+      repository.flushMessageSearchIndex();
+
+      expect(repository.searchMessages({ query: 'deferred window' }).results).toHaveLength(1);
+    });
+
+    it('indexes pending rows left from a previous run on flush', () => {
+      createSearchIndex();
+      repository.saveSDKMessage('session-1', createUserMessage('recovery marker'));
+
+      const pending = db.prepare(`SELECT message_id FROM message_search_pending`).all() as Array<{
+        message_id: string;
+      }>;
+      expect(pending).toHaveLength(1);
+
+      repository.flushMessageSearchIndex();
+
+      expect(db.prepare(`SELECT COUNT(*) AS n FROM message_search_pending`).get()).toEqual({
+        n: 0,
+      });
+      expect(repository.searchMessages({ query: 'recovery' }).results).toHaveLength(1);
+    });
+
+    it('retains pending rows that fail to index and retries on a later flush', () => {
+      createSearchIndex();
+      repository.saveSDKMessage('session-1', createUserMessage('retry marker'));
+
+      db.exec(`DROP TABLE message_search_fts`);
+
+      repository.flushMessageSearchIndex();
+      expect(db.prepare(`SELECT COUNT(*) AS n FROM message_search_pending`).get()).toEqual({
+        n: 1,
+      });
+
+      db.exec(
+        `CREATE VIRTUAL TABLE message_search_fts USING fts5(
+					title,
+					body,
+					content='message_search_content',
+					content_rowid='rowid',
+					detail=column,
+					tokenize = 'unicode61'
+				)`
+      );
+
+      repository.flushMessageSearchIndex();
+
+      expect(repository.searchMessages({ query: 'retry marker' }).results).toHaveLength(1);
+    });
+
+    it('coalesces repeated schedules of the same message', () => {
+      createSearchIndex();
+      const id = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('coalesced marker'),
+        'consumed'
+      );
+      repository.updateMessageTimestamp(id, Date.now() - 5_000);
+      repository.updateMessageStatus([id], 'consumed');
+
+      const pending = db.prepare(`SELECT message_id FROM message_search_pending`).all() as Array<{
+        message_id: string;
+      }>;
+      expect(pending).toHaveLength(1);
+
+      repository.flushMessageSearchIndex();
+
+      expect(repository.searchMessages({ query: 'coalesced' }).results).toHaveLength(1);
+    });
+
+    it('processes at most limit pending rows per flush', () => {
+      createSearchIndex();
+      repository.saveUserMessage('session-1', createUserMessage('bounded marker a'), 'consumed');
+      repository.saveUserMessage('session-1', createUserMessage('bounded marker b'), 'consumed');
+      expect(db.prepare(`SELECT COUNT(*) AS n FROM message_search_pending`).get()).toEqual({
+        n: 2,
+      });
+
+      expect(repository.flushMessageSearchIndex(1)).toBe(1);
+      expect(db.prepare(`SELECT COUNT(*) AS n FROM message_search_pending`).get()).toEqual({
+        n: 1,
+      });
+
+      repository.flushMessageSearchIndex();
+      expect(db.prepare(`SELECT COUNT(*) AS n FROM message_search_pending`).get()).toEqual({
+        n: 0,
+      });
+    });
+
+    it('indexes synchronously when the pending queue table is absent', () => {
+      createSearchIndex();
+      db.exec(`DROP TABLE message_search_pending`);
+      repository.saveSDKMessage('session-1', createUserMessage('sync fallback marker'));
+
+      expect(repository.searchMessages({ query: 'sync fallback' }).results).toHaveLength(1);
+    });
+
+    it('applies supersession when the replacement is still pending', () => {
+      createSearchIndex();
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('interleave superseded', 'interleave-uuid')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'assistant',
+        uuid: 'interleave-replacement',
+        supersedes: ['interleave-uuid'],
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'interleave replacement text' }],
+        },
+      } as unknown as SDKMessage);
+
+      repository.flushMessageSearchIndex();
+
+      expect(repository.searchMessages({ query: 'interleave superseded' }).results).toEqual([]);
+      expect(repository.searchMessages({ query: 'interleave replacement' }).results).toHaveLength(
+        1
+      );
     });
   });
 
@@ -3521,6 +3661,8 @@ describe('SDKMessageRepository', () => {
       repository.saveSDKMessage('session-1', resultMessage());
 
       expect(counter.count()).toBe(0);
+
+      repository.flushMessageSearchIndex();
 
       const bodies = db
         .prepare(

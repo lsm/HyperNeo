@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('SpaceTaskRepository', () => {
@@ -61,6 +62,10 @@ describe('SpaceTaskRepository', () => {
 				body TEXT,
 				timestamp INTEGER,
 				PRIMARY KEY (kind, source_id)
+			);
+			CREATE TABLE message_search_pending (
+				message_id TEXT PRIMARY KEY,
+				created_at INTEGER NOT NULL
 			);
 			CREATE VIRTUAL TABLE message_search_fts USING fts5(
 				title,
@@ -743,6 +748,48 @@ describe('SpaceTaskRepository', () => {
       repo.deleteTask(task.id);
 
       expect(searchIndexedTaskIds('nebula')).toEqual([]);
+    });
+
+    it('purges pending message rows when the task is deleted', () => {
+      createSearchIndex();
+      const task = repo.createTask({
+        spaceId,
+        title: 'Purge task',
+        description: '',
+      });
+      insertWorkerSession('session-1', task.id);
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, task_id)
+				 VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        'pending-msg',
+        'session-1',
+        'user',
+        JSON.stringify({
+          type: 'user',
+          uuid: 'pending-uuid',
+          message: { role: 'user', content: [{ type: 'text', text: 'pending purge marker' }] },
+        }),
+        new Date().toISOString(),
+        'consumed',
+        task.id
+      );
+      db.prepare(`INSERT INTO message_search_pending (message_id, created_at) VALUES (?, ?)`).run(
+        'pending-msg',
+        Date.now()
+      );
+
+      repo.deleteTask(task.id);
+
+      expect((db as any).prepare(`SELECT COUNT(*) AS n FROM message_search_pending`).get()).toEqual(
+        {
+          n: 0,
+        }
+      );
+
+      const sdkRepo = new SDKMessageRepository(db as any);
+      sdkRepo.flushMessageSearchIndex();
+      expect(sdkRepo.searchMessages({ query: 'pending purge' }).results).toEqual([]);
     });
 
     it('preserves linked message rows when a task enters terminal status', () => {
