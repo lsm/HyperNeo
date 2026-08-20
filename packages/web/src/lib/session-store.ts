@@ -60,11 +60,11 @@ function isSortedByTimestampRowid(messages: ChatMessage[]): boolean {
 function insertByTimestampRowid(existing: ChatMessage[], rows: ChatMessage[]): ChatMessage[] {
   const added = [...rows].sort(compareByTimestampRowid);
   if (existing.length === 0) return added;
-  if (compareByTimestampRowid(existing[existing.length - 1], added[0]) <= 0) {
-    return [...existing, ...added];
-  }
   if (!isSortedByTimestampRowid(existing)) {
     return sortByTimestampRowid([...existing, ...added]);
+  }
+  if (compareByTimestampRowid(existing[existing.length - 1], added[0]) <= 0) {
+    return [...existing, ...added];
   }
   const next = existing.slice();
   for (const row of added) {

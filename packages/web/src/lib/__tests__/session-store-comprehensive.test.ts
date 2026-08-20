@@ -697,7 +697,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
         expect(uuids()).toEqual(['u-q', 'u-jit', 'u-w1', 'u-p1', 'u-w2']);
       });
 
-      it('appends tail rows without disturbing a jittered prefix', async () => {
+      it('normalizes a jittered transcript when adding tail rows', async () => {
         const hub = installLiveQueryHub();
         await sessionStore.select('session-1');
         const subId = hub.subscriptionId;
@@ -715,7 +715,28 @@ describe('SessionStore - Comprehensive Coverage', () => {
           removed: [],
         });
 
-        expect(uuids()).toEqual(['u-q', 'u-p1', 'u-w1', 'u-w2', 'u-tail']);
+        expect(uuids()).toEqual(['u-q', 'u-w1', 'u-p1', 'u-w2', 'u-tail']);
+      });
+
+      it('normalizes a jittered transcript when a removal strips the tail before an add', async () => {
+        const hub = installLiveQueryHub();
+        await sessionStore.select('session-1');
+        const subId = hub.subscriptionId;
+        hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows: [row('p1', 101, 2)] });
+        sessionStore.prependMessages([row('q', 50, 1)]);
+        hub.fire('liveQuery.snapshot', {
+          subscriptionId: subId,
+          rows: [row('w1', 100, 5), row('w2', 110, 6)],
+        });
+
+        hub.fire('liveQuery.delta', {
+          subscriptionId: subId,
+          added: [row('jit', 100, 7)],
+          updated: [],
+          removed: [{ id: 'w2' }],
+        });
+
+        expect(uuids()).toEqual(['u-q', 'u-w1', 'u-jit', 'u-p1']);
       });
     });
 
