@@ -716,6 +716,34 @@ describe('Provider RPC handlers', () => {
       expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
     });
 
+    it('unregisters the provider before interrupting cached ACP sessions', async () => {
+      const provider = new AcpProvider({}, async () => {});
+      provider.setAcpCommand('devin acp');
+      getProviderRegistry().register(provider);
+      let releaseInterrupt: () => void;
+      const interruptStarted = new Promise<void>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      let registryEmptyDuringInterrupt = false;
+      sessionManager.interruptCachedProviderSessions = mock(async () => {
+        registryEmptyDuringInterrupt = getProviderRegistry().get('acp') === undefined;
+        releaseInterrupt!();
+      });
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'devin acp', models: [] }),
+      });
+      const handlers = setup();
+
+      await handlers.get('providers.update')!({ id: created.id, params: { isEnabled: false } }, {});
+      await interruptStarted;
+
+      expect(registryEmptyDuringInterrupt).toBe(true);
+    });
+
     it('emits providers.changed after update', async () => {
       const created = repo.createProvider({
         providerId: 'anthropic',

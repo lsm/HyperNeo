@@ -423,13 +423,13 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
           if (shouldResync) {
             if (record.isEnabled === false) {
-              if (record.providerId === 'acp' && existing.isEnabled !== false) {
-                await sessionManager?.interruptCachedProviderSessions('acp');
-              }
               if (record.kind === 'built_in') {
                 markBuiltInProviderDisabled(record.providerId);
               }
               await removeProviderFromRegistry(record.providerId);
+              if (record.providerId === 'acp' && existing.isEnabled !== false) {
+                await sessionManager?.interruptCachedProviderSessions('acp');
+              }
             } else {
               const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
               await ensureBuiltInProviderRegistered(record.providerId);
@@ -471,14 +471,15 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
       if (record.kind === 'built_in') {
         providerRepo.updateProvider(data.id, { isEnabled: false });
+        markBuiltInProviderDisabled(record.providerId);
+        await removeProviderFromRegistry(record.providerId);
         if (record.providerId === 'acp' && record.isEnabled !== false) {
           await sessionManager?.interruptCachedProviderSessions('acp');
         }
-        markBuiltInProviderDisabled(record.providerId);
       } else {
         providerRepo.deleteProvider(data.id);
+        await removeProviderFromRegistry(record.providerId);
       }
-      await removeProviderFromRegistry(record.providerId);
       await clearCacheAndNotifyProvidersChanged(internalEventBus);
       return { success: true };
     });
