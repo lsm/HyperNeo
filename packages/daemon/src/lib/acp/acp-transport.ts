@@ -16,6 +16,15 @@ import {
 const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 const CLOSE_SIGTERM_TIMEOUT_MS = 5_000;
 
+const defaultProcessGroupProbe = (pid: number): boolean => {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+};
+
 const logger = new Logger('AcpTransport');
 
 export function buildAcpProcessEnv(
@@ -53,6 +62,8 @@ export interface AcpTransportOptions extends AcpTransportCallbacks {
   replaceEnv?: boolean;
   cwd?: string;
   requestTimeoutMs?: number;
+  closeSIGKILLTimeoutMs?: number;
+  processGroupProbe?: (pid: number) => boolean;
   processTreeOwner?: AcpProcessTreeOwner;
 }
 
@@ -70,6 +81,8 @@ export class AcpTransport {
   private buffer = '';
   private closed = false;
   private processExited = false;
+  private processGroupGone = false;
+  private killTimer: ReturnType<typeof setTimeout> | null = null;
   private closePromise: Promise<void> | null = null;
   private closeResolve: (() => void) | null = null;
 
@@ -96,6 +109,7 @@ export class AcpTransport {
 
     proc.on('error', (err) => {
       logger.error('ACP agent process error:', err.message);
+      this.recordProcessGroupGone();
       this.process = null;
       this.processExited = true;
       this.rejectAllPending(new Error(`ACP agent process error: ${err.message}`));
@@ -125,6 +139,7 @@ export class AcpTransport {
 
     proc.on('exit', (code, signal) => {
       logger.info(`ACP agent exited (code=${code}, signal=${signal})`);
+      this.recordProcessGroupGone();
       this.process = null;
       this.processExited = true;
       if (this.options.onExit) {
@@ -343,6 +358,19 @@ export class AcpTransport {
     this.processTree?.terminate(signal);
   }
 
+  private recordProcessGroupGone(): void {
+    if (!this.processGroupGone) {
+      const pid = this.process?.pid;
+      if (pid != null && !(this.options.processGroupProbe ?? defaultProcessGroupProbe)(pid)) {
+        this.processGroupGone = true;
+      }
+    }
+    if (this.processGroupGone && this.killTimer) {
+      clearTimeout(this.killTimer);
+      this.killTimer = null;
+    }
+  }
+
   close(): Promise<void> {
     if (this.closed) {
       return this.closePromise ?? Promise.resolve();
@@ -361,11 +389,14 @@ export class AcpTransport {
 
       this.killProcess('SIGTERM');
 
-      const killTimer = setTimeout(() => {
+      this.killTimer = setTimeout(() => {
+        this.killTimer = null;
+        if (this.processGroupGone) return;
         logger.warn('ACP agent cleanup escalation after SIGTERM');
         this.killProcess('SIGKILL');
-      }, CLOSE_SIGTERM_TIMEOUT_MS);
-      killTimer.unref();
+      }, this.options.closeSIGKILLTimeoutMs ?? CLOSE_SIGTERM_TIMEOUT_MS);
+      this.killTimer.unref();
+      this.recordProcessGroupGone();
 
       if (this.processExited) {
         resolve();

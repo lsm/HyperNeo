@@ -319,6 +319,43 @@ describe('AcpTransport', () => {
     expect(terminate).toHaveBeenCalledWith('SIGTERM');
   });
 
+  test('does not escalate SIGKILL after the process group is gone', async () => {
+    const terminate = vi.fn();
+    const processTreeOwner = vi.fn(() => ({ terminate }));
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      processTreeOwner,
+      processGroupProbe: () => false,
+      closeSIGKILLTimeoutMs: 50,
+    });
+    const proc = lastMockProcess!;
+
+    proc.emit('exit', 0, null);
+    await transport.close();
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
+    expect(terminate).not.toHaveBeenCalledWith('SIGKILL');
+  }, 1000);
+
+  test('escalates SIGKILL while the process group remains', async () => {
+    const terminate = vi.fn();
+    const processTreeOwner = vi.fn(() => ({ terminate }));
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      processTreeOwner,
+      processGroupProbe: () => true,
+      closeSIGKILLTimeoutMs: 50,
+    });
+    const proc = lastMockProcess!;
+
+    transport.close();
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
+    expect(terminate).toHaveBeenCalledWith('SIGKILL');
+  }, 1000);
+
   test('onExit callback fires when process exits', () => {
     const exits: Array<{ code: number | null; signal: string | null }> = [];
     const transport = new AcpTransport({
