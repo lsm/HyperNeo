@@ -45,6 +45,7 @@
         "@modelcontextprotocol/sdk": "1.29.0",
         "croner": "10.0.1",
         "simple-git": "3.36.0",
+        "superpipe": "^0.17.0",
         "ws": "8.18.0",
         "zod": "4.4.3",
       },
@@ -1579,6 +1580,8 @@
     "strip-json-comments": ["strip-json-comments@5.0.3", "", {}, "sha512-1tB5mhVo7U+ETBKNf92xT4hrQa3pm0MZ0PQvuDnWgAAGHDsfp4lPSpiS6psrSiet87wyGPh9ft6wmhOMQ0hDiw=="],
 
     "stylis": ["stylis@4.4.0", "", {}, "sha512-5Z9ZpRzfuH6l/UAvCPAPUo3665Nk2wLaZU3x+TLHKVzIz33+sbJqbtrYoC3KD4/uVOr2Zp+L0LySezP9OHV9yA=="],
+
+    "superpipe": ["superpipe@0.17.0", "", {}, "sha512-0d/ZqDUQy1VfMd7TzZ7Of7+6MrdgWrHxnhB4hxcvZ3mBVtwryzQFNojpuU9j3mmu2+ieVEIOWEAlFmevDd6NDA=="],
 
     "supports-color": ["supports-color@7.2.0", "", { "dependencies": { "has-flag": "^4.0.0" } }, "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw=="],
 
