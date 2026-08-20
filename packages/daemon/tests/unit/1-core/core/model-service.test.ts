@@ -1519,6 +1519,42 @@ describe('Model Service', () => {
       expect(getAvailableModels('global')).toContainEqual(recoveredModel);
     });
 
+    it('refreshes in the background once a provider catalog expires', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const ttlModel = {
+        id: 'ttl-model',
+        name: 'TTL Model',
+        family: 'test',
+        provider: 'ttl-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      let refreshCalls = 0;
+      let expiresAt = Date.now() + 60;
+      registry.register({
+        id: 'ttl-provider',
+        getModels: async () => [ttlModel],
+        refreshModels: async () => {
+          refreshCalls += 1;
+          expiresAt = Date.now() + 60;
+          return [ttlModel];
+        },
+        getModelCacheExpiresAt: () => expiresAt,
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+      expect(refreshCalls).toBe(1);
+      expect(getAvailableModels('global')).toEqual([ttlModel]);
+
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      getAvailableModels('global');
+      await waitFor(() => refreshCalls === 2);
+      expect(getAvailableModels('global')).toEqual([ttlModel]);
+    });
+
     it('should drop stale models when a provider credential scope changes', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];

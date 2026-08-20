@@ -1362,6 +1362,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return this.activeCatalogScope ? this.scopeKey(this.activeCatalogScope) : undefined;
   }
 
+  getModelCacheExpiresAt(): number | undefined {
+    if (!this.modelCache || !this.activeCatalogScope) return undefined;
+    if (!this.cacheMatchesScope(this.modelCache, this.activeCatalogScope)) return undefined;
+    return Date.parse(this.modelCache.fetchedAt) + CODEX_MODEL_CACHE_TTL_MS;
+  }
+
   private async loadModels(strict: boolean): Promise<ModelInfo[]> {
     const initialAuth = await this.getBridgeAuth();
     if (!initialAuth) return [];

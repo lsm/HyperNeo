@@ -132,6 +132,8 @@ const backgroundRefreshFailures = new Map<string, number>();
 
 const cacheGeneration = new Map<string, number>();
 
+const catalogExpiryAt = new Map<string, number>();
+
 const refreshedMissingProviders = new Set<string>();
 
 export async function getSupportedModelsFromQuery(
@@ -235,6 +237,7 @@ interface ProviderModelLoadResult {
   rejectedProviderIds: Set<string>;
   changedProviderIds: Set<string>;
   noProviderAvailable: boolean;
+  catalogExpiryAt: number | undefined;
 }
 
 async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
@@ -321,16 +324,27 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
     }
   });
 
+  let minCatalogExpiry: number | undefined;
+  for (const provider of providers) {
+    const expiry = provider.getModelCacheExpiresAt?.();
+    if (expiry !== undefined && (minCatalogExpiry === undefined || expiry < minCatalogExpiry)) {
+      minCatalogExpiry = expiry;
+    }
+  }
+
   return {
     models,
     failedProviderIds,
     rejectedProviderIds,
     changedProviderIds,
     noProviderAvailable: providers.length > 0 && availableProviderCount === 0,
+    catalogExpiryAt: minCatalogExpiry,
   };
 }
 
 function isCacheStale(cacheKey: string): boolean {
+  const expiry = catalogExpiryAt.get(cacheKey);
+  if (expiry !== undefined && Date.now() > expiry) return true;
   const timestamp = cacheTimestamps.get(cacheKey);
   if (!timestamp) return true;
   return Date.now() - timestamp > CACHE_TTL;
@@ -369,7 +383,9 @@ export async function initializeModels(): Promise<void> {
       rejectedProviderIds,
       changedProviderIds,
       noProviderAvailable,
+      catalogExpiryAt: providerExpiry,
     } = await loadModelsFromProviders();
+    if (providerExpiry !== undefined) catalogExpiryAt.set(cacheKey, providerExpiry);
     const mergedModels = reconcileProviderModels(
       mergeWithFallbackModels(models),
       undefined,
@@ -409,6 +425,7 @@ export function clearModelsCache(cacheKey?: string): void {
     modelsCache.delete(cacheKey);
     cacheTimestamps.delete(cacheKey);
     backgroundRefreshFailures.delete(cacheKey);
+    catalogExpiryAt.delete(cacheKey);
     refreshInProgress.delete(cacheKey);
     if (hadInFlight || cacheGeneration.has(cacheKey)) {
       cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
@@ -418,6 +435,7 @@ export function clearModelsCache(cacheKey?: string): void {
     modelsCache.clear();
     cacheTimestamps.clear();
     backgroundRefreshFailures.clear();
+    catalogExpiryAt.clear();
     refreshInProgress.clear();
     clearProviderModelCaches();
     for (const key of inFlightKeys) {
@@ -431,6 +449,7 @@ export function invalidateModelsCacheEntry(cacheKey: string): void {
   modelsCache.delete(cacheKey);
   cacheTimestamps.delete(cacheKey);
   backgroundRefreshFailures.delete(cacheKey);
+  catalogExpiryAt.delete(cacheKey);
 }
 
 export function hasRefreshBeenAttemptedFor(providerId: string): boolean {
@@ -475,10 +494,13 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
         rejectedProviderIds,
         changedProviderIds,
         noProviderAvailable,
+        catalogExpiryAt: providerExpiry,
       } = await loadModelsFromProviders();
       if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
         return;
       }
+      if (providerExpiry === undefined) catalogExpiryAt.delete(cacheKey);
+      else catalogExpiryAt.set(cacheKey, providerExpiry);
       if (
         previousModels?.length &&
         models.length === 0 &&

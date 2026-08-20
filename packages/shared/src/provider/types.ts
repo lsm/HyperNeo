@@ -80,6 +80,8 @@ export interface Provider {
 
   getModelCatalogScope?(): string | undefined;
 
+  getModelCacheExpiresAt?(): number | undefined;
+
   healthCheck?(): Promise<void>;
 
   ownsModel(modelId: string): boolean;
