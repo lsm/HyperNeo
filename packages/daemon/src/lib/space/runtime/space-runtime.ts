@@ -1511,12 +1511,7 @@ export class SpaceRuntime {
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
       .filter(({ eventRecord }) => eventRecord.state === 'published')
-      .sort(
-        (a, b) =>
-          a.eventRecord.createdAt - b.eventRecord.createdAt ||
-          a.delivery.updatedAt - b.delivery.updatedAt ||
-          a.delivery.deliveryKey.localeCompare(b.delivery.deliveryKey)
-      );
+      .sort((a, b) => a.eventRecord.createdAt - b.eventRecord.createdAt);
 
     for (const { delivery, eventRecord } of deliveries) {
       if (store.isDeliveryTerminal(delivery.eventId, delivery.deliveryKey)) continue;
