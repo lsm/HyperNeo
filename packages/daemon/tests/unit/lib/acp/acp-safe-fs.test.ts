@@ -1,6 +1,17 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { link, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -40,7 +51,9 @@ bunRuntimeTest('writes through workspace directories without following symlinks'
       'written',
       new AbortController().signal
     );
-    expect(await readFile(join(workspace, 'nested', 'written.txt'), 'utf-8')).toBe('written');
+    const written = join(workspace, 'nested', 'written.txt');
+    expect(await readFile(written, 'utf-8')).toBe('written');
+    expect((await stat(written)).mode & 0o777).toBe(0o600);
 
     await rename(join(workspace, 'nested'), join(workspace, 'moved'));
     await symlink(outside, join(workspace, 'nested'));
@@ -90,6 +103,27 @@ bunRuntimeTest('writes maximum-length filenames through a short temporary name',
   try {
     await writeFileWithinWorkspace(workspace, [fileName], 'content', new AbortController().signal);
     expect(await readFile(join(workspace, fileName), 'utf-8')).toBe('content');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+bunRuntimeTest('preserves permissions when replacing an existing file', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-mode-'));
+  const workspace = join(root, 'workspace');
+  const target = join(workspace, 'script.sh');
+  await mkdir(workspace);
+  await writeFile(target, 'original');
+  await chmod(target, 0o755);
+
+  try {
+    await writeFileWithinWorkspace(
+      workspace,
+      ['script.sh'],
+      'replacement',
+      new AbortController().signal
+    );
+    expect((await stat(target)).mode & 0o777).toBe(0o755);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -259,7 +293,9 @@ bunRuntimeTest('rejects named pipes without blocking', async () => {
       'replacement',
       new AbortController().signal
     );
-    expect(await readFile(join(workspace, 'pipe'), 'utf-8')).toBe('replacement');
+    const replacement = join(workspace, 'pipe');
+    expect(await readFile(replacement, 'utf-8')).toBe('replacement');
+    expect((await stat(replacement)).mode & 0o777).toBe(0o600);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

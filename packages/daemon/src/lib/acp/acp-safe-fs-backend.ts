@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { constants, fstatSync } from 'node:fs';
+import { constants, fchmodSync, fstatSync } from 'node:fs';
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -160,6 +160,23 @@ function closeFile(symbols: LibcSymbols, fd: number): void {
   if (fd >= 0) symbols.close(fd);
 }
 
+function replacementMode(symbols: LibcSymbols, directoryFd: number, fileName: string): number {
+  const fileFd = symbols.openat(
+    directoryFd,
+    cString(fileName),
+    constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    0
+  );
+  if (fileFd < 0) return FILE_MODE;
+
+  try {
+    const stats = fstatSync(fileFd);
+    return stats.isFile() ? stats.mode & 0o777 : FILE_MODE;
+  } finally {
+    closeFile(symbols, fileFd);
+  }
+}
+
 async function openWorkspacePath(
   workspace: string,
   segments: string[],
@@ -279,6 +296,7 @@ export async function writeFileWithinWorkspace(
     throw new Error(`ACP filesystem write exceeds ${MAX_WRITE_BYTES} bytes`);
   }
   const { symbols, directoryFd, fileName } = await openWorkspacePath(workspace, segments, true);
+  const mode = replacementMode(symbols, directoryFd, fileName);
   const temporaryName = `.acp-${randomUUID()}`;
   let temporaryExists = false;
 
@@ -299,6 +317,7 @@ export async function writeFileWithinWorkspace(
 
     try {
       if (!fstatSync(fileFd).isFile()) throwFsError('write', fileName);
+      if (mode !== FILE_MODE) fchmodSync(fileFd, mode);
       let offset = 0;
       while (offset < data.length) {
         if (signal.aborted) throw new Error('ACP filesystem write cancelled');
