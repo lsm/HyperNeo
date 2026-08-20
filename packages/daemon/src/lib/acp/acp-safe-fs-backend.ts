@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { constants, fstatSync } from 'node:fs';
 
 const DIRECTORY_MODE = 0o700;
@@ -23,10 +24,11 @@ interface BunFfiModule {
 
 interface LibcSymbols {
   close: (fd: number) => number;
-  ftruncate: (fd: number, length: number) => number;
   mkdirat: (fd: number, path: Buffer, mode: number) => number;
   openat: (fd: number, path: Buffer, flags: number, mode: number) => number;
   read: (fd: number, buffer: Buffer, length: number) => number | bigint;
+  renameat: (oldFd: number, oldPath: Buffer, newFd: number, newPath: Buffer) => number;
+  unlinkat: (fd: number, path: Buffer, flags: number) => number;
   write: (fd: number, buffer: Buffer, length: number) => number | bigint;
 }
 
@@ -90,10 +92,6 @@ async function loadSafeFsBackend(): Promise<SafeFsBackend> {
     const ffi = (await import(moduleName)) as unknown as BunFfiModule;
     const definitions = {
       close: { args: [ffi.FFIType.i32], returns: ffi.FFIType.i32 },
-      ftruncate: {
-        args: [ffi.FFIType.i32, ffi.FFIType.i64],
-        returns: ffi.FFIType.i32,
-      },
       mkdirat: {
         args: [ffi.FFIType.i32, ffi.FFIType.cstring, ffi.FFIType.u32],
         returns: ffi.FFIType.i32,
@@ -105,6 +103,14 @@ async function loadSafeFsBackend(): Promise<SafeFsBackend> {
       read: {
         args: [ffi.FFIType.i32, ffi.FFIType.ptr, ffi.FFIType.u64],
         returns: ffi.FFIType.i64,
+      },
+      renameat: {
+        args: [ffi.FFIType.i32, ffi.FFIType.cstring, ffi.FFIType.i32, ffi.FFIType.cstring],
+        returns: ffi.FFIType.i32,
+      },
+      unlinkat: {
+        args: [ffi.FFIType.i32, ffi.FFIType.cstring, ffi.FFIType.i32],
+        returns: ffi.FFIType.i32,
       },
       write: {
         args: [ffi.FFIType.i32, ffi.FFIType.ptr, ffi.FFIType.u64],
@@ -273,21 +279,26 @@ export async function writeFileWithinWorkspace(
     throw new Error(`ACP filesystem write exceeds ${MAX_WRITE_BYTES} bytes`);
   }
   const { symbols, directoryFd, fileName } = await openWorkspacePath(workspace, segments, true);
+  const temporaryName = `.acp-${randomUUID()}`;
+  let temporaryExists = false;
 
   try {
     if (signal.aborted) throw new Error('ACP filesystem write cancelled');
     const fileFd = symbols.openat(
       directoryFd,
-      cString(fileName),
-      constants.O_WRONLY | constants.O_CREAT | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+      cString(temporaryName),
+      constants.O_WRONLY |
+        constants.O_CREAT |
+        constants.O_EXCL |
+        constants.O_NONBLOCK |
+        constants.O_NOFOLLOW,
       FILE_MODE
     );
     if (fileFd < 0) throwFsError('open', fileName);
+    temporaryExists = true;
 
     try {
       if (!fstatSync(fileFd).isFile()) throwFsError('write', fileName);
-      if (signal.aborted) throw new Error('ACP filesystem write cancelled');
-      if (symbols.ftruncate(fileFd, 0) !== 0) throwFsError('truncate', fileName);
       let offset = 0;
       while (offset < data.length) {
         if (signal.aborted) throw new Error('ACP filesystem write cancelled');
@@ -298,7 +309,16 @@ export async function writeFileWithinWorkspace(
     } finally {
       closeFile(symbols, fileFd);
     }
+
+    if (signal.aborted) throw new Error('ACP filesystem write cancelled');
+    if (
+      symbols.renameat(directoryFd, cString(temporaryName), directoryFd, cString(fileName)) !== 0
+    ) {
+      throwFsError('replace', fileName);
+    }
+    temporaryExists = false;
   } finally {
+    if (temporaryExists) symbols.unlinkat(directoryFd, cString(temporaryName), 0);
     closeFile(symbols, directoryFd);
   }
 }

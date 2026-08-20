@@ -93,6 +93,20 @@ export class AcpTransport {
     });
 
     this.process = proc;
+
+    proc.on('error', (err) => {
+      logger.error('ACP agent process error:', err.message);
+      this.process = null;
+      this.processExited = true;
+      this.rejectAllPending(new Error(`ACP agent process error: ${err.message}`));
+      if (this.options.onExit) {
+        this.options.onExit(null, null);
+      }
+      if (this.closeResolve) {
+        this.closeResolve();
+      }
+    });
+
     this.processTree = (this.options.processTreeOwner ?? basicAcpProcessTreeOwner)(proc);
     this.options.onProcessSpawn?.(proc);
 
@@ -120,19 +134,6 @@ export class AcpTransport {
 
     proc.on('close', () => {
       this.rejectAllPending(new Error('ACP agent process exited'));
-      if (this.closeResolve) {
-        this.closeResolve();
-      }
-    });
-
-    proc.on('error', (err) => {
-      logger.error('ACP agent process error:', err.message);
-      this.process = null;
-      this.processExited = true;
-      this.rejectAllPending(new Error(`ACP agent process error: ${err.message}`));
-      if (this.options.onExit) {
-        this.options.onExit(null, null);
-      }
       if (this.closeResolve) {
         this.closeResolve();
       }

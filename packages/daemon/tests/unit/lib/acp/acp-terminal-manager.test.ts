@@ -125,6 +125,18 @@ describe('AcpTerminalManager', () => {
     });
   });
 
+  test('observes spawn errors when process-tree ownership fails', async () => {
+    const manager = new AcpTerminalManager({}, undefined, (child) => {
+      expect(child.listenerCount('error')).toBeGreaterThan(0);
+      throw new Error('missing process id');
+    });
+
+    await expect(manager.create({ sessionId: 'session-1', command: 'missing' })).rejects.toThrow(
+      'missing process id'
+    );
+    expect(() => spawned[0].emit('error', new Error('not found'))).not.toThrow();
+  });
+
   test('keeps spawn errors when a later close event arrives', async () => {
     const manager = new AcpTerminalManager();
     const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'missing' });

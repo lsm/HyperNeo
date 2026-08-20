@@ -192,6 +192,18 @@ describe('AcpTransport', () => {
     await expect(promise).rejects.toThrow('ACP agent process exited');
   });
 
+  test('observes spawn errors when process-tree ownership fails', () => {
+    const processTreeOwner = vi.fn((proc: MockChildProcess) => {
+      expect(proc.listenerCount('error')).toBeGreaterThan(0);
+      throw new Error('missing process id');
+    });
+
+    expect(() => new AcpTransport({ command: 'missing', processTreeOwner })).toThrow(
+      'missing process id'
+    );
+    expect(() => lastMockProcess?.emit('error', new Error('spawn ENOENT'))).not.toThrow();
+  });
+
   test('rejects pending requests on process error', async () => {
     const transport = new AcpTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;

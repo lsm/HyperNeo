@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -81,17 +81,59 @@ bunRuntimeTest('rejects oversized writes before modifying the target', async () 
   }
 });
 
-bunRuntimeTest('does not follow a final symlink', async () => {
+bunRuntimeTest('writes maximum-length filenames through a short temporary name', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-name-'));
+  const workspace = join(root, 'workspace');
+  const fileName = 'x'.repeat(255);
+  await mkdir(workspace);
+
+  try {
+    await writeFileWithinWorkspace(workspace, [fileName], 'content', new AbortController().signal);
+    expect(await readFile(join(workspace, fileName), 'utf-8')).toBe('content');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+bunRuntimeTest('replaces workspace hard links without modifying the linked file', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-hardlink-'));
+  const workspace = join(root, 'workspace');
+  const outside = join(root, 'outside.txt');
+  const target = join(workspace, 'linked.txt');
+  await mkdir(workspace);
+  await writeFile(outside, 'outside');
+  await link(outside, target);
+
+  try {
+    await writeFileWithinWorkspace(
+      workspace,
+      ['linked.txt'],
+      'workspace',
+      new AbortController().signal
+    );
+    expect(await readFile(target, 'utf-8')).toBe('workspace');
+    expect(await readFile(outside, 'utf-8')).toBe('outside');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+bunRuntimeTest('replaces a final symlink without following it', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-write-'));
   const workspace = join(root, 'workspace');
   const outside = join(root, 'outside.txt');
+  const target = join(workspace, 'link.txt');
   await mkdir(workspace);
-  await symlink(outside, join(workspace, 'link.txt'));
+  await symlink(outside, target);
 
   try {
-    await expect(
-      writeFileWithinWorkspace(workspace, ['link.txt'], 'blocked', new AbortController().signal)
-    ).rejects.toThrow('Unable to open ACP filesystem path');
+    await writeFileWithinWorkspace(
+      workspace,
+      ['link.txt'],
+      'workspace',
+      new AbortController().signal
+    );
+    expect(await readFile(target, 'utf-8')).toBe('workspace');
     await expect(readFile(outside, 'utf-8')).rejects.toThrow();
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -211,9 +253,13 @@ bunRuntimeTest('rejects named pipes without blocking', async () => {
         maxBytes: 1024,
       })
     ).rejects.toThrow('Unable to read ACP filesystem path');
-    await expect(
-      writeFileWithinWorkspace(workspace, ['pipe'], 'blocked', new AbortController().signal)
-    ).rejects.toThrow('Unable to open ACP filesystem path');
+    await writeFileWithinWorkspace(
+      workspace,
+      ['pipe'],
+      'replacement',
+      new AbortController().signal
+    );
+    expect(await readFile(join(workspace, 'pipe'), 'utf-8')).toBe('replacement');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

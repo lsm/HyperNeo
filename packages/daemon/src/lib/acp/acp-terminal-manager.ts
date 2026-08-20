@@ -69,6 +69,10 @@ export class AcpTerminalManager {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     });
+    const handleUnownedError = (err: Error) => {
+      logger.error(`Terminal ${terminalId} process error:`, err.message);
+    };
+    child.once('error', handleUnownedError);
     const processTree = owner(child);
 
     const requestedOutputByteLimit =
@@ -120,6 +124,7 @@ export class AcpTerminalManager {
       }
       session.exitWaiters = [];
     });
+    child.removeListener('error', handleUnownedError);
 
     this.sessions.set(terminalId, session);
     return { terminalId };
