@@ -4,6 +4,7 @@ import type { AcpClientOptions } from '../../../../src/lib/acp/acp-client';
 
 const calls: string[] = [];
 let clientOptions: AcpClientOptions | undefined;
+let lastClient: MockAcpClient | undefined;
 let authenticateError: Error | undefined;
 let configOptions: AcpConfigOption[] = [];
 let clientCanCloseSession = false;
@@ -11,6 +12,7 @@ let clientCanCloseSession = false;
 class MockAcpClient {
   constructor(options: AcpClientOptions) {
     clientOptions = options;
+    lastClient = this;
   }
 
   initialize = mock(async () => {
@@ -45,7 +47,9 @@ if (typeof Bun !== 'undefined') {
 }
 mock.module('../../../../src/lib/acp/acp-client', () => ({ AcpClient: MockAcpClient }));
 
-const { fetchAcpModels } = await import('../../../../src/lib/acp/acp-model-fetcher');
+const { disposeAcpSessions, fetchAcpModels } = await import(
+  '../../../../src/lib/acp/acp-model-fetcher'
+);
 const { AcpProvider } = await import('../../../../src/lib/providers/acp-provider');
 
 afterAll(() => {
@@ -58,6 +62,7 @@ describe('fetchAcpModels', () => {
   beforeEach(() => {
     calls.length = 0;
     clientOptions = undefined;
+    lastClient = undefined;
     authenticateError = undefined;
     clientCanCloseSession = false;
     configOptions = [
@@ -141,5 +146,21 @@ describe('fetchAcpModels', () => {
     await fetchAcpModels(new AcpProvider(), { command: 'devin acp', cwd: '/tmp' });
 
     expect(calls).toEqual(['initialize', 'authenticate', 'createSession', 'closeSession', 'close']);
+  });
+
+  test('disposes persisted sessions through close when supported', async () => {
+    clientCanCloseSession = true;
+
+    await disposeAcpSessions('devin acp', ['session-a', 'session-b'], undefined);
+
+    expect(calls).toEqual(['initialize', 'authenticate', 'closeSession', 'closeSession', 'close']);
+    expect(lastClient?.closeSession).toHaveBeenCalledWith('session-a');
+    expect(lastClient?.closeSession).toHaveBeenCalledWith('session-b');
+  });
+
+  test('does not dispose sessions when close is unsupported', async () => {
+    await disposeAcpSessions('devin acp', ['session-a'], undefined);
+
+    expect(calls).toEqual(['initialize', 'authenticate', 'close']);
   });
 });

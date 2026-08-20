@@ -334,6 +334,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     internalEventBus: deps.internalEventBus,
     sessionManager: deps.sessionManager,
     clearPersistedAcpSessionIds: () => deps.db.clearAcpSessionIds(),
+    listPersistedAcpSessionIds: () => deps.db.listAcpSessionIds(),
   });
 
   setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.internalEventBus);

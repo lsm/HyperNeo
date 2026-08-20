@@ -1,6 +1,6 @@
 import { AcpClient } from './acp-client';
 import { buildAcpSafeEnv, parseAcpCommand } from './acp-command';
-import { getAcpProcessTreeOwner } from './acp-process-tree';
+import { type AcpProcessTreeOwner, getAcpProcessTreeOwner } from './acp-process-tree';
 import {
   flattenModelChoices,
   type AcpConfiguredModel,
@@ -10,6 +10,34 @@ import {
 const FETCH_REQUEST_TIMEOUT_MS = 20000;
 
 export const buildAcpDiscoveryEnv = buildAcpSafeEnv;
+
+export async function disposeAcpSessions(
+  commandLine: string,
+  sessionIds: string[],
+  processTreeOwner?: AcpProcessTreeOwner
+): Promise<void> {
+  if (sessionIds.length === 0) return;
+  const { command, args } = parseAcpCommand(commandLine);
+  const workspace = process.cwd();
+  const owner = processTreeOwner ?? (await getAcpProcessTreeOwner());
+  const client = new AcpClient({
+    command,
+    args,
+    cwd: workspace,
+    env: buildAcpDiscoveryEnv(),
+    replaceEnv: true,
+    requestTimeoutMs: FETCH_REQUEST_TIMEOUT_MS,
+    processTreeOwner: owner,
+  });
+  try {
+    await client.initialize();
+    await client.authenticate();
+    if (!client.canCloseSession()) return;
+    await Promise.allSettled(sessionIds.map((id) => client.closeSession(id)));
+  } finally {
+    client.close();
+  }
+}
 
 export async function fetchAcpModels(
   provider: AcpProvider,

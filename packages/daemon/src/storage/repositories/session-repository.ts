@@ -101,6 +101,18 @@ export class SessionRepository {
       .run();
   }
 
+  listAcpSessionIds(): Array<{ sessionId: string; acpSessionId: string }> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, acp_session_id FROM sessions
+         WHERE acp_session_id IS NOT NULL
+           AND json_valid(config)
+           AND json_extract(config, '$.provider') = 'acp'`
+      )
+      .all() as Array<{ id: string; acp_session_id: string }>;
+    return rows.map((row) => ({ sessionId: row.id, acpSessionId: row.acp_session_id }));
+  }
+
   updateSession(id: string, updates: Partial<Session>): void {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];

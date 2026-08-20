@@ -256,10 +256,11 @@ export class AcpClient {
     return !!sessionCapabilities && 'close' in sessionCapabilities;
   }
 
-  async closeSession(): Promise<void> {
-    if (!this.sessionId) return;
+  async closeSession(sessionId?: string): Promise<void> {
+    const target = sessionId ?? this.sessionId;
+    if (!target) return;
     const response = await this.transport.sendRequest('session/close', {
-      sessionId: this.sessionId,
+      sessionId: target,
     } as AcpSessionCloseParams);
     if ('error' in response) {
       throw new Error(`session/close failed: ${response.error.message}`);

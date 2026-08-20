@@ -12,7 +12,7 @@ import { syncProviderToRegistry, removeProviderFromRegistry } from '../providers
 import { getProviderRegistry } from '../providers/registry.js';
 import { markBuiltInProviderDisabled } from '../providers/factory.js';
 import { AcpProvider } from '../providers/acp-provider.js';
-import { fetchAcpModels } from '../acp/acp-model-fetcher.js';
+import { disposeAcpSessions, fetchAcpModels } from '../acp/acp-model-fetcher.js';
 import { getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -28,6 +28,7 @@ const MAX_PROVIDER_ID_LEN = 128;
 const MAX_DISPLAY_NAME_LEN = 256;
 const MAX_BASE_URL_LEN = 2048;
 const MAX_JSON_FIELD_LEN = 64 * 1024;
+const ACP_DISPOSE_TIMEOUT_MS = 30_000;
 
 function validateCreateParams(params: unknown): asserts params is CreateProviderParams {
   if (!params || typeof params !== 'object') throw new Error('Invalid provider params');
@@ -158,6 +159,7 @@ export interface ProviderHandlerDeps {
     'interruptCachedProviderSessions' | 'interruptProviderSessions'
   >;
   clearPersistedAcpSessionIds?: () => void;
+  listPersistedAcpSessionIds?: () => Array<{ sessionId: string; acpSessionId: string }>;
 }
 
 function readAcpCommand(configJson: string | undefined): string | undefined {
@@ -187,9 +189,21 @@ function validateAcpConfigCommand(configJson: string | undefined): string | unde
 
 async function invalidateAcpSessions(
   sessionManager: Pick<SessionManager, 'interruptProviderSessions'> | undefined,
-  clearPersistedAcpSessionIds: (() => void) | undefined
+  clearPersistedAcpSessionIds: (() => void) | undefined,
+  previousCommand: string | undefined,
+  listPersistedAcpSessionIds?: () => Array<{ sessionId: string; acpSessionId: string }>
 ): Promise<void> {
+  const sessionIds =
+    previousCommand && listPersistedAcpSessionIds
+      ? listPersistedAcpSessionIds().map((entry) => entry.acpSessionId)
+      : [];
   clearPersistedAcpSessionIds?.();
+  if (previousCommand && sessionIds.length > 0) {
+    await Promise.race([
+      disposeAcpSessions(previousCommand, sessionIds).catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, ACP_DISPOSE_TIMEOUT_MS)),
+    ]);
+  }
   await sessionManager?.interruptProviderSessions('acp');
 }
 
@@ -221,6 +235,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     internalEventBus,
     sessionManager,
     clearPersistedAcpSessionIds,
+    listPersistedAcpSessionIds,
   } = deps;
 
   messageHub.onRequest('providers.list', async () => {
@@ -324,7 +339,12 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
               newAcpCommand !== undefined &&
               acpCommandsDiffer(previousAcpCommand, newAcpCommand)
             ) {
-              await invalidateAcpSessions(sessionManager, clearPersistedAcpSessionIds);
+              await invalidateAcpSessions(
+                sessionManager,
+                clearPersistedAcpSessionIds,
+                previousAcpCommand,
+                listPersistedAcpSessionIds
+              );
             }
           }
         } catch (err) {
@@ -443,7 +463,12 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           }
 
           if (shouldInvalidateAcpSessions) {
-            await invalidateAcpSessions(sessionManager, clearPersistedAcpSessionIds);
+            await invalidateAcpSessions(
+              sessionManager,
+              clearPersistedAcpSessionIds,
+              readAcpCommand(existing.configJson),
+              listPersistedAcpSessionIds
+            );
           }
 
           await clearCacheAndNotifyProvidersChanged(internalEventBus);

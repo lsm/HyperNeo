@@ -183,6 +183,10 @@ export class Database {
     this.sessionRepo.clearAcpSessionIds();
   }
 
+  listAcpSessionIds(): Array<{ sessionId: string; acpSessionId: string }> {
+    return this.sessionRepo.listAcpSessionIds();
+  }
+
   updateSession(id: string, updates: Partial<Session>): void {
     this.sessionRepo.updateSession(id, updates);
   }
