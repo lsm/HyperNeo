@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockAgentWorking = signal(false);
+const mockConnectionState = signal<'connected' | 'disconnected'>('connected');
 let mockDraftContent = '';
 
 const mockSetContent = vi.fn(() => {});
@@ -55,7 +56,9 @@ function setQueueResponses({
 
 vi.mock('../../lib/state.ts', () => ({
   globalSettings: { value: { voice: { enabled: false } } },
-  connectionState: { value: 'connected' },
+  get connectionState() {
+    return mockConnectionState;
+  },
   get isAgentWorking() {
     return {
       get value() {
@@ -130,7 +133,10 @@ vi.mock('../../hooks', () => ({
 
 vi.mock('../../lib/connection-manager', () => ({
   connectionManager: {
-    getHubIfConnected: () => ({ request: mockRequest, onEvent: mockOnEvent }),
+    getHubIfConnected: () =>
+      mockConnectionState.value === 'connected'
+        ? { request: mockRequest, onEvent: mockOnEvent }
+        : null,
   },
 }));
 
@@ -141,6 +147,7 @@ describe('MessageInput queue mode', () => {
     cleanup();
     mockDraftContent = '';
     mockAgentWorking.value = false;
+    mockConnectionState.value = 'connected';
     mockSetContent.mockClear();
     mockClearDraft.mockClear();
     mockClearAttachments.mockClear();
@@ -489,7 +496,7 @@ describe('MessageInput queue mode', () => {
         await vi.advanceTimersByTimeAsync(0);
       });
       const initialCalls = byStatusCallCount();
-      expect(initialCalls).toBe(2);
+      expect(initialCalls).toBeGreaterThanOrEqual(2);
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(15000);
@@ -497,6 +504,97 @@ describe('MessageInput queue mode', () => {
 
       expect(byStatusCallCount()).toBe(initialCalls);
       expect(container.querySelector('[data-testid="queue-overlay"]')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refreshes the queue after the socket reconnects', async () => {
+    vi.useFakeTimers();
+    try {
+      setQueueResponses({
+        deferred: [
+          {
+            dbId: 'db-deferred',
+            uuid: 'uuid-deferred',
+            timestamp: 1,
+            status: 'deferred',
+            text: 'queued during outage',
+          },
+        ],
+      });
+      const { container } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      const initialCalls = byStatusCallCount();
+
+      await act(async () => {
+        mockConnectionState.value = 'disconnected';
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await act(async () => {
+        mockConnectionState.value = 'connected';
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(byStatusCallCount()).toBeGreaterThan(initialCalls);
+      expect(container.querySelector('[data-testid="queued-next-turn-bubble"]')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('discards a superseded queue refresh response', async () => {
+    vi.useFakeTimers();
+    try {
+      const deferredResponses: Array<{
+        resolve: (value: { messages?: Array<Record<string, unknown>> }) => void;
+      }> = [];
+      mockRequest.mockImplementation(async (_method: string, payload: { status?: string }) => {
+        if (payload?.status !== 'deferred') {
+          return { messages: [] };
+        }
+        return new Promise((resolve) => {
+          deferredResponses.push({ resolve });
+        });
+      });
+
+      const { container } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(deferredResponses.length).toBeGreaterThanOrEqual(2);
+
+      const staleRefresh = deferredResponses[0];
+      const freshRefresh = deferredResponses[deferredResponses.length - 1];
+
+      await act(async () => {
+        freshRefresh.resolve({
+          messages: [
+            {
+              dbId: 'db-fresh',
+              uuid: 'uuid-fresh',
+              timestamp: 1,
+              status: 'deferred',
+              text: 'fresh message',
+            },
+          ],
+        });
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(
+        container.querySelector('[data-testid="queued-next-turn-bubble"]')?.textContent
+      ).toContain('fresh message');
+
+      await act(async () => {
+        staleRefresh.resolve({ messages: [] });
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(
+        container.querySelector('[data-testid="queued-next-turn-bubble"]')?.textContent
+      ).toContain('fresh message');
     } finally {
       vi.useRealTimers();
     }

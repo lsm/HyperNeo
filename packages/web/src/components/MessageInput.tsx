@@ -626,6 +626,8 @@ export default function MessageInput({
     };
   }, [content, getImagesForSend]);
 
+  const queueRefreshSeqRef = useRef(0);
+
   const refreshQueuedMessages = useCallback(async () => {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
@@ -633,6 +635,8 @@ export default function MessageInput({
     }
 
     const targetSessionId = sessionId;
+    const refreshSeq = queueRefreshSeqRef.current + 1;
+    queueRefreshSeqRef.current = refreshSeq;
     try {
       const [enqueuedResponse, deferredResponse] = (await Promise.all([
         hub.request('session.messages.byStatus', {
@@ -650,6 +654,9 @@ export default function MessageInput({
         { messages?: QueuePreviewMessage[]; total?: number },
       ];
       if (sessionIdRef.current !== targetSessionId) {
+        return;
+      }
+      if (queueRefreshSeqRef.current !== refreshSeq) {
         return;
       }
       setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
@@ -785,6 +792,7 @@ export default function MessageInput({
         void refreshQueuedMessages();
       }, QUEUE_EVENT_REFRESH_DEBOUNCE_MS);
     });
+    void refreshQueuedMessages();
     return () => {
       unsubscribe();
       if (refreshTimer) {
