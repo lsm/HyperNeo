@@ -820,6 +820,38 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(byId.has('claude-opus-4-7')).toBe(false);
       expect(byId.has('claude-sonnet-4-20250514')).toBe(false);
     });
+
+    it('updates the existing bridge catalog without changing its port', async () => {
+      const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-bridge-catalog-update-'));
+      try {
+        const fetchImpl = mock(
+          async () =>
+            new Response(JSON.stringify({ data: [{ id: 'gpt-dynamic' }] }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+        ) as unknown as typeof fetch;
+        const p = makeProvider({ OPENAI_API_KEY: 'sk-dynamic' }, tmpDir, tmpDir, fetchImpl);
+        const initial = p.buildSdkConfig('gpt-5.3-codex', { sessionId: 'active-session' });
+        const initialBaseUrl = initial.envVars.ANTHROPIC_BASE_URL as string;
+
+        await p.getModels();
+        const updated = p.buildSdkConfig('gpt-dynamic', { sessionId: 'next-session' });
+
+        expect(new URL(updated.envVars.ANTHROPIC_BASE_URL as string).port).toBe(
+          new URL(initialBaseUrl).port
+        );
+        const oldUrlResponse = await fetch(`${initialBaseUrl}/v1/models`);
+        expect(oldUrlResponse.status).toBe(200);
+        const body = (await oldUrlResponse.json()) as { data: Array<{ id: string }> };
+        expect(body.data.map((model) => model.id)).toEqual(['gpt-dynamic']);
+        const servers = (p as unknown as { bridgeServers: Map<string, unknown> }).bridgeServers;
+        expect(servers.size).toBe(1);
+        p.stopAllBridgeServers();
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('ownsModel()', () => {

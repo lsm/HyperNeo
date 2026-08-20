@@ -3955,6 +3955,57 @@ describe('openai-responses-bridge server', () => {
     }
   );
 
+  it.skipIf(!isBun)('updates models and aliases without replacing the bridge server', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+    const port = server.port;
+
+    server.updateModels(
+      [
+        {
+          id: 'gpt-dynamic',
+          display_name: 'GPT Dynamic',
+          created_at: '2026-01-01T00:00:00Z',
+          context_window: 400000,
+        },
+      ],
+      { 'dynamic-alias': 'gpt-dynamic' }
+    );
+
+    expect(server.port).toBe(port);
+    const modelsResp = await fetch(`http://127.0.0.1:${server.port}/v1/models`);
+    const modelsBody = (await modelsResp.json()) as {
+      data: Array<{ id: string; context_window: number }>;
+    };
+    expect(modelsBody.data).toMatchObject([{ id: 'gpt-dynamic', context_window: 400000 }]);
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'dynamic-alias',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+    await readSSEEvents(response.body);
+    expect(capturedBody?.model).toBe('gpt-dynamic');
+  });
+
   it.skipIf(!isBun)(
     'advertises real Codex context windows and forwards correct model upstream',
     async () => {

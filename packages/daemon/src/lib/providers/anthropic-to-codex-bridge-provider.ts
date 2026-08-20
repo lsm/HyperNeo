@@ -152,7 +152,6 @@ interface CodexCatalogEntry {
 const CODEX_MODEL_CACHE_SCHEMA_VERSION = 2;
 const CODEX_MODEL_CACHE_TTL_MS = 300_000;
 const CODEX_MODEL_FETCH_TIMEOUT_MS = 5000;
-const CODEX_BRIDGE_RETIRE_GRACE_MS = 300_000;
 const CODEX_COMPAT_CLIENT_VERSION = '0.148.0';
 const CODEX_MODEL_DISPLAY_NAME_MAX_LENGTH = 500;
 const CODEX_MODEL_DESCRIPTION_MAX_LENGTH = 4000;
@@ -182,8 +181,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private catalogEntries: CodexCatalogEntry[] = this.bundledCatalogEntries();
 
-  private catalogGeneration = 0;
-
   private modelCache: CodexModelCache | undefined;
 
   private hydratedCacheEntries: CodexCatalogEntry[] | undefined;
@@ -191,10 +188,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   private activeCatalogScope: CodexModelCacheScope | undefined;
 
   private readonly modelRefreshes = new Map<string, Promise<void>>();
-
-  private readonly staleBridgeTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-  private readonly sessionBridgeKeys = new Map<string, string>();
 
   private forceModelRefresh = false;
 
@@ -789,48 +782,26 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   private stopBridgeServerByKey(key: string): void {
-    const timer = this.staleBridgeTimers.get(key);
-    if (timer) clearTimeout(timer);
-    this.staleBridgeTimers.delete(key);
     const server = this.bridgeServers.get(key);
     if (server) server.stop();
     this.bridgeServers.delete(key);
-    for (const [sessionId, sessionKey] of this.sessionBridgeKeys) {
-      if (sessionKey === key) this.sessionBridgeKeys.delete(sessionId);
-    }
-  }
-
-  private retireBridgeServer(key: string): void {
-    if (this.staleBridgeTimers.has(key)) return;
-    const timer = setTimeout(() => this.stopBridgeServerByKey(key), CODEX_BRIDGE_RETIRE_GRACE_MS);
-    timer.unref?.();
-    this.staleBridgeTimers.set(key, timer);
   }
 
   private resetBridgeServers(): void {
     for (const key of this.bridgeServers.keys()) this.stopBridgeServerByKey(key);
-    this.sessionBridgeKeys.clear();
   }
 
   private replaceCatalog(
     entries: CodexCatalogEntry[],
     scope: CodexModelCacheScope | undefined
   ): void {
-    const changed =
-      this.catalogEntries.length !== entries.length ||
-      this.catalogEntries.some(({ info, visibility }, index) => {
-        const next = entries[index];
-        return (
-          !next ||
-          info.id !== next.info.id ||
-          info.name !== next.info.name ||
-          info.contextWindow !== next.info.contextWindow ||
-          visibility !== next.visibility
-        );
-      });
     this.catalogEntries = entries;
     this.activeCatalogScope = scope;
-    if (changed) this.catalogGeneration += 1;
+    for (const [key, server] of this.bridgeServers) {
+      const authKey = key.slice('responses:'.length);
+      const isChatgptOAuth = authKey.startsWith('chatgpt:');
+      server.updateModels(this.responsesBridgeModels(isChatgptOAuth), this.modelAliases());
+    }
   }
 
   private async requestModelCatalog(
@@ -1017,15 +988,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const sessionId = sessionConfig?.sessionId ?? 'default';
     const auth = this.resolveBridgeAuth();
     const authKey = this.bridgeAuthCacheKey(auth);
-    const bridgeKey = `responses:${authKey}:${this.catalogGeneration}`;
+    const bridgeKey = `responses:${authKey}`;
     let bridgeServer = this.bridgeServers.get(bridgeKey);
     for (const key of this.bridgeServers.keys()) {
-      if (key === bridgeKey) continue;
-      if (key.startsWith(`responses:${authKey}:`)) {
-        this.retireBridgeServer(key);
-      } else {
-        this.stopBridgeServerByKey(key);
-      }
+      if (key !== bridgeKey) this.stopBridgeServerByKey(key);
     }
     const catalogEntry = this.catalogEntries.find(
       ({ info }) =>
@@ -1063,7 +1029,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       resolvedId;
 
     bridgeServer.setSessionModelConfig?.(sessionId, sdkModelId, resolvedId);
-    this.sessionBridgeKeys.set(sessionId, bridgeKey);
 
     return {
       envVars: {
@@ -1094,8 +1059,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   setSessionThinkingConfig(sessionId: string, thinkingLevel: string | undefined): void {
-    const bridgeKey = this.sessionBridgeKeys.get(sessionId);
-    const bridgeServer = bridgeKey ? this.bridgeServers.get(bridgeKey) : undefined;
+    const auth = this.resolveBridgeAuth();
+    const bridgeServer = this.bridgeServers.get(`responses:${this.bridgeAuthCacheKey(auth)}`);
     if (!bridgeServer?.setSessionThinkingConfig) return;
 
     const tokens = THINKING_LEVEL_TOKENS[thinkingLevel as keyof typeof THINKING_LEVEL_TOKENS];

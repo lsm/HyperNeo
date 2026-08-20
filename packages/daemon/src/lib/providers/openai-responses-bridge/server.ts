@@ -63,6 +63,7 @@ export type OpenAIResponsesBridgeServer = {
   baseUrlForSession?(sessionId: string): string;
   setSessionThinkingConfig?(sessionId: string, thinking: AnthropicRequest['thinking']): void;
   setSessionModelConfig?(sessionId: string, aliasModelId: string, realModelId: string): void;
+  updateModels(models: OpenAIResponsesBridgeModel[], modelAliases?: Record<string, string>): void;
   stop(): void;
 };
 
@@ -1321,19 +1322,27 @@ export function createOpenAIResponsesBridgeServer(
 ): OpenAIResponsesBridgeServer {
   const fetchImpl = config.fetchImpl ?? fetch;
   const baseUrl = config.openAIBaseUrl ?? defaultBaseUrlForAuth(config.auth);
-  const modelsResponse = modelsListResponse(config.models);
+  let modelsResponse = modelsListResponse(config.models);
+  let modelAliases = config.modelAliases;
   const contextWindowByModelId = new Map<string, number>();
-  for (const model of config.models) {
-    contextWindowByModelId.set(model.id, model.context_window);
-  }
-  if (config.modelAliases) {
-    for (const [alias, modelId] of Object.entries(config.modelAliases)) {
-      const cw = contextWindowByModelId.get(modelId);
-      if (cw !== undefined) {
-        contextWindowByModelId.set(alias, cw);
+  const updateModels = (
+    models: OpenAIResponsesBridgeModel[],
+    aliases?: Record<string, string>
+  ): void => {
+    modelsResponse = modelsListResponse(models);
+    modelAliases = aliases;
+    contextWindowByModelId.clear();
+    for (const model of models) {
+      contextWindowByModelId.set(model.id, model.context_window);
+    }
+    if (aliases) {
+      for (const [alias, modelId] of Object.entries(aliases)) {
+        const contextWindow = contextWindowByModelId.get(modelId);
+        if (contextWindow !== undefined) contextWindowByModelId.set(alias, contextWindow);
       }
     }
-  }
+  };
+  updateModels(config.models, config.modelAliases);
   const continuationTtlMs = config.continuationTtlMs ?? DEFAULT_RESPONSE_CONTINUATION_TTL_MS;
   const continuations = new Map<string, ResponseContinuation>();
   const sessionReasoningItems = new Map<string, SessionReasoningEntry>();
@@ -1486,7 +1495,7 @@ export function createOpenAIResponsesBridgeServer(
         );
       }
 
-      let model = resolveModelId(body.model, config.modelAliases);
+      let model = resolveModelId(body.model, modelAliases);
       const sessionId = route.sessionId;
       const sessionModelOverride = sessionModelAliasOverrides.get(
         sessionModelKey(sessionId, body.model)
@@ -1743,6 +1752,7 @@ export function createOpenAIResponsesBridgeServer(
     setSessionModelConfig: (sessionId: string, aliasModelId: string, realModelId: string) => {
       sessionModelAliasOverrides.set(sessionModelKey(sessionId, aliasModelId), realModelId);
     },
+    updateModels,
     stop: () => {
       for (const continuation of continuations.values()) {
         clearTimeout(continuation.cleanupTimer);
