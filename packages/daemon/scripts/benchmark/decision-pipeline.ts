@@ -139,6 +139,18 @@ function runIfCascade(input: RouterInput): RouterContext {
   return ctx;
 }
 
+function verifyEquivalentDecisions(): void {
+  for (const input of inputs) {
+    const pipelineDecision = runDecisionPipeline(input).decision;
+    const cascadeDecision = runIfCascade(input).decision;
+    if (pipelineDecision !== cascadeDecision) {
+      throw new Error(
+        `Benchmark variants disagreed for ${input.message}: ${pipelineDecision} !== ${cascadeDecision}`
+      );
+    }
+  }
+}
+
 function runIterations(
   run: (input: RouterInput) => RouterContext,
   iterations: number
@@ -192,17 +204,13 @@ if (variant === 'decisionRun' || variant === 'if-cascade') {
 } else {
   const decisionSamples = Array.from({ length: SAMPLES }, () => runChild('decisionRun'));
   const cascadeSamples = Array.from({ length: SAMPLES }, () => runChild('if-cascade'));
-  const coldChecksums = [...decisionSamples, ...cascadeSamples].map(
-    (sample) => sample.cold.checksum
-  );
-  const warmChecksums = [...decisionSamples, ...cascadeSamples].map(
-    (sample) => sample.warm.checksum
-  );
-  if (
-    !coldChecksums.every((checksum) => checksum === coldChecksums[0]) ||
-    !warmChecksums.every((checksum) => checksum === warmChecksums[0])
-  ) {
-    throw new Error('Benchmark variants produced different decisions');
+  verifyEquivalentDecisions();
+  const checksums = [...decisionSamples, ...cascadeSamples].flatMap((sample) => [
+    sample.cold.checksum,
+    sample.warm.checksum,
+  ]);
+  if (!checksums.every((checksum) => checksum === checksums[0])) {
+    throw new Error('Benchmark samples produced inconsistent checksums');
   }
 
   log(
