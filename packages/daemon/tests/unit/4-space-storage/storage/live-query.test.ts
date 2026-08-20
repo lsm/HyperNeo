@@ -433,6 +433,111 @@ describe('LiveQueryEngine', () => {
     });
   });
 
+  describe('rowFingerprint — lightweight change detection', () => {
+    const FINGERPRINT = (row: Record<string, unknown>) => ({
+      name: typeof row.name === 'string' ? row.name.length : row.name,
+      val: row.val,
+    });
+
+    test('content-length fingerprint detects a content rewrite (updated)', async () => {
+      insertItem(db, 'a', 'alpha', 1);
+      const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
+      engine.subscribe(SQL, [], (diff) => diffs.push(diff), { rowFingerprint: FINGERPRINT });
+
+      updateItem(db, 'a', 'alpha-expanded', 1);
+      mockReactive.bumpAndFire('items');
+
+      await Promise.resolve();
+
+      const delta = diffs[1];
+      expect(delta.type).toBe('delta');
+      expect(delta.updated?.length).toBe(1);
+      expect(delta.updated?.[0].id).toBe('a');
+      expect(delta.updated?.[0].name).toBe('alpha-expanded');
+    });
+
+    test('rowFingerprint emits no delta when the fingerprint is unchanged', async () => {
+      insertItem(db, 'a', 'alpha', 1);
+      const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
+      engine.subscribe(SQL, [], (diff) => diffs.push(diff), { rowFingerprint: FINGERPRINT });
+
+      mockReactive.bumpAndFire('items');
+
+      await Promise.resolve();
+
+      expect(diffs.length).toBe(1);
+    });
+
+    test('rowFingerprint detects a change in a watched column', async () => {
+      insertItem(db, 'a', 'alpha', 1);
+      const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
+      engine.subscribe(SQL, [], (diff) => diffs.push(diff), { rowFingerprint: FINGERPRINT });
+
+      updateItem(db, 'a', 'alpha', 99);
+      mockReactive.bumpAndFire('items');
+
+      await Promise.resolve();
+
+      const delta = diffs[1];
+      expect(delta.updated?.length).toBe(1);
+      expect(delta.updated?.[0].val).toBe(99);
+    });
+
+    test('rowFingerprint ignores columns excluded from the fingerprint', async () => {
+      const nameOnly = (row: Record<string, unknown>) => ({
+        name: typeof row.name === 'string' ? row.name.length : row.name,
+      });
+      insertItem(db, 'a', 'alpha', 1);
+      const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
+      engine.subscribe(SQL, [], (diff) => diffs.push(diff), { rowFingerprint: nameOnly });
+
+      updateItem(db, 'a', 'alpha', 99);
+      mockReactive.bumpAndFire('items');
+
+      await Promise.resolve();
+
+      expect(diffs.length).toBe(1);
+    });
+
+    test('rowFingerprint preserves added and removed semantics', async () => {
+      insertItem(db, 'a', 'alpha', 1);
+      const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];
+      engine.subscribe(SQL, [], (diff) => diffs.push(diff), { rowFingerprint: FINGERPRINT });
+
+      insertItem(db, 'b', 'beta', 2);
+      deleteItem(db, 'a');
+      mockReactive.bumpAndFire('items');
+
+      await Promise.resolve();
+
+      const delta = diffs[1];
+      expect(delta.added?.map((row) => row.id)).toEqual(['b']);
+      expect(delta.removed?.map((row) => row.id)).toEqual(['a']);
+    });
+
+    test('rowFingerprint is ignored on the no-id positional path', async () => {
+      db.exec('CREATE TABLE fp_metrics (name TEXT, value INTEGER)');
+      db.exec(`INSERT INTO fp_metrics (name, value) VALUES ('cpu', 42)`);
+      const diffs: QueryDiff<{ name: string; value: number }>[] = [];
+      engine.subscribe(
+        'SELECT name, value FROM fp_metrics ORDER BY name',
+        [],
+        (diff) => diffs.push(diff),
+        { rowFingerprint: FINGERPRINT }
+      );
+
+      db.exec(`UPDATE fp_metrics SET value = 99 WHERE name = 'cpu'`);
+      mockReactive.bumpAndFire('fp_metrics');
+
+      await Promise.resolve();
+
+      const delta = diffs[1];
+      expect(delta.updated).toEqual([]);
+      expect(delta.removed).toEqual([{ name: 'cpu', value: 42 }]);
+      expect(delta.added).toEqual([{ name: 'cpu', value: 99 }]);
+    });
+  });
+
   describe('handle.dispose()', () => {
     test('disposed handle no longer receives deltas', async () => {
       const diffs: QueryDiff<{ id: string; name: string; val: number }>[] = [];

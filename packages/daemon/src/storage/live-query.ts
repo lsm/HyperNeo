@@ -17,6 +17,7 @@ export interface LiveQuerySubscribeOptions {
     params: ReadonlyArray<unknown>
   ) => Record<string, unknown> | undefined;
   scopeFilter?: (scope: TableChangeScope) => boolean;
+  rowFingerprint?: (row: Record<string, unknown>) => unknown;
 }
 
 export interface QueryDiff<T = Record<string, unknown>> {
@@ -54,6 +55,7 @@ interface QueryEntry<T extends Record<string, unknown>> {
   pendingTimer: ReturnType<typeof setTimeout> | null;
   debounceMs: number;
   scopeFilter: ((scope: TableChangeScope) => boolean) | undefined;
+  rowFingerprint: ((row: Record<string, unknown>) => unknown) | undefined;
 }
 
 interface RowHashSnapshot {
@@ -89,7 +91,10 @@ function hashString(value: string): number {
   return hashString32(value);
 }
 
-function hashRows(rows: Record<string, unknown>[]): RowHashSnapshot {
+export function hashRows(
+  rows: Record<string, unknown>[],
+  rowFingerprint?: (row: Record<string, unknown>) => unknown
+): RowHashSnapshot {
   const hasId = rows.length > 0 && 'id' in rows[0];
   if (!hasId) {
     return { hash: hashString(JSON.stringify(rows)), rowHashes: null };
@@ -99,7 +104,7 @@ function hashRows(rows: Record<string, unknown>[]): RowHashSnapshot {
   const digestParts: string[] = [String(rows.length)];
   for (const row of rows) {
     const id = row['id'];
-    const rowHash = hashString(JSON.stringify(row));
+    const rowHash = hashString(JSON.stringify(rowFingerprint ? rowFingerprint(row) : row));
     rowHashes.set(id, rowHash);
     digestParts.push(`${String(id).length}:${String(id)}:${rowHash}`);
   }
@@ -198,7 +203,7 @@ export class LiveQueryEngine {
 
     if (!entry) {
       const rows = this.runQuery<T>(sql, params);
-      const hashSnapshot = hashRows(rows);
+      const hashSnapshot = hashRows(rows, options.rowFingerprint);
       const tables = extractTables(sql);
       const cachedMetadata = options.getMetadata?.(rows, params);
 
@@ -217,6 +222,7 @@ export class LiveQueryEngine {
         pendingTimer: null,
         debounceMs,
         scopeFilter: options.scopeFilter,
+        rowFingerprint: options.rowFingerprint,
       } as unknown as QueryEntry<T>;
 
       this.queries.set(cacheKey, entry as unknown as QueryEntry<Record<string, unknown>>);
@@ -330,7 +336,7 @@ export class LiveQueryEngine {
     entry.pendingTimer = null;
 
     const newRows = this.runQuery(entry.sql, entry.params);
-    const newHashSnapshot = hashRows(newRows);
+    const newHashSnapshot = hashRows(newRows, entry.rowFingerprint);
     const newMetadata = entry.getMetadata?.(newRows, entry.params);
     const newMetadataHash = hashMetadata(newMetadata);
     const rowsChanged = newHashSnapshot.hash !== entry.cachedHash;

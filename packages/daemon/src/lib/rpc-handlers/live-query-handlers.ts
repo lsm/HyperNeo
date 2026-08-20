@@ -37,6 +37,7 @@ export interface NamedQuery {
     params: ReadonlyArray<unknown>,
     db: BunDatabase
   ) => ((scope: TableChangeScope) => boolean) | undefined;
+  rowFingerprint?: (row: Record<string, unknown>) => unknown;
 }
 
 const DEBOUNCE_SDK_MESSAGES_MS = 100;
@@ -3495,6 +3496,14 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
           return scope.sessionId === targetSessionId;
         };
       },
+      rowFingerprint: (row) => ({
+        content: typeof row.content === 'string' ? row.content.length : row.content,
+        timestamp: row.timestamp,
+        sendStatus: row.sendStatus,
+        origin: row.origin,
+        rowid: row.rowid,
+        deliveryRetryInfo: row.deliveryRetryInfo,
+      }),
     },
   ],
   [
@@ -3807,6 +3816,7 @@ export function setupLiveQueryHandlers(
         debounceMs: namedQuery.debounceMs,
         getMetadata: namedQuery.mapResult,
         scopeFilter: namedQuery.buildScopeFilter?.(params, db),
+        rowFingerprint: namedQuery.rowFingerprint,
       }
     );
 
