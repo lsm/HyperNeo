@@ -6,6 +6,11 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { WorkflowChannel } from '@hyperneo/shared';
 import { ChannelResolver } from './channel-resolver';
+import {
+  buildNodeNameResolver,
+  buildSlotToNodeMap,
+  resolveNodeAgentTargets,
+} from './agent-message-routing-gates';
 import { formatAgentMessage } from '../agent-message-envelope';
 import { ActivationError, type ChannelRouter } from './channel-router';
 
@@ -473,15 +478,8 @@ export class AgentMessageRouter {
     } = this.config;
 
     const resolver = new ChannelResolver(workflowChannels);
-    const slotToNode = new Map<string, string>();
-    if (nodeGroups) {
-      for (const [nodeName, slots] of Object.entries(nodeGroups)) {
-        for (const slot of slots) {
-          slotToNode.set(slot, nodeName);
-        }
-      }
-    }
-    const resolveNodeName = (slotOrNode: string) => slotToNode.get(slotOrNode) ?? slotOrNode;
+    const slotToNode = buildSlotToNodeMap(nodeGroups);
+    const resolveNodeName = buildNodeNameResolver(slotToNode);
     const fromNodeName = resolveNodeName(fromAgentName);
     const requestedTargets =
       target === '*' ? ['*'] : Array.isArray(target) ? [...target] : [target];
@@ -552,77 +550,36 @@ export class AgentMessageRouter {
       }
     }
 
-    let targetAgentNames: string[];
-
-    if (target === '*') {
-      const permittedNodes = resolver.getPermittedTargets(fromNodeName);
-      if (permittedNodes.length === 0) {
-        return {
-          success: false,
-          delivered: [],
-          failed: [],
-          reason: `No permitted targets for agent '${fromAgentName}' in the declared channel topology.`,
-        };
-      }
-      targetAgentNames = permittedNodes;
-    } else if (Array.isArray(target)) {
-      targetAgentNames = target;
-    } else if (target === 'space-agent' && spaceAgentInjector && spaceId) {
-      targetAgentNames = ['space-agent'];
-    } else {
-      const agentMatches = peers.filter((m) => m.agentName === target).map((m) => m.agentName);
-
-      if (agentMatches.length > 0) {
-        targetAgentNames = [target];
-      } else if (nodeGroups && nodeGroups[target]) {
-        targetAgentNames = nodeGroups[target];
-      } else if (allDeclaredAgentNames.has(target)) {
-        targetAgentNames = [target];
-      } else {
-        const permittedNodes = resolver.getPermittedTargets(fromNodeName);
-        const isTopologyDeclared =
-          permittedNodes.includes(target) ||
-          permittedNodes.some((n) => resolveNodeName(n) === target);
-        if (isTopologyDeclared) {
-          targetAgentNames = [target];
-        } else {
-          const knownAgentNames = [...new Set(peers.map((m) => m.agentName))].sort();
-          const nodeNames = nodeGroups ? Object.keys(nodeGroups) : [];
-          const allTargets = [
-            ...new Set([...knownAgentNames, ...nodeNames, ...allDeclaredAgentNames]),
-          ].sort();
-          if (spaceAgentInjector && spaceId) allTargets.push('space-agent');
-          return {
-            success: false,
-            delivered: [],
-            failed: [],
-            reason:
-              `Unknown target '${target}': no agent or node found with this name. ` +
-              (allTargets.length > 0
-                ? `Reachable targets: ${allTargets.join(', ')}.`
-                : 'No reachable targets available.'),
-          };
-        }
-      }
-    }
-
-    const topologyTargets = targetAgentNames.filter((r) => r !== 'space-agent');
-    const unauthorized = topologyTargets.filter(
-      (r) => !resolver.canSend(fromNodeName, resolveNodeName(r))
-    );
-    if (unauthorized.length > 0) {
-      const permittedNodes = resolver.getPermittedTargets(fromNodeName);
+    const resolution = resolveNodeAgentTargets({
+      target,
+      fromAgentName,
+      fromNodeName,
+      peerAgentNames: peers.map((m) => m.agentName),
+      nodeGroups,
+      declaredAgentNames: allDeclaredAgentNames,
+      permittedTargets: resolver.getPermittedTargets(fromNodeName),
+      spaceAgentAvailable: Boolean(spaceAgentInjector && spaceId),
+      canSend: (fromNode, toNode) => resolver.canSend(fromNode, toNode),
+    });
+    if (resolution.status === 'unauthorized') {
       return {
         success: false,
         delivered: [],
         failed: [],
-        reason:
-          `Channel topology does not permit '${fromAgentName}' to send to: ${unauthorized.join(', ')}. ` +
-          `Permitted targets: ${permittedNodes.length > 0 ? permittedNodes.join(', ') : 'none'}.`,
-        unauthorizedAgentNames: unauthorized,
-        permittedTargets: permittedNodes,
+        reason: resolution.reason,
+        unauthorizedAgentNames: resolution.unauthorized,
+        permittedTargets: resolution.permittedTargets,
       };
     }
+    if (resolution.status !== 'resolved') {
+      return {
+        success: false,
+        delivered: [],
+        failed: [],
+        reason: resolution.reason,
+      };
+    }
+    const targetAgentNames = resolution.targetAgentNames;
 
     const activatedTargets = new Set<string>();
     if (channelRouter) {
