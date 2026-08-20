@@ -702,7 +702,8 @@ export class AcpQueryRunner {
         onProcessSpawn: (proc) =>
           this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
         onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
-        onPermissionRequest: (params) => handleAcpPermissionRequest(params, canUseTool),
+        onPermissionRequest: (params) =>
+          handleAcpPermissionRequest(params, canUseTool, abortController.signal),
         ...hostCallbacks,
       });
 

@@ -696,13 +696,12 @@ describe('AcpQueryRunner', () => {
         const danglingTarget = join(root, 'created-through-link.txt');
         const danglingLink = join(workspace, 'dangling-link');
         await symlink(danglingTarget, danglingLink);
-        await expect(
-          constructorOptions[0].onFsWrite?.({
-            sessionId: 'acp-session-1',
-            path: danglingLink,
-            content: 'blocked',
-          })
-        ).rejects.toThrow('Unable to open ACP filesystem path');
+        await constructorOptions[0].onFsWrite?.({
+          sessionId: 'acp-session-1',
+          path: danglingLink,
+          content: 'blocked',
+        });
+        expect(await readFile(danglingLink, 'utf-8')).toBe('blocked');
         await expect(readFile(danglingTarget, 'utf-8')).rejects.toThrow();
         releasePrompt();
         await ctx.queryPromise;
@@ -826,6 +825,40 @@ describe('AcpQueryRunner', () => {
     ctx.queryAbortController?.abort();
 
     await expect(terminal).rejects.toThrow('ACP terminal command cancelled');
+    releasePrompt();
+    await ctx.queryPromise;
+  });
+
+  test('cancels pending native permission requests when the query ends', async () => {
+    const permissionStarted = Promise.withResolvers<void>();
+    const permission = Promise.withResolvers<{
+      behavior: 'allow';
+      updatedInput: { answers: Record<string, string> };
+    }>();
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      client,
+      canUseTool: async () => {
+        permissionStarted.resolve();
+        return permission.promise;
+      },
+    });
+
+    await runner.start();
+    await promptStarted;
+    const pending = constructorOptions[0].onPermissionRequest?.({
+      sessionId: 'acp-session-1',
+      toolCall: {
+        toolCallId: 'tool-1',
+        title: 'Edit file',
+        kind: 'edit',
+      },
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
+    });
+    await permissionStarted.promise;
+    ctx.queryAbortController?.abort();
+
+    await expect(pending).resolves.toEqual({ outcome: { outcome: 'cancelled' } });
     releasePrompt();
     await ctx.queryPromise;
   });
@@ -1088,7 +1121,9 @@ describe('AcpQueryRunner', () => {
   });
 
   test('maps ACP permission requests through AskUserQuestion approval callback', async () => {
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
     const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture({
+      client,
       canUseTool: async (_toolName, _input, _options) => ({
         behavior: 'allow',
         updatedInput: { answers: { 'Allow Edit file?': 'Allow once' } },
@@ -1096,7 +1131,7 @@ describe('AcpQueryRunner', () => {
     });
 
     await runner.start();
-    await ctx.queryPromise;
+    await promptStarted;
 
     const result = await constructorOptions[0].onPermissionRequest?.({
       sessionId: 'acp-session-1',
@@ -1125,6 +1160,8 @@ describe('AcpQueryRunner', () => {
       expect.objectContaining({ toolUseID: 'tool-1' })
     );
     expect(result).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } });
+    releasePrompt();
+    await ctx.queryPromise;
   });
 
   test('cancels ACP permission requests denied by the approval callback', async () => {
