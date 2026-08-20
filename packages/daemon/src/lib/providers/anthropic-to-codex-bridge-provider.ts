@@ -210,6 +210,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private cachedApiKey: string | undefined = undefined;
 
+  private oauthRefresh: Promise<StoredCredentials | undefined> | undefined;
+
   private activeOAuthFlow: {
     state: string;
     verifier: string;
@@ -654,7 +656,16 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     }));
   }
 
-  private async refreshStoredOauthCredentials(): Promise<StoredCredentials | undefined> {
+  private refreshStoredOauthCredentials(): Promise<StoredCredentials | undefined> {
+    if (this.oauthRefresh) return this.oauthRefresh;
+    const refresh = this.performOauthCredentialRefresh().finally(() => {
+      if (this.oauthRefresh === refresh) this.oauthRefresh = undefined;
+    });
+    this.oauthRefresh = refresh;
+    return refresh;
+  }
+
+  private async performOauthCredentialRefresh(): Promise<StoredCredentials | undefined> {
     const credentials = await this.loadCredentials();
     if (!credentials || credentials.type !== 'oauth' || !credentials.refresh) {
       return undefined;

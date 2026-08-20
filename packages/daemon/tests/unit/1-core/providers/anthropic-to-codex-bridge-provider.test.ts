@@ -2106,6 +2106,50 @@ describe('AnthropicToCodexBridgeProvider', () => {
       rmSync(tmpDir, { recursive: true, force: true });
     });
 
+    it('coalesces concurrent refreshes that rotate the refresh token', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const refreshedAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-coalesced' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'stale-access-token',
+        refresh: 'single-use-refresh-token',
+        expires: Date.now() - 60_000,
+        accountId: 'acct-coalesced',
+      });
+      let resolveRefresh: ((response: Response) => void) | undefined;
+      const refreshResponse = new Promise<Response>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      fetchSpy.mockImplementationOnce(async () => refreshResponse);
+      const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
+
+      const first = p.refreshToken();
+      const second = p.refreshToken();
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+      resolveRefresh?.(
+        new Response(
+          JSON.stringify({
+            access_token: refreshedAccess,
+            refresh_token: 'rotated-refresh-token',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(await p.getApiKey()).toBe(refreshedAccess);
+      const saved = JSON.parse(readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')) as {
+        openai: { refresh: string };
+      };
+      expect(saved.openai.refresh).toBe('rotated-refresh-token');
+      p.stopAllBridgeServers();
+    });
+
     it('clears stale credentials when token refresh fails with invalid_grant', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       writeHyperNeoAuth(hyperneoDir, {

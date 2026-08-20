@@ -173,7 +173,11 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
           failedProviderIds
         );
         modelsCache.set(cacheKey, mergedModels);
-        cacheTimestamps.set(cacheKey, Date.now());
+        if (failedProviderIds.size === 0) {
+          cacheTimestamps.set(cacheKey, Date.now());
+        } else {
+          cacheTimestamps.delete(cacheKey);
+        }
       }
       /* v8 ignore next 2 */
     } catch {
@@ -360,7 +364,11 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
           failedProviderIds
         );
         modelsCache.set(cacheKey, mergedModels);
-        cacheTimestamps.set(cacheKey, Date.now());
+        if (failedProviderIds.size === 0) {
+          cacheTimestamps.set(cacheKey, Date.now());
+        } else {
+          cacheTimestamps.delete(cacheKey);
+        }
       } else if (!previousModels || previousModels.length === 0) {
         const registry = getProviderRegistry();
         const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));

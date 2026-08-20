@@ -1250,6 +1250,23 @@ describe('Model Service', () => {
       await refreshModels();
 
       expect(getAvailableModels('global')).toEqual([currentHealthy, staleFailed]);
+
+      const recoveredFailed = {
+        ...staleFailed,
+        id: 'recovered-failed-model',
+        name: 'Recovered Failed Model',
+      };
+      registry.unregister('failed-provider');
+      registry.register({
+        id: 'failed-provider',
+        getModels: async () => [recoveredFailed],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      getAvailableModels('global');
+      await expect
+        .poll(() => getAvailableModels('global'))
+        .toEqual([currentHealthy, recoveredFailed]);
     });
 
     it('should cancel in-flight background refresh when clearModelsCache is called', async () => {
