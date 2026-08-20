@@ -2847,6 +2847,26 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('clears unrefreshable OAuth credentials on a definitive 401', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'access-only-token',
+        accountId: 'acct-access-only',
+      });
+      const fetchImpl = mock(
+        async () => new Response('unauthorized', { status: 401 })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+
+      await expect(provider.refreshModels()).rejects.toThrow(
+        'Codex credentials rejected (HTTP 401)'
+      );
+
+      expect(await provider.isAvailable()).toBe(false);
+      expect(existsSync(path.join(hyperneoDir, 'auth.json'))).toBe(false);
+    });
+
     it('marks proactive OAuth logout as a definitive rejection', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       writeHyperNeoAuth(hyperneoDir, {

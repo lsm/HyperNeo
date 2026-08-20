@@ -1120,6 +1120,14 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       : currentAuth;
   }
 
+  private async clearUnrefreshableOauthCredentials(auth: OpenAIResponsesBridgeAuth): Promise<void> {
+    if (auth.source !== 'chatgpt_oauth') return;
+    const credentials = await this.loadCredentials();
+    if (!credentials || credentials.type !== 'oauth' || credentials.refresh) return;
+    if (credentials.access !== auth.apiKey) return;
+    await this.logout();
+  }
+
   private rekeyModelRefresh(fromKey: string, toKey: string): Promise<void> | undefined {
     if (fromKey === toKey) return undefined;
     const pending = this.modelRefreshes.get(fromKey);
@@ -1275,6 +1283,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         }
         return this.fetchModelCatalog(replacementAuth, false, refreshKey);
       }
+      await this.clearUnrefreshableOauthCredentials(auth);
       throw Object.assign(new Error('Codex credentials rejected (HTTP 401)'), {
         definitiveAuthFailure: true,
       });

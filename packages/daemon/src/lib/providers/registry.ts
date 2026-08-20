@@ -228,5 +228,9 @@ export async function inferPersistableProviderForModel(
       if (await owner.isAvailable()) return undefined;
     }
   }
+  const owner = getProviderRegistry().get(inferred);
+  if (owner && typeof owner.isAvailable === 'function' && !(await owner.isAvailable())) {
+    return undefined;
+  }
   return inferred;
 }
