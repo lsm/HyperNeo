@@ -1,4 +1,3 @@
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type {
   CreateNodeExecutionParams,
   NodeExecution,
@@ -12,7 +11,6 @@ import type {
   WorkflowChannel,
   WorkflowNode,
 } from '@hyperneo/shared';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   isChannelCyclic,
   isRateOrUsageLimited,
@@ -22,38 +20,52 @@ import {
   MIN_SPACE_CONCURRENT_TASKS,
   resolveNodeAgents,
 } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { isSDKResultError } from '@hyperneo/shared/sdk';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
-import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
-import { formatExternalEventEssence } from '../../external-events/event-essence';
-import type { ExternalEventStore } from '../../external-events/external-event-store';
-import {
-  type QueueHealthGauges,
-  type QueueHealthSnapshot,
-  ExternalEventQueueMetrics,
-  computeQueueAgeStats,
-} from '../../external-events/queue-health-metrics';
-import type { ExternalEvent } from '../../external-events/types';
-import { validateGlobPattern } from '../../external-events/topic-validator';
-import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern';
-import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern';
 import {
   ChannelCycleRepository,
   DEAD_LOOP_THRESHOLD,
   DEAD_LOOP_WINDOW_MS,
 } from '../../../storage/repositories/channel-cycle-repository';
-import { normalizeMeaningfulTaskResult } from '../task-result-utils';
-import type { WorkflowArtifactProfile } from './artifact-profile';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
+import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
+import { formatExternalEventEssence } from '../../external-events/event-essence';
+import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
+import type { ExternalEventStore } from '../../external-events/external-event-store';
+import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern';
+import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern';
+import {
+  computeQueueAgeStats,
+  ExternalEventQueueMetrics,
+  type QueueHealthGauges,
+  type QueueHealthSnapshot,
+} from '../../external-events/queue-health-metrics';
+import { TopicTrie } from '../../external-events/topic-trie';
+import { validateGlobPattern } from '../../external-events/topic-validator';
+import type { ExternalEvent } from '../../external-events/types';
+import {
+  type DaemonCommandMap,
+  type InternalCommandBus,
+  MissingCommandHandlerError,
+} from '../../internal-command-bus';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+  InternalEventPayload,
+} from '../../internal-event-bus';
 import { Logger } from '../../logger';
-import { isSDKResultError } from '@hyperneo/shared/sdk';
+import type { SpaceActorRegistryAdapter } from '../actor-registry';
+import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
 import { isValidSpaceTaskTransition, SpaceTaskManager } from '../managers/space-task-manager';
@@ -61,8 +73,8 @@ import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
 } from '../managers/space-workflow-manager';
-import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
-import { deliveryModeFromFailureReason } from './delivery-mode';
+import { normalizeMeaningfulTaskResult } from '../task-result-utils';
+import type { WorkflowArtifactProfile } from './artifact-profile';
 import { CompletionDetector } from './completion-detector';
 import {
   DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
@@ -74,48 +86,55 @@ import {
   MAX_TASK_AGENT_CRASH_RETRIES,
   MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
 } from './constants';
+import { deliveryModeFromFailureReason } from './delivery-mode';
+import {
+  buildQueueKey,
+  DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS,
+  type ExternalEventTaskDecision,
+  evaluateRequeueTaskLifecycle,
+  hasAnyExecutionForTarget,
+  hasTerminalExecutionForTarget,
+  isPublishedExternalEventExpired,
+  isQueuedExternalEventExpired,
+  isWorkflowTargetOwnedBySpace,
+  prepareExternalEventTask,
+  resolveCurrentQueueableOrActiveExecution,
+  resolveLiveDeliveryTarget,
+  resolveSubscriptionTarget,
+} from './external-event-admission-gates';
+import {
+  decideExternalEventDelivery,
+  decidePostActivationDelivery,
+  type ExternalEventDeliveryDecision,
+} from './external-event-delivery-pipeline';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
-import {
-  COMPACT_RESULT_TIMEOUT_MS,
-  MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
-  buildPromptTooLongContinueNag,
-  createPromptTooLongRecoveryState,
-  isPromptTooLongErrorMessage,
-  type PromptTooLongRecoveryState,
-} from './prompt-too-long-recovery';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
-import type {
-  InternalEventBus,
-  DaemonInternalEventMap,
-  InternalEventPayload,
-} from '../../internal-event-bus';
 import {
-  MissingCommandHandlerError,
-  type DaemonCommandMap,
-  type InternalCommandBus,
-} from '../../internal-command-bus';
-import {
+  clearPendingCompletionState,
   type PostApprovalRouteContext,
   type PostApprovalRouteResult,
   PostApprovalRouter,
-  clearPendingCompletionState,
 } from './post-approval-router';
-
+import {
+  buildPromptTooLongContinueNag,
+  COMPACT_RESULT_TIMEOUT_MS,
+  createPromptTooLongRecoveryState,
+  isPromptTooLongErrorMessage,
+  MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
+  type PromptTooLongRecoveryState,
+} from './prompt-too-long-recovery';
 import type { TaskAgentManager } from './task-agent-manager';
-import type { SpaceActorRegistryAdapter } from '../actor-registry';
-import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
-import { TopicTrie } from '../../external-events/topic-trie';
 import { WorkflowExecutor } from './workflow-executor';
 import {
+  findMissingNodeAgentReferences,
+  formatMissingAgentReference,
   isMissingWorkflowAgentError,
   isPermanentSpawnError,
   isTransientSpawnError,
   MissingWorkflowAgentError,
-  findMissingNodeAgentReferences,
-  formatMissingAgentReference,
 } from './workflow-node-execution-validation';
-import { selectWorkflow } from './workflow-selector';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
+import { selectWorkflow } from './workflow-selector';
 
 const log = new Logger('space-runtime');
 const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {
@@ -351,7 +370,10 @@ const EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP = parsePositiveIntegerEnv(
   'HYPERNEO_EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP',
   4096
 );
-const EXTERNAL_EVENT_QUEUE_TTL_MS = parsePositiveIntegerEnv('EXTERNAL_EVENT_QUEUE_TTL_MS', 300_000);
+const EXTERNAL_EVENT_QUEUE_TTL_MS = parsePositiveIntegerEnv(
+  'EXTERNAL_EVENT_QUEUE_TTL_MS',
+  DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS
+);
 
 export function parsePositiveIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -449,12 +471,6 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
   const prefix = 'long_horizon:';
   return workflowRunId.startsWith(prefix) ? workflowRunId.slice(prefix.length) : null;
 }
-
-type ExternalEventTaskDecision =
-  | { action: 'deliver' }
-  | { action: 'reactivate' }
-  | { action: 'hold' }
-  | { action: 'fail'; reason: string };
 
 function parseSubscriptionQueueKey(
   key: string
@@ -641,7 +657,6 @@ export class SpaceRuntime {
   private readonly externalEventRetryTimers = new Map<string, Timer>();
   private readonly externalEventRetryCounts = new Map<string, number>();
   private readonly externalEventDeliveriesInFlight = new Set<string>();
-  private readonly recoveryInFlight = new Map<string, Promise<void>>();
   private readonly cancelledLongHorizonDeliveries = new Set<string>();
   private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
@@ -1629,41 +1644,6 @@ export class SpaceRuntime {
       await this.deliverToLongHorizonAgent(target, payload, deliveryKey);
     }
 
-    const reactivationTarget = [...workflowDeliveries.values()]
-      .filter(
-        ({ deliveryKey }) =>
-          !store.isDeliveryTerminal(payload.eventId, deliveryKey) &&
-          !this.externalEventDeliveriesInFlight.has(deliveryKey)
-      )
-      .map((entry) => entry.target)
-      .find((target) => this.prepareExternalEventTask(target, payload).action === 'reactivate');
-    if (reactivationTarget) {
-      const task = this.config.taskRepo.getTask(reactivationTarget.taskId);
-      if (task) {
-        const existing = this.recoveryInFlight.get(task.id);
-        if (existing) {
-          await existing;
-        } else {
-          const recoveryPromise = (async () => {
-            try {
-              await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
-                workflowNodeId: reactivationTarget.nodeId,
-                agentName: reactivationTarget.agentName,
-              });
-            } catch (err) {
-              log.warn(
-                `SpaceRuntime: failed to reactivate task ${task.id} for event ${payload.eventId}: ${formatCommandError(err)}`
-              );
-            }
-          })();
-          this.recoveryInFlight.set(task.id, recoveryPromise);
-          await recoveryPromise.finally(() => {
-            this.recoveryInFlight.delete(task.id);
-          });
-        }
-      }
-    }
-
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
       if (this.isDeliveryInDeliveryCooldown(deliveryKey)) {
         this.queueHealthMetrics.recordCooldownSkip();
@@ -1680,200 +1660,222 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
-    const pendingRecovery = this.recoveryInFlight.get(target.taskId);
-    if (pendingRecovery) await pendingRecovery;
     const resolved = this.resolveSubscriptionTarget(target);
     try {
-      if (store.isDeliveryTerminal(payload.eventId, deliveryKey)) {
-        return;
-      }
-      if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
-        this.queueHealthMetrics.recordClaimConflict();
-        log.debug('SpaceRuntime: external event delivery already in flight; skipped dispatch', {
-          runId: resolved.workflowRunId,
-          deliveryKey,
-        });
-        return;
-      }
-
-      if (!this.isTargetStillSubscribed(resolved, payload.topic)) {
-        store.markDeliveryFailed(payload.eventId, deliveryKey, {
-          terminal: true,
-          reason: 'subscription_no_longer_active',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(resolved, deliveryKey);
-        return;
-      }
-
-      const taskDecision = await this.resolveExternalEventDelivery(resolved, payload);
-      if (taskDecision.action === 'fail') {
-        store.markDeliveryFailed(payload.eventId, deliveryKey, {
-          terminal: true,
-          reason: taskDecision.reason,
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(resolved, deliveryKey);
-        return;
-      }
-      if (taskDecision.action === 'hold') {
-        this.queueHealthMetrics.recordPausedSpaceSkip();
-        store.markDeliveryFailed(payload.eventId, deliveryKey, {
-          terminal: false,
-          reason: 'deliveryMode:defer; task_stopped',
-        });
-        return;
-      }
-
-      const preparedTarget = taskDecision.target;
-      const currentExecution = this.getCurrentQueueableOrActiveExecution(preparedTarget);
-      if (preparedTarget.sessionId && this.isTargetSessionLive(preparedTarget.sessionId)) {
-        const targetRun = this.config.workflowRunRepo.getRun(preparedTarget.workflowRunId);
-        if (targetRun && this.pausedSpaceIds.has(targetRun.spaceId)) {
-          this.queueHealthMetrics.recordPausedSpaceSkip();
-          store.markDeliveryFailed(payload.eventId, deliveryKey, {
-            terminal: false,
-            reason: 'deliveryMode:defer; space_paused',
-          });
-          return;
-        }
-        const eventRecord = store.getById(payload.eventId);
-        await this.normalizeStaleInterruptedSession(preparedTarget.sessionId);
-        if (
-          this.parkDeliveryForInterruptedSession(
-            preparedTarget,
-            payload,
-            deliveryKey,
-            eventRecord?.createdAt ?? Date.now()
-          )
-        ) {
-          return;
-        }
-        await this.flushPendingNodeQueueAsync(preparedTarget, deliveryKey, {
-          event: payload,
-          deliveryKey,
-          deliveryMode: 'defer',
-          createdAt: eventRecord?.createdAt ?? Date.now(),
-        });
-      } else if (preparedTarget.sessionId) {
-        this.queueHealthMetrics.recordStaleSessionSkip();
-        const eventRecord = store.getById(payload.eventId);
-        await this.flushPendingNodeQueueAsync(preparedTarget, deliveryKey, {
-          event: payload,
-          deliveryKey,
-          deliveryMode: 'defer',
-          createdAt: eventRecord?.createdAt ?? Date.now(),
-        });
-      } else if (
-        currentExecution?.status === 'pending' ||
-        currentExecution?.status === 'waiting_rebind'
-      ) {
-        const eventRecord = store.getById(payload.eventId);
-        this.queueForPendingNode(
-          preparedTarget,
-          payload,
-          deliveryKey,
-          'defer',
-          eventRecord?.createdAt ?? Date.now()
-        );
-        this.scheduleActivationRetry(
-          preparedTarget,
-          payload,
-          deliveryKey,
-          'deliveryMode:defer; node_execution_pending',
-          {
-            preserveAttemptCount: true,
-          }
-        );
-      } else {
-        let activatedTarget: WorkflowSubscriptionTarget | null = null;
-        try {
-          activatedTarget = await this.activateSubscribedTargetForExternalEvent(preparedTarget);
-        } catch (err) {
-          const failureReason = err instanceof Error ? err.message : String(err);
-          const eventRecord = store.getById(payload.eventId);
-          this.queueForPendingNode(
-            resolved,
-            payload,
-            deliveryKey,
-            'defer',
-            eventRecord?.createdAt ?? Date.now()
-          );
-          this.scheduleActivationRetry(
-            resolved,
-            payload,
-            deliveryKey,
-            `deliveryMode:defer; activation_failed; ${failureReason}`
-          );
-          return;
-        }
-        if (activatedTarget?.sessionId && this.isTargetSessionLive(activatedTarget.sessionId)) {
-          const eventRecord = store.getById(payload.eventId);
-          await this.normalizeStaleInterruptedSession(activatedTarget.sessionId);
-          if (
-            this.parkDeliveryForInterruptedSession(
-              activatedTarget,
-              payload,
-              deliveryKey,
-              eventRecord?.createdAt ?? Date.now()
-            )
-          ) {
-            return;
-          }
-          await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey, {
-            event: payload,
-            deliveryKey,
-            deliveryMode: 'defer',
-            createdAt: eventRecord?.createdAt ?? Date.now(),
-          });
-        } else if (activatedTarget?.sessionId) {
-          this.queueHealthMetrics.recordStaleSessionSkip();
-          const eventRecord = store.getById(payload.eventId);
-          await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey, {
-            event: payload,
-            deliveryKey,
-            deliveryMode: 'defer',
-            createdAt: eventRecord?.createdAt ?? Date.now(),
-          });
-        } else if (activatedTarget) {
-          store.markDeliveryFailed(payload.eventId, deliveryKey, {
-            terminal: false,
-            reason: 'deliveryMode:defer; node_execution_not_active',
-          });
-          if (!(await this.isTargetSpacePausedOrStopped(activatedTarget))) {
-            this.scheduleActivationRetry(
-              activatedTarget,
-              payload,
-              deliveryKey,
-              'deliveryMode:defer; node_execution_not_active'
-            );
-          }
-        } else {
-          const eventRecord = store.getById(payload.eventId);
-          this.queueForPendingNode(
-            resolved,
-            payload,
-            deliveryKey,
-            'defer',
-            eventRecord?.createdAt ?? Date.now()
-          );
-          if (!(await this.isTargetSpacePausedOrStopped(resolved))) {
-            this.scheduleActivationRetry(
-              resolved,
-              payload,
-              deliveryKey,
-              'deliveryMode:defer; node_execution_not_active'
-            );
-          }
-        }
-      }
+      const targetRun = this.config.workflowRunRepo.getRun(resolved.workflowRunId);
+      const currentExecution = this.getCurrentQueueableOrActiveExecution(resolved);
+      const decision = decideExternalEventDelivery({
+        deliveryTerminal: store.isDeliveryTerminal(payload.eventId, deliveryKey),
+        deliveryInFlight: this.externalEventDeliveriesInFlight.has(deliveryKey),
+        subscriptionActive: this.isTargetStillSubscribed(resolved, payload.topic),
+        taskDecision: this.prepareExternalEventTask(resolved, payload),
+        targetHasSession: !!resolved.sessionId,
+        targetSessionLive: resolved.sessionId
+          ? this.isTargetSessionLive(resolved.sessionId)
+          : false,
+        targetSpacePaused: !!targetRun && this.pausedSpaceIds.has(targetRun.spaceId),
+        executionPendingActivation:
+          currentExecution?.status === 'pending' || currentExecution?.status === 'waiting_rebind',
+      });
+      await this.executeExternalEventDeliveryDecision(decision, resolved, payload, deliveryKey);
     } catch (err) {
       log.warn(
         `SpaceRuntime: failed to process external event ${payload.eventId} for ` +
           `${resolved.workflowRunId}/${resolved.nodeId}/${resolved.agentName}: ${formatCommandError(err)}`
       );
+    }
+  }
+
+  private async executeExternalEventDeliveryDecision(
+    decision: ExternalEventDeliveryDecision,
+    resolved: WorkflowSubscriptionTarget,
+    payload: ExternalEventPublishedPayload,
+    deliveryKey: string
+  ): Promise<void> {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    if (decision.action === 'skip') {
+      return;
+    }
+    if (decision.action === 'skipClaimConflict') {
+      this.queueHealthMetrics.recordClaimConflict();
+      log.debug('SpaceRuntime: external event delivery already in flight; skipped dispatch', {
+        runId: resolved.workflowRunId,
+        deliveryKey,
+      });
+      return;
+    }
+    if (decision.action === 'failDelivery') {
+      store.markDeliveryFailed(payload.eventId, deliveryKey, {
+        terminal: true,
+        reason: decision.reason,
+      });
+      store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
+      this.clearExternalEventRetry(deliveryKey);
+      this.clearQueuedDelivery(resolved, deliveryKey);
+      return;
+    }
+    if (decision.action === 'deferStoppedTask') {
+      this.queueHealthMetrics.recordPausedSpaceSkip();
+      store.markDeliveryFailed(payload.eventId, deliveryKey, {
+        terminal: false,
+        reason: 'deliveryMode:defer; task_stopped',
+      });
+      return;
+    }
+    if (decision.action === 'deferPausedSpace') {
+      this.queueHealthMetrics.recordPausedSpaceSkip();
+      store.markDeliveryFailed(payload.eventId, deliveryKey, {
+        terminal: false,
+        reason: 'deliveryMode:defer; space_paused',
+      });
+      return;
+    }
+    if (decision.action === 'deliverLiveSession') {
+      await this.deliverToLiveSessionTarget(resolved, payload, deliveryKey);
+      return;
+    }
+    if (decision.action === 'deliverStaleSession') {
+      await this.deliverToStaleSessionTarget(resolved, payload, deliveryKey);
+      return;
+    }
+    if (decision.action === 'queueForActivation') {
+      await this.queueDeliveryForActivation(decision, resolved, payload, deliveryKey);
+      return;
+    }
+    await this.deliverViaActivation(resolved, payload, deliveryKey);
+  }
+
+  private async deliverToLiveSessionTarget(
+    target: WorkflowSubscriptionTarget,
+    payload: ExternalEventPublishedPayload,
+    deliveryKey: string
+  ): Promise<void> {
+    const store = this.config.externalEventStore;
+    if (!store || !target.sessionId) return;
+    const createdAt = this.externalEventCreatedAt(payload);
+    await this.normalizeStaleInterruptedSession(target.sessionId);
+    if (this.parkDeliveryForInterruptedSession(target, payload, deliveryKey, createdAt)) {
+      return;
+    }
+    await this.flushPendingNodeQueueAsync(target, deliveryKey, {
+      event: payload,
+      deliveryKey,
+      deliveryMode: 'defer',
+      createdAt,
+    });
+  }
+
+  private async deliverToStaleSessionTarget(
+    target: WorkflowSubscriptionTarget,
+    payload: ExternalEventPublishedPayload,
+    deliveryKey: string
+  ): Promise<void> {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    this.queueHealthMetrics.recordStaleSessionSkip();
+    await this.flushPendingNodeQueueAsync(target, deliveryKey, {
+      event: payload,
+      deliveryKey,
+      deliveryMode: 'defer',
+      createdAt: this.externalEventCreatedAt(payload),
+    });
+  }
+
+  private externalEventCreatedAt(payload: ExternalEventPublishedPayload): number {
+    return this.config.externalEventStore?.getById(payload.eventId)?.createdAt ?? Date.now();
+  }
+
+  private async queueDeliveryForActivation(
+    decision: Extract<ExternalEventDeliveryDecision, { action: 'queueForActivation' }>,
+    target: WorkflowSubscriptionTarget,
+    payload: ExternalEventPublishedPayload,
+    deliveryKey: string
+  ): Promise<void> {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    this.queueForPendingNode(
+      target,
+      payload,
+      deliveryKey,
+      'defer',
+      this.externalEventCreatedAt(payload)
+    );
+    if (decision.retryUnlessPaused && (await this.isTargetSpacePausedOrStopped(target))) {
+      return;
+    }
+    this.scheduleActivationRetry(
+      target,
+      payload,
+      deliveryKey,
+      decision.reason,
+      decision.preserveAttemptCount ? { preserveAttemptCount: true } : {}
+    );
+  }
+
+  private async deliverViaActivation(
+    resolved: WorkflowSubscriptionTarget,
+    payload: ExternalEventPublishedPayload,
+    deliveryKey: string
+  ): Promise<void> {
+    let activatedTarget: WorkflowSubscriptionTarget | null = null;
+    let activationError: string | null = null;
+    try {
+      activatedTarget = await this.activateSubscribedTargetForExternalEvent(resolved);
+    } catch (err) {
+      activationError = err instanceof Error ? err.message : String(err);
+    }
+    const decision = decidePostActivationDelivery({
+      activationError,
+      activatedTargetFound: activatedTarget !== null,
+      activatedHasSession: !!activatedTarget?.sessionId,
+      activatedSessionLive: activatedTarget?.sessionId
+        ? this.isTargetSessionLive(activatedTarget.sessionId)
+        : false,
+    });
+    await this.executePostActivationDecision(
+      decision,
+      resolved,
+      activatedTarget,
+      payload,
+      deliveryKey
+    );
+  }
+
+  private async executePostActivationDecision(
+    decision: ExternalEventDeliveryDecision,
+    resolved: WorkflowSubscriptionTarget,
+    activatedTarget: WorkflowSubscriptionTarget | null,
+    payload: ExternalEventPublishedPayload,
+    deliveryKey: string
+  ): Promise<void> {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    if (decision.action === 'queueForActivation') {
+      await this.queueDeliveryForActivation(decision, resolved, payload, deliveryKey);
+      return;
+    }
+    if (decision.action === 'deliverLiveSession') {
+      await this.deliverToLiveSessionTarget(activatedTarget!, payload, deliveryKey);
+      return;
+    }
+    if (decision.action === 'deliverStaleSession') {
+      await this.deliverToStaleSessionTarget(activatedTarget!, payload, deliveryKey);
+      return;
+    }
+    if (decision.action === 'deferNotActive') {
+      store.markDeliveryFailed(payload.eventId, deliveryKey, {
+        terminal: false,
+        reason: 'deliveryMode:defer; node_execution_not_active',
+      });
+      if (!(await this.isTargetSpacePausedOrStopped(activatedTarget!))) {
+        this.scheduleActivationRetry(
+          activatedTarget!,
+          payload,
+          deliveryKey,
+          'deliveryMode:defer; node_execution_not_active'
+        );
+      }
     }
   }
 
@@ -2104,142 +2106,11 @@ export class SpaceRuntime {
         this.queueForPendingNode(target, event, deliveryKey, deliveryMode, createdAt);
         return;
       }
-      if (taskDecision.action === 'reactivate') {
-        retainClaim = true;
-        void this.deliverReactivatedExternalEvent(
-          target,
-          event,
-          deliveryKey,
-          deliveryMode,
-          createdAt,
-          rateLimitKey
-        );
-        return;
-      }
 
       await this.deliverToSession(target, event, deliveryKey, deliveryMode, createdAt);
       this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
     } finally {
       if (!retainClaim) this.externalEventDeliveriesInFlight.delete(deliveryKey);
-    }
-  }
-
-  private async deliverReactivatedExternalEvent(
-    target: WorkflowSubscriptionTarget,
-    event: ExternalEventPublishedPayload,
-    deliveryKey: string,
-    deliveryMode: 'immediate' | 'defer',
-    createdAt: number,
-    rateLimitKey: string
-  ): Promise<void> {
-    const store = this.config.externalEventStore;
-    try {
-      if (!store) return;
-      const task = this.config.taskRepo.getTask(target.taskId);
-      if (!task) {
-        store.markDeliveryFailed(event.eventId, deliveryKey, {
-          terminal: true,
-          reason: 'invalid_target_ownership',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(target, deliveryKey);
-        return;
-      }
-      const existingRecovery = this.recoveryInFlight.get(task.id);
-      if (existingRecovery) {
-        await existingRecovery;
-        const afterShared = this.config.taskRepo.getTask(target.taskId);
-        if (!afterShared || afterShared.status === 'done') {
-          store.markDeliveryFailed(event.eventId, deliveryKey, {
-            terminal: true,
-            reason: 'target_task_reactivation_failed',
-          });
-          store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-          this.clearExternalEventRetry(deliveryKey);
-          this.clearQueuedDelivery(target, deliveryKey);
-          return;
-        }
-      } else {
-        const recoveryPromise = (async () => {
-          try {
-            await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
-              workflowNodeId: target.nodeId,
-              agentName: target.agentName,
-            });
-          } catch (err) {
-            log.warn(
-              `SpaceRuntime: failed to reactivate task ${task.id} for check failure ${event.eventId}: ${formatCommandError(err)}`
-            );
-          }
-        })();
-        this.recoveryInFlight.set(task.id, recoveryPromise);
-        await recoveryPromise.finally(() => {
-          this.recoveryInFlight.delete(task.id);
-        });
-        const recoveredTask = this.config.taskRepo.getTask(target.taskId);
-        if (!recoveredTask || recoveredTask.status === 'done') {
-          store.markDeliveryFailed(event.eventId, deliveryKey, {
-            terminal: true,
-            reason: 'target_task_reactivation_failed',
-          });
-          store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-          this.clearExternalEventRetry(deliveryKey);
-          this.clearQueuedDelivery(target, deliveryKey);
-          return;
-        }
-      }
-      const rechecked = this.revalidateRecoveredTarget(target, event);
-      if (rechecked.action === 'fail') {
-        store.markDeliveryFailed(event.eventId, deliveryKey, {
-          terminal: true,
-          reason: rechecked.reason,
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(target, deliveryKey);
-        return;
-      }
-      if (rechecked.action === 'hold') {
-        this.queueHealthMetrics.recordPausedSpaceSkip();
-        const eventRecord = store.getById(event.eventId);
-        this.queueForPendingNode(
-          target,
-          event,
-          deliveryKey,
-          deliveryMode,
-          eventRecord?.createdAt ?? createdAt
-        );
-        return;
-      }
-      const refreshed = rechecked.target;
-      if (refreshed.sessionId && this.isTargetSessionLive(refreshed.sessionId)) {
-        await this.normalizeStaleInterruptedSession(refreshed.sessionId);
-        if (this.parkDeliveryForInterruptedSession(refreshed, event, deliveryKey, createdAt)) {
-          return;
-        }
-        await this.deliverToSession(refreshed, event, deliveryKey, deliveryMode, createdAt);
-      } else {
-        const eventRecord = store.getById(event.eventId);
-        this.queueForPendingNode(
-          refreshed,
-          event,
-          deliveryKey,
-          deliveryMode,
-          eventRecord?.createdAt ?? createdAt
-        );
-        if (!(await this.isTargetSpacePausedOrStopped(refreshed))) {
-          this.scheduleActivationRetry(
-            refreshed,
-            event,
-            deliveryKey,
-            `deliveryMode:${deliveryMode}; node_execution_not_active`
-          );
-        }
-      }
-      this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
-    } finally {
-      this.externalEventDeliveriesInFlight.delete(deliveryKey);
     }
   }
 
@@ -2291,17 +2162,6 @@ export class SpaceRuntime {
         this.queueHealthMetrics.recordPausedSpaceSkip();
         this.preservePendingDigestItem(item);
         this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
-        continue;
-      }
-      if (taskDecision.action === 'reactivate') {
-        void this.deliverReactivatedExternalEvent(
-          item.target,
-          item.event,
-          item.deliveryKey,
-          item.deliveryMode,
-          item.createdAt,
-          this.buildRateLimitKey(item.target)
-        );
         continue;
       }
       dispatchable.push(item);
@@ -2770,17 +2630,15 @@ export class SpaceRuntime {
   }
 
   private isQueuedExternalEventExpired(item: PendingExternalEvent, now = Date.now()): boolean {
-    return now - item.createdAt > EXTERNAL_EVENT_QUEUE_TTL_MS;
+    return isQueuedExternalEventExpired(item.createdAt, now, EXTERNAL_EVENT_QUEUE_TTL_MS);
   }
 
   private isPublishedExternalEventExpired(
     payload: ExternalEventPublishedPayload,
     now = Date.now()
   ): boolean {
-    const store = this.config.externalEventStore;
-    const createdAt = store?.getById(payload.eventId)?.createdAt;
-    if (createdAt === undefined) return false;
-    return now - createdAt > EXTERNAL_EVENT_QUEUE_TTL_MS;
+    const createdAt = this.config.externalEventStore?.getById(payload.eventId)?.createdAt;
+    return isPublishedExternalEventExpired(createdAt, now, EXTERNAL_EVENT_QUEUE_TTL_MS);
   }
 
   private failQueuedDeliveryForTtl(item: PendingExternalEvent, queueKey: string): void {
@@ -2884,16 +2742,19 @@ export class SpaceRuntime {
   private resolveSubscriptionTarget(
     target: WorkflowSubscriptionTarget
   ): WorkflowSubscriptionTarget {
-    const current = this.getCurrentQueueableOrActiveExecution(target);
-    return current?.agentSessionId ? { ...target, sessionId: current.agentSessionId } : target;
+    return resolveSubscriptionTarget(
+      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
+      target
+    );
   }
 
   private resolveLiveDeliveryTarget(
     target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
   ): WorkflowSubscriptionTarget | null {
-    const current = this.getCurrentQueueableOrActiveExecution(target);
-    if (!current?.agentSessionId) return null;
-    return { ...target, sessionId: current.agentSessionId };
+    return resolveLiveDeliveryTarget(
+      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
+      target
+    );
   }
 
   private isRunInterestRebuildEligible(run: SpaceWorkflowRun): boolean {
@@ -2922,13 +2783,7 @@ export class SpaceRuntime {
   ): boolean {
     const task = this.config.taskRepo.getTask(target.taskId);
     const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-    return !!(
-      task &&
-      run &&
-      task.spaceId === spaceId &&
-      run.spaceId === spaceId &&
-      task.workflowRunId === run.id
-    );
+    return isWorkflowTargetOwnedBySpace(task, run, spaceId);
   }
 
   private prepareExternalEventTask(
@@ -2937,94 +2792,24 @@ export class SpaceRuntime {
   ): ExternalEventTaskDecision {
     const task = this.config.taskRepo.getTask(target.taskId);
     const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-    if (
-      !task ||
-      !run ||
-      task.spaceId !== event.spaceId ||
-      run.spaceId !== event.spaceId ||
-      task.workflowRunId !== run.id
-    ) {
-      return { action: 'fail', reason: 'invalid_target_ownership' };
-    }
-    if (task.status === 'cancelled' || task.status === 'archived' || task.status === 'done') {
-      return { action: 'fail', reason: 'target_task_terminal' };
-    }
-    if (task.status === 'stopped') {
-      return { action: 'hold' };
-    }
-
-    return { action: 'deliver' };
-  }
-
-  private async resolveExternalEventDelivery(
-    target: WorkflowSubscriptionTarget,
-    event: ExternalEventPublishedPayload
-  ): Promise<
-    | { action: 'deliver'; target: WorkflowSubscriptionTarget }
-    | { action: 'hold' }
-    | { action: 'fail'; reason: string }
-  > {
-    const decision = this.prepareExternalEventTask(target, event);
-    if (decision.action === 'fail') return { action: 'fail', reason: decision.reason };
-    if (decision.action === 'hold') return { action: 'hold' };
-    if (decision.action === 'reactivate') {
-      const task = this.config.taskRepo.getTask(target.taskId);
-      if (!task) return { action: 'fail', reason: 'invalid_target_ownership' };
-      try {
-        await this.recoverWorkflowBackedTask(task.spaceId, task.id, 'in_progress', {
-          workflowNodeId: target.nodeId,
-          agentName: target.agentName,
-        });
-      } catch (err) {
-        log.warn(
-          `SpaceRuntime: failed to reactivate task ${task.id} for check failure ${event.eventId}: ${formatCommandError(err)}`
-        );
-        return { action: 'fail', reason: 'target_task_reactivation_failed' };
-      }
-      return this.revalidateRecoveredTarget(target, event);
-    }
-    return { action: 'deliver', target };
-  }
-
-  private revalidateRecoveredTarget(
-    target: WorkflowSubscriptionTarget,
-    event: ExternalEventPublishedPayload
-  ):
-    | { action: 'deliver'; target: WorkflowSubscriptionTarget }
-    | { action: 'hold' }
-    | { action: 'fail'; reason: string } {
-    const refreshed = this.resolveSubscriptionTarget(target);
-    if (!this.isTargetStillSubscribed(refreshed, event.topic)) {
-      return { action: 'fail', reason: 'subscription_no_longer_active' };
-    }
-    const rechecked = this.prepareExternalEventTask(refreshed, event);
-    if (rechecked.action === 'fail') return { action: 'fail', reason: rechecked.reason };
-    if (rechecked.action === 'hold') return { action: 'hold' };
-    return { action: 'deliver', target: refreshed };
+    return prepareExternalEventTask(task, run, event);
   }
 
   private evaluateRequeueTaskLifecycle(
     target: Pick<WorkflowSubscriptionTarget, 'taskId'>,
     event: { topic: string; source: string }
   ): string | null {
-    void event;
     const task = this.config.taskRepo.getTask(target.taskId);
-    if (!task) return 'invalid_target_ownership';
-    if (task.status === 'cancelled' || task.status === 'archived' || task.status === 'done') {
-      return 'target_task_terminal';
-    }
-    return null;
+    return evaluateRequeueTaskLifecycle(task, event);
   }
 
   private getCurrentQueueableOrActiveExecution(
     target: WorkflowSubscriptionTarget
   ): NodeExecution | undefined {
-    return this.config.nodeExecutionRepo
-      .listByNode(target.workflowRunId, target.nodeId)
-      .filter(
-        (execution) => execution.agentName === target.agentName && execution.status !== 'cancelled'
-      )
-      .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))[0];
+    return resolveCurrentQueueableOrActiveExecution(
+      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
+      target
+    );
   }
 
   private isTargetSessionLive(sessionId: string): boolean {
@@ -3065,25 +2850,25 @@ export class SpaceRuntime {
   private hasTerminalExecutionForTarget(
     target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
   ): boolean {
-    return this.config.nodeExecutionRepo
-      .listByNode(target.workflowRunId, target.nodeId)
-      .some(
-        (execution) => execution.agentName === target.agentName && execution.status === 'cancelled'
-      );
+    return hasTerminalExecutionForTarget(
+      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
+      target
+    );
   }
 
   private hasAnyExecutionForTarget(
     target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
   ): boolean {
-    return this.config.nodeExecutionRepo
-      .listByNode(target.workflowRunId, target.nodeId)
-      .some((execution) => execution.agentName === target.agentName);
+    return hasAnyExecutionForTarget(
+      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
+      target
+    );
   }
 
   private buildQueueKey(
     target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
   ): string {
-    return JSON.stringify([target.workflowRunId, target.taskId, target.nodeId, target.agentName]);
+    return buildQueueKey(target);
   }
 
   private isDeliveryInDeliveryCooldown(deliveryKey: string): boolean {
