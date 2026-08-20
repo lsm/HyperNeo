@@ -758,6 +758,108 @@ describe('Provider RPC handlers', () => {
       expect(healthCheck).toHaveBeenCalledTimes(1);
     });
 
+    it('clears the global model cache when a health check replaces the catalog', async () => {
+      const created = repo.createProvider({
+        providerId: 'rescope-provider',
+        displayName: 'Rescope Provider',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      let catalogScope = 'scope-before';
+      getProviderRegistry().register({
+        id: 'rescope-provider',
+        displayName: 'Rescope Provider',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        getModelCatalogScope: () => catalogScope,
+        getCachedModels: () => [],
+        healthCheck: async () => {
+          catalogScope = 'scope-after';
+        },
+        ownsModel: () => true,
+        getModelForTier: () => 'default',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+      const { setModelsCache, getModelsCache } = await import('../../../../src/lib/model-service');
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'stale-global-model',
+                name: 'Stale Global Model',
+                family: 'test',
+                provider: 'rescope-provider',
+                contextWindow: 100000,
+              },
+            ],
+          ],
+        ])
+      );
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.test')!({ id: created.id }, {})) as {
+        healthy: boolean;
+      };
+
+      expect(result.healthy).toBe(true);
+      expect(getModelsCache().has('global')).toBe(false);
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
+    });
+
+    it('keeps the global model cache when a health check leaves the catalog unchanged', async () => {
+      const created = repo.createProvider({
+        providerId: 'stable-provider',
+        displayName: 'Stable Provider',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      getProviderRegistry().register({
+        id: 'stable-provider',
+        displayName: 'Stable Provider',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        healthCheck: async () => {},
+        ownsModel: () => true,
+        getModelForTier: () => 'default',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+      const { setModelsCache, getModelsCache, clearModelsCache } = await import(
+        '../../../../src/lib/model-service'
+      );
+      clearModelsCache();
+      setModelsCache(new Map([['global', []]]));
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.test')!({ id: created.id }, {})) as {
+        healthy: boolean;
+      };
+
+      expect(result.healthy).toBe(true);
+      expect(getModelsCache().has('global')).toBe(true);
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+      clearModelsCache();
+    });
+
     it('returns unhealthy for missing provider', async () => {
       const created = repo.createProvider({
         providerId: 'missing',

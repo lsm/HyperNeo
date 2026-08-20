@@ -1079,7 +1079,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         definitiveAuthFailure: definitive,
       });
     }
-    return currentAuth.apiKey === initialAuth.apiKey ? initialAuth : currentAuth;
+    return this.sameScope(this.authScope(currentAuth), this.authScope(initialAuth))
+      ? initialAuth
+      : currentAuth;
   }
 
   private rekeyModelRefresh(fromKey: string, toKey: string): Promise<void> | undefined {

@@ -2969,6 +2969,76 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('adopts replacement scope metadata when the access token is unchanged', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const sharedToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-same-token' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: sharedToken,
+        refresh: 'refresh-token',
+        accountId: 'acct-same-token',
+        expires: Date.now() - 60_000,
+      });
+      let resolveRefresh: ((response: Response) => void) | undefined;
+      const refreshResponse = new Promise<Response>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      const catalogFetch = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-rescope' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch').mockImplementationOnce(
+        async () => refreshResponse
+      );
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, catalogFetch);
+
+        const modelsPromise = provider.getModels();
+        await vi.waitFor(() => expect(refreshFetch).toHaveBeenCalledTimes(1));
+        provider.setCredentials({
+          type: 'oauth',
+          accessToken: sharedToken,
+          refreshToken: 'new-refresh-token',
+          raw: { accountId: 'acct-rescoped', isFedrampAccount: true },
+        });
+        resolveRefresh?.(
+          new Response(
+            JSON.stringify({
+              access_token: makeJwt({
+                'https://api.openai.com/auth': { chatgpt_account_id: 'acct-same-token' },
+                jti: 'superseded',
+              }),
+              refresh_token: 'next-refresh-token',
+              expires_in: 3600,
+              token_type: 'Bearer',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        );
+
+        const models = await modelsPromise;
+        expect(models.map((model) => model.id)).toEqual(['gpt-rescope']);
+        const [, init] = (catalogFetch as ReturnType<typeof mock>).mock.calls[0] as [
+          URL,
+          RequestInit,
+        ];
+        const headers = new Headers(init.headers);
+        expect(headers.get('authorization')).toBe(`Bearer ${sharedToken}`);
+        expect(headers.get('ChatGPT-Account-ID')).toBe('acct-rescoped');
+        expect(headers.get('X-OpenAI-Fedramp')).toBe('true');
+        expect(provider.getModelCatalogScope()).toBe(
+          'chatgpt_oauth:acct-rescoped:acct-rescoped:fedramp'
+        );
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
     it('joins concurrent discovery when the 401 retry adopts replacement credentials', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const oldAccess = makeJwt({

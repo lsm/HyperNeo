@@ -1,7 +1,7 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers';
 import type { CreateProviderParams, UpdateProviderParams } from '@hyperneo/shared';
-import type { ProviderCredentials } from '@hyperneo/shared/provider';
+import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import {
@@ -149,6 +149,14 @@ export interface ProviderHandlerDeps {
   providerRepo: ProviderRepository;
   credentialManager: ProviderCredentialManager;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+}
+
+function providerCatalogSignature(provider: Provider): string {
+  const scope = provider.getModelCatalogScope?.() ?? '';
+  const modelIds = (provider.getCachedModels?.() ?? [])
+    .map((model: { id: string }) => model.id)
+    .sort();
+  return `${scope}|${modelIds.join(',')}`;
 }
 
 async function clearCacheAndNotifyProvidersChanged(
@@ -373,10 +381,14 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         });
         return { healthy: false, error: 'Provider not available' };
       }
+      const catalogBefore = providerCatalogSignature(provider);
       if (provider.healthCheck) {
         await provider.healthCheck();
       } else {
         await provider.getModels();
+      }
+      if (providerCatalogSignature(provider) !== catalogBefore) {
+        await clearCacheAndNotifyProvidersChanged(internalEventBus);
       }
       providerRepo.updateProvider(data.id, {
         healthStatus: 'healthy',
@@ -415,10 +427,14 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             });
             return { providerId: record.providerId, healthy: false, error: 'Not available' };
           }
+          const catalogBefore = providerCatalogSignature(provider);
           if (provider.healthCheck) {
             await provider.healthCheck();
           } else {
             await provider.getModels();
+          }
+          if (providerCatalogSignature(provider) !== catalogBefore) {
+            await clearCacheAndNotifyProvidersChanged(internalEventBus);
           }
           providerRepo.updateProvider(record.id, {
             healthStatus: 'healthy',
