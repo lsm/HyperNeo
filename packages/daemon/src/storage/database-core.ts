@@ -84,9 +84,7 @@ export class DatabaseCore {
     }
     try {
       this.db.exec('PRAGMA optimize');
-    } catch {
-      // Ignore optimize errors — the DB may already be closed or in an error state
-    }
+    } catch {}
     try {
       this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     } catch {
@@ -101,9 +99,7 @@ export class DatabaseCore {
 
     try {
       this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      // Ignore checkpoint errors
-    }
+    } catch {}
 
     const maxBytes = getMigrationBackupMaxBytes();
     if (maxBytes > 0 && statSync(this.dbPath).size > maxBytes) {
