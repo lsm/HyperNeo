@@ -1036,6 +1036,50 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(init?.body).toBeUndefined();
     });
 
+    it.skipIf(!isBun)(
+      'preserves known per-model reasoning limits from the general OpenAI catalog',
+      async () => {
+        const fetchImpl = mock(
+          async () =>
+            new Response(JSON.stringify({ data: [{ id: 'gpt-5.4-mini' }] }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+        ) as unknown as typeof fetch;
+        provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+        await provider.getModels();
+
+        const captured = { body: undefined as Record<string, unknown> | undefined };
+        const originalFetch = globalThis.fetch;
+        const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+          if (String(input).startsWith('http://127.0.0.1:')) return originalFetch(input, init);
+          captured.body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          return new Response(
+            'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":0},"output":[]}}\n\n',
+            { headers: { 'Content-Type': 'text/event-stream' } }
+          );
+        });
+        try {
+          const config = provider.buildSdkConfig('gpt-5.4-mini', { sessionId: 'api-mini' });
+          provider.setSessionThinkingConfig('api-mini', 'think32k');
+          await originalFetch(`${config.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'gpt-5.4-mini',
+              max_tokens: 128,
+              messages: [{ role: 'user', content: 'Think deeply.' }],
+            }),
+          });
+
+          expect(captured.body?.reasoning).toEqual({ effort: 'high', summary: 'auto' });
+        } finally {
+          fetchSpy.mockRestore();
+        }
+      }
+    );
+
     it('filters non-Responses models from the general OpenAI catalog', async () => {
       const fetchImpl = mock(
         async () =>
@@ -1422,6 +1466,34 @@ describe('AnthropicToCodexBridgeProvider', () => {
         sdkModelIds: ['gpt-5.6-sol'],
       });
       expect(provider.ownsModel('codex-5.6')).toBe(true);
+    });
+
+    it('ignores discovery failures from a replaced credential scope', async () => {
+      let rejectOld: ((error: Error) => void) | undefined;
+      const oldRequest = new Promise<Response>((_resolve, reject) => {
+        rejectOld = reject;
+      });
+      const successfulResponse = () =>
+        new Response(JSON.stringify({ data: [{ id: 'gpt-new-scope' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      const fetchImpl = mock()
+        .mockImplementationOnce(async () => oldRequest)
+        .mockImplementation(async () => successfulResponse()) as unknown as typeof fetch;
+      provider = makeProvider({}, tmpDir, tmpDir, fetchImpl);
+      provider.setCredentials({ type: 'api_key', apiKey: 'sk-old-scope' });
+
+      const oldRefresh = provider.getModels();
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+      provider.setCredentials({ type: 'api_key', apiKey: 'sk-new-scope' });
+      await provider.refreshModels();
+      rejectOld?.(new Error('old scope offline'));
+
+      await expect(oldRefresh).resolves.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: 'gpt-new-scope' })])
+      );
+      await expect(provider.healthCheck()).resolves.toBeUndefined();
     });
 
     it('does not route a previous credential scope catalog after credentials change', async () => {

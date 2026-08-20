@@ -274,11 +274,15 @@ export async function initializeModels(): Promise<void> {
   await waitForOptionalProviderRegistration();
 
   try {
-    const { models } = await loadModelsFromProviders();
+    const { models, failedProviderIds } = await loadModelsFromProviders();
     if (models.length > 0) {
       const mergedModels = mergeWithFallbackModels(models);
       modelsCache.set(cacheKey, mergedModels);
-      cacheTimestamps.set(cacheKey, Date.now());
+      if (failedProviderIds.size === 0) {
+        cacheTimestamps.set(cacheKey, Date.now());
+      } else {
+        cacheTimestamps.delete(cacheKey);
+      }
     } else {
       throw new Error('No models returned from providers');
     }
@@ -286,7 +290,7 @@ export async function initializeModels(): Promise<void> {
     const registry = getProviderRegistry();
     const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
     modelsCache.set(cacheKey, filteredFallbacks);
-    cacheTimestamps.set(cacheKey, Date.now());
+    cacheTimestamps.delete(cacheKey);
   }
 }
 

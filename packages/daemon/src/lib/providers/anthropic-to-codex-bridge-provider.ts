@@ -259,13 +259,17 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     }
   }
 
+  private bundledReasoningEfforts(modelId: string): OpenAIResponsesReasoningEffort[] {
+    return [...CODEX_REASONING_EFFORTS].filter(
+      (effort) => effort !== 'xhigh' || CODEX_XHIGH_MODEL_IDS.has(modelId)
+    );
+  }
+
   private bundledCatalogEntries(): CodexCatalogEntry[] {
     return ANTHROPIC_CODEX_MODELS.map((info) => ({
       info: { ...info, thinkingModes: 'granular' },
       visibility: 'list',
-      supportedReasoningEfforts: [...CODEX_REASONING_EFFORTS].filter(
-        (effort) => effort !== 'xhigh' || CODEX_XHIGH_MODEL_IDS.has(info.id)
-      ),
+      supportedReasoningEfforts: this.bundledReasoningEfforts(info.id),
     }));
   }
 
@@ -839,7 +843,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       visibility: 'list',
       supportedInApi,
       ...(resolveCodexBridgeModelId(record.id)
-        ? { supportedReasoningEfforts: [...CODEX_REASONING_EFFORTS] }
+        ? { supportedReasoningEfforts: this.bundledReasoningEfforts(record.id) }
         : {}),
       priority,
     };
@@ -953,7 +957,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     });
   }
 
-  private setDiscoveryError(message: string): void {
+  private setDiscoveryError(message: string, scope: CodexModelCacheScope): void {
+    if (!this.currentScopeMatches(scope)) return;
     this.discoveryError = new Error(message);
     logger.warn(message);
   }
@@ -984,7 +989,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       response = await this.requestModelCatalog(auth, matchingCache?.etag);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      this.setDiscoveryError(`AnthropicToCodexBridgeProvider: model discovery failed: ${detail}`);
+      this.setDiscoveryError(
+        `AnthropicToCodexBridgeProvider: model discovery failed: ${detail}`,
+        scope
+      );
       return;
     }
 
@@ -1001,7 +1009,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
           this.setDiscoveryError(
-            `AnthropicToCodexBridgeProvider: model discovery retry failed: ${detail}`
+            `AnthropicToCodexBridgeProvider: model discovery retry failed: ${detail}`,
+            scope
           );
           return;
         }
@@ -1029,10 +1038,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       await response.body?.cancel().catch(() => undefined);
       const message = `AnthropicToCodexBridgeProvider: model discovery HTTP ${response.status}`;
       if (response.status === 403) {
-        this.discoveryError = undefined;
+        if (this.currentScopeMatches(scope)) this.discoveryError = undefined;
         logger.warn(message);
       } else {
-        this.setDiscoveryError(message);
+        this.setDiscoveryError(message, scope);
       }
       return;
     }
@@ -1046,7 +1055,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const entries = models ? this.catalogEntriesFromRemote(models, scope.source) : [];
     if (!models || entries.length === 0 || !entries.some((entry) => entry.visibility === 'list')) {
       this.setDiscoveryError(
-        'AnthropicToCodexBridgeProvider: model discovery returned no usable models'
+        'AnthropicToCodexBridgeProvider: model discovery returned no usable models',
+        scope
       );
       return;
     }

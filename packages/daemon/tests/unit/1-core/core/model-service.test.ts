@@ -528,6 +528,50 @@ describe('Model Service', () => {
       const cache = getModelsCache();
       expect(cache.get('global')).toEqual(mockModels);
     });
+
+    it('keeps partially failed initialization stale for an automatic retry', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const healthyModel = {
+        id: 'startup-healthy',
+        name: 'Startup Healthy',
+        family: 'test',
+        provider: 'startup-healthy-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const recoveredModel = {
+        ...healthyModel,
+        id: 'startup-recovered',
+        name: 'Startup Recovered',
+        provider: 'startup-failed-provider',
+      };
+      registry.register({
+        id: 'startup-healthy-provider',
+        getModels: async () => [healthyModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register({
+        id: 'startup-failed-provider',
+        getModels: async () => {
+          throw new Error('offline');
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      await initializeModels();
+      expect(getAvailableModels('global')).toContainEqual(healthyModel);
+
+      registry.unregister('startup-failed-provider');
+      registry.register({
+        id: 'startup-failed-provider',
+        getModels: async () => [recoveredModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      getAvailableModels('global');
+      await expect.poll(() => getAvailableModels('global')).toContainEqual(recoveredModel);
+    });
   });
 
   describe('background refresh behavior', () => {
