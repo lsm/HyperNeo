@@ -90,7 +90,10 @@ export class SessionRepository {
       .prepare(
         `UPDATE sessions
          SET acp_session_id = NULL,
-             metadata = json_remove(metadata, '$.acpContextUsageEstimate')
+             metadata = CASE
+               WHEN json_valid(metadata) THEN json_remove(metadata, '$.acpContextUsageEstimate')
+               ELSE metadata
+             END
          WHERE acp_session_id IS NOT NULL
            AND json_valid(config)
            AND json_extract(config, '$.provider') = 'acp'`
