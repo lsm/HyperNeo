@@ -131,23 +131,64 @@ describe('AcpMessageTranslator', () => {
     expect(start.length).toBe(1);
     expect(start[0].type).toBe('assistant');
 
-    const progress = translator.processUpdate(toolCallUpdate('tc-6', undefined));
+    const progress = translator.processUpdate({
+      ...toolCallUpdate('tc-6', undefined),
+      status: 'in_progress',
+      content: [{ type: 'content', content: { type: 'text', text: 'partial' } }],
+    });
     expect(progress.length).toBe(1);
     expect(progress[0].type).toBe('tool_progress');
     expect((progress[0] as { tool_name: string }).tool_name).toBe('Read file');
 
-    const emptyUpdate = translator.processUpdate(toolCallUpdate('tc-6', undefined));
+    const emptyUpdate = translator.processUpdate({
+      ...toolCallUpdate('tc-6', undefined),
+      status: 'in_progress',
+      content: [{ type: 'content', content: { type: 'text', text: ' output' } }],
+    });
     expect(emptyUpdate.length).toBe(0);
 
     const result = translator.processUpdate({
       sessionUpdate: 'tool_call_update',
       toolCallId: 'tc-6',
       title: undefined,
-      rawOutput: 'hello',
-    } as never);
+      status: 'completed',
+    });
     expect(result.length).toBe(1);
     expect(result[0].type).toBe('user');
     expect((result[0] as { parent_tool_use_id: string }).parent_tool_use_id).toBe('tc-6');
+    const toolResult = result[0] as { tool_use_result: unknown };
+    expect(toolResult.tool_use_result).toEqual([
+      { type: 'content', content: { type: 'text', text: 'partial' } },
+      { type: 'content', content: { type: 'text', text: ' output' } },
+    ]);
+  });
+
+  test('emits a tool result for completed status without output', () => {
+    translator.processUpdate(toolCall('tc-empty', 'No output', {}));
+
+    const result = translator.processUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-empty',
+      status: 'completed',
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe('user');
+    expect((result[0] as { tool_use_result: unknown }).tool_use_result).toBe('');
+  });
+
+  test('emits a tool result for failed status', () => {
+    translator.processUpdate(toolCall('tc-failed', 'Failing tool', {}));
+
+    const result = translator.processUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-failed',
+      status: 'failed',
+      rawOutput: 'failed output',
+    });
+
+    expect(result).toHaveLength(1);
+    expect((result[0] as { tool_use_result: unknown }).tool_use_result).toBe('failed output');
   });
 
   test('translateResult produces success result', () => {

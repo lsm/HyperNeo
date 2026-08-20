@@ -92,7 +92,7 @@ export class AcpTerminalManager {
       session.exitCode = code ?? null;
       session.exitSignal = signal ?? null;
       session.exited = true;
-      if (session.killTimer) {
+      if (session.killTimer && process.platform === 'win32') {
         clearTimeout(session.killTimer);
         session.killTimer = null;
       }
@@ -107,7 +107,7 @@ export class AcpTerminalManager {
       session.exitCode = 1;
       session.exitSignal = null;
       session.exited = true;
-      if (session.killTimer) {
+      if (session.killTimer && process.platform === 'win32') {
         clearTimeout(session.killTimer);
         session.killTimer = null;
       }
@@ -149,12 +149,12 @@ export class AcpTerminalManager {
 
   async kill(params: AcpTerminalKillParams): Promise<AcpTerminalKillResult> {
     const session = this.getSession(params.terminalId);
-    if (!session.killed && !session.exited) {
+    if (!session.killed && (process.platform !== 'win32' || !session.exited)) {
       session.killed = true;
       this.signalProcess(session.process, 'SIGTERM');
       session.killTimer = setTimeout(() => {
         session.killTimer = null;
-        if (!session.exited) {
+        if (process.platform !== 'win32' || !session.exited) {
           this.signalProcess(session.process, 'SIGKILL');
         }
       }, 5000);
@@ -177,12 +177,12 @@ export class AcpTerminalManager {
     if (this.disposed) return;
     this.disposed = true;
     for (const [terminalId, session] of this.sessions) {
-      if (!session.exited) {
+      if (!session.killed && (process.platform !== 'win32' || !session.exited)) {
         session.killed = true;
         this.signalProcess(session.process, 'SIGTERM');
         session.killTimer = setTimeout(() => {
           session.killTimer = null;
-          if (!session.exited) {
+          if (process.platform !== 'win32' || !session.exited) {
             this.signalProcess(session.process, 'SIGKILL');
           }
         }, 5000);

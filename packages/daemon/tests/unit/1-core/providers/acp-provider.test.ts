@@ -212,6 +212,23 @@ describe('AcpProvider', () => {
       expect(provider.getCachedModels()?.map((m) => m.id)).toEqual(['devin-model-a']);
     });
 
+    it('should preserve default-only curation during live config negotiation', () => {
+      provider.setAcpCommand('devin acp');
+      provider.setAcpModels([]);
+      provider.setConfigOptions([
+        {
+          id: 'model',
+          name: 'Model',
+          type: 'select',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [{ name: 'Sonnet', value: 'sonnet' }],
+        },
+      ]);
+
+      expect(provider.getCachedModels()?.map((m) => m.id)).toEqual(['acp-default']);
+    });
+
     it('should own curated model ids', () => {
       provider.setAcpCommand('devin acp');
       provider.setAcpModels([{ id: 'devin-model-a' }]);

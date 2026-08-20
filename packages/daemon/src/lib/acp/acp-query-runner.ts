@@ -293,7 +293,8 @@ function shellQuote(value: string): string {
 
 async function authorizeAcpFsWrite(
   params: AcpFsWriteParams,
-  canUseTool: CanUseTool
+  canUseTool: CanUseTool,
+  signal: AbortSignal
 ): Promise<AcpFsWriteParams> {
   const permission = await handleAcpPermissionRequest(
     {
@@ -309,8 +310,12 @@ async function authorizeAcpFsWrite(
         { optionId: 'deny-write', name: 'Deny', kind: 'reject_once' },
       ],
     },
-    canUseTool
+    canUseTool,
+    signal
   );
+  if (signal.aborted) {
+    throw new Error('ACP filesystem write cancelled');
+  }
   if (permission.outcome.outcome !== 'selected' || permission.outcome.optionId !== 'allow-write') {
     throw new Error('ACP filesystem write denied');
   }
@@ -361,16 +366,17 @@ async function authorizeAcpTerminalCreate(
 
 async function handleAcpPermissionRequest(
   params: AcpPermissionRequest,
-  canUseTool: CanUseTool
+  canUseTool: CanUseTool,
+  signal?: AbortSignal
 ): Promise<AcpPermissionResponseResult> {
   if (params.options.length === 0) {
     return { outcome: { outcome: 'cancelled' } };
   }
 
-  const controller = new AbortController();
+  const permissionSignal = signal ?? new AbortController().signal;
   const question = acpPermissionQuestion(params);
   const result = await canUseTool('AskUserQuestion', acpPermissionQuestionInput(params), {
-    signal: controller.signal,
+    signal: permissionSignal,
     toolUseID: params.toolCall.toolCallId,
     title: question,
     displayName: params.toolCall.title ?? params.toolCall.kind ?? 'ACP tool',
@@ -657,7 +663,11 @@ export class AcpQueryRunner {
               onTerminalRelease: (params: AcpTerminalReleaseParams) => manager.release(params),
               onFsRead: (params: AcpFsReadParams) => this.handleFsRead(params, workspace),
               onFsWrite: async (params: AcpFsWriteParams) =>
-                this.handleFsWrite(await authorizeAcpFsWrite(params, canUseTool), workspace),
+                this.handleFsWrite(
+                  await authorizeAcpFsWrite(params, canUseTool, abortController.signal),
+                  workspace,
+                  abortController.signal
+                ),
             };
           })()
         : {};
@@ -1076,13 +1086,17 @@ export class AcpQueryRunner {
 
   private async handleFsWrite(
     params: AcpFsWriteParams,
-    workspace: string
+    workspace: string,
+    signal: AbortSignal
   ): Promise<AcpFsWriteResult> {
     const { writeFile, mkdir } = await import('node:fs/promises');
     const { dirname } = await import('node:path');
+    if (signal.aborted) throw new Error('ACP filesystem write cancelled');
     const filePath = await this.resolveWorkspacePath(params.path, workspace);
+    if (signal.aborted) throw new Error('ACP filesystem write cancelled');
     await mkdir(dirname(filePath), { recursive: true });
-    await writeFile(filePath, params.content, 'utf-8');
+    if (signal.aborted) throw new Error('ACP filesystem write cancelled');
+    await writeFile(filePath, params.content, { encoding: 'utf-8', signal });
     return {};
   }
 

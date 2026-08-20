@@ -55,6 +55,28 @@ function createMockClient() {
   };
 }
 
+function createHeldPromptClient() {
+  let markPromptStarted: (() => void) | undefined;
+  let releasePrompt: (() => void) | undefined;
+  const promptStarted = new Promise<void>((resolve) => {
+    markPromptStarted = resolve;
+  });
+  const promptReleased = new Promise<void>((resolve) => {
+    releasePrompt = resolve;
+  });
+  const client = createMockClient();
+  client.sendPrompt = mock(async function* (
+    _prompt: unknown,
+    callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+  ) {
+    callbacks?.onSubmitted?.();
+    callbacks?.onAccepted?.();
+    markPromptStarted?.();
+    await promptReleased;
+  });
+  return { client, promptStarted, releasePrompt: () => releasePrompt?.() };
+}
+
 function makeUserMessage(content: string | MessageContent[]): SDKUserMessage {
   return {
     type: 'user',
@@ -586,7 +608,9 @@ describe('AcpQueryRunner', () => {
     await mkdir(workspace);
     await writeFile(join(workspace, 'inside.txt'), 'one\ntwo\nthree\nfour');
     await writeFile(outside, 'secret');
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
     const { runner, ctx, constructorOptions } = createRunnerFixture({
+      client,
       session: { workspacePath: workspace },
       queryOptions: { cwd: workspace, mcpServers: {} },
       canUseTool: async (_toolName, input) => {
@@ -597,7 +621,7 @@ describe('AcpQueryRunner', () => {
 
     try {
       await runner.start();
-      await ctx.queryPromise;
+      await promptStarted;
 
       await expect(
         constructorOptions[0].onFsRead?.({
@@ -659,7 +683,10 @@ describe('AcpQueryRunner', () => {
         })
       ).rejects.toThrow('dangling symbolic link');
       await expect(readFile(danglingTarget, 'utf-8')).rejects.toThrow();
+      releasePrompt();
+      await ctx.queryPromise;
     } finally {
+      releasePrompt();
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -669,7 +696,9 @@ describe('AcpQueryRunner', () => {
     const workspace = join(root, 'workspace');
     const target = join(workspace, 'denied.txt');
     await mkdir(workspace);
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
     const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture({
+      client,
       session: { workspacePath: workspace },
       queryOptions: { cwd: workspace, mcpServers: {} },
       canUseTool: async () => ({ behavior: 'deny', message: 'Denied' }),
@@ -677,7 +706,7 @@ describe('AcpQueryRunner', () => {
 
     try {
       await runner.start();
-      await ctx.queryPromise;
+      await promptStarted;
 
       await expect(
         constructorOptions[0].onFsWrite?.({
@@ -699,7 +728,52 @@ describe('AcpQueryRunner', () => {
         }),
         expect.objectContaining({ displayName: `write ${target}` })
       );
+      releasePrompt();
+      await ctx.queryPromise;
     } finally {
+      releasePrompt();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('cancels a pending ACP filesystem write when the query ends', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-write-'));
+    const workspace = join(root, 'workspace');
+    const target = join(workspace, 'cancelled.txt');
+    await mkdir(workspace);
+    let approveWrite: (() => void) | undefined;
+    const writeApproved = new Promise<void>((resolve) => {
+      approveWrite = resolve;
+    });
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      client,
+      session: { workspacePath: workspace },
+      queryOptions: { cwd: workspace, mcpServers: {} },
+      canUseTool: async (_toolName, input) => {
+        await writeApproved;
+        const question = (input.questions as Array<{ question: string }>)[0].question;
+        return { behavior: 'allow', updatedInput: { answers: { [question]: 'Allow once' } } };
+      },
+    });
+
+    try {
+      await runner.start();
+      await promptStarted;
+      const write = constructorOptions[0].onFsWrite?.({
+        sessionId: 'acp-session-1',
+        path: target,
+        content: 'blocked',
+      });
+      ctx.queryAbortController?.abort();
+      approveWrite?.();
+
+      await expect(write).rejects.toThrow('ACP filesystem write cancelled');
+      await expect(readFile(target, 'utf-8')).rejects.toThrow();
+      releasePrompt();
+      await ctx.queryPromise;
+    } finally {
+      releasePrompt();
       await rm(root, { recursive: true, force: true });
     }
   });

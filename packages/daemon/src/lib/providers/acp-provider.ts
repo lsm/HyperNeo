@@ -176,19 +176,25 @@ export class AcpProvider implements Provider {
 
   private rebuildModelsFromCurated(): void {
     const commandIdentity = this.getCommandIdentity();
-    if (commandIdentity && this.curatedModels && this.curatedModels.length > 0) {
-      this.cachedModels = this.curatedModels.map((model) => ({
-        id: model.id,
-        name: model.name ?? model.id,
-        alias: model.id,
-        family: 'acp',
-        provider: 'acp',
-        contextWindow: this.getContextWindow(),
-        description: `ACP model ${model.name ?? model.id}`,
-        releaseDate: '2026-01-01',
-        available: true,
-        preferContextWindowMetadata: false,
-      }));
+    if (commandIdentity && this.curatedModels !== undefined) {
+      this.cachedModels =
+        this.curatedModels.length > 0
+          ? this.curatedModels.map((model) => ({
+              id: model.id,
+              name: model.name ?? model.id,
+              alias: model.id,
+              family: 'acp',
+              provider: 'acp',
+              contextWindow: this.getContextWindow(),
+              description: `ACP model ${model.name ?? model.id}`,
+              releaseDate: '2026-01-01',
+              available: true,
+              preferContextWindowMetadata: false,
+            }))
+          : AcpProvider.MODELS.map((model) => ({
+              ...model,
+              contextWindow: this.getContextWindow(),
+            }));
       this.cachedModelsCommandIdentity = commandIdentity;
     } else {
       this.cachedModels = null;
@@ -255,7 +261,7 @@ export class AcpProvider implements Provider {
   }
 
   setConfigOptions(configOptions: AcpConfigOption[]): void {
-    if (this.curatedModels && this.curatedModels.length > 0) return;
+    if (this.curatedModels !== undefined) return;
     const modelOption = configOptions.find((option) => option.category === 'model');
     if (!modelOption) {
       this.clearModelCache();

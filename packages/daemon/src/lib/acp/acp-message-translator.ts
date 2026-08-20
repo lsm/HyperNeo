@@ -68,6 +68,7 @@ export class AcpMessageTranslator {
   private contextUsageEstimate = 0;
   private reportedContextUsage: number | null = null;
   private inProgressToolUseIds = new Set<string>();
+  private toolCallUpdates = new Map<string, AcpToolCallUpdateUpdate>();
   private toolCallTitles = new Map<string, string>();
 
   constructor(
@@ -92,15 +93,27 @@ export class AcpMessageTranslator {
       case 'tool_call':
         return [...this.flush(), this.translateToolCall(update)];
       case 'tool_call_update': {
-        const messages: SDKMessage[] = [];
-        if (update.content || update.rawOutput !== undefined) {
+        const previous = this.toolCallUpdates.get(update.toolCallId);
+        const accumulated = {
+          ...previous,
+          ...update,
+          content: update.content
+            ? [...(previous?.content ?? []), ...update.content]
+            : previous?.content,
+          rawOutput: update.rawOutput !== undefined ? update.rawOutput : previous?.rawOutput,
+        };
+        const terminal = update.status === 'completed' || update.status === 'failed';
+        if (terminal) {
           this.inProgressToolUseIds.delete(update.toolCallId);
-          messages.push(this.translateToolResult(update));
-        } else if (!this.inProgressToolUseIds.has(update.toolCallId)) {
-          this.inProgressToolUseIds.add(update.toolCallId);
-          messages.push(this.translateToolCallUpdate(update));
+          this.toolCallUpdates.delete(update.toolCallId);
+          return [this.translateToolResult(accumulated)];
         }
-        return messages;
+        this.toolCallUpdates.set(update.toolCallId, accumulated);
+        if (!this.inProgressToolUseIds.has(update.toolCallId)) {
+          this.inProgressToolUseIds.add(update.toolCallId);
+          return [this.translateToolCallUpdate(update)];
+        }
+        return [];
       }
       case 'plan':
         return [...this.flush(), this.translateSyntheticAssistant('Plan', update.entries)];
@@ -184,7 +197,7 @@ export class AcpMessageTranslator {
   }
 
   translateToolResult(update: AcpToolCallUpdateUpdate): SDKUserMessage {
-    const output = update.rawOutput ?? update.content;
+    const output = update.rawOutput ?? update.content ?? '';
     const text = typeof output === 'string' ? output : JSON.stringify(output);
     this.contextUsageEstimate += estimateTokens(text);
 

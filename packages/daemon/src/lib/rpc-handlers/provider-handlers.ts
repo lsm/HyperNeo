@@ -385,13 +385,23 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             existing.providerId === 'acp' && updates.configJson !== undefined
               ? validateAcpConfigCommand(updates.configJson)
               : undefined;
+          const registeredAcpProvider = getProviderRegistry().get('acp');
+          const liveAcpCommand =
+            registeredAcpProvider instanceof AcpProvider
+              ? registeredAcpProvider.getAcpCommand()
+              : process.env.HYPERNEO_ACP_COMMAND;
+          const enablingChangedAcpCommand =
+            existing.providerId === 'acp' &&
+            existing.isEnabled === false &&
+            updates.isEnabled === true &&
+            acpCommandsDiffer(liveAcpCommand, readAcpCommand(existing.configJson));
           const acpCommandChanged =
             existing.providerId === 'acp' &&
             updates.configJson !== undefined &&
             acpCommandsDiffer(readAcpCommand(existing.configJson), updatedAcpCommand);
           const record = providerRepo.updateProvider(data.id, updates);
           if (!record) throw new Error(`Provider ${data.id} not found`);
-          if (acpCommandChanged) {
+          if (acpCommandChanged || enablingChangedAcpCommand) {
             await invalidateAcpSessions(sessionManager, clearPersistedAcpSessionIds);
           }
 

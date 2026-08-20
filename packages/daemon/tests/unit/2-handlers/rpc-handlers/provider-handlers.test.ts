@@ -490,6 +490,27 @@ describe('Provider RPC handlers', () => {
       expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
     });
 
+    it('invalidates ACP sessions when enabling a stored command that differs from live', async () => {
+      const provider = new AcpProvider({}, async () => {});
+      provider.setAcpCommand('old acp');
+      getProviderRegistry().register(provider);
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        isEnabled: false,
+        configJson: JSON.stringify({ command: 'new acp', models: [] }),
+      });
+      const handlers = setup();
+
+      await handlers.get('providers.update')!({ id: created.id, params: { isEnabled: true } }, {});
+
+      expect(provider.getAcpCommand()).toBe('new acp');
+      expect(sessionManager.interruptProviderSessions).toHaveBeenCalledWith('acp');
+      expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
+    });
+
     it('rejects invalid ACP commands before persisting or mutating the provider', async () => {
       const originalConfig = JSON.stringify({ command: 'devin acp', models: [] });
       const created = repo.createProvider({

@@ -157,6 +157,36 @@ describe('AcpTerminalManager', () => {
     );
   });
 
+  test('release terminates a process group after its leader exits', async () => {
+    const processKill = mock((_pid: number, _signal: NodeJS.Signals) => {});
+    const manager = new AcpTerminalManager({}, undefined, processKill);
+    const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'command' });
+
+    spawned[0].emit('close', 0, null);
+    await manager.release(params(terminalId));
+
+    if (process.platform === 'win32') {
+      expect(spawned[0].kill).not.toHaveBeenCalled();
+    } else {
+      expect(processKill).toHaveBeenCalledWith(-spawned[0].pid, 'SIGTERM');
+    }
+  });
+
+  test('dispose terminates a process group after its leader exits', async () => {
+    const processKill = mock((_pid: number, _signal: NodeJS.Signals) => {});
+    const manager = new AcpTerminalManager({}, undefined, processKill);
+    await manager.create({ sessionId: 'session-1', command: 'command' });
+
+    spawned[0].emit('close', 0, null);
+    manager.dispose();
+
+    if (process.platform === 'win32') {
+      expect(spawned[0].kill).not.toHaveBeenCalled();
+    } else {
+      expect(processKill).toHaveBeenCalledWith(-spawned[0].pid, 'SIGTERM');
+    }
+  });
+
   test('rejects operations for unknown terminal ids', async () => {
     const manager = new AcpTerminalManager();
     const unknown = params('unknown');
