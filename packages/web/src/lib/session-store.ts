@@ -43,10 +43,31 @@ const rowTimestamp = (m: ChatMessage): number => (m as MessageRow).timestamp || 
 const rowRowid = (m: ChatMessage): number => (m as MessageRow).rowid ?? 0;
 const rowId = (m: ChatMessage): unknown => (m as MessageRow).id;
 
+const compareByTimestampRowid = (a: ChatMessage, b: ChatMessage): number =>
+  rowTimestamp(a) - rowTimestamp(b) || rowRowid(a) - rowRowid(b);
+
 function sortByTimestampRowid(messages: ChatMessage[]): ChatMessage[] {
-  return [...messages].sort(
-    (a, b) => rowTimestamp(a) - rowTimestamp(b) || rowRowid(a) - rowRowid(b)
-  );
+  return [...messages].sort(compareByTimestampRowid);
+}
+
+function insertByTimestampRowid(existing: ChatMessage[], rows: ChatMessage[]): ChatMessage[] {
+  const added = [...rows].sort(compareByTimestampRowid);
+  if (existing.length === 0) return added;
+  if (compareByTimestampRowid(existing[existing.length - 1], added[0]) <= 0) {
+    return [...existing, ...added];
+  }
+  const next = existing.slice();
+  for (const row of added) {
+    let low = 0;
+    let high = next.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (compareByTimestampRowid(next[mid], row) <= 0) low = mid + 1;
+      else high = mid;
+    }
+    next.splice(low, 0, row);
+  }
+  return next;
 }
 
 const SNAPSHOT_TIMESTAMP_JITTER_MS = 1;
@@ -456,16 +477,20 @@ export class SessionStore {
         const id = (row as ChatMessage & { id?: unknown }).id;
         if (id != null) updatedById.set(id, row);
       }
+      let orderKeysChanged = false;
       next = next.map((m) => {
         const id = (m as ChatMessage & { id?: unknown }).id;
         if (id != null && updatedById.has(id)) {
           const updated = updatedById.get(id)!;
           if (updated !== m) changed = true;
+          if (rowTimestamp(updated) !== rowTimestamp(m) || rowRowid(updated) !== rowRowid(m)) {
+            orderKeysChanged = true;
+          }
           return updated;
         }
         return m;
       });
-      if (changed) next = sortByTimestampRowid(next);
+      if (orderKeysChanged) next = sortByTimestampRowid(next);
     }
 
     if (event.added?.length) {
@@ -480,7 +505,7 @@ export class SessionStore {
       }
       if (trulyNew.length) {
         changed = true;
-        next = sortByTimestampRowid([...next, ...trulyNew]);
+        next = insertByTimestampRowid(next, trulyNew);
       }
       this._syncCommandsFromSDKMessages(trulyNew);
     }

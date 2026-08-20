@@ -535,6 +535,147 @@ describe('SessionStore - Comprehensive Coverage', () => {
       expect(order).toEqual(['u-b', 'u-a']);
     });
 
+    describe('delta ordering', () => {
+      const row = (id: string, timestamp: number, rowid: number) => ({
+        id,
+        uuid: `u-${id}`,
+        type: 'user',
+        timestamp,
+        rowid,
+        content: id,
+      });
+      const uuids = () => sessionStore.sdkMessages.value.map((m) => (m as { uuid?: string }).uuid);
+
+      async function setupWithRows(rows: ReturnType<typeof row>[]) {
+        const hub = installLiveQueryHub();
+        await sessionStore.select('session-1');
+        hub.fire('liveQuery.snapshot', { subscriptionId: hub.subscriptionId, rows });
+        return hub;
+      }
+
+      it('appends newer rows at the tail in arrival order', async () => {
+        const hub = await setupWithRows([row('a', 100, 1), row('b', 200, 2)]);
+
+        hub.fire('liveQuery.delta', {
+          subscriptionId: hub.subscriptionId,
+          added: [row('c', 300, 3), row('d', 400, 4)],
+          updated: [],
+          removed: [],
+        });
+
+        expect(uuids()).toEqual(['u-a', 'u-b', 'u-c', 'u-d']);
+      });
+
+      it('inserts out-of-order rows at their sorted position', async () => {
+        const hub = await setupWithRows([row('a', 100, 1), row('c', 300, 3)]);
+
+        hub.fire('liveQuery.delta', {
+          subscriptionId: hub.subscriptionId,
+          added: [row('b', 200, 2)],
+          updated: [],
+          removed: [],
+        });
+
+        expect(uuids()).toEqual(['u-a', 'u-b', 'u-c']);
+      });
+
+      it('sorts an unsorted added batch among itself before inserting', async () => {
+        const hub = await setupWithRows([]);
+
+        hub.fire('liveQuery.delta', {
+          subscriptionId: hub.subscriptionId,
+          added: [row('c', 300, 3), row('a', 100, 1), row('b', 200, 2)],
+          updated: [],
+          removed: [],
+        });
+
+        expect(uuids()).toEqual(['u-a', 'u-b', 'u-c']);
+      });
+
+      it('breaks same-millisecond ties by rowid on insert', async () => {
+        const hub = await setupWithRows([row('a', 100, 1), row('b', 150, 5)]);
+
+        hub.fire('liveQuery.delta', {
+          subscriptionId: hub.subscriptionId,
+          added: [row('c', 150, 7), row('d', 150, 3)],
+          updated: [],
+          removed: [],
+        });
+
+        expect(uuids()).toEqual(['u-a', 'u-d', 'u-b', 'u-c']);
+      });
+
+      it('places added rows after existing rows with equal timestamp and rowid', async () => {
+        const hub = await setupWithRows([row('a', 150, 5), row('b', 200, 6)]);
+
+        hub.fire('liveQuery.delta', {
+          subscriptionId: hub.subscriptionId,
+          added: [row('c', 150, 5)],
+          updated: [],
+          removed: [],
+        });
+
+        expect(uuids()).toEqual(['u-a', 'u-c', 'u-b']);
+      });
+
+      it('re-adds a removed row at its ordered position within the same delta', async () => {
+        const hub = await setupWithRows([row('a', 100, 1), row('b', 200, 2)]);
+
+        hub.fire('liveQuery.delta', {
+          subscriptionId: hub.subscriptionId,
+          added: [row('c', 150, 3)],
+          updated: [],
+          removed: [{ id: 'b' }],
+        });
+
+        expect(uuids()).toEqual(['u-a', 'u-c']);
+      });
+
+      it('does not duplicate rows when the same added delta fires twice', async () => {
+        const hub = await setupWithRows([row('a', 100, 1)]);
+
+        const delta = {
+          subscriptionId: hub.subscriptionId,
+          added: [row('b', 200, 2)],
+          updated: [],
+          removed: [],
+        };
+        hub.fire('liveQuery.delta', delta);
+        hub.fire('liveQuery.delta', delta);
+
+        expect(uuids()).toEqual(['u-a', 'u-b']);
+      });
+
+      it('keeps row order when updates leave timestamp and rowid unchanged', async () => {
+        const hub = await setupWithRows([row('a', 100, 1), row('b', 200, 2)]);
+
+        hub.fire('liveQuery.delta', {
+          subscriptionId: hub.subscriptionId,
+          added: [],
+          updated: [{ ...row('a', 100, 1), content: 'refreshed' }],
+          removed: [],
+        });
+
+        expect(uuids()).toEqual(['u-a', 'u-b']);
+        expect((sessionStore.sdkMessages.value[0] as { content?: unknown }).content).toBe(
+          'refreshed'
+        );
+      });
+
+      it('reorders an updated row whose rowid changes within the same millisecond', async () => {
+        const hub = await setupWithRows([row('a', 100, 1), row('b', 100, 5)]);
+
+        hub.fire('liveQuery.delta', {
+          subscriptionId: hub.subscriptionId,
+          added: [],
+          updated: [{ ...row('a', 100, 1), rowid: 9 }],
+          removed: [],
+        });
+
+        expect(uuids()).toEqual(['u-b', 'u-a']);
+      });
+    });
+
     it('ignores snapshot/delta events for a different subscriptionId', async () => {
       const hub = installLiveQueryHub();
       await sessionStore.select('session-1');
