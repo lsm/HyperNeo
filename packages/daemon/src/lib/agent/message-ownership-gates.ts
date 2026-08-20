@@ -85,12 +85,15 @@ export function planFlushDelivery(args: {
   return { action: 'each', deliver, skip };
 }
 
+export type DeliveryRoleResolution = MessageDeliveryRole | 'explicit_role_rejected';
+
 export function resolveDeliveryRole(args: {
   existingActiveRole: MessageDeliveryRole | null;
   requestedRole?: MessageDeliveryRole;
   uniqueConstraintHit: boolean;
-}): MessageDeliveryRole {
+}): DeliveryRoleResolution {
   if (args.existingActiveRole) return args.existingActiveRole;
+  if (args.requestedRole && args.uniqueConstraintHit) return 'explicit_role_rejected';
   if (args.requestedRole) return args.requestedRole;
   if (args.uniqueConstraintHit) return 'steer';
   return 'turn';

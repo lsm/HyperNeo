@@ -450,21 +450,31 @@ describe('resolveDeliveryRole', () => {
     ).toBe('turn');
   });
 
-  test('an explicit requested role wins over the unique-constraint fallback', () => {
+  test('an explicit requested role is returned when no constraint hits', () => {
     expect(
       resolveDeliveryRole({
         existingActiveRole: null,
         requestedRole: 'steer',
-        uniqueConstraintHit: true,
+        uniqueConstraintHit: false,
       })
     ).toBe('steer');
     expect(
       resolveDeliveryRole({
         existingActiveRole: null,
         requestedRole: 'turn',
-        uniqueConstraintHit: true,
+        uniqueConstraintHit: false,
       })
     ).toBe('turn');
+  });
+
+  test('an explicit requested turn under a unique-constraint hit is rejected, not returned', () => {
+    expect(
+      resolveDeliveryRole({
+        existingActiveRole: null,
+        requestedRole: 'turn',
+        uniqueConstraintHit: true,
+      })
+    ).toBe('explicit_role_rejected');
   });
 
   test('a unique-constraint hit with no existing or requested role falls back to steer', () => {
