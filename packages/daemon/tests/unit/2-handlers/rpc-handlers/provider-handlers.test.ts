@@ -466,7 +466,7 @@ describe('Provider RPC handlers', () => {
       expect(result.provider.displayName).toBe('Anthropic Inc');
     });
 
-    it('updates the live command before invalidating ACP sessions', async () => {
+    it('updates the live command before clearing sessions and interrupting ACP sessions', async () => {
       const provider = new AcpProvider({}, async () => {});
       provider.setAcpCommand('old acp');
       getProviderRegistry().register(provider);
@@ -476,6 +476,9 @@ describe('Provider RPC handlers', () => {
       });
       sessionManager.interruptProviderSessions = mock(async () => {
         callOrder.push('interrupt');
+      });
+      clearPersistedAcpSessionIds = mock(() => {
+        callOrder.push('clear');
       });
       const created = repo.createProvider({
         providerId: 'acp',
@@ -496,7 +499,7 @@ describe('Provider RPC handlers', () => {
         {}
       );
 
-      expect(callOrder).toEqual(['sync:new acp', 'interrupt']);
+      expect(callOrder).toEqual(['sync:new acp', 'clear', 'interrupt']);
       expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
     });
 

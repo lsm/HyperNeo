@@ -189,8 +189,8 @@ async function invalidateAcpSessions(
   sessionManager: Pick<SessionManager, 'interruptProviderSessions'> | undefined,
   clearPersistedAcpSessionIds: (() => void) | undefined
 ): Promise<void> {
-  await sessionManager?.interruptProviderSessions('acp');
   clearPersistedAcpSessionIds?.();
+  await sessionManager?.interruptProviderSessions('acp');
 }
 
 function acpCommandsDiffer(
