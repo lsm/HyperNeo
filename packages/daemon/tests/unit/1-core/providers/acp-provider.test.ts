@@ -126,6 +126,18 @@ describe('AcpProvider', () => {
 
       expect((await provider.getModels())[0].id).toBe('acp-cached');
     });
+
+    it('should preserve the current command when a malformed override is rejected', () => {
+      provider.setAcpCommand('devin acp');
+
+      expect(() => provider.setAcpCommand("devin 'acp")).toThrow(
+        'Invalid ACP command: unmatched quote'
+      );
+      expect(provider.getAcpCommand()).toBe('devin acp');
+
+      provider.setAcpCommand('fixed acp');
+      expect(provider.getAcpCommand()).toBe('fixed acp');
+    });
   });
 
   describe('setAcpModels', () => {

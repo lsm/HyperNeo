@@ -270,6 +270,48 @@ describe('Provider RPC handlers', () => {
       expect(creds.storeApiKey).not.toHaveBeenCalled();
     });
 
+    it('rejects invalid ACP commands before creating or mutating the provider', async () => {
+      const provider = new AcpProvider({}, async () => {});
+      provider.setAcpCommand('devin acp');
+      getProviderRegistry().register(provider);
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.create')!(
+          {
+            params: {
+              providerId: 'acp',
+              displayName: 'ACP Agent',
+              kind: 'built_in',
+              authType: 'none',
+              configJson: JSON.stringify({ command: "devin 'acp", models: [] }),
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('Invalid ACP command: unmatched quote');
+
+      expect(repo.listProviders()).toEqual([]);
+      expect(provider.getAcpCommand()).toBe('devin acp');
+
+      const result = (await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'acp',
+            displayName: 'ACP Agent',
+            kind: 'built_in',
+            authType: 'none',
+            configJson: JSON.stringify({ command: 'fixed acp', models: [] }),
+          },
+        },
+        {}
+      )) as { success: boolean; provider: ProviderRecord };
+
+      expect(result.success).toBe(true);
+      expect(repo.listProviders()).toHaveLength(1);
+      expect(provider.getAcpCommand()).toBe('fixed acp');
+    });
+
     it('rolls back the provider row and surfaces keychain guidance when storeApiKey throws KeychainUnavailableError', async () => {
       creds.storeApiKey = mock(async () => {
         throw new KeychainUnavailableError('User interaction is not allowed.');

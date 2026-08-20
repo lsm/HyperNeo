@@ -274,6 +274,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         data.params.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
       return lock(async () => {
         validateCreateParams(data.params);
+        if (data.params.providerId === 'acp') {
+          validateAcpConfigCommand(data.params.configJson);
+        }
         const record = providerRepo.createProvider(data.params);
 
         try {
