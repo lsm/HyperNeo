@@ -199,3 +199,103 @@ describe.skipIf(!isBun)(
     });
   }
 );
+
+describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement', () => {
+  let server: AnthropicMessagesBridgeServer | undefined;
+
+  afterEach(() => {
+    server?.stop();
+    server = undefined;
+  });
+
+  async function postWithSession(
+    port: number,
+    sessionId: string | undefined,
+    body: object
+  ): Promise<Response> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (sessionId) headers.Authorization = `Bearer custom-endpoint:${sessionId}`;
+    return await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('rewrites an adaptive thinking body to the session-configured enabled budget', async () => {
+    let upstreamThinking: unknown = 'not-captured';
+    server = makeServer(async (_url, init) => {
+      const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
+        thinking?: unknown;
+      };
+      upstreamThinking = body.thinking ?? null;
+      return new Response(JSON.stringify({ input_tokens: 1 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    server.setSessionThinkingConfig?.('sess-1', { type: 'enabled', budget_tokens: 31999 });
+
+    const res = await postWithSession(server.port, 'sess-1', {
+      model: 'swe-1-7',
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'hi' }],
+      thinking: { type: 'adaptive' },
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(upstreamThinking).toEqual({ type: 'enabled', budget_tokens: 31999 });
+  });
+
+  it('strips thinking entirely for a session configured as off', async () => {
+    let upstreamHadThinking: boolean | null = null;
+    server = makeServer(async (_url, init) => {
+      const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
+        thinking?: unknown;
+      };
+      upstreamHadThinking = 'thinking' in body;
+      return new Response(JSON.stringify({ input_tokens: 1 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    server.setSessionThinkingConfig?.('sess-off', undefined);
+
+    const res = await postWithSession(server.port, 'sess-off', {
+      model: 'swe-1-7',
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'hi' }],
+      thinking: { type: 'adaptive' },
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(upstreamHadThinking).toBe(false);
+  });
+
+  it('leaves unknown sessions untouched (no rewrite without an explicit config)', async () => {
+    let upstreamThinking: unknown = 'not-captured';
+    server = makeServer(async (_url, init) => {
+      const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
+        thinking?: unknown;
+      };
+      upstreamThinking = body.thinking ?? null;
+      return new Response(JSON.stringify({ input_tokens: 1 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    const res = await postWithSession(server.port, 'never-configured', {
+      model: 'swe-1-7',
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'hi' }],
+      thinking: { type: 'adaptive' },
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(upstreamThinking).toEqual({ type: 'adaptive' });
+  });
+});
