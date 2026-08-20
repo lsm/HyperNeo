@@ -389,6 +389,12 @@ export class AcpTransport {
         return;
       }
 
+      this.recordProcessGroupGone();
+      if (this.processGroupGone) {
+        resolve();
+        return;
+      }
+
       this.killProcess('SIGTERM');
 
       this.killTimer = setTimeout(() => {
