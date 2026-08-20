@@ -7,7 +7,7 @@ import type {
   SpaceWorkerAgentSyncDiff,
   SpaceWorkerAgentSyncPreview,
 } from '@hyperneo/shared';
-import { KNOWN_TOOLS } from '@hyperneo/shared';
+import { KNOWN_TOOLS, isKnownToolEntry } from '@hyperneo/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
 
 type LongHorizonAgentHandleSource = {
@@ -21,7 +21,6 @@ import { computeAgentTemplateHash } from '../agents/agent-template-hash';
 
 const log = new Logger('space-agent-manager');
 
-const KNOWN_TOOLS_SET = new Set<string>(KNOWN_TOOLS);
 const RESERVED_AGENT_HANDLES = new Set<string>(RESERVED_SPACE_AGENT_HANDLES);
 
 export type SpaceAgentResult<T> =
@@ -366,9 +365,9 @@ export class SpaceAgentManager {
 }
 
 function validateTools(tools: string[]): string | null {
-  const invalid = tools.filter((t) => !KNOWN_TOOLS_SET.has(t));
+  const invalid = tools.filter((t) => !isKnownToolEntry(t));
   if (invalid.length === 0) return null;
-  return `Unknown tool${invalid.length > 1 ? 's' : ''}: ${invalid.map((t) => `"${t}"`).join(', ')}. Valid tools: ${KNOWN_TOOLS.join(', ')}`;
+  return `Unknown tool${invalid.length > 1 ? 's' : ''}: ${invalid.map((t) => `"${t}"`).join(', ')}. Valid tools: ${KNOWN_TOOLS.join(', ')} or scoped Bash entries like 'Bash(gh pr view:*)'`;
 }
 
 function toolSetsEqual(a: string[], b: string[]): boolean {

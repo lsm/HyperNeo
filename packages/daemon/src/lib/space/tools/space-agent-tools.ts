@@ -4,6 +4,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import {
   generateUUID,
   getWorkflowRunExecutionStatusLabel,
+  isKnownToolEntry,
   isRateOrUsageLimited,
   isWorkflowRecoveryTransition,
   KNOWN_TOOLS,
@@ -81,7 +82,6 @@ import {
 } from '../agent-handle';
 
 const log = new Logger('space-agent-tools');
-const KNOWN_TOOLS_SET = new Set<string>(KNOWN_TOOLS);
 
 function workflowRunAttemptLabel(status: WorkflowRunStatus): string {
   return getWorkflowRunExecutionStatusLabel(status).toLowerCase();
@@ -201,11 +201,13 @@ function normalizeGoalUpdateArgs(args: GoalToolUpdateArgs) {
 }
 
 function validateTools(tools: string[]): string | null {
-  const invalid = tools.filter((toolName) => !KNOWN_TOOLS_SET.has(toolName));
+  const invalid = tools.filter((toolName) => !isKnownToolEntry(toolName));
   if (invalid.length === 0) return null;
   return `Unknown tool${invalid.length > 1 ? 's' : ''}: ${invalid
     .map((toolName) => `"${toolName}"`)
-    .join(', ')}. Valid tools: ${KNOWN_TOOLS.join(', ')}`;
+    .join(
+      ', '
+    )}. Valid tools: ${KNOWN_TOOLS.join(', ')} or scoped Bash entries like 'Bash(gh pr view:*)'`;
 }
 
 async function validateLongHorizonModel(

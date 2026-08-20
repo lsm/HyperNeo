@@ -14,6 +14,7 @@ import type {
   WorkflowNode,
 } from '@hyperneo/shared';
 import type { SkillEnablementOverride } from '@hyperneo/shared';
+import { isScopedBashToolEntry } from '@hyperneo/shared';
 import type {
   AgentMemoryCoreEntry,
   AgentMemorySearchResult,
@@ -178,7 +179,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
   sections.push(`## Your Task #${task.taskNumber}`);
   sections.push('');
   sections.push(`**Title:** ${task.title}`);
-  sections.push(`**Description:** ${task.description}`);
+  sections.push(`**Description:** ${labelVerificationImplementerFacing(task.description)}`);
   if (task.priority) sections.push(`**Priority:** ${task.priority}`);
 
   sections.push('');
@@ -294,6 +295,16 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 function truncateMemoryPromptContent(content: string): string {
   if (content.length <= MEMORY_PROMPT_CONTENT_LIMIT) return content;
   return `${content.slice(0, MEMORY_PROMPT_CONTENT_LIMIT)}…`;
+}
+
+const IMPLEMENTER_FACING_VERIFICATION_LABEL =
+  ' (for the implementer; the reviewer validates by reading, CI validates by running)';
+
+export function labelVerificationImplementerFacing(description: string): string {
+  return description.replace(
+    /^[ \t]*(?:#{1,6}[ \t]*Verification[ \t]*|Verification:[ \t]*|\*\*Verification:\*\*[ \t]*)$/m,
+    (heading) => `${heading.trimEnd()}${IMPLEMENTER_FACING_VERIFICATION_LABEL}`
+  );
 }
 
 function buildPreviousWorkLines(items: string[] | undefined): string[] {
@@ -426,8 +437,13 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
   const customAgentInvocationTools = customTools?.filter((tool) =>
     ['Task', 'TaskOutput', 'TaskStop'].includes(tool)
   );
+  const scopedBashToolEntries = customTools?.filter((tool) => isScopedBashToolEntry(tool));
+  const allowedToolEntries = [
+    ...(customAgentInvocationTools ?? []),
+    ...(scopedBashToolEntries ?? []),
+  ];
   const customToolPermissions = {
-    ...(customAgentInvocationTools?.length ? { allowedTools: customAgentInvocationTools } : {}),
+    ...(allowedToolEntries.length > 0 ? { allowedTools: allowedToolEntries } : {}),
     ...(customDisallowedBuiltins.length > 0 ? { disallowedTools: customDisallowedBuiltins } : {}),
   };
   const model =

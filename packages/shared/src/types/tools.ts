@@ -40,3 +40,13 @@ export const KNOWN_TOOLS = [
 ] as const;
 
 export const DENIABLE_TOOLS = ['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'] as const;
+
+export const SCOPED_BASH_TOOL_PATTERN = /^Bash\((.+):\*\)$/;
+
+export function isScopedBashToolEntry(entry: string): boolean {
+  return SCOPED_BASH_TOOL_PATTERN.test(entry);
+}
+
+export function isKnownToolEntry(entry: string): boolean {
+  return (KNOWN_TOOLS as readonly string[]).includes(entry) || isScopedBashToolEntry(entry);
+}

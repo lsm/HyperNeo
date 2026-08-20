@@ -1,7 +1,6 @@
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { describe, expect, test } from 'bun:test';
 import type { Space, SpaceTask } from '@hyperneo/shared';
-import { DENIABLE_TOOLS } from '@hyperneo/shared';
+import { DENIABLE_TOOLS, isScopedBashToolEntry } from '@hyperneo/shared';
 import { requireAgentFamily } from '../../../../src/lib/space/agents/agent-family-resolver';
 import {
   createCustomAgentInit,
@@ -14,6 +13,7 @@ import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agen
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { runMigrations } from '../../../../src/storage/schema/index';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -94,6 +94,16 @@ describe('deriveWorkerDisallowedTools — shared tool-policy resolver', () => {
     expect(denied.slice(0, DENIABLE_TOOLS.length)).toEqual([...DENIABLE_TOOLS]);
     expect(denied.slice(DENIABLE_TOOLS.length)).toEqual(['Workflow', 'CronCreate']);
   });
+
+  test('scoped Bash command patterns keep Bash available instead of denying it wholesale', () => {
+    const denied = deriveWorkerDisallowedTools(['Read', 'Bash(gh pr view:*)', 'Grep']);
+    expect(denied).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+  });
+
+  test('a profile with neither bare Bash nor scoped Bash entries still denies Bash', () => {
+    const denied = deriveWorkerDisallowedTools(['Read', 'Grep', 'Glob']);
+    expect(denied).toEqual([...DENIABLE_TOOLS]);
+  });
 });
 
 describe('effective runtime capability vs declared profile (worker presets)', () => {
@@ -121,13 +131,16 @@ describe('effective runtime capability vs declared profile (worker presets)', ()
     }
   });
 
-  test('Reviewer keeps Bash but denies write/edit deniable tools (restrained review role)', () => {
-    const effective = new Set(effectiveDeniableTools(PRESET_AGENT_TOOLS.reviewer));
+  test('Reviewer keeps Bash via scoped command patterns but denies write/edit deniable tools', () => {
+    const profile = PRESET_AGENT_TOOLS.reviewer;
+    const effective = new Set(effectiveDeniableTools(profile));
     expect(effective.has('Bash')).toBe(true);
     expect(effective.has('Write')).toBe(false);
     expect(effective.has('Edit')).toBe(false);
     expect(effective.has('MultiEdit')).toBe(false);
     expect(effective.has('NotebookEdit')).toBe(false);
+    expect(profile.some((tool) => tool.startsWith('Bash('))).toBe(true);
+    expect(profile).not.toContain('Bash');
   });
 
   test('QA keeps Bash, denies the write/edit deniable tools', () => {
@@ -141,10 +154,12 @@ describe('effective runtime capability vs declared profile (worker presets)', ()
     for (const [name, profile] of Object.entries(PRESET_AGENT_TOOLS)) {
       const permissive = !profile || profile.length === 0;
       const listed = new Set(profile);
+      const hasScopedBash = profile.some((tool) => isScopedBashToolEntry(tool));
       const denied = new Set(deriveWorkerDisallowedTools(profile));
       for (const tool of DENIABLE_TOOLS) {
         const availableAtRuntime = !denied.has(tool);
-        const intendedAvailable = permissive || listed.has(tool);
+        const intendedAvailable =
+          permissive || listed.has(tool) || (tool === 'Bash' && hasScopedBash);
         expect({ preset: name, tool, availableAtRuntime, intendedAvailable }).toEqual({
           preset: name,
           tool,
@@ -206,6 +221,23 @@ describe('shared resolver across worker and long-horizon families', () => {
 
     const profile = ['Read', 'Bash'];
     expect(workerInit(profile).disallowedTools ?? []).toEqual(deriveWorkerDisallowedTools(profile));
+  });
+
+  test('the reviewer preset forwards scoped Bash entries into allowedTools and keeps Bash undenied', () => {
+    const init = workerInit(PRESET_AGENT_TOOLS.reviewer);
+    const allowed = new Set(init.allowedTools ?? []);
+    expect(allowed.has('Task')).toBe(true);
+    expect(allowed.has('TaskOutput')).toBe(true);
+    expect(allowed.has('TaskStop')).toBe(true);
+    expect(allowed.has('Bash(gh pr view:*)')).toBe(true);
+    expect(allowed.has('Bash(gh api graphql:*)')).toBe(true);
+    expect(allowed.has('Bash(jq:*)')).toBe(true);
+    expect(
+      init.allowedTools?.every((tool) => !tool.startsWith('Bash') || isScopedBashToolEntry(tool))
+    ).toBe(true);
+    expect(init.disallowedTools ?? []).not.toContain('Bash');
+    expect(init.disallowedTools ?? []).toContain('Write');
+    expect(init.disallowedTools ?? []).toContain('Edit');
   });
 });
 

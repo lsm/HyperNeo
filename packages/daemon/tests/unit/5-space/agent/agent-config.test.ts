@@ -1,15 +1,15 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
+import type { Space, SpaceTask, SpaceWorkerAgent } from '@hyperneo/shared';
+import {
+  type CustomAgentConfig,
+  createCustomAgentInit,
+  expandPrompt,
+  type SlotOverrides,
+} from '../../../../src/lib/space/agents/custom-agent';
 import {
   PRESET_AGENT_TOOLS,
   SUB_SESSION_FEATURES,
 } from '../../../../src/lib/space/agents/seed-agents';
-import {
-  createCustomAgentInit,
-  expandPrompt,
-  type SlotOverrides,
-  type CustomAgentConfig,
-} from '../../../../src/lib/space/agents/custom-agent';
-import type { SpaceWorkerAgent, Space, SpaceTask } from '@hyperneo/shared';
 
 function makeAgent(overrides?: Partial<SpaceWorkerAgent>): SpaceWorkerAgent {
   return {
@@ -89,12 +89,16 @@ describe('PRESET_AGENT_TOOLS', () => {
     expect(tools).not.toContain('Edit');
   });
 
-  it('reviewer has Bash + Cron tools for inspection, but NO Write/Edit (posts via the gh CLI)', () => {
+  it('reviewer has scoped gh Bash patterns + Cron tools for inspection, but NO bare Bash/Write/Edit', () => {
     const tools = PRESET_AGENT_TOOLS.reviewer;
     expect(tools).toContain('Read');
     expect(tools).toContain('Grep');
     expect(tools).toContain('Glob');
-    expect(tools).toContain('Bash');
+    expect(tools).not.toContain('Bash');
+    expect(tools).toContain('Bash(gh pr view:*)');
+    expect(tools).toContain('Bash(gh pr diff:*)');
+    expect(tools).toContain('Bash(gh pr checks:*)');
+    expect(tools).toContain('Bash(gh api graphql:*)');
     expect(tools).toContain('CronCreate');
     expect(tools).toContain('CronDelete');
     expect(tools).toContain('CronList');
@@ -230,12 +234,30 @@ describe('createCustomAgentInit — sub-session features', () => {
     expect(init.features).toEqual(SUB_SESSION_FEATURES);
   });
 
-  it('reviewer denies mutation tools but keeps Bash (restrained review role)', () => {
+  it('reviewer denies mutation tools but keeps Bash via scoped command patterns (restrained review role)', () => {
     const config = makeConfig(PRESET_AGENT_TOOLS.reviewer);
     const init = createCustomAgentInit(config);
 
     expect(init.sdkToolsPreset).toBeUndefined();
-    expect(init.allowedTools).toEqual(['Task', 'TaskOutput', 'TaskStop']);
+    expect(init.allowedTools).toEqual([
+      'Task',
+      'TaskOutput',
+      'TaskStop',
+      'Bash(gh pr view:*)',
+      'Bash(gh pr diff:*)',
+      'Bash(gh pr checks:*)',
+      'Bash(gh api graphql:*)',
+      'Bash(gh api repos:*)',
+      'Bash(jq:*)',
+      'Bash(mktemp:*)',
+      'Bash(echo:*)',
+      'Bash(cat:*)',
+      'Bash(test:*)',
+      'Bash(head:*)',
+      'Bash(tr:*)',
+      'Bash(base64:*)',
+      'Bash(exit:*)',
+    ]);
     expect(init.agent).toBeUndefined();
     expect(init.agents?.['general-purpose']).toBeDefined();
     expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);

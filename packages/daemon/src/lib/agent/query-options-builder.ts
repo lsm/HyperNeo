@@ -60,6 +60,7 @@ import {
   resolveConfig,
 } from './output-limiter-hook';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
+import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope';
 
 const log = new Logger('QueryOptionsBuilder');
 
@@ -893,6 +894,14 @@ CRITICAL RULES:
           hooks: matcherGuards.map(compileToolGuard),
         });
       }
+    }
+
+    const bashScopePrefixes = extractBashScopePrefixes(this.ctx.session.config.allowedTools ?? []);
+    if (bashScopePrefixes.length > 0) {
+      preToolUse.push({
+        matcher: 'Bash',
+        hooks: [createBashScopeHook(bashScopePrefixes)],
+      });
     }
 
     const globalSettings = this.ctx.settingsManager.getGlobalSettings();
