@@ -1073,6 +1073,56 @@ describe('AgentSession', () => {
       await expect(drive).resolves.toEqual({ outcome: 'completed' });
     });
 
+    it('driveDeliveryTurn re-arms through a spurious turn-end after reusing an acknowledgment', async () => {
+      let resultLanded = false;
+      let sendStatus = 'enqueued';
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus })),
+        hasTerminalResultAfter: mock(() => resultLanded),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryConsumedByUuids: mock(() => {
+          sendStatus = 'consumed';
+          return [];
+        }),
+        markDeliveryRetryableByUuid: mock(() => 'db-1'),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: mock(() => Promise.resolve()),
+        waitForPendingOrInFlight: mock(() => ({
+          acknowledgment: Promise.resolve(),
+          content: 'hello',
+        })),
+        isRunning: mock(() => false),
+        size: mock(() => 1),
+      };
+
+      await agentSession.stateManager.setProcessing('uuid-spurious-reused');
+      const drive = agentSession.driveDeliveryTurn(
+        'uuid-spurious-reused',
+        'hello',
+        null,
+        false,
+        () => true
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await agentSession.stateManager.setIdle();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      resultLanded = true;
+      await agentSession.stateManager.setProcessing('uuid-spurious-reused');
+      await agentSession.stateManager.setIdle();
+      await expect(drive).resolves.toEqual({ outcome: 'completed' });
+    });
+
     it('driveDeliveryTurn reuses a pending batch acknowledgment on retry', async () => {
       let resultLanded = false;
       const markSubmittedSpy = mock(() => ['db-member']);
@@ -1164,10 +1214,11 @@ describe('AgentSession', () => {
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
       );
+      const existing = Promise.withResolvers<void>();
       (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
         admitWithId: mock(() => Promise.resolve()),
         waitForPendingOrInFlight: mock(() => ({
-          acknowledgment: new Promise<void>(() => {}),
+          acknowledgment: existing.promise,
           content: 'kickoff',
         })),
         isRunning: mock(() => false),
@@ -1187,6 +1238,8 @@ describe('AgentSession', () => {
       expect(result).toEqual({ outcome: 'aborted' });
       expect(markSubmittedSpy).not.toHaveBeenCalled();
       expect(markConsumedSpy).not.toHaveBeenCalled();
+      existing.reject(new Error('Interrupted by user'));
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     it('driveDeliveryTurn abort leaves a reused pending message intact', async () => {

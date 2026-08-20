@@ -1422,6 +1422,7 @@ export class AgentSession
           const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
           freshFeed = existing === null;
           if (existing && !this.deliveryContentMatches(existing.content, feedContent)) {
+            void existing.acknowledgment.catch(() => {});
             turnEnd.cancel();
             disarmObserver();
             return { kind: 'aborted' as const };
@@ -1507,7 +1508,7 @@ export class AgentSession
       stallPromise = this.armDeliveryTurnStall(signal, claimGuard);
       stallWatchdog = this.deliveryTurnStall;
       const SPURIOUS_TURN_END_GRACE_MS = 250;
-      const freshFeed = started.freshFeed;
+      const feedAcknowledged = started.acknowledgment !== null;
       let raceArmedAt = Date.now();
       let graceRearms = 0;
       let turnEndFired = false;
@@ -1537,7 +1538,7 @@ export class AgentSession
           !!turnResultRepo?.hasTerminalResultAfter(this.session.id, messageUuid) ||
           !!turnResultRepo?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
         const spuriousFire =
-          freshFeed &&
+          feedAcknowledged &&
           turnEndFired &&
           !queryEnded &&
           Date.now() - raceArmedAt <= SPURIOUS_TURN_END_GRACE_MS &&
