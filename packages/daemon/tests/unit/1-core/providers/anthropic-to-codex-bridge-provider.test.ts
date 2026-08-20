@@ -2957,6 +2957,66 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('abandons the old-scope retry when replacement discovery is already running', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const oldAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-race-old' },
+      });
+      const replacementAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-race-new' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: oldAccess,
+        refresh: 'old-refresh-token',
+        accountId: 'acct-race-old',
+      });
+      let resolveOld401: ((response: Response) => void) | undefined;
+      const oldResponse = new Promise<Response>((resolve) => {
+        resolveOld401 = resolve;
+      });
+      let resolveReplacement: ((response: Response) => void) | undefined;
+      const replacementResponse = new Promise<Response>((resolve) => {
+        resolveReplacement = resolve;
+      });
+      const fetchImpl = mock()
+        .mockImplementationOnce(async () => oldResponse)
+        .mockImplementationOnce(async () => replacementResponse)
+        .mockImplementationOnce(
+          async () => new Response('server error', { status: 500 })
+        ) as unknown as typeof fetch;
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+
+        const first = provider.getModels();
+        await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+        provider.setCredentials({
+          type: 'oauth',
+          accessToken: replacementAccess,
+          refreshToken: 'new-refresh-token',
+          raw: { accountId: 'acct-race-new' },
+        });
+        const second = provider.getModels();
+        await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
+        resolveOld401?.(new Response('unauthorized', { status: 401 }));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        resolveReplacement?.(
+          new Response(JSON.stringify({ data: [{ id: 'gpt-race-new' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        );
+
+        const [, secondModels] = await Promise.all([first, second]);
+        expect(secondModels.map((model) => model.id)).toEqual(['gpt-race-new']);
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+        expect((provider as unknown as { discoveryError?: Error }).discoveryError).toBeUndefined();
+      } finally {
+        provider?.stopAllBridgeServers();
+      }
+    });
+
     it('does not carry a failed scope discovery error into a replacement scope', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const tokenA = makeJwt({
