@@ -1817,7 +1817,7 @@ describe('AgentMessageRouter: generic address targets', () => {
 
   test('does not infer a node name for a slot declared in two node groups', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('Coding', 'Review A'),
+      makeChannel('Coding', ['Review A', 'Review B']),
     ]);
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, 'node-coding', 'coder', ctx.coderSessionId);
     seedPeerTask(
@@ -1829,26 +1829,34 @@ describe('AgentMessageRouter: generic address targets', () => {
       'session-review-a'
     );
     const activatedAgents: string[] = [];
-    const router = makeRouter(ctx, workflowRunId, [], [makeChannel('Coding', 'Review A')], {
-      nodeGroups: { Coding: ['coder'], 'Review A': ['reviewer'], 'Review B': ['reviewer'] },
-      workflowNodeNameById: { 'node-coding': 'Coding' },
-      activateTargetSession: async (agentName) => {
-        activatedAgents.push(agentName);
-        return [];
-      },
-    });
+    const router = makeRouter(
+      ctx,
+      workflowRunId,
+      [],
+      [makeChannel('Coding', ['Review A', 'Review B'])],
+      {
+        nodeGroups: { Coding: ['coder'], 'Review A': ['reviewer'], 'Review B': ['reviewer'] },
+        workflowNodeNameById: { 'node-coding': 'Coding' },
+        activateTargetSession: async (agentName) => {
+          activatedAgents.push(agentName);
+          return [];
+        },
+      }
+    );
 
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: '@worker:Review%20A/reviewer',
-      message: 'review A only',
-    });
+    for (const nodeName of ['Review A', 'Review B']) {
+      const result = await router.deliverMessage({
+        fromAgentName: 'coder',
+        fromSessionId: ctx.coderSessionId,
+        target: `@worker:${encodeURIComponent(nodeName)}/reviewer`,
+        message: `${nodeName} only`,
+      });
 
-    expect(result.success).toBe(false);
-    expect(result.delivered).toEqual([]);
-    expect(result.notFoundAgentNames).toEqual(['reviewer']);
-    expect(activatedAgents).toEqual(['reviewer']);
+      expect(result.success).toBe(false);
+      expect(result.delivered).toEqual([]);
+      expect(result.notFoundAgentNames).toEqual(['reviewer']);
+    }
+    expect(activatedAgents).toEqual(['reviewer', 'reviewer']);
   });
 
   test('treats a generic target as a plain agent name when mixed with a plain target', async () => {
