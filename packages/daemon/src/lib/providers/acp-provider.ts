@@ -16,7 +16,20 @@ const ACP_CONTEXT_WINDOW_ENV_VAR = 'HYPERNEO_ACP_CONTEXT_WINDOW';
 const ACP_PROBE_TIMEOUT_MS = 5000;
 const ACP_PROBE_KILL_TIMEOUT_MS = 1000;
 
-export type AcpCommandProbe = (command: string, timeoutMs?: number) => Promise<void>;
+export type AcpCommandProbe = (
+  command: string,
+  timeoutMs?: number,
+  processGroupProbe?: (pid: number) => boolean
+) => Promise<void>;
+
+const defaultProcessGroupProbe = (pid: number): boolean => {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+};
 
 export interface AcpConfiguredModel {
   id: string;
@@ -25,21 +38,35 @@ export interface AcpConfiguredModel {
 
 export const defaultAcpCommandProbe: AcpCommandProbe = async (
   commandLine: string,
-  timeoutMs: number = ACP_PROBE_TIMEOUT_MS
+  timeoutMs: number = ACP_PROBE_TIMEOUT_MS,
+  processGroupProbe: (pid: number) => boolean = defaultProcessGroupProbe
 ): Promise<void> => {
   const { command, args } = parseAcpCommand(commandLine);
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
+    let processGroupGone = false;
     let processTree: AcpProcessTree | undefined;
     const child = spawn(command, args, {
       env: buildAcpSafeEnv(),
       stdio: ['ignore', 'ignore', 'ignore'],
       detached: process.platform !== 'win32',
     });
+    const recordGroupGone = () => {
+      if (processGroupGone) return;
+      const pid = child.pid;
+      if (pid == null || processGroupProbe(pid)) return;
+      processGroupGone = true;
+      if (killTimer) {
+        clearTimeout(killTimer);
+        killTimer = null;
+      }
+    };
     const timer = setTimeout(() => {
       processTree?.terminate('SIGTERM');
-      killTimer = setTimeout(() => processTree?.terminate('SIGKILL'), ACP_PROBE_KILL_TIMEOUT_MS);
+      killTimer = setTimeout(() => {
+        if (!processGroupGone) processTree?.terminate('SIGKILL');
+      }, ACP_PROBE_KILL_TIMEOUT_MS);
       killTimer.unref();
       settle(() =>
         reject(new Error(`ACP command '${command}' probe timed out after ${timeoutMs}ms`))
@@ -58,14 +85,19 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
         const ownedTree = owner(child);
         processTree = ownedTree;
         ownedTree.terminate('SIGTERM');
-        killTimer = setTimeout(() => ownedTree.terminate('SIGKILL'), ACP_PROBE_KILL_TIMEOUT_MS);
+        killTimer = setTimeout(() => {
+          if (!processGroupGone) ownedTree.terminate('SIGKILL');
+        }, ACP_PROBE_KILL_TIMEOUT_MS);
         killTimer.unref();
+        recordGroupGone();
         settle(resolve);
       } catch (error) {
         child.kill('SIGKILL');
         settle(() => reject(error));
       }
     });
+    child.on('exit', recordGroupGone);
+    child.on('close', recordGroupGone);
     child.on('error', (err: NodeJS.ErrnoException) => {
       settle(() => {
         if (err.code === 'ENOENT') {

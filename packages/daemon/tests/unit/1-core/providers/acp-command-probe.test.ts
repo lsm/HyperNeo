@@ -99,4 +99,55 @@ describe('defaultAcpCommandProbe', () => {
       "ACP command 'missing' not found in PATH"
     );
   });
+
+  test('escalates SIGKILL while the process group remains', async () => {
+    const killSignals: NodeJS.Signals[] = [];
+    spawnHandler = (command, args, options) => {
+      calls.push({ command, args, options });
+      const child = new EventEmitter() as EventEmitter & {
+        kill: (signal: NodeJS.Signals) => boolean;
+        pid?: number;
+      };
+      child.kill = (signal) => {
+        killSignals.push(signal);
+        return true;
+      };
+      child.pid = 0x40000000;
+      queueMicrotask(() => child.emit('spawn'));
+      return child;
+    };
+
+    await defaultAcpCommandProbe('devin acp', 1000, () => true);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
+    expect(killSignals).toContain('SIGTERM');
+    expect(killSignals).toContain('SIGKILL');
+  }, 2000);
+
+  test('skips SIGKILL after the process group is gone', async () => {
+    const killSignals: NodeJS.Signals[] = [];
+    spawnHandler = (command, args, options) => {
+      calls.push({ command, args, options });
+      const child = new EventEmitter() as EventEmitter & {
+        kill: (signal: NodeJS.Signals) => boolean;
+        pid?: number;
+      };
+      child.kill = (signal) => {
+        killSignals.push(signal);
+        return true;
+      };
+      child.pid = 0x40000001;
+      queueMicrotask(() => {
+        child.emit('spawn');
+        child.emit('exit', 0, null);
+      });
+      return child;
+    };
+
+    await defaultAcpCommandProbe('devin acp', 1000, () => false);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
+    expect(killSignals).toContain('SIGTERM');
+    expect(killSignals).not.toContain('SIGKILL');
+  }, 2000);
 });
