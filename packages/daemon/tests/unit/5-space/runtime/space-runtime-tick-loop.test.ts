@@ -2100,6 +2100,57 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(rt.executorCount).toBe(0);
     });
 
+    test('active executor with no run tasks is a safe no-op', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, { workflowRunId: null });
+
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(taskRepo.listByWorkflowRun(run.id)).toHaveLength(0);
+      expect(rt.getExecutor(run.id)).toBeDefined();
+      expect(nodeExecutionRepo.listByWorkflowRun(run.id)[0]?.status).toBe('pending');
+    });
+
+    test('active executor with no metadata is a safe no-op', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { executorMeta: Map<string, unknown> }).executorMeta.delete(run.id);
+
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('open');
+      expect(rt.getExecutor(run.id)).toBeDefined();
+      expect(nodeExecutionRepo.listByWorkflowRun(run.id)[0]?.status).toBe('pending');
+    });
+
+    test('active executor with no node executions is a safe no-op', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      db.prepare('DELETE FROM node_executions WHERE workflow_run_id = ?').run(run.id);
+
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('open');
+      expect(rt.getExecutor(run.id)).toBeDefined();
+      expect(nodeExecutionRepo.listByWorkflowRun(run.id)).toHaveLength(0);
+    });
+
     test('cleanupTerminalExecutors leaves in_progress runs alone', async () => {
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
         isTaskAgentAlive: () => true,

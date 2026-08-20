@@ -540,6 +540,85 @@ describe('SpaceRuntime — notification events', () => {
 
       expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(2);
     });
+
+    test('re-notifies timeout after executions stop timing out while task stays in_progress', async () => {
+      setSpaceTaskTimeoutMs(db, SPACE_ID, 60_000);
+
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
+      ]);
+
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+      const executionId = seedNodeExec(db, run.id, STEP_A, 'plan', 'in_progress', {
+        startedAt: Date.now() - 120_000,
+      });
+
+      await runtime.executeTick();
+      expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
+
+      const executionRepo = new NodeExecutionRepository(db);
+      executionRepo.update(executionId, { startedAt: Date.now() });
+      await runtime.executeTick();
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('in_progress');
+      expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
+
+      executionRepo.update(executionId, { startedAt: Date.now() - 120_000 });
+      await runtime.executeTick();
+
+      expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(2);
+    });
+  });
+
+  describe('agent_crash', () => {
+    test('emits one event when a dead execution exhausts its retry budget', async () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
+      ]);
+      let spawnCount = 0;
+      const taskAgentManager = new MockTaskAgentManager();
+      taskAgentManager.spawnWorkflowNodeAgentForExecution = async (
+        _task: SpaceTask,
+        _space: Space,
+        _workflow: SpaceWorkflow,
+        _run: SpaceWorkflowRun,
+        execution: { id: string }
+      ) => {
+        spawnCount += 1;
+        const sessionId = `dead-session:${spawnCount}`;
+        new NodeExecutionRepository(db).update(execution.id, {
+          status: 'in_progress',
+          agentSessionId: sessionId,
+          startedAt: Date.now(),
+        });
+        return sessionId;
+      };
+      runtime = makeRuntime({
+        taskAgentManager: taskAgentManager as unknown as TaskAgentManager,
+      });
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = new NodeExecutionRepository(db).listByWorkflowRun(run.id)[0]!;
+      new NodeExecutionRepository(db).update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'dead-session:initial',
+      });
+
+      await runtime.executeTick();
+      expect(collector.events.filter((event) => event.kind === 'agent_crash')).toHaveLength(0);
+
+      await runtime.executeTick();
+      expect(collector.events.filter((event) => event.kind === 'agent_crash')).toHaveLength(0);
+
+      await runtime.executeTick();
+
+      const events = collector.events.filter((event) => event.kind === 'agent_crash');
+      expect(events).toHaveLength(1);
+      expect(events[0].payload['spaceId']).toBe(SPACE_ID);
+      expect(events[0].payload['taskId']).toBe(tasks[0].id);
+      expect(typeof events[0].payload['timestamp']).toBe('string');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('blocked');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+    });
   });
 
   describe('no notifications for mechanical advancement', () => {

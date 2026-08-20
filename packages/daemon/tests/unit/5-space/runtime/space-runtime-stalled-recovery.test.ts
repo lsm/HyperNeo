@@ -2000,6 +2000,74 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(taskRepo.getTask(task.id)!.blockReason).toBe('workflow_invalid');
     });
 
+    test('permanent spawn failure leaves a driveable sibling run active', async () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Step A', agentId: AGENT },
+        { id: STEP_B, name: 'Step B', agentId: AGENT },
+      ]);
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Partially Stale Pending Exec',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Partially Stale Pending Exec',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'in_progress',
+      });
+
+      const stale = seedExec(run.id, 'deleted-node', 'Step A', 'pending');
+      const sibling = seedExec(run.id, STEP_B, 'Step B', 'pending');
+      db.prepare('UPDATE node_executions SET created_at = ? WHERE id = ?').run(1, stale.id);
+      db.prepare('UPDATE node_executions SET created_at = ? WHERE id = ?').run(2, sibling.id);
+      const spawnAttempts: string[] = [];
+      const tam = {
+        rehydrate: async () => {},
+        isExecutionSpawning: () => false,
+        isSessionAlive: () => false,
+        tryResumeNodeAgentSession: async () => {},
+        spawnWorkflowNodeAgentForExecution: async (
+          _task: unknown,
+          _space: unknown,
+          _workflow: unknown,
+          _run: unknown,
+          execution: { id: string }
+        ) => {
+          spawnAttempts.push(execution.id);
+          if (execution.id === stale.id) {
+            throw new PermanentSpawnError(
+              'Workflow node deleted-node no longer exists in workflow definition'
+            );
+          }
+          nodeExecutionRepo.update(execution.id, {
+            status: 'in_progress',
+            agentSessionId: `session:${execution.id}`,
+            startedAt: Date.now(),
+          });
+          return `session:${execution.id}`;
+        },
+        flushPendingMessagesForTarget: async () => {},
+        cancelBySessionId: () => {},
+        interruptBySessionId: async () => {},
+      };
+
+      const rt = makeRuntime({ taskAgentManager: tam as never });
+      await rt.recoverStalledRuns();
+      await rt.executeTick();
+
+      expect(spawnAttempts).toEqual([stale.id, sibling.id]);
+      expect(nodeExecutionRepo.getById(stale.id)!.status).toBe('cancelled');
+      expect(nodeExecutionRepo.getById(sibling.id)!.status).toBe('in_progress');
+      expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)!.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)!.blockReason).toBeNull();
+    });
+
     test('blocked execution → run untouched (existing blocked-recovery path owns it)', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },

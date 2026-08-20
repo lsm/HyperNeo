@@ -417,6 +417,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
       const completedTask = taskRepo.getTask(task.id)!;
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      expect(completedTask.status).toBe('done');
       expect(completedTask.result).toBe(SUMMARY);
       expect(completedTask.reportedSummary).toBe(SUMMARY);
       const evidence = evolutionScopeService.captureCompletedTaskEvidence({
@@ -711,6 +712,47 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(['blocked', 'archived']).toContain(blockedAfter?.status);
       expect(blockedAfter?.status).not.toBe('approved');
       expect(blockedAfter?.status).not.toBe('done');
+    });
+
+    test.each([
+      'review',
+      'approved',
+      'cancelled',
+    ] as const)('resolved %s task keeps its status without post-approval dispatch', async (status) => {
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Resolved ${status} ${Date.now()}`,
+        description: '',
+        nodes: [
+          {
+            id: `resolved-${status}-end`,
+            name: 'End',
+            agents: [{ agentId: AGENT_A, name: 'End' }],
+            postApproval: { targetAgent: 'End', instructions: 'continue' },
+          },
+        ],
+        startNodeId: `resolved-${status}-end`,
+        endNodeId: `resolved-${status}-end`,
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status,
+        reportedStatus: status === 'cancelled' ? 'cancelled' : 'done',
+        completedAt: status === 'cancelled' ? Date.now() : null,
+      });
+      seedNodeExec(db, run.id, `resolved-${status}-end`, 'End', 'idle');
+
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe(status);
+      expect(mockTam.spawnedPostApprovalSessions).toHaveLength(0);
     });
 
     test('blocked → in_progress → done lifecycle via resume', async () => {
@@ -1399,6 +1441,120 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(mockTam.cancelledSessions).not.toContain(coderSessionId);
     });
 
+    test('already-routed post-approval session is excluded from sibling quiescing', async () => {
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      mockTam.isSessionAlive = () => true;
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Already Routed Survives Quiesce ${Date.now()}`,
+        description: '',
+        nodes: [
+          {
+            id: 'ar-coder',
+            name: 'Coding',
+            agents: [{ agentId: AGENT_A, name: 'Coder' }],
+          },
+          {
+            id: 'ar-review',
+            name: 'Review',
+            agents: [{ agentId: AGENT_B, name: 'Reviewer' }],
+            postApproval: { targetAgent: 'Merger', instructions: 'merge the PR' },
+          },
+          {
+            id: 'ar-merge',
+            name: 'Merge',
+            agents: [{ agentId: AGENT_C, name: 'Merger' }],
+          },
+        ],
+        startNodeId: 'ar-coder',
+        endNodeId: 'ar-review',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const mergeSessionId = 'already-routed-merge-session';
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'in_progress',
+        reportedStatus: 'done',
+        pendingCompletionSubmittedByNodeId: 'ar-review',
+        postApprovalSourceNodeId: 'ar-review',
+        postApprovalSessionId: mergeSessionId,
+      });
+      const coderExecutionId = seedNodeExec(db, run.id, 'ar-coder', 'Coding', 'in_progress');
+      const coderSessionId = 'already-routed-coder-session';
+      nodeExecutionRepo.update(coderExecutionId, { agentSessionId: coderSessionId });
+      seedNodeExec(db, run.id, 'ar-review', 'Review', 'idle');
+      const mergeExecutionId = seedNodeExec(db, run.id, 'ar-merge', 'Merge', 'in_progress');
+      nodeExecutionRepo.update(mergeExecutionId, { agentSessionId: mergeSessionId });
+
+      await rt.executeTick();
+
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('approved');
+      expect(taskRepo.getTask(tasks[0].id)?.postApprovalSessionId).toBe(mergeSessionId);
+      expect(nodeExecutionRepo.getById(mergeExecutionId)?.status).toBe('in_progress');
+      expect(mockTam.interruptedSessions).not.toContain(mergeSessionId);
+      expect(nodeExecutionRepo.getById(coderExecutionId)?.status).toBe('idle');
+      expect(mockTam.interruptedSessions).toContain(coderSessionId);
+      expect(mockTam.spawnedPostApprovalSessions).toHaveLength(0);
+    });
+
+    test('skipped post-approval dispatch preserves its settlement-tick sibling state', async () => {
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      mockTam.isSessionAlive = () => true;
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Skipped Dispatch Settlement ${Date.now()}`,
+        description: '',
+        nodes: [
+          {
+            id: 'skip-coder',
+            name: 'Coding',
+            agents: [{ agentId: AGENT_A, name: 'Coder' }],
+          },
+          {
+            id: 'skip-review',
+            name: 'Review',
+            agents: [{ agentId: AGENT_B, name: 'Reviewer' }],
+            postApproval: { targetAgent: 'Merger', instructions: '' },
+          },
+          {
+            id: 'skip-merge',
+            name: 'Merge',
+            agents: [{ agentId: AGENT_C, name: 'Merger' }],
+          },
+        ],
+        startNodeId: 'skip-coder',
+        endNodeId: 'skip-review',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'in_progress',
+        reportedStatus: 'done',
+        pendingCompletionSubmittedByNodeId: 'skip-review',
+        postApprovalSourceNodeId: 'skip-review',
+      });
+      const siblingExecutionId = seedNodeExec(db, run.id, 'skip-coder', 'Coding', 'in_progress');
+      const siblingSessionId = 'skipped-dispatch-coder-session';
+      nodeExecutionRepo.update(siblingExecutionId, { agentSessionId: siblingSessionId });
+      seedNodeExec(db, run.id, 'skip-review', 'Review', 'idle');
+
+      await rt.executeTick();
+
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('approved');
+      expect(taskRepo.getTask(tasks[0].id)?.postApprovalSessionId).toBeNull();
+      expect(nodeExecutionRepo.getById(siblingExecutionId)?.status).toBe('in_progress');
+      expect(mockTam.interruptedSessions).not.toContain(siblingSessionId);
+      expect(mockTam.spawnedPostApprovalSessions).toHaveLength(0);
+    });
+
     test('sibling session remains reachable for send_message after workflow completion (#1515)', async () => {
       const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
       mockTam.isSessionAlive = () => true;
@@ -1467,6 +1623,38 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       await expect(rt.startWorkflowRun(SPACE_ID, legacyWorkflow.id, 'Run')).rejects.toThrow(
         'is missing endNodeId'
       );
+    });
+
+    test('tick blocks a run whose captured workflow is missing endNodeId', async () => {
+      const rt = makeRuntimeWithTam();
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Lost End Node ${Date.now()}`,
+        description: '',
+        nodes: [{ id: 'lost-end', name: 'End', agentId: AGENT_A }],
+        startNodeId: 'lost-end',
+        endNodeId: 'lost-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const executorMeta = (
+        rt as unknown as {
+          executorMeta: Map<string, { workflow: SpaceWorkflow }>;
+        }
+      ).executorMeta.get(run.id)!;
+      executorMeta.workflow.endNodeId = undefined;
+
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      const task = taskRepo.getTask(tasks[0].id)!;
+      expect(task.status).toBe('blocked');
+      expect(task.blockReason).toBe('workflow_invalid');
+      expect(task.result).toBe('Workflow is missing endNodeId and cannot be executed safely.');
+      const events = collector.events.filter((event) => event.kind === 'workflow_run_blocked');
+      expect(events).toHaveLength(1);
+      expect(events[0].payload['runId']).toBe(run.id);
     });
 
     test('result artifact summary populates task outcome on run completion', async () => {
@@ -1642,6 +1830,100 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       const taskAfter = taskRepo.getTask(tasks[0].id);
       expect(taskAfter?.result).toBe('Fresh artifact summary after retry');
       expect(taskAfter?.reportedSummary).toBe('Fresh artifact summary after retry');
+    });
+
+    test('computed terminal summary wins over task result and reported summary', async () => {
+      const rt = makeRuntimeWithTam();
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Computed Summary Precedence ${Date.now()}`,
+        description: '',
+        nodes: [{ id: 'computed-end', name: 'End', agentId: AGENT_A }],
+        startNodeId: 'computed-end',
+        endNodeId: 'computed-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'in_progress',
+        result: 'Existing task result',
+        reportedStatus: 'done',
+        reportedSummary: 'Reported task summary',
+      });
+      const executionId = seedNodeExec(db, run.id, 'computed-end', 'End', 'idle');
+      nodeExecutionRepo.update(executionId, { result: 'Computed terminal summary' });
+
+      await rt.executeTick();
+
+      const task = taskRepo.getTask(tasks[0].id)!;
+      expect(task.result).toBe('Computed terminal summary');
+      expect(task.reportedSummary).toBe('Computed terminal summary');
+    });
+
+    test('primary result artifact wins over computed terminal summary', async () => {
+      const rt = makeRuntimeWithTam();
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Artifact Summary Precedence ${Date.now()}`,
+        description: '',
+        nodes: [{ id: 'artifact-precedence-end', name: 'End', agentId: AGENT_A }],
+        startNodeId: 'artifact-precedence-end',
+        endNodeId: 'artifact-precedence-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      artifactRepo.upsert({
+        id: 'artifact-summary-precedence',
+        runId: run.id,
+        nodeId: 'End',
+        artifactType: 'decision',
+        artifactKey: 'final',
+        data: { summary: 'Artifact summary' },
+      });
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'in_progress',
+        reportedStatus: 'done',
+      });
+      const executionId = seedNodeExec(db, run.id, 'artifact-precedence-end', 'End', 'idle');
+      nodeExecutionRepo.update(executionId, { result: 'Computed terminal summary' });
+
+      await rt.executeTick();
+
+      const task = taskRepo.getTask(tasks[0].id)!;
+      expect(task.result).toBe('Artifact summary');
+      expect(task.reportedSummary).toBe('Artifact summary');
+    });
+
+    test('existing task result wins over reported summary without a fresh summary', async () => {
+      const rt = makeRuntimeWithTam();
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Existing Result Precedence ${Date.now()}`,
+        description: '',
+        nodes: [{ id: 'existing-end', name: 'End', agentId: AGENT_A }],
+        startNodeId: 'existing-end',
+        endNodeId: 'existing-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'in_progress',
+        result: 'Existing task result',
+        reportedStatus: 'done',
+        reportedSummary: 'Reported task summary',
+      });
+      seedNodeExec(db, run.id, 'existing-end', 'End', 'idle');
+
+      await rt.executeTick();
+
+      const task = taskRepo.getTask(tasks[0].id)!;
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      expect(task.status).toBe('done');
+      expect(task.result).toBe('Existing task result');
+      expect(task.reportedSummary).toBe('Reported task summary');
     });
 
     test('reported summary replaces generic error task result when no artifact exists', async () => {

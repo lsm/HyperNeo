@@ -672,6 +672,30 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       ).toBe(true);
     });
 
+    test('an approved parked task does not respawn parked agents', async () => {
+      const tam = makeParkTam(nodeExecutionRepo);
+      const rt = buildRuntime(tam);
+      const { workflow } = buildWorkflow(SPACE_ID);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Approved Park Run');
+      const task = tasks[0];
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'pending',
+        agentSessionId: null,
+        startedAt: Date.now(),
+      });
+      taskRepo.updateTask(task.id, { status: 'approved' });
+
+      await rt.executeTick();
+
+      expect(tam._spawned).toHaveLength(0);
+      expect(taskRepo.getTask(task.id)?.status).toBe('approved');
+      const parked = nodeExecutionRepo.getById(execution.id)!;
+      expect(parked.status).toBe('pending');
+      expect(parked.startedAt).not.toBeNull();
+      expect(parked.agentSessionId).toBeNull();
+    });
+
     test('a review task with fresh pending work still spawns after a restart', async () => {
       const tam = makeParkTam(nodeExecutionRepo);
       const rt = buildRuntime(tam);
