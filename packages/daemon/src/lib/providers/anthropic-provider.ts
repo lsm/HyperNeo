@@ -130,13 +130,9 @@ export class AnthropicProvider implements Provider {
       return [];
     }
 
-    try {
-      const models = await this.loadModelsFromSdk();
-      this.modelCache = models;
-      return models;
-    } catch {
-      return [];
-    }
+    const models = await this.loadModelsFromSdk();
+    this.modelCache = models;
+    return models;
   }
 
   private async loadModelsFromSdk(timeout: number = 10000): Promise<ModelInfo[]> {

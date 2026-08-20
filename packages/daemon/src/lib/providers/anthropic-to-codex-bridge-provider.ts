@@ -805,6 +805,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     for (const key of this.bridgeServers.keys()) this.stopBridgeServerByKey(key);
   }
 
+  private updateBridgeAuth(auth: OpenAIResponsesBridgeAuth): void {
+    this.bridgeServers.get(`responses:${this.bridgeAuthCacheKey(auth)}`)?.updateAuth(auth);
+  }
+
   private replaceCatalog(
     entries: CodexCatalogEntry[],
     scope: CodexModelCacheScope | undefined
@@ -859,7 +863,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       if (credentials?.expires && Date.now() >= credentials.expires - 5 * 60 * 1000) {
         const refreshed = await this.refreshStoredOauthCredentials();
         const refreshedAuth = refreshed ? this.toBridgeAuth(refreshed) : undefined;
-        if (refreshedAuth) auth = refreshedAuth;
+        if (refreshedAuth) {
+          auth = refreshedAuth;
+          this.updateBridgeAuth(auth);
+        }
       }
     }
     let scope = this.authScope(auth);
@@ -882,6 +889,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       const refreshedAuth = refreshed ? this.toBridgeAuth(refreshed) : undefined;
       if (refreshedAuth?.source === 'chatgpt_oauth') {
         auth = refreshedAuth;
+        this.updateBridgeAuth(auth);
         scope = this.authScope(auth);
         try {
           response = await this.requestModelCatalog(auth);

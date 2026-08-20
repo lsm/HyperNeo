@@ -1166,6 +1166,49 @@ describe('Model Service', () => {
       expect(getAvailableModels('global')).toEqual([retained]);
     });
 
+    it('should preserve Anthropic models when SDK discovery fails', async () => {
+      const { AnthropicProvider } = await import(
+        '../../../../src/lib/providers/anthropic-provider'
+      );
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const staleAnthropic = {
+        id: 'claude-discovered-model',
+        name: 'Claude Discovered Model',
+        family: 'sonnet',
+        provider: 'anthropic',
+        contextWindow: 200000,
+      } satisfies ModelInfo;
+      const healthyModel = {
+        id: 'healthy-model',
+        name: 'Healthy Model',
+        family: 'test',
+        provider: 'healthy-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const anthropic = new AnthropicProvider({ ANTHROPIC_API_KEY: 'test-key' });
+      mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+        query: () => ({
+          interrupt: mock(async () => {}),
+          supportedModels: mock(async () => {
+            throw new Error('SDK unavailable');
+          }),
+        }),
+      }));
+      getProviderRegistry().register(anthropic);
+      getProviderRegistry().register({
+        id: 'healthy-provider',
+        getModels: async () => [healthyModel],
+        isAvailable: async () => true,
+      } as Parameters<ReturnType<typeof getProviderRegistry>['register']>[0]);
+      setModelsCache(new Map([['global', [staleAnthropic]]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toContainEqual(staleAnthropic);
+      expect(getAvailableModels('global')).toContainEqual(healthyModel);
+    });
+
     it('should retain only models from providers that fail during refresh', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];

@@ -1617,6 +1617,82 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(models.map((model) => model.id)).toEqual(['gpt-stable']);
     });
 
+    it.skipIf(!isBun)('updates an active bridge after proactive OAuth refresh', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const accountId = 'acct-proactive-refresh';
+      const staleToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: accountId },
+      });
+      const refreshedToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: accountId },
+        jti: 'refreshed',
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: staleToken,
+        refresh: 'refresh-token',
+        accountId,
+        expires: Date.now() + 60_000,
+      });
+      const catalogFetch = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-5.3-codex' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      const capturedHeaders: Headers[] = [];
+      const refreshFetch = spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        if (typeof url === 'string' && url.includes('/oauth/token')) {
+          return new Response(
+            JSON.stringify({
+              access_token: refreshedToken,
+              refresh_token: 'next-refresh-token',
+              expires_in: 3600,
+              token_type: 'Bearer',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (typeof url === 'string' && url.includes('/responses')) {
+          capturedHeaders.push(new Headers(init?.headers));
+          return new Response(
+            `event: response.completed\ndata: ${JSON.stringify({
+              type: 'response.completed',
+              response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+            })}\n\n`,
+            { headers: { 'Content-Type': 'text/event-stream' } }
+          );
+        }
+        return new Response('not found', { status: 404 });
+      });
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, catalogFetch);
+        await provider.getApiKey();
+        const config = provider.buildSdkConfig('gpt-5.3-codex', {
+          sessionId: 'proactive-refresh',
+        });
+        const port = new URL(config.envVars.ANTHROPIC_BASE_URL as string).port;
+
+        await provider.getModels();
+        const response = await fetch(`${config.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gpt-5.3-codex',
+            max_tokens: 128,
+            messages: [{ role: 'user', content: 'Say hello.' }],
+          }),
+        });
+
+        expect(response.status).toBe(200);
+        expect(new URL(config.envVars.ANTHROPIC_BASE_URL as string).port).toBe(port);
+        expect(capturedHeaders[0]?.get('Authorization')).toBe(`Bearer ${refreshedToken}`);
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
     it('refreshes OAuth after a 401 and retries model discovery once', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const refreshedToken = makeJwt({

@@ -63,6 +63,7 @@ export type OpenAIResponsesBridgeServer = {
   baseUrlForSession?(sessionId: string): string;
   setSessionThinkingConfig?(sessionId: string, thinking: AnthropicRequest['thinking']): void;
   setSessionModelConfig?(sessionId: string, aliasModelId: string, realModelId: string): void;
+  updateAuth(auth: OpenAIResponsesBridgeAuth): void;
   updateModels(models: OpenAIResponsesBridgeModel[], modelAliases?: Record<string, string>): void;
   stop(): void;
 };
@@ -1349,6 +1350,13 @@ export function createOpenAIResponsesBridgeServer(
   const sessionThinkingConfigs = new Map<string, SessionThinkingConfigEntry>();
   const sessionModelAliasOverrides = new Map<string, string>();
   let resolvedAuth: ResolvedResponsesAuth | undefined;
+  const updateAuth = (auth: OpenAIResponsesBridgeAuth): void => {
+    resolvedAuth = {
+      apiKey: auth.apiKey,
+      accountId: auth.accountId,
+      isFedrampAccount: auth.isFedrampAccount,
+    };
+  };
   const isChatgptOAuth = config.auth.source === 'chatgpt_oauth' && !config.openAIBaseUrl;
   const buildOpts = {
     includeMaxOutputTokens: !isChatgptOAuth,
@@ -1752,6 +1760,7 @@ export function createOpenAIResponsesBridgeServer(
     setSessionModelConfig: (sessionId: string, aliasModelId: string, realModelId: string) => {
       sessionModelAliasOverrides.set(sessionModelKey(sessionId, aliasModelId), realModelId);
     },
+    updateAuth,
     updateModels,
     stop: () => {
       for (const continuation of continuations.values()) {
