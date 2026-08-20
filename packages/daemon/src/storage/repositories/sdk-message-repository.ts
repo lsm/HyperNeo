@@ -1884,7 +1884,9 @@ export class SDKMessageRepository {
   }
 
   updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): void {
-    const stmt = this.db.prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`);
+    const stmt = this.db.prepare(
+      `UPDATE sdk_messages SET sdk_message = ? WHERE id = ? AND message_type = 'hyperneo_action'`
+    );
     stmt.run(JSON.stringify(updated), rowId);
     this.upsertMessageSearchRow(rowId);
   }
