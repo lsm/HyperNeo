@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 const GUARD = 'scripts/validate-test-matrix.sh';
-const TIMEOUT = 120_000;
+const TIMEOUT = 180_000;
 const WORK_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'hyperneo-vmx-'));
 const FX = path.join(WORK_DIR, 'fixture');
 
@@ -599,12 +599,32 @@ const SCENARIOS: Scenario[] = [
 const resolvers: Array<(value: GuardResult) => void> = [];
 const results = SCENARIOS.map(() => new Promise<GuardResult>((resolve) => resolvers.push(resolve)));
 
+function effectiveCpus(): number {
+  const cpus = os.cpus().length;
+  try {
+    const v2 = fs.readFileSync('/sys/fs/cgroup/cpu.max', 'utf-8').trim().split(/\s+/);
+    if (v2.length === 2 && v2[0] !== 'max' && /^\d+$/.test(v2[1])) {
+      const quota = Number(v2[0]);
+      const period = Number(v2[1]) || 100000;
+      if (quota > 0) return Math.max(1, Math.min(cpus, Math.floor(quota / period)));
+    }
+    const quotaV1 = Number(fs.readFileSync('/sys/fs/cgroup/cpu/cpu.cfs_quota_us', 'utf-8'));
+    const periodV1 = Number(fs.readFileSync('/sys/fs/cgroup/cpu/cpu.cfs_period_us', 'utf-8'));
+    if (quotaV1 > 0 && periodV1 > 0) {
+      return Math.max(1, Math.min(cpus, Math.floor(quotaV1 / periodV1)));
+    }
+  } catch {
+    return cpus;
+  }
+  return cpus;
+}
+
 async function runGuard(cwd: string, script: string): Promise<GuardResult> {
   try {
     const { stdout, stderr } = await execFileAsync('/bin/bash', [script], {
       cwd,
       encoding: 'utf-8',
-      timeout: 90_000,
+      timeout: 150_000,
       maxBuffer: 16 * 1024 * 1024,
     });
     return { exitCode: 0, stdout, stderr, prepareError: false };
@@ -645,7 +665,7 @@ beforeAll(() => {
   if (built.status !== 0) {
     throw new Error(`fixture build failed (${built.status}):\n${built.stdout}\n${built.stderr}`);
   }
-  const limit = Math.min(14, os.cpus().length + 4);
+  const limit = Math.min(8, effectiveCpus());
   let cursor = 0;
   const workers = Array.from({ length: limit }, () => {
     return (async () => {
