@@ -519,6 +519,30 @@ describe('ModelSwitchHandler', () => {
         expect(handleErrorSpy).toHaveBeenCalled();
       });
 
+      it('restores ACP context usage state when a provider switch rolls back', async () => {
+        mockSession.config.model = 'acp-default';
+        mockSession.config.provider = 'acp';
+        mockSession.acpSessionId = 'remote-acp-session';
+        mockSession.metadata = {
+          ...mockSession.metadata,
+          acpContextUsageEstimate: 12000,
+        };
+        restartSpy.mockRejectedValue(new Error('Restart failed'));
+        handler = createHandler();
+
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+        expect(result.success).toBe(false);
+        expect(mockSession.acpSessionId).toBe('remote-acp-session');
+        expect(mockSession.metadata.acpContextUsageEstimate).toBe(12000);
+        expect(updateSessionSpy.mock.calls.at(-1)?.[1]).toEqual(
+          expect.objectContaining({
+            acpSessionId: 'remote-acp-session',
+            metadata: expect.objectContaining({ acpContextUsageEstimate: 12000 }),
+          })
+        );
+      });
+
       it('rollback restores the literal stored provider, not the guard inference (P1)', async () => {
         mockSession.config.model = 'gemini-3.1-pro-preview';
         (mockSession.config as Record<string, unknown>).provider = undefined;

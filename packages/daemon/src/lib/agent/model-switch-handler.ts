@@ -118,6 +118,7 @@ export class ModelSwitchHandler {
     const previousAcpSessionId = session.acpSessionId;
     const previousSdkSessionId = session.sdkSessionId;
     const previousSdkOriginPath = session.sdkOriginPath;
+    const previousMetadata = session.metadata;
 
     try {
       if (!previousProvider) {
@@ -272,6 +273,7 @@ export class ModelSwitchHandler {
       session.acpSessionId = previousAcpSessionId;
       session.sdkSessionId = previousSdkSessionId;
       session.sdkOriginPath = previousSdkOriginPath;
+      session.metadata = previousMetadata;
       db.updateSession(session.id, {
         config: {
           model: previousModel,
@@ -280,6 +282,7 @@ export class ModelSwitchHandler {
         acpSessionId: previousAcpSessionId,
         sdkSessionId: previousSdkSessionId,
         sdkOriginPath: previousSdkOriginPath,
+        metadata: previousMetadata,
       });
       contextTracker.setModel(previousModel);
       await internalEventBus.publish('session.updated', {
