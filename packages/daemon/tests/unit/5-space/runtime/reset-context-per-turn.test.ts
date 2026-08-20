@@ -1,8 +1,13 @@
-import { describe, expect, it, mock, beforeAll, afterAll } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
+import {
+  QueryModeHandler,
+  type QueryModeHandlerContext,
+} from '../../../../src/lib/agent/query-mode-handler.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 
 const SESSION_ID = 'reviewer-session-1';
 const RUN_ID = 'run-1';
@@ -21,6 +26,7 @@ function makeManager(opts: {
   nodeEmptyAgents?: boolean;
   hasActiveDeliveryJob?: boolean;
   deliveryContent?: { sendStatus: string };
+  parentTaskStatus?: string;
 }): {
   manager: TaskAgentManager;
   session: Record<string, ReturnType<typeof mock>>;
@@ -94,6 +100,14 @@ function makeManager(opts: {
     workflowRunRepo: {
       getRun: mock(() => ({ workflowId: WORKFLOW_ID })),
     },
+    taskRepo: {
+      getTask: mock(() =>
+        opts.parentTaskStatus
+          ? { id: 'task-1', status: opts.parentTaskStatus, workflowRunId: RUN_ID }
+          : null
+      ),
+      listByWorkflowRunIncludingArchived: mock(() => []),
+    },
     spaceWorkflowManager: {
       getWorkflow: mock(() => workflow),
       getWorkflowForRun: mock(() => workflow),
@@ -123,6 +137,13 @@ function indexSession(manager: TaskAgentManager, session: AgentSession): void {
   );
 }
 
+function attachSessionToTask(manager: TaskAgentManager, session: AgentSession): void {
+  const subSessions = (
+    manager as unknown as { subSessions: Map<string, Map<string, AgentSession>> }
+  ).subSessions;
+  subSessions.set('task-1', new Map([[SESSION_ID, session]]));
+}
+
 describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
   const previousFlag = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
   beforeAll(() => {
@@ -148,6 +169,25 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(session.clearMock).toHaveBeenCalledTimes(1);
     expect(session.saveUserMessage).toHaveBeenCalled();
     expect(session.enqueueMock).toHaveBeenCalled();
+  });
+
+  it('delivers the handoff after resetContextPerTurn clear fails', async () => {
+    const { manager, session } = makeManager({ slotResets: true });
+    session.clearMock.mockRejectedValue(new Error('clear failed'));
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    expect(session.clearMock).toHaveBeenCalledTimes(1);
+    expect(session.saveUserMessage.mock.calls[0][2]).toBe('enqueued');
+    expect(session.enqueueMock).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT clear when a durable turn is already pending for the session', async () => {
@@ -248,6 +288,48 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(session.clearMock).not.toHaveBeenCalled();
   });
 
+  it('busy resetContextPerTurn task handoff defers until turn end', async () => {
+    const { manager, session } = makeManager({ slotResets: true });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'processing' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true,
+      undefined,
+      'defer'
+    );
+
+    expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
+    expect(session.saveUserMessage.mock.calls[0][2]).toBe('deferred');
+    expect(session.clearMock).not.toHaveBeenCalled();
+    expect(session.enqueueMock).not.toHaveBeenCalled();
+  });
+
+  it('busy immediate delivery remains enqueued instead of taking the defer branch', async () => {
+    const { manager, session } = makeManager({ slotResets: true });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'processing' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, 'deliver now', true);
+
+    expect(session.saveUserMessage.mock.calls[0][2]).toBe('enqueued');
+    expect(session.enqueueMock).toHaveBeenCalledTimes(1);
+  });
+
   it('does NOT clear for synthetic non-handoff injects (external events / hook notices)', async () => {
     const { manager, session } = makeManager({ slotResets: true });
     const live = {
@@ -337,6 +419,55 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     const locks = (manager as unknown as { sessionInjectLocks: Map<string, unknown> })
       .sessionInjectLocks;
     expect(locks.size).toBe(0);
+  });
+
+  it('KNOWN-BUG turn-end delivers handoff then later idle clear wipes that handoff', async () => {
+    const { manager, session } = makeManager({ slotResets: true });
+    let status = 'processing';
+    const context: string[] = [];
+    const order: string[] = [];
+    session.enqueueMock.mockImplementation(async (_uuid: string, content: string) => {
+      order.push(content);
+      context.push(content);
+    });
+    session.clearMock.mockImplementation(async () => {
+      order.push('/clear');
+      context.length = 0;
+    });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, 'handoff', true, undefined, 'defer');
+    const deferred = session.saveUserMessage.mock.calls[0][1] as SDKMessage;
+    const flush = new QueryModeHandler({
+      session: live.session,
+      db: {
+        getMessagesByStatus: mock(() => [{ ...deferred, dbId: 'db-handoff', timestamp: 1 }]),
+        updateMessageStatus: mock(() => {}),
+        getJobQueueRepo: mock(() => ({ activeDeliveryMessageUuids: () => new Set<string>() })),
+      },
+      internalEventBus: { publish: mock(async () => {}) },
+      messageQueue: live.messageQueue,
+      logger: { error: mock(() => {}) },
+      ensureQueryStarted: session.ensureStartedMock,
+    } as unknown as QueryModeHandlerContext);
+
+    await flush.handleQueryTrigger();
+
+    expect(session.clearMock).not.toHaveBeenCalled();
+    expect(context).toEqual(['handoff']);
+
+    status = 'idle';
+    await manager.injectSubSessionMessage(SESSION_ID, 'later task', true);
+
+    expect(order).toEqual(['handoff', '/clear', 'later task']);
+    expect(context).toEqual(['later task']);
   });
 });
 
@@ -431,6 +562,24 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(session.reopenDeliveryByUuid).toHaveBeenCalledTimes(1);
     expect(session.markDeliveryDeferredByUuid).toHaveBeenCalledTimes(1);
     expect(session.saveUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('defers injection while the parent task is rate limited', async () => {
+    const { manager, session } = makeManager({ parentTaskStatus: 'rate_limited' });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+    attachSessionToTask(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, 'wait for parent task', true);
+
+    expect(session.saveUserMessage.mock.calls[0][2]).toBe('deferred');
+    expect(session.enqueueMock).not.toHaveBeenCalled();
   });
 
   it('a deferred human message to a busy live session persists as a deferred row (task #949)', async () => {
