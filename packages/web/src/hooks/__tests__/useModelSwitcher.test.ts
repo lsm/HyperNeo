@@ -1206,11 +1206,22 @@ describe('mapRawModelsToModelInfos', () => {
     expect(result[0].family).toBe('opus');
   });
 
-  it('detects gpt family', () => {
-    const result = mapRawModelsToModelInfos([
-      { id: 'gpt-4o', display_name: 'GPT-4o', description: '' },
+  it('detects discoverable Codex families and providers', () => {
+    const result = mapRawModelsToModelInfos(
+      ['gpt-4o', 'o3', 'o4-mini', 'codex-mini-latest', 'ft:o3:team:custom'].map((id) => ({
+        id,
+        display_name: id,
+        description: '',
+      }))
+    );
+    expect(result.map(({ family }) => family)).toEqual(['gpt', 'gpt', 'gpt', 'gpt', 'gpt']);
+    expect(result.map(({ provider }) => provider)).toEqual([
+      'anthropic-codex',
+      'anthropic-codex',
+      'anthropic-codex',
+      'anthropic-codex',
+      'anthropic-codex',
     ]);
-    expect(result[0].family).toBe('gpt');
   });
 
   it('defaults provider to anthropic when not provided', () => {

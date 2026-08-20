@@ -678,9 +678,14 @@ describe('inferProviderForModel', () => {
     expect(inferProviderForModel('other-provider-cloud')).toBe('anthropic');
   });
 
-  it('maps gpt- prefix to anthropic-codex', () => {
+  it('maps discoverable Codex prefixes to anthropic-codex', () => {
     expect(inferProviderForModel('gpt-5.3-codex')).toBe('anthropic-codex');
     expect(inferProviderForModel('gpt-5.4')).toBe('anthropic-codex');
+    expect(inferProviderForModel('o3')).toBe('anthropic-codex');
+    expect(inferProviderForModel('o4-mini')).toBe('anthropic-codex');
+    expect(inferProviderForModel('codex-mini-latest')).toBe('anthropic-codex');
+    expect(inferProviderForModel('ft:o3:team:custom')).toBe('anthropic-codex');
+    expect(inferProviderForModel('ft:gpt-5.4:team:custom')).toBe('anthropic-codex');
   });
 
   it('defaults claude- models to anthropic', () => {

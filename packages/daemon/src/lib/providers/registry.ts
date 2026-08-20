@@ -192,7 +192,9 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
   if (/^qwen[\w.-]*:/i.test(modelId)) return 'ollama';
   if (/^gpt-oss:[1-9]\d{2,}b$/i.test(modelId)) return 'ollama-cloud';
   if (modelId.startsWith('gpt-oss:')) return modelId.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
-  if (modelId.startsWith('gpt-')) return 'anthropic-codex';
+  if (/^(?:gpt-|o\d|codex-|ft:(?:gpt-|o\d|codex-))/.test(normalizedModelId)) {
+    return 'anthropic-codex';
+  }
   return 'anthropic';
 }
 

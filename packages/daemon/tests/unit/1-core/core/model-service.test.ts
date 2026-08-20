@@ -1137,6 +1137,77 @@ describe('Model Service', () => {
       expect(models).toEqual(mockModels);
     });
 
+    it('should accept a successful provider catalog shrink', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const retained = {
+        id: 'retained-model',
+        name: 'Retained Model',
+        family: 'test',
+        provider: 'shrinking-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const removed = {
+        ...retained,
+        id: 'removed-model',
+        name: 'Removed Model',
+      };
+      registry.register({
+        id: 'shrinking-provider',
+        getModels: async () => [retained],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      setModelsCache(new Map([['global', [retained, removed]]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual([retained]);
+    });
+
+    it('should retain only models from providers that fail during refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const staleFailed = {
+        id: 'stale-failed-model',
+        name: 'Stale Failed Model',
+        family: 'test',
+        provider: 'failed-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const staleHealthy = {
+        ...staleFailed,
+        id: 'stale-healthy-model',
+        name: 'Stale Healthy Model',
+        provider: 'healthy-provider',
+      };
+      const currentHealthy = {
+        ...staleHealthy,
+        id: 'current-healthy-model',
+        name: 'Current Healthy Model',
+      };
+      registry.register({
+        id: 'failed-provider',
+        getModels: async () => {
+          throw new Error('offline');
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register({
+        id: 'healthy-provider',
+        getModels: async () => [currentHealthy],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      setModelsCache(new Map([['global', [staleFailed, staleHealthy]]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual([currentHealthy, staleFailed]);
+    });
+
     it('should cancel in-flight background refresh when clearModelsCache is called', async () => {
       const cacheKey = 'bg-cancel-test';
 

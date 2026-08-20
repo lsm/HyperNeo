@@ -103,6 +103,21 @@ function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
   return Array.from(modelMap.values());
 }
 
+function retainFailedProviderModels(
+  models: ModelInfo[],
+  previousModels: ModelInfo[] | undefined,
+  failedProviderIds: Set<string>
+): ModelInfo[] {
+  if (!previousModels || failedProviderIds.size === 0) return models;
+  const modelMap = new Map(models.map((model) => [`${model.provider}:${model.id}`, model]));
+  for (const model of previousModels) {
+    if (failedProviderIds.has(model.provider)) {
+      modelMap.set(`${model.provider}:${model.id}`, model);
+    }
+  }
+  return [...modelMap.values()];
+}
+
 const refreshInProgress = new Map<string, Promise<void>>();
 
 const cacheGeneration = new Map<string, number>();
@@ -146,12 +161,17 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
   }
 
   const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
+  const previousModels = modelsCache.get(cacheKey);
 
   const refreshPromise = (async () => {
     try {
-      const models = await loadModelsFromProviders();
+      const { models, failedProviderIds } = await loadModelsFromProviders();
       if (models.length > 0 && (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart) {
-        const mergedModels = mergeWithFallbackModels(models);
+        const mergedModels = retainFailedProviderModels(
+          mergeWithFallbackModels(models),
+          previousModels,
+          failedProviderIds
+        );
         modelsCache.set(cacheKey, mergedModels);
         cacheTimestamps.set(cacheKey, Date.now());
       }
@@ -173,7 +193,12 @@ function shouldWaitForOptionalProviders(registry = getProviderRegistry()): boole
   return process.env.NODE_ENV !== 'test' || registry.has('anthropic-copilot');
 }
 
-async function loadModelsFromProviders(): Promise<ModelInfo[]> {
+interface ProviderModelLoadResult {
+  models: ModelInfo[];
+  failedProviderIds: Set<string>;
+}
+
+async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
   const registry = getProviderRegistry();
   if (registry.size === 0) {
     initializeProviders();
@@ -186,18 +211,24 @@ async function loadModelsFromProviders(): Promise<ModelInfo[]> {
   const results = await Promise.allSettled(
     providers.map(async (provider) => {
       const available = await provider.isAvailable();
-      if (!available) return [];
-      return provider.getModels();
+      return {
+        available,
+        models: available ? await provider.getModels() : [],
+      };
     })
   );
 
-  const allModels: ModelInfo[] = [];
-  results.forEach((result) => {
-    /* v8 ignore next 2 */
-    if (result.status === 'fulfilled') allModels.push(...result.value);
+  const models: ModelInfo[] = [];
+  const failedProviderIds = new Set<string>();
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled' && result.value.available) {
+      models.push(...result.value.models);
+    } else {
+      failedProviderIds.add(providers[index].id);
+    }
   });
 
-  return allModels;
+  return { models, failedProviderIds };
 }
 
 function isCacheStale(cacheKey: string): boolean {
@@ -233,7 +264,7 @@ export async function initializeModels(): Promise<void> {
   await waitForOptionalProviderRegistration();
 
   try {
-    const models = await loadModelsFromProviders();
+    const { models } = await loadModelsFromProviders();
     if (models.length > 0) {
       const mergedModels = mergeWithFallbackModels(models);
       modelsCache.set(cacheKey, mergedModels);
@@ -316,17 +347,16 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
       if (signal?.aborted) {
         return;
       }
-      const models = await loadModelsFromProviders();
+      const { models, failedProviderIds } = await loadModelsFromProviders();
       if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
         return;
       }
       if (models.length > 0) {
-        const mergedModels = mergeWithFallbackModels(models);
-        if (previousModels && previousModels.length > mergedModels.length) {
-          modelsCache.set(cacheKey, previousModels);
-          cacheTimestamps.set(cacheKey, Date.now());
-          return;
-        }
+        const mergedModels = retainFailedProviderModels(
+          mergeWithFallbackModels(models),
+          previousModels,
+          failedProviderIds
+        );
         modelsCache.set(cacheKey, mergedModels);
         cacheTimestamps.set(cacheKey, Date.now());
       } else if (!previousModels || previousModels.length === 0) {

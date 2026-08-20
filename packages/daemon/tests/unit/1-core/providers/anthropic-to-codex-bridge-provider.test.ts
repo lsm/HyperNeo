@@ -786,10 +786,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.4');
     });
 
-    it('throws for unknown model IDs instead of silently falling back', () => {
-      expect(() =>
-        provider.buildSdkConfig('unknown-model', { workspacePath: '/tmp/ws-unk' })
-      ).toThrow('Unknown Codex model: unknown-model');
+    it('falls back to the default listed model for stale model IDs', () => {
+      const cfg = provider.buildSdkConfig('unknown-model', { workspacePath: '/tmp/ws-unk' });
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.6-terra');
     });
 
     it('uses real Codex model IDs in ANTHROPIC_DEFAULT_*_MODEL env vars', () => {
@@ -1320,6 +1319,31 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(provider.ownsModel('codex-5.6')).toBe(true);
     });
 
+    it('does not route a previous credential scope catalog after credentials change', async () => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-account-specific' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({}, tmpDir, tmpDir, fetchImpl);
+      provider.setCredentials({ type: 'api_key', apiKey: 'sk-first-account' });
+      await provider.getModels();
+      expect(provider.ownsModel('gpt-account-specific')).toBe(true);
+
+      provider.setCredentials({ type: 'api_key', apiKey: 'sk-second-account' });
+
+      expect(provider.ownsModel('gpt-account-specific')).toBe(false);
+      expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
+      if (isBun) {
+        const config = provider.buildSdkConfig('gpt-account-specific', {
+          sessionId: 'new-account',
+        });
+        expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.6-terra');
+      }
+    });
+
     it('hydrates OAuth dynamic routing synchronously after restart', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       writeHyperNeoAuth(hyperneoDir, {
@@ -1405,6 +1429,74 @@ describe('AnthropicToCodexBridgeProvider', () => {
         expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('128000');
       }
       restarted.stopAllBridgeServers();
+    });
+
+    it('revalidates a stale cache with its ETag and retains models on 304', async () => {
+      const cachePath = path.join(tmpDir, 'openai-models-cache.json');
+      const initialFetch = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-revalidated' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', ETag: 'catalog-v1' },
+          })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, initialFetch);
+      await provider.getModels();
+      const staleCache = JSON.parse(readFileSync(cachePath, 'utf-8')) as Record<string, unknown>;
+      staleCache.fetchedAt = '2020-01-01T00:00:00.000Z';
+      writeFileSync(cachePath, JSON.stringify(staleCache), { mode: 0o600 });
+
+      const revalidateFetch = mock(
+        async () => new Response(null, { status: 304 })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, revalidateFetch);
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(['gpt-revalidated']);
+      const [, init] = (revalidateFetch as ReturnType<typeof mock>).mock.calls[0] as [
+        URL,
+        RequestInit,
+      ];
+      expect((init.headers as Record<string, string>)['if-none-match']).toBe('catalog-v1');
+      const refreshedCache = JSON.parse(readFileSync(cachePath, 'utf-8')) as Record<
+        string,
+        unknown
+      >;
+      expect(refreshedCache.fetchedAt).not.toBe(staleCache.fetchedAt);
+      expect(JSON.stringify(refreshedCache)).toContain('gpt-revalidated');
+    });
+
+    it('ignores corrupt cache files', () => {
+      const cachePath = path.join(tmpDir, 'openai-models-cache.json');
+      writeFileSync(cachePath, '{broken', { mode: 0o600 });
+
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir);
+
+      expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
+    });
+
+    it('does not activate a cache from another client version', async () => {
+      const cachePath = path.join(tmpDir, 'openai-models-cache.json');
+      const initialFetch = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-incompatible-cache' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, initialFetch);
+      await provider.getModels();
+      const incompatibleCache = JSON.parse(readFileSync(cachePath, 'utf-8')) as Record<
+        string,
+        unknown
+      >;
+      incompatibleCache.clientVersion = '0.147.0';
+      writeFileSync(cachePath, JSON.stringify(incompatibleCache), { mode: 0o600 });
+
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir);
+
+      expect(provider.ownsModel('gpt-incompatible-cache')).toBe(false);
+      expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
     });
 
     it('forces an unconditional refresh instead of reusing the ETag', async () => {

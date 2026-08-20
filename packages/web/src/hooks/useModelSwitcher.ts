@@ -83,7 +83,7 @@ export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
       family = 'deepseek';
     } else if (mid === 'openrouter/auto') {
       family = 'openrouter';
-    } else if (mid.startsWith('gpt-') || mid.includes('/gpt')) {
+    } else if (/^(?:gpt-|o\d|codex-|ft:(?:gpt-|o\d|codex-))/.test(mid) || mid.includes('/gpt')) {
       family = 'gpt';
     } else if (mid.includes('/')) {
       family = 'openrouter';
@@ -139,6 +139,7 @@ export function inferProviderFromModelId(modelId: string): string | undefined {
 
   if (id === 'openrouter/auto' || id.includes('/')) return 'openrouter';
 
+  if (/^ft:(?:gpt-|o\d|codex-)/.test(id)) return 'anthropic-codex';
   if (id.includes(':')) return 'ollama';
 
   if (id.startsWith('glm-') || id === 'glm') return 'glm';
@@ -153,7 +154,7 @@ export function inferProviderFromModelId(modelId: string): string | undefined {
   if (id.startsWith('minimax-') || id === 'minimax') return 'minimax';
   if (id.startsWith('deepseek-') || id === 'deepseek') return 'deepseek';
   if (id === 'ollama') return 'ollama';
-  if (id.startsWith('gpt-')) return 'anthropic-codex';
+  if (/^(?:gpt-|o\d|codex-|ft:(?:gpt-|o\d|codex-))/.test(id)) return 'anthropic-codex';
   return undefined;
 }
 

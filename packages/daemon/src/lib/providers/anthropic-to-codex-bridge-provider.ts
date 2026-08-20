@@ -418,6 +418,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return this.activeCatalogScope ? this.sameScope(this.activeCatalogScope, scope) : false;
   }
 
+  private ensureCatalogForScope(scope: CodexModelCacheScope): void {
+    if (!this.hasActiveCatalog(scope) && !this.activateCachedCatalog(scope)) {
+      this.replaceCatalog(this.bundledCatalogEntries(), scope);
+    }
+  }
+
   private sameScope(left: CodexModelCacheScope, right: CodexModelCacheScope): boolean {
     return (
       left.source === right.source &&
@@ -450,6 +456,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       this.cachedCredentials = { type: 'api_key', access: credentials.apiKey };
       this.cachedBridgeAuth = { source: 'api_key', apiKey: credentials.apiKey };
       this.cachedApiKey = credentials.apiKey;
+      this.ensureCatalogForScope(this.authScope(this.cachedBridgeAuth));
       return;
     }
 
@@ -467,6 +474,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedCredentials = stored;
     this.cachedBridgeAuth = this.toBridgeAuth(stored) ?? null;
     this.cachedApiKey = stored.access ?? '';
+    if (this.cachedBridgeAuth) {
+      this.ensureCatalogForScope(this.authScope(this.cachedBridgeAuth));
+    }
   }
 
   async getCredentials(): Promise<ProviderCredentials | null> {
@@ -931,9 +941,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const auth = await this.getBridgeAuth();
     if (!auth) return [];
     const scope = this.authScope(auth);
-    if (!this.hasActiveCatalog(scope) && !this.activateCachedCatalog(scope)) {
-      this.replaceCatalog(this.bundledCatalogEntries(), scope);
-    }
+    this.ensureCatalogForScope(scope);
     if (
       this.forceModelRefresh ||
       !this.modelCache ||
@@ -992,18 +1000,22 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
     const sessionId = sessionConfig?.sessionId ?? 'default';
     const auth = this.resolveBridgeAuth();
+    if (auth) this.ensureCatalogForScope(this.authScope(auth));
     const authKey = this.bridgeAuthCacheKey(auth);
     const bridgeKey = `responses:${authKey}`;
     let bridgeServer = this.bridgeServers.get(bridgeKey);
     for (const key of this.bridgeServers.keys()) {
       if (key !== bridgeKey) this.stopBridgeServerByKey(key);
     }
-    const catalogEntry = this.catalogEntries.find(
+    let catalogEntry = this.catalogEntries.find(
       ({ info }) =>
         info.alias === modelId || info.id === modelId || info.providerAliases?.includes(modelId)
     );
     if (!catalogEntry) {
-      throw new Error(`Unknown Codex model: ${modelId}`);
+      const fallbackId = this.getModelForTier('default');
+      catalogEntry = this.catalogEntries.find(({ info }) => info.id === fallbackId);
+      if (!catalogEntry) throw new Error(`Unknown Codex model: ${modelId}`);
+      logger.warn(`Unknown Codex model '${modelId}'; using '${catalogEntry.info.id}'`);
     }
     const entry = catalogEntry.info;
     const resolvedId = entry.id;
