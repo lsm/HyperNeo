@@ -772,13 +772,14 @@ describe('inferPersistableProviderForModel', () => {
     expect(await inferPersistableProviderForModel('openai/gpt-5.4')).toBe('openrouter');
   });
 
-  it('suppresses gpt-* only when an AVAILABLE provider also claims the ID', async () => {
+  it('suppresses gpt-* only when an available optional provider claims the ID', async () => {
     try {
       const registry = initializeProviders();
       await waitForOptionalProviderRegistration(registry);
 
       expect(inferProviderForModel('gpt-5.4')).toBe('anthropic-codex');
-      expect(inferProviderForModel('gpt-5.6-sol')).toBe('anthropic-codex');
+      expect(await inferPersistableProviderForModel('gpt-5.4')).toBeUndefined();
+      expect(await inferPersistableProviderForModel('gpt-5.6-sol')).toBe('anthropic-codex');
     } finally {
       resetProviderRegistry();
       resetProviderFactory();
@@ -806,6 +807,31 @@ describe('inferPersistableProviderForModel', () => {
     getProviderRegistry().register(claimant('anthropic-copilot', false));
     try {
       expect(await inferPersistableProviderForModel('gpt-5.4')).toBe('anthropic-codex');
+    } finally {
+      resetProviderRegistry();
+    }
+  });
+
+  it('falls back from an unavailable specific owner for gpt-* models', async () => {
+    const claimant = (available: boolean) =>
+      ({
+        id: 'anthropic-copilot',
+        displayName: 'Anthropic Copilot',
+        ownsModel: () => true,
+        isAvailable: async () => available,
+      }) as unknown as Provider;
+
+    getProviderRegistry().register(claimant(false));
+    try {
+      expect(inferProviderForModel('gpt-5-mini')).toBe('anthropic-copilot');
+      expect(await inferPersistableProviderForModel('gpt-5-mini')).toBe('anthropic-codex');
+    } finally {
+      resetProviderRegistry();
+    }
+
+    getProviderRegistry().register(claimant(true));
+    try {
+      expect(await inferPersistableProviderForModel('gpt-5-mini')).toBe('anthropic-copilot');
     } finally {
       resetProviderRegistry();
     }

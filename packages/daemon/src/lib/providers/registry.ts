@@ -208,8 +208,14 @@ export async function inferPersistableProviderForModel(
 ): Promise<ProviderIdStr | undefined> {
   const inferred = inferProviderForModel(modelId);
   if (inferred === 'anthropic') return undefined;
+  const isCodexModel = /^(?:gpt-|o\d|codex-|ft:(?:gpt-|o\d|codex-))/.test(modelId.toLowerCase());
+  const registry = getProviderRegistry();
+  if (isCodexModel && inferred !== 'anthropic-codex') {
+    const owner = registry.get(inferred);
+    if (owner && !(await owner.isAvailable())) return 'anthropic-codex';
+  }
   if (inferred === 'anthropic-codex') {
-    const otherOwners = getProviderRegistry()
+    const otherOwners = registry
       .getAll()
       .filter(
         (provider) =>

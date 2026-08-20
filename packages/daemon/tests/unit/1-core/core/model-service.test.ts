@@ -1222,6 +1222,80 @@ describe('Model Service', () => {
       expect(getAvailableModels('global')).toEqual([retained]);
     });
 
+    it('should retain provider fallbacks on the first strict refresh failure', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const fallbackModel = {
+        id: 'provider-fallback-model',
+        name: 'Provider Fallback Model',
+        family: 'test',
+        provider: 'failed-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const recoveredModel = {
+        ...fallbackModel,
+        id: 'provider-recovered-model',
+        name: 'Provider Recovered Model',
+      };
+      let failRefresh = true;
+      registry.register({
+        id: 'failed-provider',
+        getModels: async () => (failRefresh ? [fallbackModel] : [recoveredModel]),
+        refreshModels: async () => {
+          if (failRefresh) throw new Error('offline');
+          return [recoveredModel];
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getModelsCache().get('global')).toContainEqual(fallbackModel);
+
+      failRefresh = false;
+      getAvailableModels('global');
+      await expect.poll(() => getAvailableModels('global')).toContainEqual(recoveredModel);
+    });
+
+    it('should retry after every provider fails with a populated cache', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const staleModel = {
+        id: 'all-failed-stale-model',
+        name: 'All Failed Stale Model',
+        family: 'test',
+        provider: 'failed-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const recoveredModel = {
+        ...staleModel,
+        id: 'all-failed-recovered-model',
+        name: 'All Failed Recovered Model',
+      };
+      let failRefresh = true;
+      registry.register({
+        id: 'failed-provider',
+        getModels: async () => {
+          if (failRefresh) throw new Error('offline');
+          return [recoveredModel];
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      setModelsCache(new Map([['global', [staleModel]]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getModelsCache().get('global')).toEqual([staleModel]);
+
+      failRefresh = false;
+      getAvailableModels('global');
+      await expect.poll(() => getAvailableModels('global')).toEqual([recoveredModel]);
+    });
+
     it('should preserve Anthropic models when SDK discovery fails', async () => {
       const { AnthropicProvider } = await import(
         '../../../../src/lib/providers/anthropic-provider'

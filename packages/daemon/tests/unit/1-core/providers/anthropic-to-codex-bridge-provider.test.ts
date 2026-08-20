@@ -1280,6 +1280,26 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
+    it('coalesces concurrent model calls when discovery fails', async () => {
+      let rejectFetch: ((error: Error) => void) | undefined;
+      const failedResponse = new Promise<Response>((_resolve, reject) => {
+        rejectFetch = reject;
+      });
+      const fetchImpl = mock(async () => failedResponse) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      const first = provider.getModels();
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+      const second = provider.getModels();
+      rejectFetch?.(new Error('ECONNRESET'));
+
+      const [firstModels, secondModels] = await Promise.all([first, second]);
+
+      expect(firstModels.map((model) => model.id)).toContain('gpt-5.6-sol');
+      expect(secondModels.map((model) => model.id)).toContain('gpt-5.6-sol');
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
     it('keeps valid rich models when another entry has unsupported schema', async () => {
       const fetchImpl = mock(
         async () =>

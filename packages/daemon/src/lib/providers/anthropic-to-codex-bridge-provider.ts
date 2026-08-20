@@ -1107,17 +1107,23 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       !this.isModelCacheFresh(this.modelCache, scope)
     ) {
       const refreshKey = this.scopeKey(scope);
-      const activeRefresh = this.modelRefreshes.get(refreshKey);
-      if (activeRefresh) await activeRefresh;
+      let joinedRefresh = false;
+      let activeRefresh = this.modelRefreshes.get(refreshKey);
+      while (activeRefresh) {
+        joinedRefresh = true;
+        await activeRefresh;
+        activeRefresh = this.modelRefreshes.get(refreshKey);
+      }
       if (
         this.forceModelRefresh ||
-        !this.modelCache ||
-        !this.isModelCacheFresh(this.modelCache, scope)
+        (!joinedRefresh && (!this.modelCache || !this.isModelCacheFresh(this.modelCache, scope)))
       ) {
         const revalidate = !this.forceModelRefresh;
         this.forceModelRefresh = false;
         const refresh = this.fetchModelCatalog(auth, revalidate).finally(() => {
-          this.modelRefreshes.delete(refreshKey);
+          if (this.modelRefreshes.get(refreshKey) === refresh) {
+            this.modelRefreshes.delete(refreshKey);
+          }
         });
         this.modelRefreshes.set(refreshKey, refresh);
         await refresh;

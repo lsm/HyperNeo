@@ -219,12 +219,15 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
   const results = await Promise.allSettled(
     providers.map(async (provider) => {
       const available = await provider.isAvailable();
-      return {
-        available,
-        models: available
-          ? await (provider.refreshModels ? provider.refreshModels() : provider.getModels())
-          : [],
-      };
+      if (!available) return { available, models: [], failed: false };
+      if (!provider.refreshModels) {
+        return { available, models: await provider.getModels(), failed: false };
+      }
+      try {
+        return { available, models: await provider.refreshModels(), failed: false };
+      } catch {
+        return { available, models: await provider.getModels(), failed: true };
+      }
     })
   );
 
@@ -235,6 +238,7 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
       failedProviderIds.add(providers[index].id);
     } else if (result.value.available) {
       models.push(...result.value.models);
+      if (result.value.failed) failedProviderIds.add(providers[index].id);
     }
   });
 
@@ -372,18 +376,16 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
           failedProviderIds
         );
         modelsCache.set(cacheKey, mergedModels);
-        if (failedProviderIds.size === 0) {
-          cacheTimestamps.set(cacheKey, Date.now());
-        } else {
-          cacheTimestamps.delete(cacheKey);
-        }
       } else if (failedProviderIds.size === 0) {
         modelsCache.set(cacheKey, []);
-        cacheTimestamps.set(cacheKey, Date.now());
       } else if (!previousModels || previousModels.length === 0) {
         const registry = getProviderRegistry();
         const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
         modelsCache.set(cacheKey, filteredFallbacks);
+      }
+      if (failedProviderIds.size === 0) {
+        cacheTimestamps.set(cacheKey, Date.now());
+      } else {
         cacheTimestamps.delete(cacheKey);
       }
     } finally {
