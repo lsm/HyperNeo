@@ -608,6 +608,60 @@ describe('JobQueueRepository', () => {
     });
   });
 
+  describe('cleanupCompleted', () => {
+    it('deletes completed jobs for the queue older than threshold', () => {
+      repository.enqueue({ queue: 'scan', payload: {} });
+      const [job] = repository.dequeue('scan');
+      repository.complete(job.id);
+
+      const deleted = repository.cleanupCompleted('scan', Date.now() + 1000);
+
+      expect(deleted).toBe(1);
+      expect(repository.getJob(job.id)).toBeNull();
+    });
+
+    it('keeps completed jobs for other queues', () => {
+      repository.enqueue({ queue: 'scan', payload: {} });
+      repository.enqueue({ queue: 'other', payload: {} });
+      const [scanJob] = repository.dequeue('scan');
+      const [otherJob] = repository.dequeue('other');
+      repository.complete(scanJob.id);
+      repository.complete(otherJob.id);
+
+      const deleted = repository.cleanupCompleted('scan', Date.now() + 1000);
+
+      expect(deleted).toBe(1);
+      expect(repository.getJob(scanJob.id)).toBeNull();
+      expect(repository.getJob(otherJob.id)).not.toBeNull();
+    });
+
+    it('keeps dead jobs in the same queue', () => {
+      repository.enqueue({ queue: 'scan', payload: {}, maxRetries: 0 });
+      const [job] = repository.dequeue('scan');
+      repository.fail(job.id, 'fatal');
+
+      const deleted = repository.cleanupCompleted('scan', Date.now() + 1000);
+
+      expect(deleted).toBe(0);
+      expect(repository.getJob(job.id)).not.toBeNull();
+      expect(repository.getJob(job.id)?.status).toBe('dead');
+    });
+
+    it('keeps completed jobs in the same queue younger than threshold', () => {
+      const now = Date.now();
+      const db = (repository as any).db;
+      db.exec(`
+				INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)
+				VALUES ('recent-completed', 'scan', 'completed', '{}', 0, 3, 0, ${now}, ${now}, ${now})
+			`);
+
+      const deleted = repository.cleanupCompleted('scan', now - 1000);
+
+      expect(deleted).toBe(0);
+      expect(repository.getJob('recent-completed')).not.toBeNull();
+    });
+  });
+
   describe('reclaimStale', () => {
     it('reclaims processing jobs started before threshold', () => {
       repository.enqueue({ queue: 'test', payload: {} });

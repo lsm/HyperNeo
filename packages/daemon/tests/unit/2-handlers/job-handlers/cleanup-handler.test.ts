@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { createCleanupHandler } from '../../../../src/lib/job-handlers/cleanup.handler';
-import { JOB_QUEUE_CLEANUP } from '../../../../src/lib/job-queue-constants';
+import {
+  JOB_QUEUE_CLEANUP,
+  LONG_HORIZON_AGENT_REMINDER_FIRE,
+} from '../../../../src/lib/job-queue-constants';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 
 function createTestDb(): Database {
@@ -103,7 +106,7 @@ describe('createCleanupHandler', () => {
     );
   });
 
-  it('self-schedules the next cleanup job ~24 hours from now', async () => {
+  it('self-schedules the next cleanup job ~1 hour from now', async () => {
     const handler = createCleanupHandler(jobQueue);
     const before = Date.now();
     const result = await handler(fakeJob);
@@ -112,8 +115,8 @@ describe('createCleanupHandler', () => {
     const pending = jobQueue.listJobs({ queue: JOB_QUEUE_CLEANUP, status: 'pending', limit: 10 });
     expect(pending.length).toBe(1);
 
-    const expectedMin = before + 24 * 60 * 60 * 1000;
-    const expectedMax = after + 24 * 60 * 60 * 1000;
+    const expectedMin = before + 60 * 60 * 1000;
+    const expectedMax = after + 60 * 60 * 1000;
     expect(pending[0].runAt).toBeGreaterThanOrEqual(expectedMin);
     expect(pending[0].runAt).toBeLessThanOrEqual(expectedMax);
     expect(result.nextRunAt).toBeGreaterThanOrEqual(expectedMin);
@@ -156,5 +159,44 @@ describe('createCleanupHandler', () => {
     const result = await handler(fakeJob);
 
     expect(result.deletedJobs).toBe(0);
+  });
+
+  it('deletes completed reminder scan jobs older than the per-queue retention', async () => {
+    const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+
+    db.exec(`
+			INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)
+			VALUES
+				('old-reminder-scan', '${LONG_HORIZON_AGENT_REMINDER_FIRE}', 'completed', '{}', 0, 3, 0, ${twoHoursAgo}, ${twoHoursAgo}, ${twoHoursAgo}),
+				('recent-reminder-scan', '${LONG_HORIZON_AGENT_REMINDER_FIRE}', 'completed', '{}', 0, 3, 0, ${fiveMinutesAgo}, ${fiveMinutesAgo}, ${fiveMinutesAgo}),
+				('old-other-queue', 'some.queue', 'completed', '{}', 0, 3, 0, ${twoHoursAgo}, ${twoHoursAgo}, ${twoHoursAgo})
+		`);
+
+    const handler = createCleanupHandler(jobQueue);
+    const result = await handler(fakeJob);
+
+    expect(result.deletedJobs).toBe(1);
+    expect(jobQueue.getJob('old-reminder-scan')).toBeNull();
+    expect(jobQueue.getJob('recent-reminder-scan')).not.toBeNull();
+    expect(jobQueue.getJob('old-other-queue')).not.toBeNull();
+  });
+
+  it('keeps dead and failed reminder scan jobs until the default retention', async () => {
+    const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+
+    db.exec(`
+			INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)
+			VALUES
+				('dead-reminder-scan', '${LONG_HORIZON_AGENT_REMINDER_FIRE}', 'dead', '{}', 0, 3, 3, ${twoHoursAgo}, ${twoHoursAgo}, ${twoHoursAgo}),
+				('failed-reminder-scan', '${LONG_HORIZON_AGENT_REMINDER_FIRE}', 'failed', '{}', 0, 3, 1, ${twoHoursAgo}, ${twoHoursAgo}, ${twoHoursAgo})
+		`);
+
+    const handler = createCleanupHandler(jobQueue);
+    const result = await handler(fakeJob);
+
+    expect(result.deletedJobs).toBe(0);
+    expect(jobQueue.getJob('dead-reminder-scan')).not.toBeNull();
+    expect(jobQueue.getJob('failed-reminder-scan')).not.toBeNull();
   });
 });
