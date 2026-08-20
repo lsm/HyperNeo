@@ -324,7 +324,8 @@ export class SDKMessageHandler {
   }
 
   private async acknowledgeOldestQueuedUserOnTurnEnd(
-    activeMessageId: string | null
+    activeMessageId: string | null,
+    resultUuid: string
   ): Promise<void> {
     const { session, db, internalEventBus, messageHub, messageQueue } = this.ctx;
     const durableOwned =
@@ -344,12 +345,18 @@ export class SDKMessageHandler {
       let consumedAt = Date.now();
       if (consumedAt <= lastConsumedAt) consumedAt = lastConsumedAt + 1;
       lastConsumedAt = consumedAt;
-      db.updateMessageStatus([enqueuedUser.dbId], 'consumed');
-      db.updateMessageTimestamp(enqueuedUser.dbId, consumedAt);
-      messageQueue.acknowledgeYielded(enqueuedUser.uuid ?? '');
+      const messageId = enqueuedUser.uuid ?? '';
+      const consumedId = db
+        .getSDKMessageRepo()
+        .markDeliveryConsumedAtTurnEnd(session.id, messageId, resultUuid);
+      if (!consumedId) continue;
+      db.updateMessageTimestamp(consumedId, consumedAt);
+      if (messageQueue.acknowledgeYielded(messageId)) {
+        this.completeDeliveryAcceptance(messageId);
+      }
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: session.id,
-        messageIds: [enqueuedUser.dbId],
+        messageIds: [consumedId],
         status: 'consumed',
       });
 
@@ -412,9 +419,13 @@ export class SDKMessageHandler {
       messageId
     );
     if (consumed) {
-      signalDeliveryConsumed(this.ctx.session.id, messageId);
-      this.consumeBatchMembersAtAcceptance(messageId);
+      this.completeDeliveryAcceptance(messageId);
     }
+  }
+
+  private completeDeliveryAcceptance(messageId: string): void {
+    signalDeliveryConsumed(this.ctx.session.id, messageId);
+    this.consumeBatchMembersAtAcceptance(messageId);
   }
 
   private consumeBatchMembersAtAcceptance(kickoffUuid: string): void {
@@ -879,7 +890,7 @@ export class SDKMessageHandler {
     }
 
     if (!this.acknowledgedPersistedUserThisTurn) {
-      await this.acknowledgeOldestQueuedUserOnTurnEnd(activeMessageId);
+      await this.acknowledgeOldestQueuedUserOnTurnEnd(activeMessageId, message.uuid ?? '');
     }
     this.acknowledgedPersistedUserThisTurn = false;
 

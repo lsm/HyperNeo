@@ -1231,6 +1231,10 @@ describe('SDKMessageHandler', () => {
         }
         return [];
       });
+      const markDeliveryConsumedAtTurnEndSpy = mock(() => 'db-msg-1');
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markDeliveryConsumedAtTurnEnd: markDeliveryConsumedAtTurnEndSpy,
+      })) as never;
 
       const message: SDKMessage = {
         type: 'result',
@@ -1248,7 +1252,11 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(message);
 
-      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-1'], 'consumed');
+      expect(markDeliveryConsumedAtTurnEndSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        'enqueued-user-uuid',
+        'result-uuid'
+      );
       expect(mockDb.updateMessageTimestamp).not.toHaveBeenCalledWith('db-msg-1');
       expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
         sessionId: 'test-session-id',
@@ -1322,9 +1330,18 @@ describe('SDKMessageHandler', () => {
         }
         return [];
       });
+      const markDeliveryConsumedAtTurnEndSpy = mock(() => 'db-yielded');
+      const markDeliveryConsumedByUuidsSpy = mock(() => ['db-batch-member']);
       mockDb.getJobQueueRepo = mock(() => ({
         activeDeliveryMessageUuids: () => new Set(['yielded-user-uuid']),
+        getActiveDeliveryBatchUuids: () => ['yielded-user-uuid', 'batch-member-uuid'],
       })) as never;
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markDeliveryConsumedAtTurnEnd: markDeliveryConsumedAtTurnEndSpy,
+        markDeliveryConsumedByUuids: markDeliveryConsumedByUuidsSpy,
+      })) as never;
+      const kickoffWaiter = waitForDeliveryConsumption(mockSession.id, 'yielded-user-uuid');
+      const memberWaiter = waitForDeliveryConsumption(mockSession.id, 'batch-member-uuid');
       getStateSpy.mockReturnValue({
         status: 'processing',
         messageId: 'yielded-user-uuid',
@@ -1348,8 +1365,26 @@ describe('SDKMessageHandler', () => {
 
       expect(setIdleSpy).toHaveBeenCalled();
       expect(getStateSpy).toHaveBeenCalledTimes(1);
-      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-yielded'], 'consumed');
+      expect(markDeliveryConsumedAtTurnEndSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        'yielded-user-uuid',
+        'result-uuid'
+      );
       expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('yielded-user-uuid');
+      expect(markDeliveryConsumedByUuidsSpy).toHaveBeenCalledWith('test-session-id', [
+        'batch-member-uuid',
+      ]);
+      expect(
+        await Promise.all([
+          kickoffWaiter.promise.then(() => 'consumed'),
+          memberWaiter.promise.then(() => 'consumed'),
+        ])
+      ).toEqual(['consumed', 'consumed']);
+      expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'test-session-id',
+        messageIds: ['db-batch-member'],
+        status: 'consumed',
+      });
     });
 
     it('leaves an active durable steer enqueued and claimable at turn end (#3744401261)', async () => {

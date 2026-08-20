@@ -1678,6 +1678,12 @@ describe('SDKMessageRepository', () => {
       expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(0);
       expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(2);
       expect(repository.getMessagesByStatus('session-1', 'deferred').length).toBe(1);
+      const turns = db
+        .prepare(
+          'SELECT DISTINCT conversation_turn_index AS turn FROM sdk_messages WHERE id IN (?, ?)'
+        )
+        .all(kickoffId, memberId) as Array<{ turn: number }>;
+      expect(turns).toHaveLength(1);
     });
 
     it('markDeliveryFailedByUuidInclusive does NOT fail a deferred row (user hold survives dead-letter)', () => {
@@ -2079,6 +2085,45 @@ describe('SDKMessageRepository', () => {
         terminal: true,
       });
       expect(repository.hasTerminalResultAfter('session-1', 'own-turn-msg')).toBe(true);
+    });
+
+    it('uses the current result boundary when turn-end fallback consumes after result persistence', () => {
+      const messageId = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('yielded prompt', 'yielded-msg'),
+        'enqueued'
+      );
+      const resultUuid = 'result-uuid';
+      repository.saveSDKMessage('session-1', {
+        type: 'result',
+        subtype: 'success',
+        uuid: resultUuid,
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage);
+
+      expect(repository.markDeliveryConsumedAtTurnEnd('session-1', 'yielded-msg', resultUuid)).toBe(
+        messageId
+      );
+      expect(repository.hasTerminalResultAfter('session-1', 'yielded-msg')).toBe(true);
+    });
+
+    it('does not consume at turn end without the matching successful top-level result', () => {
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('yielded prompt', 'yielded-msg'),
+        'enqueued'
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'result',
+        subtype: 'error_during_execution',
+        uuid: 'error-result-uuid',
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage);
+
+      expect(
+        repository.markDeliveryConsumedAtTurnEnd('session-1', 'yielded-msg', 'error-result-uuid')
+      ).toBeNull();
+      expect(repository.getMessagesByStatus('session-1', 'enqueued')).toHaveLength(1);
     });
 
     it('is false when the terminal result belongs to another session', () => {
