@@ -1139,6 +1139,7 @@ describe('messages.bySession — content replacement rewrite', () => {
         session_id: 's1',
         action: 'sdk_resume_choice',
         resolved: false,
+        chosenOption: 'start_fresh',
         timestamp: 1,
       },
       timestamp: '2024-01-01 00:00:01',
@@ -1155,9 +1156,9 @@ describe('messages.bySession — content replacement rewrite', () => {
       uuid: 'u-action',
       session_id: 's1',
       action: 'sdk_resume_choice',
-      resolved: true,
-      chosenOption: 'start_fresh',
-      timestamp: 2,
+      resolved: false,
+      chosenOption: 'leave_as_is',
+      timestamp: 1,
     });
 
     reactiveDb.notifyChange('sdk_messages', { sessionId: 's1' });
@@ -1168,8 +1169,7 @@ describe('messages.bySession — content replacement rewrite', () => {
     const updated = diffs[2].updated as Array<{ id: string; content: string }>;
     expect(updated.map((row) => row.id)).toContain('action-1');
     const rewritten = updated.find((row) => row.id === 'action-1');
-    expect(rewritten?.content).toContain('"resolved":true');
-    expect(rewritten?.content).toContain('"chosenOption":"start_fresh"');
+    expect(rewritten?.content).toContain('"chosenOption":"leave_as_is"');
 
     engine.dispose();
   });

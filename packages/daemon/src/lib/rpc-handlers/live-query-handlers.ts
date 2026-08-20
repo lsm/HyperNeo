@@ -3000,6 +3000,7 @@ WITH top_level AS (
     send_status,
     origin,
     rowid,
+    message_type,
     -- Active-delivery retry info for the "retrying" UI state (task #862):
     -- the pending/processing message_delivery job for this row's canonical
     -- uuid, packed as {count, runAt, max}. count > 0 drives the "retrying"
@@ -3096,6 +3097,7 @@ subagent AS (
     sm.send_status AS send_status,
     sm.origin AS origin,
     sm.rowid AS rowid,
+    sm.message_type AS message_type,
     (
       SELECT json_object(
         'count', jq.retry_count,
@@ -3128,6 +3130,7 @@ SELECT
   send_status                                                       AS sendStatus,
   origin                                                            AS origin,
   rowid                                                             AS rowid,
+  message_type                                                      AS messageType,
   deliveryRetryInfo                                                 AS deliveryRetryInfo
 FROM top_level
 UNION ALL
@@ -3138,6 +3141,7 @@ SELECT
   send_status                                                       AS sendStatus,
   origin                                                            AS origin,
   rowid                                                             AS rowid,
+  message_type                                                      AS messageType,
   deliveryRetryInfo                                                 AS deliveryRetryInfo
 FROM subagent
 ORDER BY timestamp ASC, rowid ASC
@@ -3496,14 +3500,17 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
           return scope.sessionId === targetSessionId;
         };
       },
-      rowFingerprint: (row) => ({
-        content: typeof row.content === 'string' ? row.content.length : row.content,
-        timestamp: row.timestamp,
-        sendStatus: row.sendStatus,
-        origin: row.origin,
-        rowid: row.rowid,
-        deliveryRetryInfo: row.deliveryRetryInfo,
-      }),
+      rowFingerprint: (row) =>
+        row.messageType === 'hyperneo_action'
+          ? row
+          : {
+              content: typeof row.content === 'string' ? row.content.length : row.content,
+              timestamp: row.timestamp,
+              sendStatus: row.sendStatus,
+              origin: row.origin,
+              rowid: row.rowid,
+              deliveryRetryInfo: row.deliveryRetryInfo,
+            },
     },
   ],
   [

@@ -30,7 +30,8 @@ function buildContent(seed: number, kb: number): string {
 function buildRows(): Record<string, unknown>[] {
   const rows: Record<string, unknown>[] = [];
   for (let index = 0; index < WINDOW; index++) {
-    const kb = index % 10 === 0 ? 64 : 8 + (index % 5) * 4;
+    const rewriteable = index % 20 === 0;
+    const kb = rewriteable ? 0 : index % 10 === 0 ? 64 : 8 + (index % 5) * 4;
     rows.push({
       id: `msg-${index}`,
       content: buildContent(index, kb),
@@ -38,20 +39,24 @@ function buildRows(): Record<string, unknown>[] {
       sendStatus: index % 3 === 0 ? 'consumed' : index % 3 === 1 ? 'processing' : 'deferred',
       origin: index % 2 === 0 ? 'human' : 'system',
       rowid: index + 1,
+      messageType: rewriteable ? 'hyperneo_action' : 'assistant',
       deliveryRetryInfo: index % 7 === 0 ? `{"count":${index % 3},"runAt":1,"max":8}` : null,
     });
   }
   return rows;
 }
 
-const fingerprint = (row: Record<string, unknown>): Record<string, unknown> => ({
-  content: typeof row.content === 'string' ? row.content.length : row.content,
-  timestamp: row.timestamp,
-  sendStatus: row.sendStatus,
-  origin: row.origin,
-  rowid: row.rowid,
-  deliveryRetryInfo: row.deliveryRetryInfo,
-});
+const fingerprint = (row: Record<string, unknown>): Record<string, unknown> =>
+  row.messageType === 'hyperneo_action'
+    ? row
+    : {
+        content: typeof row.content === 'string' ? row.content.length : row.content,
+        timestamp: row.timestamp,
+        sendStatus: row.sendStatus,
+        origin: row.origin,
+        rowid: row.rowid,
+        deliveryRetryInfo: row.deliveryRetryInfo,
+      };
 
 const rows = buildRows();
 
