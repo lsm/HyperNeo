@@ -186,7 +186,10 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
   if (modelId.startsWith('gpt-oss:')) return modelId.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
 
   if (/^(?:gpt-|o\d|codex-|ft:(?:gpt-|o\d|codex-))/.test(normalizedModelId)) {
-    return 'anthropic-codex';
+    const specificOwner = getProviderRegistry()
+      .getAll()
+      .find((provider) => provider.id !== 'anthropic' && provider.ownsModel(modelId));
+    return (specificOwner?.id as ProviderIdStr | undefined) ?? 'anthropic-codex';
   }
 
   const fromRegistry = getProviderRegistry().findProviderForModel(modelId)?.id;

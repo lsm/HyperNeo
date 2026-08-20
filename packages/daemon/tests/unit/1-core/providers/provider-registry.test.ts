@@ -708,6 +708,34 @@ describe('inferProviderForModel', () => {
     }
   });
 
+  it('preserves specific registered ownership for Codex-style IDs', () => {
+    try {
+      getProviderRegistry().register(
+        new (class extends MockProvider {
+          readonly id = 'anthropic' as const;
+          readonly displayName = 'Anthropic';
+          ownsModel(): boolean {
+            return true;
+          }
+        })()
+      );
+      getProviderRegistry().register(
+        new (class extends MockProvider {
+          readonly id = 'anthropic-copilot' as const;
+          readonly displayName = 'Anthropic Copilot';
+          ownsModel(modelId: string): boolean {
+            return modelId === 'gpt-5-mini';
+          }
+        })()
+      );
+
+      expect(inferProviderForModel('gpt-5-mini')).toBe('anthropic-copilot');
+      expect(inferProviderForModel('o3')).toBe('anthropic-codex');
+    } finally {
+      resetProviderRegistry();
+    }
+  });
+
   it('defaults claude- models to anthropic', () => {
     expect(inferProviderForModel('claude-opus-4-6')).toBe('anthropic');
     expect(inferProviderForModel('claude-sonnet-4.6/preview')).toBe('anthropic');
