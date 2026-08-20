@@ -719,6 +719,9 @@ export class SDKMessageHandler {
     if (isTopLevelResult) {
       this.lastResultWasSuccess = isSDKResultSuccess(message);
       this.resetThinkingTokenTracking();
+      if (!isSDKResultSuccess(message)) {
+        this.suppressIdleOnNextResult = false;
+      }
     }
 
     if (isSDKUserMessage(message)) {

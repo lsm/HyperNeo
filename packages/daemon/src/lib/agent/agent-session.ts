@@ -264,7 +264,8 @@ export class AgentSession
 
   onPrepareContextResetFlush?: (
     sessionId: string,
-    pendingCount: number
+    pendingCount: number,
+    containsTaskMessage: boolean
   ) => Promise<'prepared' | 'noop'>;
 
   get mcpEnablementRepo(): import('../../storage/repositories/mcp-enablement-repository').McpEnablementRepository {
@@ -854,9 +855,16 @@ export class AgentSession
     finish();
   }
 
-  async prepareContextResetFlush(pendingCount: number): Promise<'prepared' | 'noop'> {
+  async prepareContextResetFlush(
+    pendingCount: number,
+    containsTaskMessage: boolean
+  ): Promise<'prepared' | 'noop'> {
     if (!this.onPrepareContextResetFlush) return 'noop';
-    return await this.onPrepareContextResetFlush(this.session.id, pendingCount);
+    return await this.onPrepareContextResetFlush(
+      this.session.id,
+      pendingCount,
+      containsTaskMessage
+    );
   }
 
   private nextPastSdkSessionIds(): string[] | undefined {

@@ -1096,9 +1096,9 @@ export class SDKMessageRepository {
   getMessagesByStatus(
     sessionId: string,
     status: SendStatus
-  ): Array<SDKMessage & { dbId: string; timestamp: number }> {
+  ): Array<SDKMessage & { dbId: string; timestamp: number; origin?: string | null }> {
     const stmt = this.db.prepare(
-      `SELECT id, sdk_message, timestamp FROM sdk_messages
+      `SELECT id, sdk_message, timestamp, origin FROM sdk_messages
        WHERE session_id = ? AND send_status = ?
        ORDER BY timestamp ASC`
     );
@@ -1106,6 +1106,7 @@ export class SDKMessageRepository {
       id: string;
       sdk_message: string;
       timestamp: string;
+      origin: string | null;
     }>;
 
     return rows.map((row) => this.inflatePersistedMessage(row));
@@ -1135,7 +1136,8 @@ export class SDKMessageRepository {
     id: string;
     sdk_message: string;
     timestamp: string;
-  }): SDKMessage & { dbId: string; timestamp: number } {
+    origin?: string | null;
+  }): SDKMessage & { dbId: string; timestamp: number; origin?: string | null } {
     let message: SDKMessage;
     try {
       message = JSON.parse(row.sdk_message) as SDKMessage;
@@ -1146,7 +1148,8 @@ export class SDKMessageRepository {
       ...message,
       dbId: row.id,
       timestamp: new Date(row.timestamp).getTime(),
-    } as SDKMessage & { dbId: string; timestamp: number };
+      origin: row.origin ?? undefined,
+    } as SDKMessage & { dbId: string; timestamp: number; origin?: string | null };
   }
 
   updateMessageStatus(

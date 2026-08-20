@@ -486,13 +486,20 @@ describe('recovery flush — confirmed clear at the front of a batch (task #1098
     else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previousFlag;
   });
 
+  interface DeferredMessage {
+    uuid: string;
+    text: string;
+    isSynthetic?: boolean;
+    origin?: string | null;
+  }
+
   interface FlushHarness {
     manager: TaskAgentManager;
     clearMock: ReturnType<typeof mock>;
     enqueueWithIdMock: ReturnType<typeof mock>;
     getMessagesByStatus: ReturnType<typeof mock>;
     sessionId: string;
-    setDeferred(messages: Array<{ uuid: string; text: string }>): void;
+    setDeferred(messages: Array<DeferredMessage>): void;
     flush(): Promise<{ success: boolean; messageCount: number }>;
   }
 
@@ -531,17 +538,19 @@ describe('recovery flush — confirmed clear at the front of a batch (task #1098
       messageQueue: { enqueueWithId: session.enqueueMock },
       logger: { error: mock(), warn: mock() } as unknown as Logger,
       ensureQueryStarted: session.ensureStartedMock,
-      prepareContextResetFlush: async (count: number) =>
-        manager.prepareContextResetFlushForSession(sessionId, count),
+      prepareContextResetFlush: async (count: number, containsTaskMessage: boolean) =>
+        manager.prepareContextResetFlushForSession(sessionId, count, containsTaskMessage),
     } as unknown as QueryModeHandlerContext);
 
-    const setDeferred = (messages: Array<{ uuid: string; text: string }>): void => {
+    const setDeferred = (messages: Array<DeferredMessage>): void => {
       session.getMessagesByStatus.mockImplementation((sid: string, status: string) => {
         if (status !== 'deferred') return [];
         return messages.map((m, i) => ({
           dbId: `db-${i}`,
           uuid: m.uuid,
           type: 'user',
+          isSynthetic: m.isSynthetic,
+          origin: m.origin,
           message: { role: 'user', content: [{ type: 'text', text: m.text }] },
           timestamp: 0,
         }));
@@ -620,6 +629,39 @@ describe('recovery flush — confirmed clear at the front of a batch (task #1098
     expect(harness.enqueueWithIdMock).toHaveBeenCalledTimes(1);
   });
 
+  it('does not clear when the flush batch contains only human follow-ups', async () => {
+    const harness = makeFlushHarness({ slotResets: true });
+    harness.setDeferred([{ uuid: 'human-1', text: 'please review the diff', isSynthetic: false }]);
+
+    await harness.flush();
+
+    expect(harness.clearMock).not.toHaveBeenCalled();
+    expect(harness.enqueueWithIdMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not clear when the flush batch contains only a recovery nag (origin=system)', async () => {
+    const harness = makeFlushHarness({ slotResets: true });
+    harness.setDeferred([{ uuid: 'recovery-1', text: '/compact', origin: 'system' }]);
+
+    await harness.flush();
+
+    expect(harness.clearMock).not.toHaveBeenCalled();
+    expect(harness.enqueueWithIdMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears when the flush batch mixes a handoff with a human follow-up', async () => {
+    const harness = makeFlushHarness({ slotResets: true });
+    harness.setDeferred([
+      { uuid: 'human-1', text: 'please review the diff', isSynthetic: false },
+      { uuid: 'handoff-1', text: 'review round 3' },
+    ]);
+
+    await harness.flush();
+
+    expect(harness.clearMock).toHaveBeenCalledTimes(1);
+    expect(harness.enqueueWithIdMock).toHaveBeenCalledTimes(2);
+  });
+
   it('does not clear on the recovery flush when the session has no prior context', async () => {
     const { manager, session } = makeManager({ slotResets: true });
     let pendingClear = false;
@@ -658,7 +700,7 @@ describe('recovery flush — confirmed clear at the front of a batch (task #1098
       logger: { error: mock(), warn: mock() } as unknown as Logger,
       ensureQueryStarted: session.ensureStartedMock,
       prepareContextResetFlush: async (count: number) =>
-        manager.prepareContextResetFlushForSession(SESSION_ID, count),
+        manager.prepareContextResetFlushForSession(SESSION_ID, count, true),
     } as unknown as QueryModeHandlerContext);
 
     await qmh.handleQueryTrigger();

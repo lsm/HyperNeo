@@ -690,6 +690,46 @@ describe('SDKMessageHandler', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
+    it('releases idle suppression when the suppressed /clear turn errors (worker must not stay busy)', async () => {
+      const successResult = (uuid: string): SDKMessage =>
+        ({
+          type: 'result',
+          subtype: 'success',
+          uuid,
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        }) as unknown as SDKMessage;
+      const errorResult = {
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        uuid: 'clear-error',
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+
+      handler.suppressIdleForNextResult();
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage(errorResult);
+      expect(setIdleSpy).not.toHaveBeenCalled();
+
+      await handler.handleMessage(successResult('handoff-result'));
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
+
     it('should persist and broadcast api_retry message', async () => {
       const message: SDKMessage = {
         type: 'system',

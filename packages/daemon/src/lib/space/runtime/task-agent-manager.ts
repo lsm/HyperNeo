@@ -2722,16 +2722,21 @@ export class TaskAgentManager {
   }
 
   private wireContextResetFlushHook(agentSession: AgentSession): void {
-    agentSession.onPrepareContextResetFlush = async (sessionId: string, pendingCount: number) =>
-      this.prepareContextResetFlushForSession(sessionId, pendingCount);
+    agentSession.onPrepareContextResetFlush = async (
+      sessionId: string,
+      pendingCount: number,
+      containsTaskMessage: boolean
+    ) => this.prepareContextResetFlushForSession(sessionId, pendingCount, containsTaskMessage);
   }
 
   async prepareContextResetFlushForSession(
     sessionId: string,
-    _pendingCount: number
+    _pendingCount: number,
+    containsTaskMessage: boolean
   ): Promise<'prepared' | 'noop'> {
     const session = this.agentSessionIndex.get(sessionId);
     if (!session) return 'noop';
+    if (!containsTaskMessage) return 'noop';
     if (!session.session.sdkSessionId) return 'noop';
     if (!this.slotResetsContextForSession(sessionId)) return 'noop';
     if (session.hasPendingContextResetClear?.()) return 'noop';

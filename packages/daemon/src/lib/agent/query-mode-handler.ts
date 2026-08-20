@@ -25,7 +25,18 @@ export interface QueryModeHandlerContext {
   };
 
   ensureQueryStarted(): Promise<void>;
-  prepareContextResetFlush?(pendingCount: number): Promise<'prepared' | 'noop'>;
+  prepareContextResetFlush?(
+    pendingCount: number,
+    containsTaskMessage: boolean
+  ): Promise<'prepared' | 'noop'>;
+}
+
+function isTaskHandoffMessage(
+  message: SDKMessage & { isSynthetic?: boolean; origin?: string | null }
+): boolean {
+  if (message.isSynthetic === false) return false;
+  if (message.origin === 'system') return false;
+  return true;
 }
 
 export class QueryModeHandler {
@@ -45,7 +56,10 @@ export class QueryModeHandler {
         return { success: true, messageCount: 0 };
       }
 
-      await this.ctx.prepareContextResetFlush?.(deferredMessages.length);
+      await this.ctx.prepareContextResetFlush?.(
+        deferredMessages.length,
+        deferredMessages.some(isTaskHandoffMessage)
+      );
 
       const dbIds = deferredMessages.map((m) => m.dbId);
       db.updateMessageStatus(dbIds, 'enqueued');
@@ -136,7 +150,10 @@ export class QueryModeHandler {
         return;
       }
 
-      await this.ctx.prepareContextResetFlush?.(queuedMessages.length);
+      await this.ctx.prepareContextResetFlush?.(
+        queuedMessages.length,
+        queuedMessages.some(isTaskHandoffMessage)
+      );
 
       if (isMessageDeliveryV2Enabled()) {
         await this.deliverFlushUnderV2(queuedMessages, 'recovery');

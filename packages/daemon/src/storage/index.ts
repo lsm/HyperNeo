@@ -250,7 +250,7 @@ export class Database {
   getMessagesByStatus(
     sessionId: string,
     status: SendStatus
-  ): Array<SDKMessage & { dbId: string; timestamp: number }> {
+  ): Array<SDKMessage & { dbId: string; timestamp: number; origin?: string | null }> {
     return this.sdkMessageRepo.getMessagesByStatus(sessionId, status);
   }
 
