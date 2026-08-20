@@ -1145,11 +1145,21 @@ describe('AgentSession', () => {
         false,
         () => true
       );
+      let settled = false;
+      void drive.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        }
+      );
       await new Promise((resolve) => setTimeout(resolve, 10));
       for (let fire = 0; fire < 3; fire++) {
         await agentSession.stateManager.setIdle();
         if (fire < 2) {
           await new Promise((resolve) => setTimeout(resolve, 10));
+          expect(settled).toBe(false);
           await agentSession.stateManager.setProcessing('uuid-grace-cap');
         }
       }
