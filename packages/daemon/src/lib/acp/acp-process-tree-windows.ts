@@ -66,7 +66,10 @@ async function createWindowsProcessTreeOwner(): Promise<AcpProcessTreeOwner> {
     const pid = child.pid;
     if (pid == null) throw new Error('Unable to own ACP process tree without a process id');
     const job = symbols.CreateJobObjectA(null, null);
-    if (job === 0n) throw new Error(`Unable to create ACP process job (${symbols.GetLastError()})`);
+    if (job === 0n) {
+      child.kill('SIGKILL');
+      throw new Error(`Unable to create ACP process job (${symbols.GetLastError()})`);
+    }
 
     try {
       const limits = Buffer.alloc(JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_BYTES);
