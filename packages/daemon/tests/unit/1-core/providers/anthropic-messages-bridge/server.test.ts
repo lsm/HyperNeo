@@ -253,7 +253,7 @@ describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement
     expect(upstreamThinking).toEqual({ type: 'enabled', budget_tokens: 31999 });
   });
 
-  it('leaves enabled thinking unchanged when the model does not support it', async () => {
+  it('strips enabled thinking when the model does not support it', async () => {
     let upstreamThinking: unknown = 'not-captured';
     server = makeServer(async (_url, init) => {
       const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
@@ -279,7 +279,7 @@ describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement
 
     expect(res.status).toBe(200);
     await res.text();
-    expect(upstreamThinking).toEqual({ type: 'adaptive' });
+    expect(upstreamThinking).toBeNull();
   });
 
   it('strips thinking entirely for a session configured as off', async () => {

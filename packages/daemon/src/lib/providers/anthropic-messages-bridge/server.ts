@@ -165,13 +165,12 @@ export function createAnthropicMessagesBridgeServer(
 
       const sessionId = extractSessionIdFromRequest(req);
       if (isMessages && sessionId && sessionThinking.has(sessionId)) {
-        const desired = sessionThinking.get(sessionId);
-        if (desired === undefined || config.thinkingSupported !== false) {
-          try {
-            bodyBytes = enforceThinking(bodyBytes, desired);
-          } catch {
-            return sendJsonError(400, 'invalid_request_error', 'Bad Request: invalid JSON');
-          }
+        const desired =
+          config.thinkingSupported === false ? undefined : sessionThinking.get(sessionId);
+        try {
+          bodyBytes = enforceThinking(bodyBytes, desired);
+        } catch {
+          return sendJsonError(400, 'invalid_request_error', 'Bad Request: invalid JSON');
         }
       }
 
