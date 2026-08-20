@@ -61,8 +61,11 @@ VACUUM rebuilds the database into a temporary file, and step 3 writes a full bac
 df -h "$(dirname "$DB")"
 ```
 
-You need roughly **2× the current DB size** of free space beyond the file itself
-(1× backup + 1× VACUUM temp) — on a 31 GB DB that is ~62 GB free.
+Budget up to **3× the current DB size** of free space beyond the file itself: 1× for the
+step-3 backup copy plus up to 2× for VACUUM, which rebuilds into a temporary database and
+journals the overwrite of the original (SQLite documents VACUUM alone as needing up to
+twice the DB size in free space). On a 31 GB DB that is ~93 GB free; the journal share is
+often smaller in practice, but do not provision the theoretical minimum.
 
 ### 3) Take a backup
 
