@@ -96,6 +96,22 @@ describe('AcpTerminalManager', () => {
     });
   });
 
+  test('does not report truncation when output exactly fills the limit', async () => {
+    const manager = new AcpTerminalManager();
+    const { terminalId } = await manager.create({
+      sessionId: 'session-1',
+      command: 'command',
+      outputByteLimit: 4,
+    });
+
+    spawned[0].stdout.emit('data', Buffer.from('abcd'));
+
+    expect(await manager.output(params(terminalId))).toMatchObject({
+      output: 'abcd',
+      truncated: false,
+    });
+  });
+
   test('reports close status to output and pending waiters', async () => {
     const manager = new AcpTerminalManager();
     const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'command' });

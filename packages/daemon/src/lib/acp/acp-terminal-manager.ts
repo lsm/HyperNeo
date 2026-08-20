@@ -1,15 +1,15 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import type {
   AcpTerminalCreateParams,
   AcpTerminalCreateResult,
-  AcpTerminalOutputParams,
-  AcpTerminalOutputResult,
-  AcpTerminalWaitForExitParams,
-  AcpTerminalWaitForExitResult,
   AcpTerminalKillParams,
   AcpTerminalKillResult,
+  AcpTerminalOutputParams,
+  AcpTerminalOutputResult,
   AcpTerminalReleaseParams,
   AcpTerminalReleaseResult,
+  AcpTerminalWaitForExitParams,
+  AcpTerminalWaitForExitResult,
 } from '@hyperneo/shared';
 import { Logger } from '../logger';
 import { parseAcpCommand } from './acp-command';
@@ -209,7 +209,7 @@ export class AcpTerminalManager {
   private appendOutput(terminalId: string, chunk: Buffer): void {
     const session = this.sessions.get(terminalId);
     if (!session) return;
-    if (chunk.length >= session.outputByteLimit) {
+    if (chunk.length > session.outputByteLimit) {
       session.outputChunks = [chunk.subarray(chunk.length - session.outputByteLimit)];
       session.outputByteLength = session.outputByteLimit;
       session.outputTruncated = true;
