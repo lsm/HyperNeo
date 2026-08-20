@@ -358,7 +358,9 @@ export async function initializeModels(): Promise<void> {
       rejectedProviderIds,
       changedProviderIds
     );
-    modelsCache.set(cacheKey, mergedModels);
+    if (mergedModels.length > 0 || failedProviderIds.size === 0) {
+      modelsCache.set(cacheKey, mergedModels);
+    }
     if (failedProviderIds.size === 0 && !(noProviderAvailable && models.length === 0)) {
       cacheTimestamps.set(cacheKey, Date.now());
       backgroundRefreshFailures.delete(cacheKey);

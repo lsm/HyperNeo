@@ -153,9 +153,9 @@ export interface ProviderHandlerDeps {
 
 function providerCatalogSignature(provider: Provider): string {
   const scope = provider.getModelCatalogScope?.() ?? '';
-  const serialized = (provider.getCachedModels?.() ?? [])
-    .map((model: { id: string }) => JSON.stringify(model))
-    .sort();
+  const serialized = (provider.getCachedModels?.() ?? []).map((model: { id: string }) =>
+    JSON.stringify(model)
+  );
   return `${scope}|${serialized.join(',')}`;
 }
 
