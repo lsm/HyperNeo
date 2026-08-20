@@ -500,7 +500,9 @@ export class SessionStore {
         }
         return m;
       });
-      if (orderKeysChanged) next = sortByTimestampRowid(next);
+      if (orderKeysChanged || (changed && !isSortedByTimestampRowid(next))) {
+        next = sortByTimestampRowid(next);
+      }
     }
 
     if (event.added?.length) {
