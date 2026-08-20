@@ -254,6 +254,25 @@ describe('isBashCommandAllowed — tests, builds, app code, and route-arounds de
     expect(isBashCommandAllowed(herestringSubstitution, PREFIXES)).toBe(false);
   });
 
+  test('unterminated heredocs fail closed — trailing commands are denied, not skipped', () => {
+    const backslashBodyLine =
+      'cat > "$F" <<\'EOF\'\nprose ending with a backslash \\\nEOF\nbun test';
+    expect(isBashCommandAllowed(backslashBodyLine, PREFIXES)).toBe(false);
+
+    const spacedDelimiter = "cat <<'EO F'\nbody\nEO F\nbun test";
+    expect(isBashCommandAllowed(spacedDelimiter, PREFIXES)).toBe(false);
+
+    const plainUnterminated = "cat <<'EOF'\nbody\nbun test";
+    expect(isBashCommandAllowed(plainUnterminated, PREFIXES)).toBe(false);
+
+    const backslashBodyBenign =
+      'cat > "$F" <<\'EOF\'\nprose ending with a backslash \\\nEOF\necho done';
+    expect(isBashCommandAllowed(backslashBodyBenign, PREFIXES)).toBe(true);
+
+    const continuation = 'gh pr view \\\n  --json id';
+    expect(isBashCommandAllowed(continuation, PREFIXES)).toBe(true);
+  });
+
   test('commands on the heredoc marker line after the delimiter are segmented and checked', () => {
     const piped = "cat <<'EOF' | bun test\nbody\nEOF";
     expect(isBashCommandAllowed(piped, PREFIXES)).toBe(false);

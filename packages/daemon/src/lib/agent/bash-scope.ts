@@ -126,6 +126,7 @@ function extractBacktick(text: string, startIndex: number): BalancedSpan {
 interface HeredocMarker {
   found: boolean;
   quoted: boolean;
+  terminated: boolean;
   markerEnd: number;
   bodyEnd: number;
 }
@@ -147,7 +148,9 @@ function extractHeredocSpan(text: string, start: number): HeredocMarker {
     i++;
   }
   if (quote && text[i] === quote) i++;
-  if (!delimiter) return { found: false, quoted: false, markerEnd: i, bodyEnd: i };
+  if (!delimiter) {
+    return { found: false, quoted: false, terminated: false, markerEnd: i, bodyEnd: i };
+  }
   const markerEnd = i;
   while (i < n && text[i] !== '\n') i++;
   if (i < n) i++;
@@ -157,11 +160,17 @@ function extractHeredocSpan(text: string, start: number): HeredocMarker {
     const line = text.slice(i, lineEnd);
     const candidate = dashed ? line.replace(/^\t+/, '') : line;
     if (candidate.trim() === delimiter) {
-      return { found: true, quoted: quote !== '', markerEnd, bodyEnd: lineEnd + 1 };
+      return {
+        found: true,
+        quoted: quote !== '',
+        terminated: true,
+        markerEnd,
+        bodyEnd: lineEnd + 1,
+      };
     }
     i = lineEnd + 1;
   }
-  return { found: true, quoted: quote !== '', markerEnd, bodyEnd: n };
+  return { found: true, quoted: quote !== '', terminated: false, markerEnd, bodyEnd: n };
 }
 
 const DENIED_ASSIGNMENT_NAMES = new Set([
@@ -232,8 +241,7 @@ function segmentHasAllowedHead(segment: string, prefixes: readonly string[]): bo
 
 export function isBashCommandAllowed(command: string, prefixes: readonly string[]): boolean {
   if (prefixes.length === 0) return false;
-  const normalized = command.replace(/\\\r?\n/g, ' ');
-  return checkCommandText(normalized, prefixes);
+  return checkCommandText(command, prefixes);
 }
 
 function checkCommandText(text: string, prefixes: readonly string[]): boolean {
@@ -298,6 +306,10 @@ function checkCommandText(text: string, prefixes: readonly string[]): boolean {
       if (i < n) i++;
       continue;
     }
+    if (ch === '\\' && (text[i + 1] === '\n' || (text[i + 1] === '\r' && text[i + 2] === '\n'))) {
+      i += text[i + 1] === '\r' ? 3 : 2;
+      continue;
+    }
     if (ch === '\\' && i + 1 < n) {
       current += ch + text[i + 1];
       lineHasContent = true;
@@ -329,7 +341,7 @@ function checkCommandText(text: string, prefixes: readonly string[]): boolean {
         continue;
       }
       current += '<<HEREDOC';
-      if (!span.quoted) ok = false;
+      if (!span.quoted || !span.terminated) ok = false;
       pendingHeredoc = span;
       i = span.markerEnd;
       continue;
