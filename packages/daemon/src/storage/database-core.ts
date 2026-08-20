@@ -1,18 +1,19 @@
-import { Database as BunDatabase } from './sqlite-compat';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
-import { mkdirSync, existsSync, copyFileSync, readdirSync, unlinkSync, statSync } from 'node:fs';
 import { Logger } from '../lib/logger';
-import { configureMessageSearchFts, createTables, runMigrations } from './schema';
 import { DatabaseLock } from './database-lock';
+import { configureMessageSearchFts, createTables, runMigrations } from './schema';
+import { Database as BunDatabase } from './sqlite-compat';
 
-const DEFAULT_MIGRATION_BACKUP_MAX_BYTES = 1024 * 1024 * 1024;
-
-function getMigrationBackupMaxBytes(): number {
-  const raw = process.env.HYPERNEO_DB_MIGRATION_BACKUP_MAX_BYTES?.trim();
-  if (!raw) return DEFAULT_MIGRATION_BACKUP_MAX_BYTES;
-  const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : DEFAULT_MIGRATION_BACKUP_MAX_BYTES;
-}
+const MIGRATION_BACKUP_RETENTION = 3;
 
 export class DatabaseCore {
   private db: BunDatabase;
@@ -97,20 +98,6 @@ export class DatabaseCore {
   private createBackup(): void {
     if (!existsSync(this.dbPath)) return;
 
-    try {
-      this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {}
-
-    const maxBytes = getMigrationBackupMaxBytes();
-    if (maxBytes > 0 && statSync(this.dbPath).size > maxBytes) {
-      this.logger.warn(
-        `[Database] Skipping migration backup: ${this.dbPath} exceeds ` +
-          `HYPERNEO_DB_MIGRATION_BACKUP_MAX_BYTES=${maxBytes} bytes. ` +
-          `Take an offline backup before upgrading — see docs/db-maintenance.md`
-      );
-      return;
-    }
-
     const dir = dirname(this.dbPath);
     const backupDir = join(dir, 'backups');
 
@@ -121,14 +108,72 @@ export class DatabaseCore {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupPath = join(backupDir, `daemon-${timestamp}.db`);
 
+    const startedAt = Date.now();
+    const strategy = this.writeBackup(backupPath);
+    if (strategy === null) return;
+
+    this.logger.info(
+      `[Database] Migration backup created via ${strategy} in ${Date.now() - startedAt}ms: ${backupPath}`
+    );
+    this.cleanupOldBackups(backupDir, MIGRATION_BACKUP_RETENTION);
+  }
+
+  private writeBackup(backupPath: string): string | null {
+    if (this.tryFastCopy(backupPath)) {
+      this.copyWalSidecar(backupPath);
+      return 'fs-copy';
+    }
+    if (this.tryVacuumInto(backupPath)) return 'vacuum-into';
+    return this.tryCheckpointCopy(backupPath) ? 'checkpoint-copy' : null;
+  }
+
+  private tryFastCopy(backupPath: string): boolean {
+    if (typeof Bun === 'undefined') return false;
+    try {
+      copyFileSync(this.dbPath, backupPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private tryVacuumInto(backupPath: string): boolean {
+    try {
+      rmSync(backupPath, { force: true });
+      this.db.prepare('VACUUM INTO ?').run(backupPath);
+      return existsSync(backupPath);
+    } catch {
+      return false;
+    }
+  }
+
+  private tryCheckpointCopy(backupPath: string): boolean {
+    let checkpointed = true;
+    try {
+      this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch {
+      checkpointed = false;
+    }
     try {
       copyFileSync(this.dbPath, backupPath);
     } catch (err) {
-      this.logger.error('Failed to create backup:', err);
-      return;
+      this.logger.error('Failed to create migration backup:', err);
+      return false;
     }
+    if (!checkpointed) {
+      this.copyWalSidecar(backupPath);
+    }
+    return true;
+  }
 
-    this.cleanupOldBackups(backupDir, 3);
+  private copyWalSidecar(backupPath: string): void {
+    const walPath = `${this.dbPath}-wal`;
+    try {
+      if (!existsSync(walPath) || statSync(walPath).size === 0) return;
+      copyFileSync(walPath, `${backupPath}-wal`);
+    } catch (err) {
+      this.logger.warn('Failed to copy WAL sidecar into migration backup:', err);
+    }
   }
 
   private cleanupOldBackups(backupDir: string, keepCount: number): void {
@@ -145,12 +190,11 @@ export class DatabaseCore {
       for (const file of files.slice(keepCount)) {
         try {
           unlinkSync(file.path);
-        } catch {
-          // Ignore deletion errors
-        }
+        } catch {}
+        try {
+          unlinkSync(`${file.path}-wal`);
+        } catch {}
       }
-    } catch {
-      // Ignore cleanup errors
-    }
+    } catch {}
   }
 }

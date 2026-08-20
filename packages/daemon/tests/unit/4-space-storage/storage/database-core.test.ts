@@ -1,8 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { configureLogger, LogLevel, subscribeToStructuredLogs } from '../../../../src/lib/logger';
 import { DatabaseCore } from '../../../../src/storage/database-core';
+import { Database as RawDatabase } from '../../../../src/storage/sqlite-compat';
 
 describe('DatabaseCore', () => {
   let testDir: string;
@@ -255,7 +266,7 @@ describe('DatabaseCore', () => {
     });
   });
 
-  describe('migration backup size bound', () => {
+  describe('pre-migration backups', () => {
     const envKey = 'HYPERNEO_DB_MIGRATION_BACKUP_MAX_BYTES';
     let previousValue: string | undefined;
 
@@ -278,59 +289,163 @@ describe('DatabaseCore', () => {
         : [];
     };
 
-    it('should skip the migration backup when the database exceeds the bound', async () => {
+    const seedWalData = (db: RawDatabase): void => {
+      db.exec('PRAGMA journal_mode = WAL');
+      db.exec('CREATE TABLE backup_probe (id INTEGER PRIMARY KEY, value TEXT)');
+      db.exec("INSERT INTO backup_probe (value) VALUES ('pre-migration')");
+    };
+
+    it('should create a backup before pending migrations even with the legacy size bound set to skip', async () => {
       process.env[envKey] = '1';
 
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
 
-      expect(existsSync(dbPath)).toBe(true);
+      expect(listBackups()).toHaveLength(1);
+    });
+
+    it('should not create a backup when no migrations are pending', async () => {
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+      dbCore.close();
+
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+      dbCore.close();
+
+      expect(listBackups()).toHaveLength(1);
+    });
+
+    it('should create a valid backup that includes data committed to the WAL', async () => {
+      const raw = new RawDatabase(dbPath);
+      seedWalData(raw);
+
+      configureLogger({ level: LogLevel.INFO });
+      const strategies: string[] = [];
+      const unsubscribe = subscribeToStructuredLogs((event) => {
+        const match = /Migration backup created via (\S+)/.exec(event.message);
+        if (match) strategies.push(match[1]);
+      });
+
+      try {
+        dbCore = new DatabaseCore(dbPath);
+        await dbCore.initialize();
+      } finally {
+        unsubscribe();
+        configureLogger({ level: LogLevel.SILENT });
+        raw.close();
+      }
+
+      const backups = listBackups();
+      expect(backups).toHaveLength(1);
+      expect(strategies).toHaveLength(1);
+      const backupPath = join(testDir, 'backups', backups[0]);
+      if (typeof Bun === 'undefined') {
+        expect(strategies[0]).toBe('vacuum-into');
+      } else {
+        expect(strategies[0]).toBe('fs-copy');
+        expect(statSync(`${backupPath}-wal`).size).toBeGreaterThan(0);
+      }
+
+      const backup = new RawDatabase(backupPath);
+      try {
+        expect(backup.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+        expect(backup.prepare('SELECT value FROM backup_probe').all()).toEqual([
+          { value: 'pre-migration' },
+        ]);
+        expect(
+          backup
+            .prepare(`SELECT COUNT(*) as count FROM migration_markers WHERE key = 'migration_001'`)
+            .get()
+        ).toEqual({ count: 0 });
+      } finally {
+        backup.close();
+      }
+    });
+
+    it('should fall back to checkpoint and copy when faster backup strategies fail', async () => {
+      const raw = new RawDatabase(dbPath);
+      seedWalData(raw);
+
+      configureLogger({ level: LogLevel.INFO });
+      const strategies: string[] = [];
+      const unsubscribe = subscribeToStructuredLogs((event) => {
+        const match = /Migration backup created via (\S+)/.exec(event.message);
+        if (match) strategies.push(match[1]);
+      });
+
+      try {
+        dbCore = new DatabaseCore(dbPath);
+        const internals = dbCore as unknown as Record<string, unknown>;
+        internals.tryFastCopy = () => false;
+        internals.tryVacuumInto = () => false;
+        await dbCore.initialize();
+      } finally {
+        unsubscribe();
+        configureLogger({ level: LogLevel.SILENT });
+        raw.close();
+      }
+
+      const backups = listBackups();
+      expect(backups).toHaveLength(1);
+      expect(strategies).toEqual(['checkpoint-copy']);
+      expect(existsSync(join(testDir, 'backups', `${backups[0]}-wal`))).toBe(false);
+
+      const backup = new RawDatabase(join(testDir, 'backups', backups[0]));
+      try {
+        expect(backup.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+        expect(backup.prepare('SELECT value FROM backup_probe').all()).toEqual([
+          { value: 'pre-migration' },
+        ]);
+      } finally {
+        backup.close();
+      }
+    });
+
+    it('should complete initialization without a backup when the backup directory is unwritable', async () => {
+      const backupDir = join(testDir, 'backups');
+      mkdirSync(backupDir, { recursive: true });
+      chmodSync(backupDir, 0o500);
+
+      configureLogger({ level: LogLevel.INFO });
+      const errors: string[] = [];
+      const unsubscribe = subscribeToStructuredLogs((event) => {
+        if (event.level === 'error') errors.push(event.message);
+      });
+
+      try {
+        dbCore = new DatabaseCore(dbPath);
+        await dbCore.initialize();
+      } finally {
+        unsubscribe();
+        configureLogger({ level: LogLevel.SILENT });
+        chmodSync(backupDir, 0o700);
+      }
+
       expect(listBackups()).toHaveLength(0);
+      expect(errors).toHaveLength(1);
     });
 
-    it('should still create the migration backup when the bound is disabled', async () => {
-      process.env[envKey] = '0';
+    it('should prune expired backups together with their WAL sidecars', async () => {
+      const backupDir = join(testDir, 'backups');
+      mkdirSync(backupDir, { recursive: true });
+      const now = Date.now() / 1000;
+      const staleWalOwner = 'daemon-2026-01-01T00-00-00-000Z.db';
+      for (let i = 0; i < 4; i++) {
+        const stale = join(backupDir, `daemon-2026-01-0${i + 1}T00-00-00-000Z.db`);
+        writeFileSync(stale, 'stale');
+        if (i === 0) {
+          writeFileSync(`${stale}-wal`, 'stale-wal');
+        }
+        utimesSync(stale, now - (5 - i) * 60, now - (5 - i) * 60);
+      }
 
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
 
-      expect(listBackups()).toHaveLength(1);
-    });
-
-    it('should fall back to the default bound for invalid values', async () => {
-      process.env[envKey] = 'not-a-number';
-
-      dbCore = new DatabaseCore(dbPath);
-      await dbCore.initialize();
-
-      expect(listBackups()).toHaveLength(1);
-    });
-
-    it('should fall back to the default bound for partially numeric values like 1GB', async () => {
-      process.env[envKey] = '1GB';
-
-      dbCore = new DatabaseCore(dbPath);
-      await dbCore.initialize();
-
-      expect(listBackups()).toHaveLength(1);
-    });
-
-    it('should fall back to the default bound for negative values', async () => {
-      process.env[envKey] = '-1';
-
-      dbCore = new DatabaseCore(dbPath);
-      await dbCore.initialize();
-
-      expect(listBackups()).toHaveLength(1);
-    });
-
-    it('should fall back to the default bound for whitespace-only values', async () => {
-      process.env[envKey] = '   ';
-
-      dbCore = new DatabaseCore(dbPath);
-      await dbCore.initialize();
-
-      expect(listBackups()).toHaveLength(1);
+      const remaining = readdirSync(backupDir);
+      expect(remaining.filter((f) => f.endsWith('.db') && f.startsWith('daemon-'))).toHaveLength(3);
+      expect(existsSync(join(backupDir, `${staleWalOwner}-wal`))).toBe(false);
     });
   });
 
