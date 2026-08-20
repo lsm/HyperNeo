@@ -5,6 +5,15 @@ import { Logger } from '../lib/logger';
 import { configureMessageSearchFts, createTables, runMigrations } from './schema';
 import { DatabaseLock } from './database-lock';
 
+const DEFAULT_MIGRATION_BACKUP_MAX_BYTES = 1024 * 1024 * 1024;
+
+function getMigrationBackupMaxBytes(): number {
+  const raw = process.env.HYPERNEO_DB_MIGRATION_BACKUP_MAX_BYTES?.trim();
+  if (!raw) return DEFAULT_MIGRATION_BACKUP_MAX_BYTES;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : DEFAULT_MIGRATION_BACKUP_MAX_BYTES;
+}
+
 export class DatabaseCore {
   private db: BunDatabase;
   private logger = new Logger('Database');
@@ -74,6 +83,9 @@ export class DatabaseCore {
       this.messageSearchMergeTimer = null;
     }
     try {
+      this.db.exec('PRAGMA optimize');
+    } catch {}
+    try {
       this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     } catch {
       // Ignore checkpoint errors — the DB may already be closed or in an error state
@@ -85,17 +97,25 @@ export class DatabaseCore {
   private createBackup(): void {
     if (!existsSync(this.dbPath)) return;
 
+    try {
+      this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch {}
+
+    const maxBytes = getMigrationBackupMaxBytes();
+    if (maxBytes > 0 && statSync(this.dbPath).size > maxBytes) {
+      this.logger.warn(
+        `[Database] Skipping migration backup: ${this.dbPath} exceeds ` +
+          `HYPERNEO_DB_MIGRATION_BACKUP_MAX_BYTES=${maxBytes} bytes. ` +
+          `Take an offline backup before upgrading — see docs/db-maintenance.md`
+      );
+      return;
+    }
+
     const dir = dirname(this.dbPath);
     const backupDir = join(dir, 'backups');
 
     if (!existsSync(backupDir)) {
       mkdirSync(backupDir, { recursive: true });
-    }
-
-    try {
-      this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      // Ignore checkpoint errors
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
