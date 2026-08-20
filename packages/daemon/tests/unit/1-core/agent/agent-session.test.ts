@@ -1853,20 +1853,27 @@ describe('AgentSession', () => {
     });
 
     it('reconcileStrandedDeliveries skips processing, queued, and waiting_for_input', async () => {
-      const activeDeliveryMessageUuids = mock(() => new Set<string>());
-      mockDb.getJobQueueRepo = mock(() => ({ activeDeliveryMessageUuids }));
+      const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+      try {
+        const activeDeliveryMessageUuids = mock(() => new Set<string>());
+        mockDb.getJobQueueRepo = mock(() => ({ activeDeliveryMessageUuids }));
 
-      await agentSession.stateManager.setProcessing('msg-processing');
-      expect(await agentSession.reconcileStrandedDeliveries()).toBe(0);
-      await agentSession.stateManager.setQueued('msg-queued');
-      expect(await agentSession.reconcileStrandedDeliveries()).toBe(0);
-      await agentSession.stateManager.setWaitingForInput({
-        toolUseId: 'tool-waiting',
-        questions: [],
-      });
-      expect(await agentSession.reconcileStrandedDeliveries()).toBe(0);
+        await agentSession.stateManager.setProcessing('msg-processing');
+        expect(await agentSession.reconcileStrandedDeliveries()).toBe(0);
+        await agentSession.stateManager.setQueued('msg-queued');
+        expect(await agentSession.reconcileStrandedDeliveries()).toBe(0);
+        await agentSession.stateManager.setWaitingForInput({
+          toolUseId: 'tool-waiting',
+          questions: [],
+        });
+        expect(await agentSession.reconcileStrandedDeliveries()).toBe(0);
 
-      expect(activeDeliveryMessageUuids).not.toHaveBeenCalled();
+        expect(activeDeliveryMessageUuids).not.toHaveBeenCalled();
+      } finally {
+        if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+        else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+      }
     });
 
     it('handleModelSwitch should delegate to modelSwitchHandler', async () => {
@@ -4947,8 +4954,11 @@ describe('AgentSession', () => {
     const sessionId = 'sess-reconcile-admission';
     let db: Database;
     let agentSession: AgentSession;
+    let previousDeliveryV2: string | undefined;
 
     beforeEach(async () => {
+      previousDeliveryV2 = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
       db = await createTestDb();
       const session = createTestSession(sessionId);
       db.createSession(session);
@@ -4969,6 +4979,8 @@ describe('AgentSession', () => {
     afterEach(async () => {
       await agentSession.cleanup();
       db.close();
+      if (previousDeliveryV2 === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previousDeliveryV2;
     });
 
     it('idle admission re-enqueues a stranded enqueued delivery', async () => {
