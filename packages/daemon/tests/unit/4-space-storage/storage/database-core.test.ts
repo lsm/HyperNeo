@@ -402,6 +402,48 @@ describe('DatabaseCore', () => {
       }
     });
 
+    it('should copy the WAL sidecar when the checkpoint is blocked by a concurrent reader', async () => {
+      const raw = new RawDatabase(dbPath);
+      seedWalData(raw);
+      raw.exec('BEGIN');
+      raw.prepare('SELECT COUNT(*) as c FROM backup_probe').get();
+
+      configureLogger({ level: LogLevel.INFO });
+      const strategies: string[] = [];
+      const unsubscribe = subscribeToStructuredLogs((event) => {
+        const match = /Migration backup created via (\S+)/.exec(event.message);
+        if (match) strategies.push(match[1]);
+      });
+
+      try {
+        dbCore = new DatabaseCore(dbPath);
+        const internals = dbCore as unknown as Record<string, unknown>;
+        internals.tryFastCopy = () => false;
+        internals.tryVacuumInto = () => false;
+        await dbCore.initialize();
+      } finally {
+        unsubscribe();
+        configureLogger({ level: LogLevel.SILENT });
+        raw.exec('ROLLBACK');
+        raw.close();
+      }
+
+      const backups = listBackups();
+      expect(backups).toHaveLength(1);
+      expect(strategies).toEqual(['checkpoint-copy']);
+      expect(statSync(join(testDir, 'backups', `${backups[0]}-wal`)).size).toBeGreaterThan(0);
+
+      const backup = new RawDatabase(join(testDir, 'backups', backups[0]));
+      try {
+        expect(backup.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+        expect(backup.prepare('SELECT value FROM backup_probe').all()).toEqual([
+          { value: 'pre-migration' },
+        ]);
+      } finally {
+        backup.close();
+      }
+    }, 15000);
+
     it('should fall back to a self-contained snapshot when the WAL sidecar copy fails', async () => {
       const raw = new RawDatabase(dbPath);
       seedWalData(raw);

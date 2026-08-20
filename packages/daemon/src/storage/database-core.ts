@@ -160,9 +160,13 @@ export class DatabaseCore {
   }
 
   private tryCheckpointCopy(backupPath: string): boolean {
-    let checkpointed = true;
+    let checkpointed = false;
     try {
-      this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      const result = this.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get() as
+        | { busy?: number }
+        | null
+        | undefined;
+      checkpointed = result?.busy === 0;
     } catch {
       checkpointed = false;
     }
