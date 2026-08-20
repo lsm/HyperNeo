@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'preact/hooks';
+import { useVisibleTick } from '../../hooks/useVisibleTick.ts';
 import { cancelRateLimitRetry, retryNowAfterRateLimit } from '../../lib/api-helpers.ts';
 
 interface Props {
@@ -14,15 +15,10 @@ export function RateLimitCooldownBanner({ sessionId, retryCount, maxRetries, ret
   const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      const ms = Math.max(0, retryAt - Date.now());
-      setRemaining(ms);
-      if (ms <= 0) {
-        clearInterval(interval);
-      }
-    }, 1000);
-    return () => clearInterval(interval);
+    setRemaining(Math.max(0, retryAt - Date.now()));
   }, [retryAt]);
+
+  useVisibleTick(1000, remaining > 0, () => setRemaining(Math.max(0, retryAt - Date.now())));
 
   const formatCountdown = (ms: number): string => {
     if (ms <= 0) return 'now';

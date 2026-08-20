@@ -1,6 +1,7 @@
 import type { TaskMilestoneRow } from '@hyperneo/shared';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useMemo } from 'preact/hooks';
 import { useTaskMilestones } from '../../hooks/useTaskMilestones';
+import { useVisibleTick } from '../../hooks/useVisibleTick';
 import { INDICATOR_TONES } from '../../lib/indicator-tokens';
 import { curateTaskMilestones, formatRelativeTimestamp } from '../../lib/task-milestones';
 import { cn } from '../../lib/utils';
@@ -67,11 +68,7 @@ export function TaskMilestoneTimeline({
 }: TaskMilestoneTimelineProps) {
   const { rows, isLoading, isReconnecting } = useTaskMilestones({ taskId });
   const curated = useMemo(() => curateTaskMilestones(rows), [rows]);
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((n) => n + 1), 60_000);
-    return () => clearInterval(id);
-  }, []);
+  useVisibleTick(60_000);
   const now = Date.now();
 
   const paddingStyle = bottomInsetPx > 0 ? { paddingBottom: `${bottomInsetPx}px` } : undefined;
