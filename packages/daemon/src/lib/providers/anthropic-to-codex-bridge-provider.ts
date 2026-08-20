@@ -1045,6 +1045,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         ? this.modelCache
         : undefined;
     let response: Response;
+    let oauthRefreshFailedWithPreservedCredentials = false;
     try {
       response = await this.requestModelCatalog(auth, matchingCache?.etag);
     } catch (error) {
@@ -1081,6 +1082,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           return;
         }
       } else {
+        const credentials = await this.loadCredentials();
+        const canRefresh = credentials?.type === 'oauth' && Boolean(credentials.refresh);
         const refreshed = await this.refreshStoredOauthCredentials();
         const refreshedAuth = refreshed ? this.toBridgeAuth(refreshed) : undefined;
         if (refreshedAuth?.source === 'chatgpt_oauth') {
@@ -1099,8 +1102,20 @@ export class AnthropicToCodexBridgeProvider implements Provider {
             );
             return;
           }
+        } else {
+          oauthRefreshFailedWithPreservedCredentials =
+            canRefresh && this.resolveBridgeAuth() !== undefined;
         }
       }
+    }
+
+    if (response.status === 401 && oauthRefreshFailedWithPreservedCredentials) {
+      this.setDiscoveryError(
+        'AnthropicToCodexBridgeProvider: model discovery HTTP 401',
+        auth,
+        scope
+      );
+      return;
     }
 
     if (response.status === 401) {

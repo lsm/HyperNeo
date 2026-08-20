@@ -2730,6 +2730,35 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('keeps cached OAuth models retryable when refresh fails transiently after a 401', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'stale-token',
+        refresh: 'refresh-token',
+        accountId: 'acct-transient',
+      });
+      const fetchImpl = mock(
+        async () => new Response('unauthorized', { status: 401 })
+      ) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch').mockRejectedValue(
+        new Error('refresh service offline')
+      );
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+
+        await expect(provider.refreshModels()).rejects.toThrow('model discovery HTTP 401');
+
+        expect(provider.getCachedModels()).toEqual(
+          expect.arrayContaining([expect.objectContaining({ id: 'gpt-5.6-sol' })])
+        );
+        expect(await provider.isAvailable()).toBe(true);
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
     it('does not expose a persisted catalog to different credentials after restart', async () => {
       const firstFetch = mock(
         async () =>
