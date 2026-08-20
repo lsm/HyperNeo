@@ -7,7 +7,7 @@ import type {
   HyperNeoActionMessage,
   ChatMessage,
 } from '@hyperneo/shared';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { ReactiveDatabase } from '../reactive-database';
 import { Logger } from '../../lib/logger';
@@ -30,6 +30,14 @@ const TERMINAL_SPACE_TASK_STATUSES = new Set(['done', 'cancelled', 'completed'])
 const SEARCHABLE_MESSAGE_TYPES = new Set(['system', 'user', 'assistant']);
 const RENDERABLE_TEXT_MESSAGE_BATCH_SIZE = 50;
 const RENDERABLE_TEXT_MESSAGE_MAX_SCAN = 250;
+const STATUS_MESSAGE_HYDRATION_BATCH_SIZE = 900;
+const USER_STATUS_MESSAGE_SQL = `message_type = 'user'
+  AND json_valid(sdk_message)
+  AND json_extract(sdk_message, '$.type') = 'user'
+  AND (
+    json_type(sdk_message, '$.isReplay') IS NULL
+    OR json_type(sdk_message, '$.isReplay') = 'false'
+  )`;
 
 const LAST_MESSAGE_PROGRESS_SUBTYPES = new Set(['task_started', 'task_progress', 'task_updated']);
 const BACKGROUND_TASK_METADATA_SUBTYPES = ['task_started', 'task_updated', 'task_notification'];
@@ -1109,6 +1117,64 @@ export class SDKMessageRepository {
     }>;
 
     return rows.map((row) => this.inflatePersistedMessage(row));
+  }
+
+  getUserMessagesByStatus(
+    sessionId: string,
+    status: SendStatus,
+    limit: number
+  ): {
+    messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>;
+    total: number;
+  } {
+    const countRow = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM sdk_messages
+         WHERE session_id = ? AND send_status = ? AND ${USER_STATUS_MESSAGE_SQL}`
+      )
+      .get(sessionId, status) as { count: number };
+    const projected = this.db
+      .prepare(
+        `SELECT rowid AS row_id FROM sdk_messages
+         WHERE session_id = ? AND send_status = ? AND ${USER_STATUS_MESSAGE_SQL}
+         ORDER BY timestamp ASC, rowid ASC
+         LIMIT ?`
+      )
+      .all(sessionId, status, limit) as Array<{ row_id: number }>;
+    const messagesByRowId = new Map<number, SDKUserMessage & { dbId: string; timestamp: number }>();
+
+    for (let offset = 0; offset < projected.length; offset += STATUS_MESSAGE_HYDRATION_BATCH_SIZE) {
+      const batch = projected.slice(offset, offset + STATUS_MESSAGE_HYDRATION_BATCH_SIZE);
+      const placeholders = batch.map(() => '?').join(', ');
+      const rows = this.db
+        .prepare(
+          `SELECT rowid AS row_id, id, sdk_message, timestamp FROM sdk_messages
+           WHERE rowid IN (${placeholders})`
+        )
+        .all(...batch.map((row) => row.row_id)) as Array<{
+        row_id: number;
+        id: string;
+        sdk_message: string;
+        timestamp: string;
+      }>;
+      for (const row of rows) {
+        messagesByRowId.set(
+          row.row_id,
+          this.inflatePersistedMessage(row) as SDKUserMessage & {
+            dbId: string;
+            timestamp: number;
+          }
+        );
+      }
+    }
+
+    return {
+      messages: projected.flatMap((row) => {
+        const message = messagesByRowId.get(row.row_id);
+        return message ? [message] : [];
+      }),
+      total: countRow.count,
+    };
   }
 
   getMessageByStatusAndUuid(

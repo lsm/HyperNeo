@@ -1580,6 +1580,115 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('getUserMessagesByStatus', () => {
+    function messageTexts(messages: SDKMessage[]): string[] {
+      return messages.map((message) => {
+        const content = (message as { message: { content: Array<{ text?: string }> } }).message
+          .content;
+        return content[0]?.text ?? '';
+      });
+    }
+
+    function insertStatusMessage(
+      id: string,
+      sessionId: string,
+      messageType: string,
+      sdkMessage: string,
+      timestamp: string,
+      status = 'consumed'
+    ): void {
+      db.prepare(
+        `INSERT INTO sdk_messages
+         (id, session_id, message_type, sdk_message, timestamp, send_status)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(id, sessionId, messageType, sdkMessage, timestamp, status);
+    }
+
+    it('returns the oldest bounded window and the full eligible total', () => {
+      const timestamp = '2026-01-01T00:00:00.000Z';
+      for (const [index, text] of ['First', 'Second', 'Third'].entries()) {
+        insertStatusMessage(
+          `user-${index}`,
+          'session-1',
+          'user',
+          JSON.stringify(createUserMessage(text, `uuid-${index}`)),
+          timestamp
+        );
+      }
+      insertStatusMessage(
+        'other-session',
+        'session-2',
+        'user',
+        JSON.stringify(createUserMessage('Other session')),
+        timestamp
+      );
+      insertStatusMessage(
+        'other-status',
+        'session-1',
+        'user',
+        JSON.stringify(createUserMessage('Other status')),
+        timestamp,
+        'deferred'
+      );
+
+      const result = repository.getUserMessagesByStatus('session-1', 'consumed', 2);
+
+      expect(messageTexts(result.messages)).toEqual(['First', 'Second']);
+      expect(result.messages.map((message) => message.dbId)).toEqual(['user-0', 'user-1']);
+      expect(result.total).toBe(3);
+    });
+
+    it('skips malformed, mismatched, and replay user rows', () => {
+      const timestamp = '2026-01-01T00:00:00.000Z';
+      const rows: Array<[string, string, string]> = [
+        ['user', 'user', JSON.stringify(createUserMessage('User'))],
+        [
+          'non-replay',
+          'user',
+          JSON.stringify({ ...createUserMessage('Non-replay'), isReplay: false }),
+        ],
+        ['replay', 'user', JSON.stringify({ ...createUserMessage('Replay'), isReplay: true })],
+        ['null-replay', 'user', JSON.stringify({ ...createUserMessage('Null'), isReplay: null })],
+        ['assistant', 'assistant', JSON.stringify(createAssistantMessage('Assistant'))],
+        ['mismatched', 'user', JSON.stringify(createAssistantMessage('Mismatched'))],
+        ['malformed', 'user', '{not-json'],
+      ];
+      for (const [id, messageType, sdkMessage] of rows) {
+        insertStatusMessage(id, 'session-1', messageType, sdkMessage, timestamp);
+      }
+
+      const result = repository.getUserMessagesByStatus('session-1', 'consumed', 20);
+
+      expect(result.messages.map((message) => message.dbId)).toEqual(['user', 'non-replay']);
+      expect(result.total).toBe(2);
+    });
+
+    it('hydrates multiple chunks without changing projected order', () => {
+      const insert = db.prepare(
+        `INSERT INTO sdk_messages
+         (id, session_id, message_type, sdk_message, timestamp, send_status)
+         VALUES (?, 'session-1', 'user', ?, ?, 'consumed')`
+      );
+      db.transaction(() => {
+        for (let index = 0; index < 901; index++) {
+          insert.run(
+            `message-${index.toString().padStart(4, '0')}`,
+            JSON.stringify(createUserMessage(`Message ${index}`, `uuid-${index}`)),
+            new Date(index).toISOString()
+          );
+        }
+      })();
+
+      const result = repository.getUserMessagesByStatus('session-1', 'consumed', 901);
+
+      expect(result.messages).toHaveLength(901);
+      expect(result.total).toBe(901);
+      expect(result.messages.map((message) => message.dbId)).toEqual(
+        Array.from({ length: 901 }, (_, index) => `message-${index.toString().padStart(4, '0')}`)
+      );
+    });
+  });
+
   describe('updateMessageStatus', () => {
     it('should update status for specified message IDs', () => {
       const id1 = repository.saveUserMessage('session-1', createUserMessage('Msg 1'), 'deferred');
