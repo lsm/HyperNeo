@@ -2,6 +2,7 @@ import type { Database as BunDatabase } from '../../../src/storage/sqlite-compat
 import { createEvolutionTables } from '../../../src/storage/schema/evolution';
 import { createLongHorizonAgentTables } from '../../../src/storage/schema/long-horizon-agents';
 import { createWorkflowEventSubscriptionTables } from '../../../src/storage/schema/workflow-event-subscriptions';
+import { createSessionCounters } from '../../../src/storage/schema/session-counters';
 
 export function createSpaceTables(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = ON');
@@ -509,6 +510,7 @@ export function createSpaceTables(db: BunDatabase): void {
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_space_agent_provenance
 		ON sessions(json_extract(session_context, '$.spaceId'), json_extract(metadata, '$.promptProvenance.agentId'))`);
+  createSessionCounters(db);
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS sdk_messages (

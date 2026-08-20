@@ -588,6 +588,55 @@ describe('setupLiveQueryHandlers', () => {
       prevVersion = v;
     }
   });
+
+  test('sessions.list metadata reflects the maintained counter across mutations', async () => {
+    const insertSession = (
+      id: string,
+      type: string,
+      status: string,
+      context: string | null
+    ): void => {
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
+         VALUES (?, '', ?, ?, ?, '{}', '{}', ?, ?)`
+      ).run(id, now, now, status, type, context);
+    };
+    const metadataOf = (index: number) =>
+      (
+        setup.sentMessages[index].message.data as {
+          metadata?: { totalCount: number; archivedCount: number };
+        }
+      ).metadata;
+
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'sessions.list',
+      params: [0],
+      subscriptionId: 'sub-sessions-list',
+    });
+    expect(metadataOf(0)).toEqual({ totalCount: 0, archivedCount: 0 });
+
+    insertSession('h1', 'worker', 'active', null);
+    reactiveDb.notifyChange('sessions', { sessionId: 'h1' });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(metadataOf(setup.sentMessages.length - 1)).toEqual({ totalCount: 1, archivedCount: 0 });
+
+    insertSession('sp1', 'worker', 'active', '{"spaceId":"sp-1"}');
+    const beforeExcluded = setup.sentMessages.length;
+    reactiveDb.notifyChange('sessions', { sessionId: 'sp1' });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(setup.sentMessages.length).toBe(beforeExcluded);
+
+    insertSession('h2', 'worker', 'archived', null);
+    reactiveDb.notifyChange('sessions', { sessionId: 'h2' });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(metadataOf(setup.sentMessages.length - 1)).toEqual({ totalCount: 2, archivedCount: 1 });
+
+    db.prepare(`UPDATE sessions SET status = 'active' WHERE id = 'h2'`).run();
+    reactiveDb.notifyChange('sessions', { sessionId: 'h2' });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(metadataOf(setup.sentMessages.length - 1)).toEqual({ totalCount: 2, archivedCount: 0 });
+  });
 });
 
 describe('setupLiveQueryHandlers: per-client subscription cap', () => {
