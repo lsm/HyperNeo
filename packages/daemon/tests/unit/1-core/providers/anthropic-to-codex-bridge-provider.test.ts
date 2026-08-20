@@ -1688,6 +1688,57 @@ describe('AnthropicToCodexBridgeProvider', () => {
       await expect(provider.healthCheck()).resolves.toBeUndefined();
     });
 
+    it('ignores discovery failures from a replaced OAuth token for the same account', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const oldAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-same' },
+        jti: 'old-token',
+      });
+      const replacementAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-same' },
+        jti: 'replacement-token',
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: oldAccess,
+        refresh: 'old-refresh-token',
+        accountId: 'acct-same',
+      });
+      let rejectOld: ((error: Error) => void) | undefined;
+      const oldRequest = new Promise<Response>((_resolve, reject) => {
+        rejectOld = reject;
+      });
+      const fetchImpl = mock()
+        .mockImplementationOnce(async () => oldRequest)
+        .mockImplementation(
+          async () =>
+            new Response(JSON.stringify({ data: [{ id: 'gpt-replacement-token' }] }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+        ) as unknown as typeof fetch;
+      provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+
+      const oldRefresh = provider.getModels();
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+      provider.setCredentials({
+        type: 'oauth',
+        accessToken: replacementAccess,
+        refreshToken: 'new-refresh-token',
+        raw: { accountId: 'acct-same' },
+      });
+      const replacementRefresh = provider.refreshModels();
+      rejectOld?.(new Error('old token offline'));
+
+      await expect(oldRefresh).resolves.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: 'gpt-5.6-sol' })])
+      );
+      await expect(replacementRefresh).resolves.toEqual([
+        expect.objectContaining({ id: 'gpt-replacement-token' }),
+      ]);
+      await expect(provider.healthCheck()).resolves.toBeUndefined();
+    });
+
     it('does not route a previous credential scope catalog after credentials change', async () => {
       const fetchImpl = mock(
         async () =>

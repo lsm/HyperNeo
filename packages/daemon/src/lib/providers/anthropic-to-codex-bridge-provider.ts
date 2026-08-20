@@ -487,9 +487,14 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     ].join(':');
   }
 
-  private currentScopeMatches(scope: CodexModelCacheScope): boolean {
-    const auth = this.resolveBridgeAuth();
-    return auth ? this.sameScope(this.authScope(auth), scope) : false;
+  private currentAuthMatches(
+    auth: OpenAIResponsesBridgeAuth,
+    scope: CodexModelCacheScope
+  ): boolean {
+    const currentAuth = this.resolveBridgeAuth();
+    return currentAuth
+      ? currentAuth.apiKey === auth.apiKey && this.sameScope(this.authScope(currentAuth), scope)
+      : false;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -963,8 +968,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     });
   }
 
-  private setDiscoveryError(message: string, scope: CodexModelCacheScope): void {
-    if (!this.currentScopeMatches(scope)) return;
+  private setDiscoveryError(
+    message: string,
+    auth: OpenAIResponsesBridgeAuth,
+    scope: CodexModelCacheScope
+  ): void {
+    if (!this.currentAuthMatches(auth, scope)) return;
     this.discoveryError = new Error(message);
     logger.warn(message);
   }
@@ -1000,6 +1009,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       const detail = error instanceof Error ? error.message : String(error);
       this.setDiscoveryError(
         `AnthropicToCodexBridgeProvider: model discovery failed: ${detail}`,
+        auth,
         scope
       );
       return;
@@ -1023,6 +1033,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           const detail = error instanceof Error ? error.message : String(error);
           this.setDiscoveryError(
             `AnthropicToCodexBridgeProvider: model discovery retry failed: ${detail}`,
+            auth,
             scope
           );
           return;
@@ -1041,6 +1052,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
             const detail = error instanceof Error ? error.message : String(error);
             this.setDiscoveryError(
               `AnthropicToCodexBridgeProvider: model discovery retry failed: ${detail}`,
+              auth,
               scope
             );
             return;
@@ -1055,7 +1067,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     }
 
     if (response.status === 304 && matchingCache) {
-      if (!this.currentScopeMatches(scope)) return;
+      if (!this.currentAuthMatches(auth, scope)) return;
       this.discoveryError = undefined;
       const cache = { ...matchingCache, fetchedAt: new Date().toISOString() };
       this.modelCache = cache;
@@ -1070,10 +1082,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       await response.body?.cancel().catch(() => undefined);
       const message = `AnthropicToCodexBridgeProvider: model discovery HTTP ${response.status}`;
       if (response.status === 403) {
-        if (this.currentScopeMatches(scope)) this.discoveryError = undefined;
+        if (this.currentAuthMatches(auth, scope)) this.discoveryError = undefined;
         logger.warn(message);
       } else {
-        this.setDiscoveryError(message, scope);
+        this.setDiscoveryError(message, auth, scope);
       }
       return;
     }
@@ -1088,11 +1100,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (!models || entries.length === 0 || !entries.some((entry) => entry.visibility === 'list')) {
       this.setDiscoveryError(
         'AnthropicToCodexBridgeProvider: model discovery returned no usable models',
+        auth,
         scope
       );
       return;
     }
-    if (!this.currentScopeMatches(scope)) return;
+    if (!this.currentAuthMatches(auth, scope)) return;
 
     this.discoveryError = undefined;
     this.replaceCatalog(entries, scope);
