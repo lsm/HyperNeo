@@ -1129,6 +1129,28 @@ describe('AnthropicToCodexBridgeProvider', () => {
       await expect(provider.healthCheck()).rejects.toThrow('model discovery HTTP 503');
     });
 
+    it.each([
+      ['malformed JSON', '{'],
+      ['unexpected schema', JSON.stringify({ result: [] })],
+      ['no usable listed models', JSON.stringify({ data: [{ id: 'text-embedding-3-large' }] })],
+    ])('reports %s as unhealthy while retaining fallback models', async (_name, body) => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(body, {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toContain('gpt-5.6-sol');
+      await expect(provider.healthCheck()).rejects.toThrow(
+        'model discovery returned no usable models'
+      );
+    });
+
     it('clears discovery health failures after a successful probe', async () => {
       const fetchImpl = mock()
         .mockRejectedValueOnce(new Error('ECONNRESET'))

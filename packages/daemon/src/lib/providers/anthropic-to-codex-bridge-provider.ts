@@ -939,7 +939,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     }
     const entries = models ? this.catalogEntriesFromRemote(models, scope.source) : [];
     if (!models || entries.length === 0 || !entries.some((entry) => entry.visibility === 'list')) {
-      logger.warn('AnthropicToCodexBridgeProvider: model discovery returned no usable models');
+      this.setDiscoveryError(
+        'AnthropicToCodexBridgeProvider: model discovery returned no usable models'
+      );
       return;
     }
     if (!this.currentScopeMatches(scope)) return;
