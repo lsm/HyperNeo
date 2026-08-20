@@ -29,7 +29,6 @@ export async function fetchAcpModels(
     await client.initialize();
     await client.authenticate();
     const { configOptions } = await client.createSession(workspace, []);
-    provider.setConfigOptions(configOptions);
     const modelOption = configOptions.find((option) => option.category === 'model');
     if (!modelOption) return [];
     return flattenModelChoices(modelOption).map((choice) => ({

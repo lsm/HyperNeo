@@ -1,4 +1,5 @@
 import type { UUID } from 'crypto';
+import { isAbsolute, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
 import {
@@ -10,6 +11,10 @@ import {
 import type {
   AcpConfigOption,
   AcpContentBlock,
+  AcpFsReadParams,
+  AcpFsReadResult,
+  AcpFsWriteParams,
+  AcpFsWriteResult,
   AcpMcpServerConfig,
   AcpPermissionRequest,
   AcpPermissionResponseResult,
@@ -355,7 +360,6 @@ export class AcpQueryRunner {
     uuid: string;
     content: string | MessageContent[];
   } | null = null;
-  private terminalManager = new AcpTerminalManager();
 
   get lastConsumedUserMessage() {
     return this._lastConsumedUserMessage;
@@ -402,6 +406,7 @@ export class AcpQueryRunner {
     let receivedAcpMessageDuringRun = false;
     let restoreMessageEnqueuedHandler: (() => void) | undefined;
     let proxyBridge: AcpMcpProxyBridge | null = null;
+    let terminalManager: AcpTerminalManager | null = null;
     let turnCompletedNormally = false;
     let runAbortController: AbortController | null = this.ctx.queryAbortController;
 
@@ -538,6 +543,10 @@ export class AcpQueryRunner {
         acpEnv.CLAUDE_CODE_OAUTH_TOKEN = preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN;
       }
 
+      const runTerminalManager = new AcpTerminalManager(
+        acpEnv as Record<string, string> | undefined
+      );
+      terminalManager = runTerminalManager;
       client = this.createAcpClient({
         command,
         args,
@@ -547,13 +556,13 @@ export class AcpQueryRunner {
           this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
         onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
         onPermissionRequest: (params) => handleAcpPermissionRequest(params, canUseTool),
-        onTerminalCreate: (params) => this.terminalManager.create(params),
-        onTerminalOutput: (params) => this.terminalManager.output(params),
-        onTerminalWaitForExit: (params) => this.terminalManager.waitForExit(params),
-        onTerminalKill: (params) => this.terminalManager.kill(params),
-        onTerminalRelease: (params) => this.terminalManager.release(params),
-        onFsRead: (params) => this.handleFsRead(params),
-        onFsWrite: (params) => this.handleFsWrite(params),
+        onTerminalCreate: (params) => runTerminalManager.create(params),
+        onTerminalOutput: (params) => runTerminalManager.output(params),
+        onTerminalWaitForExit: (params) => runTerminalManager.waitForExit(params),
+        onTerminalKill: (params) => runTerminalManager.kill(params),
+        onTerminalRelease: (params) => runTerminalManager.release(params),
+        onFsRead: (params) => this.handleFsRead(params, cwd),
+        onFsWrite: (params) => this.handleFsWrite(params, cwd),
       });
 
       if (messageQueue.size() > 0) {
@@ -740,7 +749,7 @@ export class AcpQueryRunner {
       );
     } finally {
       restoreMessageEnqueuedHandler?.();
-      this.terminalManager.dispose();
+      terminalManager?.dispose();
       await proxyBridge?.close();
       proxyBridge = null;
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
@@ -942,21 +951,65 @@ export class AcpQueryRunner {
     await this.ctx.onMarkApiSuccess(message);
   }
 
-  private async handleFsRead(params: { path: string }): Promise<{ content: string }> {
+  private async handleFsRead(params: AcpFsReadParams, workspace: string): Promise<AcpFsReadResult> {
     const { readFile } = await import('node:fs/promises');
-    const content = await readFile(params.path, 'utf-8');
-    return { content };
+    const filePath = await this.resolveWorkspacePath(params.path, workspace);
+    const content = await readFile(filePath, 'utf-8');
+    const start = Math.max(0, (params.line ?? 1) - 1);
+    const limit = params.limit ?? undefined;
+    if (start === 0 && limit === undefined) return { content };
+    const lines = content.split('\n');
+    return {
+      content: lines.slice(start, limit === undefined ? undefined : start + limit).join('\n'),
+    };
   }
 
-  private async handleFsWrite(params: {
-    path: string;
-    content: string;
-  }): Promise<{ _meta?: object | null }> {
+  private async handleFsWrite(
+    params: AcpFsWriteParams,
+    workspace: string
+  ): Promise<AcpFsWriteResult> {
     const { writeFile, mkdir } = await import('node:fs/promises');
     const { dirname } = await import('node:path');
-    await mkdir(dirname(params.path), { recursive: true });
-    await writeFile(params.path, params.content, 'utf-8');
+    const filePath = await this.resolveWorkspacePath(params.path, workspace);
+    await mkdir(dirname(filePath), { recursive: true });
+    await writeFile(filePath, params.content, 'utf-8');
     return {};
+  }
+
+  private async resolveWorkspacePath(path: string, workspace: string): Promise<string> {
+    const { realpath } = await import('node:fs/promises');
+    const { dirname, resolve } = await import('node:path');
+    const workspacePath = await realpath(workspace);
+    const requestedPath = resolve(
+      workspacePath,
+      isAbsolute(path) ? relative(resolve(workspace), path) : path
+    );
+    this.assertWorkspacePath(requestedPath, workspacePath, path);
+
+    let existingPath = requestedPath;
+    let resolvedPath: string | undefined;
+    while (!resolvedPath) {
+      resolvedPath = await realpath(existingPath).catch(() => undefined);
+      if (resolvedPath) break;
+      const parentPath = dirname(existingPath);
+      if (parentPath === existingPath) break;
+      existingPath = parentPath;
+    }
+    if (!resolvedPath) {
+      throw new Error(`Unable to resolve ACP filesystem path: ${path}`);
+    }
+    this.assertWorkspacePath(resolvedPath, workspacePath, path);
+
+    const targetPath = await realpath(requestedPath).catch(() => requestedPath);
+    this.assertWorkspacePath(targetPath, workspacePath, path);
+    return targetPath;
+  }
+
+  private assertWorkspacePath(path: string, workspace: string, requestedPath: string): void {
+    const relativePath = relative(workspace, path);
+    if (relativePath.startsWith('..') || isAbsolute(relativePath)) {
+      throw new Error(`ACP filesystem path escapes workspace: ${requestedPath}`);
+    }
   }
 
   private async ensureRequiredMcpServersForAcp(queryOptions: Options): Promise<Options> {

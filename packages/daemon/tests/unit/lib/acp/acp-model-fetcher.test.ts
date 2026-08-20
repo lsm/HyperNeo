@@ -53,12 +53,14 @@ afterAll(() => {
 });
 
 describe('fetchAcpModels', () => {
-  test('authenticates before creating the discovery session', async () => {
+  test('authenticates before creating the discovery session without mutating provider models', async () => {
     const provider = new AcpProvider({}, async () => {});
+    provider.setAcpModels([{ id: 'configured-model' }]);
 
     const models = await fetchAcpModels(provider, { command: 'devin acp', cwd: '/tmp' });
 
     expect(calls).toEqual(['initialize', 'authenticate', 'createSession', 'close']);
     expect(models).toEqual([{ id: 'devin-default', name: 'Devin Default' }]);
+    expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['configured-model']);
   });
 });

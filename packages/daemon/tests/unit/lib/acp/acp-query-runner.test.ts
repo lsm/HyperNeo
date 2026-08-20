@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
 import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -574,6 +577,63 @@ describe('AcpQueryRunner', () => {
     expect(onSDKMessage.mock.calls.some(([message]) => message.type === 'result')).toBe(true);
     expect(onMarkApiSuccess).toHaveBeenCalled();
     expect(stopSpy).toHaveBeenCalled();
+  });
+
+  test('confines filesystem callbacks to the workspace and honors read ranges', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-fs-'));
+    const workspace = join(root, 'workspace');
+    const outside = join(root, 'outside.txt');
+    await mkdir(workspace);
+    await writeFile(join(workspace, 'inside.txt'), 'one\ntwo\nthree\nfour');
+    await writeFile(outside, 'secret');
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      session: { workspacePath: workspace },
+      queryOptions: { cwd: workspace, mcpServers: {} },
+    });
+
+    try {
+      await runner.start();
+      await ctx.queryPromise;
+
+      await expect(
+        constructorOptions[0].onFsRead?.({
+          sessionId: 'acp-session-1',
+          path: join(workspace, 'inside.txt'),
+          line: 2,
+          limit: 2,
+        })
+      ).resolves.toEqual({ content: 'two\nthree' });
+      await expect(
+        constructorOptions[0].onFsRead?.({
+          sessionId: 'acp-session-1',
+          path: outside,
+        })
+      ).rejects.toThrow('escapes workspace');
+      await expect(
+        constructorOptions[0].onFsWrite?.({
+          sessionId: 'acp-session-1',
+          path: '../escaped.txt',
+          content: 'blocked',
+        })
+      ).rejects.toThrow('escapes workspace');
+      await constructorOptions[0].onFsWrite?.({
+        sessionId: 'acp-session-1',
+        path: join(workspace, 'nested', 'written.txt'),
+        content: 'written',
+      });
+      expect(await readFile(join(workspace, 'nested', 'written.txt'), 'utf-8')).toBe('written');
+
+      const link = join(workspace, 'outside-link');
+      await symlink(root, link);
+      await expect(
+        constructorOptions[0].onFsRead?.({
+          sessionId: 'acp-session-1',
+          path: join(link, 'outside.txt'),
+        })
+      ).rejects.toThrow('escapes workspace');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test('publishes query.trigger on normal turn completion to replay deferred rows', async () => {

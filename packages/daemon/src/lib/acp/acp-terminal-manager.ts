@@ -32,32 +32,26 @@ interface TerminalSession {
 export class AcpTerminalManager {
   private sessions = new Map<string, TerminalSession>();
 
+  constructor(
+    private readonly baseEnv: Record<string, string> = {},
+    private readonly processKill: (pid: number, signal: NodeJS.Signals) => void = process.kill
+  ) {}
+
   async create(params: AcpTerminalCreateParams): Promise<AcpTerminalCreateResult> {
     const terminalId = `term-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const { command, args = [], cwd, env, outputByteLimit } = params;
 
-    const processEnv: NodeJS.ProcessEnv = { ...process.env };
+    const processEnv: NodeJS.ProcessEnv = { ...this.baseEnv };
     for (const entry of env ?? []) {
       processEnv[entry.name] = entry.value;
     }
 
-    const hasArgs = args.length > 0;
-    const looksLikeShellCommand = !hasArgs && /\s/.test(command);
-    const child = looksLikeShellCommand
-      ? spawn(
-          process.platform === 'win32' ? 'cmd.exe' : 'sh',
-          [process.platform === 'win32' ? '/c' : '-c', command],
-          {
-            cwd: cwd ?? undefined,
-            env: processEnv,
-            stdio: ['ignore', 'pipe', 'pipe'],
-          }
-        )
-      : spawn(command, args, {
-          cwd: cwd ?? undefined,
-          env: processEnv,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
+    const child = spawn(command, args, {
+      cwd: cwd ?? undefined,
+      env: processEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    });
 
     const session: TerminalSession = {
       process: child,
@@ -119,7 +113,7 @@ export class AcpTerminalManager {
     const buffer = session.output;
     const truncated = buffer.length > session.outputByteLimit;
     const output = truncated
-      ? buffer.slice(0, session.outputByteLimit).toString('utf-8')
+      ? buffer.subarray(buffer.length - session.outputByteLimit).toString('utf-8')
       : buffer.toString('utf-8');
 
     return {
@@ -164,11 +158,11 @@ export class AcpTerminalManager {
     const session = this.sessions.get(params.terminalId);
     if (session && !session.killed && !session.exited) {
       session.killed = true;
-      session.process.kill('SIGTERM');
+      this.signalProcess(session.process, 'SIGTERM');
       session.killTimer = setTimeout(() => {
         session.killTimer = null;
         if (!session.exited) {
-          session.process.kill('SIGKILL');
+          this.signalProcess(session.process, 'SIGKILL');
         }
       }, 5000);
     }
@@ -189,17 +183,27 @@ export class AcpTerminalManager {
     for (const [terminalId, session] of this.sessions) {
       if (!session.exited) {
         session.killed = true;
-        session.process.kill('SIGTERM');
+        this.signalProcess(session.process, 'SIGTERM');
         session.killTimer = setTimeout(() => {
           session.killTimer = null;
           if (!session.exited) {
-            session.process.kill('SIGKILL');
+            this.signalProcess(session.process, 'SIGKILL');
           }
         }, 5000);
       }
       session.released = true;
       this.sessions.delete(terminalId);
     }
+  }
+
+  private signalProcess(child: ChildProcess, signal: NodeJS.Signals): void {
+    if (process.platform !== 'win32' && child.pid != null) {
+      try {
+        this.processKill(-child.pid, signal);
+        return;
+      } catch {}
+    }
+    child.kill(signal);
   }
 
   private appendOutput(terminalId: string, chunk: Buffer): void {
