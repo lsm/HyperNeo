@@ -195,6 +195,23 @@ export class MessageQueue {
     return false;
   }
 
+  hasYielded(messageId: string): boolean {
+    for (const message of this.yielded) {
+      if (message.id === messageId) return true;
+    }
+    return false;
+  }
+
+  acknowledgeYielded(messageId: string): boolean {
+    for (const message of this.yielded) {
+      if (message.id !== messageId) continue;
+      this.yielded.delete(message);
+      message.resolve(message.id);
+      return true;
+    }
+    return false;
+  }
+
   waitForPendingOrInFlight(
     messageId: string
   ): { acknowledgment: Promise<void>; content: string | MessageContent[] } | null {

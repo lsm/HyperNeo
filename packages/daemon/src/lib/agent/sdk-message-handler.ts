@@ -324,14 +324,17 @@ export class SDKMessageHandler {
   }
 
   private async acknowledgeOldestQueuedUserOnTurnEnd(): Promise<void> {
-    const { session, db, internalEventBus, messageHub, messageQueue } = this.ctx;
+    const { session, db, internalEventBus, messageHub, messageQueue, stateManager } = this.ctx;
     const durableOwned =
       db.getJobQueueRepo?.()?.activeDeliveryMessageUuids(session.id) ?? new Set();
+    const state = stateManager.getState();
+    const activeMessageId = state.status === 'processing' ? state.messageId : null;
     const enqueuedUsers = db.getMessagesByStatus(session.id, 'enqueued').filter((enqueued) => {
       const uuid = enqueued.uuid ?? '';
+      const activeYielded = uuid === activeMessageId && messageQueue.hasYielded(uuid);
       return (
         isSDKUserMessage(enqueued) &&
-        !durableOwned.has(uuid) &&
+        (!durableOwned.has(uuid) || activeYielded) &&
         !messageQueue.hasPendingOrClaimed(uuid)
       );
     });
@@ -343,6 +346,7 @@ export class SDKMessageHandler {
       lastConsumedAt = consumedAt;
       db.updateMessageStatus([enqueuedUser.dbId], 'consumed');
       db.updateMessageTimestamp(enqueuedUser.dbId, consumedAt);
+      messageQueue.acknowledgeYielded(enqueuedUser.uuid ?? '');
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: session.id,
         messageIds: [enqueuedUser.dbId],

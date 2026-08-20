@@ -169,10 +169,12 @@ describe('MessageQueue', () => {
     it('reports false for an unknown id and true while queued/claimed/yielded', async () => {
       expect(queue.hasPendingOrInFlight('nope')).toBe(false);
       expect(queue.hasPendingOrClaimed('nope')).toBe(false);
+      expect(queue.hasYielded('nope')).toBe(false);
 
       const acknowledgment = queue.enqueueWithId('in-flight-id', 'Message 1');
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(true);
       expect(queue.hasPendingOrClaimed('in-flight-id')).toBe(true);
+      expect(queue.hasYielded('in-flight-id')).toBe(false);
       const existing = queue.waitForPendingOrInFlight('in-flight-id');
       expect(existing?.content).toBe('Message 1');
 
@@ -182,11 +184,15 @@ describe('MessageQueue', () => {
       expect(result.done).toBe(false);
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(true);
       expect(queue.hasPendingOrClaimed('in-flight-id')).toBe(false);
+      expect(queue.hasYielded('in-flight-id')).toBe(true);
+      expect(queue.acknowledgeYielded('in-flight-id')).toBe(true);
 
       result.value.onSent();
       await acknowledgment;
       await existing?.acknowledgment;
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(false);
+      expect(queue.hasYielded('in-flight-id')).toBe(false);
+      expect(queue.acknowledgeYielded('in-flight-id')).toBe(false);
       expect(queue.waitForPendingOrInFlight('in-flight-id')).toBeNull();
       queue.stop();
     });

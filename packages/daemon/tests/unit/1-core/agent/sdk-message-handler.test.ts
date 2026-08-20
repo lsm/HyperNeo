@@ -87,6 +87,8 @@ describe('SDKMessageHandler', () => {
   let lifecycleStopSpy: ReturnType<typeof mock>;
   let messageQueueClearSpy: ReturnType<typeof mock>;
   let hasPendingOrClaimedSpy: ReturnType<typeof mock>;
+  let hasYieldedSpy: ReturnType<typeof mock>;
+  let acknowledgeYieldedSpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
   let bumpDeliveryTurnActivitySpy: ReturnType<typeof mock>;
 
@@ -176,11 +178,15 @@ describe('SDKMessageHandler', () => {
     enqueueMessageSpy = mock(async () => 'context-id');
     messageQueueClearSpy = mock(() => {});
     hasPendingOrClaimedSpy = mock(() => false);
+    hasYieldedSpy = mock(() => false);
+    acknowledgeYieldedSpy = mock(() => false);
     mockMessageQueue = {
       enqueue: enqueueMessageSpy,
       enqueueWithId: mock(async () => {}),
       clear: messageQueueClearSpy,
       hasPendingOrClaimed: hasPendingOrClaimedSpy,
+      hasYielded: hasYieldedSpy,
+      acknowledgeYielded: acknowledgeYieldedSpy,
     } as unknown as MessageQueue;
 
     handleErrorSpy = mock(async () => {});
@@ -1301,7 +1307,7 @@ describe('SDKMessageHandler', () => {
       expect(updateMessageStatusSpy).not.toHaveBeenCalledWith(['db-queued'], 'consumed');
     });
 
-    it('acknowledges a yielded message at turn end when replay is absent', async () => {
+    it('acknowledges a yielded durable message at turn end when replay is absent', async () => {
       getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
         if (status === 'enqueued') {
           return [
@@ -1316,7 +1322,17 @@ describe('SDKMessageHandler', () => {
         }
         return [];
       });
+      mockDb.getJobQueueRepo = mock(() => ({
+        activeDeliveryMessageUuids: () => new Set(['yielded-user-uuid']),
+      })) as never;
+      getStateSpy.mockReturnValue({
+        status: 'processing',
+        messageId: 'yielded-user-uuid',
+        phase: 'streaming',
+      });
       hasPendingOrClaimedSpy.mockReturnValue(false);
+      hasYieldedSpy.mockImplementation((uuid: string) => uuid === 'yielded-user-uuid');
+      acknowledgeYieldedSpy.mockImplementation((uuid: string) => uuid === 'yielded-user-uuid');
 
       await handler.handleMessage({
         type: 'result',
@@ -1328,6 +1344,7 @@ describe('SDKMessageHandler', () => {
       } as unknown as SDKMessage);
 
       expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-yielded'], 'consumed');
+      expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('yielded-user-uuid');
     });
 
     it('leaves an active durable steer enqueued and claimable at turn end (#3744401261)', async () => {
@@ -1359,6 +1376,45 @@ describe('SDKMessageHandler', () => {
       } as unknown as SDKMessage);
 
       expect(updateMessageStatusSpy).not.toHaveBeenCalledWith(['db-steer'], 'consumed');
+    });
+
+    it('leaves a yielded durable steer enqueued when another message owns the turn', async () => {
+      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+        if (status === 'enqueued') {
+          return [
+            {
+              dbId: 'db-steer',
+              uuid: 'durable-steer-uuid',
+              type: 'user',
+              timestamp: 1700000000000,
+              message: { role: 'user', content: [{ type: 'text', text: 'steer' }] },
+            },
+          ];
+        }
+        return [];
+      });
+      mockDb.getJobQueueRepo = mock(() => ({
+        activeDeliveryMessageUuids: () => new Set(['durable-steer-uuid']),
+      })) as never;
+      getStateSpy.mockReturnValue({
+        status: 'processing',
+        messageId: 'current-turn-uuid',
+        phase: 'streaming',
+      });
+      hasPendingOrClaimedSpy.mockReturnValue(false);
+      hasYieldedSpy.mockReturnValue(true);
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-uuid',
+        usage: { input_tokens: 1, output_tokens: 1 },
+        total_cost_usd: 0,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(updateMessageStatusSpy).not.toHaveBeenCalledWith(['db-steer'], 'consumed');
+      expect(acknowledgeYieldedSpy).not.toHaveBeenCalled();
     });
 
     it('should handle result message with missing usage (bridge provider edge case)', async () => {
