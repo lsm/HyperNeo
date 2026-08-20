@@ -70,7 +70,10 @@ export class AcpTerminalManager {
       process: child,
       outputChunks: [],
       outputByteLength: 0,
-      outputByteLimit: Math.min(MAX_OUTPUT_BYTE_LIMIT, Math.max(1, requestedOutputByteLimit)),
+      outputByteLimit: Math.min(
+        MAX_OUTPUT_BYTE_LIMIT,
+        Math.max(1, Math.trunc(requestedOutputByteLimit))
+      ),
       outputTruncated: false,
       exitCode: null,
       exitSignal: null,

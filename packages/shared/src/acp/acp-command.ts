@@ -8,6 +8,7 @@ export function parseAcpCommand(commandLine: string): { command: string; args: s
   let current = '';
   let quote: 'single' | 'double' | null = null;
   let escaping = false;
+  let tokenStarted = false;
 
   const trimmedCommand = commandLine.trim();
   for (let index = 0; index < trimmedCommand.length; index++) {
@@ -15,6 +16,7 @@ export function parseAcpCommand(commandLine: string): { command: string; args: s
     if (escaping) {
       current += char;
       escaping = false;
+      tokenStarted = true;
       continue;
     }
 
@@ -27,37 +29,45 @@ export function parseAcpCommand(commandLine: string): { command: string; args: s
         escaping = true;
       } else {
         current += char;
+        tokenStarted = true;
       }
       continue;
     }
 
     if (char === "'" && quote !== 'double') {
       quote = quote === 'single' ? null : 'single';
+      tokenStarted = true;
       continue;
     }
 
     if (char === '"' && quote !== 'single') {
       quote = quote === 'double' ? null : 'double';
+      tokenStarted = true;
       continue;
     }
 
     if (/\s/.test(char) && !quote) {
-      if (current) {
+      if (tokenStarted) {
         tokens.push(current);
         current = '';
+        tokenStarted = false;
       }
       continue;
     }
 
     current += char;
+    tokenStarted = true;
   }
 
-  if (escaping) current += '\\';
+  if (escaping) {
+    current += '\\';
+    tokenStarted = true;
+  }
   if (quote) {
     throw new Error('Invalid ACP command: unmatched quote');
   }
-  if (current) tokens.push(current);
-  if (tokens.length === 0) {
+  if (tokenStarted) tokens.push(current);
+  if (!tokens[0]) {
     throw new Error('Invalid ACP command: command is empty');
   }
 

@@ -643,6 +643,18 @@ describe('AcpQueryRunner', () => {
           path: join(link, 'outside.txt'),
         })
       ).rejects.toThrow('escapes workspace');
+
+      const danglingTarget = join(root, 'created-through-link.txt');
+      const danglingLink = join(workspace, 'dangling-link');
+      await symlink(danglingTarget, danglingLink);
+      await expect(
+        constructorOptions[0].onFsWrite?.({
+          sessionId: 'acp-session-1',
+          path: danglingLink,
+          content: 'blocked',
+        })
+      ).rejects.toThrow('dangling symbolic link');
+      await expect(readFile(danglingTarget, 'utf-8')).rejects.toThrow();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

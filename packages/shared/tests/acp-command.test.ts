@@ -12,7 +12,19 @@ describe('parseAcpCommand', () => {
     );
   });
 
+  test('preserves explicitly empty quoted arguments', () => {
+    expect(parseAcpCommand('agent --profile "" acp')).toEqual({
+      command: 'agent',
+      args: ['--profile', '', 'acp'],
+    });
+    expect(parseAcpCommand("agent '' tail")).toEqual({
+      command: 'agent',
+      args: ['', 'tail'],
+    });
+  });
+
   test('rejects malformed commands', () => {
     expect(() => parseAcpCommand("devin 'acp")).toThrow('Invalid ACP command: unmatched quote');
+    expect(() => parseAcpCommand("'' acp")).toThrow('Invalid ACP command: command is empty');
   });
 });

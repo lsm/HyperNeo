@@ -1049,11 +1049,19 @@ export class AcpQueryRunner {
   }
 
   private async resolveWorkspacePath(path: string, workspace: string): Promise<string> {
-    const { realpath } = await import('node:fs/promises');
+    const { lstat, realpath } = await import('node:fs/promises');
     const { dirname, resolve } = await import('node:path');
     const workspacePath = await realpath(workspace);
     const requestedPath = isAbsolute(path) ? resolve(path) : resolve(workspacePath, path);
     if (!isAbsolute(path)) this.assertWorkspacePath(requestedPath, workspacePath, path);
+
+    const requestedStats = await lstat(requestedPath).catch(() => undefined);
+    if (
+      requestedStats?.isSymbolicLink() &&
+      !(await realpath(requestedPath).catch(() => undefined))
+    ) {
+      throw new Error(`ACP filesystem path is a dangling symbolic link: ${path}`);
+    }
 
     let existingPath = requestedPath;
     let resolvedPath: string | undefined;

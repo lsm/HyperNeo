@@ -194,10 +194,16 @@ describe('AcpTerminalManager', () => {
       command: 'command',
       outputByteLimit: 'invalid' as unknown as number,
     });
+    const fractional = await manager.create({
+      sessionId: 'session-1',
+      command: 'command',
+      outputByteLimit: 1.5,
+    });
 
     spawned[0].stdout.emit('data', Buffer.from('abc'));
     spawned[1].stdout.emit('data', Buffer.alloc(4 * 1024 * 1024 + 1, 'x'));
     spawned[2].stdout.emit('data', Buffer.alloc(1024 * 1024 + 1, 'x'));
+    spawned[3].stdout.emit('data', Buffer.from('ab'));
 
     expect(await manager.output(params(low.terminalId))).toMatchObject({
       output: 'c',
@@ -209,6 +215,10 @@ describe('AcpTerminalManager', () => {
     const malformedOutput = await manager.output(params(malformed.terminalId));
     expect(Buffer.byteLength(malformedOutput.output)).toBe(1024 * 1024);
     expect(malformedOutput.truncated).toBe(true);
+    expect(await manager.output(params(fractional.terminalId))).toMatchObject({
+      output: 'b',
+      truncated: true,
+    });
   });
 
   test('signals the terminal process group and escalates to SIGKILL', async () => {
