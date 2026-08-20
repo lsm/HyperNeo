@@ -1,14 +1,14 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
-import { createTables } from '../../../../src/storage/schema';
-import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
-import { LiveQueryEngine } from '../../../../src/storage/live-query';
 import {
   BACKGROUND_TASK_METADATA_SQL,
   NAMED_QUERY_REGISTRY,
   setupLiveQueryHandlers,
 } from '../../../../src/lib/rpc-handlers/live-query-handlers';
+import { LiveQueryEngine } from '../../../../src/storage/live-query';
+import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
+import { createTables } from '../../../../src/storage/schema';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -466,6 +466,37 @@ describe('messages.bySession — SQL behavior', () => {
     expect(rows.map((r) => r.id)).toEqual(['older-visible', 'newer-visible']);
   });
 
+  test('keeps worker shutdown rows until a newer user message reaches a terminal state', () => {
+    insertSdkMessage(db, {
+      id: 'shutdown',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'worker_shutting_down',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'worker_shutting_down',
+        uuid: 'shutdown-uuid',
+        session_id: 's1',
+        reason: 'host_exit',
+      },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    insertSdkMessage(db, {
+      id: 'user',
+      sessionId: 's1',
+      messageType: 'user',
+      sdkMessage: { type: 'user', uuid: 'user-uuid', message: { content: 'continue' } },
+      timestamp: '2024-01-01 00:00:02',
+      sendStatus: 'enqueued',
+    });
+
+    expect(query(db, 's1', 10).map((row) => row.id)).toEqual(['shutdown', 'user']);
+
+    db.prepare(`UPDATE sdk_messages SET send_status = 'consumed' WHERE id = ?`).run('user');
+
+    expect(query(db, 's1', 10).map((row) => row.id)).toEqual(['user']);
+  });
+
   test('keeps worker shutdown rows when they are the top-level live tail', () => {
     insertSdkMessage(db, {
       id: 'visible',
@@ -798,9 +829,11 @@ describe('messages.bySession — SQL behavior', () => {
     expect(rows.map((r) => r.id)).toEqual(['normal']);
   });
 
-  test('uses the session timestamp index for the top-level window', () => {
+  test('uses one bounded shutdown lookup and the session timestamp index', () => {
     const plan = queryPlan(db, 's1', 200);
+    expect(plan).toContain('MATERIALIZE latest_shutdown_boundary');
     expect(plan).toMatch(/idx_sdk_messages_session(_timestamp_id)?\b/);
+    expect(plan).not.toContain('MULTI-INDEX OR');
     expect(plan).not.toContain('SCAN sdk_messages USING');
   });
 
