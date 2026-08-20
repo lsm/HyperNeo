@@ -25,7 +25,7 @@ export function createSdkMessageRetentionHandler(options: {
 
     const boundedDays = Math.min(retentionDays, MAX_SDK_MESSAGE_RETENTION_DAYS);
     const olderThanIso = new Date(Date.now() - boundedDays * 24 * 60 * 60 * 1000).toISOString();
-    const { deleted, hasMore } = options.sdkMessageRepo.deleteExpiredArchivedSessionMessages({
+    const { deleted, hasMore } = await options.sdkMessageRepo.deleteExpiredArchivedSessionMessages({
       olderThanIso,
       batchLimit: RETENTION_BATCH_LIMIT,
     });

@@ -160,12 +160,12 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
     db.close();
   });
 
-  it('deletes old consumed messages of archived worker sessions and keeps recent ones', () => {
+  it('deletes old consumed messages of archived worker sessions and keeps recent ones', async () => {
     insertSession(db, 's1');
     insertMessage(db, { id: 'm-old', sessionId: 's1', daysAgo: 60 });
     insertMessage(db, { id: 'm-recent', sessionId: 's1', daysAgo: 2 });
 
-    const result = repository.deleteExpiredArchivedSessionMessages({
+    const result = await repository.deleteExpiredArchivedSessionMessages({
       olderThanIso: iso(30),
       batchLimit: 100,
     });
@@ -181,13 +181,13 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
     ).toEqual(['m-recent']);
   });
 
-  it('does not touch messages of non-archived sessions', () => {
+  it('does not touch messages of non-archived sessions', async () => {
     insertSession(db, 'active', { status: 'active' });
     insertSession(db, 'ended', { status: 'ended' });
     insertMessage(db, { id: 'm1', sessionId: 'active', daysAgo: 60 });
     insertMessage(db, { id: 'm2', sessionId: 'ended', daysAgo: 60 });
 
-    const result = repository.deleteExpiredArchivedSessionMessages({
+    const result = await repository.deleteExpiredArchivedSessionMessages({
       olderThanIso: iso(30),
       batchLimit: 100,
     });
@@ -195,7 +195,7 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
     expect(result.deleted).toBe(0);
   });
 
-  it('does not delete messages with a pending delivery status', () => {
+  it('does not delete messages with a pending delivery status', async () => {
     insertSession(db, 's1');
     insertMessage(db, { id: 'm-enqueued', sessionId: 's1', daysAgo: 60, sendStatus: 'enqueued' });
     insertMessage(db, { id: 'm-deferred', sessionId: 's1', daysAgo: 60, sendStatus: 'deferred' });
@@ -204,7 +204,7 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
     insertMessage(db, { id: 'm-consumed', sessionId: 's1', daysAgo: 60, sendStatus: 'consumed' });
     insertMessage(db, { id: 'm-null', sessionId: 's1', daysAgo: 60, sendStatus: null });
 
-    const result = repository.deleteExpiredArchivedSessionMessages({
+    const result = await repository.deleteExpiredArchivedSessionMessages({
       olderThanIso: iso(30),
       batchLimit: 100,
     });
@@ -216,7 +216,7 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
     expect(remaining.sort()).toEqual(['m-deferred', 'm-enqueued', 'm-submitted']);
   });
 
-  it('skips sessions that still have an active message_delivery job', () => {
+  it('skips sessions that still have an active message_delivery job', async () => {
     insertSession(db, 's1');
     insertMessage(db, { id: 'm1', sessionId: 's1', daysAgo: 60 });
     db.prepare(
@@ -224,7 +224,7 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
        VALUES ('j1', 'message_delivery', 'pending', '{"sessionId":"s1"}', 0, 0)`
     ).run();
 
-    const result = repository.deleteExpiredArchivedSessionMessages({
+    const result = await repository.deleteExpiredArchivedSessionMessages({
       olderThanIso: iso(30),
       batchLimit: 100,
     });
@@ -232,7 +232,7 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
     expect(result.deleted).toBe(0);
   });
 
-  it('ignores completed message_delivery jobs when deciding to retain', () => {
+  it('ignores completed message_delivery jobs when deciding to retain', async () => {
     insertSession(db, 's1');
     insertMessage(db, { id: 'm1', sessionId: 's1', daysAgo: 60 });
     db.prepare(
@@ -240,7 +240,7 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
        VALUES ('j1', 'message_delivery', 'completed', '{"sessionId":"s1"}', 0, 0)`
     ).run();
 
-    const result = repository.deleteExpiredArchivedSessionMessages({
+    const result = await repository.deleteExpiredArchivedSessionMessages({
       olderThanIso: iso(30),
       batchLimit: 100,
     });
@@ -248,7 +248,7 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
     expect(result.deleted).toBe(1);
   });
 
-  it('skips space and room sessions, including ad-hoc members with worker type', () => {
+  it('skips space and room sessions, including ad-hoc members with worker type', async () => {
     insertSession(db, 'space:room-1', { type: 'space_chat' });
     insertSession(db, 'worker1', { type: 'space_task_agent' });
     insertSession(db, 'worker2', { sessionContext: JSON.stringify({ taskId: 'task-1' }) });
@@ -260,7 +260,7 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
     insertMessage(db, { id: 'm4', sessionId: 'worker3', daysAgo: 60 });
     insertMessage(db, { id: 'm5', sessionId: 'worker4', daysAgo: 60 });
 
-    const result = repository.deleteExpiredArchivedSessionMessages({
+    const result = await repository.deleteExpiredArchivedSessionMessages({
       olderThanIso: iso(30),
       batchLimit: 100,
     });
@@ -268,7 +268,7 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
     expect(result.deleted).toBe(0);
   });
 
-  it('deletes search content rows and clears delivery turn ends for removed messages', () => {
+  it('deletes search content rows and clears delivery turn ends for removed messages', async () => {
     insertSession(db, 's1');
     insertMessage(db, { id: 'm1', sessionId: 's1', daysAgo: 60, sdkUuid: 'uuid-1' });
     insertMessage(db, { id: 'm2', sessionId: 's1', daysAgo: 60, sdkUuid: 'uuid-2' });
@@ -281,7 +281,10 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
        VALUES ('s1', 'uuid-1', 'now')`
     ).run();
 
-    repository.deleteExpiredArchivedSessionMessages({ olderThanIso: iso(30), batchLimit: 100 });
+    await repository.deleteExpiredArchivedSessionMessages({
+      olderThanIso: iso(30),
+      batchLimit: 100,
+    });
 
     expect(
       db.prepare(`SELECT COUNT(*) AS n FROM message_search_content`).get() as { n: number }
@@ -294,12 +297,15 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
     ).toEqual({ n: 0 });
   });
 
-  it('recomputes the visible message count for affected sessions', () => {
+  it('recomputes the visible message count for affected sessions', async () => {
     insertSession(db, 's1', { visibleMessageCount: 10 });
     insertMessage(db, { id: 'm1', sessionId: 's1', daysAgo: 60, messageType: 'assistant' });
     insertMessage(db, { id: 'm2', sessionId: 's1', daysAgo: 2, messageType: 'assistant' });
 
-    repository.deleteExpiredArchivedSessionMessages({ olderThanIso: iso(30), batchLimit: 100 });
+    await repository.deleteExpiredArchivedSessionMessages({
+      olderThanIso: iso(30),
+      batchLimit: 100,
+    });
 
     const row = db
       .prepare(`SELECT visible_message_count AS n FROM sessions WHERE id = 's1'`)
@@ -309,7 +315,28 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
     expect(row.n).toBe(1);
   });
 
-  it('cascades sdk_message_replacements when the source message is deleted', () => {
+  it('emits sessions and sdk_messages invalidations for affected sessions only', async () => {
+    const notifications: Array<{ table: string; scope: { sessionId?: string } }> = [];
+    const reactiveDb = {
+      notifyChange: (table: string, scope: { sessionId?: string }) => {
+        notifications.push({ table, scope });
+      },
+    } as any;
+    const repo = new SDKMessageRepository(db as any, reactiveDb);
+
+    insertSession(db, 's1');
+    insertSession(db, 's2');
+    insertMessage(db, { id: 'm1', sessionId: 's1', daysAgo: 60 });
+    insertMessage(db, { id: 'm2', sessionId: 's2', daysAgo: 2 });
+
+    await repo.deleteExpiredArchivedSessionMessages({ olderThanIso: iso(30), batchLimit: 100 });
+
+    expect(notifications).toContainEqual({ table: 'sessions', scope: { sessionId: 's1' } });
+    expect(notifications).toContainEqual({ table: 'sdk_messages', scope: { sessionId: 's1' } });
+    expect(notifications.filter((n) => n.scope.sessionId === 's2')).toEqual([]);
+  });
+
+  it('cascades sdk_message_replacements when the source message is deleted', async () => {
     insertSession(db, 's1');
     insertMessage(db, { id: 'm-old', sessionId: 's1', daysAgo: 60, sdkUuid: 'uuid-old' });
     db.prepare(
@@ -317,27 +344,30 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
        VALUES ('m-old', 's1', NULL, 'uuid-new', 'superseded')`
     ).run();
 
-    repository.deleteExpiredArchivedSessionMessages({ olderThanIso: iso(30), batchLimit: 100 });
+    await repository.deleteExpiredArchivedSessionMessages({
+      olderThanIso: iso(30),
+      batchLimit: 100,
+    });
 
     expect(
       db.prepare(`SELECT COUNT(*) AS n FROM sdk_message_replacements`).get() as { n: number }
     ).toEqual({ n: 0 });
   });
 
-  it('respects the batch limit and reports hasMore', () => {
+  it('respects the batch limit and reports hasMore', async () => {
     insertSession(db, 's1');
     insertMessage(db, { id: 'm1', sessionId: 's1', daysAgo: 60 });
     insertMessage(db, { id: 'm2', sessionId: 's1', daysAgo: 60 });
     insertMessage(db, { id: 'm3', sessionId: 's1', daysAgo: 60 });
 
-    const first = repository.deleteExpiredArchivedSessionMessages({
+    const first = await repository.deleteExpiredArchivedSessionMessages({
       olderThanIso: iso(30),
       batchLimit: 2,
     });
     expect(first.deleted).toBe(2);
     expect(first.hasMore).toBe(true);
 
-    const second = repository.deleteExpiredArchivedSessionMessages({
+    const second = await repository.deleteExpiredArchivedSessionMessages({
       olderThanIso: iso(30),
       batchLimit: 2,
     });
@@ -348,11 +378,11 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
     });
   });
 
-  it('returns no-op when the cutoff deletes nothing', () => {
+  it('returns no-op when the cutoff deletes nothing', async () => {
     insertSession(db, 's1');
     insertMessage(db, { id: 'm1', sessionId: 's1', daysAgo: 2 });
 
-    const result = repository.deleteExpiredArchivedSessionMessages({
+    const result = await repository.deleteExpiredArchivedSessionMessages({
       olderThanIso: iso(30),
       batchLimit: 100,
     });
@@ -360,8 +390,8 @@ describe('SDKMessageRepository.deleteExpiredArchivedSessionMessages', () => {
     expect(result).toEqual({ deleted: 0, affectedSessions: [], hasMore: false });
   });
 
-  it('returns no-op for a non-positive batch limit', () => {
-    const result = repository.deleteExpiredArchivedSessionMessages({
+  it('returns no-op for a non-positive batch limit', async () => {
+    const result = await repository.deleteExpiredArchivedSessionMessages({
       olderThanIso: iso(30),
       batchLimit: 0,
     });

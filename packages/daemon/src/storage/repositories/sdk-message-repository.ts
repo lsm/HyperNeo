@@ -1367,17 +1367,17 @@ export class SDKMessageRepository {
     return deleted;
   }
 
-  deleteExpiredArchivedSessionMessages(params: { olderThanIso: string; batchLimit: number }): {
-    deleted: number;
-    affectedSessions: string[];
-    hasMore: boolean;
-  } {
+  async deleteExpiredArchivedSessionMessages(params: {
+    olderThanIso: string;
+    batchLimit: number;
+  }): Promise<{ deleted: number; affectedSessions: string[]; hasMore: boolean }> {
     if (params.batchLimit <= 0) {
       return { deleted: 0, affectedSessions: [], hasMore: false };
     }
     if (!this.tableExists('sessions') || !this.tableExists('job_queue')) {
       return { deleted: 0, affectedSessions: [], hasMore: false };
     }
+    const CHUNK_SIZE = 500;
     const rows = this.db
       .prepare(
         `SELECT sm.id, sm.session_id, sm.sdk_uuid
@@ -1414,15 +1414,21 @@ export class SDKMessageRepository {
       : null;
     const affectedSessions = new Set<string>();
     let deleted = 0;
-    this.db.transaction(() => {
-      for (const row of rows) {
-        if (deleteMessage.run(row.id).changes === 0) continue;
-        deleted++;
-        affectedSessions.add(row.session_id);
-        deleteSearchRow?.run(row.id);
-        if (row.sdk_uuid) this.clearDeliveryTurnEnd(row.session_id, row.sdk_uuid);
+    for (let offset = 0; offset < rows.length; offset += CHUNK_SIZE) {
+      const chunk = rows.slice(offset, offset + CHUNK_SIZE);
+      this.db.transaction(() => {
+        for (const row of chunk) {
+          if (deleteMessage.run(row.id).changes === 0) continue;
+          deleted++;
+          affectedSessions.add(row.session_id);
+          deleteSearchRow?.run(row.id);
+          if (row.sdk_uuid) this.clearDeliveryTurnEnd(row.session_id, row.sdk_uuid);
+        }
+      })();
+      if (offset + CHUNK_SIZE < rows.length) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
       }
-    })();
+    }
 
     for (const sessionId of affectedSessions) {
       if (this.supportsVisibleMessageCount()) this.recomputeVisibleMessageCount(sessionId);
