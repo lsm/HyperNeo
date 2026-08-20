@@ -338,6 +338,32 @@ describe('Provider RPC handlers', () => {
       expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
     });
 
+    it('does not activate a command from a disabled ACP record', async () => {
+      const provider = new AcpProvider({}, async () => {});
+      provider.setAcpCommand('old acp');
+      getProviderRegistry().register(provider);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'acp',
+            displayName: 'ACP Agent',
+            kind: 'built_in',
+            authType: 'none',
+            isEnabled: false,
+            configJson: JSON.stringify({ command: 'new acp', models: [] }),
+          },
+        },
+        {}
+      )) as { provider: ProviderRecord };
+
+      expect(result.provider.isEnabled).toBe(false);
+      expect(provider.getAcpCommand()).toBe('old acp');
+      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
+    });
+
     it('rolls back the provider row and surfaces keychain guidance when storeApiKey throws KeychainUnavailableError', async () => {
       creds.storeApiKey = mock(async () => {
         throw new KeychainUnavailableError('User interaction is not allowed.');

@@ -309,22 +309,23 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             }
           }
 
-          if (record.kind === 'built_in') {
-            const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
-            await ensureBuiltInProviderRegistered(record.providerId);
-          }
-          const creds = await resolveCredentialsForHydration(
-            credentialManager,
-            record.providerId,
-            data.credentials
-          );
-          await syncProviderToRegistry(record, creds);
-          if (
-            record.isEnabled &&
-            newAcpCommand !== undefined &&
-            acpCommandsDiffer(previousAcpCommand, newAcpCommand)
-          ) {
-            await invalidateAcpSessions(sessionManager, clearPersistedAcpSessionIds);
+          if (record.isEnabled) {
+            if (record.kind === 'built_in') {
+              const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
+              await ensureBuiltInProviderRegistered(record.providerId);
+            }
+            const creds = await resolveCredentialsForHydration(
+              credentialManager,
+              record.providerId,
+              data.credentials
+            );
+            await syncProviderToRegistry(record, creds);
+            if (
+              newAcpCommand !== undefined &&
+              acpCommandsDiffer(previousAcpCommand, newAcpCommand)
+            ) {
+              await invalidateAcpSessions(sessionManager, clearPersistedAcpSessionIds);
+            }
           }
         } catch (err) {
           providerRepo.deleteProvider(record.id);
