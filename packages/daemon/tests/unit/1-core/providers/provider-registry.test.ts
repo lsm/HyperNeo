@@ -790,6 +790,14 @@ describe('inferProviderForModel', () => {
 });
 
 describe('inferPersistableProviderForModel', () => {
+  const claimant = (id: string, available: boolean) =>
+    ({
+      id,
+      displayName: id,
+      ownsModel: () => true,
+      isAvailable: async () => available,
+    }) as unknown as Provider;
+
   it('returns undefined for contested anthropic/codex inferences', async () => {
     expect(await inferPersistableProviderForModel('claude-sonnet-4.6')).toBeUndefined();
     expect(await inferPersistableProviderForModel('gemini-3.1-pro-preview')).toBeUndefined();
@@ -806,6 +814,26 @@ describe('inferPersistableProviderForModel', () => {
     expect(await inferPersistableProviderForModel('acp-default')).toBe('acp');
     expect(await inferPersistableProviderForModel('gpt-oss:20b')).toBe('ollama');
     expect(await inferPersistableProviderForModel('openai/gpt-5.4')).toBe('openrouter');
+  });
+
+  it('does not persist Codex when an available registered provider also owns the model', async () => {
+    getProviderRegistry().register(claimant('anthropic-codex', true));
+    getProviderRegistry().register(claimant('anthropic-copilot', true));
+    try {
+      expect(await inferPersistableProviderForModel('gpt-5.4')).toBeUndefined();
+    } finally {
+      resetProviderRegistry();
+    }
+  });
+
+  it('persists Codex when other registered owners are unavailable', async () => {
+    getProviderRegistry().register(claimant('anthropic-codex', true));
+    getProviderRegistry().register(claimant('anthropic-copilot', false));
+    try {
+      expect(await inferPersistableProviderForModel('gpt-5.4')).toBe('anthropic-codex');
+    } finally {
+      resetProviderRegistry();
+    }
   });
 
   it('persists the static codex default for gpt-* when no live provider contests it', async () => {
