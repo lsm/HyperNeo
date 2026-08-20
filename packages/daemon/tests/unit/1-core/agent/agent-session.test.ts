@@ -1320,12 +1320,15 @@ describe('AgentSession', () => {
         () => {}
       );
       const existing = Promise.withResolvers<void>();
+      const removeSpy = mock(() => true);
       (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
         admitWithId: mock(() => Promise.resolve()),
         waitForPendingOrInFlight: mock(() => ({
           acknowledgment: existing.promise,
           content: 'kickoff',
         })),
+        hasYielded: mock(() => false),
+        remove: removeSpy,
         isRunning: mock(() => false),
         size: mock(() => 1),
       };
@@ -1341,10 +1344,48 @@ describe('AgentSession', () => {
       );
 
       expect(result).toEqual({ outcome: 'aborted' });
+      expect(removeSpy).toHaveBeenCalledWith('uuid-pending');
       expect(markSubmittedSpy).not.toHaveBeenCalled();
       expect(markConsumedSpy).not.toHaveBeenCalled();
       existing.reject(new Error('Interrupted by user'));
       await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    it('driveDeliveryTurn preserves yielded content that does not match a rebuilt batch', async () => {
+      const removeSpy = mock(() => true);
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sessionId: string, uuid: string) => ({
+          content: uuid === 'uuid-yielded' ? 'kickoff' : 'member',
+          sendStatus: 'enqueued',
+        })),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({}));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        waitForPendingOrInFlight: mock(() => ({
+          acknowledgment: new Promise<void>(() => {}),
+          content: 'kickoff',
+        })),
+        hasYielded: mock(() => true),
+        remove: removeSpy,
+        isRunning: mock(() => false),
+        size: mock(() => 1),
+      };
+
+      const result = await agentSession.driveDeliveryTurn(
+        'uuid-yielded',
+        'hello',
+        null,
+        false,
+        () => true,
+        ['uuid-yielded', 'uuid-member']
+      );
+
+      expect(result).toEqual({ outcome: 'aborted' });
+      expect(removeSpy).not.toHaveBeenCalled();
     });
 
     it('driveDeliveryTurn abort leaves a reused pending message intact', async () => {

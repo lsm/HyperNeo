@@ -1457,6 +1457,9 @@ export class AgentSession
             );
           }
           if (existing && !this.deliveryContentMatches(existing.content, feedContent)) {
+            if (!this.messageQueue.hasYielded(messageUuid)) {
+              this.messageQueue.remove(messageUuid);
+            }
             turnEnd.cancel();
             disarmObserver();
             return { kind: 'aborted' as const };
