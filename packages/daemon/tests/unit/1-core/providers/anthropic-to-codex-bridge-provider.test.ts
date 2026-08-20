@@ -1088,11 +1088,11 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     );
 
-    it('preserves reasoning for fine-tuned known models', async () => {
-      const modelId = 'ft:gpt-5.4:org:custom';
+    it('preserves reasoning for known and unbundled GPT-5 models and fine-tunes', async () => {
+      const modelIds = ['gpt-5', 'gpt-5-mini', 'ft:gpt-5:org:custom', 'ft:gpt-5.4:org:custom'];
       const fetchImpl = mock(
         async () =>
-          new Response(JSON.stringify({ data: [{ id: modelId }] }), {
+          new Response(JSON.stringify({ data: modelIds.map((id) => ({ id })) }), {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
           })
@@ -1101,8 +1101,10 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       const models = await provider.getModels();
 
-      expect(models.map((model) => model.id)).toEqual([modelId]);
-      expect(provider.getModelThinkingMode(modelId)).toBe('granular');
+      expect(models.map((model) => model.id).sort()).toEqual([...modelIds].sort());
+      for (const modelId of modelIds) {
+        expect(provider.getModelThinkingMode(modelId)).toBe('granular');
+      }
     });
 
     it('filters non-Responses models from the general OpenAI catalog', async () => {

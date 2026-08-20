@@ -851,7 +851,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const baseModelId = this.openAIBaseModelId(modelId);
     if (!baseModelId) return undefined;
     if (resolveCodexBridgeModelId(baseModelId)) return this.bundledReasoningEfforts(baseModelId);
-    return /^o(?:1|3|4)(?:-|$)/.test(baseModelId) ? ['low', 'medium', 'high'] : undefined;
+    return /^(?:gpt-5(?:-|$)|o(?:1|3|4)(?:-|$))/.test(baseModelId)
+      ? ['low', 'medium', 'high']
+      : undefined;
   }
 
   private openAIModelPriority(modelId: string): number {
