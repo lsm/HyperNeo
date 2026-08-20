@@ -168,20 +168,20 @@ export function GeneralSettings() {
 
   const handleSdkMessageRetentionDaysBlur = async () => {
     const trimmed = localSdkMessageRetentionDays.trim();
-    const current = settings?.sdkMessageRetentionDays;
+    const current = settings?.sdkMessageRetentionDays ?? 0;
+    let days: number;
     if (trimmed === '') {
-      setLocalSdkMessageRetentionDays(current != null ? String(current) : '');
-      return;
+      days = 0;
+    } else {
+      days = Number(trimmed);
+      if (!Number.isInteger(days) || days < 0) {
+        toast.error('Message retention must be a whole number of days, or empty to disable');
+        setLocalSdkMessageRetentionDays(current !== 0 ? String(current) : '');
+        return;
+      }
     }
 
-    const days = Number(trimmed);
-    if (!Number.isInteger(days) || days < 0) {
-      toast.error('Message retention must be a whole number of days, or empty to disable');
-      setLocalSdkMessageRetentionDays(current != null ? String(current) : '');
-      return;
-    }
-
-    setLocalSdkMessageRetentionDays(String(days));
+    setLocalSdkMessageRetentionDays(trimmed === '' ? '' : String(days));
     if (days === current) return;
 
     setIsUpdating(true);
@@ -189,7 +189,7 @@ export function GeneralSettings() {
       await updateGlobalSettings({ sdkMessageRetentionDays: days });
     } catch {
       toast.error('Failed to update message retention');
-      setLocalSdkMessageRetentionDays(current != null ? String(current) : '');
+      setLocalSdkMessageRetentionDays(current !== 0 ? String(current) : '');
     } finally {
       setIsUpdating(false);
     }
