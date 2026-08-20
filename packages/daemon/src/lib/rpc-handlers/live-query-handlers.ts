@@ -3003,7 +3003,16 @@ ORDER BY timestamp DESC, rowid DESC
 `.trim();
 
 const MESSAGES_BY_SESSION_SQL = `
-WITH active_delivery_jobs AS MATERIALIZED (
+WITH latest_shutdown_boundary AS MATERIALIZED (
+  SELECT id
+  FROM sdk_messages
+  WHERE session_id = ?1
+    AND parent_tool_use_id IS NULL
+    AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
+  ORDER BY timestamp DESC, id DESC
+  LIMIT 1
+),
+active_delivery_jobs AS MATERIALIZED (
   SELECT
     jq.rowid AS job_rowid,
     json_extract(jq.payload, '$.messageUuid') AS message_uuid,
@@ -3093,17 +3102,7 @@ top_level AS (
     AND (
       message_type != 'system'
       OR message_subtype_norm != 'worker_shutting_down'
-      OR NOT EXISTS (
-        SELECT 1
-        FROM sdk_messages newer
-        WHERE newer.session_id = sdk_messages.session_id
-          AND newer.parent_tool_use_id IS NULL
-          AND (
-            newer.timestamp > sdk_messages.timestamp
-            OR (newer.timestamp = sdk_messages.timestamp AND newer.id > sdk_messages.id)
-          )
-          AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
-      )
+      OR id = (SELECT id FROM latest_shutdown_boundary)
     )
   -- Cap window orders by (timestamp, rowid) so a LiveQuery limit that cuts
   -- through same-millisecond hook_started/progress/response rows keeps the
