@@ -3405,6 +3405,7 @@ describe('SDKMessageRepository', () => {
       repository.saveSDKMessage('session-1', createUserMessage('warmup user'));
       repository.saveSDKMessage('session-1', resultMessage());
 
+      expect(counter.count()).toBeGreaterThan(0);
       counter.reset();
       repository.saveSDKMessage('session-1', createUserMessage('steady user'));
       repository.saveSDKMessage('session-1', createAssistantMessage('steady assistant'));
