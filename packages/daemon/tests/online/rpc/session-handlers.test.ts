@@ -71,14 +71,24 @@ describe('Session RPC Handlers (API-dependent)', () => {
     }
   }
 
-  async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Promise<unknown> {
+  async function waitForWebSocketResponse(
+    ws: WebSocket,
+    requestId: string,
+    timeout = 5000
+  ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const messageHandler = (event: MessageEvent) => {
-        clearTimeout(timer);
-        ws.removeEventListener('message', messageHandler);
-        ws.removeEventListener('error', errorHandler);
         try {
-          const data = JSON.parse(event.data as string);
+          const data = JSON.parse(event.data as string) as {
+            type?: string;
+            requestId?: string;
+          };
+          if (data.type !== 'RSP' || data.requestId !== requestId) {
+            return;
+          }
+          clearTimeout(timer);
+          ws.removeEventListener('message', messageHandler);
+          ws.removeEventListener('error', errorHandler);
           resolve(data);
         } catch {
           reject(new Error('Failed to parse WebSocket message'));
@@ -100,7 +110,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
         ws.removeEventListener('error', errorHandler);
         reject(
           new Error(
-            `No WebSocket message received within ${timeout}ms (readyState: ${ws.readyState})`
+            `No WebSocket response for ${requestId} within ${timeout}ms (readyState: ${ws.readyState})`
           )
         );
       }, timeout);
@@ -124,7 +134,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
         await waitForWebSocketState(ws, WebSocket.OPEN);
         await firstMessagePromise;
 
-        const responsePromise = waitForWebSocketMessage(ws, 12000);
+        const responsePromise = waitForWebSocketResponse(ws, 'msg-2', 12000);
 
         ws.send(
           JSON.stringify({
@@ -166,7 +176,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
       await waitForWebSocketState(ws, WebSocket.OPEN);
       await firstMessagePromise;
 
-      const responsePromise = waitForWebSocketMessage(ws, 10000);
+      const responsePromise = waitForWebSocketResponse(ws, 'models-list-1', 10000);
 
       ws.send(
         JSON.stringify({
@@ -200,7 +210,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
       await waitForWebSocketState(ws, WebSocket.OPEN);
       await firstMessagePromise;
 
-      const responsePromise = waitForWebSocketMessage(ws, 10000);
+      const responsePromise = waitForWebSocketResponse(ws, 'models-list-2', 10000);
 
       ws.send(
         JSON.stringify({
@@ -234,7 +244,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
       await waitForWebSocketState(ws, WebSocket.OPEN);
       await firstMessagePromise;
 
-      const responsePromise = waitForWebSocketMessage(ws, 10000);
+      const responsePromise = waitForWebSocketResponse(ws, 'models-list-3', 10000);
 
       ws.send(
         JSON.stringify({
