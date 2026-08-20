@@ -42,6 +42,25 @@ describe('resolveNodeAgentTargets: broadcast * target', () => {
       reason: `No permitted targets for agent 'coder' in the declared channel topology.`,
     });
   });
+
+  test('filters broadcast targets through the authorization predicate', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: '*',
+        permittedTargets: ['reviewer', 'security'],
+        canSend: (_fromNode, toNode) => toNode === 'reviewer',
+      })
+    );
+
+    expect(outcome).toEqual({
+      status: 'unauthorized',
+      unauthorized: ['security'],
+      permittedTargets: ['reviewer', 'security'],
+      reason:
+        `Channel topology does not permit 'coder' to send to: security. ` +
+        `Permitted targets: reviewer, security.`,
+    });
+  });
 });
 
 describe('resolveNodeAgentTargets: array target', () => {
@@ -77,6 +96,19 @@ describe('resolveNodeAgentTargets: array target', () => {
         `Channel topology does not permit 'coder' to send to: security. ` +
         `Permitted targets: reviewer.`,
     });
+  });
+
+  test('skips the authorization predicate for space-agent entries in array targets', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: ['space-agent', 'reviewer'],
+        spaceAgentAvailable: true,
+        declaredAgentNames: ['reviewer'],
+        canSend: (_fromNode, toNode) => toNode === 'reviewer',
+      })
+    );
+
+    expect(outcome).toEqual({ status: 'resolved', targetAgentNames: ['space-agent', 'reviewer'] });
   });
 });
 
@@ -153,7 +185,7 @@ describe('resolveNodeAgentTargets: plain-name precedence', () => {
     expect(outcome).toEqual({ status: 'resolved', targetAgentNames: ['reviewer'] });
   });
 
-  test('topology-declared target resolves when node groups map the sender slot', () => {
+  test('topology-declared node target resolves directly with node groups present', () => {
     const outcome = resolveNodeAgentTargets(
       makeInput({
         target: 'Review',
@@ -164,6 +196,18 @@ describe('resolveNodeAgentTargets: plain-name precedence', () => {
     );
 
     expect(outcome).toEqual({ status: 'resolved', targetAgentNames: ['Review'] });
+  });
+
+  test('node-group expansion preempts slot-resolved topology declaration', () => {
+    const outcome = resolveNodeAgentTargets(
+      makeInput({
+        target: 'Review',
+        nodeGroups: { Review: ['reviewer'] },
+        permittedTargets: ['reviewer'],
+      })
+    );
+
+    expect(outcome).toEqual({ status: 'resolved', targetAgentNames: ['reviewer'] });
   });
 
   test('expands a node group with an empty slot list to zero targets', () => {
