@@ -1112,8 +1112,30 @@ export class AnthropicToCodexBridgeProvider implements Provider {
             return;
           }
         } else {
-          oauthRefreshFailedWithPreservedCredentials =
-            !refreshResult.definitive && this.resolveBridgeAuth() !== undefined;
+          const replacementAuth = this.resolveBridgeAuth();
+          if (
+            replacementAuth &&
+            (replacementAuth.apiKey !== auth.apiKey ||
+              !this.sameScope(scope, this.authScope(replacementAuth)))
+          ) {
+            auth = replacementAuth;
+            scope = this.authScope(auth);
+            this.ensureCatalogForScope(scope);
+            try {
+              response = await this.requestModelCatalog(auth);
+            } catch (error) {
+              const detail = error instanceof Error ? error.message : String(error);
+              this.setDiscoveryError(
+                `AnthropicToCodexBridgeProvider: model discovery retry failed: ${detail}`,
+                auth,
+                scope
+              );
+              return;
+            }
+          } else {
+            oauthRefreshFailedWithPreservedCredentials =
+              !refreshResult.definitive && replacementAuth !== undefined;
+          }
         }
       }
     }

@@ -2836,6 +2836,69 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('retries with replacement credentials when a pending refresh is superseded after a 401', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const oldAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-old' },
+      });
+      const replacementAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-new' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: oldAccess,
+        refresh: 'old-refresh-token',
+        accountId: 'acct-old',
+      });
+      let resolveRefresh: ((response: Response) => void) | undefined;
+      const refreshResponse = new Promise<Response>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      const fetchImpl = mock()
+        .mockImplementationOnce(async () => new Response('unauthorized', { status: 401 }))
+        .mockImplementationOnce(
+          async () =>
+            new Response(JSON.stringify({ data: [{ id: 'gpt-replacement' }] }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+        ) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch').mockImplementationOnce(
+        async () => refreshResponse
+      );
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+
+        const modelsPromise = provider.getModels();
+        await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+        provider.setCredentials({
+          type: 'oauth',
+          accessToken: replacementAccess,
+          refreshToken: 'new-refresh-token',
+          raw: { accountId: 'acct-new' },
+        });
+        resolveRefresh?.(
+          new Response('{"error":"invalid_grant"}', {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        );
+
+        const models = await modelsPromise;
+        expect(models.map((model) => model.id)).toEqual(['gpt-replacement']);
+        const [, retryInit] = (fetchImpl as ReturnType<typeof mock>).mock.calls[1] as [
+          URL,
+          RequestInit,
+        ];
+        const headers = new Headers(retryInit.headers);
+        expect(headers.get('authorization')).toBe(`Bearer ${replacementAccess}`);
+        expect(headers.get('ChatGPT-Account-ID')).toBe('acct-new');
+        expect(await provider.isAvailable()).toBe(true);
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
     it('keeps cached OAuth models retryable when refresh fails transiently after a 401', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       writeHyperNeoAuth(hyperneoDir, {
