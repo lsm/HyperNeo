@@ -93,7 +93,9 @@ export function resolveDeliveryRole(args: {
   uniqueConstraintHit: boolean;
 }): DeliveryRoleResolution {
   if (args.existingActiveRole) return args.existingActiveRole;
-  if (args.requestedRole && args.uniqueConstraintHit) return 'explicit_role_rejected';
+  if (args.requestedRole === 'turn' && args.uniqueConstraintHit) {
+    return 'explicit_role_rejected';
+  }
   if (args.requestedRole) return args.requestedRole;
   if (args.uniqueConstraintHit) return 'steer';
   return 'turn';
@@ -102,7 +104,7 @@ export function resolveDeliveryRole(args: {
 export type DeferAdmissionDecision = { action: 'defer' } | { action: 'deliver' };
 
 export function decideDeferAdmission(args: {
-  deliveryMode: string;
+  deliveryMode: 'immediate' | 'defer';
   isBusy: boolean;
   inRateLimitCooldown: boolean;
   parentTaskLimited: boolean;

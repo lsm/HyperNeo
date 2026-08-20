@@ -477,6 +477,16 @@ describe('resolveDeliveryRole', () => {
     ).toBe('explicit_role_rejected');
   });
 
+  test('an explicit requested steer under a unique-constraint hit is still returned', () => {
+    expect(
+      resolveDeliveryRole({
+        existingActiveRole: null,
+        requestedRole: 'steer',
+        uniqueConstraintHit: true,
+      })
+    ).toBe('steer');
+  });
+
   test('a unique-constraint hit with no existing or requested role falls back to steer', () => {
     expect(
       resolveDeliveryRole({
