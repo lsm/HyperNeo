@@ -1,4 +1,4 @@
-import superpipe, { type PipelineAPI } from 'superpipe';
+import { decisionRun } from './decision-pipeline';
 import type { ExternalEventTaskDecision } from './external-event-admission-gates';
 
 export type ExternalEventDeliveryDecision =
@@ -112,53 +112,30 @@ export function applyActivatedRoutingGate(
   return decided(ctx, { action: 'deliverLiveSession' });
 }
 
-const deliveryDecisionRun = (
-  superpipe<{
-    hasDecision: (ctx: ExternalEventDeliveryCtx) => boolean;
-  }>({
-    hasDecision: (ctx: ExternalEventDeliveryCtx): boolean => ctx.decision !== null,
-  })('external-event-delivery') as PipelineAPI
-)
-  .input(['ctx'])
-  .pipe(applyTerminalGate, 'ctx', 'ctx')
-  .pipe('!hasDecision', 'ctx')
-  .pipe(applyClaimConflictGate, 'ctx', 'ctx')
-  .pipe('!hasDecision', 'ctx')
-  .pipe(applySubscriptionGate, 'ctx', 'ctx')
-  .pipe('!hasDecision', 'ctx')
-  .pipe(applyTaskAdmissionGate, 'ctx', 'ctx')
-  .pipe('!hasDecision', 'ctx')
-  .pipe(applySessionRoutingGate, 'ctx', 'ctx')
-  .pipe('!hasDecision', 'ctx')
-  .pipe(applyExecutionRoutingGate, 'ctx', 'ctx')
-  .end('ctx');
+const deliveryDecisionRun = decisionRun('external-event-delivery', [
+  applyTerminalGate,
+  applyClaimConflictGate,
+  applySubscriptionGate,
+  applyTaskAdmissionGate,
+  applySessionRoutingGate,
+  applyExecutionRoutingGate,
+]);
 
-const postActivationDecisionRun = (
-  superpipe<{
-    hasDecision: (ctx: PostActivationDeliveryCtx) => boolean;
-  }>({
-    hasDecision: (ctx: PostActivationDeliveryCtx): boolean => ctx.decision !== null,
-  })('external-event-post-activation') as PipelineAPI
-)
-  .input(['ctx'])
-  .pipe(applyActivationErrorGate, 'ctx', 'ctx')
-  .pipe('!hasDecision', 'ctx')
-  .pipe(applyActivatedRoutingGate, 'ctx', 'ctx')
-  .end('ctx');
+const postActivationDecisionRun = decisionRun('external-event-post-activation', [
+  applyActivationErrorGate,
+  applyActivatedRoutingGate,
+]);
 
 export function decideExternalEventDelivery(
   input: ExternalEventDeliveryInput
 ): ExternalEventDeliveryDecision {
-  const ctx = deliveryDecisionRun({ ...input, decision: null }) as ExternalEventDeliveryCtx;
+  const ctx = deliveryDecisionRun(input);
   return ctx.decision ?? { action: 'skip' };
 }
 
 export function decidePostActivationDelivery(
   input: PostActivationDeliveryInput
 ): ExternalEventDeliveryDecision {
-  const ctx = postActivationDecisionRun({
-    ...input,
-    decision: null,
-  }) as PostActivationDeliveryCtx;
+  const ctx = postActivationDecisionRun(input);
   return ctx.decision ?? { action: 'skip' };
 }
