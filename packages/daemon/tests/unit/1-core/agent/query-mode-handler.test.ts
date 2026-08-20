@@ -1,17 +1,17 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { Session } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import {
   QueryModeHandler,
   type QueryModeHandlerContext,
 } from '../../../../src/lib/agent/query-mode-handler';
-import type { Session } from '@hyperneo/shared';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
-import type { Database } from '../../../../src/storage/database';
-import { Database as DatabaseImpl } from '../../../../src/storage/sqlite-compat';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { Logger } from '../../../../src/lib/logger';
+import type { Database } from '../../../../src/storage/database';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { Database as DatabaseImpl } from '../../../../src/storage/sqlite-compat';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
 describe('QueryModeHandler', () => {
   let handler: QueryModeHandler;
@@ -703,6 +703,53 @@ describe('QueryModeHandler', () => {
       expect(jobs[0].uuid).toBe('uuid-1');
       expect(jobs[0].role).toBe('turn');
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+    });
+
+    it('sendEnqueuedMessagesOnTurnEnd skips v2 delivery owned by the durable queue', async () => {
+      jobQueue.enqueue({
+        queue: 'message_delivery',
+        payload: {
+          sessionId: 'test-session-id',
+          messageUuid: 'uuid-owned',
+          role: 'turn',
+          origin: 'chat',
+          parentToolUseId: null,
+        },
+      });
+      getMessagesByStatusSpy.mockReturnValue([
+        {
+          dbId: 'db-owned',
+          uuid: 'uuid-owned',
+          type: 'user',
+          message: { role: 'user', content: 'already durable' },
+        },
+      ] as unknown as SDKMessage[]);
+
+      handler = new QueryModeHandler(createContext());
+      await handler.sendEnqueuedMessagesOnTurnEnd();
+
+      expect(deliveryUuids()).toEqual([{ uuid: 'uuid-owned', role: 'turn' }]);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
+    });
+
+    it('sendEnqueuedMessagesOnTurnEnd skips v2 delivery owned by the in-memory queue', async () => {
+      getMessagesByStatusSpy.mockReturnValue([
+        {
+          dbId: 'db-owned',
+          uuid: 'uuid-owned',
+          type: 'user',
+          message: { role: 'user', content: 'already admitted' },
+        },
+      ] as unknown as SDKMessage[]);
+      hasPendingOrInFlightSpy.mockImplementation((uuid: string) => uuid === 'uuid-owned');
+
+      handler = new QueryModeHandler(createContext());
+      await handler.sendEnqueuedMessagesOnTurnEnd();
+
+      expect(deliveryUuids()).toEqual([]);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
     });
   });
 });
