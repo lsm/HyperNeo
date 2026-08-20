@@ -323,6 +323,15 @@ describe('DatabaseCore', () => {
 
       expect(listBackups()).toHaveLength(1);
     });
+
+    it('should fall back to the default bound for whitespace-only values', async () => {
+      process.env[envKey] = '   ';
+
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      expect(listBackups()).toHaveLength(1);
+    });
   });
 
   describe('in-memory database', () => {
