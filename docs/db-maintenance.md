@@ -167,8 +167,11 @@ self-contained snapshot, so a reported backup never silently misses WAL-resident
 
 Disk cost: on APFS (and reflink-capable Linux filesystems) retained backups are
 copy-on-write clones, so keeping 3 costs almost nothing until the files diverge. On
-filesystems without clone support every backup is a full copy, so up to 3× the DB size can
-be retained — run the offline VACUUM procedure above first if that is a concern. The
+filesystems without clone support every backup is a full copy, and an `fs-copy` backup
+whose WAL holds committed frames (for example after an unclean shutdown, or while a
+long-lived reader keeps checkpoints from completing) also retains a full copy of that
+`-wal` sidecar — budget up to 3 × (DB + WAL) for an upgrade on such a volume, and run the
+offline VACUUM procedure above first if that is a concern. The
 `HYPERNEO_DB_MIGRATION_BACKUP_MAX_BYTES` size bound (which skipped backups for DBs over
 1 GiB) was removed: large databases are exactly where a pre-migration backup matters most,
 and with clone-based copies it is no longer expensive.
