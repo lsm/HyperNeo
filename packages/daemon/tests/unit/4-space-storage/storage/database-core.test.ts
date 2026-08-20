@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -389,6 +390,48 @@ describe('DatabaseCore', () => {
       const backups = listBackups();
       expect(backups).toHaveLength(1);
       expect(strategies).toEqual(['checkpoint-copy']);
+      expect(existsSync(join(testDir, 'backups', `${backups[0]}-wal`))).toBe(false);
+
+      const backup = new RawDatabase(join(testDir, 'backups', backups[0]));
+      try {
+        expect(backup.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+        expect(backup.prepare('SELECT value FROM backup_probe').all()).toEqual([
+          { value: 'pre-migration' },
+        ]);
+      } finally {
+        backup.close();
+      }
+    });
+
+    it('should fall back to a self-contained snapshot when the WAL sidecar copy fails', async () => {
+      const raw = new RawDatabase(dbPath);
+      seedWalData(raw);
+
+      configureLogger({ level: LogLevel.INFO });
+      const strategies: string[] = [];
+      const unsubscribe = subscribeToStructuredLogs((event) => {
+        const match = /Migration backup created via (\S+)/.exec(event.message);
+        if (match) strategies.push(match[1]);
+      });
+
+      try {
+        dbCore = new DatabaseCore(dbPath);
+        const internals = dbCore as unknown as Record<string, unknown>;
+        internals.tryFastCopy = (backupPath: string) => {
+          copyFileSync(dbPath, backupPath);
+          return true;
+        };
+        internals.copyWalSidecar = () => false;
+        await dbCore.initialize();
+      } finally {
+        unsubscribe();
+        configureLogger({ level: LogLevel.SILENT });
+        raw.close();
+      }
+
+      const backups = listBackups();
+      expect(backups).toHaveLength(1);
+      expect(strategies).toEqual(['vacuum-into']);
       expect(existsSync(join(testDir, 'backups', `${backups[0]}-wal`))).toBe(false);
 
       const backup = new RawDatabase(join(testDir, 'backups', backups[0]));

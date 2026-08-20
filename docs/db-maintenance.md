@@ -160,7 +160,9 @@ The copy strategy is picked per attempt, fastest first, and logged
 | `checkpoint-copy` | last resort if the above two fail     | `PRAGMA wal_checkpoint(TRUNCATE)` followed by a plain full-file copy.                                                  |
 
 If every strategy fails (for example the backups directory is not writable), the daemon
-logs an error and proceeds with the migration — the same behavior as before.
+logs an error and proceeds with the migration — the same behavior as before. A failed
+WAL-sidecar copy likewise discards the `fs-copy` attempt and falls through to a
+self-contained snapshot, so a reported backup never silently misses WAL-resident data.
 
 Disk cost: on APFS (and reflink-capable Linux filesystems) retained backups are
 copy-on-write clones, so keeping 3 costs almost nothing until the files diverge. On

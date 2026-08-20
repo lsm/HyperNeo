@@ -120,8 +120,10 @@ export class DatabaseCore {
 
   private writeBackup(backupPath: string): string | null {
     if (this.tryFastCopy(backupPath)) {
-      this.copyWalSidecar(backupPath);
-      return 'fs-copy';
+      if (this.copyWalSidecar(backupPath)) {
+        return 'fs-copy';
+      }
+      this.removePartialBackup(backupPath);
     }
     if (this.tryVacuumInto(backupPath)) return 'vacuum-into';
     return this.tryCheckpointCopy(backupPath) ? 'checkpoint-copy' : null;
@@ -137,9 +139,14 @@ export class DatabaseCore {
     }
   }
 
+  private removePartialBackup(backupPath: string): void {
+    rmSync(backupPath, { force: true });
+    rmSync(`${backupPath}-wal`, { force: true });
+  }
+
   private tryVacuumInto(backupPath: string): boolean {
     try {
-      rmSync(backupPath, { force: true });
+      this.removePartialBackup(backupPath);
       this.db.prepare('VACUUM INTO ?').run(backupPath);
       return existsSync(backupPath);
     } catch {
@@ -160,19 +167,23 @@ export class DatabaseCore {
       this.logger.error('Failed to create migration backup:', err);
       return false;
     }
-    if (!checkpointed) {
-      this.copyWalSidecar(backupPath);
+    if (!checkpointed && !this.copyWalSidecar(backupPath)) {
+      this.logger.error('Failed to create migration backup: WAL sidecar copy failed');
+      this.removePartialBackup(backupPath);
+      return false;
     }
     return true;
   }
 
-  private copyWalSidecar(backupPath: string): void {
+  private copyWalSidecar(backupPath: string): boolean {
     const walPath = `${this.dbPath}-wal`;
     try {
-      if (!existsSync(walPath) || statSync(walPath).size === 0) return;
+      if (!existsSync(walPath) || statSync(walPath).size === 0) return true;
       copyFileSync(walPath, `${backupPath}-wal`);
+      return true;
     } catch (err) {
       this.logger.warn('Failed to copy WAL sidecar into migration backup:', err);
+      return false;
     }
   }
 
