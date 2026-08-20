@@ -47,6 +47,7 @@ interface TerminalSession {
   released: boolean;
   killed: boolean;
   killTimer: ReturnType<typeof setTimeout> | null;
+  processGroupGone: boolean;
 }
 
 export class AcpTerminalManager {
@@ -108,6 +109,7 @@ export class AcpTerminalManager {
       released: false,
       killed: false,
       killTimer: null,
+      processGroupGone: false,
     };
 
     child.stdout?.on('data', (chunk: Buffer) => this.appendOutput(terminalId, chunk));
@@ -122,6 +124,7 @@ export class AcpTerminalManager {
         waiter({ exitCode: session.exitCode, signal: session.exitSignal });
       }
       session.exitWaiters = [];
+      this.recordGroupGone(session);
       this.cancelStaleKillEscalation(session);
     });
 
@@ -136,6 +139,7 @@ export class AcpTerminalManager {
         waiter({ exitCode: 1, signal: null });
       }
       session.exitWaiters = [];
+      this.recordGroupGone(session);
       this.cancelStaleKillEscalation(session);
     });
     child.removeListener('error', handleUnownedError);
@@ -204,6 +208,7 @@ export class AcpTerminalManager {
   private killSession(session: TerminalSession): void {
     if (session.killed) return;
     session.killed = true;
+    if (process.platform !== 'win32' && session.processGroupGone) return;
     session.processTree.terminate('SIGTERM');
     if (process.platform === 'win32') return;
     session.killTimer = setTimeout(() => {
@@ -214,11 +219,17 @@ export class AcpTerminalManager {
     this.cancelStaleKillEscalation(session);
   }
 
-  private cancelStaleKillEscalation(session: TerminalSession): void {
-    if (session.killTimer === null) return;
+  private recordGroupGone(session: TerminalSession): void {
+    if (session.processGroupGone) return;
     const pid = session.process.pid;
     const groupExists = pid != null && (this.processGroupProbe ?? defaultProcessGroupProbe)(pid);
-    if (!groupExists) {
+    if (!groupExists) session.processGroupGone = true;
+  }
+
+  private cancelStaleKillEscalation(session: TerminalSession): void {
+    if (session.killTimer === null) return;
+    this.recordGroupGone(session);
+    if (session.processGroupGone) {
       clearTimeout(session.killTimer);
       session.killTimer = null;
     }

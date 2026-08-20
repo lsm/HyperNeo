@@ -169,7 +169,12 @@ describe('AcpTerminalManager', () => {
 
   test('release terminates the retained process tree after its leader exits', async () => {
     const terminate = mock((_signal: NodeJS.Signals) => {});
-    const manager = new AcpTerminalManager({}, undefined, () => ({ terminate }));
+    const manager = new AcpTerminalManager(
+      {},
+      undefined,
+      () => ({ terminate }),
+      () => true
+    );
     const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'command' });
 
     spawned[0].emit('close', 0, null);
@@ -180,7 +185,12 @@ describe('AcpTerminalManager', () => {
 
   test('dispose terminates the retained process tree after its leader exits', async () => {
     const terminate = mock((_signal: NodeJS.Signals) => {});
-    const manager = new AcpTerminalManager({}, undefined, () => ({ terminate }));
+    const manager = new AcpTerminalManager(
+      {},
+      undefined,
+      () => ({ terminate }),
+      () => true
+    );
     await manager.create({ sessionId: 'session-1', command: 'command' });
 
     spawned[0].emit('close', 0, null);
@@ -188,6 +198,25 @@ describe('AcpTerminalManager', () => {
 
     expect(terminate).toHaveBeenCalledWith('SIGTERM');
   });
+
+  test('does not signal a completed terminal whose process group is gone', async () => {
+    const terminate = mock((_signal: NodeJS.Signals) => {});
+    const manager = new AcpTerminalManager(
+      {},
+      undefined,
+      () => ({ terminate }),
+      () => false,
+      50
+    );
+    const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'short' });
+
+    spawned[0].emit('close', 0, null);
+    await manager.release(params(terminalId));
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(terminate).not.toHaveBeenCalledWith('SIGTERM');
+    expect(terminate).not.toHaveBeenCalledWith('SIGKILL');
+  }, 1000);
 
   test('rejects operations for unknown terminal ids', async () => {
     const manager = new AcpTerminalManager();
