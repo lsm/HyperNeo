@@ -61,6 +61,123 @@ function createMockMessageHub(): {
   return { hub, handlers };
 }
 
+describe('Session RPC Handlers — session.messages.byStatus', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
+  let getUserMessagesByStatus: ReturnType<typeof mock>;
+  let getMessagesByStatus: ReturnType<typeof mock>;
+  let getSessionAsync: ReturnType<typeof mock>;
+
+  beforeEach(async () => {
+    messageHubData = createMockMessageHub();
+    eventBus = createMockInternalEventBus();
+    getUserMessagesByStatus = mock(() => ({
+      messages: [
+        {
+          type: 'user',
+          uuid: 'message-1',
+          dbId: 'db-1',
+          timestamp: 123,
+          message: {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'First' },
+              { type: 'image' },
+              { type: 'text', text: 'Second' },
+            ],
+          },
+        },
+      ],
+      total: 42,
+    }));
+    getMessagesByStatus = mock(() => {
+      throw new Error('unbounded path called');
+    });
+    getSessionAsync = mock(async () => ({
+      getSessionData: () => ({ id: 'session-1' }),
+    }));
+    const sessionManager = {
+      getSessionAsync,
+      getDatabase: () => ({ getUserMessagesByStatus, getMessagesByStatus }),
+    } as unknown as SessionManager;
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
+  });
+
+  it('uses the bounded repository window and preserves its total', async () => {
+    const handler = messageHubData.handlers.get('session.messages.byStatus');
+
+    const result = (await handler!(
+      { sessionId: 'session-1', status: 'consumed', limit: 2 },
+      {}
+    )) as {
+      messages: Array<{
+        dbId: string;
+        uuid: string;
+        timestamp: number;
+        status: string;
+        text: string;
+      }>;
+      total: number;
+    };
+
+    expect(getUserMessagesByStatus).toHaveBeenCalledWith('session-1', 'consumed', 2);
+    expect(getMessagesByStatus).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      messages: [
+        {
+          dbId: 'db-1',
+          uuid: 'message-1',
+          timestamp: 123,
+          status: 'consumed',
+          text: 'First\nSecond',
+        },
+      ],
+      total: 42,
+    });
+  });
+
+  it('defaults the bounded repository window to 20', async () => {
+    const handler = messageHubData.handlers.get('session.messages.byStatus');
+
+    await handler!({ sessionId: 'session-1', status: 'enqueued' }, {});
+
+    expect(getUserMessagesByStatus).toHaveBeenCalledWith('session-1', 'enqueued', 20);
+  });
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    1001,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    '20',
+  ])('rejects invalid limit %p before accessing the session or database', async (limit) => {
+    const handler = messageHubData.handlers.get('session.messages.byStatus');
+
+    await expect(
+      handler!({ sessionId: 'session-1', status: 'deferred', limit }, {})
+    ).rejects.toThrow('Invalid limit: must be an integer between 1 and 1000');
+
+    expect(getSessionAsync).not.toHaveBeenCalled();
+    expect(getUserMessagesByStatus).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid status before accessing the session or database', async () => {
+    const handler = messageHubData.handlers.get('session.messages.byStatus');
+
+    await expect(
+      handler!({ sessionId: 'session-1', status: 'failed', limit: 20 }, {})
+    ).rejects.toThrow('Invalid status');
+
+    expect(getSessionAsync).not.toHaveBeenCalled();
+    expect(getUserMessagesByStatus).not.toHaveBeenCalled();
+  });
+});
+
 describe('Session RPC Handlers — models.list', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let eventBus: ReturnType<typeof createMockInternalEventBus>;

@@ -1035,6 +1035,9 @@ export function setupSessionHandlers(
     if (!['deferred', 'enqueued', 'consumed'].includes(status)) {
       throw new Error('Invalid status');
     }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+      throw new Error('Invalid limit: must be an integer between 1 and 1000');
+    }
 
     const agentSession = await sessionManager.getSessionAsync(targetSessionId);
     if (!agentSession) {
@@ -1042,10 +1045,8 @@ export function setupSessionHandlers(
     }
 
     const db = sessionManager.getDatabase();
-    const all = db
-      .getMessagesByStatus(targetSessionId, status)
-      .filter((message) => isSDKUserMessage(message));
-    const messages = all.slice(0, limit).map((message) => ({
+    const result = db.getUserMessagesByStatus(targetSessionId, status, limit);
+    const messages = result.messages.map((message) => ({
       dbId: message.dbId,
       uuid: message.uuid ?? '',
       timestamp: message.timestamp,
@@ -1053,7 +1054,7 @@ export function setupSessionHandlers(
       text: extractMessageText(message.message.content),
     }));
 
-    return { messages, total: all.length };
+    return { messages, total: result.total };
   });
 
   messageHub.onRequest('session.messages.removePending', async (data) => {
