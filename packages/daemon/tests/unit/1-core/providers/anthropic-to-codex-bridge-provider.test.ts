@@ -3079,7 +3079,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
           })
         );
 
-        const [, secondModels] = await Promise.all([first, second]);
+        const [firstModels, secondModels] = await Promise.all([first, second]);
+        expect(firstModels.map((model) => model.id)).toEqual(['gpt-race-new']);
         expect(secondModels.map((model) => model.id)).toEqual(['gpt-race-new']);
         expect(fetchImpl).toHaveBeenCalledTimes(2);
         expect((provider as unknown as { discoveryError?: Error }).discoveryError).toBeUndefined();

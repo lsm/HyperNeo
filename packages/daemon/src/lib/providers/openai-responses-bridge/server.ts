@@ -1345,6 +1345,7 @@ export function createOpenAIResponsesBridgeServer(
   let modelAliases = config.modelAliases;
   const contextWindowByModelId = new Map<string, number>();
   const reasoningEffortsByModelId = new Map<string, OpenAIResponsesReasoningEffort[]>();
+  const sessionModelAliasOverrides = new Map<string, string>();
   const updateModels = (
     models: OpenAIResponsesBridgeModel[],
     aliases?: Record<string, string>
@@ -1358,6 +1359,11 @@ export function createOpenAIResponsesBridgeServer(
       if (model.supported_reasoning_efforts) {
         reasoningEffortsByModelId.set(model.id, model.supported_reasoning_efforts);
       }
+    }
+    const knownModelIds = new Set(models.map((model) => model.id));
+    for (const alias of Object.keys(aliases ?? {})) knownModelIds.add(alias);
+    for (const [key, modelId] of sessionModelAliasOverrides) {
+      if (!knownModelIds.has(modelId)) sessionModelAliasOverrides.delete(key);
     }
     if (aliases) {
       for (const [alias, modelId] of Object.entries(aliases)) {
@@ -1373,7 +1379,6 @@ export function createOpenAIResponsesBridgeServer(
   const continuations = new Map<string, ResponseContinuation>();
   const sessionReasoningItems = new Map<string, SessionReasoningEntry>();
   const sessionThinkingConfigs = new Map<string, SessionThinkingConfigEntry>();
-  const sessionModelAliasOverrides = new Map<string, string>();
   let activeAuth = config.auth;
   let resolvedAuth: ResolvedResponsesAuth | undefined;
   const updateAuth = (auth: OpenAIResponsesBridgeAuth): void => {
