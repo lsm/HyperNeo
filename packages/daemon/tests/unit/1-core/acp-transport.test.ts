@@ -294,13 +294,17 @@ describe('AcpTransport', () => {
     expect(proc.killed).toBe(true);
   });
 
-  test('close resolves immediately if process already exited', async () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+  test('retains tree ownership after the leader exits', async () => {
+    const terminate = vi.fn();
+    const processTreeOwner = vi.fn(() => ({ terminate }));
+    const transport = new AcpTransport({ command: 'acp-agent', processTreeOwner });
     const proc = lastMockProcess!;
 
     proc.emit('exit', 0, null);
 
     await expect(transport.close()).resolves.toBeUndefined();
+    expect(processTreeOwner).toHaveBeenCalledWith(proc);
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
   });
 
   test('onExit callback fires when process exits', () => {

@@ -13,6 +13,11 @@ import type {
 } from '@hyperneo/shared';
 import { Logger } from '../logger';
 import { parseAcpCommand } from './acp-command';
+import {
+  type AcpProcessTree,
+  type AcpProcessTreeOwner,
+  getAcpProcessTreeOwner,
+} from './acp-process-tree';
 
 const logger = new Logger('AcpTerminalManager');
 const DEFAULT_OUTPUT_BYTE_LIMIT = 1024 * 1024;
@@ -20,6 +25,7 @@ const MAX_OUTPUT_BYTE_LIMIT = 4 * 1024 * 1024;
 
 interface TerminalSession {
   process: ChildProcess;
+  processTree: AcpProcessTree;
   outputChunks: Buffer[];
   outputByteLength: number;
   outputByteLimit: number;
@@ -40,7 +46,7 @@ export class AcpTerminalManager {
   constructor(
     private readonly baseEnv: Record<string, string> = {},
     private readonly defaultCwd?: string,
-    private readonly processKill: (pid: number, signal: NodeJS.Signals) => void = process.kill
+    private readonly processTreeOwner?: AcpProcessTreeOwner
   ) {}
 
   async create(params: AcpTerminalCreateParams): Promise<AcpTerminalCreateResult> {
@@ -54,6 +60,8 @@ export class AcpTerminalManager {
       params.args === undefined
         ? parseAcpCommand(params.command)
         : { command: params.command, args: params.args };
+    const owner = this.processTreeOwner ?? (await getAcpProcessTreeOwner());
+    if (this.disposed) throw new Error('ACP terminal manager has been disposed');
 
     const child = spawn(parsed.command, parsed.args, {
       cwd: this.defaultCwd,
@@ -61,6 +69,7 @@ export class AcpTerminalManager {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     });
+    const processTree = owner(child);
 
     const requestedOutputByteLimit =
       typeof outputByteLimit === 'number' && Number.isFinite(outputByteLimit)
@@ -68,6 +77,7 @@ export class AcpTerminalManager {
         : DEFAULT_OUTPUT_BYTE_LIMIT;
     const session: TerminalSession = {
       process: child,
+      processTree,
       outputChunks: [],
       outputByteLength: 0,
       outputByteLimit: Math.min(
@@ -92,10 +102,6 @@ export class AcpTerminalManager {
       session.exitCode = code ?? null;
       session.exitSignal = signal ?? null;
       session.exited = true;
-      if (session.killTimer && process.platform === 'win32') {
-        clearTimeout(session.killTimer);
-        session.killTimer = null;
-      }
       for (const waiter of session.exitWaiters) {
         waiter({ exitCode: session.exitCode, signal: session.exitSignal });
       }
@@ -107,10 +113,6 @@ export class AcpTerminalManager {
       session.exitCode = 1;
       session.exitSignal = null;
       session.exited = true;
-      if (session.killTimer && process.platform === 'win32') {
-        clearTimeout(session.killTimer);
-        session.killTimer = null;
-      }
       const message = `Process error: ${err.message}\n`;
       this.appendOutput(terminalId, Buffer.from(message));
       for (const waiter of session.exitWaiters) {
@@ -149,17 +151,7 @@ export class AcpTerminalManager {
 
   async kill(params: AcpTerminalKillParams): Promise<AcpTerminalKillResult> {
     const session = this.getSession(params.terminalId);
-    if (!session.killed && (process.platform !== 'win32' || !session.exited)) {
-      session.killed = true;
-      this.signalProcess(session.process, 'SIGTERM');
-      session.killTimer = setTimeout(() => {
-        session.killTimer = null;
-        if (process.platform !== 'win32' || !session.exited) {
-          this.signalProcess(session.process, 'SIGKILL');
-        }
-      }, 5000);
-      session.killTimer.unref();
-    }
+    this.killSession(session);
     return {};
   }
 
@@ -167,7 +159,7 @@ export class AcpTerminalManager {
     const session = this.getSession(params.terminalId);
     if (!session.released) {
       session.released = true;
-      await this.kill(params);
+      this.killSession(session);
     }
     this.sessions.delete(params.terminalId);
     return {};
@@ -176,20 +168,11 @@ export class AcpTerminalManager {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    for (const [terminalId, session] of this.sessions) {
-      if (!session.killed && (process.platform !== 'win32' || !session.exited)) {
-        session.killed = true;
-        this.signalProcess(session.process, 'SIGTERM');
-        session.killTimer = setTimeout(() => {
-          session.killTimer = null;
-          if (process.platform !== 'win32' || !session.exited) {
-            this.signalProcess(session.process, 'SIGKILL');
-          }
-        }, 5000);
-        session.killTimer.unref();
-      }
+    const sessions = [...this.sessions.values()];
+    this.sessions.clear();
+    for (const session of sessions) {
+      this.killSession(session);
       session.released = true;
-      this.sessions.delete(terminalId);
     }
   }
 
@@ -199,14 +182,16 @@ export class AcpTerminalManager {
     return session;
   }
 
-  private signalProcess(child: ChildProcess, signal: NodeJS.Signals): void {
-    if (process.platform !== 'win32' && child.pid != null) {
-      try {
-        this.processKill(-child.pid, signal);
-        return;
-      } catch {}
-    }
-    child.kill(signal);
+  private killSession(session: TerminalSession): void {
+    if (session.killed) return;
+    session.killed = true;
+    session.processTree.terminate('SIGTERM');
+    if (process.platform === 'win32') return;
+    session.killTimer = setTimeout(() => {
+      session.killTimer = null;
+      session.processTree.terminate('SIGKILL');
+    }, 5000);
+    session.killTimer.unref();
   }
 
   private appendOutput(terminalId: string, chunk: Buffer): void {

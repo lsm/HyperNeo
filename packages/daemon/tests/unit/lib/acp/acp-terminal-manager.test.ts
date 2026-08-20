@@ -141,50 +141,40 @@ describe('AcpTerminalManager', () => {
   });
 
   test('release kills a running terminal and removes it', async () => {
-    const processKill = mock((_pid: number, _signal: NodeJS.Signals) => {});
-    const manager = new AcpTerminalManager({}, undefined, processKill);
+    const terminate = mock((_signal: NodeJS.Signals) => {});
+    const processTreeOwner = mock(() => ({ terminate }));
+    const manager = new AcpTerminalManager({}, undefined, processTreeOwner);
     const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'command' });
 
     await manager.release(params(terminalId));
 
-    if (process.platform === 'win32') {
-      expect(spawned[0].kill).toHaveBeenCalledWith('SIGTERM');
-    } else {
-      expect(processKill).toHaveBeenCalledWith(-spawned[0].pid, 'SIGTERM');
-    }
+    expect(processTreeOwner).toHaveBeenCalledWith(spawned[0]);
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
     await expect(manager.output(params(terminalId))).rejects.toThrow(
       `Unknown or released ACP terminal: ${terminalId}`
     );
   });
 
-  test('release terminates a process group after its leader exits', async () => {
-    const processKill = mock((_pid: number, _signal: NodeJS.Signals) => {});
-    const manager = new AcpTerminalManager({}, undefined, processKill);
+  test('release terminates the retained process tree after its leader exits', async () => {
+    const terminate = mock((_signal: NodeJS.Signals) => {});
+    const manager = new AcpTerminalManager({}, undefined, () => ({ terminate }));
     const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'command' });
 
     spawned[0].emit('close', 0, null);
     await manager.release(params(terminalId));
 
-    if (process.platform === 'win32') {
-      expect(spawned[0].kill).not.toHaveBeenCalled();
-    } else {
-      expect(processKill).toHaveBeenCalledWith(-spawned[0].pid, 'SIGTERM');
-    }
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
   });
 
-  test('dispose terminates a process group after its leader exits', async () => {
-    const processKill = mock((_pid: number, _signal: NodeJS.Signals) => {});
-    const manager = new AcpTerminalManager({}, undefined, processKill);
+  test('dispose terminates the retained process tree after its leader exits', async () => {
+    const terminate = mock((_signal: NodeJS.Signals) => {});
+    const manager = new AcpTerminalManager({}, undefined, () => ({ terminate }));
     await manager.create({ sessionId: 'session-1', command: 'command' });
 
     spawned[0].emit('close', 0, null);
     manager.dispose();
 
-    if (process.platform === 'win32') {
-      expect(spawned[0].kill).not.toHaveBeenCalled();
-    } else {
-      expect(processKill).toHaveBeenCalledWith(-spawned[0].pid, 'SIGTERM');
-    }
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
   });
 
   test('rejects operations for unknown terminal ids', async () => {
@@ -251,41 +241,30 @@ describe('AcpTerminalManager', () => {
     });
   });
 
-  test('signals the terminal process group and escalates to SIGKILL', async () => {
-    const processKill = mock((_pid: number, _signal: NodeJS.Signals) => {});
-    const manager = new AcpTerminalManager({}, undefined, processKill);
+  test('signals the terminal process tree and escalates to SIGKILL', async () => {
+    const terminate = mock((_signal: NodeJS.Signals) => {});
+    const manager = new AcpTerminalManager({}, undefined, () => ({ terminate }));
     const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'sleep' });
-    const child = spawned[0];
 
     await manager.kill(params(terminalId));
-    if (process.platform === 'win32') {
-      expect(child.kill).toHaveBeenCalledWith('SIGTERM');
-    } else {
-      expect(processKill).toHaveBeenCalledWith(-child.pid, 'SIGTERM');
-    }
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
 
-    await new Promise((resolve) => setTimeout(resolve, 5100));
-    if (process.platform === 'win32') {
-      expect(child.kill).toHaveBeenCalledWith('SIGKILL');
-    } else {
-      expect(processKill).toHaveBeenCalledWith(-child.pid, 'SIGKILL');
+    if (process.platform !== 'win32') {
+      await new Promise((resolve) => setTimeout(resolve, 5100));
+      expect(terminate).toHaveBeenCalledWith('SIGKILL');
     }
   }, 6000);
 
-  test('dispose terminates every active terminal process', async () => {
-    const processKill = mock((_pid: number, _signal: NodeJS.Signals) => {});
-    const manager = new AcpTerminalManager({}, undefined, processKill);
+  test('dispose terminates every active terminal process tree', async () => {
+    const terminate = mock((_signal: NodeJS.Signals) => {});
+    const manager = new AcpTerminalManager({}, undefined, () => ({ terminate }));
     await manager.create({ sessionId: 'session-1', command: 'first' });
     await manager.create({ sessionId: 'session-1', command: 'second' });
 
     manager.dispose();
 
-    if (process.platform === 'win32') {
-      expect(spawned[0].kill).toHaveBeenCalledWith('SIGTERM');
-      expect(spawned[1].kill).toHaveBeenCalledWith('SIGTERM');
-    } else {
-      expect(processKill).toHaveBeenCalledWith(-spawned[0].pid, 'SIGTERM');
-      expect(processKill).toHaveBeenCalledWith(-spawned[1].pid, 'SIGTERM');
-    }
+    expect(terminate).toHaveBeenCalledTimes(2);
+    expect(terminate).toHaveBeenNthCalledWith(1, 'SIGTERM');
+    expect(terminate).toHaveBeenNthCalledWith(2, 'SIGTERM');
   });
 });

@@ -9,6 +9,7 @@ import type {
 import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
 import { spawn } from 'node:child_process';
 import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command';
+import { type AcpProcessTree, getAcpProcessTreeOwner } from '../acp/acp-process-tree';
 
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
 const ACP_CONTEXT_WINDOW_ENV_VAR = 'HYPERNEO_ACP_CONTEXT_WINDOW';
@@ -30,13 +31,15 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
+    let processTree: AcpProcessTree | undefined;
     const child = spawn(command, args, {
       env: buildAcpSafeEnv(),
       stdio: ['ignore', 'ignore', 'ignore'],
+      detached: process.platform !== 'win32',
     });
     const timer = setTimeout(() => {
-      child.kill('SIGTERM');
-      killTimer = setTimeout(() => child.kill('SIGKILL'), ACP_PROBE_KILL_TIMEOUT_MS);
+      processTree?.terminate('SIGTERM');
+      killTimer = setTimeout(() => processTree?.terminate('SIGKILL'), ACP_PROBE_KILL_TIMEOUT_MS);
       killTimer.unref();
       settle(() =>
         reject(new Error(`ACP command '${command}' probe timed out after ${timeoutMs}ms`))
@@ -48,20 +51,22 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
       clearTimeout(timer);
       callback();
     };
-    const clearKillTimer = () => {
-      if (!killTimer) return;
-      clearTimeout(killTimer);
-      killTimer = null;
-    };
 
-    child.on('spawn', () => {
-      child.kill('SIGTERM');
-      killTimer = setTimeout(() => child.kill('SIGKILL'), ACP_PROBE_KILL_TIMEOUT_MS);
-      killTimer.unref();
-      settle(resolve);
+    child.on('spawn', async () => {
+      try {
+        const owner = await getAcpProcessTreeOwner();
+        const ownedTree = owner(child);
+        processTree = ownedTree;
+        ownedTree.terminate('SIGTERM');
+        killTimer = setTimeout(() => ownedTree.terminate('SIGKILL'), ACP_PROBE_KILL_TIMEOUT_MS);
+        killTimer.unref();
+        settle(resolve);
+      } catch (error) {
+        child.kill('SIGKILL');
+        settle(() => reject(error));
+      }
     });
     child.on('error', (err: NodeJS.ErrnoException) => {
-      clearKillTimer();
       settle(() => {
         if (err.code === 'ENOENT') {
           reject(new Error(`ACP command '${command}' not found in PATH`));
@@ -70,7 +75,6 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
         reject(new Error(`ACP command '${command}' probe failed: ${err.message}`));
       });
     });
-    child.on('exit', clearKillTimer);
   });
 };
 

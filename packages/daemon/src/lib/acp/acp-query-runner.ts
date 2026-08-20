@@ -43,6 +43,7 @@ import {
 } from '../space/runtime/space-mcp-session-policy';
 import { AcpClient, type AcpClientOptions } from './acp-client';
 import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from './acp-command';
+import { getAcpProcessTreeOwner } from './acp-process-tree';
 import { AcpQueryAdapter } from './acp-query-adapter';
 import { AcpTerminalManager } from './acp-terminal-manager';
 import { readFileWithinWorkspace, writeFileWithinWorkspace } from './acp-safe-fs';
@@ -326,7 +327,8 @@ async function authorizeAcpFsWrite(
 
 async function authorizeAcpTerminalCreate(
   params: AcpTerminalCreateParams,
-  canUseTool: CanUseTool
+  canUseTool: CanUseTool,
+  signal: AbortSignal
 ): Promise<AcpTerminalCreateParams> {
   if (params.cwd != null || (params.env?.length ?? 0) > 0) {
     throw new Error('ACP terminal cwd and environment overrides are not supported');
@@ -349,8 +351,10 @@ async function authorizeAcpTerminalCreate(
         { optionId: 'deny-terminal', name: 'Deny', kind: 'reject_once' },
       ],
     },
-    canUseTool
+    canUseTool,
+    signal
   );
+  if (signal.aborted) throw new Error('ACP terminal command cancelled');
   if (
     permission.outcome.outcome !== 'selected' ||
     permission.outcome.optionId !== 'allow-terminal'
@@ -651,13 +655,16 @@ export class AcpQueryRunner {
         acpEnv.CLAUDE_CODE_OAUTH_TOKEN = preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN;
       }
 
+      const processTreeOwner = await getAcpProcessTreeOwner();
       const hostCallbacks = workspace
         ? (() => {
-            const manager = new AcpTerminalManager(buildAcpSafeEnv(), workspace);
+            const manager = new AcpTerminalManager(buildAcpSafeEnv(), workspace, processTreeOwner);
             terminalManager = manager;
             return {
               onTerminalCreate: async (params: AcpTerminalCreateParams) =>
-                manager.create(await authorizeAcpTerminalCreate(params, canUseTool)),
+                manager.create(
+                  await authorizeAcpTerminalCreate(params, canUseTool, abortController.signal)
+                ),
               onTerminalOutput: (params: AcpTerminalOutputParams) => manager.output(params),
               onTerminalWaitForExit: (params: AcpTerminalWaitForExitParams) =>
                 manager.waitForExit(params),
@@ -678,6 +685,7 @@ export class AcpQueryRunner {
         args,
         cwd,
         env: acpEnv as Record<string, string> | undefined,
+        processTreeOwner,
         onProcessSpawn: (proc) =>
           this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
         onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),

@@ -654,7 +654,7 @@ describe('AcpQueryRunner', () => {
             sessionId: 'acp-session-1',
             path: large,
           })
-        ).rejects.toThrow('ACP filesystem read exceeds');
+        ).rejects.toThrow('ACP filesystem scan exceeds');
         await expect(
           constructorOptions[0].onFsRead?.({
             sessionId: 'acp-session-1',
@@ -797,6 +797,36 @@ describe('AcpQueryRunner', () => {
       releasePrompt();
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  test('cancels pending terminal approval when the query ends', async () => {
+    let approveTerminal: (() => void) | undefined;
+    const terminalApproved = new Promise<void>((resolve) => {
+      approveTerminal = resolve;
+    });
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      client,
+      canUseTool: async (_toolName, input) => {
+        await terminalApproved;
+        const question = (input.questions as Array<{ question: string }>)[0].question;
+        return { behavior: 'allow', updatedInput: { answers: { [question]: 'Allow once' } } };
+      },
+    });
+
+    await runner.start();
+    await promptStarted;
+    const terminal = constructorOptions[0].onTerminalCreate?.({
+      sessionId: 'acp-session-1',
+      command: process.execPath,
+      args: ['-e', 'process.exit(0)'],
+    });
+    ctx.queryAbortController?.abort();
+    approveTerminal?.();
+
+    await expect(terminal).rejects.toThrow('ACP terminal command cancelled');
+    releasePrompt();
+    await ctx.queryPromise;
   });
 
   test('starts workspace-less ACP sessions without host filesystem or terminal callbacks', async () => {
@@ -1154,7 +1184,7 @@ describe('AcpQueryRunner', () => {
         command: process.execPath,
         args: ['-e', 'process.exit(0)'],
       })
-    ).rejects.toThrow('ACP terminal manager has been disposed');
+    ).rejects.toThrow('ACP terminal command cancelled');
     expect(canUseTool).toHaveBeenCalledWith(
       'AskUserQuestion',
       expect.objectContaining({
@@ -1197,12 +1227,14 @@ describe('AcpQueryRunner', () => {
   });
 
   test('does not create terminals denied by the permission callback', async () => {
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
     const { runner, ctx, constructorOptions } = createRunnerFixture({
+      client,
       canUseTool: async () => ({ behavior: 'deny', message: 'Denied' }),
     });
 
     await runner.start();
-    await ctx.queryPromise;
+    await promptStarted;
 
     await expect(
       constructorOptions[0].onTerminalCreate?.({
@@ -1211,10 +1243,14 @@ describe('AcpQueryRunner', () => {
         args: ['-e', 'process.exit(0)'],
       })
     ).rejects.toThrow('ACP terminal command denied');
+    releasePrompt();
+    await ctx.queryPromise;
   });
 
   test('does not create terminals when the explicit deny option is selected', async () => {
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
     const { runner, ctx, constructorOptions } = createRunnerFixture({
+      client,
       canUseTool: async (_toolName, input) => {
         const question = (input.questions as Array<{ question: string }>)[0].question;
         return { behavior: 'allow', updatedInput: { answers: { [question]: 'Deny' } } };
@@ -1222,7 +1258,7 @@ describe('AcpQueryRunner', () => {
     });
 
     await runner.start();
-    await ctx.queryPromise;
+    await promptStarted;
 
     await expect(
       constructorOptions[0].onTerminalCreate?.({
@@ -1231,6 +1267,8 @@ describe('AcpQueryRunner', () => {
         args: ['-e', 'process.exit(0)'],
       })
     ).rejects.toThrow('ACP terminal command denied');
+    releasePrompt();
+    await ctx.queryPromise;
   });
 
   test('persists new ACP session ids', async () => {

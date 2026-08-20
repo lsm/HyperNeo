@@ -59,6 +59,7 @@ describe('defaultAcpCommandProbe', () => {
         options: {
           env: { PATH: '/safe/bin', HOME: '/safe/home' },
           stdio: ['ignore', 'ignore', 'ignore'],
+          detached: process.platform !== 'win32',
         },
       },
     ]);

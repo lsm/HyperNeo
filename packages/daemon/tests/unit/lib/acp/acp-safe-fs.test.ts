@@ -156,6 +156,25 @@ bunRuntimeTest('rejects path segments containing NUL bytes', async () => {
   }
 });
 
+bunRuntimeTest('bounds bytes scanned before the requested line', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-scan-'));
+  const workspace = join(root, 'workspace');
+  await mkdir(workspace);
+  await writeFile(join(workspace, 'content.txt'), `${'x'.repeat(64 * 1024)}\ntarget\n`);
+
+  try {
+    await expect(
+      readFileWithinWorkspace(workspace, ['content.txt'], {
+        startLine: 1,
+        lineLimit: 1,
+        maxBytes: 64 * 1024,
+      })
+    ).rejects.toThrow('ACP filesystem scan exceeds 65536 bytes');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 bunRuntimeTest('rejects named pipes without blocking', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-fifo-'));
   const workspace = join(root, 'workspace');

@@ -407,10 +407,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             acpCommandsDiffer(readAcpCommand(existing.configJson), updatedAcpCommand);
           const record = providerRepo.updateProvider(data.id, updates);
           if (!record) throw new Error(`Provider ${data.id} not found`);
+          const shouldInvalidateAcpSessions =
+            (acpCommandChanged || enablingChangedAcpCommand) &&
+            !(acpCommandChanged && existing.isEnabled === false && updates.isEnabled !== true);
           if (acpCommandChanged && existing.isEnabled === false && updates.isEnabled !== true) {
             clearPersistedAcpSessionIds?.();
-          } else if (acpCommandChanged || enablingChangedAcpCommand) {
-            await invalidateAcpSessions(sessionManager, clearPersistedAcpSessionIds);
           }
 
           const shouldResync =
@@ -439,6 +440,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
               );
               await syncProviderToRegistry(record, creds);
             }
+          }
+
+          if (shouldInvalidateAcpSessions) {
+            await invalidateAcpSessions(sessionManager, clearPersistedAcpSessionIds);
           }
 
           await clearCacheAndNotifyProvidersChanged(internalEventBus);

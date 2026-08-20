@@ -36,6 +36,7 @@ import type {
   AcpContentBlock,
   AcpStopReason,
 } from '@hyperneo/shared';
+import type { AcpProcessTreeOwner } from './acp-process-tree';
 import { AcpTransport } from './acp-transport';
 import type { AcpTransportCallbacks } from './acp-transport';
 
@@ -61,6 +62,7 @@ export interface AcpClientOptions
   replaceEnv?: boolean;
   cwd?: string;
   requestTimeoutMs?: number;
+  processTreeOwner?: AcpProcessTreeOwner;
 }
 
 export class AcpClient {

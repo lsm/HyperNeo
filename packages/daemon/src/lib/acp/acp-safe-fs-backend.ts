@@ -209,6 +209,7 @@ export async function readFileWithinWorkspace(
       ? Number.POSITIVE_INFINITY
       : options.startLine + options.lineLimit;
   const chunks: Buffer[] = [];
+  let scannedBytes = 0;
   let selectedBytes = 0;
   let line = 0;
 
@@ -218,6 +219,10 @@ export async function readFileWithinWorkspace(
       const bytesRead = Number(symbols.read(fileFd, buffer, buffer.length));
       if (bytesRead < 0) throwFsError('read', fileName);
       if (bytesRead === 0) break;
+      scannedBytes += bytesRead;
+      if (scannedBytes > options.maxBytes) {
+        throw new Error(`ACP filesystem scan exceeds ${options.maxBytes} bytes`);
+      }
       const content = buffer.subarray(0, bytesRead);
       let cursor = 0;
 
