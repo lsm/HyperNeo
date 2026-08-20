@@ -1001,7 +1001,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   ): void {
     if (!previous || !next || this.sameScope(previous, next)) return;
     void import('../model-service.js')
-      .then((module) => module.clearModelsCache())
+      .then((module) => module.invalidateModelsCacheEntry('global'))
       .catch(() => undefined);
   }
 

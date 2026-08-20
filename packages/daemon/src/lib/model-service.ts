@@ -406,6 +406,12 @@ export function clearModelsCache(cacheKey?: string): void {
   }
 }
 
+export function invalidateModelsCacheEntry(cacheKey: string): void {
+  modelsCache.delete(cacheKey);
+  cacheTimestamps.delete(cacheKey);
+  backgroundRefreshFailures.delete(cacheKey);
+}
+
 export function hasRefreshBeenAttemptedFor(providerId: string): boolean {
   return refreshedMissingProviders.has(providerId);
 }

@@ -16,6 +16,9 @@ import {
   markRefreshAttemptedFor,
 } from '../../../../src/lib/model-service';
 import type { ModelInfo } from '@hyperneo/shared';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 
@@ -25,6 +28,14 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void
     if (performance.now() >= deadline) throw new Error('Timed out waiting for condition');
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
+}
+
+function makeScopeRaceJwt(accountId: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+  const body = Buffer.from(
+    JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: accountId } })
+  ).toString('base64url');
+  return `${header}.${body}.`;
 }
 
 describe('Model Service', () => {
@@ -1318,6 +1329,105 @@ describe('Model Service', () => {
       await refreshModels();
 
       expect(getModelsCache().get('global')).toEqual([]);
+    });
+
+    it('keeps the replacement catalog when a provider switches scope mid-refresh', async () => {
+      const { AnthropicToCodexBridgeProvider } = await import(
+        '../../../../src/lib/providers/anthropic-to-codex-bridge-provider'
+      );
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const tmpRoot = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-scope-race-'));
+      const hyperneoDir = path.join(tmpRoot, 'hyperneo');
+      mkdirSync(hyperneoDir, { recursive: true });
+      const tokenA = makeScopeRaceJwt('acct-race-a');
+      const tokenB = makeScopeRaceJwt('acct-race-b');
+      writeFileSync(
+        path.join(hyperneoDir, 'auth.json'),
+        JSON.stringify({
+          openai: {
+            type: 'oauth',
+            access: tokenA,
+            refresh: 'refresh-a',
+            accountId: 'acct-race-a',
+          },
+        }),
+        { mode: 0o600 }
+      );
+      let resolveOld: ((response: Response) => void) | undefined;
+      const oldResponse = new Promise<Response>((resolve) => {
+        resolveOld = resolve;
+      });
+      const catalogFetch = mock()
+        .mockImplementationOnce(
+          async () =>
+            new Response(JSON.stringify({ data: [{ id: 'gpt-race-a' }] }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+        )
+        .mockImplementationOnce(async () => oldResponse)
+        .mockImplementationOnce(
+          async () =>
+            new Response(JSON.stringify({ data: [{ id: 'gpt-race-replacement' }] }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+        ) as unknown as typeof fetch;
+      const provider = new AnthropicToCodexBridgeProvider({}, hyperneoDir, tmpRoot, catalogFetch);
+      try {
+        getProviderRegistry().register(provider as unknown as ProviderLike);
+        const { refreshModels } = await import('../../../../src/lib/model-service');
+        await provider.getModels();
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'gpt-race-a',
+                  name: 'GPT Race A',
+                  family: 'gpt',
+                  provider: 'anthropic-codex',
+                  contextWindow: 100000,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const msRefresh = refreshModels();
+        await new Promise<void>((resolve, reject) => {
+          const deadline = Date.now() + 2000;
+          const check = () => {
+            if (
+              (catalogFetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length >= 2
+            ) {
+              resolve();
+            } else if (Date.now() > deadline) {
+              reject(new Error('second catalog fetch never started'));
+            } else {
+              setTimeout(check, 1);
+            }
+          };
+          check();
+        });
+        provider.setCredentials({
+          type: 'oauth',
+          accessToken: tokenB,
+          refreshToken: 'refresh-b',
+          raw: { accountId: 'acct-race-b' },
+        });
+        resolveOld?.(new Response('unauthorized', { status: 401 }));
+        await msRefresh;
+
+        const models = getAvailableModels('global');
+        expect(models.map((model) => model.id)).toContain('gpt-race-replacement');
+        expect(models.map((model) => model.id)).not.toContain('gpt-race-a');
+      } finally {
+        provider.stopAllBridgeServers();
+        rmSync(tmpRoot, { recursive: true, force: true });
+      }
     });
 
     it('should retain models when every provider becomes unavailable', async () => {
