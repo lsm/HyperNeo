@@ -9,6 +9,12 @@ delivery decision pipeline + interpreter (#2589), shared `decisionRun` combinato
 adopted pattern, its boundaries, and the migration roadmap. It does not mandate
 immediate adoption elsewhere; each phase gets its own go/no-go.
 
+Revised 2026-08-20 after owner review: scope widened from decision cores to pure
+pipelines generally — decisions, multi-step transforms (rendering/projection), and
+staged async flows (decide → effect → re-snapshot). The boundaries in
+"Where superpipe must not be used" still hold; "free-form effect executor"
+replaces the earlier blanket "effect executor".
+
 ## Context
 
 HyperNeo's Space runtime classes accumulate cascades that interleave three concerns:
@@ -30,8 +36,10 @@ support, catchable `OutputKeyError`).
 
 ## Decision
 
-Adopt the functional-core sandwich for runtime decision flows. Superpipe is used
-only for the decision core; the class keeps snapshot reads and effect execution.
+Adopt the functional-core sandwich for runtime logic — decision flows and
+multi-step transforms alike. Superpipe carries the pure core (a decision, an
+evolved value, or a staged plan); the class keeps snapshot reads and effect
+execution at staged boundaries.
 
 ```
 shell (class): read snapshot into a plain input object
@@ -51,21 +59,39 @@ shell (class): flat interpreter, one branch per decision action
    A new decision pipeline is a name plus a gate array (~6 lines). Do not
    hand-write the superpipe ritual; do not import superpipe outside
    `decision-pipeline.ts` without an ADR-level reason.
-4. **Decision cores stay synchronous** (`.end`, never `.endAsync`). Pilot evidence:
+4. **Pipelines are the composition primitive for sequential logic, not just
+   decisions.** Two additional sanctioned forms beyond decide-once cores:
+   - **Transform pipelines.** A pipeline may compose an evolving value across
+     many steps — rendering/projection pipelines, message-shape normalization,
+     UI state changes — using the same halt machinery for data-dependent early
+     exit (`!dep` guards, `?dep` optional stages): a 10-step render that stops
+     after step 3 when the data says so is a pipeline, not a decision. Steps
+     stay pure `(value) => value`; applying the result (DOM, DB, publish)
+     remains outside.
+   - **Staged async flows: decide → effect → re-snapshot → decide.** A pipeline
+     run may end in an effect, and the shell may re-enter a pipeline on the
+     result. The pilot already ships this shape: `deliverViaActivation` runs
+     the async activation, then feeds the outcome through the post-activation
+     decision pipeline. What is *not* sanctioned is free-form effectful stages
+     mid-pipeline: each effect boundary must be idempotent or compensable, and
+     atomic multi-step writes belong to a transaction shell (P7), never to the
+     pipeline. A pipeline owns no atomicity.
+5. **Decision cores stay synchronous** (`.end`, never `.endAsync`). Pilot evidence:
    the async executor's promise settlement added microtask boundaries that changed
    interleaving with background tick timers and broke a timing-sensitive test
    (transient-dispatch retry in `space-runtime-external-events.test.ts`); the sync
    executor preserves the pre-refactor event-loop profile exactly. Async snapshot
    gathering stays in the shell; the core is sync by convention until a case is
-   made and proven.
-5. **Testing conventions.** (a) A parity harness pins behavior against the parent
+   made and proven. Any async pipeline coupled to the run-tick must pin its
+   microtask profile in tests.
+6. **Testing conventions.** (a) A parity harness pins behavior against the parent
    commit before extraction — transcript-style instrumentation of store marks and
    effect calls (`space-runtime-external-event-admission-parity.test.ts`). (b) Gate
    unit tests cover the decision table, precedence ("terminal beats every
    downstream gate"), and pass-through identity. (c) The interpreter is covered by
    the pre-existing scenario suites, which must pass unchanged — that is the
    parity proof.
-6. **Cancellation is requirement-driven.** `run.withSignal(signal, …)` per-run
+7. **Cancellation is requirement-driven.** `run.withSignal(signal, …)` per-run
    `AbortSignal` cancellation exists and is unused. Wire it when a real
    cancellation requirement appears, not to exercise the feature.
 
@@ -74,8 +100,10 @@ shell (class): flat interpreter, one branch per decision action
 - **As a state machine or unbounded fold.** State lives in the runtime/DB; a
   pipeline decides one step. Stream reduction may use a pipeline as the per-event
   reducer body (Phase 3), never as the loop.
-- **As an effect executor.** Decisions are data. DB writes, network, publishes,
-  session injects stay in the interpreter.
+- **As a free-form effect executor.** Effects happen at pipeline boundaries
+  (decide → effect → re-snapshot), not as arbitrary mid-pipeline steps. DB writes,
+  network, publishes, session injects stay in the interpreter or in an explicitly
+  staged effect boundary; a pipeline never owns atomicity.
 - **As a resource owner.** `AbortController`s, timers, subscriptions, query
   objects stay in classes; pipelines receive values.
 - **On hot paths.** Per-stage container allocation is not free. Planning flows are
@@ -86,8 +114,8 @@ shell (class): flat interpreter, one branch per decision action
 
 | Pattern | Shape | HyperNeo fit |
 | --- | --- | --- |
-| P1 pure sync transform | `pipe → end` | data mapping, projections |
-| P2 awaitable planning flow | async deciders, `endAsync` | **pilot used sync cores instead**; async variant unproven in-repo |
+| P1 pure sync transform | `pipe → end` | data mapping, projections, rendering pipelines with data-dependent early exit (Phase 5) |
+| P2 awaitable planning flow | async deciders, `endAsync` | **pilot used sync cores instead**; async variant unproven in-repo; staged effect boundaries (Decision item 4) are the sanctioned async form meanwhile |
 | P3 guard/validation gate | boolean `!dep` halts | eligibility, preflight decline |
 | P4 optional stages | `?dep` skips when undefined | conditional normalization |
 | P5 callback continuation | `next` keeps run open | avoided — abort abandons retained `next` |
@@ -118,7 +146,12 @@ async deciders carry a proof obligation (microtask-profile sensitivity).
   "sync core, async shell" holds as a standing convention. Go/no-go for Phases
   2–5.
 - **Phase 2 — workflow transition resolution** (message-delivery admission half
-  done in the pilot).
+  done in the pilot). The message-admission pipeline — sequenced behind the
+  in-flight delivery-ordering fixes in the turn lifecycle — is also the landing
+  spot for a **provider-concurrency admission gate**: when a provider (e.g. GLM)
+  is at its concurrency limit, the admission decision queues the message before
+  it is persisted to the session, instead of letting concurrent calls pile up at
+  the provider.
 - **Phase 3 — per-event stream reduction** (query-runner event folds, ACP
   translation as P6 reducer bodies).
 - **Phase 4 — transaction sandwich** (schedule transactions, workflow hook
