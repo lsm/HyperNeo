@@ -3343,6 +3343,33 @@ describe('SDKMessageRepository', () => {
       expect(repository.searchMessages({ query: 'recovery' }).results).toHaveLength(1);
     });
 
+    it('retains pending rows that fail to index and retries on a later flush', () => {
+      createSearchIndex();
+      repository.saveSDKMessage('session-1', createUserMessage('retry marker'));
+
+      db.exec(`DROP TABLE message_search_fts`);
+
+      repository.flushMessageSearchIndex();
+      expect(db.prepare(`SELECT COUNT(*) AS n FROM message_search_pending`).get()).toEqual({
+        n: 1,
+      });
+
+      db.exec(
+        `CREATE VIRTUAL TABLE message_search_fts USING fts5(
+					title,
+					body,
+					content='message_search_content',
+					content_rowid='rowid',
+					detail=column,
+					tokenize = 'unicode61'
+				)`
+      );
+
+      repository.flushMessageSearchIndex();
+
+      expect(repository.searchMessages({ query: 'retry marker' }).results).toHaveLength(1);
+    });
+
     it('coalesces repeated schedules of the same message', () => {
       createSearchIndex();
       const id = repository.saveUserMessage(

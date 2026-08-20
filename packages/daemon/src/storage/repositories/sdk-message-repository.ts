@@ -449,10 +449,7 @@ export class SDKMessageRepository {
           deletePendingStmt.run(message_id);
         })();
       } catch (err) {
-        this.logger.warn('message search index flush failed, dropping pending row:', err);
-        try {
-          deletePendingStmt.run(message_id);
-        } catch {}
+        this.logger.warn('message search index flush failed, will retry next flush:', err);
       }
       processed++;
     }
