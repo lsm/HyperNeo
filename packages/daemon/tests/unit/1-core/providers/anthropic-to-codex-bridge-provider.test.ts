@@ -1950,6 +1950,73 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it.skipIf(!isBun)(
+      'preserves known reasoning limits when rich metadata omits levels',
+      async () => {
+        const hyperneoDir = path.join(tmpDir, 'hyperneo');
+        writeHyperNeoAuth(hyperneoDir, {
+          type: 'oauth',
+          access: 'oauth-access-token',
+          refresh: 'oauth-refresh-token',
+          accountId: 'acct-rich-mini',
+        });
+        const catalogFetch = mock(
+          async () =>
+            new Response(
+              JSON.stringify({
+                models: [
+                  {
+                    slug: 'gpt-5.4-mini',
+                    display_name: 'GPT-5.4 Mini',
+                    visibility: 'list',
+                    supported_in_api: true,
+                    priority: 1,
+                  },
+                ],
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+        ) as unknown as typeof fetch;
+        const captured = { body: undefined as Record<string, unknown> | undefined };
+        const originalFetch = globalThis.fetch.bind(globalThis);
+        const responseFetch = spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+          if (typeof url === 'string' && url.includes('/responses')) {
+            captured.body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            return new Response(
+              `event: response.completed\ndata: ${JSON.stringify({
+                type: 'response.completed',
+                response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+              })}\n\n`,
+              { headers: { 'Content-Type': 'text/event-stream' } }
+            );
+          }
+          return originalFetch(url, init);
+        });
+        try {
+          provider = makeProvider({}, hyperneoDir, tmpDir, catalogFetch);
+          await provider.getModels();
+          const config = provider.buildSdkConfig('gpt-5.4-mini', {
+            sessionId: 'rich-mini',
+          });
+          provider.setSessionThinkingConfig('rich-mini', 'think32k');
+
+          await fetch(`${config.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'gpt-5.4-mini',
+              max_tokens: 128,
+              messages: [{ role: 'user', content: 'Think deeply.' }],
+            }),
+          });
+
+          expect(captured.body?.reasoning).toEqual({ effort: 'high', summary: 'auto' });
+        } finally {
+          responseFetch.mockRestore();
+        }
+      }
+    );
+
     it('refreshes OAuth after a 401 and retries model discovery once', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const refreshedToken = makeJwt({

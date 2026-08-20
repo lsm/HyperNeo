@@ -809,7 +809,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
             : [];
         })
       : resolveCodexBridgeModelId(record.slug)
-        ? [...CODEX_REASONING_EFFORTS]
+        ? this.bundledReasoningEfforts(record.slug)
         : [];
     return {
       slug: record.slug,
