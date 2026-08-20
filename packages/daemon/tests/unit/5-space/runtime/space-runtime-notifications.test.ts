@@ -542,7 +542,7 @@ describe('SpaceRuntime — notification events', () => {
     });
 
     test('re-notifies timeout after executions stop timing out while task stays in_progress', async () => {
-      setSpaceTaskTimeoutMs(db, SPACE_ID, 1000);
+      setSpaceTaskTimeoutMs(db, SPACE_ID, 60_000);
 
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
@@ -551,7 +551,7 @@ describe('SpaceRuntime — notification events', () => {
       const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
       taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
       const executionId = seedNodeExec(db, run.id, STEP_A, 'plan', 'in_progress', {
-        startedAt: Date.now() - 2000,
+        startedAt: Date.now() - 120_000,
       });
 
       await runtime.executeTick();
@@ -562,7 +562,7 @@ describe('SpaceRuntime — notification events', () => {
       await runtime.executeTick();
       expect(taskRepo.getTask(tasks[0].id)?.status).toBe('in_progress');
 
-      executionRepo.update(executionId, { startedAt: Date.now() - 2000 });
+      executionRepo.update(executionId, { startedAt: Date.now() - 120_000 });
       await runtime.executeTick();
 
       expect(collector.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(2);
@@ -603,7 +603,11 @@ describe('SpaceRuntime — notification events', () => {
       });
 
       await runtime.executeTick();
+      expect(collector.events.filter((event) => event.kind === 'agent_crash')).toHaveLength(0);
+
       await runtime.executeTick();
+      expect(collector.events.filter((event) => event.kind === 'agent_crash')).toHaveLength(0);
+
       await runtime.executeTick();
 
       const events = collector.events.filter((event) => event.kind === 'agent_crash');
