@@ -20,6 +20,20 @@ import type {
 
 const TOKEN_CHARS = 4;
 
+function toToolCallUpdate(notification: AcpToolCallUpdateNotification): AcpToolCallUpdateUpdate {
+  return {
+    sessionUpdate: 'tool_call_update',
+    toolCallId: notification.toolCallId,
+    status: notification.status ?? null,
+    title: notification.title,
+    kind: notification.kind ?? null,
+    rawInput: notification.rawInput,
+    rawOutput: notification.rawOutput,
+    content: notification.content,
+    locations: notification.locations ?? null,
+  };
+}
+
 function zeroUsage(): {
   cache_creation: {
     ephemeral_1h_input_tokens: number;
@@ -90,8 +104,18 @@ export class AcpMessageTranslator {
       case 'agent_thought_chunk':
         this.accumulateThoughtChunk(update);
         return [];
-      case 'tool_call':
+      case 'tool_call': {
+        const seeded = toToolCallUpdate(update);
+        if (seeded.status === 'completed' || seeded.status === 'failed') {
+          return [
+            ...this.flush(),
+            this.translateToolCall(update),
+            this.translateToolResult(seeded),
+          ];
+        }
+        this.toolCallUpdates.set(update.toolCallId, seeded);
         return [...this.flush(), this.translateToolCall(update)];
+      }
       case 'tool_call_update': {
         const previous = this.toolCallUpdates.get(update.toolCallId);
         const accumulated = {

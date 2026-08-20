@@ -229,6 +229,36 @@ describe('AcpMessageTranslator', () => {
     expect((result[0] as { tool_use_result: unknown }).tool_use_result).toBe('failed output');
   });
 
+  test('carries tool output from the initial tool_call into a status-only completion', () => {
+    const output = [{ type: 'content', content: { type: 'text', text: 'initial output' } }];
+    const messages = translator.processUpdate({
+      ...toolCall('tc-initial', 'Read file', {}),
+      content: output,
+    });
+    expect(messages).toHaveLength(1);
+    expect(messages[0].type).toBe('assistant');
+
+    const result = translator.processUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-initial',
+      status: 'completed',
+    });
+    expect(result).toHaveLength(1);
+    expect((result[0] as { tool_use_result: unknown }).tool_use_result).toEqual(output);
+  });
+
+  test('emits a tool result immediately for a terminal tool_call notification', () => {
+    const messages = translator.processUpdate({
+      ...toolCall('tc-terminal', 'Fast tool', {}),
+      status: 'completed',
+      rawOutput: 'done quickly',
+    });
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0].type).toBe('assistant');
+    expect((messages[1] as { tool_use_result: unknown }).tool_use_result).toBe('done quickly');
+  });
+
   test('translateResult produces success result', () => {
     const msg = translator.translateResult('end_turn');
 
