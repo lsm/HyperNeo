@@ -441,15 +441,26 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('uses updated OAuth auth without restarting', async () => {
     let capturedHeaders: Headers | undefined;
+    let attempts = 0;
+    let staleRefreshCalls = 0;
+    let freshRefreshCalls = 0;
     server = createOpenAIResponsesBridgeServer({
       auth: {
         source: 'chatgpt_oauth',
         apiKey: 'stale-token',
         accountId: 'account-1',
+        refreshAuthTokens: async () => {
+          staleRefreshCalls += 1;
+          return null;
+        },
       },
       models,
       fetchImpl: async (_url, init) => {
+        attempts += 1;
         capturedHeaders = new Headers(init?.headers);
+        if (attempts === 1) {
+          return new Response('unauthorized', { status: 401 });
+        }
         return sse([
           {
             event: 'response.completed',
@@ -467,6 +478,14 @@ describe('openai-responses-bridge server', () => {
       apiKey: 'fresh-token',
       accountId: 'account-2',
       isFedrampAccount: true,
+      refreshAuthTokens: async () => {
+        freshRefreshCalls += 1;
+        return {
+          accessToken: 'refreshed-again-token',
+          accountId: 'account-3',
+          isFedrampAccount: false,
+        };
+      },
     });
 
     const resp = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
@@ -481,9 +500,11 @@ describe('openai-responses-bridge server', () => {
 
     expect(resp.status).toBe(200);
     expect(server.port).toBe(port);
-    expect(capturedHeaders?.get('Authorization')).toBe('Bearer fresh-token');
-    expect(capturedHeaders?.get('ChatGPT-Account-ID')).toBe('account-2');
-    expect(capturedHeaders?.get('X-OpenAI-Fedramp')).toBe('true');
+    expect(staleRefreshCalls).toBe(0);
+    expect(freshRefreshCalls).toBe(1);
+    expect(capturedHeaders?.get('Authorization')).toBe('Bearer refreshed-again-token');
+    expect(capturedHeaders?.get('ChatGPT-Account-ID')).toBe('account-3');
+    expect(capturedHeaders?.get('X-OpenAI-Fedramp')).toBeNull();
   });
 
   it.skipIf(!isBun)('streams OpenAI text deltas as Anthropic text SSE', async () => {

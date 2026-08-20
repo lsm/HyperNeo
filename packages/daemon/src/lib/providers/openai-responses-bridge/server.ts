@@ -1374,13 +1374,11 @@ export function createOpenAIResponsesBridgeServer(
   const sessionReasoningItems = new Map<string, SessionReasoningEntry>();
   const sessionThinkingConfigs = new Map<string, SessionThinkingConfigEntry>();
   const sessionModelAliasOverrides = new Map<string, string>();
+  let activeAuth = config.auth;
   let resolvedAuth: ResolvedResponsesAuth | undefined;
   const updateAuth = (auth: OpenAIResponsesBridgeAuth): void => {
-    resolvedAuth = {
-      apiKey: auth.apiKey,
-      accountId: auth.accountId,
-      isFedrampAccount: auth.isFedrampAccount,
-    };
+    activeAuth = auth;
+    resolvedAuth = undefined;
   };
   const isChatgptOAuth = config.auth.source === 'chatgpt_oauth' && !config.openAIBaseUrl;
   const buildOpts = {
@@ -1569,16 +1567,16 @@ export function createOpenAIResponsesBridgeServer(
       try {
         openAIResponse = await fetchImpl(upstreamUrl, {
           method: 'POST',
-          headers: buildOpenAIHeaders(config.auth, resolvedAuth),
+          headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
           body: JSON.stringify(requestBody),
         });
         if (openAIResponse.status === 401) {
-          const refreshed = await refreshOpenAIResponsesAuth(config.auth);
+          const refreshed = await refreshOpenAIResponsesAuth(activeAuth);
           if (refreshed) {
             resolvedAuth = refreshed;
             openAIResponse = await fetchImpl(upstreamUrl, {
               method: 'POST',
-              headers: buildOpenAIHeaders(config.auth, resolvedAuth),
+              headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
               body: JSON.stringify(requestBody),
             });
           }
@@ -1606,7 +1604,7 @@ export function createOpenAIResponsesBridgeServer(
             }
             openAIResponse = await fetchImpl(upstreamUrl, {
               method: 'POST',
-              headers: buildOpenAIHeaders(config.auth, resolvedAuth),
+              headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
               body: JSON.stringify(requestBody),
             });
             continuation = undefined;
@@ -1659,7 +1657,7 @@ export function createOpenAIResponsesBridgeServer(
           }
           openAIResponse = await fetchImpl(upstreamUrl, {
             method: 'POST',
-            headers: buildOpenAIHeaders(config.auth, resolvedAuth),
+            headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
             body: JSON.stringify(requestBody),
           });
         }

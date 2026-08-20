@@ -197,8 +197,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private readonly modelRefreshes = new Map<string, Promise<void>>();
 
-  private readonly sessionModelIds = new Map<string, string>();
-
   private forceModelRefresh = false;
 
   private discoveryError: Error | undefined;
@@ -255,6 +253,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return ANTHROPIC_CODEX_MODELS.map((info) => ({
       info: { ...info, thinkingModes: 'granular' },
       visibility: 'list',
+      supportedReasoningEfforts: [...CODEX_REASONING_EFFORTS],
     }));
   }
 
@@ -651,7 +650,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         ? (codexBackendContextWindow(info.id) ?? info.contextWindow)
         : info.contextWindow,
       max_tokens: info.id.startsWith('gpt-5.6-') ? 128000 : 16384,
-      supported_reasoning_efforts: supportedReasoningEfforts,
+      supported_reasoning_efforts: supportedReasoningEfforts ?? [],
     }));
   }
 
@@ -840,8 +839,25 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     for (const key of this.bridgeServers.keys()) this.stopBridgeServerByKey(key);
   }
 
-  private updateBridgeAuth(auth: OpenAIResponsesBridgeAuth): void {
-    this.bridgeServers.get(`responses:${this.bridgeAuthCacheKey(auth)}`)?.updateAuth(auth);
+  private updateBridgeAuth(
+    previousAuth: OpenAIResponsesBridgeAuth,
+    refreshedAuth: OpenAIResponsesBridgeAuth
+  ): void {
+    const previousKey = `responses:${this.bridgeAuthCacheKey(previousAuth)}`;
+    const refreshedKey = `responses:${this.bridgeAuthCacheKey(refreshedAuth)}`;
+    const server = this.bridgeServers.get(previousKey);
+    if (!server) return;
+
+    server.updateAuth(refreshedAuth);
+    if (previousKey === refreshedKey) return;
+
+    const replacedServer = this.bridgeServers.get(refreshedKey);
+    if (replacedServer && replacedServer !== server) {
+      replacedServer.stop();
+      this.bridgeServers.delete(refreshedKey);
+    }
+    this.bridgeServers.set(refreshedKey, server);
+    this.bridgeServers.delete(previousKey);
   }
 
   private replaceCatalog(
@@ -899,8 +915,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         const refreshed = await this.refreshStoredOauthCredentials();
         const refreshedAuth = refreshed ? this.toBridgeAuth(refreshed) : undefined;
         if (refreshedAuth) {
+          this.updateBridgeAuth(auth, refreshedAuth);
           auth = refreshedAuth;
-          this.updateBridgeAuth(auth);
         }
       }
     }
@@ -923,8 +939,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       const refreshed = await this.refreshStoredOauthCredentials();
       const refreshedAuth = refreshed ? this.toBridgeAuth(refreshed) : undefined;
       if (refreshedAuth?.source === 'chatgpt_oauth') {
+        this.updateBridgeAuth(auth, refreshedAuth);
         auth = refreshedAuth;
-        this.updateBridgeAuth(auth);
         scope = this.authScope(auth);
         try {
           response = await this.requestModelCatalog(auth);
@@ -1126,7 +1142,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       resolvedId;
 
     bridgeServer.setSessionModelConfig?.(sessionId, sdkModelId, resolvedId);
-    this.sessionModelIds.set(sessionId, resolvedId);
 
     return {
       envVars: {
@@ -1159,12 +1174,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const bridgeServer = this.bridgeServers.get(`responses:${this.bridgeAuthCacheKey(auth)}`);
     if (!bridgeServer?.setSessionThinkingConfig) return;
 
-    const modelId = this.sessionModelIds.get(sessionId);
-    if (modelId && this.getModelThinkingMode(modelId) === 'off') {
-      bridgeServer.setSessionThinkingConfig(sessionId, undefined);
-      return;
-    }
-
     const tokens = THINKING_LEVEL_TOKENS[thinkingLevel as keyof typeof THINKING_LEVEL_TOKENS];
     if (tokens === undefined) {
       bridgeServer.setSessionThinkingConfig(sessionId, undefined);
@@ -1179,7 +1188,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   stopAllBridgeServers(): void {
     this.resetBridgeServers();
-    this.sessionModelIds.clear();
     this.cachedCredentials = null;
     this.cachedBridgeAuth = undefined;
     this.cachedApiKey = undefined;

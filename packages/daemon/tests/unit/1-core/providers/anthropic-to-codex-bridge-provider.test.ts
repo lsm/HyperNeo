@@ -1678,21 +1678,23 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(models.map((model) => model.id)).toEqual(['gpt-stable']);
     });
 
-    it.skipIf(!isBun)('updates an active bridge after proactive OAuth refresh', async () => {
+    it.skipIf(!isBun)('rekeys an active bridge after proactive OAuth refresh', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
-      const accountId = 'acct-proactive-refresh';
       const staleToken = makeJwt({
-        'https://api.openai.com/auth': { chatgpt_account_id: accountId },
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-old' },
       });
       const refreshedToken = makeJwt({
-        'https://api.openai.com/auth': { chatgpt_account_id: accountId },
+        'https://api.openai.com/auth': {
+          chatgpt_account_id: 'acct-new',
+          is_fedramp_account: true,
+        },
         jti: 'refreshed',
       });
       writeHyperNeoAuth(hyperneoDir, {
         type: 'oauth',
         access: staleToken,
         refresh: 'refresh-token',
-        accountId,
+        accountId: 'acct-old',
         expires: Date.now() + 60_000,
       });
       const catalogFetch = mock(
@@ -1749,6 +1751,12 @@ describe('AnthropicToCodexBridgeProvider', () => {
         expect(response.status).toBe(200);
         expect(new URL(config.envVars.ANTHROPIC_BASE_URL as string).port).toBe(port);
         expect(capturedHeaders[0]?.get('Authorization')).toBe(`Bearer ${refreshedToken}`);
+        expect(capturedHeaders[0]?.get('ChatGPT-Account-ID')).toBe('acct-new');
+        expect(capturedHeaders[0]?.get('X-OpenAI-Fedramp')).toBe('true');
+        const servers = (provider as unknown as { bridgeServers: Map<string, { port: number }> })
+          .bridgeServers;
+        expect([...servers.keys()]).toEqual(['responses:chatgpt:acct-new:fedramp']);
+        expect(servers.values().next().value?.port).toBe(Number(port));
       } finally {
         refreshFetch.mockRestore();
       }
@@ -2324,6 +2332,102 @@ describe('AnthropicToCodexBridgeProvider', () => {
       fetchSpy.mockRestore();
       p.stopAllBridgeServers();
     });
+
+    it.skipIf(!isBun)(
+      'applies thinking capability to each primary and fallback model',
+      async () => {
+        const capturedBodies: Record<string, unknown>[] = [];
+        const originalFetch = globalThis.fetch.bind(globalThis);
+        const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+          if (
+            typeof url === 'string' &&
+            (url.includes('api.openai.com') || url.includes('chatgpt.com'))
+          ) {
+            capturedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+            return new Response(
+              `event: response.completed\ndata: ${JSON.stringify({
+                type: 'response.completed',
+                response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+              })}\n\n`,
+              { headers: { 'Content-Type': 'text/event-stream' } }
+            );
+          }
+          return originalFetch(url, init);
+        });
+        const catalogFetch = mock(
+          async () =>
+            new Response(
+              JSON.stringify({
+                models: [
+                  {
+                    slug: 'gpt-reasoning',
+                    display_name: 'GPT Reasoning',
+                    visibility: 'list',
+                    supported_in_api: true,
+                    supported_reasoning_levels: [{ effort: 'high' }],
+                    priority: 1,
+                  },
+                  {
+                    slug: 'gpt-no-reasoning',
+                    display_name: 'GPT No Reasoning',
+                    visibility: 'list',
+                    supported_in_api: true,
+                    supported_reasoning_levels: [],
+                    priority: 2,
+                  },
+                ],
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+        ) as unknown as typeof fetch;
+        const p = makeProvider({ OPENAI_API_KEY: 'sk-test' }, undefined, undefined, catalogFetch);
+        try {
+          await p.getModels();
+          const session = { sessionId: 'mixed-capabilities' };
+          const config = p.buildSdkConfig('gpt-no-reasoning', session);
+          p.buildSdkConfig('gpt-reasoning', session);
+          p.setSessionThinkingConfig(session.sessionId, 'think24k');
+
+          for (const model of ['gpt-no-reasoning', 'gpt-reasoning']) {
+            const response = await fetch(`${config.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model,
+                max_tokens: 128,
+                messages: [{ role: 'user', content: 'Think.' }],
+              }),
+            });
+            expect(response.status).toBe(200);
+          }
+
+          p.buildSdkConfig('gpt-reasoning', session);
+          p.buildSdkConfig('gpt-no-reasoning', session);
+          for (const model of ['gpt-reasoning', 'gpt-no-reasoning']) {
+            const response = await fetch(`${config.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model,
+                max_tokens: 128,
+                messages: [{ role: 'user', content: 'Think.' }],
+              }),
+            });
+            expect(response.status).toBe(200);
+          }
+
+          expect(capturedBodies.map((body) => body.reasoning)).toEqual([
+            undefined,
+            { effort: 'high', summary: 'auto' },
+            { effort: 'high', summary: 'auto' },
+            undefined,
+          ]);
+        } finally {
+          fetchSpy.mockRestore();
+          p.stopAllBridgeServers();
+        }
+      }
+    );
 
     it('clears config when thinking level is off or undefined', async () => {
       const captured = { body: undefined as Record<string, unknown> | undefined };
