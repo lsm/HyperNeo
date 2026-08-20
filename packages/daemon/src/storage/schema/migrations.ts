@@ -430,6 +430,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(195), () => runMigration195(db));
 
   run(migrationMarkerKey(196), () => runMigration196(db));
+
+  run(migrationMarkerKey(197), () => runMigration197(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -9487,4 +9489,11 @@ function addStoppedStatusToSpaceTasks(createSql: string): string {
     throw new Error('Migration 195: space_tasks status CHECK constraint not found');
   }
   return result;
+}
+
+export function runMigration197(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status_timestamp
+    ON sdk_messages(session_id, send_status, timestamp)`);
+  db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_send_status`);
 }
