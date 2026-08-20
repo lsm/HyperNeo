@@ -61,7 +61,12 @@ export function planFlushDelivery(args: {
 
   const allBatchable = args.messages
     .filter((message) => message.isUserMessage && !args.pendingInMemoryUuids.has(message.uuid))
-    .every((message) => message.flattenedText !== null && !message.flattenedText.startsWith('/'));
+    .every(
+      (message) =>
+        message.flattenedText !== null &&
+        !message.flattenedText.startsWith('/') &&
+        !args.activeInJobQueue.has(message.uuid)
+    );
   if (
     deliver.length >= 2 &&
     allBatchable &&

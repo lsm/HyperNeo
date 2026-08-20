@@ -138,7 +138,7 @@ describe('planFlushDelivery', () => {
     expect(result).toEqual({ action: 'each', deliver: ['solo'], skip: [] });
   });
 
-  test('owned messages do not block batching of the unowned remainder', () => {
+  test('a job-queue-owned message forces per-message delivery for the rest', () => {
     const result = planFlushDelivery({
       messages: [
         makeFlushMessage({ uuid: 'job-owned', flattenedText: 'durable' }),
@@ -149,8 +149,9 @@ describe('planFlushDelivery', () => {
       pendingInMemoryUuids: new Set(),
     });
     expect(result).toEqual({
-      action: 'batch',
-      uuids: ['a', 'b'],
+      action: 'each',
+      deliver: ['a', 'b'],
+      skip: [{ uuid: 'job-owned', ownership: 'job_queue' }],
     });
   });
 
@@ -167,6 +168,22 @@ describe('planFlushDelivery', () => {
       action: 'each',
       deliver: ['slash', 'plain'],
       skip: [],
+    });
+  });
+
+  test('a job-queue-owned flattenable message alone already blocks batching', () => {
+    const result = planFlushDelivery({
+      messages: [
+        makeFlushMessage({ uuid: 'job-owned', flattenedText: 'durable' }),
+        makeFlushMessage({ uuid: 'a' }),
+      ],
+      activeInJobQueue: new Set(['job-owned']),
+      pendingInMemoryUuids: new Set(),
+    });
+    expect(result).toEqual({
+      action: 'each',
+      deliver: ['a'],
+      skip: [{ uuid: 'job-owned', ownership: 'job_queue' }],
     });
   });
 
