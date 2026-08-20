@@ -39,7 +39,7 @@ export interface NamedQuery {
   ) => ((scope: TableChangeScope) => boolean) | undefined;
 }
 
-const DEBOUNCE_SDK_MESSAGES_MS = 100;
+const DEBOUNCE_SDK_MESSAGES_MS = 250;
 const DEBOUNCE_SESSION_GROUP_MESSAGES_MS = 150;
 const DEBOUNCE_SESSION_LIST_MS = 150;
 const DEBOUNCE_SPACE_SESSIONS_MS = 150;
