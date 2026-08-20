@@ -13,7 +13,8 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import { vi } from 'vitest';
-import daemonPackage from '../../../../package.json';
+
+const CODEX_COMPAT_CLIENT_VERSION = '0.148.0';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
@@ -963,7 +964,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       const [url, init] = (fetchImpl.mock.calls[0] as [URL, RequestInit]) ?? [];
       expect(String(url)).toBe(
-        `https://api.openai.com/v1/models?client_version=${daemonPackage.version}`
+        `https://api.openai.com/v1/models?client_version=${CODEX_COMPAT_CLIENT_VERSION}`
       );
       expect(init?.method).toBe('GET');
       const headers = init?.headers as Record<string, string>;
@@ -1042,7 +1043,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       const [url, init] = (fetchImpl.mock.calls[0] as [URL, RequestInit]) ?? [];
       expect(String(url)).toBe(
-        `https://chatgpt.com/backend-api/codex/models?client_version=${daemonPackage.version}`
+        `https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_COMPAT_CLIENT_VERSION}`
       );
       const headers = init?.headers as Record<string, string>;
       expect(headers['authorization']).toBe(`Bearer ${jwt}`);
@@ -1058,6 +1059,17 @@ describe('AnthropicToCodexBridgeProvider', () => {
       provider = makeProvider({ OPENAI_API_KEY: 'bad-key' }, tmpDir, tmpDir, fetchImpl);
 
       expect(provider.getModels()).rejects.toThrow('Codex credentials rejected (HTTP 401)');
+    });
+
+    it('keeps bundled models when model discovery is forbidden', async () => {
+      const fetchImpl = mock(
+        async () => new Response('forbidden', { status: 403 })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'restricted-key' }, tmpDir, tmpDir, fetchImpl);
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toContain('gpt-5.6-sol');
     });
 
     it('falls back to bundled models when discovery fails at the network layer', async () => {
@@ -1087,6 +1099,85 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps valid rich models when another entry has unsupported schema', async () => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(
+            JSON.stringify({
+              models: [
+                {
+                  slug: 'gpt-valid',
+                  display_name: 'GPT Valid',
+                  visibility: 'list',
+                  supported_in_api: true,
+                  priority: 1,
+                },
+                {
+                  slug: 'gpt-invalid',
+                  display_name: 'GPT Invalid',
+                  visibility: 'preview',
+                  supported_in_api: true,
+                  priority: 2,
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+      ) as unknown as typeof fetch;
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'oauth-access-token',
+        accountId: 'acct-valid',
+      });
+      provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(['gpt-valid']);
+    });
+
+    it('rejects oversized rich metadata without poisoning the persisted cache', async () => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(
+            JSON.stringify({
+              models: [
+                {
+                  slug: 'gpt-valid',
+                  display_name: 'GPT Valid',
+                  visibility: 'list',
+                  supported_in_api: true,
+                  priority: 1,
+                },
+                {
+                  slug: 'gpt-oversized',
+                  display_name: 'x'.repeat(501),
+                  description: 'y'.repeat(4001),
+                  visibility: 'list',
+                  supported_in_api: true,
+                  priority: 2,
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+      ) as unknown as typeof fetch;
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'oauth-access-token',
+        accountId: 'acct-bounded',
+      });
+      provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(['gpt-valid']);
+      const cache = readFileSync(path.join(hyperneoDir, 'openai-models-cache.json'), 'utf-8');
+      expect(cache).not.toContain('gpt-oversized');
+    });
+
     it('sorts rich models, filters API-ineligible and hidden entries, and keeps hidden routing', async () => {
       const fetchImpl = mock(
         async () =>
@@ -1102,7 +1193,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
                   priority: 20,
                 },
                 {
-                  slug: 'gpt-hidden',
+                  slug: 'gpt-5.6-sol',
                   display_name: 'GPT Hidden',
                   context_window: 111000,
                   visibility: 'hide',
@@ -1142,8 +1233,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
         sdkModelIds: ['gpt-first'],
       });
       expect(models[1]?.contextWindow).toBe(222000);
-      expect(provider.ownsModel('gpt-hidden')).toBe(true);
+      expect(provider.ownsModel('gpt-5.6-sol')).toBe(true);
       expect(provider.ownsModel('gpt-account-only')).toBe(false);
+      expect(provider.getModelForTier('opus')).toBe('gpt-first');
     });
 
     it('preserves curated metadata and aliases for known remote models', async () => {
@@ -1179,6 +1271,52 @@ describe('AnthropicToCodexBridgeProvider', () => {
         sdkModelIds: ['gpt-5.6-sol'],
       });
       expect(provider.ownsModel('codex-5.6')).toBe(true);
+    });
+
+    it('hydrates OAuth dynamic routing synchronously after restart', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'oauth-token',
+        refresh: 'oauth-refresh',
+        accountId: 'acct-restart',
+      });
+      const fetchImpl = mock(
+        async () =>
+          new Response(
+            JSON.stringify({
+              models: [
+                {
+                  slug: 'gpt-oauth-restart',
+                  display_name: 'GPT OAuth Restart',
+                  visibility: 'list',
+                  supported_in_api: true,
+                  priority: 1,
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+      ) as unknown as typeof fetch;
+      provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+      await provider.getModels();
+
+      const restarted = makeProvider(
+        {},
+        hyperneoDir,
+        tmpDir,
+        mock(async () => {
+          throw new Error('offline');
+        }) as unknown as typeof fetch
+      );
+
+      expect(restarted.ownsModel('gpt-oauth-restart')).toBe(true);
+      if (isBun) {
+        expect(() =>
+          restarted.buildSdkConfig('gpt-oauth-restart', { sessionId: 'oauth-restart' })
+        ).not.toThrow();
+      }
+      restarted.stopAllBridgeServers();
     });
 
     it('persists dynamic models without credentials and hydrates routing on restart', async () => {
@@ -1222,7 +1360,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       restarted.stopAllBridgeServers();
     });
 
-    it('forces refresh and reuses the ETag for a 304 response', async () => {
+    it('forces an unconditional refresh instead of reusing the ETag', async () => {
       const fetchImpl = mock()
         .mockResolvedValueOnce(
           new Response(JSON.stringify({ data: [{ id: 'gpt-etag' }] }), {
@@ -1230,17 +1368,22 @@ describe('AnthropicToCodexBridgeProvider', () => {
             headers: { 'Content-Type': 'application/json', ETag: 'catalog-v1' },
           })
         )
-        .mockResolvedValueOnce(new Response(null, { status: 304 })) as unknown as typeof fetch;
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data: [{ id: 'gpt-refreshed' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', ETag: 'catalog-v2' },
+          })
+        ) as unknown as typeof fetch;
       provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
 
       await provider.getModels();
       provider.clearModelCache();
       const models = await provider.getModels();
 
-      expect(models.map((model) => model.id)).toEqual(['gpt-etag']);
+      expect(models.map((model) => model.id)).toEqual(['gpt-refreshed']);
       expect(fetchImpl).toHaveBeenCalledTimes(2);
       const [, init] = (fetchImpl as ReturnType<typeof mock>).mock.calls[1] as [URL, RequestInit];
-      expect((init.headers as Record<string, string>)['if-none-match']).toBe('catalog-v1');
+      expect((init.headers as Record<string, string>)['if-none-match']).toBeUndefined();
     });
 
     it('keeps the last valid catalog when a forced refresh is malformed', async () => {

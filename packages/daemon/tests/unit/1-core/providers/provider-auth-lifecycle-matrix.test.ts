@@ -13,8 +13,9 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
-import daemonPackage from '../../../../package.json';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
+
+const CODEX_COMPAT_CLIENT_VERSION = '0.148.0';
 
 const fsPromiseMocks = vi.hoisted(() => ({
   readFile: vi.fn(),
@@ -34,8 +35,8 @@ vi.mock('fs/promises', async (importOriginal) => {
   };
 });
 
-const OAUTH_PROBE_URL = `https://chatgpt.com/backend-api/codex/models?client_version=${daemonPackage.version}`;
-const API_KEY_PROBE_URL = `https://api.openai.com/v1/models?client_version=${daemonPackage.version}`;
+const OAUTH_PROBE_URL = `https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_COMPAT_CLIENT_VERSION}`;
+const API_KEY_PROBE_URL = `https://api.openai.com/v1/models?client_version=${CODEX_COMPAT_CLIENT_VERSION}`;
 
 type Mode = 'oauth' | 'api_key';
 
