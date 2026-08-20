@@ -356,6 +356,26 @@ describe('AcpTransport', () => {
     expect(terminate).toHaveBeenCalledWith('SIGKILL');
   }, 1000);
 
+  test('skips SIGKILL when the group exits during the escalation delay', async () => {
+    const terminate = vi.fn();
+    const processTreeOwner = vi.fn(() => ({ terminate }));
+    let groupExists = true;
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      processTreeOwner,
+      processGroupProbe: () => groupExists,
+      closeSIGKILLTimeoutMs: 50,
+    });
+    const proc = lastMockProcess!;
+
+    transport.close();
+    groupExists = false;
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
+    expect(terminate).not.toHaveBeenCalledWith('SIGKILL');
+  }, 1000);
+
   test('onExit callback fires when process exits', () => {
     const exits: Array<{ code: number | null; signal: string | null }> = [];
     const transport = new AcpTransport({

@@ -81,6 +81,7 @@ export class AcpTransport {
   private buffer = '';
   private closed = false;
   private processExited = false;
+  private processPid: number | undefined;
   private processGroupGone = false;
   private killTimer: ReturnType<typeof setTimeout> | null = null;
   private closePromise: Promise<void> | null = null;
@@ -106,6 +107,7 @@ export class AcpTransport {
     });
 
     this.process = proc;
+    this.processPid = proc.pid ?? undefined;
 
     proc.on('error', (err) => {
       logger.error('ACP agent process error:', err.message);
@@ -360,7 +362,7 @@ export class AcpTransport {
 
   private recordProcessGroupGone(): void {
     if (!this.processGroupGone) {
-      const pid = this.process?.pid;
+      const pid = this.processPid;
       if (pid != null && !(this.options.processGroupProbe ?? defaultProcessGroupProbe)(pid)) {
         this.processGroupGone = true;
       }
@@ -391,6 +393,7 @@ export class AcpTransport {
 
       this.killTimer = setTimeout(() => {
         this.killTimer = null;
+        this.recordProcessGroupGone();
         if (this.processGroupGone) return;
         logger.warn('ACP agent cleanup escalation after SIGTERM');
         this.killProcess('SIGKILL');
