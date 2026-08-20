@@ -77,6 +77,14 @@ export class SpaceTaskRepository {
   private deleteTaskMessageSearchRows(taskId: string): void {
     if (!this.hasMessageSearchIndex()) return;
     this.db.prepare(`DELETE FROM message_search_content WHERE task_id = ?`).run(taskId);
+    if (this.tableExists('message_search_pending')) {
+      this.db
+        .prepare(
+          `DELETE FROM message_search_pending
+           WHERE message_id IN (SELECT id FROM sdk_messages WHERE task_id = ?)`
+        )
+        .run(taskId);
+    }
   }
 
   private deleteTaskMessageRows(taskId: string): void {

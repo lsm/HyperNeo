@@ -425,31 +425,36 @@ export class SDKMessageRepository {
     }
     this.db
       .prepare(
-        `INSERT OR IGNORE INTO message_search_pending (message_id, created_at) VALUES (?, ?)`
+        `INSERT OR IGNORE INTO message_search_pending (message_id, created_at)
+         SELECT ?, ? WHERE EXISTS (SELECT 1 FROM sdk_messages WHERE id = ?)`
       )
-      .run(messageId, Date.now());
+      .run(messageId, Date.now(), messageId);
   }
 
   flushMessageSearchIndex(limit = 500): number {
     if (!this.hasMessageSearchIndex()) return 0;
     if (!this.tableExists('message_search_pending')) return 0;
-    let processed = 0;
+    const pending = this.db
+      .prepare(`SELECT message_id FROM message_search_pending ORDER BY created_at LIMIT ?`)
+      .all(limit) as Array<{ message_id: string }>;
+    if (pending.length === 0) return 0;
     const deletePendingStmt = this.db.prepare(
       `DELETE FROM message_search_pending WHERE message_id = ?`
     );
-    while (true) {
-      const pending = this.db
-        .prepare(`SELECT message_id FROM message_search_pending ORDER BY created_at LIMIT ?`)
-        .all(limit) as Array<{ message_id: string }>;
-      if (pending.length === 0) break;
-      this.db.transaction(() => {
-        for (const { message_id } of pending) {
+    let processed = 0;
+    for (const { message_id } of pending) {
+      try {
+        this.db.transaction(() => {
           this.upsertMessageSearchRow(message_id);
           deletePendingStmt.run(message_id);
-        }
-      })();
-      processed += pending.length;
-      if (pending.length < limit) break;
+        })();
+      } catch (err) {
+        this.logger.warn('message search index flush failed, dropping pending row:', err);
+        try {
+          deletePendingStmt.run(message_id);
+        } catch {}
+      }
+      processed++;
     }
     return processed;
   }

@@ -169,7 +169,11 @@ export class Database {
     this.goalAutomationCursorRepo = new GoalAutomationCursorRepository(db);
     this.providerRepo = new ProviderRepository(db, reactiveDb);
     this.agentMemoryRepo.backfillPendingEmbeddings();
-    this.sdkMessageRepo.flushMessageSearchIndex();
+    try {
+      this.sdkMessageRepo.flushMessageSearchIndex();
+    } catch (err) {
+      this.logger.warn('startup message search index flush failed:', err);
+    }
     if (this.messageSearchIndexFlushIntervalMs > 0) {
       this.messageSearchIndexTimer = setInterval(() => {
         try {

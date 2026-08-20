@@ -3362,6 +3362,57 @@ describe('SDKMessageRepository', () => {
 
       expect(repository.searchMessages({ query: 'coalesced' }).results).toHaveLength(1);
     });
+
+    it('processes at most limit pending rows per flush', () => {
+      createSearchIndex();
+      repository.saveUserMessage('session-1', createUserMessage('bounded marker a'), 'consumed');
+      repository.saveUserMessage('session-1', createUserMessage('bounded marker b'), 'consumed');
+      expect(db.prepare(`SELECT COUNT(*) AS n FROM message_search_pending`).get()).toEqual({
+        n: 2,
+      });
+
+      expect(repository.flushMessageSearchIndex(1)).toBe(1);
+      expect(db.prepare(`SELECT COUNT(*) AS n FROM message_search_pending`).get()).toEqual({
+        n: 1,
+      });
+
+      repository.flushMessageSearchIndex();
+      expect(db.prepare(`SELECT COUNT(*) AS n FROM message_search_pending`).get()).toEqual({
+        n: 0,
+      });
+    });
+
+    it('indexes synchronously when the pending queue table is absent', () => {
+      createSearchIndex();
+      db.exec(`DROP TABLE message_search_pending`);
+      repository.saveSDKMessage('session-1', createUserMessage('sync fallback marker'));
+
+      expect(repository.searchMessages({ query: 'sync fallback' }).results).toHaveLength(1);
+    });
+
+    it('applies supersession when the replacement is still pending', () => {
+      createSearchIndex();
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('interleave superseded', 'interleave-uuid')
+      );
+      repository.saveSDKMessage('session-1', {
+        type: 'assistant',
+        uuid: 'interleave-replacement',
+        supersedes: ['interleave-uuid'],
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'interleave replacement text' }],
+        },
+      } as unknown as SDKMessage);
+
+      repository.flushMessageSearchIndex();
+
+      expect(repository.searchMessages({ query: 'interleave superseded' }).results).toEqual([]);
+      expect(repository.searchMessages({ query: 'interleave replacement' }).results).toHaveLength(
+        1
+      );
+    });
   });
 
   describe('conversation_turn_index — anchor gated on sendStatus (#2338)', () => {
@@ -3583,6 +3634,8 @@ describe('SDKMessageRepository', () => {
       repository.saveSDKMessage('session-1', resultMessage());
 
       expect(counter.count()).toBe(0);
+
+      repository.flushMessageSearchIndex();
 
       const bodies = db
         .prepare(

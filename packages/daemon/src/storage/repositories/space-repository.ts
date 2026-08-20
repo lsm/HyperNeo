@@ -244,9 +244,18 @@ export class SpaceRepository {
     const deleteSearchRows = this.tableExists('message_search_content')
       ? this.db.prepare(`DELETE FROM message_search_content WHERE space_id = ?`)
       : null;
+    const deletePendingRows = this.tableExists('message_search_pending')
+      ? this.db.prepare(
+          `DELETE FROM message_search_pending
+           WHERE message_id IN (
+             SELECT id FROM sdk_messages WHERE task_id IN (SELECT id FROM space_tasks WHERE space_id = ?)
+           )`
+        )
+      : null;
     const deleteSpace = this.db.prepare(`DELETE FROM spaces WHERE id = ?`);
     const tx = this.db.transaction((spaceId: string) => {
       deleteSearchRows?.run(spaceId);
+      deletePendingRows?.run(spaceId);
       return deleteSpace.run(spaceId);
     });
     const result = tx(id);
