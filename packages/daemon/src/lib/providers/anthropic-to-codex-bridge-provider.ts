@@ -1046,17 +1046,15 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         ),
         CLAUDE_CODE_OAUTH_TOKEN: '',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-        ANTHROPIC_DEFAULT_OPUS_MODEL: this.catalogEntries.some(
-          ({ info }) => info.id === 'gpt-5.6-sol'
-        )
-          ? CODEX_TO_SDK_MODEL['gpt-5.6-sol']
-          : sdkModelId,
+        ANTHROPIC_DEFAULT_OPUS_MODEL:
+          this.getModelForTier('opus') === 'gpt-5.6-sol'
+            ? CODEX_TO_SDK_MODEL['gpt-5.6-sol']
+            : sdkModelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: sdkModelId,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: this.catalogEntries.some(
-          ({ info }) => info.id === 'gpt-5.6-luna'
-        )
-          ? CODEX_TO_SDK_MODEL['gpt-5.6-luna']
-          : sdkModelId,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL:
+          this.getModelForTier('haiku') === 'gpt-5.6-luna'
+            ? CODEX_TO_SDK_MODEL['gpt-5.6-luna']
+            : sdkModelId,
       },
       isAnthropicCompatible: true,
       apiVersion: 'v1',

@@ -1233,6 +1233,14 @@ describe('AnthropicToCodexBridgeProvider', () => {
                   priority: 5,
                 },
                 {
+                  slug: 'gpt-5.6-luna',
+                  display_name: 'GPT Hidden Mini',
+                  context_window: 111000,
+                  visibility: 'none',
+                  supported_in_api: true,
+                  priority: 6,
+                },
+                {
                   slug: 'gpt-account-only',
                   display_name: 'GPT Account Only',
                   visibility: 'list',
@@ -1266,8 +1274,15 @@ describe('AnthropicToCodexBridgeProvider', () => {
       });
       expect(models[1]?.contextWindow).toBe(222000);
       expect(provider.ownsModel('gpt-5.6-sol')).toBe(true);
+      expect(provider.ownsModel('gpt-5.6-luna')).toBe(true);
       expect(provider.ownsModel('gpt-account-only')).toBe(false);
       expect(provider.getModelForTier('opus')).toBe('gpt-first');
+      expect(provider.getModelForTier('haiku')).toBe('gpt-first');
+      if (isBun) {
+        const config = provider.buildSdkConfig('gpt-first', { sessionId: 'hidden-defaults' });
+        expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-first');
+        expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-first');
+      }
     });
 
     it('preserves curated metadata and aliases for known remote models', async () => {
