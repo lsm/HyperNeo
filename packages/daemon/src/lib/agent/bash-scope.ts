@@ -209,6 +209,57 @@ function stripLeadingAssignments(segment: string): string | null {
   }
 }
 
+function outputRedirectsAreSafe(segment: string): boolean {
+  const n = segment.length;
+  let i = 0;
+  while (i < n) {
+    const ch = segment[i];
+    if (ch === "'") {
+      const close = segment.indexOf("'", i + 1);
+      if (close === -1) break;
+      i = close + 1;
+      continue;
+    }
+    if (ch === '"') {
+      i++;
+      while (i < n && segment[i] !== '"') {
+        if (segment[i] === '\\') i++;
+        i++;
+      }
+      i++;
+      continue;
+    }
+    if (ch === '>') {
+      let j = i + 1;
+      while (j < n && segment[j] === '>') j++;
+      while (j < n && (segment[j] === ' ' || segment[j] === '\t')) j++;
+      if (j >= n) return false;
+      if (segment[j] === '&') {
+        i = j + 1;
+        continue;
+      }
+      if (segment[j] === '$') {
+        i = j + 1;
+        continue;
+      }
+      if (segment[j] === '"' && segment[j + 1] === '$') {
+        i = j + 1;
+        continue;
+      }
+      if (segment.startsWith('/dev/null', j)) {
+        const after = segment[j + 9];
+        if (after === undefined || after === ' ' || after === '\t') {
+          i = j + 9;
+          continue;
+        }
+      }
+      return false;
+    }
+    i++;
+  }
+  return true;
+}
+
 function segmentHasAllowedHead(segment: string, prefixes: readonly string[]): boolean {
   let s = segment.trim();
   if (!s) return true;
@@ -233,7 +284,7 @@ function segmentHasAllowedHead(segment: string, prefixes: readonly string[]): bo
       next === '<' ||
       next === '/'
     ) {
-      return true;
+      return outputRedirectsAreSafe(segment);
     }
   }
   return false;

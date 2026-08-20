@@ -283,11 +283,27 @@ describe('isBashCommandAllowed — tests, builds, app code, and route-arounds de
     const appended = "cat <<'EOF' && make build\nbody\nEOF";
     expect(isBashCommandAllowed(appended, PREFIXES)).toBe(false);
 
-    const redirectRemainder = "cat <<'EOF' >> /tmp/out\nbody\nEOF";
-    expect(isBashCommandAllowed(redirectRemainder, PREFIXES)).toBe(true);
+    const redirectRemainderLiteral = "cat <<'EOF' >> /tmp/out\nbody\nEOF";
+    expect(isBashCommandAllowed(redirectRemainderLiteral, PREFIXES)).toBe(false);
+
+    const redirectRemainderVar = 'cat <<\'EOF\' >> "$OUT"\nbody\nEOF';
+    expect(isBashCommandAllowed(redirectRemainderVar, PREFIXES)).toBe(true);
 
     const allowedPiped = "cat <<'EOF' | head -5\nbody\nEOF";
     expect(isBashCommandAllowed(allowedPiped, PREFIXES)).toBe(true);
+  });
+
+  test('output redirection to literal paths is denied; variable/fd targets stay allowed', () => {
+    expect(isBashCommandAllowed('echo hacked > ~/.bashrc', PREFIXES)).toBe(false);
+    expect(isBashCommandAllowed('cat payload > /etc/hosts', PREFIXES)).toBe(false);
+    expect(isBashCommandAllowed('echo x >> ./repo/src/file.ts', PREFIXES)).toBe(false);
+    expect(isBashCommandAllowed('jq . > out.json', PREFIXES)).toBe(false);
+    expect(isBashCommandAllowed('gh pr view 123 > pr.json', PREFIXES)).toBe(false);
+
+    expect(isBashCommandAllowed('jq -n --arg id "$PR_ID" > "$REQ"', PREFIXES)).toBe(true);
+    expect(isBashCommandAllowed('echo "warning" >&2', PREFIXES)).toBe(true);
+    expect(isBashCommandAllowed('head -5 file >/dev/null 2>&1', PREFIXES)).toBe(true);
+    expect(isBashCommandAllowed('jq . < resp.json', PREFIXES)).toBe(true);
   });
 
   test('a command whose name comes from an expansion is denied (word-splitting bypass)', () => {
