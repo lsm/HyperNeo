@@ -171,6 +171,8 @@ describe('MessageQueue', () => {
 
       const acknowledgment = queue.enqueueWithId('in-flight-id', 'Message 1');
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(true);
+      const existing = queue.waitForPendingOrInFlight('in-flight-id');
+      expect(existing).not.toBeNull();
 
       queue.start();
       const generator = queue.messageGenerator(testSessionId);
@@ -180,8 +182,22 @@ describe('MessageQueue', () => {
 
       result.value.onSent();
       await acknowledgment;
+      await existing;
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(false);
+      expect(queue.waitForPendingOrInFlight('in-flight-id')).toBeNull();
       queue.stop();
+    });
+
+    it('rejects a reused wait when the original queue entry fails', async () => {
+      const acknowledgment = queue
+        .enqueueWithId('rejected-id', 'Message 1')
+        .catch((error) => error);
+      const existing = queue.waitForPendingOrInFlight('rejected-id')?.catch((error) => error);
+
+      queue.clear();
+
+      expect(await acknowledgment).toMatchObject({ message: 'Interrupted by user' });
+      expect(await existing).toMatchObject({ message: 'Interrupted by user' });
     });
   });
 

@@ -1381,6 +1381,7 @@ export class AgentSession
           recordTurnEndMarker
         );
         let acknowledgment: Promise<void> | null = null;
+        let freshFeed = false;
         let admittedBatchUuids: string[] | undefined;
         let feedContent: string | MessageContent[] = content;
         if (!alreadyConsumed) {
@@ -1422,17 +1423,20 @@ export class AgentSession
               this.markDeliveryBatchSubmitted(memberUuids);
             }
           }
-          if (!this.messageQueue.hasPendingOrInFlight(messageUuid)) {
-            acknowledgment = this.messageQueue.admitWithId(messageUuid, feedContent, false, {
+          const existingAcknowledgment = this.messageQueue.waitForPendingOrInFlight(messageUuid);
+          freshFeed = existingAcknowledgment === null;
+          acknowledgment =
+            existingAcknowledgment ??
+            this.messageQueue.admitWithId(messageUuid, feedContent, false, {
               durable: true,
             });
-          }
         }
         return {
           kind: 'driving' as const,
           queryPromise,
           turnEnd,
           acknowledgment,
+          freshFeed,
           admittedBatchUuids,
           generation,
           responseObserver: armedObserver,
@@ -1466,6 +1470,7 @@ export class AgentSession
           await Promise.race([started.acknowledgment, aborted.promise]);
         } catch (error) {
           if (signal?.aborted) {
+            if (!started.freshFeed) throw error;
             if (this.messageQueue.remove(messageUuid)) throw error;
             await started.acknowledgment;
           } else {
@@ -1497,7 +1502,7 @@ export class AgentSession
       stallPromise = this.armDeliveryTurnStall(signal, claimGuard);
       stallWatchdog = this.deliveryTurnStall;
       const SPURIOUS_TURN_END_GRACE_MS = 250;
-      const freshFeed = !!started.acknowledgment;
+      const freshFeed = started.freshFeed;
       let raceArmedAt = Date.now();
       let graceRearms = 0;
       let turnEndFired = false;

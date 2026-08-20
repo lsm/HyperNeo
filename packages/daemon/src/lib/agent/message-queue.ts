@@ -28,6 +28,8 @@ interface QueuedMessage {
   internal?: boolean;
   timeoutId?: ReturnType<typeof setTimeout>;
   durable?: boolean;
+  onResolved?: () => void;
+  onRejected?: (error: Error) => void;
 }
 
 export class MessageQueue {
@@ -87,12 +89,14 @@ export class MessageQueue {
           if (queuedMessage.timeoutId) {
             clearTimeout(queuedMessage.timeoutId);
           }
+          queuedMessage.onResolved?.();
           resolve();
         },
         reject: (error: Error) => {
           if (queuedMessage.timeoutId) {
             clearTimeout(queuedMessage.timeoutId);
           }
+          queuedMessage.onRejected?.(error);
           reject(error);
         },
         internal,
@@ -180,14 +184,36 @@ export class MessageQueue {
   }
 
   hasPendingOrInFlight(messageId: string): boolean {
-    if (this.queue.some((message) => message.id === messageId)) return true;
+    return this.findPendingOrInFlight(messageId) !== null;
+  }
+
+  waitForPendingOrInFlight(messageId: string): Promise<void> | null {
+    const message = this.findPendingOrInFlight(messageId);
+    if (!message) return null;
+    return new Promise<void>((resolve, reject) => {
+      const previousResolved = message.onResolved;
+      const previousRejected = message.onRejected;
+      message.onResolved = () => {
+        previousResolved?.();
+        resolve();
+      };
+      message.onRejected = (error) => {
+        previousRejected?.(error);
+        reject(error);
+      };
+    });
+  }
+
+  private findPendingOrInFlight(messageId: string): QueuedMessage | null {
+    const queued = this.queue.find((message) => message.id === messageId);
+    if (queued) return queued;
     for (const message of this.claimed) {
-      if (message.id === messageId) return true;
+      if (message.id === messageId) return message;
     }
     for (const message of this.yielded) {
-      if (message.id === messageId) return true;
+      if (message.id === messageId) return message;
     }
-    return false;
+    return null;
   }
 
   start(): void {
