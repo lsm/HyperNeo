@@ -3524,12 +3524,29 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
         }
         return { totalCount: 0, archivedCount: 0 };
       },
-      buildScopeFilter: () => (scope) => {
-        if (scope.sessionType && SESSION_LIST_EXCLUDED_TYPES.has(scope.sessionType)) {
-          return false;
-        }
-        if (scope.roomId || scope.spaceId) return false;
-        return true;
+      buildScopeFilter: (_params, db) => {
+        const stmt = db.prepare(
+          `SELECT type,
+             json_extract(session_context, '$.roomId') AS room_id,
+             json_extract(session_context, '$.spaceId') AS space_id
+           FROM sessions WHERE id = ?`
+        );
+        return (scope) => {
+          if (scope.sessionType && SESSION_LIST_EXCLUDED_TYPES.has(scope.sessionType)) {
+            return false;
+          }
+          if (scope.roomId || scope.spaceId) return false;
+          if (scope.sessionId) {
+            const row = stmt.get(scope.sessionId) as
+              | { type: string | null; room_id: string | null; space_id: string | null }
+              | undefined;
+            if (row) {
+              if (row.type && SESSION_LIST_EXCLUDED_TYPES.has(row.type)) return false;
+              if (row.room_id || row.space_id) return false;
+            }
+          }
+          return true;
+        };
       },
     },
   ],

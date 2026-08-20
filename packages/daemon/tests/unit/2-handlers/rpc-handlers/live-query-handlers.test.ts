@@ -5115,6 +5115,26 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(filter({ sessionId: 's' })).toBe(true);
         expect(filter({ sessionId: 's', taskId: 'task-1' })).toBe(true);
       });
+
+      test('session-ID-only scopes resolve visibility from the database', () => {
+        db.exec(`
+          INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
+          VALUES ('db-worker', 'Worker', '2026-08-20', '2026-08-20', 'active', '{}', '{}', 'worker', '{"spaceId":"space-1"}')
+        `);
+        db.exec(`
+          INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
+          VALUES ('db-task-agent', 'Task Agent', '2026-08-20', '2026-08-20', 'active', '{}', '{}', 'space_task_agent', NULL)
+        `);
+        db.exec(`
+          INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
+          VALUES ('db-human', 'Human', '2026-08-20', '2026-08-20', 'active', '{}', '{}', 'general', NULL)
+        `);
+        const filter = buildFilter();
+        expect(filter({ sessionId: 'db-worker' })).toBe(false);
+        expect(filter({ sessionId: 'db-task-agent' })).toBe(false);
+        expect(filter({ sessionId: 'db-human' })).toBe(true);
+        expect(filter({ sessionId: 'missing-session' })).toBe(true);
+      });
     });
 
     describe('actor message queries', () => {
@@ -5463,6 +5483,43 @@ describe('sessions.list reactive scope filter', () => {
     await flush();
     expect(spy.mock.calls).toHaveLength(0);
     expect(diffs).toHaveLength(1);
+  });
+
+  function makeAssistantMessage(uuid: string): SDKMessage {
+    return {
+      type: 'assistant',
+      uuid,
+      parent_tool_use_id: null,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+    } as SDKMessage;
+  }
+
+  test('worker session message saves do not re-run the list', async () => {
+    reactiveDb.db.createSession(makeSession('space-worker-1', { spaceId: 'space-1' }));
+    const spy = spyOnEvaluate();
+    const diffs: QueryDiff<Record<string, unknown>>[] = [];
+    subscribeToList((diff) => diffs.push(diff));
+    await flush();
+    spy.mockClear();
+
+    reactiveDb.db.saveSDKMessage('space-worker-1', makeAssistantMessage('worker-msg-1'));
+    await flush();
+
+    expect(spy.mock.calls).toHaveLength(0);
+    expect(diffs).toHaveLength(1);
+  });
+
+  test('human session message saves re-run the list', async () => {
+    reactiveDb.db.createSession(makeSession('human-1'));
+    const spy = spyOnEvaluate();
+    subscribeToList(() => {});
+    await flush();
+    spy.mockClear();
+
+    reactiveDb.db.saveSDKMessage('human-1', makeAssistantMessage('human-msg-1'));
+    await flush();
+
+    expect(spy.mock.calls).toHaveLength(1);
   });
 
   test('archiving a human session re-runs and drops it from the list', async () => {
