@@ -1259,6 +1259,22 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
     if (response.status === 401) {
       await response.body?.cancel().catch(() => undefined);
+      const replacementAuth = this.resolveBridgeAuth();
+      if (
+        replacementAuth &&
+        (replacementAuth.apiKey !== auth.apiKey ||
+          !this.sameScope(this.authScope(replacementAuth), scope))
+      ) {
+        const running = this.rekeyModelRefresh(
+          refreshKey,
+          this.scopeKey(this.authScope(replacementAuth))
+        );
+        if (running) {
+          await running;
+          return;
+        }
+        return this.fetchModelCatalog(replacementAuth, false, refreshKey);
+      }
       throw Object.assign(new Error('Codex credentials rejected (HTTP 401)'), {
         definitiveAuthFailure: true,
       });

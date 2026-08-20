@@ -1383,6 +1383,14 @@ export function createOpenAIResponsesBridgeServer(
   const updateAuth = (auth: OpenAIResponsesBridgeAuth): void => {
     activeAuth = auth;
     resolvedAuth = undefined;
+    for (const continuation of continuations.values()) {
+      clearTimeout(continuation.cleanupTimer);
+    }
+    continuations.clear();
+    for (const entry of sessionReasoningItems.values()) {
+      clearTimeout(entry.cleanupTimer);
+    }
+    sessionReasoningItems.clear();
   };
   const isChatgptOAuth = config.auth.source === 'chatgpt_oauth' && !config.openAIBaseUrl;
   const buildOpts = {

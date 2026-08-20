@@ -252,20 +252,27 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
       const previousScope = provider.getModelCatalogScope?.();
       const available = await provider.isAvailable();
       if (!available) {
-        return { available, models: [], failed: false, rejected: false, scopeChanged: false };
+        return { available, models: [], failed: false, rejected: false, scopeAfter: previousScope };
       }
       if (!provider.refreshModels) {
+        const models = await provider.getModels();
         return {
           available,
-          models: await provider.getModels(),
+          models,
           failed: false,
           rejected: false,
-          scopeChanged: false,
+          scopeAfter: provider.getModelCatalogScope?.(),
         };
       }
       try {
         const models = await provider.refreshModels();
-        return { available, models, failed: false, rejected: false, scopeChanged: false };
+        return {
+          available,
+          models,
+          failed: false,
+          rejected: false,
+          scopeAfter: provider.getModelCatalogScope?.(),
+        };
       } catch (error) {
         const definitiveAuthFailure = Boolean(
           (error as ProviderModelRefreshError).definitiveAuthFailure
@@ -280,6 +287,7 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
             previousScope !== undefined &&
             currentScope !== undefined &&
             previousScope !== currentScope,
+          scopeAfter: currentScope,
         };
       }
     })
@@ -299,6 +307,17 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
       if (result.value.failed) failedProviderIds.add(providers[index].id);
       if (result.value.rejected) rejectedProviderIds.add(providers[index].id);
       if (result.value.scopeChanged) changedProviderIds.add(providers[index].id);
+      const scopeNow = providers[index].getModelCatalogScope?.();
+      if (
+        result.value.scopeAfter !== undefined &&
+        scopeNow !== undefined &&
+        result.value.scopeAfter !== scopeNow
+      ) {
+        changedProviderIds.add(providers[index].id);
+        for (let i = models.length - 1; i >= 0; i -= 1) {
+          if (models[i].provider === providers[index].id) models.splice(i, 1);
+        }
+      }
     }
   });
 

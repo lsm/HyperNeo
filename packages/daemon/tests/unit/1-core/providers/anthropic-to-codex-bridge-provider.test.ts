@@ -3331,6 +3331,77 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('rechecks active auth before rejecting a retried 401', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const oldAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-recheck-old' },
+      });
+      const refreshedAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-recheck-old' },
+        jti: 'rotated',
+      });
+      const replacementAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-recheck-new' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: oldAccess,
+        refresh: 'old-refresh-token',
+        accountId: 'acct-recheck-old',
+      });
+      let resolveRetry: ((response: Response) => void) | undefined;
+      const retryResponse = new Promise<Response>((resolve) => {
+        resolveRetry = resolve;
+      });
+      const fetchImpl = mock()
+        .mockImplementationOnce(async () => new Response('unauthorized', { status: 401 }))
+        .mockImplementationOnce(async () => retryResponse)
+        .mockImplementationOnce(
+          async () =>
+            new Response(JSON.stringify({ data: [{ id: 'gpt-recheck-new' }] }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+        ) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            access_token: refreshedAccess,
+            refresh_token: 'next-refresh-token',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+
+        const modelsPromise = provider.getModels();
+        await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
+        provider.setCredentials({
+          type: 'oauth',
+          accessToken: replacementAccess,
+          refreshToken: 'new-refresh-token',
+          raw: { accountId: 'acct-recheck-new' },
+        });
+        resolveRetry?.(new Response('unauthorized', { status: 401 }));
+
+        const models = await modelsPromise;
+        expect(models.map((model) => model.id)).toEqual(['gpt-recheck-new']);
+        const thirdCall = (fetchImpl as ReturnType<typeof mock>).mock.calls[2] as [
+          URL,
+          RequestInit,
+        ];
+        const headers = new Headers(thirdCall[1].headers);
+        expect(headers.get('authorization')).toBe(`Bearer ${replacementAccess}`);
+        expect(headers.get('ChatGPT-Account-ID')).toBe('acct-recheck-new');
+        expect(await provider.isAvailable()).toBe(true);
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
     it('abandons the old-scope retry when replacement discovery is already running', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const oldAccess = makeJwt({
