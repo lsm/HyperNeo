@@ -313,6 +313,7 @@ export class CustomEndpointProvider implements Provider {
           baseUrl,
           apiKey,
           headers: this.config.headers,
+          thinkingSupported: caps.thinking,
           ...(fetchImpl ? { fetchImpl } : {}),
         });
       }

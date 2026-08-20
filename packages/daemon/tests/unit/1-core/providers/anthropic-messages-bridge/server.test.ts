@@ -8,11 +8,15 @@ const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
 type FetchImpl = typeof fetch;
 
-function makeServer(upstream: FetchImpl): AnthropicMessagesBridgeServer {
+function makeServer(
+  upstream: FetchImpl,
+  thinkingSupported?: boolean
+): AnthropicMessagesBridgeServer {
   return createAnthropicMessagesBridgeServer({
     baseUrl: 'https://open.bigmodel.cn/api/anthropic',
     apiKey: 'test-key',
     fetchImpl: upstream,
+    thinkingSupported,
   });
 }
 
@@ -247,6 +251,35 @@ describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement
     expect(res.status).toBe(200);
     await res.text();
     expect(upstreamThinking).toEqual({ type: 'enabled', budget_tokens: 31999 });
+  });
+
+  it('leaves enabled thinking unchanged when the model does not support it', async () => {
+    let upstreamThinking: unknown = 'not-captured';
+    server = makeServer(async (_url, init) => {
+      const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
+        thinking?: unknown;
+      };
+      upstreamThinking = body.thinking ?? null;
+      return new Response(JSON.stringify({ input_tokens: 1 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }, false);
+    server.setSessionThinkingConfig?.('sess-unsupported', {
+      type: 'enabled',
+      budget_tokens: 31999,
+    });
+
+    const res = await postWithSession(server.port, 'sess-unsupported', {
+      model: 'swe-1-7',
+      max_tokens: 32000,
+      messages: [{ role: 'user', content: 'hi' }],
+      thinking: { type: 'adaptive' },
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(upstreamThinking).toEqual({ type: 'adaptive' });
   });
 
   it('strips thinking entirely for a session configured as off', async () => {
