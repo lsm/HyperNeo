@@ -45,7 +45,7 @@ import { AcpClient, type AcpClientOptions } from './acp-client';
 import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from './acp-command';
 import { AcpQueryAdapter } from './acp-query-adapter';
 import { AcpTerminalManager } from './acp-terminal-manager';
-import { writeFileWithinWorkspace } from './acp-safe-fs';
+import { readFileWithinWorkspace, writeFileWithinWorkspace } from './acp-safe-fs';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
@@ -1074,35 +1074,14 @@ export class AcpQueryRunner {
   }
 
   private async handleFsRead(params: AcpFsReadParams, workspace: string): Promise<AcpFsReadResult> {
-    const { createReadStream } = await import('node:fs');
-    const { createInterface } = await import('node:readline');
-    const filePath = await this.resolveWorkspacePath(params.path, workspace);
-    const start = Math.max(0, (params.line ?? 1) - 1);
-    const end = params.limit == null ? Number.POSITIVE_INFINITY : start + params.limit;
-    const stream = createReadStream(filePath, { encoding: 'utf-8' });
-    const lines = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
-    const selected: string[] = [];
-    let bytes = 0;
-    let line = 0;
-
-    try {
-      for await (const content of lines) {
-        if (line >= end) break;
-        if (line >= start) {
-          bytes += Buffer.byteLength(content) + (selected.length > 0 ? 1 : 0);
-          if (bytes > MAX_FS_READ_BYTES) {
-            throw new Error(`ACP filesystem read exceeds ${MAX_FS_READ_BYTES} bytes`);
-          }
-          selected.push(content);
-        }
-        line++;
-      }
-    } finally {
-      lines.close();
-      stream.destroy();
-    }
-
-    return { content: selected.join('\n') };
+    const { workspacePath, segments } = await this.resolveWorkspaceSegments(params.path, workspace);
+    return {
+      content: await readFileWithinWorkspace(workspacePath, segments, {
+        startLine: Math.max(0, (params.line ?? 1) - 1),
+        lineLimit: params.limit ?? undefined,
+        maxBytes: MAX_FS_READ_BYTES,
+      }),
+    };
   }
 
   private async handleFsWrite(
@@ -1111,44 +1090,29 @@ export class AcpQueryRunner {
     signal: AbortSignal
   ): Promise<AcpFsWriteResult> {
     if (signal.aborted) throw new Error('ACP filesystem write cancelled');
-    const workspacePath = await this.resolveWorkspacePath('.', workspace);
-    const filePath = await this.resolveWorkspacePath(params.path, workspace);
-    const relativePath = relative(workspacePath, filePath);
-    await writeFileWithinWorkspace(workspacePath, relativePath.split(sep), params.content, signal);
+    const { workspacePath, segments } = await this.resolveWorkspaceSegments(params.path, workspace);
+    await writeFileWithinWorkspace(workspacePath, segments, params.content, signal);
     return {};
   }
 
-  private async resolveWorkspacePath(path: string, workspace: string): Promise<string> {
-    const { lstat, realpath } = await import('node:fs/promises');
-    const { dirname, resolve } = await import('node:path');
+  private async resolveWorkspaceSegments(
+    path: string,
+    workspace: string
+  ): Promise<{ workspacePath: string; segments: string[] }> {
+    const { realpath } = await import('node:fs/promises');
+    const { resolve } = await import('node:path');
     const workspacePath = await realpath(workspace);
-    const requestedPath = isAbsolute(path) ? resolve(path) : resolve(workspacePath, path);
-    if (!isAbsolute(path)) this.assertWorkspacePath(requestedPath, workspacePath, path);
-
-    const requestedStats = await lstat(requestedPath).catch(() => undefined);
-    if (
-      requestedStats?.isSymbolicLink() &&
-      !(await realpath(requestedPath).catch(() => undefined))
-    ) {
-      throw new Error(`ACP filesystem path is a dangling symbolic link: ${path}`);
+    const lexicalWorkspace = resolve(workspace);
+    const requestedPath = isAbsolute(path) ? resolve(path) : resolve(lexicalWorkspace, path);
+    let relativePath = relative(lexicalWorkspace, requestedPath);
+    try {
+      this.assertWorkspacePath(requestedPath, lexicalWorkspace, path);
+    } catch {
+      this.assertWorkspacePath(requestedPath, workspacePath, path);
+      relativePath = relative(workspacePath, requestedPath);
     }
-
-    let existingPath = requestedPath;
-    let resolvedPath: string | undefined;
-    while (!resolvedPath) {
-      resolvedPath = await realpath(existingPath).catch(() => undefined);
-      if (resolvedPath) break;
-      const parentPath = dirname(existingPath);
-      if (parentPath === existingPath) break;
-      existingPath = parentPath;
-    }
-    if (!resolvedPath) {
-      throw new Error(`Unable to resolve ACP filesystem path: ${path}`);
-    }
-
-    const targetPath = resolve(resolvedPath, relative(existingPath, requestedPath));
-    this.assertWorkspacePath(targetPath, workspacePath, path);
-    return targetPath;
+    if (!relativePath) throw new Error(`ACP filesystem path must identify a file: ${path}`);
+    return { workspacePath, segments: relativePath.split(sep) };
   }
 
   private assertWorkspacePath(path: string, workspace: string, requestedPath: string): void {

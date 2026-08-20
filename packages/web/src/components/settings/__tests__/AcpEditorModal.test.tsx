@@ -120,6 +120,51 @@ describe('AcpEditorModal', () => {
     });
   });
 
+  it('preserves absent models on no-op save', async () => {
+    mockUpdateProvider.mockResolvedValue({ success: true });
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command="devin acp"
+        onClose={() => {}}
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledWith('acp-1', {
+        configJson: JSON.stringify({ command: 'devin acp' }),
+      });
+    });
+  });
+
+  it('preserves explicit empty models on no-op save', async () => {
+    mockUpdateProvider.mockResolvedValue({ success: true });
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command="devin acp"
+        models={[]}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledWith('acp-1', {
+        configJson: JSON.stringify({ command: 'devin acp', models: [] }),
+      });
+    });
+  });
+
   it('preserves curated models for equivalent command formatting', async () => {
     mockUpdateProvider.mockResolvedValue({ success: true });
 

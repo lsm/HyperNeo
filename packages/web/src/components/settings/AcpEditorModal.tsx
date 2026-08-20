@@ -13,7 +13,7 @@ interface AcpEditorModalProps {
   providerId: string;
   providerName: string;
   command: string;
-  models: AcpConfiguredModel[];
+  models?: AcpConfiguredModel[];
   onClose: () => void;
   onSaved: () => void;
 }
@@ -35,7 +35,7 @@ export function AcpEditorModal({
   onSaved,
 }: AcpEditorModalProps) {
   const [command, setCommand] = useState(initialCommand);
-  const [models, setModels] = useState<AcpConfiguredModel[]>(initialModels);
+  const [models, setModels] = useState<AcpConfiguredModel[] | undefined>(initialModels);
   const [modelsCommand, setModelsCommand] = useState(initialCommand.trim());
   const [fetchedModels, setFetchedModels] = useState<AcpConfiguredModel[] | null>(null);
   const [fetchedCommand, setFetchedCommand] = useState<string | null>(null);
@@ -45,7 +45,7 @@ export function AcpEditorModal({
   const [error, setError] = useState<string | null>(null);
   const commandChanged = !acpCommandsEquivalent(command, initialCommand);
 
-  const existingModelIds = new Set(models.map((m) => m.id));
+  const existingModelIds = new Set((models ?? []).map((m) => m.id));
   const selectableFetched = fetchedModels?.filter((m) => !existingModelIds.has(m.id)) ?? [];
 
   const handleFetch = async () => {
@@ -82,12 +82,12 @@ export function AcpEditorModal({
     const toAdd =
       fetchedModels?.filter((m) => selectedIds.includes(m.id) && !existingModelIds.has(m.id)) ?? [];
     if (toAdd.length === 0) return;
-    setModels((prev) => [...prev, ...toAdd]);
+    setModels((prev) => [...(prev ?? []), ...toAdd]);
     setSelectedIds([]);
   };
 
   const removeModel = (id: string) => {
-    setModels((prev) => prev.filter((m) => m.id !== id));
+    setModels((prev) => prev?.filter((m) => m.id !== id));
   };
 
   const handleSave = async () => {
@@ -221,7 +221,7 @@ export function AcpEditorModal({
               </div>
             )}
 
-            {models.length === 0 ? (
+            {!models?.length ? (
               <p class="text-xs text-gray-500 italic">
                 No models selected — fetch and add models, or leave empty to use ACP Default.
               </p>

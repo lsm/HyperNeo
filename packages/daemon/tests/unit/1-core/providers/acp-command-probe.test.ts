@@ -15,7 +15,7 @@ let spawnHandler: SpawnHandler = (command, args, options) => {
     kill: (signal: NodeJS.Signals) => boolean;
   };
   child.kill = () => true;
-  queueMicrotask(() => child.emit('exit', 0, null));
+  queueMicrotask(() => child.emit('spawn'));
   return child;
 };
 
@@ -38,7 +38,7 @@ describe('defaultAcpCommandProbe', () => {
         kill: (signal: NodeJS.Signals) => boolean;
       };
       child.kill = () => true;
-      queueMicrotask(() => child.emit('exit', 0, null));
+      queueMicrotask(() => child.emit('spawn'));
       return child;
     };
   });
@@ -55,7 +55,7 @@ describe('defaultAcpCommandProbe', () => {
     expect(calls).toEqual([
       {
         command: '/Applications/Devin CLI/devin',
-        args: ['acp', '--help'],
+        args: ['acp'],
         options: {
           env: { PATH: '/safe/bin', HOME: '/safe/home' },
           stdio: ['ignore', 'ignore', 'ignore'],
@@ -64,17 +64,38 @@ describe('defaultAcpCommandProbe', () => {
     ]);
   });
 
-  test('rejects nonzero probe exits', async () => {
+  test('accepts a process that exits nonzero after spawning', async () => {
     spawnHandler = (command, args, options) => {
       calls.push({ command, args, options });
       const child = new EventEmitter() as EventEmitter & {
         kill: (signal: NodeJS.Signals) => boolean;
       };
       child.kill = () => true;
-      queueMicrotask(() => child.emit('exit', 3, null));
+      queueMicrotask(() => {
+        child.emit('spawn');
+        child.emit('exit', 3, null);
+      });
       return child;
     };
 
-    await expect(defaultAcpCommandProbe('devin acp', 1000)).rejects.toThrow('probe exited with 3');
+    await expect(defaultAcpCommandProbe('devin acp', 1000)).resolves.toBeUndefined();
+  });
+
+  test('reports a missing command', async () => {
+    spawnHandler = (command, args, options) => {
+      calls.push({ command, args, options });
+      const child = new EventEmitter() as EventEmitter & {
+        kill: (signal: NodeJS.Signals) => boolean;
+      };
+      child.kill = () => true;
+      queueMicrotask(() =>
+        child.emit('error', Object.assign(new Error('missing'), { code: 'ENOENT' }))
+      );
+      return child;
+    };
+
+    await expect(defaultAcpCommandProbe('missing acp', 1000)).rejects.toThrow(
+      "ACP command 'missing' not found in PATH"
+    );
   });
 });

@@ -1,10 +1,31 @@
 import { expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rename, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeFileWithinWorkspace } from '../../../../src/lib/acp/acp-safe-fs';
+import {
+  readFileWithinWorkspace,
+  writeFileWithinWorkspace,
+} from '../../../../src/lib/acp/acp-safe-fs';
 
-test('writes through workspace directories without following symlinks', async () => {
+const bunRuntimeTest = process.versions.bun ? test : test.skip;
+const unsupportedRuntimeTest = process.versions.bun ? test.skip : test;
+
+unsupportedRuntimeTest('rejects filesystem operations only when invoked', async () => {
+  const signal = new AbortController().signal;
+
+  await expect(
+    readFileWithinWorkspace('/workspace', ['content.txt'], {
+      startLine: 0,
+      lineLimit: undefined,
+      maxBytes: 1024,
+    })
+  ).rejects.toThrow(`ACP safe filesystem operations are unavailable on ${process.platform}`);
+  await expect(
+    writeFileWithinWorkspace('/workspace', ['content.txt'], 'content', signal)
+  ).rejects.toThrow(`ACP safe filesystem operations are unavailable on ${process.platform}`);
+});
+
+bunRuntimeTest('writes through workspace directories without following symlinks', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-write-'));
   const workspace = join(root, 'workspace');
   const outside = join(root, 'outside');
@@ -37,7 +58,7 @@ test('writes through workspace directories without following symlinks', async ()
   }
 });
 
-test('does not follow a final symlink', async () => {
+bunRuntimeTest('does not follow a final symlink', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-write-'));
   const workspace = join(root, 'workspace');
   const outside = join(root, 'outside.txt');
@@ -49,6 +70,60 @@ test('does not follow a final symlink', async () => {
       writeFileWithinWorkspace(workspace, ['link.txt'], 'blocked', new AbortController().signal)
     ).rejects.toThrow('Unable to open ACP filesystem path');
     await expect(readFile(outside, 'utf-8')).rejects.toThrow();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+bunRuntimeTest('reads exact ranged content without following symlinks', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-read-'));
+  const workspace = join(root, 'workspace');
+  const outside = join(root, 'outside');
+  await mkdir(join(workspace, 'nested'), { recursive: true });
+  await mkdir(outside);
+  await writeFile(join(workspace, 'nested', 'content.txt'), 'one\r\ntwo\r\nthree\r\n');
+  await writeFile(join(outside, 'secret.txt'), 'secret');
+
+  try {
+    expect(
+      await readFileWithinWorkspace(workspace, ['nested', 'content.txt'], {
+        startLine: 1,
+        lineLimit: 1,
+        maxBytes: 1024,
+      })
+    ).toBe('two\r\n');
+
+    await rename(join(workspace, 'nested'), join(workspace, 'moved'));
+    await symlink(outside, join(workspace, 'nested'));
+
+    await expect(
+      readFileWithinWorkspace(workspace, ['nested', 'secret.txt'], {
+        startLine: 0,
+        lineLimit: undefined,
+        maxBytes: 1024,
+      })
+    ).rejects.toThrow('Unable to open ACP filesystem path');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+bunRuntimeTest('does not follow a final read symlink', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-read-'));
+  const workspace = join(root, 'workspace');
+  const outside = join(root, 'outside.txt');
+  await mkdir(workspace);
+  await writeFile(outside, 'secret');
+  await symlink(outside, join(workspace, 'link.txt'));
+
+  try {
+    await expect(
+      readFileWithinWorkspace(workspace, ['link.txt'], {
+        startLine: 0,
+        lineLimit: undefined,
+        maxBytes: 1024,
+      })
+    ).rejects.toThrow('Unable to open ACP filesystem path');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

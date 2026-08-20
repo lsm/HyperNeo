@@ -395,15 +395,21 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             existing.isEnabled === false &&
             updates.isEnabled === true &&
             liveAcpCommand !== undefined &&
-            acpCommandsDiffer(liveAcpCommand, readAcpCommand(existing.configJson));
+            acpCommandsDiffer(
+              liveAcpCommand,
+              updates.configJson !== undefined
+                ? updatedAcpCommand
+                : readAcpCommand(existing.configJson)
+            );
           const acpCommandChanged =
             existing.providerId === 'acp' &&
-            existing.isEnabled !== false &&
             updates.configJson !== undefined &&
             acpCommandsDiffer(readAcpCommand(existing.configJson), updatedAcpCommand);
           const record = providerRepo.updateProvider(data.id, updates);
           if (!record) throw new Error(`Provider ${data.id} not found`);
-          if (acpCommandChanged || enablingChangedAcpCommand) {
+          if (acpCommandChanged && existing.isEnabled === false && updates.isEnabled !== true) {
+            clearPersistedAcpSessionIds?.();
+          } else if (acpCommandChanged || enablingChangedAcpCommand) {
             await invalidateAcpSessions(sessionManager, clearPersistedAcpSessionIds);
           }
 

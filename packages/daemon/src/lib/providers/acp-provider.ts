@@ -30,23 +30,11 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
-    const child = spawn(command, [...args, '--help'], {
+    const child = spawn(command, args, {
       env: buildAcpSafeEnv(),
       stdio: ['ignore', 'ignore', 'ignore'],
     });
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const settle = (callback: () => void) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      callback();
-    };
-    const clearKillTimer = () => {
-      if (!killTimer) return;
-      clearTimeout(killTimer);
-      killTimer = null;
-    };
-    timer = setTimeout(() => {
+    const timer = setTimeout(() => {
       child.kill('SIGTERM');
       killTimer = setTimeout(() => child.kill('SIGKILL'), ACP_PROBE_KILL_TIMEOUT_MS);
       killTimer.unref();
@@ -54,7 +42,24 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
         reject(new Error(`ACP command '${command}' probe timed out after ${timeoutMs}ms`))
       );
     }, timeoutMs);
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    const clearKillTimer = () => {
+      if (!killTimer) return;
+      clearTimeout(killTimer);
+      killTimer = null;
+    };
 
+    child.on('spawn', () => {
+      child.kill('SIGTERM');
+      killTimer = setTimeout(() => child.kill('SIGKILL'), ACP_PROBE_KILL_TIMEOUT_MS);
+      killTimer.unref();
+      settle(resolve);
+    });
     child.on('error', (err: NodeJS.ErrnoException) => {
       clearKillTimer();
       settle(() => {
@@ -65,20 +70,7 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
         reject(new Error(`ACP command '${command}' probe failed: ${err.message}`));
       });
     });
-    child.on('exit', (code, signal) => {
-      clearKillTimer();
-      settle(() => {
-        if (code === 0) {
-          resolve();
-          return;
-        }
-        reject(
-          new Error(
-            `ACP command '${command}' probe exited with ${code ?? signal ?? 'unknown status'}`
-          )
-        );
-      });
-    });
+    child.on('exit', clearKillTimer);
   });
 };
 

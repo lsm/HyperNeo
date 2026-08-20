@@ -601,111 +601,116 @@ describe('AcpQueryRunner', () => {
     expect(stopSpy).toHaveBeenCalled();
   });
 
-  test('confines filesystem callbacks to the workspace and honors read ranges', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-fs-'));
-    const workspace = join(root, 'workspace');
-    const outside = join(root, 'outside.txt');
-    await mkdir(workspace);
-    await writeFile(join(workspace, 'inside.txt'), 'one\ntwo\nthree\nfour');
-    await writeFile(outside, 'secret');
-    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
-    const { runner, ctx, constructorOptions } = createRunnerFixture({
-      client,
-      session: { workspacePath: workspace },
-      queryOptions: { cwd: workspace, mcpServers: {} },
-      canUseTool: async (_toolName, input) => {
-        const question = (input.questions as Array<{ question: string }>)[0].question;
-        return { behavior: 'allow', updatedInput: { answers: { [question]: 'Allow once' } } };
-      },
-    });
+  const bunRuntimeTest = process.versions.bun ? test : test.skip;
 
-    try {
-      await runner.start();
-      await promptStarted;
-
-      await expect(
-        constructorOptions[0].onFsRead?.({
-          sessionId: 'acp-session-1',
-          path: join(workspace, 'inside.txt'),
-          line: 2,
-          limit: 2,
-        })
-      ).resolves.toEqual({ content: 'two\nthree' });
-      await expect(
-        constructorOptions[0].onFsRead?.({
-          sessionId: 'acp-session-1',
-          path: join(await realpath(workspace), 'inside.txt'),
-        })
-      ).resolves.toEqual({ content: 'one\ntwo\nthree\nfour' });
-      await expect(
-        constructorOptions[0].onFsRead?.({
-          sessionId: 'acp-session-1',
-          path: outside,
-        })
-      ).rejects.toThrow('escapes workspace');
-      const large = join(workspace, 'large.txt');
-      await writeFile(large, 'x'.repeat(4 * 1024 * 1024 + 1));
-      await expect(
-        constructorOptions[0].onFsRead?.({
-          sessionId: 'acp-session-1',
-          path: large,
-        })
-      ).rejects.toThrow('ACP filesystem read exceeds');
-      await expect(
-        constructorOptions[0].onFsRead?.({
-          sessionId: 'acp-session-1',
-          path: large,
-          line: 1,
-          limit: 0,
-        })
-      ).resolves.toEqual({ content: '' });
-      await expect(
-        constructorOptions[0].onFsWrite?.({
-          sessionId: 'acp-session-1',
-          path: '../escaped.txt',
-          content: 'blocked',
-        })
-      ).rejects.toThrow('escapes workspace');
-      await constructorOptions[0].onFsWrite?.({
-        sessionId: 'acp-session-1',
-        path: join(workspace, 'nested', 'written.txt'),
-        content: 'written',
+  bunRuntimeTest(
+    'confines filesystem callbacks to the workspace and honors read ranges',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-fs-'));
+      const workspace = join(root, 'workspace');
+      const outside = join(root, 'outside.txt');
+      await mkdir(workspace);
+      await writeFile(join(workspace, 'inside.txt'), 'one\ntwo\nthree\nfour');
+      await writeFile(outside, 'secret');
+      const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+      const { runner, ctx, constructorOptions } = createRunnerFixture({
+        client,
+        session: { workspacePath: workspace },
+        queryOptions: { cwd: workspace, mcpServers: {} },
+        canUseTool: async (_toolName, input) => {
+          const question = (input.questions as Array<{ question: string }>)[0].question;
+          return { behavior: 'allow', updatedInput: { answers: { [question]: 'Allow once' } } };
+        },
       });
-      expect(await readFile(join(workspace, 'nested', 'written.txt'), 'utf-8')).toBe('written');
-      await constructorOptions[0].onFsWrite?.({
-        sessionId: 'acp-session-1',
-        path: '..hidden/written.txt',
-        content: 'hidden',
-      });
-      expect(await readFile(join(workspace, '..hidden', 'written.txt'), 'utf-8')).toBe('hidden');
 
-      const link = join(workspace, 'outside-link');
-      await symlink(root, link);
-      await expect(
-        constructorOptions[0].onFsRead?.({
-          sessionId: 'acp-session-1',
-          path: join(link, 'outside.txt'),
-        })
-      ).rejects.toThrow('escapes workspace');
+      try {
+        await runner.start();
+        await promptStarted;
 
-      const danglingTarget = join(root, 'created-through-link.txt');
-      const danglingLink = join(workspace, 'dangling-link');
-      await symlink(danglingTarget, danglingLink);
-      await expect(
-        constructorOptions[0].onFsWrite?.({
+        await expect(
+          constructorOptions[0].onFsRead?.({
+            sessionId: 'acp-session-1',
+            path: join(workspace, 'inside.txt'),
+            line: 2,
+            limit: 2,
+          })
+        ).resolves.toEqual({ content: 'two\nthree\n' });
+        await expect(
+          constructorOptions[0].onFsRead?.({
+            sessionId: 'acp-session-1',
+            path: join(await realpath(workspace), 'inside.txt'),
+          })
+        ).resolves.toEqual({ content: 'one\ntwo\nthree\nfour' });
+        await expect(
+          constructorOptions[0].onFsRead?.({
+            sessionId: 'acp-session-1',
+            path: outside,
+          })
+        ).rejects.toThrow('escapes workspace');
+        const large = join(workspace, 'large.txt');
+        await writeFile(large, 'x'.repeat(4 * 1024 * 1024 + 1));
+        await expect(
+          constructorOptions[0].onFsRead?.({
+            sessionId: 'acp-session-1',
+            path: large,
+          })
+        ).rejects.toThrow('ACP filesystem read exceeds');
+        await expect(
+          constructorOptions[0].onFsRead?.({
+            sessionId: 'acp-session-1',
+            path: large,
+            line: 1,
+            limit: 0,
+          })
+        ).resolves.toEqual({ content: '' });
+        await expect(
+          constructorOptions[0].onFsWrite?.({
+            sessionId: 'acp-session-1',
+            path: '../escaped.txt',
+            content: 'blocked',
+          })
+        ).rejects.toThrow('escapes workspace');
+        await constructorOptions[0].onFsWrite?.({
           sessionId: 'acp-session-1',
-          path: danglingLink,
-          content: 'blocked',
-        })
-      ).rejects.toThrow('dangling symbolic link');
-      await expect(readFile(danglingTarget, 'utf-8')).rejects.toThrow();
-      releasePrompt();
-      await ctx.queryPromise;
-    } finally {
-      releasePrompt();
-      await rm(root, { recursive: true, force: true });
+          path: join(workspace, 'nested', 'written.txt'),
+          content: 'written',
+        });
+        expect(await readFile(join(workspace, 'nested', 'written.txt'), 'utf-8')).toBe('written');
+        await constructorOptions[0].onFsWrite?.({
+          sessionId: 'acp-session-1',
+          path: '..hidden/written.txt',
+          content: 'hidden',
+        });
+        expect(await readFile(join(workspace, '..hidden', 'written.txt'), 'utf-8')).toBe('hidden');
+
+        const link = join(workspace, 'outside-link');
+        await symlink(root, link);
+        await expect(
+          constructorOptions[0].onFsRead?.({
+            sessionId: 'acp-session-1',
+            path: join(link, 'outside.txt'),
+          })
+        ).rejects.toThrow('Unable to open ACP filesystem path');
+
+        const danglingTarget = join(root, 'created-through-link.txt');
+        const danglingLink = join(workspace, 'dangling-link');
+        await symlink(danglingTarget, danglingLink);
+        await expect(
+          constructorOptions[0].onFsWrite?.({
+            sessionId: 'acp-session-1',
+            path: danglingLink,
+            content: 'blocked',
+          })
+        ).rejects.toThrow('Unable to open ACP filesystem path');
+        await expect(readFile(danglingTarget, 'utf-8')).rejects.toThrow();
+        releasePrompt();
+        await ctx.queryPromise;
+      } finally {
+        releasePrompt();
+        await rm(root, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
   test('denies ACP filesystem writes before mutating the workspace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-write-'));

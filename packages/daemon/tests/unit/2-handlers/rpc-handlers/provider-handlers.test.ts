@@ -511,7 +511,39 @@ describe('Provider RPC handlers', () => {
       expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
     });
 
+    it('invalidates ACP sessions when enabling with a new command', async () => {
+      const provider = new AcpProvider({}, async () => {});
+      provider.setAcpCommand('old acp');
+      getProviderRegistry().register(provider);
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        isEnabled: false,
+        configJson: JSON.stringify({ command: 'old acp', models: [] }),
+      });
+      const handlers = setup();
+
+      await handlers.get('providers.update')!(
+        {
+          id: created.id,
+          params: {
+            isEnabled: true,
+            configJson: JSON.stringify({ command: 'new acp', models: [] }),
+          },
+        },
+        {}
+      );
+
+      expect(provider.getAcpCommand()).toBe('new acp');
+      expect(sessionManager.interruptProviderSessions).toHaveBeenCalledWith('acp');
+      expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
+    });
+
     it('preserves ACP sessions when re-enabling an unchanged disabled provider', async () => {
+      const originalCommand = process.env.HYPERNEO_ACP_COMMAND;
+      process.env.HYPERNEO_ACP_COMMAND = 'devin acp';
       const created = repo.createProvider({
         providerId: 'acp',
         displayName: 'ACP Agent',
@@ -521,16 +553,27 @@ describe('Provider RPC handlers', () => {
       });
       const handlers = setup();
 
-      await handlers.get('providers.update')!({ id: created.id, params: { isEnabled: false } }, {});
-      sessionManager.interruptProviderSessions.mockClear();
-      clearPersistedAcpSessionIds.mockClear();
-      await handlers.get('providers.update')!({ id: created.id, params: { isEnabled: true } }, {});
+      try {
+        await handlers.get('providers.update')!(
+          { id: created.id, params: { isEnabled: false } },
+          {}
+        );
+        sessionManager.interruptProviderSessions.mockClear();
+        clearPersistedAcpSessionIds.mockClear();
+        await handlers.get('providers.update')!(
+          { id: created.id, params: { isEnabled: true } },
+          {}
+        );
 
-      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
-      expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
+        expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+        expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
+      } finally {
+        if (originalCommand === undefined) delete process.env.HYPERNEO_ACP_COMMAND;
+        else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
+      }
     });
 
-    it('defers ACP command invalidation while the provider remains disabled', async () => {
+    it('clears persisted ACP sessions when the command changes while disabled', async () => {
       const created = repo.createProvider({
         providerId: 'acp',
         displayName: 'ACP Agent',
@@ -550,7 +593,7 @@ describe('Provider RPC handlers', () => {
       );
 
       expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
-      expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
+      expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
     });
 
     it('rejects invalid ACP commands before persisting or mutating the provider', async () => {

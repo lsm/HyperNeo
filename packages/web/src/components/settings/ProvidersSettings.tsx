@@ -55,11 +55,11 @@ function readAcpCommand(provider: EnrichedProvider): string {
   }
 }
 
-function readAcpModels(provider: EnrichedProvider): AcpConfiguredModel[] {
-  if (!provider.configJson) return [];
+function readAcpModels(provider: EnrichedProvider): AcpConfiguredModel[] | undefined {
+  if (!provider.configJson) return undefined;
   try {
     const parsed = JSON.parse(provider.configJson) as { models?: unknown };
-    if (!Array.isArray(parsed.models)) return [];
+    if (!Array.isArray(parsed.models)) return undefined;
     return parsed.models.flatMap((model) => {
       if (!model || typeof model !== 'object') return [];
       const { id, name } = model as { id?: unknown; name?: unknown };
@@ -67,7 +67,7 @@ function readAcpModels(provider: EnrichedProvider): AcpConfiguredModel[] {
       return [{ id, ...(typeof name === 'string' ? { name } : {}) }];
     });
   } catch {
-    return [];
+    return undefined;
   }
 }
 
@@ -88,7 +88,7 @@ export function ProvidersSettings() {
     providerId: string;
     providerName: string;
     command: string;
-    models: AcpConfiguredModel[];
+    models?: AcpConfiguredModel[];
   } | null>(null);
   const [kimiRegions, setKimiRegions] = useState<Record<string, 'china' | 'global'>>({});
   const [customEditor, setCustomEditor] = useState<EditorState | null>(null);
@@ -712,9 +712,9 @@ export function ProvidersSettings() {
                                 <div class="text-xs text-gray-500 font-mono truncate">
                                   {readAcpCommand(provider) || 'No command set'}
                                 </div>
-                                {readAcpModels(provider).length > 0 && (
+                                {(readAcpModels(provider)?.length ?? 0) > 0 && (
                                   <div class="mt-1 flex flex-wrap gap-1">
-                                    {readAcpModels(provider).map((model) => (
+                                    {readAcpModels(provider)?.map((model) => (
                                       <span
                                         key={model.id}
                                         class="text-[10px] px-1.5 py-0.5 rounded bg-dark-800 text-gray-300"
