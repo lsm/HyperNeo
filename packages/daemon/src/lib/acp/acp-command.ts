@@ -1,4 +1,11 @@
+import { createHash } from 'node:crypto';
+import { getAcpCommandIdentity } from '@hyperneo/shared/acp';
+
 export { getAcpCommandIdentity, parseAcpCommand } from '@hyperneo/shared/acp';
+
+export function getAcpCommandIdentityDigest(commandLine: string): string {
+  return createHash('sha256').update(getAcpCommandIdentity(commandLine)).digest('hex');
+}
 
 const ACP_SAFE_ENV_KEYS = [
   'HOME',

@@ -6,6 +6,7 @@ import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { z } from 'zod';
 import type { AcpClient, AcpClientOptions } from '../../../../src/lib/acp/acp-client';
+import { getAcpCommandIdentityDigest } from '../../../../src/lib/acp/acp-command';
 import {
   AcpQueryRunner,
   convertMcpServersForAcp,
@@ -863,6 +864,34 @@ describe('AcpQueryRunner', () => {
     await ctx.queryPromise;
   });
 
+  test('aborts stale ACP startup after cleanup begins', async () => {
+    let markBuildStarted: () => void;
+    const buildStarted = new Promise<void>((resolve) => {
+      markBuildStarted = resolve;
+    });
+    let releaseBuild: () => void;
+    const buildGate = new Promise<void>((resolve) => {
+      releaseBuild = resolve;
+    });
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      queryOptions: { cwd: '/tmp/acp-session', mcpServers: {} },
+    });
+    ctx.optionsBuilder.build = mock(async () => {
+      markBuildStarted();
+      await buildGate;
+      return { cwd: '/tmp/acp-session', mcpServers: {} };
+    });
+
+    await runner.start();
+    await buildStarted;
+    ctx.isCleaningUp = () => true;
+    releaseBuild!();
+    await ctx.queryPromise;
+
+    expect(constructorOptions).toHaveLength(0);
+    expect(ctx.queryAbortController).toBeNull();
+  });
+
   test('starts workspace-less ACP sessions without host filesystem or terminal callbacks', async () => {
     const { runner, ctx, constructorOptions } = createRunnerFixture({
       session: { workspacePath: undefined },
@@ -1387,7 +1416,7 @@ describe('AcpQueryRunner', () => {
     expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
       acpSessionId: undefined,
       metadata: expect.objectContaining({
-        acpCommandIdentity: JSON.stringify(['mock-acp', '--stdio']),
+        acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
         acpContextUsageEstimate: undefined,
       }),
     });
@@ -1421,7 +1450,49 @@ describe('AcpQueryRunner', () => {
       []
     );
     expect(client.createSession).not.toHaveBeenCalled();
-    expect(ctx.session.metadata.acpCommandIdentity).toBe(JSON.stringify(['mock-acp', '--stdio']));
+    expect(ctx.session.metadata.acpCommandIdentity).toBe(
+      getAcpCommandIdentityDigest('mock-acp --stdio')
+    );
+  });
+
+  test('preserves an existing session whose legacy command identity matches', async () => {
+    const client = createMockClient();
+    client.canLoadSession.mockImplementation(() => true);
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: {
+        acpSessionId: 'persisted-acp-session',
+        metadata: {
+          acpCommandIdentity: JSON.stringify(['mock-acp', '--stdio']),
+          acpInstructionsSent: true,
+        },
+      } as Partial<Session>,
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(client.loadSession).toHaveBeenCalledWith(
+      'persisted-acp-session',
+      '/tmp/acp-session',
+      []
+    );
+    expect(client.createSession).not.toHaveBeenCalled();
+    expect(ctx.session.metadata.acpCommandIdentity).toBe(
+      getAcpCommandIdentityDigest('mock-acp --stdio')
+    );
+  });
+
+  test('persists only a digest of the ACP command identity', async () => {
+    process.env.HYPERNEO_ACP_COMMAND = 'devin acp --token topsecret';
+    const { runner, ctx } = createRunnerFixture();
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    const identity = ctx.session.metadata.acpCommandIdentity as string;
+    expect(identity).toBe(getAcpCommandIdentityDigest('devin acp --token topsecret'));
+    expect(identity).not.toContain('topsecret');
   });
 
   test('falls back to resume when ACP session load fails', async () => {

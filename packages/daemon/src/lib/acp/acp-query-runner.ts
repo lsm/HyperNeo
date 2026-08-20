@@ -42,7 +42,12 @@ import {
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy';
 import { AcpClient, type AcpClientOptions } from './acp-client';
-import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from './acp-command';
+import {
+  buildAcpSafeEnv,
+  getAcpCommandIdentity,
+  getAcpCommandIdentityDigest,
+  parseAcpCommand,
+} from './acp-command';
 import { getAcpProcessTreeOwner } from './acp-process-tree';
 import { AcpQueryAdapter } from './acp-query-adapter';
 import { AcpTerminalManager } from './acp-terminal-manager';
@@ -56,6 +61,7 @@ import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
 const MAX_FS_READ_BYTES = 4 * 1024 * 1024;
+const ACPDIGEST_RE = /^[0-9a-f]{64}$/;
 
 function getStartupTimeoutMs(): number {
   const raw = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
@@ -503,6 +509,17 @@ export class AcpQueryRunner {
     recoveryState = { rateLimitCooldownScheduled: false }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
+    const assertActiveAcpStartup = () => {
+      if (
+        this.ctx.isCleaningUp() ||
+        this.ctx.getQueryGeneration() !== queryGeneration ||
+        stateManager.getState().status === 'interrupted'
+      ) {
+        const error = new Error('ACP query aborted during startup');
+        error.name = 'AbortError';
+        throw error;
+      }
+    };
     let client: AcpClient | null = null;
     let queryStartTime = Date.now();
     let startupTimeoutReached = false;
@@ -559,12 +576,14 @@ export class AcpQueryRunner {
         throw new Error('Set HYPERNEO_ACP_COMMAND to enable ACP agents.');
       }
       const { command, args } = parseAcpCommand(acpCommand);
-      const commandIdentity = getAcpCommandIdentity(acpCommand);
-      if (
-        session.acpSessionId &&
-        session.metadata?.acpCommandIdentity &&
-        session.metadata.acpCommandIdentity !== commandIdentity
-      ) {
+      const commandIdentity = getAcpCommandIdentityDigest(acpCommand);
+      const storedIdentity = session.metadata?.acpCommandIdentity;
+      const storedMatches =
+        storedIdentity !== undefined &&
+        (storedIdentity === commandIdentity ||
+          (!ACPDIGEST_RE.test(storedIdentity) &&
+            storedIdentity === getAcpCommandIdentity(acpCommand)));
+      if (session.acpSessionId && storedIdentity !== undefined && !storedMatches) {
         session.acpSessionId = undefined;
         session.metadata = {
           ...session.metadata,
@@ -576,7 +595,7 @@ export class AcpQueryRunner {
           acpSessionId: undefined,
           metadata: session.metadata,
         });
-      } else if (session.metadata?.acpCommandIdentity !== commandIdentity) {
+      } else if (storedIdentity !== commandIdentity) {
         session.metadata = {
           ...session.metadata,
           acpCommandIdentity: commandIdentity,
@@ -607,6 +626,7 @@ export class AcpQueryRunner {
       const workspace = getAcpWorkspacePath(session, queryOptions);
       const cwd = workspace ?? process.cwd();
       const startupTimeoutMs = getStartupTimeoutMs();
+      assertActiveAcpStartup();
       const abortController = new AbortController();
       this.ctx.queryAbortController = abortController;
       runAbortController = abortController;
@@ -701,6 +721,7 @@ export class AcpQueryRunner {
             };
           })()
         : {};
+      assertActiveAcpStartup();
       client = this.createAcpClient({
         command,
         args,
