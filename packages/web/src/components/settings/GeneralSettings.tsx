@@ -1,12 +1,16 @@
-import { useEffect, useState } from 'preact/hooks';
-import { globalSettings } from '../../lib/state.ts';
-import { updateGlobalSettings } from '../../lib/api-helpers.ts';
-import { toast } from '../../lib/toast.ts';
-import type { PermissionMode, ThinkingLevel, SettingSource } from '@hyperneo/shared';
-import { MAX_GITHUB_POLLING_INTERVAL_SECONDS, normalizeThinkingLevel } from '@hyperneo/shared';
+import type { PermissionMode, SettingSource, ThinkingLevel } from '@hyperneo/shared';
 import {
-  SettingsSection,
+  MAX_GITHUB_POLLING_INTERVAL_SECONDS,
+  MAX_SDK_MESSAGE_RETENTION_DAYS,
+  normalizeThinkingLevel,
+} from '@hyperneo/shared';
+import { useEffect, useState } from 'preact/hooks';
+import { updateGlobalSettings } from '../../lib/api-helpers.ts';
+import { globalSettings } from '../../lib/state.ts';
+import { toast } from '../../lib/toast.ts';
+import {
   SettingsRow,
+  SettingsSection,
   SettingsSelect,
   SettingsToggle,
 } from './SettingsSection.tsx';
@@ -42,6 +46,9 @@ export function GeneralSettings() {
   const [localGitHubPollingInterval, setLocalGitHubPollingInterval] = useState(
     String(settings?.githubPollingInterval ?? 120)
   );
+  const [localSdkMessageRetentionDays, setLocalSdkMessageRetentionDays] = useState(
+    settings?.sdkMessageRetentionDays != null ? String(settings.sdkMessageRetentionDays) : ''
+  );
   const [localThinkingLevel, setLocalThinkingLevel] = useState<ThinkingLevel>(
     normalizeThinkingLevel(settings?.thinkingLevel)
   );
@@ -57,6 +64,9 @@ export function GeneralSettings() {
       setLocalPermissionMode(settings.permissionMode ?? 'default');
       setLocalAutoScroll(settings.autoScroll ?? true);
       setLocalGitHubPollingInterval(String(settings.githubPollingInterval ?? 120));
+      setLocalSdkMessageRetentionDays(
+        settings.sdkMessageRetentionDays != null ? String(settings.sdkMessageRetentionDays) : ''
+      );
       setLocalThinkingLevel(normalizeThinkingLevel(settings.thinkingLevel));
       setLocalShowArchived(settings.showArchived ?? false);
       setLocalSettingSources(settings.settingSources ?? ['user', 'project', 'local']);
@@ -156,6 +166,41 @@ export function GeneralSettings() {
     }
   };
 
+  const handleSdkMessageRetentionDaysChange = (value: string) => {
+    setLocalSdkMessageRetentionDays(value);
+  };
+
+  const handleSdkMessageRetentionDaysBlur = async () => {
+    const trimmed = localSdkMessageRetentionDays.trim();
+    const current = settings?.sdkMessageRetentionDays ?? 0;
+    let days: number;
+    if (trimmed === '') {
+      days = 0;
+    } else {
+      days = Number(trimmed);
+      if (!Number.isInteger(days) || days < 0 || days > MAX_SDK_MESSAGE_RETENTION_DAYS) {
+        toast.error(
+          `Message retention must be a whole number of days up to ${MAX_SDK_MESSAGE_RETENTION_DAYS}, or empty to disable`
+        );
+        setLocalSdkMessageRetentionDays(current !== 0 ? String(current) : '');
+        return;
+      }
+    }
+
+    setLocalSdkMessageRetentionDays(trimmed === '' ? '' : String(days));
+    if (days === current) return;
+
+    setIsUpdating(true);
+    try {
+      await updateGlobalSettings({ sdkMessageRetentionDays: days });
+    } catch {
+      toast.error('Failed to update message retention');
+      setLocalSdkMessageRetentionDays(current !== 0 ? String(current) : '');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const handleShowArchivedChange = async (value: boolean) => {
     setLocalShowArchived(value);
     setIsUpdating(true);
@@ -229,6 +274,25 @@ export function GeneralSettings() {
             handleGitHubPollingIntervalChange((event.target as HTMLInputElement).value)
           }
           onBlur={handleGitHubPollingIntervalBlur}
+          disabled={isUpdating}
+          class="w-24 rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </SettingsRow>
+
+      <SettingsRow
+        label="Message retention (days)"
+        description="Delete messages in archived sessions older than this many days. Empty or 0 disables."
+      >
+        <input
+          type="number"
+          min="0"
+          step="1"
+          placeholder="disabled"
+          value={localSdkMessageRetentionDays}
+          onInput={(event) =>
+            handleSdkMessageRetentionDaysChange((event.target as HTMLInputElement).value)
+          }
+          onBlur={handleSdkMessageRetentionDaysBlur}
           disabled={isUpdating}
           class="w-24 rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
         />

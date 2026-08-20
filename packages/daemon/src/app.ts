@@ -1,39 +1,23 @@
-import { homedir } from 'os';
-import { parsePositiveInt, type Config } from './config';
-import type { WebSocketData } from './types/websocket';
-import { createHttpWsServer, type ServerHandle } from './lib/runtime-server';
-import { Database } from './storage/database';
-import {
-  prefetchAgentMemoryEmbeddingModel,
-  abortAgentMemoryEmbeddingModelPrefetch,
-} from './storage/repositories/agent-memory-transformers';
-import { SessionManager } from './lib/session-manager';
-import { AuthManager } from './lib/auth-manager';
-import { SettingsManager } from './lib/settings-manager';
-import { StateProjectionService } from './lib/state-projection-service';
-import { createClientEventBridge } from './lib/client-event-bridge';
 import {
   MAX_GITHUB_POLLING_INTERVAL_SECONDS,
   MessageHub,
   MessageHubRouter,
 } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
+import { homedir } from 'os';
+import { type Config, parsePositiveInt } from './config';
+import { asMessageDeliveryPayload } from './lib/agent/message-delivery';
+import { deliveryMetrics } from './lib/agent/message-delivery-metrics';
+import { AuthManager } from './lib/auth-manager';
+import { createClientEventBridge } from './lib/client-event-bridge';
 import {
-  createDaemonInternalEventBus,
-  type DaemonInternalEventMap,
-  type InternalEventBus,
-} from './lib/internal-event-bus';
-import {
-  createInternalCommandBus,
-  type DaemonCommandMap,
-  type InternalCommandBus,
-} from './lib/internal-command-bus';
-import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus';
-import { setupRPCHandlers } from './lib/rpc-handlers';
-import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers';
-import { WebSocketServerTransport } from './lib/websocket-server-transport';
-import { createWebSocketHandlers } from './routes/setup-websocket';
-import { createGitHubService, type GitHubService } from './lib/github/github-service';
+  backfillDeepSeekProvider,
+  migrateProvidersIfNeeded,
+  refreshGlmDisplayName,
+} from './lib/credential-discovery';
+import { KeychainUnavailableError } from './lib/credentials/credential-store.js';
+import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
+import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
 import { ExternalEventService, ExternalEventStore } from './lib/external-events';
 import { ExternalEventExtensionConfigStore } from './lib/external-events/extension-config-store';
 import {
@@ -42,74 +26,95 @@ import {
   isRpcExtension,
 } from './lib/external-events/extension-manager';
 import { GitHubEventExtension } from './lib/external-events/github';
+import { FileIndex } from './lib/file-index';
+import { createGitHubService, type GitHubService } from './lib/github/github-service';
 import {
-  initializeProviders,
-  waitForOptionalProviderRegistration,
-  markBuiltInProviderDisabled,
-} from './lib/providers/factory.js';
-import { getProviderRegistry } from './lib/providers/registry.js';
-import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
-import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
-import { KeychainUnavailableError } from './lib/credentials/credential-store.js';
-import { syncAllProviders } from './lib/providers/provider-sync.js';
+  createInternalCommandBus,
+  type DaemonCommandMap,
+  type InternalCommandBus,
+} from './lib/internal-command-bus';
 import {
-  backfillDeepSeekProvider,
-  migrateProvidersIfNeeded,
-  refreshGlmDisplayName,
-} from './lib/credential-discovery';
-import { createReactiveDatabase } from './storage/reactive-database';
-import { LiveQueryEngine } from './storage/live-query';
-import { SpaceAgentRepository } from './storage/repositories/space-agent-repository';
-import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service';
-import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository';
-import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository';
-import { SpaceAgentManager } from './lib/space/managers/space-agent-manager';
-import { SpaceManager } from './lib/space/managers/space-manager';
-import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service';
-import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager';
-import type { SpaceWorktreeManager } from './lib/space/managers/space-worktree-manager';
-import { JobQueueRepository } from './storage/repositories/job-queue-repository';
-import { JobQueueProcessor, applyStaleReclaimJitter } from './storage/job-queue-processor';
+  createDaemonInternalEventBus,
+  type DaemonInternalEventMap,
+  type InternalEventBus,
+} from './lib/internal-event-bus';
+import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
-import {
-  createMemoryConsolidationHandler,
-  enqueueMemoryConsolidationIfMissing,
-} from './lib/job-handlers/memory-consolidation.handler';
-import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler';
-import {
-  JOB_QUEUE_CLEANUP,
-  LONG_HORIZON_AGENT_REMINDER_FIRE,
-  MEMORY_CONSOLIDATION,
-  MESSAGE_DELIVERY,
-  SKILL_VALIDATE,
-  TASK_SCHEDULE_FIRE,
-} from './lib/job-queue-constants';
-import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler';
-import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter';
-import { asMessageDeliveryPayload } from './lib/agent/message-delivery';
-import { deliveryMetrics } from './lib/agent/message-delivery-metrics';
-import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
 import {
   backfillLongHorizonAgentReminderNextRunAt,
   enqueueLongHorizonAgentReminderScanIfMissing,
   handleLongHorizonAgentReminderFire,
 } from './lib/job-handlers/long-horizon-agent-reminder-fire.handler';
-import { longTermAgentSessionId } from './lib/space/long-term-agent-session';
-import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository';
-import { SpaceRepository } from './storage/repositories/space-repository';
-import { SpaceTaskRepository } from './storage/repositories/space-task-repository';
-import { SpaceGoalRepository } from './storage/repositories/space-goal-repository';
-import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from './lib/mcp';
-import { FileIndex } from './lib/file-index';
+import {
+  createMemoryConsolidationHandler,
+  enqueueMemoryConsolidationIfMissing,
+} from './lib/job-handlers/memory-consolidation.handler';
+import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler';
+import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter';
+import {
+  createSdkMessageRetentionHandler,
+  enqueueSdkMessageRetentionIfMissing,
+} from './lib/job-handlers/sdk-message-retention.handler';
+import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler';
+import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
+import {
+  JOB_QUEUE_CLEANUP,
+  LONG_HORIZON_AGENT_REMINDER_FIRE,
+  MEMORY_CONSOLIDATION,
+  MESSAGE_DELIVERY,
+  SDK_MESSAGE_RETENTION,
+  SKILL_VALIDATE,
+  TASK_SCHEDULE_FIRE,
+} from './lib/job-queue-constants';
 import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger';
-import { StructuredLogFileSink } from './lib/structured-log-file-sink';
-import { EvolutionLogEvidenceService } from './lib/space/evolution-log-evidence-service';
-import { SkillsManager } from './lib/skills-manager';
+import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from './lib/mcp';
 import {
   cleanupSuspiciousProcesses,
-  ProcessWatchdog,
   type ProcessSnapshot,
+  ProcessWatchdog,
 } from './lib/process-watchdog';
+import {
+  initializeProviders,
+  markBuiltInProviderDisabled,
+  waitForOptionalProviderRegistration,
+} from './lib/providers/factory.js';
+import { syncAllProviders } from './lib/providers/provider-sync.js';
+import { getProviderRegistry } from './lib/providers/registry.js';
+import { setupRPCHandlers } from './lib/rpc-handlers';
+import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers';
+import { createHttpWsServer, type ServerHandle } from './lib/runtime-server';
+import { SessionManager } from './lib/session-manager';
+import { SettingsManager } from './lib/settings-manager';
+import { SkillsManager } from './lib/skills-manager';
+import { EvolutionLogEvidenceService } from './lib/space/evolution-log-evidence-service';
+import { longTermAgentSessionId } from './lib/space/long-term-agent-session';
+import { SpaceAgentManager } from './lib/space/managers/space-agent-manager';
+import { SpaceManager } from './lib/space/managers/space-manager';
+import type { SpaceWorktreeManager } from './lib/space/managers/space-worktree-manager';
+import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service';
+import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager';
+import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service';
+import { StateProjectionService } from './lib/state-projection-service';
+import { StructuredLogFileSink } from './lib/structured-log-file-sink';
+import { WebSocketServerTransport } from './lib/websocket-server-transport';
+import { createWebSocketHandlers } from './routes/setup-websocket';
+import { Database } from './storage/database';
+import { applyStaleReclaimJitter, JobQueueProcessor } from './storage/job-queue-processor';
+import { LiveQueryEngine } from './storage/live-query';
+import { createReactiveDatabase } from './storage/reactive-database';
+import {
+  abortAgentMemoryEmbeddingModelPrefetch,
+  prefetchAgentMemoryEmbeddingModel,
+} from './storage/repositories/agent-memory-transformers';
+import { JobQueueRepository } from './storage/repositories/job-queue-repository';
+import { SpaceAgentRepository } from './storage/repositories/space-agent-repository';
+import { SpaceGoalRepository } from './storage/repositories/space-goal-repository';
+import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository';
+import { SpaceRepository } from './storage/repositories/space-repository';
+import { SpaceTaskRepository } from './storage/repositories/space-task-repository';
+import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository';
+import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository';
+import type { WebSocketData } from './types/websocket';
 
 async function applyStoredProviderCredentials(
   providers: Provider[],
@@ -786,6 +791,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     );
     jobProcessor.register(JOB_QUEUE_CLEANUP, createCleanupHandler(jobQueue));
     jobProcessor.register(
+      SDK_MESSAGE_RETENTION,
+      createSdkMessageRetentionHandler({
+        getSettings: () => db.getGlobalSettings(),
+        sdkMessageRepo: db.getSDKMessageRepo(),
+        jobQueue,
+      })
+    );
+    jobProcessor.register(
       MEMORY_CONSOLIDATION,
       createMemoryConsolidationHandler(db.agentMemory, jobQueue)
     );
@@ -945,6 +958,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       jobQueue.enqueue({ queue: JOB_QUEUE_CLEANUP, payload: {}, runAt: Date.now() });
       logInfo('[Daemon] Enqueued initial job_queue.cleanup job');
     }
+    enqueueSdkMessageRetentionIfMissing(jobQueue, Date.now());
+    logInfo('[Daemon] Ensured initial sdk_message.retention job');
     enqueueMemoryConsolidationIfMissing(jobQueue, Date.now());
     logInfo('[Daemon] Ensured initial memory_consolidation job');
     enqueueLongHorizonAgentReminderScanIfMissing(jobQueue, Date.now());
