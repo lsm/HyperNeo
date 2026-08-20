@@ -1743,7 +1743,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (result.credentials === undefined) return false;
     if (previousAuth) {
       const refreshedAuth = this.toBridgeAuth(result.credentials);
-      if (refreshedAuth) this.updateBridgeAuth(previousAuth, refreshedAuth);
+      if (refreshedAuth) {
+        this.updateBridgeAuth(previousAuth, refreshedAuth);
+        this.ensureCatalogForScope(this.authScope(refreshedAuth));
+      }
     }
     return true;
   }

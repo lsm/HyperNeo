@@ -1964,7 +1964,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
         type: 'oauth',
         access: currentToken,
         refresh: 'refresh-token',
-        accountId: 'acct-scheduled',
+        accountId: 'acct-scheduled-old',
       });
       const catalogFetch = mock(
         async () => new Response('{}', { status: 200 })
@@ -1972,7 +1972,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const updateAuthCalls: Array<{ apiKey?: string; accountId?: string }> = [];
       const fakeServers = new Map<string, unknown>([
         [
-          'responses:chatgpt:acct-scheduled:standard',
+          'responses:chatgpt:acct-scheduled-old:standard',
           {
             stop: () => undefined,
             updateModels: () => undefined,
