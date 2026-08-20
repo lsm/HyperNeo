@@ -800,26 +800,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     }
   }
 
-  private bridgeServerInUse(key: string): boolean {
-    for (const sessionKey of this.sessionBridgeKeys.values()) {
-      if (sessionKey === key) return true;
-    }
-    return false;
-  }
-
   private retireBridgeServer(key: string): void {
     if (this.staleBridgeTimers.has(key)) return;
-    const retire = (): void => {
-      this.staleBridgeTimers.delete(key);
-      if (this.bridgeServerInUse(key)) {
-        const timer = setTimeout(retire, CODEX_BRIDGE_RETIRE_GRACE_MS);
-        timer.unref?.();
-        this.staleBridgeTimers.set(key, timer);
-        return;
-      }
-      this.stopBridgeServerByKey(key);
-    };
-    const timer = setTimeout(retire, CODEX_BRIDGE_RETIRE_GRACE_MS);
+    const timer = setTimeout(() => this.stopBridgeServerByKey(key), CODEX_BRIDGE_RETIRE_GRACE_MS);
     timer.unref?.();
     this.staleBridgeTimers.set(key, timer);
   }
