@@ -3,7 +3,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables, runMigrations } from '../../../../../src/storage/schema';
-import { runMigration197 } from '../../../../../src/storage/schema/m197-session-counters';
+import { runMigration198 } from '../../../../../src/storage/schema/m198-session-counters';
 import {
   SESSION_COUNTERS_TABLE_SQL,
   createSessionCounters,
@@ -120,7 +120,7 @@ describe('session_counters: maintained total/archived counts', () => {
       insertSession(db, 'rm1', 'room_chat', 'active', '{"roomId":"r-1"}');
       insertSession(db, 'ws1', 'general', 'active', '{"roomId":"r-1","spaceId":"sp-1"}');
 
-      runMigration197(db);
+      runMigration198(db);
 
       expect(counters(db)).toEqual({ total: 3, archived: 1 });
       expectCounters(db);
@@ -130,15 +130,15 @@ describe('session_counters: maintained total/archived counts', () => {
       createSessionsTable(db);
       insertSession(db, 'h1', 'worker', 'active', null);
       insertSession(db, 'h2', 'worker', 'archived', null);
-      runMigration197(db);
+      runMigration198(db);
       const first = counters(db);
-      expect(() => runMigration197(db)).not.toThrow();
+      expect(() => runMigration198(db)).not.toThrow();
       expect(counters(db)).toEqual(first);
       expectCounters(db);
     });
 
     test('no-ops on an empty DB', () => {
-      expect(() => runMigration197(db)).not.toThrow();
+      expect(() => runMigration198(db)).not.toThrow();
       expect(tableExists(db, 'session_counters')).toBe(false);
     });
 
@@ -148,7 +148,7 @@ describe('session_counters: maintained total/archived counts', () => {
       insertSession(db, 'corrupt', 'worker', 'active', 'not-json');
       insertSession(db, 'sp1', 'room_chat', 'active', '{"roomId":"r-1"}');
 
-      expect(() => runMigration197(db)).not.toThrow();
+      expect(() => runMigration198(db)).not.toThrow();
       expect(counters(db)).toEqual({ total: 2, archived: 0 });
       expectCounters(db);
     });

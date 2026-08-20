@@ -4,7 +4,7 @@ export const SESSION_COUNTERS_TABLE_SQL = `
   -- Single-row aggregate of the sessions.list sidebar totals (total human
   -- sessions incl. archived, and archived-only). Read by sessions.list mapResult
   -- instead of two full-table COUNT(*) subqueries per evaluation. Maintained by
-  -- the session_counters_* triggers below (see migration 197 for the backfill).
+  -- the session_counters_* triggers below (see migration 198 for the backfill).
   CREATE TABLE IF NOT EXISTS session_counters (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     total_count INTEGER NOT NULL DEFAULT 0,

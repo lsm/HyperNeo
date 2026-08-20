@@ -1,7 +1,7 @@
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { backfillSessionCounters, createSessionCounters } from './session-counters';
 
-export function runMigration197(db: BunDatabase): void {
+export function runMigration198(db: BunDatabase): void {
   if (!tableExists(db, 'sessions')) return;
   createSessionCounters(db);
   backfillSessionCounters(db);

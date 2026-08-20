@@ -306,6 +306,48 @@ describe('ReactiveDatabase — scope extraction', () => {
       sessionType: 'worker',
     });
   });
+
+  test('updateSession touching type or context emits an unscoped change', () => {
+    const events: TableChangeEvent[] = [];
+    reactiveDb.on('change', (data) => events.push(data));
+
+    reactiveDb.db.createSession(makeSession('sess-transition'));
+    events.length = 0;
+
+    reactiveDb.db.updateSession('sess-transition', { context: { spaceId: 'space-1' } });
+
+    const sessionEvent = events[events.length - 1];
+    expect(sessionEvent.tables).toContain('sessions');
+    expect(sessionEvent.scope).toBeUndefined();
+  });
+
+  test('updateSession changing type emits an unscoped change', () => {
+    const events: TableChangeEvent[] = [];
+    reactiveDb.on('change', (data) => events.push(data));
+
+    reactiveDb.db.createSession(makeSession('sess-type'));
+    events.length = 0;
+
+    reactiveDb.db.updateSession('sess-type', { type: 'space_task_agent' });
+
+    const sessionEvent = events[events.length - 1];
+    expect(sessionEvent.tables).toContain('sessions');
+    expect(sessionEvent.scope).toBeUndefined();
+  });
+
+  test('updateSession touching only non-membership fields keeps a scoped change', () => {
+    const events: TableChangeEvent[] = [];
+    reactiveDb.on('change', (data) => events.push(data));
+
+    reactiveDb.db.createSession(makeSession('sess-scoped'));
+    events.length = 0;
+
+    reactiveDb.db.updateSession('sess-scoped', { status: 'archived' });
+
+    const sessionEvent = events[events.length - 1];
+    expect(sessionEvent.tables).toContain('sessions');
+    expect(sessionEvent.scope).toEqual({ sessionId: 'sess-scoped', sessionType: 'worker' });
+  });
 });
 
 describe('LiveQueryEngine — scope filtering', () => {
