@@ -1,4 +1,5 @@
 import type * as NodeSqlite from 'node:sqlite';
+import { STATEMENT_CACHE_CAPACITY, StatementCache } from './statement-cache';
 
 const { DatabaseSync, StatementSync } = (await import('node:' + 'sqlite')) as typeof NodeSqlite;
 
@@ -50,6 +51,7 @@ class CompatStatement<TRow = unknown, TParams extends unknown[] = unknown[]> {
 export class Database extends DatabaseSync {
   private txDepth = 0;
   private txSavepointSeq = 0;
+  private readonly statementCache = new StatementCache<CompatStatement>(STATEMENT_CACHE_CAPACITY);
 
   constructor(
     path: string,
@@ -61,6 +63,11 @@ export class Database extends DatabaseSync {
       ...(readonly ? { readOnly: true } : {}),
       ...rest,
     });
+  }
+
+  close(): void {
+    this.statementCache.clear();
+    super.close();
   }
 
   transaction<TArgs extends unknown[], TReturn>(
@@ -102,7 +109,14 @@ export class Database extends DatabaseSync {
     sql: string,
     options?: Parameters<DatabaseSync['prepare']>[1]
   ): CompatStatement<TRow, TParams> {
-    return new CompatStatement<TRow, TParams>(super.prepare(sql, options));
+    if (options !== undefined) {
+      return new CompatStatement<TRow, TParams>(super.prepare(sql, options));
+    }
+    const cached = this.statementCache.get(sql);
+    if (cached) return cached as CompatStatement<TRow, TParams>;
+    const statement = new CompatStatement<TRow, TParams>(super.prepare(sql));
+    this.statementCache.set(sql, statement);
+    return statement;
   }
 
   query<TRow = unknown, TParams extends unknown[] = unknown[]>(
