@@ -3,6 +3,7 @@ import { constants, fstatSync } from 'node:fs';
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 const READ_BUFFER_BYTES = 64 * 1024;
+const MAX_WRITE_BYTES = 4 * 1024 * 1024;
 
 interface BunFfiModule {
   dlopen: (
@@ -264,6 +265,13 @@ export async function writeFileWithinWorkspace(
   signal: AbortSignal
 ): Promise<void> {
   if (signal.aborted) throw new Error('ACP filesystem write cancelled');
+  if (content.length > MAX_WRITE_BYTES) {
+    throw new Error(`ACP filesystem write exceeds ${MAX_WRITE_BYTES} bytes`);
+  }
+  const data = Buffer.from(content);
+  if (data.length > MAX_WRITE_BYTES) {
+    throw new Error(`ACP filesystem write exceeds ${MAX_WRITE_BYTES} bytes`);
+  }
   const { symbols, directoryFd, fileName } = await openWorkspacePath(workspace, segments, true);
 
   try {
@@ -280,7 +288,6 @@ export async function writeFileWithinWorkspace(
       if (!fstatSync(fileFd).isFile()) throwFsError('write', fileName);
       if (signal.aborted) throw new Error('ACP filesystem write cancelled');
       if (symbols.ftruncate(fileFd, 0) !== 0) throwFsError('truncate', fileName);
-      const data = Buffer.from(content);
       let offset = 0;
       while (offset < data.length) {
         if (signal.aborted) throw new Error('ACP filesystem write cancelled');

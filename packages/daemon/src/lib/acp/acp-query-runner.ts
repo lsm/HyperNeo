@@ -941,6 +941,7 @@ export class AcpQueryRunner {
           });
         }
 
+        this._lastConsumedUserMessage = null;
         this.ctx.queryPromise = null;
       }
     }

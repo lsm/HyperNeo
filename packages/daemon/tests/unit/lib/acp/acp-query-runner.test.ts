@@ -599,6 +599,7 @@ describe('AcpQueryRunner', () => {
     expect(onSDKMessage.mock.calls.some(([message]) => message.type === 'result')).toBe(true);
     expect(onMarkApiSuccess).toHaveBeenCalled();
     expect(stopSpy).toHaveBeenCalled();
+    expect(runner.lastConsumedUserMessage).toBeNull();
   });
 
   const bunRuntimeTest = process.versions.bun ? test : test.skip;

@@ -59,6 +59,28 @@ bunRuntimeTest('writes through workspace directories without following symlinks'
   }
 });
 
+bunRuntimeTest('rejects oversized writes before modifying the target', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-size-'));
+  const workspace = join(root, 'workspace');
+  const target = join(workspace, 'content.txt');
+  await mkdir(workspace);
+  await writeFile(target, 'original');
+
+  try {
+    await expect(
+      writeFileWithinWorkspace(
+        workspace,
+        ['content.txt'],
+        'x'.repeat(4 * 1024 * 1024 + 1),
+        new AbortController().signal
+      )
+    ).rejects.toThrow('ACP filesystem write exceeds 4194304 bytes');
+    expect(await readFile(target, 'utf-8')).toBe('original');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 bunRuntimeTest('does not follow a final symlink', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-write-'));
   const workspace = join(root, 'workspace');
