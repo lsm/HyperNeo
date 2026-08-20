@@ -1,9 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import {
-  SDKMessageRepository,
-  type SendStatus,
-} from '../../../../src/storage/repositories/sdk-message-repository';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { classifyReclaimTermination } from '../../../../src/lib/agent/message-delivery';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { HyperNeoActionMessage } from '@hyperneo/shared';
@@ -1651,6 +1648,15 @@ describe('SDKMessageRepository', () => {
     });
 
     it('markDeliveryConsumedByUuids flips kickoff + members in one atomic call', () => {
+      db.exec(`
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          session_context TEXT,
+          type TEXT
+        );
+        INSERT INTO sessions (id, session_context, type)
+        VALUES ('session-1', '{"taskId":"task-1"}', 'space_task_agent');
+      `);
       const kickoffId = repository.saveUserMessage(
         'session-1',
         createUserMessage('kickoff', 'uuid-kick'),
@@ -1682,8 +1688,9 @@ describe('SDKMessageRepository', () => {
         .prepare(
           'SELECT DISTINCT conversation_turn_index AS turn FROM sdk_messages WHERE id IN (?, ?)'
         )
-        .all(kickoffId, memberId) as Array<{ turn: number }>;
+        .all(kickoffId, memberId) as Array<{ turn: number | null }>;
       expect(turns).toHaveLength(1);
+      expect(turns[0]?.turn).not.toBeNull();
     });
 
     it('markDeliveryFailedByUuidInclusive does NOT fail a deferred row (user hold survives dead-letter)', () => {
@@ -2105,6 +2112,58 @@ describe('SDKMessageRepository', () => {
         messageId
       );
       expect(repository.hasTerminalResultAfter('session-1', 'yielded-msg')).toBe(true);
+    });
+
+    it('consumes a turn-end batch in one task turn at the matching result boundary', () => {
+      db.exec(`
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          session_context TEXT,
+          type TEXT
+        );
+        INSERT INTO sessions (id, session_context, type)
+        VALUES ('session-1', '{"taskId":"task-1"}', 'space_task_agent');
+      `);
+      const kickoffId = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('yielded prompt', 'yielded-msg'),
+        'enqueued'
+      );
+      const memberId = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('batch member', 'member-msg'),
+        'submitted'
+      );
+      const resultUuid = 'batch-result-uuid';
+      repository.saveSDKMessage('session-1', {
+        type: 'result',
+        subtype: 'success',
+        uuid: resultUuid,
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage);
+      const result = db
+        .prepare('SELECT consumed_seq FROM sdk_messages WHERE sdk_uuid = ?')
+        .get(resultUuid) as { consumed_seq: number };
+
+      expect(
+        repository.markDeliveriesConsumedAtTurnEnd(
+          'session-1',
+          ['yielded-msg', 'member-msg'],
+          resultUuid
+        )
+      ).toEqual([kickoffId, memberId]);
+      const rows = db
+        .prepare(
+          'SELECT send_status AS status, conversation_turn_index AS turn, consumed_seq AS seq FROM sdk_messages WHERE id IN (?, ?) ORDER BY id'
+        )
+        .all(kickoffId, memberId) as Array<{
+        status: string;
+        turn: number | null;
+        seq: number | null;
+      }>;
+      expect(rows.map((row) => row.status)).toEqual(['consumed', 'consumed']);
+      expect(new Set(rows.map((row) => row.turn))).toEqual(new Set([1]));
+      expect(new Set(rows.map((row) => row.seq))).toEqual(new Set([result.consumed_seq]));
     });
 
     it('does not consume at turn end without the matching successful top-level result', () => {

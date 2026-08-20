@@ -1231,9 +1231,9 @@ describe('SDKMessageHandler', () => {
         }
         return [];
       });
-      const markDeliveryConsumedAtTurnEndSpy = mock(() => 'db-msg-1');
+      const markDeliveriesConsumedAtTurnEndSpy = mock(() => ['db-msg-1']);
       mockDb.getSDKMessageRepo = mock(() => ({
-        markDeliveryConsumedAtTurnEnd: markDeliveryConsumedAtTurnEndSpy,
+        markDeliveriesConsumedAtTurnEnd: markDeliveriesConsumedAtTurnEndSpy,
       })) as never;
 
       const message: SDKMessage = {
@@ -1252,9 +1252,9 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(message);
 
-      expect(markDeliveryConsumedAtTurnEndSpy).toHaveBeenCalledWith(
+      expect(markDeliveriesConsumedAtTurnEndSpy).toHaveBeenCalledWith(
         'test-session-id',
-        'enqueued-user-uuid',
+        ['enqueued-user-uuid'],
         'result-uuid'
       );
       expect(mockDb.updateMessageTimestamp).not.toHaveBeenCalledWith('db-msg-1');
@@ -1330,15 +1330,13 @@ describe('SDKMessageHandler', () => {
         }
         return [];
       });
-      const markDeliveryConsumedAtTurnEndSpy = mock(() => 'db-yielded');
-      const markDeliveryConsumedByUuidsSpy = mock(() => ['db-batch-member']);
+      const markDeliveriesConsumedAtTurnEndSpy = mock(() => ['db-yielded', 'db-batch-member']);
       mockDb.getJobQueueRepo = mock(() => ({
         activeDeliveryMessageUuids: () => new Set(['yielded-user-uuid']),
         getActiveDeliveryBatchUuids: () => ['yielded-user-uuid', 'batch-member-uuid'],
       })) as never;
       mockDb.getSDKMessageRepo = mock(() => ({
-        markDeliveryConsumedAtTurnEnd: markDeliveryConsumedAtTurnEndSpy,
-        markDeliveryConsumedByUuids: markDeliveryConsumedByUuidsSpy,
+        markDeliveriesConsumedAtTurnEnd: markDeliveriesConsumedAtTurnEndSpy,
       })) as never;
       const kickoffWaiter = waitForDeliveryConsumption(mockSession.id, 'yielded-user-uuid');
       const memberWaiter = waitForDeliveryConsumption(mockSession.id, 'batch-member-uuid');
@@ -1365,15 +1363,12 @@ describe('SDKMessageHandler', () => {
 
       expect(setIdleSpy).toHaveBeenCalled();
       expect(getStateSpy).toHaveBeenCalledTimes(1);
-      expect(markDeliveryConsumedAtTurnEndSpy).toHaveBeenCalledWith(
+      expect(markDeliveriesConsumedAtTurnEndSpy).toHaveBeenCalledWith(
         'test-session-id',
-        'yielded-user-uuid',
+        ['yielded-user-uuid', 'batch-member-uuid'],
         'result-uuid'
       );
       expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('yielded-user-uuid');
-      expect(markDeliveryConsumedByUuidsSpy).toHaveBeenCalledWith('test-session-id', [
-        'batch-member-uuid',
-      ]);
       expect(
         await Promise.all([
           kickoffWaiter.promise.then(() => 'consumed'),
@@ -1382,7 +1377,7 @@ describe('SDKMessageHandler', () => {
       ).toEqual(['consumed', 'consumed']);
       expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
         sessionId: 'test-session-id',
-        messageIds: ['db-batch-member'],
+        messageIds: ['db-yielded', 'db-batch-member'],
         status: 'consumed',
       });
     });

@@ -1123,6 +1123,111 @@ describe('AgentSession', () => {
       await expect(drive).resolves.toEqual({ outcome: 'completed' });
     });
 
+    it('driveDeliveryTurn aborts when startup consumes the pending queue entry', async () => {
+      let sendStatus = 'enqueued';
+      let queuePending = true;
+      const getPendingOrInFlightContentSpy = mock(() => (queuePending ? 'hello' : null));
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'hello', sendStatus })),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => {
+        queuePending = false;
+        sendStatus = 'consumed';
+        return 'ok' as never;
+      });
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const admitSpy = mock(() => Promise.resolve());
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        getPendingOrInFlightContent: getPendingOrInFlightContentSpy,
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => true),
+        size: mock(() => 0),
+      };
+
+      const result = await agentSession.driveDeliveryTurn(
+        'uuid-startup-consumed',
+        'hello',
+        null,
+        false,
+        () => true
+      );
+
+      expect(result).toEqual({ outcome: 'aborted' });
+      expect(getPendingOrInFlightContentSpy).toHaveBeenCalledTimes(1);
+      expect(admitSpy).not.toHaveBeenCalled();
+    });
+
+    it('driveDeliveryTurn aborts fresh admission when startup consumes an untracked row', async () => {
+      let sendStatus = 'enqueued';
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'hello', sendStatus })),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => {
+        sendStatus = 'consumed';
+        return 'ok' as never;
+      });
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const admitSpy = mock(() => Promise.resolve());
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        getPendingOrInFlightContent: mock(() => null),
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => true),
+        size: mock(() => 0),
+      };
+
+      const result = await agentSession.driveDeliveryTurn(
+        'uuid-startup-untracked',
+        'hello',
+        null,
+        false,
+        () => true
+      );
+
+      expect(result).toEqual({ outcome: 'aborted' });
+      expect(admitSpy).not.toHaveBeenCalled();
+    });
+
+    it('driveDeliveryTurn admits refreshed content after startup', async () => {
+      let content = 'before startup';
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content, sendStatus: 'enqueued' })),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => {
+        content = 'after startup';
+        return 'ok' as never;
+      });
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const admitSpy = mock(() => new Promise<void>(() => {}));
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        getPendingOrInFlightContent: mock(() => null),
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => true),
+        size: mock(() => 0),
+      };
+
+      void agentSession.driveDeliveryTurn(
+        'uuid-startup-refreshed',
+        'before startup',
+        null,
+        false,
+        () => true
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(admitSpy).toHaveBeenCalledWith('uuid-startup-refreshed', 'after startup', false, {
+        durable: true,
+      });
+    });
+
     it('driveDeliveryTurn reuses a pending batch acknowledgment on retry', async () => {
       let resultLanded = false;
       const markSubmittedSpy = mock(() => ['db-member']);

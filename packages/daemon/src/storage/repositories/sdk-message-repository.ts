@@ -1596,27 +1596,44 @@ export class SDKMessageRepository {
     uuid: string,
     resultUuid: string
   ): string | null {
-    const result = this.db
-      .prepare(
-        `SELECT consumed_seq FROM sdk_messages
-           WHERE session_id = ? AND message_type = 'result' AND sdk_uuid = ?
-             AND message_subtype = 'success' AND is_terminal = 1
-             AND parent_tool_use_id IS NULL AND consumed_seq IS NOT NULL
-           LIMIT 1`
-      )
-      .get(sessionId, resultUuid) as { consumed_seq: number } | undefined;
-    if (!result) return null;
-    const row = this.db
-      .prepare(
-        `SELECT id FROM sdk_messages
-           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-             AND send_status IN ('enqueued', 'submitted')
-           ORDER BY timestamp ASC LIMIT 1`
-      )
-      .get(sessionId, uuid) as { id: string } | undefined;
-    if (!row) return null;
-    this.updateMessageStatus([row.id], 'consumed', { consumedSeq: result.consumed_seq });
-    return row.id;
+    return this.markDeliveriesConsumedAtTurnEnd(sessionId, [uuid], resultUuid)[0] ?? null;
+  }
+
+  markDeliveriesConsumedAtTurnEnd(
+    sessionId: string,
+    uuids: string[],
+    resultUuid: string
+  ): string[] {
+    return this.db.transaction(() => {
+      const result = this.db
+        .prepare(
+          `SELECT consumed_seq FROM sdk_messages
+             WHERE session_id = ? AND message_type = 'result' AND sdk_uuid = ?
+               AND message_subtype = 'success' AND is_terminal = 1
+               AND parent_tool_use_id IS NULL AND consumed_seq IS NOT NULL
+             LIMIT 1`
+        )
+        .get(sessionId, resultUuid) as { consumed_seq: number } | undefined;
+      if (!result) return [];
+      const ids: string[] = [];
+      for (const [index, uuid] of [...new Set(uuids)].entries()) {
+        const row = this.db
+          .prepare(
+            `SELECT id FROM sdk_messages
+               WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+                 AND send_status IN ('enqueued', 'submitted')
+               ORDER BY timestamp ASC LIMIT 1`
+          )
+          .get(sessionId, uuid) as { id: string } | undefined;
+        if (index === 0 && !row) return [];
+        if (row) ids.push(row.id);
+      }
+      this.updateMessageStatus(ids, 'consumed', {
+        sharedTurn: true,
+        consumedSeq: result.consumed_seq,
+      });
+      return ids;
+    })();
   }
 
   markDeliveryConsumedByUuids(sessionId: string, uuids: string[]): string[] {

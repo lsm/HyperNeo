@@ -1348,6 +1348,9 @@ export class AgentSession
             this.deliveryResponseObserver = null;
           }
         };
+        const pendingContentBeforeStart = alreadyConsumed
+          ? null
+          : (this.messageQueue.getPendingOrInFlightContent?.(messageUuid) ?? null);
         const ensureStartedAt = Date.now();
         let queryStartResult: EnsureQueryStartedResult;
         try {
@@ -1390,10 +1393,31 @@ export class AgentSession
             disarmObserver();
             return { kind: 'aborted' as const };
           }
+          const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
+          freshFeed = existing === null;
+          if (freshFeed) {
+            const loaded = this.db
+              .getSDKMessageRepo()
+              .getDeliveryContent(this.session.id, messageUuid);
+            if (
+              this.db.getSession(this.session.id)?.status === 'archived' ||
+              loaded?.sendStatus !== 'enqueued'
+            ) {
+              turnEnd.cancel();
+              disarmObserver();
+              return { kind: 'aborted' as const };
+            }
+            feedContent = loaded.content;
+          }
           if (batchUuids && batchUuids.length > 1) {
-            const rebuilt = this.rebuildBatchDeliveryContent(messageUuid, content, batchUuids);
+            const rebuilt = this.rebuildBatchDeliveryContent(messageUuid, feedContent, batchUuids);
             feedContent = rebuilt.content;
             admittedBatchUuids = rebuilt.admittedUuids;
+            if (freshFeed && !admittedBatchUuids?.includes(messageUuid)) {
+              turnEnd.cancel();
+              disarmObserver();
+              return { kind: 'aborted' as const };
+            }
             if (admittedBatchUuids && admittedBatchUuids.length !== batchUuids.length) {
               let narrowed = false;
               try {
@@ -1419,8 +1443,18 @@ export class AgentSession
               }
             }
           }
-          const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
-          freshFeed = existing === null;
+          if (freshFeed && pendingContentBeforeStart !== null) {
+            if (!this.deliveryContentMatches(pendingContentBeforeStart, feedContent)) {
+              turnEnd.cancel();
+              disarmObserver();
+              return { kind: 'aborted' as const };
+            }
+            turnEnd.cancel();
+            disarmObserver();
+            throw new MessageDeliveryRecoverableTurnError(
+              'Pending queue entry disappeared before delivery admission'
+            );
+          }
           if (existing && !this.deliveryContentMatches(existing.content, feedContent)) {
             void existing.acknowledgment.catch(() => {});
             turnEnd.cancel();

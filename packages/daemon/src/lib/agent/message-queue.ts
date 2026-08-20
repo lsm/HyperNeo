@@ -183,8 +183,12 @@ export class MessageQueue {
     return this.queue.length + this.claimed.size + this.yielded.size;
   }
 
+  getPendingOrInFlightContent(messageId: string): string | MessageContent[] | null {
+    return this.findPendingOrInFlight(messageId)?.content ?? null;
+  }
+
   hasPendingOrInFlight(messageId: string): boolean {
-    return this.findPendingOrInFlight(messageId) !== null;
+    return this.getPendingOrInFlightContent(messageId) !== null;
   }
 
   hasPendingOrClaimed(messageId: string): boolean {
