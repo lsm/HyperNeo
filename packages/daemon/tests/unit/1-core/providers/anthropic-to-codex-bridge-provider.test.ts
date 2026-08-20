@@ -1,6 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { vi } from 'vitest';
-import * as fs from 'fs/promises';
 import {
   mkdirSync,
   mkdtempSync,
@@ -10,9 +8,12 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import * as path from 'path';
-import * as os from 'os';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+import { vi } from 'vitest';
+import daemonPackage from '../../../../package.json';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
@@ -946,27 +947,73 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(models).toEqual([]);
     });
 
-    it('probes OpenAI upstream with the resolved API key', async () => {
+    it('fetches OpenAI models with the resolved API key', async () => {
       const fetchImpl = mock(
-        async () => new Response('{}', { status: 200 })
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-dynamic-api' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
       ) as unknown as typeof fetch;
       provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
 
-      await provider.getModels();
+      const models = await provider.getModels();
 
+      expect(models.map((model) => model.id)).toEqual(['gpt-dynamic-api']);
       expect(fetchImpl).toHaveBeenCalledTimes(1);
-      const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
-      expect(url).toBe('https://api.openai.com/v1/responses');
-      expect(init?.method).toBe('POST');
+      const [url, init] = (fetchImpl.mock.calls[0] as [URL, RequestInit]) ?? [];
+      expect(String(url)).toBe(
+        `https://api.openai.com/v1/models?client_version=${daemonPackage.version}`
+      );
+      expect(init?.method).toBe('GET');
       const headers = init?.headers as Record<string, string>;
       expect(headers['authorization']).toBe('Bearer sk-env-key');
-      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
-      expect(body['max_output_tokens']).toBe(1);
+      expect(init?.body).toBeUndefined();
     });
 
-    it('probes the ChatGPT codex backend for OAuth tokens', async () => {
+    it('filters non-Responses models from the general OpenAI catalog', async () => {
       const fetchImpl = mock(
-        async () => new Response('{}', { status: 200 })
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [
+                { id: 'gpt-5.4' },
+                { id: 'o3' },
+                { id: 'text-embedding-3-small' },
+                { id: 'gpt-image-1' },
+                { id: 'omni-moderation-latest' },
+                { id: 'whisper-1' },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(['gpt-5.4', 'o3']);
+    });
+
+    it('fetches rich models from the ChatGPT Codex backend for OAuth tokens', async () => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(
+            JSON.stringify({
+              models: [
+                {
+                  slug: 'gpt-dynamic-oauth',
+                  display_name: 'GPT Dynamic OAuth',
+                  description: 'Account-specific model',
+                  context_window: 300000,
+                  visibility: 'list',
+                  supported_in_api: false,
+                  priority: 1,
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
       ) as unknown as typeof fetch;
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const jwt = makeJwt({
@@ -981,20 +1028,27 @@ describe('AnthropicToCodexBridgeProvider', () => {
       });
       provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
 
-      await provider.getModels();
+      const models = await provider.getModels();
 
+      expect(models.map((model) => model.id)).toEqual(['gpt-dynamic-oauth']);
+      expect(provider.getModelForTier('opus')).toBe('gpt-dynamic-oauth');
+      if (isBun) {
+        const config = provider.buildSdkConfig('gpt-dynamic-oauth', {
+          sessionId: 'dynamic-only',
+        });
+        expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-dynamic-oauth');
+        expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-dynamic-oauth');
+      }
       expect(fetchImpl).toHaveBeenCalledTimes(1);
-      const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
-      expect(url).toBe('https://chatgpt.com/backend-api/codex/responses');
+      const [url, init] = (fetchImpl.mock.calls[0] as [URL, RequestInit]) ?? [];
+      expect(String(url)).toBe(
+        `https://chatgpt.com/backend-api/codex/models?client_version=${daemonPackage.version}`
+      );
       const headers = init?.headers as Record<string, string>;
       expect(headers['authorization']).toBe(`Bearer ${jwt}`);
       expect(headers['ChatGPT-Account-ID']).toBe('acct-1');
       expect(headers['OpenAI-Beta']).toBeUndefined();
-      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
-      expect(body['max_output_tokens']).toBeUndefined();
-      expect(body['instructions']).toBe('You are a concise assistant.');
-      expect(body['store']).toBe(false);
-      expect(body['stream']).toBe(true);
+      expect(init?.body).toBeUndefined();
     });
 
     it('throws when OpenAI rejects the API key (401)', async () => {
@@ -1006,18 +1060,24 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(provider.getModels()).rejects.toThrow('Codex credentials rejected (HTTP 401)');
     });
 
-    it('throws when probe fails at the network layer', async () => {
+    it('falls back to bundled models when discovery fails at the network layer', async () => {
       const fetchImpl = mock(async () => {
         throw new Error('ECONNREFUSED');
       }) as unknown as typeof fetch;
       provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
 
-      expect(provider.getModels()).rejects.toThrow('Codex probe failed: ECONNREFUSED');
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toContain('gpt-5.6-sol');
     });
 
-    it('caches successful probe so repeated calls do not re-probe', async () => {
+    it('caches a successful model list so repeated calls do not refetch', async () => {
       const fetchImpl = mock(
-        async () => new Response('{}', { status: 200 })
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-dynamic-api' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
       ) as unknown as typeof fetch;
       provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
 
@@ -1025,6 +1085,317 @@ describe('AnthropicToCodexBridgeProvider', () => {
       await provider.getModels();
 
       expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it('sorts rich models, filters API-ineligible and hidden entries, and keeps hidden routing', async () => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(
+            JSON.stringify({
+              models: [
+                {
+                  slug: 'gpt-later',
+                  display_name: 'GPT Later',
+                  max_context_window: 222000,
+                  visibility: 'list',
+                  supported_in_api: true,
+                  priority: 20,
+                },
+                {
+                  slug: 'gpt-hidden',
+                  display_name: 'GPT Hidden',
+                  context_window: 111000,
+                  visibility: 'hide',
+                  supported_in_api: true,
+                  priority: 5,
+                },
+                {
+                  slug: 'gpt-account-only',
+                  display_name: 'GPT Account Only',
+                  visibility: 'list',
+                  supported_in_api: false,
+                  priority: 1,
+                },
+                {
+                  slug: 'gpt-first',
+                  display_name: 'GPT First',
+                  description: 'First available model',
+                  context_window: 333000,
+                  visibility: 'list',
+                  supported_in_api: true,
+                  priority: 10,
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(['gpt-first', 'gpt-later']);
+      expect(models[0]).toMatchObject({
+        name: 'GPT First',
+        description: 'First available model',
+        contextWindow: 333000,
+        sdkModelIds: ['gpt-first'],
+      });
+      expect(models[1]?.contextWindow).toBe(222000);
+      expect(provider.ownsModel('gpt-hidden')).toBe(true);
+      expect(provider.ownsModel('gpt-account-only')).toBe(false);
+    });
+
+    it('preserves curated metadata and aliases for known remote models', async () => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(
+            JSON.stringify({
+              models: [
+                {
+                  slug: 'gpt-5.6-sol',
+                  display_name: 'Server Name',
+                  description: 'Server description',
+                  context_window: 1,
+                  visibility: 'list',
+                  supported_in_api: true,
+                  priority: 1,
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      const models = await provider.getModels();
+
+      expect(models).toHaveLength(1);
+      expect(models[0]).toMatchObject({
+        id: 'gpt-5.6-sol',
+        name: 'GPT-5.6 Sol',
+        alias: 'codex-latest',
+        contextWindow: 1050000,
+        sdkModelIds: ['gpt-5.6-sol'],
+      });
+      expect(provider.ownsModel('codex-5.6')).toBe(true);
+    });
+
+    it('persists dynamic models without credentials and hydrates routing on restart', async () => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-restart-safe' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', ETag: 'catalog-v1' },
+          })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'secret-api-key' }, tmpDir, tmpDir, fetchImpl);
+
+      await provider.getModels();
+
+      const cachePath = path.join(tmpDir, 'openai-models-cache.json');
+      const serialized = readFileSync(cachePath, 'utf-8');
+      expect(serialized).toContain('gpt-restart-safe');
+      expect(serialized).toContain('catalog-v1');
+      expect(serialized).not.toContain('secret-api-key');
+
+      const restarted = makeProvider(
+        { OPENAI_API_KEY: 'secret-api-key' },
+        tmpDir,
+        tmpDir,
+        mock(async () => {
+          throw new Error('offline');
+        }) as unknown as typeof fetch
+      );
+      expect(restarted.ownsModel('gpt-restart-safe')).toBe(true);
+      expect(restarted.ownsModel('unfetched-model')).toBe(false);
+      const models = await restarted.getModels();
+      expect(models.map((model) => model.id)).toEqual(['gpt-restart-safe']);
+      expect(restarted.ownsModel('gpt-restart-safe')).toBe(true);
+      if (isBun) {
+        const config = restarted.buildSdkConfig('gpt-restart-safe', {
+          sessionId: 'restart-safe',
+        });
+        expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-restart-safe');
+        expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('128000');
+      }
+      restarted.stopAllBridgeServers();
+    });
+
+    it('forces refresh and reuses the ETag for a 304 response', async () => {
+      const fetchImpl = mock()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data: [{ id: 'gpt-etag' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', ETag: 'catalog-v1' },
+          })
+        )
+        .mockResolvedValueOnce(new Response(null, { status: 304 })) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      await provider.getModels();
+      provider.clearModelCache();
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(['gpt-etag']);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      const [, init] = (fetchImpl as ReturnType<typeof mock>).mock.calls[1] as [URL, RequestInit];
+      expect((init.headers as Record<string, string>)['if-none-match']).toBe('catalog-v1');
+    });
+
+    it('keeps the last valid catalog when a forced refresh is malformed', async () => {
+      const fetchImpl = mock()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data: [{ id: 'gpt-stable' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ models: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      await provider.getModels();
+      provider.clearModelCache();
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(['gpt-stable']);
+    });
+
+    it('refreshes OAuth after a 401 and retries model discovery once', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const refreshedToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-refresh' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'stale-token',
+        refresh: 'refresh-token',
+        accountId: 'acct-refresh',
+      });
+      const fetchImpl = mock()
+        .mockResolvedValueOnce(new Response('unauthorized', { status: 401 }))
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data: [{ id: 'gpt-after-refresh' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        ) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: refreshedToken,
+            refresh_token: 'next-refresh-token',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+
+        const models = await provider.getModels();
+
+        expect(models.map((model) => model.id)).toEqual(['gpt-after-refresh']);
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+        const [, retryInit] = (fetchImpl as ReturnType<typeof mock>).mock.calls[1] as [
+          URL,
+          RequestInit,
+        ];
+        expect((retryInit.headers as Record<string, string>).authorization).toBe(
+          `Bearer ${refreshedToken}`
+        );
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
+    it('does not expose a persisted catalog to different credentials after restart', async () => {
+      const firstFetch = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-first-account-only' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'first-key' }, tmpDir, tmpDir, firstFetch);
+      await provider.getModels();
+
+      const offlineFetch = mock(async () => {
+        throw new Error('offline');
+      }) as unknown as typeof fetch;
+      const restarted = makeProvider(
+        { OPENAI_API_KEY: 'second-key' },
+        tmpDir,
+        tmpDir,
+        offlineFetch
+      );
+
+      const models = await restarted.getModels();
+
+      expect(models.map((model) => model.id)).toContain('gpt-5.6-sol');
+      expect(models.map((model) => model.id)).not.toContain('gpt-first-account-only');
+      expect(restarted.ownsModel('gpt-first-account-only')).toBe(false);
+      restarted.stopAllBridgeServers();
+    });
+
+    it('uses a persisted catalog after restart even when discovery is offline', async () => {
+      const firstFetch = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-persisted-offline' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, firstFetch);
+      await provider.getModels();
+
+      const offlineFetch = mock(async () => {
+        throw new Error('offline');
+      }) as unknown as typeof fetch;
+      const restarted = makeProvider(
+        { OPENAI_API_KEY: 'sk-env-key' },
+        tmpDir,
+        tmpDir,
+        offlineFetch
+      );
+
+      const models = await restarted.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(['gpt-persisted-offline']);
+      expect(offlineFetch).not.toHaveBeenCalled();
+      restarted.stopAllBridgeServers();
+    });
+
+    it('sends FedRAMP routing on OAuth model discovery', async () => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-fedramp' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'oauth-access-token',
+        refresh: 'oauth-refresh-token',
+        accountId: 'acct-fedramp',
+        isFedrampAccount: true,
+      });
+      provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+
+      await provider.getModels();
+
+      const [, init] = (fetchImpl.mock.calls[0] as [URL, RequestInit]) ?? [];
+      const headers = init.headers as Record<string, string>;
+      expect(headers['ChatGPT-Account-ID']).toBe('acct-fedramp');
+      expect(headers['X-OpenAI-Fedramp']).toBe('true');
     });
   });
 

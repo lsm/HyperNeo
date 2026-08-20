@@ -1,32 +1,36 @@
-import { getDataDir } from '../data-dir';
-import type {
-  Provider,
-  ProviderCapabilities,
-  ProviderCredentials,
-  ProviderSdkConfig,
-  ProviderSessionConfig,
-  ModelTier,
-  ProviderAuthStatusInfo,
-  ProviderOAuthFlowData,
-} from '@hyperneo/shared/provider';
+import { readFileSync } from 'node:fs';
 import type { ModelInfo } from '@hyperneo/shared';
 import { THINKING_LEVEL_TOKENS } from '@hyperneo/shared';
+import type {
+  ModelTier,
+  Provider,
+  ProviderAuthStatusInfo,
+  ProviderCapabilities,
+  ProviderCredentials,
+  ProviderOAuthFlowData,
+  ProviderSdkConfig,
+  ProviderSessionConfig,
+} from '@hyperneo/shared/provider';
+import * as crypto from 'crypto';
+import * as fs from 'fs/promises';
+import * as http from 'http';
+import * as os from 'os';
+import * as path from 'path';
+import daemonPackage from '../../../package.json';
+import { getDataDir } from '../data-dir';
+import { Logger } from '../logger.js';
 import {
+  CODEX_TO_SDK_MODEL,
+  type CodexRemoteModelMetadata,
+  codexBackendContextWindow,
+  codexRemoteModelInfo,
+  getCodexBridgeModelInfos,
+} from './codex-models.js';
+import {
+  createOpenAIResponsesBridgeServer,
   type OpenAIResponsesBridgeAuth,
   type OpenAIResponsesBridgeServer,
-  createOpenAIResponsesBridgeServer,
 } from './openai-responses-bridge/server.js';
-import {
-  getCodexBridgeModelInfos,
-  CODEX_TO_SDK_MODEL,
-  codexBackendContextWindow,
-} from './codex-models.js';
-import { Logger } from '../logger.js';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import * as os from 'os';
-import * as http from 'http';
-import * as crypto from 'crypto';
 
 const logger = new Logger('anthropic-to-codex-bridge-provider');
 
@@ -115,6 +119,40 @@ interface CodexAuthFile {
   last_refresh?: string;
 }
 
+type CodexModelVisibility = 'list' | 'hide' | 'none';
+
+interface CodexRemoteModel extends CodexRemoteModelMetadata {
+  visibility: CodexModelVisibility;
+  supportedInApi: boolean;
+  priority: number;
+}
+
+interface CodexModelCacheScope {
+  source: 'api_key' | 'chatgpt_oauth';
+  credentialId: string;
+  accountId?: string;
+  isFedrampAccount?: boolean;
+}
+
+interface CodexModelCache {
+  schemaVersion: 1;
+  fetchedAt: string;
+  etag?: string;
+  clientVersion: string;
+  scope: CodexModelCacheScope;
+  models: CodexRemoteModel[];
+}
+
+interface CodexCatalogEntry {
+  info: ModelInfo;
+  visibility: CodexModelVisibility;
+}
+
+const CODEX_MODEL_CACHE_SCHEMA_VERSION = 1;
+const CODEX_MODEL_CACHE_TTL_MS = 300_000;
+const CODEX_MODEL_FETCH_TIMEOUT_MS = 5000;
+const CODEX_CLIENT_VERSION = daemonPackage.version;
+
 export class AnthropicToCodexBridgeProvider implements Provider {
   readonly id = 'anthropic-codex';
   readonly displayName = 'OpenAI (Codex)';
@@ -137,6 +175,22 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private readonly codexAuthPath: string;
 
+  private readonly modelCachePath: string;
+
+  private catalogEntries: CodexCatalogEntry[] = this.bundledCatalogEntries();
+
+  private catalogGeneration = 0;
+
+  private modelCache: CodexModelCache | undefined;
+
+  private hydratedCacheEntries: CodexCatalogEntry[] | undefined;
+
+  private activeCatalogScope: CodexModelCacheScope | undefined;
+
+  private modelRefresh: Promise<void> | undefined;
+
+  private forceModelRefresh = false;
+
   private cachedCredentials: StoredCredentials | null = null;
   private readonly credentialListeners = new Set<
     (credentials: ProviderCredentials) => void | Promise<void>
@@ -154,18 +208,203 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     success: boolean;
   } | null = null;
 
-  private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
-  private static readonly PROBE_TTL_MS = 30_000;
-  private static readonly PROBE_TIMEOUT_MS = 5000;
-
   constructor(
     private readonly env: Record<string, string | undefined> = process.env,
     authDir?: string,
     codexAuthDir?: string,
     private readonly fetchImpl: typeof fetch = fetch
   ) {
-    this.authPath = path.join(authDir ?? getDataDir(), 'auth.json');
+    const providerDir = authDir ?? getDataDir();
+    this.authPath = path.join(providerDir, 'auth.json');
     this.codexAuthPath = path.join(codexAuthDir ?? path.join(os.homedir(), '.codex'), 'auth.json');
+    this.modelCachePath = path.join(providerDir, 'openai-models-cache.json');
+    this.loadModelCache();
+    if (this.env.OPENAI_API_KEY) {
+      this.activateCachedCatalog({
+        source: 'api_key',
+        credentialId: this.credentialId({ source: 'api_key', apiKey: this.env.OPENAI_API_KEY }),
+      });
+    }
+  }
+
+  private bundledCatalogEntries(): CodexCatalogEntry[] {
+    return ANTHROPIC_CODEX_MODELS.map((info) => ({
+      info: { ...info, thinkingModes: 'granular' },
+      visibility: 'list',
+    }));
+  }
+
+  private isModelId(value: unknown): value is string {
+    return (
+      typeof value === 'string' &&
+      value.length > 0 &&
+      value.length <= 256 &&
+      /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value)
+    );
+  }
+
+  private optionalPositiveInteger(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+      ? value
+      : undefined;
+  }
+
+  private parseCachedRemoteModel(value: unknown): CodexRemoteModel | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const record = value as Record<string, unknown>;
+    if (!this.isModelId(record.slug)) return undefined;
+    if (typeof record.displayName !== 'string' || !record.displayName.trim()) return undefined;
+    if (record.displayName.length > 500) return undefined;
+    if (record.description !== undefined && typeof record.description !== 'string')
+      return undefined;
+    if (typeof record.description === 'string' && record.description.length > 4000)
+      return undefined;
+    if (!['list', 'hide', 'none'].includes(String(record.visibility))) return undefined;
+    if (typeof record.supportedInApi !== 'boolean') return undefined;
+    if (typeof record.priority !== 'number' || !Number.isSafeInteger(record.priority))
+      return undefined;
+    const contextWindow = this.optionalPositiveInteger(record.contextWindow);
+    const maxContextWindow = this.optionalPositiveInteger(record.maxContextWindow);
+    if (record.contextWindow !== undefined && contextWindow === undefined) return undefined;
+    if (record.maxContextWindow !== undefined && maxContextWindow === undefined) return undefined;
+    return {
+      slug: record.slug,
+      displayName: record.displayName.trim(),
+      ...(typeof record.description === 'string' ? { description: record.description } : {}),
+      ...(contextWindow ? { contextWindow } : {}),
+      ...(maxContextWindow ? { maxContextWindow } : {}),
+      visibility: record.visibility as CodexModelVisibility,
+      supportedInApi: record.supportedInApi,
+      priority: record.priority,
+    };
+  }
+
+  private parseModelCache(value: unknown): CodexModelCache | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const record = value as Record<string, unknown>;
+    if (record.schemaVersion !== CODEX_MODEL_CACHE_SCHEMA_VERSION) return undefined;
+    if (typeof record.fetchedAt !== 'string' || !Number.isFinite(Date.parse(record.fetchedAt))) {
+      return undefined;
+    }
+    if (typeof record.clientVersion !== 'string') return undefined;
+    if (record.etag !== undefined && typeof record.etag !== 'string') return undefined;
+    if (!record.scope || typeof record.scope !== 'object' || Array.isArray(record.scope)) {
+      return undefined;
+    }
+    const rawScope = record.scope as Record<string, unknown>;
+    if (rawScope.source !== 'api_key' && rawScope.source !== 'chatgpt_oauth') return undefined;
+    if (typeof rawScope.credentialId !== 'string' || !rawScope.credentialId) return undefined;
+    if (rawScope.accountId !== undefined && typeof rawScope.accountId !== 'string')
+      return undefined;
+    if (rawScope.isFedrampAccount !== undefined && typeof rawScope.isFedrampAccount !== 'boolean') {
+      return undefined;
+    }
+    if (!Array.isArray(record.models)) return undefined;
+    const models = record.models.map((model) => this.parseCachedRemoteModel(model));
+    if (models.length === 0 || models.some((model) => !model)) return undefined;
+    return {
+      schemaVersion: CODEX_MODEL_CACHE_SCHEMA_VERSION,
+      fetchedAt: record.fetchedAt,
+      ...(typeof record.etag === 'string' ? { etag: record.etag } : {}),
+      clientVersion: record.clientVersion,
+      scope: {
+        source: rawScope.source,
+        credentialId: rawScope.credentialId,
+        ...(typeof rawScope.accountId === 'string' ? { accountId: rawScope.accountId } : {}),
+        ...(typeof rawScope.isFedrampAccount === 'boolean'
+          ? { isFedrampAccount: rawScope.isFedrampAccount }
+          : {}),
+      },
+      models: models as CodexRemoteModel[],
+    };
+  }
+
+  private loadModelCache(): void {
+    try {
+      const cache = this.parseModelCache(
+        JSON.parse(readFileSync(this.modelCachePath, 'utf-8')) as unknown
+      );
+      if (!cache) return;
+      const entries = this.catalogEntriesFromRemote(cache.models, cache.scope.source);
+      if (!entries.some((entry) => entry.visibility === 'list')) return;
+      this.modelCache = cache;
+      this.hydratedCacheEntries = entries;
+    } catch {
+      return;
+    }
+  }
+
+  private catalogEntriesFromRemote(
+    models: CodexRemoteModel[],
+    source: CodexModelCacheScope['source']
+  ): CodexCatalogEntry[] {
+    const bySlug = new Map<string, CodexRemoteModel>();
+    for (const model of models) {
+      if (source === 'api_key' && !model.supportedInApi) continue;
+      const current = bySlug.get(model.slug);
+      if (!current || model.priority < current.priority) bySlug.set(model.slug, model);
+    }
+    return [...bySlug.values()]
+      .sort((a, b) => a.priority - b.priority || a.slug.localeCompare(b.slug))
+      .map((model) => ({
+        info: { ...codexRemoteModelInfo(model), thinkingModes: 'granular' },
+        visibility: model.visibility,
+      }));
+  }
+
+  private credentialId(auth: OpenAIResponsesBridgeAuth): string {
+    return crypto.createHash('sha256').update(auth.apiKey).digest('hex');
+  }
+
+  private authScope(auth: OpenAIResponsesBridgeAuth): CodexModelCacheScope {
+    return {
+      source: auth.source,
+      credentialId:
+        auth.source === 'chatgpt_oauth'
+          ? (auth.accountId ?? this.credentialId(auth))
+          : this.credentialId(auth),
+      ...(auth.source === 'chatgpt_oauth' ? { accountId: auth.accountId } : {}),
+      ...(auth.source === 'chatgpt_oauth'
+        ? { isFedrampAccount: auth.isFedrampAccount === true }
+        : {}),
+    };
+  }
+
+  private cacheMatchesScope(cache: CodexModelCache, scope: CodexModelCacheScope): boolean {
+    return (
+      cache.clientVersion === CODEX_CLIENT_VERSION &&
+      cache.scope.source === scope.source &&
+      cache.scope.credentialId === scope.credentialId &&
+      cache.scope.accountId === scope.accountId &&
+      cache.scope.isFedrampAccount === scope.isFedrampAccount
+    );
+  }
+
+  private isModelCacheFresh(cache: CodexModelCache, scope: CodexModelCacheScope): boolean {
+    return (
+      this.cacheMatchesScope(cache, scope) &&
+      Date.now() - Date.parse(cache.fetchedAt) < CODEX_MODEL_CACHE_TTL_MS
+    );
+  }
+
+  private activateCachedCatalog(scope: CodexModelCacheScope): boolean {
+    if (!this.modelCache || !this.hydratedCacheEntries) return false;
+    if (!this.cacheMatchesScope(this.modelCache, scope)) return false;
+    this.replaceCatalog(this.hydratedCacheEntries, scope);
+    return true;
+  }
+
+  private hasActiveCatalog(scope: CodexModelCacheScope): boolean {
+    return this.activeCatalogScope ? this.sameScope(this.activeCatalogScope, scope) : false;
+  }
+
+  private sameScope(left: CodexModelCacheScope, right: CodexModelCacheScope): boolean {
+    return (
+      left.source === right.source &&
+      left.credentialId === right.credentialId &&
+      left.accountId === right.accountId &&
+      left.isFedrampAccount === right.isFedrampAccount
+    );
   }
 
   async isAvailable(): Promise<boolean> {
@@ -322,26 +561,24 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   private modelAliases(): Record<string, string> {
-    const userAliases = Object.fromEntries(
-      ANTHROPIC_CODEX_MODELS.flatMap((model) => [
-        ...(model.alias ? [[model.alias, model.id] as const] : []),
-        ...(model.providerAliases?.map((alias) => [alias, model.id] as const) ?? []),
+    return Object.fromEntries(
+      this.catalogEntries.flatMap(({ info }) => [
+        ...(info.alias !== info.id ? [[info.alias, info.id] as const] : []),
+        ...(info.providerAliases?.map((alias) => [alias, info.id] as const) ?? []),
       ])
     );
-    return userAliases;
   }
 
   private responsesBridgeModels(isChatgptOAuth: boolean) {
-    const codexModels = ANTHROPIC_CODEX_MODELS.map((model) => ({
-      id: model.id,
-      display_name: model.name,
-      created_at: `${model.releaseDate ?? '2026-01-01'}T00:00:00Z`,
+    return this.catalogEntries.map(({ info }) => ({
+      id: info.id,
+      display_name: info.name,
+      created_at: `${info.releaseDate || '2026-01-01'}T00:00:00Z`,
       context_window: isChatgptOAuth
-        ? (codexBackendContextWindow(model.id) ?? model.contextWindow)
-        : model.contextWindow,
-      max_tokens: model.id.startsWith('gpt-5.6-') ? 128000 : 16384,
+        ? (codexBackendContextWindow(info.id) ?? info.contextWindow)
+        : info.contextWindow,
+      max_tokens: info.id.startsWith('gpt-5.6-') ? 128000 : 16384,
     }));
-    return codexModels;
   }
 
   private async refreshStoredOauthCredentials(): Promise<StoredCredentials | undefined> {
@@ -411,93 +648,262 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return { isAuthenticated: true, method: 'oauth' };
   }
 
-  private async verifyCredentials(auth: OpenAIResponsesBridgeAuth): Promise<void> {
-    const cacheKey = this.bridgeAuthCacheKey(auth);
-    const cached = this.probeCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < AnthropicToCodexBridgeProvider.PROBE_TTL_MS) {
-      await cached.result;
-      return;
-    }
-    const result = this.probeUpstream(auth)
-      .then(() => undefined)
-      .catch((err) => {
-        this.probeCache.delete(cacheKey);
-        throw err;
-      });
-    this.probeCache.set(cacheKey, { at: Date.now(), result });
-    await result;
+  private parseCodexRemoteModel(value: unknown): CodexRemoteModel | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const record = value as Record<string, unknown>;
+    if (!this.isModelId(record.slug)) return undefined;
+    if (typeof record.display_name !== 'string' || !record.display_name.trim()) return undefined;
+    if (record.description !== undefined && typeof record.description !== 'string')
+      return undefined;
+    if (!['list', 'hide', 'none'].includes(String(record.visibility))) return undefined;
+    if (typeof record.supported_in_api !== 'boolean') return undefined;
+    if (typeof record.priority !== 'number' || !Number.isSafeInteger(record.priority))
+      return undefined;
+    const contextWindow = this.optionalPositiveInteger(record.context_window);
+    const maxContextWindow = this.optionalPositiveInteger(record.max_context_window);
+    if (record.context_window !== undefined && contextWindow === undefined) return undefined;
+    if (record.max_context_window !== undefined && maxContextWindow === undefined) return undefined;
+    return {
+      slug: record.slug,
+      displayName: record.display_name.trim(),
+      ...(typeof record.description === 'string' ? { description: record.description } : {}),
+      ...(contextWindow ? { contextWindow } : {}),
+      ...(maxContextWindow ? { maxContextWindow } : {}),
+      visibility: record.visibility as CodexModelVisibility,
+      supportedInApi: record.supported_in_api,
+      priority: record.priority,
+    };
   }
 
-  private async probeUpstream(auth: OpenAIResponsesBridgeAuth): Promise<void> {
-    const isChatgptOAuth = auth.source === 'chatgpt_oauth';
-    const baseUrl = isChatgptOAuth
-      ? 'https://chatgpt.com/backend-api/codex'
-      : 'https://api.openai.com/v1';
-    const url = `${baseUrl}/responses`;
+  private isOpenAIResponsesModel(modelId: string): boolean {
+    if (!/^(?:gpt-|o\d)/.test(modelId)) return false;
+    return !/(?:audio|embedding|image|moderation|realtime|search|transcri|tts|whisper)/i.test(
+      modelId
+    );
+  }
 
+  private parseOpenAIRemoteModel(value: unknown, priority: number): CodexRemoteModel | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const record = value as Record<string, unknown>;
+    if (!this.isModelId(record.id)) return undefined;
+    return {
+      slug: record.id,
+      displayName: record.id,
+      visibility: 'list',
+      supportedInApi: this.isOpenAIResponsesModel(record.id),
+      priority,
+    };
+  }
+
+  private parseRemoteModelList(
+    values: unknown[],
+    parse: (value: unknown, index: number) => CodexRemoteModel | undefined
+  ): CodexRemoteModel[] | undefined {
+    const models = values.map(parse);
+    return models.length > 0 && models.every((model) => model !== undefined) ? models : undefined;
+  }
+
+  private parseRemoteModels(value: unknown): CodexRemoteModel[] | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const record = value as Record<string, unknown>;
+    if (Array.isArray(record.models)) {
+      return this.parseRemoteModelList(record.models, (model) => this.parseCodexRemoteModel(model));
+    }
+    if (Array.isArray(record.data)) {
+      return this.parseRemoteModelList(record.data, (model, priority) =>
+        this.parseOpenAIRemoteModel(model, priority)
+      );
+    }
+    return undefined;
+  }
+
+  private async writeModelCache(cache: CodexModelCache): Promise<void> {
+    const dir = path.dirname(this.modelCachePath);
+    await fs.mkdir(dir, { recursive: true });
+    const tmpPath = `${this.modelCachePath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+    try {
+      await fs.writeFile(tmpPath, JSON.stringify(cache, null, 2), { mode: 0o600 });
+      await fs.rename(tmpPath, this.modelCachePath);
+    } catch (error) {
+      await fs.unlink(tmpPath).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private resetBridgeServers(): void {
+    for (const server of this.bridgeServers.values()) server.stop();
+    this.bridgeServers.clear();
+    this.bridgeServerAuthKeys.clear();
+  }
+
+  private replaceCatalog(
+    entries: CodexCatalogEntry[],
+    scope: CodexModelCacheScope | undefined
+  ): void {
+    const changed =
+      this.catalogEntries.length !== entries.length ||
+      this.catalogEntries.some(({ info, visibility }, index) => {
+        const next = entries[index];
+        return (
+          !next ||
+          info.id !== next.info.id ||
+          info.name !== next.info.name ||
+          info.contextWindow !== next.info.contextWindow ||
+          visibility !== next.visibility
+        );
+      });
+    this.catalogEntries = entries;
+    this.activeCatalogScope = scope;
+    if (changed) this.catalogGeneration += 1;
+  }
+
+  private applyRemoteCatalog(models: CodexRemoteModel[], scope: CodexModelCacheScope): boolean {
+    const entries = this.catalogEntriesFromRemote(models, scope.source);
+    if (entries.length === 0 || !entries.some((entry) => entry.visibility === 'list')) return false;
+    this.replaceCatalog(entries, scope);
+    return true;
+  }
+
+  private async requestModelCatalog(
+    auth: OpenAIResponsesBridgeAuth,
+    etag?: string
+  ): Promise<Response> {
+    const baseUrl =
+      auth.source === 'chatgpt_oauth'
+        ? 'https://chatgpt.com/backend-api/codex'
+        : 'https://api.openai.com/v1';
+    const url = new URL(`${baseUrl}/models`);
+    url.searchParams.set('client_version', CODEX_CLIENT_VERSION);
     const headers: Record<string, string> = {
-      'content-type': 'application/json',
+      accept: 'application/json',
       authorization: `Bearer ${auth.apiKey}`,
     };
-    if (isChatgptOAuth && auth.accountId) {
-      headers['ChatGPT-Account-ID'] = auth.accountId;
+    if (etag) headers['if-none-match'] = etag;
+    if (auth.source === 'chatgpt_oauth') {
+      if (auth.accountId) headers['ChatGPT-Account-ID'] = auth.accountId;
+      if (auth.isFedrampAccount) headers['X-OpenAI-Fedramp'] = 'true';
     }
+    return this.fetchImpl(url, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(CODEX_MODEL_FETCH_TIMEOUT_MS),
+    });
+  }
 
-    const body: Record<string, unknown> = {
-      model: 'gpt-5.4-mini',
-      input: [
-        {
-          type: 'message',
-          role: 'user',
-          content: [{ type: 'input_text', text: '.' }],
-        },
-      ],
-      stream: isChatgptOAuth,
-    };
-    if (isChatgptOAuth) {
-      body.instructions = 'You are a concise assistant.';
-      body.store = false;
-    } else {
-      body.max_output_tokens = 1;
+  private async fetchModelCatalog(initialAuth: OpenAIResponsesBridgeAuth): Promise<void> {
+    let auth = initialAuth;
+    if (auth.source === 'chatgpt_oauth') {
+      const credentials = await this.loadCredentials();
+      if (credentials?.expires && Date.now() >= credentials.expires - 5 * 60 * 1000) {
+        const refreshed = await this.refreshStoredOauthCredentials();
+        const refreshedAuth = refreshed ? this.toBridgeAuth(refreshed) : undefined;
+        if (refreshedAuth) auth = refreshedAuth;
+      }
     }
-
+    let scope = this.authScope(auth);
+    const matchingCache =
+      this.modelCache && this.cacheMatchesScope(this.modelCache, scope)
+        ? this.modelCache
+        : undefined;
     let response: Response;
     try {
-      response = await this.fetchImpl(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(AnthropicToCodexBridgeProvider.PROBE_TIMEOUT_MS),
-      });
-    } catch (err) {
-      if (err instanceof Error && err.name === 'TimeoutError') {
-        throw new Error(
-          `Codex probe timed out after ${AnthropicToCodexBridgeProvider.PROBE_TIMEOUT_MS}ms`
-        );
+      response = await this.requestModelCatalog(auth, matchingCache?.etag);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      logger.warn(`AnthropicToCodexBridgeProvider: model discovery failed: ${detail}`);
+      return;
+    }
+
+    if (response.status === 401 && auth.source === 'chatgpt_oauth') {
+      const refreshed = await this.refreshStoredOauthCredentials();
+      const refreshedAuth = refreshed ? this.toBridgeAuth(refreshed) : undefined;
+      if (refreshedAuth?.source === 'chatgpt_oauth') {
+        auth = refreshedAuth;
+        scope = this.authScope(auth);
+        response = await this.requestModelCatalog(auth).catch((error) => {
+          const detail = error instanceof Error ? error.message : String(error);
+          logger.warn(`AnthropicToCodexBridgeProvider: model discovery retry failed: ${detail}`);
+          return new Response(null, { status: 503 });
+        });
       }
-      const detail = err instanceof Error ? err.message : String(err);
-      throw new Error(`Codex probe failed: ${detail}`);
     }
 
     if (response.status === 401 || response.status === 403) {
       throw new Error(`Codex credentials rejected (HTTP ${response.status})`);
     }
-    if (!response.ok) {
-      throw new Error(`Codex probe failed (HTTP ${response.status})`);
+
+    if (response.status === 304 && matchingCache) {
+      const cache = { ...matchingCache, fetchedAt: new Date().toISOString() };
+      this.modelCache = cache;
+      this.activateCachedCatalog(scope);
+      await this.writeModelCache(cache).catch((error) =>
+        logger.warn('AnthropicToCodexBridgeProvider: model cache write failed:', error)
+      );
+      return;
     }
-    await response.body?.cancel().catch(() => undefined);
+
+    if (!response.ok) {
+      logger.warn(`AnthropicToCodexBridgeProvider: model discovery HTTP ${response.status}`);
+      return;
+    }
+
+    let models: CodexRemoteModel[] | undefined;
+    try {
+      models = this.parseRemoteModels((await response.json()) as unknown);
+    } catch {
+      models = undefined;
+    }
+    if (!models || !this.applyRemoteCatalog(models, scope)) {
+      logger.warn('AnthropicToCodexBridgeProvider: model discovery returned no usable models');
+      return;
+    }
+
+    const cache: CodexModelCache = {
+      schemaVersion: CODEX_MODEL_CACHE_SCHEMA_VERSION,
+      fetchedAt: new Date().toISOString(),
+      ...(response.headers.get('etag') ? { etag: response.headers.get('etag') ?? undefined } : {}),
+      clientVersion: CODEX_CLIENT_VERSION,
+      scope,
+      models,
+    };
+    this.modelCache = cache;
+    this.hydratedCacheEntries = this.catalogEntries;
+    await this.writeModelCache(cache).catch((error) =>
+      logger.warn('AnthropicToCodexBridgeProvider: model cache write failed:', error)
+    );
+  }
+
+  clearModelCache(): void {
+    this.forceModelRefresh = true;
   }
 
   async getModels(): Promise<ModelInfo[]> {
     const auth = await this.getBridgeAuth();
     if (!auth) return [];
-    await this.verifyCredentials(auth);
-    return ANTHROPIC_CODEX_MODELS.map((m) => ({ ...m, thinkingModes: 'granular' as const }));
+    const scope = this.authScope(auth);
+    if (!this.hasActiveCatalog(scope) && !this.activateCachedCatalog(scope)) {
+      this.replaceCatalog(this.bundledCatalogEntries(), scope);
+    }
+    if (
+      this.forceModelRefresh ||
+      !this.modelCache ||
+      !this.isModelCacheFresh(this.modelCache, scope)
+    ) {
+      this.forceModelRefresh = false;
+      this.modelRefresh ??= this.fetchModelCatalog(auth).finally(() => {
+        this.modelRefresh = undefined;
+      });
+      await this.modelRefresh;
+    }
+    return this.catalogEntries
+      .filter((entry) => entry.visibility === 'list')
+      .map((entry) => ({ ...entry.info }));
   }
 
   ownsModel(modelId: string): boolean {
-    return ANTHROPIC_CODEX_MODELS.some(
-      (m) => m.id === modelId || m.alias === modelId || m.providerAliases?.includes(modelId)
+    return this.catalogEntries.some(
+      ({ info }) =>
+        info.id === modelId || info.alias === modelId || info.providerAliases?.includes(modelId)
     );
   }
 
@@ -506,33 +912,37 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   getModelForTier(tier: ModelTier): string | undefined {
-    const map: Record<ModelTier, string> = {
+    const preferred: Record<ModelTier, string> = {
       opus: 'gpt-5.6-sol',
       sonnet: 'gpt-5.6-terra',
       haiku: 'gpt-5.6-luna',
       default: 'gpt-5.6-terra',
     };
-    return map[tier];
+    const preferredId = preferred[tier];
+    if (this.catalogEntries.some(({ info }) => info.id === preferredId)) return preferredId;
+    return this.catalogEntries.find(({ visibility }) => visibility === 'list')?.info.id;
   }
 
   buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
     const sessionId = sessionConfig?.sessionId ?? 'default';
     const auth = this.resolveBridgeAuth();
     const authKey = this.bridgeAuthCacheKey(auth);
-    const bridgeKey = `responses:${authKey}`;
+    const bridgeKey = `responses:${authKey}:${this.catalogGeneration}`;
     let bridgeServer = this.bridgeServers.get(bridgeKey);
     for (const [key, server] of this.bridgeServers) {
-      if (key === bridgeKey) continue;
+      if (key === bridgeKey || key.startsWith(`responses:${authKey}:`)) continue;
       server.stop();
       this.bridgeServers.delete(key);
       this.bridgeServerAuthKeys.delete(key);
     }
-    const entry = ANTHROPIC_CODEX_MODELS.find(
-      (m) => m.alias === modelId || m.id === modelId || m.providerAliases?.includes(modelId)
+    const catalogEntry = this.catalogEntries.find(
+      ({ info }) =>
+        info.alias === modelId || info.id === modelId || info.providerAliases?.includes(modelId)
     );
-    if (!entry) {
+    if (!catalogEntry) {
       throw new Error(`Unknown Codex model: ${modelId}`);
     }
+    const entry = catalogEntry.info;
     const resolvedId = entry.id;
     const isChatgptOAuth = auth?.source === 'chatgpt_oauth';
 
@@ -558,10 +968,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       bridgeServer.baseUrlForSession?.(sessionId) || `http://127.0.0.1:${bridgeServer.port}`;
 
     const sdkModelId =
-      CODEX_TO_SDK_MODEL[resolvedId as import('./codex-models.js').CodexBridgeModelId];
-    if (!sdkModelId) {
-      throw new Error(`Unknown Codex model: ${modelId}`);
-    }
+      CODEX_TO_SDK_MODEL[resolvedId as import('./codex-models.js').CodexBridgeModelId] ??
+      resolvedId;
 
     bridgeServer.setSessionModelConfig?.(sessionId, sdkModelId, resolvedId);
 
@@ -576,9 +984,17 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         ),
         CLAUDE_CODE_OAUTH_TOKEN: '',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-        ANTHROPIC_DEFAULT_OPUS_MODEL: CODEX_TO_SDK_MODEL['gpt-5.6-sol'],
+        ANTHROPIC_DEFAULT_OPUS_MODEL: this.catalogEntries.some(
+          ({ info }) => info.id === 'gpt-5.6-sol'
+        )
+          ? CODEX_TO_SDK_MODEL['gpt-5.6-sol']
+          : sdkModelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: sdkModelId,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: CODEX_TO_SDK_MODEL['gpt-5.6-luna'],
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: this.catalogEntries.some(
+          ({ info }) => info.id === 'gpt-5.6-luna'
+        )
+          ? CODEX_TO_SDK_MODEL['gpt-5.6-luna']
+          : sdkModelId,
       },
       isAnthropicCompatible: true,
       apiVersion: 'v1',
@@ -588,7 +1004,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   setSessionThinkingConfig(sessionId: string, thinkingLevel: string | undefined): void {
     const auth = this.resolveBridgeAuth();
     const authKey = this.bridgeAuthCacheKey(auth);
-    const bridgeKey = `responses:${authKey}`;
+    const bridgeKey = `responses:${authKey}:${this.catalogGeneration}`;
     const bridgeServer = this.bridgeServers.get(bridgeKey);
     if (!bridgeServer?.setSessionThinkingConfig) return;
 
@@ -605,11 +1021,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   stopAllBridgeServers(): void {
-    for (const server of this.bridgeServers.values()) {
-      server.stop();
-    }
-    this.bridgeServers.clear();
-    this.bridgeServerAuthKeys.clear();
+    this.resetBridgeServers();
     this.cachedCredentials = null;
     this.cachedBridgeAuth = undefined;
     this.cachedApiKey = undefined;
