@@ -13,6 +13,7 @@ import { getProviderRegistry } from '../providers/registry.js';
 import { markBuiltInProviderDisabled } from '../providers/factory.js';
 import { AcpProvider } from '../providers/acp-provider.js';
 import { fetchAcpModels } from '../acp/acp-model-fetcher.js';
+import { parseAcpCommand } from '../acp/acp-command.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SessionManager } from '../session/session-manager';
@@ -164,6 +165,21 @@ function readAcpCommand(configJson: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function validateAcpConfigCommand(configJson: string | undefined): string | undefined {
+  if (!configJson) return undefined;
+  let parsed: { command?: unknown };
+  try {
+    parsed = JSON.parse(configJson) as { command?: unknown };
+  } catch {
+    throw new Error('Invalid ACP config JSON');
+  }
+  if (parsed.command === undefined) return undefined;
+  if (typeof parsed.command !== 'string') throw new Error('ACP command must be a string');
+  if (!parsed.command.trim()) throw new Error('ACP command is required');
+  parseAcpCommand(parsed.command);
+  return parsed.command;
 }
 
 async function clearAcpSessionIds(
@@ -337,10 +353,14 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             }
           }
 
+          const updatedAcpCommand =
+            existing.providerId === 'acp' && updates.configJson !== undefined
+              ? validateAcpConfigCommand(updates.configJson)
+              : undefined;
           const acpCommandChanged =
             existing.providerId === 'acp' &&
             updates.configJson !== undefined &&
-            readAcpCommand(existing.configJson) !== readAcpCommand(updates.configJson);
+            readAcpCommand(existing.configJson) !== updatedAcpCommand;
           const record = providerRepo.updateProvider(data.id, updates);
           if (!record) throw new Error(`Provider ${data.id} not found`);
           if (acpCommandChanged) {

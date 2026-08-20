@@ -411,6 +411,48 @@ describe('Provider RPC handlers', () => {
       });
     });
 
+    it('rejects invalid ACP commands before persisting or mutating the provider', async () => {
+      const originalConfig = JSON.stringify({ command: 'devin acp', models: [] });
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: originalConfig,
+      });
+      const provider = new AcpProvider({}, async () => {});
+      provider.setAcpCommand('devin acp');
+      getProviderRegistry().register(provider);
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.update')!(
+          {
+            id: created.id,
+            params: {
+              configJson: JSON.stringify({ command: "devin 'acp", models: [] }),
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('Invalid ACP command: unmatched quote');
+
+      expect(repo.getProvider(created.id)?.configJson).toBe(originalConfig);
+      expect(provider.getAcpCommand()).toBe('devin acp');
+      expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
+
+      await expect(
+        handlers.get('providers.update')!(
+          {
+            id: created.id,
+            params: { configJson: '{invalid' },
+          },
+          {}
+        )
+      ).rejects.toThrow('Invalid ACP config JSON');
+      expect(repo.getProvider(created.id)?.configJson).toBe(originalConfig);
+    });
+
     it('preserves ACP session ids for model-only configuration changes', async () => {
       const created = repo.createProvider({
         providerId: 'acp',
