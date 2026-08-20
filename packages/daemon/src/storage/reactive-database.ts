@@ -35,7 +35,7 @@ export interface ReactiveDatabase {
 
 interface MethodMapping {
   table: string;
-  extractScope?: (args: unknown[], db: Database) => TableChangeScope;
+  extractScope?: (args: unknown[], db: Database) => TableChangeScope | undefined;
 }
 
 function resolveTaskIdForSession(db: Database, sessionId: string): string | undefined {
@@ -95,6 +95,20 @@ function sessionScope(db: Database, sessionId: unknown): TableChangeScope {
   } catch {
     return { sessionId };
   }
+}
+
+function updateSessionScope(
+  db: Database,
+  sessionId: unknown,
+  updates: unknown
+): TableChangeScope | undefined {
+  if (typeof updates === 'object' && updates !== null) {
+    const record = updates as Record<string, unknown>;
+    if (record.type !== undefined || 'context' in record) {
+      return undefined;
+    }
+  }
+  return sessionScope(db, sessionId);
 }
 
 function createSessionScope(_db: Database, session: unknown): TableChangeScope {
@@ -180,7 +194,10 @@ function mergeScopes(scopes: TableChangeScope[]): TableChangeScope | undefined {
 
 const METHOD_TABLE_MAP: Record<string, MethodMapping> = {
   createSession: { table: 'sessions', extractScope: (args, db) => createSessionScope(db, args[0]) },
-  updateSession: { table: 'sessions', extractScope: (args, db) => sessionScope(db, args[0]) },
+  updateSession: {
+    table: 'sessions',
+    extractScope: (args, db) => updateSessionScope(db, args[0], args[1]),
+  },
   deleteSession: { table: 'sessions', extractScope: (args, db) => sessionScope(db, args[0]) },
   saveSDKMessage: {
     table: 'sdk_messages',

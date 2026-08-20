@@ -114,7 +114,9 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
 
   test('a send_status transition emits an UPDATED delta on the same row (no duplicate)', async () => {
     const diffs: QueryDiff<MessageRow>[] = [];
-    engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff));
+    engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff), {
+      rowFingerprint: NAMED_QUERY_REGISTRY.get('messages.bySession')!.rowFingerprint,
+    });
     await flush();
     expect(diffs[0].type).toBe('snapshot');
     expect(diffs[0].rows).toHaveLength(0);
@@ -168,7 +170,9 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
     bunDb.prepare(`UPDATE sdk_messages SET send_status = 'consumed' WHERE id = ?`).run(rowId);
 
     const diffs: QueryDiff<MessageRow>[] = [];
-    engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff));
+    engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff), {
+      rowFingerprint: NAMED_QUERY_REGISTRY.get('messages.bySession')!.rowFingerprint,
+    });
     await flush();
 
     expect(diffs[0].type).toBe('snapshot');
@@ -186,7 +190,9 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
     );
 
     const diffs: QueryDiff<MessageRow>[] = [];
-    engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff));
+    engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff), {
+      rowFingerprint: NAMED_QUERY_REGISTRY.get('messages.bySession')!.rowFingerprint,
+    });
     await flush();
     expect(diffs[0].type).toBe('snapshot');
     expect(diffs[0].rows![0].deliveryRetryInfo).toBeNull();

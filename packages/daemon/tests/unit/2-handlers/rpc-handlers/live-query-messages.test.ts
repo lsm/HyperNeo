@@ -1,14 +1,15 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
-import { createTables } from '../../../../src/storage/schema';
-import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
-import { LiveQueryEngine } from '../../../../src/storage/live-query';
 import {
   BACKGROUND_TASK_METADATA_SQL,
   NAMED_QUERY_REGISTRY,
   setupLiveQueryHandlers,
 } from '../../../../src/lib/rpc-handlers/live-query-handlers';
+import { LiveQueryEngine } from '../../../../src/storage/live-query';
+import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { createTables } from '../../../../src/storage/schema';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -193,6 +194,10 @@ describe('messages.bySession — registry metadata', () => {
 
   test('messages.bySession has a mapRow function', () => {
     expect(typeof NAMED_QUERY_REGISTRY.get('messages.bySession')!.mapRow).toBe('function');
+  });
+
+  test('messages.bySession debounces SDK-message changes to bound re-evaluation frequency', () => {
+    expect(NAMED_QUERY_REGISTRY.get('messages.bySession')!.debounceMs).toBe(250);
   });
 });
 
@@ -469,6 +474,37 @@ describe('messages.bySession — SQL behavior', () => {
 
     const rows = query(db, 's1', 2);
     expect(rows.map((r) => r.id)).toEqual(['older-visible', 'newer-visible']);
+  });
+
+  test('keeps worker shutdown rows until a newer user message reaches a terminal state', () => {
+    insertSdkMessage(db, {
+      id: 'shutdown',
+      sessionId: 's1',
+      messageType: 'system',
+      messageSubtype: 'worker_shutting_down',
+      sdkMessage: {
+        type: 'system',
+        subtype: 'worker_shutting_down',
+        uuid: 'shutdown-uuid',
+        session_id: 's1',
+        reason: 'host_exit',
+      },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    insertSdkMessage(db, {
+      id: 'user',
+      sessionId: 's1',
+      messageType: 'user',
+      sdkMessage: { type: 'user', uuid: 'user-uuid', message: { content: 'continue' } },
+      timestamp: '2024-01-01 00:00:02',
+      sendStatus: 'enqueued',
+    });
+
+    expect(query(db, 's1', 10).map((row) => row.id)).toEqual(['shutdown', 'user']);
+
+    db.prepare(`UPDATE sdk_messages SET send_status = 'consumed' WHERE id = ?`).run('user');
+
+    expect(query(db, 's1', 10).map((row) => row.id)).toEqual(['user']);
   });
 
   test('keeps worker shutdown rows when they are the top-level live tail', () => {
@@ -803,9 +839,11 @@ describe('messages.bySession — SQL behavior', () => {
     expect(rows.map((r) => r.id)).toEqual(['normal']);
   });
 
-  test('uses the session timestamp index for the top-level window', () => {
+  test('uses one bounded shutdown lookup and the session timestamp index', () => {
     const plan = queryPlan(db, 's1', 200);
+    expect(plan).toContain('MATERIALIZE latest_shutdown_boundary');
     expect(plan).toMatch(/idx_sdk_messages_session(_timestamp_id)?\b/);
+    expect(plan).not.toContain('MULTI-INDEX OR');
     expect(plan).not.toContain('SCAN sdk_messages USING');
   });
 
@@ -813,7 +851,7 @@ describe('messages.bySession — SQL behavior', () => {
     const plan = queryPlan(db, 's1', 200);
     expect(plan).toContain('MATERIALIZE active_delivery_jobs');
     expect(plan).toContain('idx_message_delivery_session_active');
-    expect(plan.match(/CORRELATED SCALAR SUBQUERY/g) ?? []).toHaveLength(1);
+    expect(plan.match(/CORRELATED SCALAR SUBQUERY/g) ?? []).toHaveLength(0);
   });
 
   test('uses the materialised parent_tool_use_id index for subagent lookups', () => {
@@ -1166,5 +1204,80 @@ describe('messages.bySession — mapRow', () => {
 
     const [row] = query(db, 's1', 10);
     expect(row.deliveryStatus).toBe('queued');
+  });
+});
+
+describe('messages.bySession — content replacement rewrite', () => {
+  let db: BunDatabase;
+
+  beforeEach(() => {
+    db = makeDb();
+    insertSession(db, { id: 's1' });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  test('registry supplies a rowFingerprint so the engine skips full payload hashing', () => {
+    const entry = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
+    expect(typeof entry.rowFingerprint).toBe('function');
+  });
+
+  test('a content rewrite through the repository replacement path emits an updated diff', async () => {
+    const entry = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
+    const reactiveDb = createReactiveDatabase({ getDatabase: () => db } as never);
+    const engine = new LiveQueryEngine(db, reactiveDb);
+    const diffs: Array<{ added?: unknown[]; removed?: unknown[]; updated?: unknown[] }> = [];
+    engine.subscribe(entry.sql, ['s1', 100], (diff) => diffs.push(diff), {
+      debounceMs: 0,
+      rowFingerprint: entry.rowFingerprint,
+    });
+    expect(diffs).toHaveLength(1);
+
+    insertSdkMessage(db, {
+      id: 'action-1',
+      sessionId: 's1',
+      messageType: 'hyperneo_action',
+      messageSubtype: 'sdk_resume_choice',
+      sdkMessage: {
+        type: 'hyperneo_action',
+        uuid: 'u-action',
+        session_id: 's1',
+        action: 'sdk_resume_choice',
+        resolved: false,
+        chosenOption: 'start_fresh',
+        timestamp: 1,
+      },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    reactiveDb.notifyChange('sdk_messages', { sessionId: 's1' });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(diffs).toHaveLength(2);
+    expect(diffs[1].added).toHaveLength(1);
+
+    const repo = new SDKMessageRepository(db, reactiveDb);
+    repo.updateHyperNeoActionMessage('action-1', {
+      type: 'hyperneo_action',
+      uuid: 'u-action',
+      session_id: 's1',
+      action: 'sdk_resume_choice',
+      resolved: false,
+      chosenOption: 'leave_as_is',
+      timestamp: 1,
+    });
+
+    reactiveDb.notifyChange('sdk_messages', { sessionId: 's1' });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(diffs).toHaveLength(3);
+    const updated = diffs[2].updated as Array<{ id: string; content: string }>;
+    expect(updated.map((row) => row.id)).toContain('action-1');
+    const rewritten = updated.find((row) => row.id === 'action-1');
+    expect(rewritten?.content).toContain('"chosenOption":"leave_as_is"');
+
+    engine.dispose();
   });
 });

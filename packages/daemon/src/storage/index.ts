@@ -11,7 +11,7 @@ import type {
   ChatMessage,
 } from '@hyperneo/shared';
 import type { GoalStatus, RoomGoal } from '@hyperneo/shared/types/neo';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { DatabaseCore } from './database-core';
 import { ShortIdAllocator } from '../lib/short-id-allocator';
 export { ShortIdAllocator } from '../lib/short-id-allocator';
@@ -275,6 +275,17 @@ export class Database {
     status: SendStatus
   ): Array<SDKMessage & { dbId: string; timestamp: number }> {
     return this.sdkMessageRepo.getMessagesByStatus(sessionId, status);
+  }
+
+  getUserMessagesByStatus(
+    sessionId: string,
+    status: SendStatus,
+    limit: number
+  ): {
+    messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>;
+    total: number;
+  } {
+    return this.sdkMessageRepo.getUserMessagesByStatus(sessionId, status, limit);
   }
 
   getMessageByStatusAndUuid(

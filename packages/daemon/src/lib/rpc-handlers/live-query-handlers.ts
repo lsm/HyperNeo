@@ -37,13 +37,25 @@ export interface NamedQuery {
     params: ReadonlyArray<unknown>,
     db: BunDatabase
   ) => ((scope: TableChangeScope) => boolean) | undefined;
+  rowFingerprint?: (row: Record<string, unknown>) => unknown;
 }
 
-const DEBOUNCE_SDK_MESSAGES_MS = 100;
+const DEBOUNCE_SDK_MESSAGES_MS = 250;
 const DEBOUNCE_SESSION_GROUP_MESSAGES_MS = 150;
 const DEBOUNCE_SESSION_LIST_MS = 150;
 const DEBOUNCE_SPACE_SESSIONS_MS = 150;
 const DEBOUNCE_SPACE_TASK_FEEDS_MS = 250;
+
+const SESSION_LIST_EXCLUDED_TYPES = new Set<string>([
+  'lobby',
+  'spaces_global',
+  'room_chat',
+  'planner',
+  'coder',
+  'leader',
+  'space_chat',
+  'space_task_agent',
+]);
 
 function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string, unknown> {
   const sourceType = row.sourceType;
@@ -2991,7 +3003,16 @@ ORDER BY timestamp DESC, rowid DESC
 `.trim();
 
 const MESSAGES_BY_SESSION_SQL = `
-WITH active_delivery_jobs AS MATERIALIZED (
+WITH latest_shutdown_boundary AS MATERIALIZED (
+  SELECT id
+  FROM sdk_messages
+  WHERE session_id = ?1
+    AND parent_tool_use_id IS NULL
+    AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
+  ORDER BY timestamp DESC, id DESC
+  LIMIT 1
+),
+active_delivery_jobs AS MATERIALIZED (
   SELECT
     jq.rowid AS job_rowid,
     json_extract(jq.payload, '$.messageUuid') AS message_uuid,
@@ -3054,6 +3075,7 @@ top_level AS (
     send_status,
     origin,
     rowid,
+    message_type,
     active_delivery_retry.deliveryRetryInfo AS deliveryRetryInfo
   FROM sdk_messages
   LEFT JOIN active_delivery_retry ON active_delivery_retry.message_uuid = sdk_messages.sdk_uuid
@@ -3080,17 +3102,7 @@ top_level AS (
     AND (
       message_type != 'system'
       OR message_subtype_norm != 'worker_shutting_down'
-      OR NOT EXISTS (
-        SELECT 1
-        FROM sdk_messages newer
-        WHERE newer.session_id = sdk_messages.session_id
-          AND newer.parent_tool_use_id IS NULL
-          AND (
-            newer.timestamp > sdk_messages.timestamp
-            OR (newer.timestamp = sdk_messages.timestamp AND newer.id > sdk_messages.id)
-          )
-          AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
-      )
+      OR id = (SELECT id FROM latest_shutdown_boundary)
     )
   -- Cap window orders by (timestamp, rowid) so a LiveQuery limit that cuts
   -- through same-millisecond hook_started/progress/response rows keeps the
@@ -3125,6 +3137,7 @@ subagent AS (
     sm.send_status AS send_status,
     sm.origin AS origin,
     sm.rowid AS rowid,
+    sm.message_type AS message_type,
     active_delivery_retry.deliveryRetryInfo AS deliveryRetryInfo
   FROM sdk_messages sm
   LEFT JOIN active_delivery_retry ON active_delivery_retry.message_uuid = sm.sdk_uuid
@@ -3139,6 +3152,7 @@ SELECT
   send_status                                                       AS sendStatus,
   origin                                                            AS origin,
   rowid                                                             AS rowid,
+  message_type                                                      AS messageType,
   deliveryRetryInfo                                                 AS deliveryRetryInfo
 FROM top_level
 UNION ALL
@@ -3149,6 +3163,7 @@ SELECT
   send_status                                                       AS sendStatus,
   origin                                                            AS origin,
   rowid                                                             AS rowid,
+  message_type                                                      AS messageType,
   deliveryRetryInfo                                                 AS deliveryRetryInfo
 FROM subagent
 ORDER BY timestamp ASC, rowid ASC
@@ -3507,6 +3522,17 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
           return scope.sessionId === targetSessionId;
         };
       },
+      rowFingerprint: (row) =>
+        row.messageType === 'hyperneo_action'
+          ? row
+          : {
+              content: typeof row.content === 'string' ? row.content.length : row.content,
+              timestamp: row.timestamp,
+              sendStatus: row.sendStatus,
+              origin: row.origin,
+              rowid: row.rowid,
+              deliveryRetryInfo: row.deliveryRetryInfo,
+            },
     },
   ],
   [
@@ -3524,6 +3550,30 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
           };
         }
         return { totalCount: 0, archivedCount: 0 };
+      },
+      buildScopeFilter: (_params, db) => {
+        const stmt = db.prepare(
+          `SELECT type,
+             json_extract(session_context, '$.roomId') AS room_id,
+             json_extract(session_context, '$.spaceId') AS space_id
+           FROM sessions WHERE id = ?`
+        );
+        return (scope) => {
+          if (scope.sessionType && SESSION_LIST_EXCLUDED_TYPES.has(scope.sessionType)) {
+            return false;
+          }
+          if (scope.roomId || scope.spaceId) return false;
+          if (scope.sessionId) {
+            const row = stmt.get(scope.sessionId) as
+              | { type: string | null; room_id: string | null; space_id: string | null }
+              | undefined;
+            if (row) {
+              if (row.type && SESSION_LIST_EXCLUDED_TYPES.has(row.type)) return false;
+              if (row.room_id || row.space_id) return false;
+            }
+          }
+          return true;
+        };
       },
     },
   ],
@@ -3819,6 +3869,7 @@ export function setupLiveQueryHandlers(
         debounceMs: namedQuery.debounceMs,
         getMetadata: namedQuery.mapResult,
         scopeFilter: namedQuery.buildScopeFilter?.(params, db),
+        rowFingerprint: namedQuery.rowFingerprint,
       }
     );
 
