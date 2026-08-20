@@ -218,6 +218,39 @@ describe('AcpTerminalManager', () => {
     expect(terminate).not.toHaveBeenCalledWith('SIGKILL');
   }, 1000);
 
+  test('resolves waiters on process exit before stream close', async () => {
+    const manager = new AcpTerminalManager();
+    const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'command' });
+    const waiting = manager.waitForExit(params(terminalId));
+
+    spawned[0].emit('exit', 3, null);
+
+    await expect(waiting).resolves.toEqual({ exitCode: 3, signal: null });
+    expect(await manager.output(params(terminalId))).toMatchObject({
+      exitStatus: { exitCode: 3, signal: null },
+    });
+  });
+
+  test('skips SIGKILL when the group exits during the escalation delay', async () => {
+    const terminate = mock((_signal: NodeJS.Signals) => {});
+    let groupExists = true;
+    const manager = new AcpTerminalManager(
+      {},
+      undefined,
+      () => ({ terminate }),
+      () => groupExists,
+      50
+    );
+    const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'sleep' });
+
+    await manager.kill(params(terminalId));
+    groupExists = false;
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
+    expect(terminate).not.toHaveBeenCalledWith('SIGKILL');
+  }, 1000);
+
   test('rejects operations for unknown terminal ids', async () => {
     const manager = new AcpTerminalManager();
     const unknown = params('unknown');

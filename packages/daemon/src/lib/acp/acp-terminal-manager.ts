@@ -115,7 +115,7 @@ export class AcpTerminalManager {
     child.stdout?.on('data', (chunk: Buffer) => this.appendOutput(terminalId, chunk));
     child.stderr?.on('data', (chunk: Buffer) => this.appendOutput(terminalId, chunk));
 
-    child.on('close', (code, signal) => {
+    child.on('exit', (code, signal) => {
       if (session.exited) return;
       session.exitCode = code ?? null;
       session.exitSignal = signal ?? null;
@@ -124,6 +124,19 @@ export class AcpTerminalManager {
         waiter({ exitCode: session.exitCode, signal: session.exitSignal });
       }
       session.exitWaiters = [];
+      this.recordGroupGone(session);
+    });
+
+    child.on('close', (code, signal) => {
+      if (!session.exited) {
+        session.exitCode = code ?? null;
+        session.exitSignal = signal ?? null;
+        session.exited = true;
+        for (const waiter of session.exitWaiters) {
+          waiter({ exitCode: session.exitCode, signal: session.exitSignal });
+        }
+        session.exitWaiters = [];
+      }
       this.recordGroupGone(session);
       this.cancelStaleKillEscalation(session);
     });
@@ -216,7 +229,8 @@ export class AcpTerminalManager {
     if (process.platform === 'win32') return;
     session.killTimer = setTimeout(() => {
       session.killTimer = null;
-      session.processTree.terminate('SIGKILL');
+      this.recordGroupGone(session);
+      if (!session.processGroupGone) session.processTree.terminate('SIGKILL');
     }, this.killEscalationMs);
     session.killTimer.unref();
     this.cancelStaleKillEscalation(session);
