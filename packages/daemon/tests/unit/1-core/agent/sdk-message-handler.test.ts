@@ -1330,6 +1330,9 @@ describe('SDKMessageHandler', () => {
         messageId: 'yielded-user-uuid',
         phase: 'streaming',
       });
+      setIdleSpy.mockImplementation(async () => {
+        getStateSpy.mockReturnValue({ status: 'idle' });
+      });
       hasPendingOrClaimedSpy.mockReturnValue(false);
       hasYieldedSpy.mockImplementation((uuid: string) => uuid === 'yielded-user-uuid');
       acknowledgeYieldedSpy.mockImplementation((uuid: string) => uuid === 'yielded-user-uuid');
@@ -1343,6 +1346,8 @@ describe('SDKMessageHandler', () => {
         modelUsage: {},
       } as unknown as SDKMessage);
 
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(getStateSpy).toHaveBeenCalledTimes(1);
       expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-yielded'], 'consumed');
       expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('yielded-user-uuid');
     });

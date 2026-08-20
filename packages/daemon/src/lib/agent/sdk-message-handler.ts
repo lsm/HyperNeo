@@ -323,12 +323,12 @@ export class SDKMessageHandler {
     await this.publishToolResultConsumedEvents(sdkReplayMessage);
   }
 
-  private async acknowledgeOldestQueuedUserOnTurnEnd(): Promise<void> {
-    const { session, db, internalEventBus, messageHub, messageQueue, stateManager } = this.ctx;
+  private async acknowledgeOldestQueuedUserOnTurnEnd(
+    activeMessageId: string | null
+  ): Promise<void> {
+    const { session, db, internalEventBus, messageHub, messageQueue } = this.ctx;
     const durableOwned =
       db.getJobQueueRepo?.()?.activeDeliveryMessageUuids(session.id) ?? new Set();
-    const state = stateManager.getState();
-    const activeMessageId = state.status === 'processing' ? state.messageId : null;
     const enqueuedUsers = db.getMessagesByStatus(session.id, 'enqueued').filter((enqueued) => {
       const uuid = enqueued.uuid ?? '';
       const activeYielded = uuid === activeMessageId && messageQueue.hasYielded(uuid);
@@ -693,6 +693,11 @@ export class SDKMessageHandler {
       .parent_tool_use_id;
     const isTopLevelResult =
       isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
+    const processingState = stateManager.getState();
+    const activeMessageId =
+      isTopLevelResult && processingState.status === 'processing'
+        ? processingState.messageId
+        : null;
     if (isTopLevelResult && !this.suppressIdleOnNextResult) {
       stateManager.beginTerminalIdle();
     }
@@ -739,7 +744,7 @@ export class SDKMessageHandler {
     }
 
     if (isTopLevelResult && isSDKResultSuccess(message)) {
-      await this.handleResultMessage(message);
+      await this.handleResultMessage(message, activeMessageId);
     }
 
     if (isSDKAssistantMessage(message)) {
@@ -815,7 +820,10 @@ export class SDKMessageHandler {
     }
   }
 
-  private async handleResultMessage(message: SDKMessage): Promise<void> {
+  private async handleResultMessage(
+    message: SDKMessage,
+    activeMessageId: string | null
+  ): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
 
     if (!isSDKResultSuccess(message)) return;
@@ -871,7 +879,7 @@ export class SDKMessageHandler {
     }
 
     if (!this.acknowledgedPersistedUserThisTurn) {
-      await this.acknowledgeOldestQueuedUserOnTurnEnd();
+      await this.acknowledgeOldestQueuedUserOnTurnEnd(activeMessageId);
     }
     this.acknowledgedPersistedUserThisTurn = false;
 
