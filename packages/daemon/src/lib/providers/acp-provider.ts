@@ -65,6 +65,7 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
     const timer = setTimeout(() => {
       processTree?.terminate('SIGTERM');
       killTimer = setTimeout(() => {
+        recordGroupGone();
         if (!processGroupGone) processTree?.terminate('SIGKILL');
       }, ACP_PROBE_KILL_TIMEOUT_MS);
       killTimer.unref();
@@ -86,6 +87,7 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
         processTree = ownedTree;
         ownedTree.terminate('SIGTERM');
         killTimer = setTimeout(() => {
+          recordGroupGone();
           if (!processGroupGone) ownedTree.terminate('SIGKILL');
         }, ACP_PROBE_KILL_TIMEOUT_MS);
         killTimer.unref();

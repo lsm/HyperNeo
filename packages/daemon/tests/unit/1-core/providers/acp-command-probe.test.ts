@@ -150,4 +150,30 @@ describe('defaultAcpCommandProbe', () => {
     expect(killSignals).toContain('SIGTERM');
     expect(killSignals).not.toContain('SIGKILL');
   }, 2000);
+
+  test('skips SIGKILL when the probed group exits during the escalation delay', async () => {
+    const killSignals: NodeJS.Signals[] = [];
+    let groupExists = true;
+    spawnHandler = (command, args, options) => {
+      calls.push({ command, args, options });
+      const child = new EventEmitter() as EventEmitter & {
+        kill: (signal: NodeJS.Signals) => boolean;
+        pid?: number;
+      };
+      child.kill = (signal) => {
+        killSignals.push(signal);
+        return true;
+      };
+      child.pid = 0x40000002;
+      queueMicrotask(() => child.emit('spawn'));
+      return child;
+    };
+
+    await defaultAcpCommandProbe('devin acp', 1000, () => groupExists);
+    groupExists = false;
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
+    expect(killSignals).toContain('SIGTERM');
+    expect(killSignals).not.toContain('SIGKILL');
+  }, 2000);
 });
