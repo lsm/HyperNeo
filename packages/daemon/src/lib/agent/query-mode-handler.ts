@@ -34,7 +34,7 @@ export interface QueryModeHandlerContext {
 function isTaskHandoffMessage(
   message: SDKMessage & { isSynthetic?: boolean; origin?: string | null }
 ): boolean {
-  if (message.isSynthetic === false) return false;
+  if (message.isSynthetic !== true) return false;
   if (message.origin === 'system') return false;
   return true;
 }

@@ -578,8 +578,8 @@ describe('recovery flush — confirmed clear at the front of a batch (task #1098
       order.push(`enqueue:${uuid}`);
     });
     harness.setDeferred([
-      { uuid: 'handoff-1', text: 'review round 3' },
-      { uuid: 'handoff-2', text: 'review round 4' },
+      { uuid: 'handoff-1', text: 'review round 3', isSynthetic: true },
+      { uuid: 'handoff-2', text: 'review round 4', isSynthetic: true },
     ]);
 
     await harness.flush();
@@ -590,7 +590,7 @@ describe('recovery flush — confirmed clear at the front of a batch (task #1098
 
   it('does not issue a second clear across two flush calls in the same epoch', async () => {
     const harness = makeFlushHarness({ slotResets: true });
-    harness.setDeferred([{ uuid: 'handoff-1', text: 'review round 3' }]);
+    harness.setDeferred([{ uuid: 'handoff-1', text: 'review round 3', isSynthetic: true }]);
 
     await harness.flush();
     await harness.flush();
@@ -600,7 +600,7 @@ describe('recovery flush — confirmed clear at the front of a batch (task #1098
 
   it('regression (live bug): the handoff is not enqueued until the confirmed clear has resolved', async () => {
     const harness = makeFlushHarness({ slotResets: true });
-    harness.setDeferred([{ uuid: 'handoff-1', text: 'review round 3' }]);
+    harness.setDeferred([{ uuid: 'handoff-1', text: 'review round 3', isSynthetic: true }]);
     let releaseClear!: () => void;
     const clearGate = new Promise<void>((resolve) => {
       releaseClear = resolve;
@@ -621,7 +621,7 @@ describe('recovery flush — confirmed clear at the front of a batch (task #1098
 
   it('does not clear on the recovery flush when the slot does not reset context', async () => {
     const harness = makeFlushHarness({ slotResets: false });
-    harness.setDeferred([{ uuid: 'handoff-1', text: 'review round 3' }]);
+    harness.setDeferred([{ uuid: 'handoff-1', text: 'review round 3', isSynthetic: true }]);
 
     await harness.flush();
 
@@ -641,7 +641,19 @@ describe('recovery flush — confirmed clear at the front of a batch (task #1098
 
   it('does not clear when the flush batch contains only a recovery nag (origin=system)', async () => {
     const harness = makeFlushHarness({ slotResets: true });
-    harness.setDeferred([{ uuid: 'recovery-1', text: '/compact', origin: 'system' }]);
+    harness.setDeferred([
+      { uuid: 'recovery-1', text: '/compact', isSynthetic: true, origin: 'system' },
+    ]);
+
+    await harness.flush();
+
+    expect(harness.clearMock).not.toHaveBeenCalled();
+    expect(harness.enqueueWithIdMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not clear when the flush batch contains an unmarked chat message (no isSynthetic)', async () => {
+    const harness = makeFlushHarness({ slotResets: true });
+    harness.setDeferred([{ uuid: 'chat-1', text: 'please review the diff' }]);
 
     await harness.flush();
 
@@ -653,7 +665,7 @@ describe('recovery flush — confirmed clear at the front of a batch (task #1098
     const harness = makeFlushHarness({ slotResets: true });
     harness.setDeferred([
       { uuid: 'human-1', text: 'please review the diff', isSynthetic: false },
-      { uuid: 'handoff-1', text: 'review round 3' },
+      { uuid: 'handoff-1', text: 'review round 3', isSynthetic: true },
     ]);
 
     await harness.flush();
