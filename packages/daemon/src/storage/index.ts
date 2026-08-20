@@ -1,4 +1,5 @@
 import { Database as BunDatabase } from './sqlite-compat';
+import { Logger } from '../lib/logger';
 import type {
   Session,
   GlobalToolsConfig,
@@ -92,7 +93,12 @@ export type {
   UpdateProviderParams,
 } from '@hyperneo/shared';
 
+export interface DatabaseOptions {
+  messageSearchIndexFlushIntervalMs?: number;
+}
+
 export class Database {
+  private logger = new Logger('Database');
   private core: DatabaseCore;
   private sessionRepo!: SessionRepository;
   private sdkMessageRepo!: SDKMessageRepository;
@@ -114,9 +120,15 @@ export class Database {
   private providerRepo!: ProviderRepository;
   private shortIdAllocator!: ShortIdAllocator;
   private reactiveDb?: ReactiveDatabase;
+  private messageSearchIndexTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly messageSearchIndexFlushIntervalMs: number;
 
-  constructor(dbPath: string) {
+  private static readonly MESSAGE_SEARCH_INDEX_FLUSH_INTERVAL_MS = 2_000;
+
+  constructor(dbPath: string, options?: DatabaseOptions) {
     this.core = new DatabaseCore(dbPath);
+    this.messageSearchIndexFlushIntervalMs =
+      options?.messageSearchIndexFlushIntervalMs ?? Database.MESSAGE_SEARCH_INDEX_FLUSH_INTERVAL_MS;
   }
 
   getDbPath(): string {
@@ -157,6 +169,17 @@ export class Database {
     this.goalAutomationCursorRepo = new GoalAutomationCursorRepository(db);
     this.providerRepo = new ProviderRepository(db, reactiveDb);
     this.agentMemoryRepo.backfillPendingEmbeddings();
+    this.sdkMessageRepo.flushMessageSearchIndex();
+    if (this.messageSearchIndexFlushIntervalMs > 0) {
+      this.messageSearchIndexTimer = setInterval(() => {
+        try {
+          this.sdkMessageRepo.flushMessageSearchIndex();
+        } catch (err) {
+          this.logger.warn('message search index flush failed:', err);
+        }
+      }, this.messageSearchIndexFlushIntervalMs);
+      this.messageSearchIndexTimer.unref?.();
+    }
   }
 
   createSession(session: Session): void {
@@ -561,6 +584,10 @@ export class Database {
   }
 
   close(): void {
+    if (this.messageSearchIndexTimer) {
+      clearInterval(this.messageSearchIndexTimer);
+      this.messageSearchIndexTimer = null;
+    }
     this.core.close();
   }
 }

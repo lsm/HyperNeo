@@ -222,6 +222,13 @@ export function createTables(db: BunDatabase): void {
       )
     `);
   db.exec(`
+      CREATE TABLE IF NOT EXISTS message_search_pending (
+        message_id TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
+      )
+    `);
+  db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_uuid
       ON sdk_messages(session_id, sdk_uuid)
     `);

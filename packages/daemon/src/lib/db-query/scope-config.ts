@@ -440,6 +440,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'workspace_history',
   'mcp_enablement',
   'message_search_content',
+  'message_search_pending',
   'message_search_fts',
   'message_search_fts_config',
   'message_search_fts_content',

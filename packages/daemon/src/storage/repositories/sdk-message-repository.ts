@@ -376,9 +376,9 @@ export class SDKMessageRepository {
   }
 
   private deleteSupersededMessageSearchRows(sessionId: string, message: SDKMessage): void {
-    if (!this.hasMessageSearchIndex()) return;
     const supersededUuids = this.getSupersededMessageUuids(message);
     if (supersededUuids.length === 0) return;
+    if (!this.hasMessageSearchIndex()) return;
 
     const placeholders = supersededUuids.map(() => '?').join(',');
     this.db
@@ -389,6 +389,43 @@ export class SDKMessageRepository {
            AND message_id IN (${placeholders})`
       )
       .run(sessionId, ...supersededUuids);
+  }
+
+  private scheduleMessageSearchIndex(messageId: string): void {
+    if (!this.hasMessageSearchIndex()) return;
+    if (!this.tableExists('message_search_pending')) {
+      this.upsertMessageSearchRow(messageId);
+      return;
+    }
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO message_search_pending (message_id, created_at) VALUES (?, ?)`
+      )
+      .run(messageId, Date.now());
+  }
+
+  flushMessageSearchIndex(limit = 500): number {
+    if (!this.hasMessageSearchIndex()) return 0;
+    if (!this.tableExists('message_search_pending')) return 0;
+    let processed = 0;
+    const deletePendingStmt = this.db.prepare(
+      `DELETE FROM message_search_pending WHERE message_id = ?`
+    );
+    while (true) {
+      const pending = this.db
+        .prepare(`SELECT message_id FROM message_search_pending ORDER BY created_at LIMIT ?`)
+        .all(limit) as Array<{ message_id: string }>;
+      if (pending.length === 0) break;
+      this.db.transaction(() => {
+        for (const { message_id } of pending) {
+          this.upsertMessageSearchRow(message_id);
+          deletePendingStmt.run(message_id);
+        }
+      })();
+      processed += pending.length;
+      if (pending.length < limit) break;
+    }
+    return processed;
   }
 
   private isMessageSuperseded(rowId: string, sessionId: string, sdkMessage: SDKMessage): boolean {
@@ -535,7 +572,7 @@ export class SDKMessageRepository {
       })();
       if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
       this.deleteSupersededMessageSearchRows(sessionId, message);
-      this.upsertMessageSearchRow(id);
+      this.scheduleMessageSearchIndex(id);
       return true;
     } catch (error) {
       this.logger.error('[Database] Failed to save SDK message:', error);
@@ -1090,7 +1127,7 @@ export class SDKMessageRepository {
   ): void {
     this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
-    this.upsertMessageSearchRow(id);
+    this.scheduleMessageSearchIndex(id);
   }
 
   getMessagesByStatus(
@@ -1230,14 +1267,14 @@ export class SDKMessageRepository {
       }
     })();
     for (const sid of changedSessions) this.notifySessionsChanged(sid);
-    for (const messageId of messageIds) this.upsertMessageSearchRow(messageId);
+    for (const messageId of messageIds) this.scheduleMessageSearchIndex(messageId);
   }
 
   updateMessageTimestamp(messageId: string, timestampMs?: number): void {
     const stmt = this.db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE id = ?`);
     const ts = timestampMs !== undefined ? new Date(timestampMs) : new Date();
     stmt.run(ts.toISOString(), messageId);
-    this.upsertMessageSearchRow(messageId);
+    this.scheduleMessageSearchIndex(messageId);
   }
 
   deletePendingUserMessage(
@@ -1865,7 +1902,7 @@ export class SDKMessageRepository {
       if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     })();
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
-    this.upsertMessageSearchRow(id);
+    this.scheduleMessageSearchIndex(id);
     return id;
   }
 
@@ -1886,7 +1923,7 @@ export class SDKMessageRepository {
   updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): void {
     const stmt = this.db.prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`);
     stmt.run(JSON.stringify(updated), rowId);
-    this.upsertMessageSearchRow(rowId);
+    this.scheduleMessageSearchIndex(rowId);
   }
 
   updateHyperNeoActionMessageByUuid(
@@ -1909,7 +1946,7 @@ export class SDKMessageRepository {
          AND sdk_uuid = ?`
     );
     stmt.run(JSON.stringify(updated), sessionId, messageUuid);
-    if (row) this.upsertMessageSearchRow(row.id);
+    if (row) this.scheduleMessageSearchIndex(row.id);
   }
 
   searchMessages(params: MessageSearchParams): MessageSearchResponse {
