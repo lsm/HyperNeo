@@ -59,6 +59,10 @@ export interface ProviderOAuthFlowData {
   message: string;
 }
 
+export interface ProviderModelRefreshError extends Error {
+  definitiveAuthFailure?: boolean;
+}
+
 export interface Provider {
   readonly id: ProviderId;
 

@@ -537,6 +537,31 @@ describe('Model Service', () => {
       expect(cache.get('global')).toEqual(mockModels);
     });
 
+    it('does not publish cached models after definitive credential rejection', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const rejectedModel = {
+        id: 'rejected-cached-model',
+        name: 'Rejected Cached Model',
+        family: 'test',
+        provider: 'rejected-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      getProviderRegistry().register({
+        id: 'rejected-provider',
+        refreshModels: async () => {
+          throw Object.assign(new Error('credentials rejected'), { definitiveAuthFailure: true });
+        },
+        getCachedModels: () => [rejectedModel],
+        getModels: async () => [rejectedModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      await initializeModels();
+
+      expect(getModelsCache().get('global')).not.toContainEqual(rejectedModel);
+    });
+
     it('keeps partially failed initialization stale for an automatic retry', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
@@ -1158,6 +1183,51 @@ describe('Model Service', () => {
   });
 
   describe('refreshModels', () => {
+    it('throttles automatic retries after a foreground refresh failure', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const healthyModel = {
+        id: 'foreground-cooldown-healthy',
+        name: 'Foreground Cooldown Healthy',
+        family: 'test',
+        provider: 'foreground-healthy-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      let failedCalls = 0;
+      registry.register({
+        id: 'foreground-healthy-provider',
+        getModels: async () => [healthyModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register({
+        id: 'foreground-failed-provider',
+        getModels: async () => {
+          failedCalls += 1;
+          throw new Error('offline');
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      let now = 100_000;
+      const dateSpy = spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        setModelsCache(new Map([['global', mockModels]]));
+
+        await refreshModels();
+        expect(failedCalls).toBe(1);
+        getAvailableModels('global');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(failedCalls).toBe(1);
+
+        now += 30_000;
+        getAvailableModels('global');
+        await waitFor(() => failedCalls === 2);
+      } finally {
+        dateSpy.mockRestore();
+      }
+    });
+
     it('should preserve both provider entries for shared model IDs after refresh', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const { refreshModels } = await import('../../../../src/lib/model-service');
@@ -1335,8 +1405,8 @@ describe('Model Service', () => {
       expect(getModelsCalls).toBe(0);
 
       failRefresh = false;
-      getAvailableModels('global');
-      await expect.poll(() => getAvailableModels('global')).toContainEqual(recoveredModel);
+      await refreshModels();
+      expect(getAvailableModels('global')).toContainEqual(recoveredModel);
     });
 
     it('should retry after every provider fails with a populated cache', async () => {
@@ -1372,8 +1442,8 @@ describe('Model Service', () => {
       expect(getModelsCache().get('global')).toEqual([staleModel]);
 
       failRefresh = false;
-      getAvailableModels('global');
-      await expect.poll(() => getAvailableModels('global')).toEqual([recoveredModel]);
+      await refreshModels();
+      expect(getAvailableModels('global')).toEqual([recoveredModel]);
     });
 
     it('should preserve Anthropic models when SDK discovery fails', async () => {
@@ -1473,80 +1543,80 @@ describe('Model Service', () => {
         isAvailable: async () => true,
       } as ProviderLike);
 
-      getAvailableModels('global');
-      await expect
-        .poll(() => getAvailableModels('global'))
-        .toEqual([currentHealthy, recoveredFailed]);
+      await refreshModels();
+      expect(getAvailableModels('global')).toEqual([currentHealthy, recoveredFailed]);
     });
 
-    it('should cancel in-flight background refresh when clearModelsCache is called', async () => {
-      const cacheKey = 'bg-cancel-test';
+    describe('getAvailableModels', () => {
+      it('should cancel in-flight background refresh when clearModelsCache is called', async () => {
+        const cacheKey = 'bg-cancel-test';
 
-      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
-      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
-      const registry = getProviderRegistry();
-      registry.register({
-        id: 'test-provider-bg',
-        getModels: async () => [
-          {
-            id: 'bg-model',
-            name: 'BG Model',
-            family: 'test',
-            provider: 'test-provider-bg',
-            contextWindow: 100000,
-          },
-        ],
-        isAvailable: async () => true,
-      } as ProviderLike);
+        const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+        type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+        const registry = getProviderRegistry();
+        registry.register({
+          id: 'test-provider-bg',
+          getModels: async () => [
+            {
+              id: 'bg-model',
+              name: 'BG Model',
+              family: 'test',
+              provider: 'test-provider-bg',
+              contextWindow: 100000,
+            },
+          ],
+          isAvailable: async () => true,
+        } as ProviderLike);
 
-      const testCache = new Map<string, ModelInfo[]>();
-      testCache.set(cacheKey, mockModels);
-      setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000);
+        const testCache = new Map<string, ModelInfo[]>();
+        testCache.set(cacheKey, mockModels);
+        setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000);
 
-      getAvailableModels(cacheKey);
+        getAvailableModels(cacheKey);
 
-      clearModelsCache();
-      expect(getAvailableModels(cacheKey)).toEqual([]);
+        clearModelsCache();
+        expect(getAvailableModels(cacheKey)).toEqual([]);
 
-      await new Promise((resolve) => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
-      expect(getAvailableModels(cacheKey)).toEqual([]);
-    });
+        expect(getAvailableModels(cacheKey)).toEqual([]);
+      });
 
-    it('should NOT cancel global background refresh on session-scoped clearModelsCache', async () => {
-      const cacheKey = 'bg-session-test';
+      it('should NOT cancel global background refresh on session-scoped clearModelsCache', async () => {
+        const cacheKey = 'bg-session-test';
 
-      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
-      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
-      const registry = getProviderRegistry();
-      registry.register({
-        id: 'test-provider-bg2',
-        getModels: async () => [
-          {
-            id: 'bg-model-2',
-            name: 'BG Model 2',
-            family: 'test',
-            provider: 'test-provider-bg2',
-            contextWindow: 100000,
-          },
-        ],
-        isAvailable: async () => true,
-      } as ProviderLike);
+        const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+        type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+        const registry = getProviderRegistry();
+        registry.register({
+          id: 'test-provider-bg2',
+          getModels: async () => [
+            {
+              id: 'bg-model-2',
+              name: 'BG Model 2',
+              family: 'test',
+              provider: 'test-provider-bg2',
+              contextWindow: 100000,
+            },
+          ],
+          isAvailable: async () => true,
+        } as ProviderLike);
 
-      const testCache = new Map<string, ModelInfo[]>();
-      testCache.set(cacheKey, mockModels);
-      setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000);
+        const testCache = new Map<string, ModelInfo[]>();
+        testCache.set(cacheKey, mockModels);
+        setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000);
 
-      getAvailableModels(cacheKey);
+        getAvailableModels(cacheKey);
 
-      clearModelsCache('session-123');
-      expect(getAvailableModels('session-123')).toEqual([]);
+        clearModelsCache('session-123');
+        expect(getAvailableModels('session-123')).toEqual([]);
 
-      await new Promise((resolve) => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
-      const models = getAvailableModels(cacheKey);
-      expect(models.length).toBeGreaterThan(0);
-      expect(models.some((m) => m.id === 'bg-model-2')).toBe(true);
+        const models = getAvailableModels(cacheKey);
+        expect(models.length).toBeGreaterThan(0);
+        expect(models.some((m) => m.id === 'bg-model-2')).toBe(true);
+      });
     });
 
     it('should drop stale result when clearModelsCache is called during foreground refresh', async () => {

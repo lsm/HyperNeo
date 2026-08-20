@@ -1428,6 +1428,38 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(provider.getModelForTier('default')).toBe('gpt-4.1');
     });
 
+    it('preserves rich catalog priority when choosing tier fallbacks', async () => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(
+            JSON.stringify({
+              models: [
+                {
+                  slug: 'gpt-alpha',
+                  display_name: 'GPT Alpha',
+                  visibility: 'list',
+                  supported_in_api: true,
+                  priority: 20,
+                },
+                {
+                  slug: 'gpt-zeta',
+                  display_name: 'GPT Zeta',
+                  visibility: 'list',
+                  supported_in_api: true,
+                  priority: 10,
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      await provider.getModels();
+
+      expect(provider.getModelForTier('default')).toBe('gpt-zeta');
+    });
+
     it('caches a successful model list so repeated calls do not refetch', async () => {
       const fetchImpl = mock(
         async () =>
@@ -1837,6 +1869,57 @@ describe('AnthropicToCodexBridgeProvider', () => {
       } finally {
         refreshFetch.mockRestore();
       }
+    });
+
+    it('does not let an older credential scope overwrite the persisted catalog', async () => {
+      let releaseOldWrite: (() => void) | undefined;
+      const oldWrite = new Promise<void>((resolve) => {
+        releaseOldWrite = resolve;
+      });
+      fsPromiseMocks.writeFile.mockImplementationOnce(
+        async (
+          filePath: Parameters<typeof fs.writeFile>[0],
+          data: Parameters<typeof fs.writeFile>[1],
+          options?: Parameters<typeof fs.writeFile>[2]
+        ) => {
+          await oldWrite;
+          const mode =
+            typeof options === 'object' ? (options as { mode?: number }).mode : undefined;
+          writeFileSync(
+            filePath as Parameters<typeof writeFileSync>[0],
+            data as Parameters<typeof writeFileSync>[1],
+            mode !== undefined ? { mode } : undefined
+          );
+        }
+      );
+      const fetchImpl = mock()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data: [{ id: 'gpt-old-scope' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data: [{ id: 'gpt-new-scope' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        ) as unknown as typeof fetch;
+      provider = makeProvider({}, tmpDir, tmpDir, fetchImpl);
+      provider.setCredentials({ type: 'api_key', apiKey: 'sk-old-scope' });
+
+      const oldRefresh = provider.getModels();
+      await vi.waitFor(() => expect(fsPromiseMocks.writeFile).toHaveBeenCalledTimes(1));
+      provider.setCredentials({ type: 'api_key', apiKey: 'sk-new-scope' });
+      const newRefresh = provider.refreshModels();
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
+      releaseOldWrite?.();
+      await Promise.all([oldRefresh, newRefresh]);
+
+      const persisted = JSON.parse(
+        readFileSync(path.join(tmpDir, 'openai-models-cache.json'), 'utf-8')
+      ) as { models: Array<{ slug: string }> };
+      expect(persisted.models.map(({ slug }) => slug)).toEqual(['gpt-new-scope']);
     });
 
     it('ignores discovery failures from a replaced credential scope', async () => {

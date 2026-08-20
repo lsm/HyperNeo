@@ -206,6 +206,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private readonly modelRefreshes = new Map<string, Promise<void>>();
 
+  private modelCacheWrite = Promise.resolve();
+
   private forceModelRefresh = false;
 
   private discoveryError: Error | undefined;
@@ -907,16 +909,29 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   private async writeModelCache(cache: CodexModelCache): Promise<void> {
-    const dir = path.dirname(this.modelCachePath);
-    await fs.mkdir(dir, { recursive: true });
-    const tmpPath = `${this.modelCachePath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
-    try {
-      await fs.writeFile(tmpPath, JSON.stringify(cache, null, 2), { mode: 0o600 });
-      await fs.rename(tmpPath, this.modelCachePath);
-    } catch (error) {
-      await fs.unlink(tmpPath).catch(() => undefined);
-      throw error;
-    }
+    const write = this.modelCacheWrite.then(async () => {
+      const dir = path.dirname(this.modelCachePath);
+      await fs.mkdir(dir, { recursive: true });
+      const tmpPath = `${this.modelCachePath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+      try {
+        await fs.writeFile(tmpPath, JSON.stringify(cache, null, 2), { mode: 0o600 });
+        const currentAuth = this.resolveBridgeAuth();
+        if (
+          this.modelCache !== cache ||
+          !currentAuth ||
+          !this.sameScope(this.authScope(currentAuth), cache.scope)
+        ) {
+          await fs.unlink(tmpPath).catch(() => undefined);
+          return;
+        }
+        await fs.rename(tmpPath, this.modelCachePath);
+      } catch (error) {
+        await fs.unlink(tmpPath).catch(() => undefined);
+        throw error;
+      }
+    });
+    this.modelCacheWrite = write.catch(() => undefined);
+    await write;
   }
 
   private stopBridgeServerByKey(key: string): void {
@@ -1084,7 +1099,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
     if (response.status === 401) {
       await response.body?.cancel().catch(() => undefined);
-      throw new Error('Codex credentials rejected (HTTP 401)');
+      throw Object.assign(new Error('Codex credentials rejected (HTTP 401)'), {
+        definitiveAuthFailure: true,
+      });
     }
 
     if (response.status === 304 && matchingCache) {
@@ -1278,10 +1295,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         ? listed.filter(isSmall)
         : tier === 'opus'
           ? listed.filter((entry) => isReasoning(entry) && !isSmall(entry))
-          : listed.filter((entry) => !isSmall(entry));
-    return (candidates.length > 0 ? candidates : listed)
-      .map(({ info }) => info.id)
-      .sort((left, right) => left.localeCompare(right))[0];
+          : listed.filter((entry) => !isReasoning(entry) && !isSmall(entry));
+    const broadCandidates = listed.filter((entry) => !isSmall(entry));
+    return (
+      candidates.length > 0 ? candidates : broadCandidates.length > 0 ? broadCandidates : listed
+    )[0]?.info.id;
   }
 
   buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
