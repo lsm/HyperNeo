@@ -108,7 +108,7 @@ bunRuntimeTest('writes maximum-length filenames through a short temporary name',
   }
 });
 
-for (const mode of [0o755, 0o200, 0o400]) {
+for (const mode of [0o755, 0o200, 0o400, 0o000]) {
   bunRuntimeTest(`preserves mode ${mode.toString(8)} when replacing an existing file`, async () => {
     const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-mode-'));
     const workspace = join(root, 'workspace');

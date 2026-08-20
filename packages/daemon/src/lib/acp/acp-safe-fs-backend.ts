@@ -5,6 +5,8 @@ const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 const READ_BUFFER_BYTES = 64 * 1024;
 const MAX_WRITE_BYTES = 4 * 1024 * 1024;
+const AT_SYMLINK_NOFOLLOW = process.platform === 'darwin' ? 0x20 : 0x100;
+const STAT_MODE_OFFSET = process.platform === 'darwin' ? 8 : process.arch === 'arm64' ? 16 : 24;
 
 interface BunFfiModule {
   dlopen: (
@@ -24,6 +26,7 @@ interface BunFfiModule {
 
 interface LibcSymbols {
   close: (fd: number) => number;
+  fstatat: (fd: number, path: Buffer, stat: Buffer, flags: number) => number;
   mkdirat: (fd: number, path: Buffer, mode: number) => number;
   openat: (fd: number, path: Buffer, flags: number, mode: number) => number;
   read: (fd: number, buffer: Buffer, length: number) => number | bigint;
@@ -96,6 +99,10 @@ async function loadSafeFsBackend(): Promise<SafeFsBackend> {
     const ffi = (await import(moduleName)) as unknown as BunFfiModule;
     const definitions = {
       close: { args: [ffi.FFIType.i32], returns: ffi.FFIType.i32 },
+      fstatat: {
+        args: [ffi.FFIType.i32, ffi.FFIType.cstring, ffi.FFIType.ptr, ffi.FFIType.i32],
+        returns: ffi.FFIType.i32,
+      },
       mkdirat: {
         args: [ffi.FFIType.i32, ffi.FFIType.cstring, ffi.FFIType.u32],
         returns: ffi.FFIType.i32,
@@ -179,14 +186,24 @@ function replacementMode(symbols: LibcSymbols, directoryFd: number, fileName: st
       0
     );
   }
-  if (fileFd < 0) return FILE_MODE;
-
-  try {
-    const stats = fstatSync(fileFd);
-    return stats.isFile() ? stats.mode & 0o777 : FILE_MODE;
-  } finally {
-    closeFile(symbols, fileFd);
+  if (fileFd >= 0) {
+    try {
+      const stats = fstatSync(fileFd);
+      return stats.isFile() ? stats.mode & 0o777 : FILE_MODE;
+    } finally {
+      closeFile(symbols, fileFd);
+    }
   }
+
+  const statBuf = Buffer.alloc(256);
+  if (symbols.fstatat(directoryFd, cString(fileName), statBuf, AT_SYMLINK_NOFOLLOW) !== 0) {
+    return FILE_MODE;
+  }
+  const mode =
+    process.platform === 'darwin'
+      ? statBuf.readUInt16LE(STAT_MODE_OFFSET)
+      : statBuf.readUInt32LE(STAT_MODE_OFFSET);
+  return (mode & 0o170000) === 0o100000 ? mode & 0o777 : FILE_MODE;
 }
 
 async function openWorkspacePath(
