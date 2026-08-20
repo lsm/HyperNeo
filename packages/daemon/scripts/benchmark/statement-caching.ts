@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { cpus } from 'node:os';
 
-import { Database } from 'bun:sqlite';
+import { Database as BunDatabase } from 'bun:sqlite';
+import { Database as CompatDatabase } from '../../src/storage/sqlite-compat';
 
 const ITERATIONS = 50_000;
 const WARMUP_ITERATIONS = 100_000;
@@ -41,8 +42,7 @@ type Sample = {
   warm: Measurement;
 };
 
-function createDatabase(): Database {
-  const db = new Database(':memory:');
+function createSchema(db: BunDatabase): void {
   db.exec(`CREATE TABLE sdk_messages (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
@@ -61,7 +61,6 @@ function createDatabase(): Database {
     replacement_metadata_normalized INTEGER NOT NULL DEFAULT 1
   )`);
   db.exec(`CREATE INDEX idx_sdk_messages_session_status ON sdk_messages(session_id, send_status)`);
-  return db;
 }
 
 function insertParams(index: number): unknown[] {
@@ -99,17 +98,12 @@ function collectSample(variant: Variant): Sample {
 }
 
 function createRunner(variant: Variant): (index: number) => number {
-  const db = createDatabase();
-  if (variant === 'fresh-insert') {
+  const cached = variant.startsWith('cached');
+  const db = (cached ? new CompatDatabase(':memory:') : new BunDatabase(':memory:')) as BunDatabase;
+  createSchema(db);
+  if (variant === 'fresh-insert' || variant === 'cached-insert') {
     return (index) => {
       const result = db.prepare(INSERT_SQL).run(...(insertParams(index) as [never]));
-      return Number(result.lastInsertRowid) + result.changes;
-    };
-  }
-  if (variant === 'cached-insert') {
-    const stmt = db.prepare(INSERT_SQL);
-    return (index) => {
-      const result = stmt.run(...(insertParams(index) as [never]));
       return Number(result.lastInsertRowid) + result.changes;
     };
   }
@@ -123,7 +117,7 @@ function createRunner(variant: Variant): (index: number) => number {
   db.exec(`UPDATE sdk_messages SET send_status = 'pending' WHERE id IN (
     SELECT id FROM sdk_messages WHERE session_id = 'session-1' LIMIT 40
   )`);
-  if (variant === 'fresh-select') {
+  if (variant === 'fresh-select' || variant === 'cached-select') {
     return () => {
       const rows = db.prepare(SELECT_SQL).all(`session-${1}`, 'pending') as Array<{
         id: string;
@@ -131,24 +125,8 @@ function createRunner(variant: Variant): (index: number) => number {
       return rows.length;
     };
   }
-  if (variant === 'cached-select') {
-    const stmt = db.prepare(SELECT_SQL);
-    return () => {
-      const rows = stmt.all(`session-${1}`, 'pending') as Array<{ id: string }>;
-      return rows.length;
-    };
-  }
-  if (variant === 'fresh-get') {
-    return (index) => {
-      const row = db.prepare(GET_SQL).get(`session-${index % 32}`, 'pending', `uuid-${index}`) as {
-        id?: string;
-      } | null;
-      return row?.id?.length ?? 0;
-    };
-  }
-  const stmt = db.prepare(GET_SQL);
   return (index) => {
-    const row = stmt.get(`session-${index % 32}`, 'pending', `uuid-${index}`) as {
+    const row = db.prepare(GET_SQL).get(`session-${index % 32}`, 'pending', `uuid-${index}`) as {
       id?: string;
     } | null;
     return row?.id?.length ?? 0;
