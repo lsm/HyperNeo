@@ -589,6 +589,10 @@ describe('AcpQueryRunner', () => {
     const { runner, ctx, constructorOptions } = createRunnerFixture({
       session: { workspacePath: workspace },
       queryOptions: { cwd: workspace, mcpServers: {} },
+      canUseTool: async (_toolName, input) => {
+        const question = (input.questions as Array<{ question: string }>)[0].question;
+        return { behavior: 'allow', updatedInput: { answers: { [question]: 'Allow once' } } };
+      },
     });
 
     try {
@@ -655,6 +659,46 @@ describe('AcpQueryRunner', () => {
         })
       ).rejects.toThrow('dangling symbolic link');
       await expect(readFile(danglingTarget, 'utf-8')).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('denies ACP filesystem writes before mutating the workspace', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-write-'));
+    const workspace = join(root, 'workspace');
+    const target = join(workspace, 'denied.txt');
+    await mkdir(workspace);
+    const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture({
+      session: { workspacePath: workspace },
+      queryOptions: { cwd: workspace, mcpServers: {} },
+      canUseTool: async () => ({ behavior: 'deny', message: 'Denied' }),
+    });
+
+    try {
+      await runner.start();
+      await ctx.queryPromise;
+
+      await expect(
+        constructorOptions[0].onFsWrite?.({
+          sessionId: 'acp-session-1',
+          path: target,
+          content: 'blocked',
+        })
+      ).rejects.toThrow('ACP filesystem write denied');
+      await expect(readFile(target, 'utf-8')).rejects.toThrow();
+      expect(canUseTool).toHaveBeenCalledWith(
+        'AskUserQuestion',
+        expect.objectContaining({
+          questions: [
+            expect.objectContaining({
+              question: `Allow write ${target}?`,
+              header: 'ACP approval',
+            }),
+          ],
+        }),
+        expect.objectContaining({ displayName: `write ${target}` })
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -291,6 +291,32 @@ function shellQuote(value: string): string {
   return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
+async function authorizeAcpFsWrite(
+  params: AcpFsWriteParams,
+  canUseTool: CanUseTool
+): Promise<AcpFsWriteParams> {
+  const permission = await handleAcpPermissionRequest(
+    {
+      sessionId: params.sessionId,
+      toolCall: {
+        toolCallId: generateUUID(),
+        title: `write ${params.path}`,
+        kind: 'edit',
+        rawInput: { file_path: params.path, content: params.content },
+      },
+      options: [
+        { optionId: 'allow-write', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'deny-write', name: 'Deny', kind: 'reject_once' },
+      ],
+    },
+    canUseTool
+  );
+  if (permission.outcome.outcome !== 'selected' || permission.outcome.optionId !== 'allow-write') {
+    throw new Error('ACP filesystem write denied');
+  }
+  return params;
+}
+
 async function authorizeAcpTerminalCreate(
   params: AcpTerminalCreateParams,
   canUseTool: CanUseTool
@@ -630,7 +656,8 @@ export class AcpQueryRunner {
               onTerminalKill: (params: AcpTerminalKillParams) => manager.kill(params),
               onTerminalRelease: (params: AcpTerminalReleaseParams) => manager.release(params),
               onFsRead: (params: AcpFsReadParams) => this.handleFsRead(params, workspace),
-              onFsWrite: (params: AcpFsWriteParams) => this.handleFsWrite(params, workspace),
+              onFsWrite: async (params: AcpFsWriteParams) =>
+                this.handleFsWrite(await authorizeAcpFsWrite(params, canUseTool), workspace),
             };
           })()
         : {};
