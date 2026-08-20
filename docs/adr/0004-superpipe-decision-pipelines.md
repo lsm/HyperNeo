@@ -106,9 +106,14 @@ shell (class): flat interpreter, one branch per decision action
   staged effect boundary; a pipeline never owns atomicity.
 - **As a resource owner.** `AbortController`s, timers, subscriptions, query
   objects stay in classes; pipelines receive values.
-- **On hot paths.** Per-stage container allocation is not free. Planning flows are
-  not hot; inner loops stay inline functions. (Unbenchmarked here — treat as
-  guidance until a micro-benchmark exists.)
+- **On hot paths.** Per-stage container allocation is not free. A six-gate,
+  router-shaped benchmark (100k iterations; median of five fresh Bun processes on
+  an Intel i9-10910) measured `decisionRun` at 2,557 ns/op cold and 1,999 ns/op warm,
+  versus 194 ns/op cold and 75 ns/op warm for an if-cascade. `AgentMessageRouter`
+  runs once per `send_message` tool call, not per streaming token, and its awaited
+  repository reads and session injection are millisecond-scale. Both pipeline
+  measurements are below the 10 µs/decision threshold, so this is a **GO** for the
+  router; genuinely hot inner loops should stay inline.
 
 ### Pattern taxonomy (from the adoption study)
 
@@ -158,8 +163,7 @@ async deciders carry a proof obligation (microtask-profile sensitivity).
   engine): read → plan → CAS within transaction → apply effects after commit.
 - **Phase 5 — web functional cores** (P1: `useTurnBlocks`, message projections,
   model-switcher projections).
-- **Carried research:** hot-path micro-benchmark of `decisionRun` vs a hand-written
-  cascade; async/`withSignal` validation if Phase 1 wants an async core.
+- **Carried research:** async/`withSignal` validation if Phase 1 wants an async core.
 
 ## References
 
@@ -169,6 +173,8 @@ async deciders carry a proof obligation (microtask-profile sensitivity).
   (`deliverExternalEventToWorkflowTarget` and helpers).
 - Parity harness:
   `packages/daemon/tests/unit/5-space/runtime/space-runtime-external-event-admission-parity.test.ts`
+- Benchmark: `packages/daemon/scripts/benchmark/decision-pipeline.ts` (`bun run
+  packages/daemon/scripts/benchmark/decision-pipeline.ts` from the repository root).
 - Pilot PRs: #2578, #2582, #2589, #2591 (branch `superpipe-pilot-1`).
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.
