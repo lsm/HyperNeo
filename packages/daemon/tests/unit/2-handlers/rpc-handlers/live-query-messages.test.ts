@@ -4,6 +4,7 @@ import type { MessageHub } from '@hyperneo/shared';
 import { createTables } from '../../../../src/storage/schema';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { LiveQueryEngine } from '../../../../src/storage/live-query';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import {
   BACKGROUND_TASK_METADATA_SQL,
   NAMED_QUERY_REGISTRY,
@@ -1170,5 +1171,80 @@ describe('messages.bySession — mapRow', () => {
 
     const [row] = query(db, 's1', 10);
     expect(row.deliveryStatus).toBe('queued');
+  });
+});
+
+describe('messages.bySession — content replacement rewrite', () => {
+  let db: BunDatabase;
+
+  beforeEach(() => {
+    db = makeDb();
+    insertSession(db, { id: 's1' });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  test('registry supplies a rowFingerprint so the engine skips full payload hashing', () => {
+    const entry = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
+    expect(typeof entry.rowFingerprint).toBe('function');
+  });
+
+  test('a content rewrite through the repository replacement path emits an updated diff', async () => {
+    const entry = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
+    const reactiveDb = createReactiveDatabase({ getDatabase: () => db } as never);
+    const engine = new LiveQueryEngine(db, reactiveDb);
+    const diffs: Array<{ added?: unknown[]; removed?: unknown[]; updated?: unknown[] }> = [];
+    engine.subscribe(entry.sql, ['s1', 100], (diff) => diffs.push(diff), {
+      debounceMs: 0,
+      rowFingerprint: entry.rowFingerprint,
+    });
+    expect(diffs).toHaveLength(1);
+
+    insertSdkMessage(db, {
+      id: 'action-1',
+      sessionId: 's1',
+      messageType: 'hyperneo_action',
+      messageSubtype: 'sdk_resume_choice',
+      sdkMessage: {
+        type: 'hyperneo_action',
+        uuid: 'u-action',
+        session_id: 's1',
+        action: 'sdk_resume_choice',
+        resolved: false,
+        chosenOption: 'start_fresh',
+        timestamp: 1,
+      },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    reactiveDb.notifyChange('sdk_messages', { sessionId: 's1' });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(diffs).toHaveLength(2);
+    expect(diffs[1].added).toHaveLength(1);
+
+    const repo = new SDKMessageRepository(db, reactiveDb);
+    repo.updateHyperNeoActionMessage('action-1', {
+      type: 'hyperneo_action',
+      uuid: 'u-action',
+      session_id: 's1',
+      action: 'sdk_resume_choice',
+      resolved: false,
+      chosenOption: 'leave_as_is',
+      timestamp: 1,
+    });
+
+    reactiveDb.notifyChange('sdk_messages', { sessionId: 's1' });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(diffs).toHaveLength(3);
+    const updated = diffs[2].updated as Array<{ id: string; content: string }>;
+    expect(updated.map((row) => row.id)).toContain('action-1');
+    const rewritten = updated.find((row) => row.id === 'action-1');
+    expect(rewritten?.content).toContain('"chosenOption":"leave_as_is"');
+
+    engine.dispose();
   });
 });

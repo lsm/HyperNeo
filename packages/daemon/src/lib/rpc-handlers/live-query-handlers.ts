@@ -37,6 +37,7 @@ export interface NamedQuery {
     params: ReadonlyArray<unknown>,
     db: BunDatabase
   ) => ((scope: TableChangeScope) => boolean) | undefined;
+  rowFingerprint?: (row: Record<string, unknown>) => unknown;
 }
 
 const DEBOUNCE_SDK_MESSAGES_MS = 250;
@@ -3054,6 +3055,7 @@ top_level AS (
     send_status,
     origin,
     rowid,
+    message_type,
     active_delivery_retry.deliveryRetryInfo AS deliveryRetryInfo
   FROM sdk_messages
   LEFT JOIN active_delivery_retry ON active_delivery_retry.message_uuid = sdk_messages.sdk_uuid
@@ -3125,6 +3127,7 @@ subagent AS (
     sm.send_status AS send_status,
     sm.origin AS origin,
     sm.rowid AS rowid,
+    sm.message_type AS message_type,
     active_delivery_retry.deliveryRetryInfo AS deliveryRetryInfo
   FROM sdk_messages sm
   LEFT JOIN active_delivery_retry ON active_delivery_retry.message_uuid = sm.sdk_uuid
@@ -3139,6 +3142,7 @@ SELECT
   send_status                                                       AS sendStatus,
   origin                                                            AS origin,
   rowid                                                             AS rowid,
+  message_type                                                      AS messageType,
   deliveryRetryInfo                                                 AS deliveryRetryInfo
 FROM top_level
 UNION ALL
@@ -3149,6 +3153,7 @@ SELECT
   send_status                                                       AS sendStatus,
   origin                                                            AS origin,
   rowid                                                             AS rowid,
+  message_type                                                      AS messageType,
   deliveryRetryInfo                                                 AS deliveryRetryInfo
 FROM subagent
 ORDER BY timestamp ASC, rowid ASC
@@ -3507,6 +3512,17 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
           return scope.sessionId === targetSessionId;
         };
       },
+      rowFingerprint: (row) =>
+        row.messageType === 'hyperneo_action'
+          ? row
+          : {
+              content: typeof row.content === 'string' ? row.content.length : row.content,
+              timestamp: row.timestamp,
+              sendStatus: row.sendStatus,
+              origin: row.origin,
+              rowid: row.rowid,
+              deliveryRetryInfo: row.deliveryRetryInfo,
+            },
     },
   ],
   [
@@ -3819,6 +3835,7 @@ export function setupLiveQueryHandlers(
         debounceMs: namedQuery.debounceMs,
         getMetadata: namedQuery.mapResult,
         scopeFilter: namedQuery.buildScopeFilter?.(params, db),
+        rowFingerprint: namedQuery.rowFingerprint,
       }
     );
 
