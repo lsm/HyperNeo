@@ -19,6 +19,7 @@ import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
 import type { TableChangeScope } from '../../storage/reactive-database';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat';
+import { humanSessionPredicate } from '../../storage/schema/session-counters';
 import { Logger } from '../logger';
 import { mapActiveTurnEntryRow } from './activity-preview';
 
@@ -2734,37 +2735,15 @@ SELECT
   s.processing_state as processingState,
   s.archived_at as archivedAt,
   s.type as type,
-  s.session_context as session_context,
-  (SELECT COUNT(*) FROM sessions s2
-   WHERE s2.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
-   AND json_extract(s2.session_context, '$.roomId') IS NULL
-   AND json_extract(s2.session_context, '$.spaceId') IS NULL) as _totalCount,
-  (SELECT COUNT(*) FROM sessions s3
-   WHERE s3.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
-   AND json_extract(s3.session_context, '$.roomId') IS NULL
-   AND json_extract(s3.session_context, '$.spaceId') IS NULL
-   AND s3.status = 'archived') as _archivedCount
+  s.session_context as session_context
 FROM sessions s
-WHERE s.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
-  AND json_extract(s.session_context, '$.roomId') IS NULL
-  AND json_extract(s.session_context, '$.spaceId') IS NULL
+WHERE ${humanSessionPredicate('s')}
   AND (s.status != 'archived' OR ?1 = 1)
 ORDER BY s.last_active_at DESC, s.id DESC
 `.trim();
 
-const SESSIONS_TOTAL_COUNT_SQL = `
-SELECT COUNT(*) as cnt FROM sessions s
-WHERE s.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
-  AND json_extract(s.session_context, '$.roomId') IS NULL
-  AND json_extract(s.session_context, '$.spaceId') IS NULL
-`.trim();
-
-const SESSIONS_ARCHIVED_COUNT_SQL = `
-SELECT COUNT(*) as cnt FROM sessions s
-WHERE s.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
-  AND json_extract(s.session_context, '$.roomId') IS NULL
-  AND json_extract(s.session_context, '$.spaceId') IS NULL
-  AND s.status = 'archived'
+const SESSION_COUNTERS_SQL = `
+SELECT total_count, archived_count FROM session_counters WHERE id = 1
 `.trim();
 
 function mapSessionRow(row: Record<string, unknown>): Record<string, unknown> {
@@ -3542,15 +3521,6 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
       paramCount: 1,
       debounceMs: DEBOUNCE_SESSION_LIST_MS,
       mapRow: mapSessionRow,
-      mapResult: (rawRows) => {
-        if (rawRows.length > 0 && rawRows[0]._totalCount != null) {
-          return {
-            totalCount: rawRows[0]._totalCount as number,
-            archivedCount: (rawRows[0]._archivedCount as number | null) ?? 0,
-          };
-        }
-        return { totalCount: 0, archivedCount: 0 };
-      },
       buildScopeFilter: (_params, db) => {
         const stmt = db.prepare(
           `SELECT type,
@@ -3588,8 +3558,7 @@ export function setupLiveQueryHandlers(
 ): () => void {
   const subscriptions = new Map<string, Map<string, LiveQueryHandle<Record<string, unknown>>>>();
 
-  const stmtSessionsTotalCount = db.prepare(SESSIONS_TOTAL_COUNT_SQL);
-  const stmtSessionsArchivedCount = db.prepare(SESSIONS_ARCHIVED_COUNT_SQL);
+  const stmtSessionCounters = db.prepare(SESSION_COUNTERS_SQL);
 
   const sessionsListBase = NAMED_QUERY_REGISTRY.get('sessions.list')!;
   const activeRegistry = new Map(NAMED_QUERY_REGISTRY);
@@ -3616,18 +3585,13 @@ export function setupLiveQueryHandlers(
 
   activeRegistry.set('sessions.list', {
     ...sessionsListBase,
-    mapResult: (rawRows) => {
-      if (rawRows.length > 0 && rawRows[0]._totalCount != null) {
-        return {
-          totalCount: rawRows[0]._totalCount as number,
-          archivedCount: (rawRows[0]._archivedCount as number | null) ?? 0,
-        };
-      }
-      const totalRow = stmtSessionsTotalCount.get() as { cnt: number } | undefined;
-      const archivedRow = stmtSessionsArchivedCount.get() as { cnt: number } | undefined;
+    mapResult: () => {
+      const row = stmtSessionCounters.get() as
+        | { total_count: number; archived_count: number }
+        | undefined;
       return {
-        totalCount: totalRow?.cnt ?? 0,
-        archivedCount: archivedRow?.cnt ?? 0,
+        totalCount: row?.total_count ?? 0,
+        archivedCount: row?.archived_count ?? 0,
       };
     },
   });

@@ -59,6 +59,7 @@ export const HELPER_SCHEMA_TABLES = [
   'pending_agent_messages',
   'sdk_message_replacements',
   'sdk_messages',
+  'session_counters',
   'sessions',
   'space_agent_forge_scope_assignments',
   'space_agent_goal_assignments',
