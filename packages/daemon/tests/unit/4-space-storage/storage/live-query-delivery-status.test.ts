@@ -40,13 +40,15 @@ function insertDeliveryJob(
     messageUuid: string;
     status?: 'pending' | 'processing' | 'completed' | 'failed' | 'dead';
     retryCount?: number;
+    maxRetries?: number;
+    runAt?: number;
     role?: 'turn' | 'steer';
   }
 ): void {
   db.prepare(
     `INSERT INTO job_queue
        (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
-     VALUES (?, 'message_delivery', ?, ?, ?, 8, ?, ?)`
+     VALUES (?, 'message_delivery', ?, ?, ?, ?, ?, ?)`
   ).run(
     args.id,
     args.status ?? 'pending',
@@ -57,7 +59,8 @@ function insertDeliveryJob(
       origin: 'chat',
     }),
     args.retryCount ?? 0,
-    Date.now(),
+    args.maxRetries ?? 8,
+    args.runAt ?? Date.now(),
     Date.now()
   );
 }
@@ -194,6 +197,8 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
       messageUuid: 'u-job',
       status: 'pending',
       retryCount: 1,
+      maxRetries: 6,
+      runAt: 1_700_000_000_001,
     });
     reactiveDb.notifyChange('job_queue');
     await flush();
@@ -202,8 +207,26 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
     expect(retryDelta.type).toBe('delta');
     expect(retryDelta.updated?.length).toBe(1);
     expect(retryDelta.updated?.[0].id).toBe(rowId);
-    const info = JSON.parse(retryDelta.updated?.[0].deliveryRetryInfo ?? 'null');
-    expect(info?.count).toBe(1);
+    expect(JSON.parse(retryDelta.updated?.[0].deliveryRetryInfo ?? 'null')).toEqual({
+      count: 1,
+      runAt: 1_700_000_000_001,
+      max: 6,
+    });
     expect(retryDelta.added ?? []).toHaveLength(0);
+
+    bunDb
+      .prepare(`UPDATE job_queue SET retry_count = 2, run_at = ? WHERE id = 'job-retry'`)
+      .run(1_700_000_000_002);
+    reactiveDb.notifyChange('job_queue');
+    await flush();
+
+    const countdownDelta = diffs[2];
+    expect(countdownDelta.updated?.length).toBe(1);
+    expect(JSON.parse(countdownDelta.updated?.[0].deliveryRetryInfo ?? 'null')).toEqual({
+      count: 2,
+      runAt: 1_700_000_000_002,
+      max: 6,
+    });
+    expect(countdownDelta.added ?? []).toHaveLength(0);
   });
 });
