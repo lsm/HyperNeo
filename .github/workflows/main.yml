@@ -13,6 +13,14 @@
 # remains manual-only here via workflow_dispatch on any branch. Real-API daemon
 # shards and LLM E2E are manual-only in real-api-tests.yml.
 #
+# NOTE: Sandbox apt packages (bubblewrap/socat/ripgrep) are intentionally not
+# installed on test/build jobs — no CI-executed test there runs a real sandbox
+# (online jobs set HYPERNEO_TEST_DISABLE_SANDBOX=1; tests/online/sandbox is
+# matrix-exempt/manual-only; the build smoke test passes without them). e2e-no-llm
+# is the exception: the compiled binary runs with the daemon-default sandbox
+# enabled, so its SDK subprocess needs bwrap/socat at spawn. real-api-tests.yml
+# installs them for its real-session shards too.
+#
 # Release is handled separately in release.yml (triggered by version tags).
 # Test coverage (unit, online, web) is uploaded to Coveralls.
 
@@ -272,13 +280,6 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Install sandbox dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat ripgrep
-
       - name: Setup Dev Proxy
         if: runner.os == 'Linux' && matrix.mock_sdk == true
         uses: ./.github/actions/setup-devproxy
@@ -391,13 +392,6 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Install sandbox dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat ripgrep
-
       - name: Cache node_modules
         uses: actions/cache@v5
         with:
@@ -473,13 +467,6 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Install sandbox dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat ripgrep
-
       - name: Cache node_modules
         uses: actions/cache@v5
         with:
@@ -546,13 +533,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
-
-      - name: Install sandbox dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Cache node_modules
         uses: actions/cache@v5
@@ -716,13 +696,6 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Install sandbox dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat ripgrep
-
       - name: Cache node_modules
         uses: actions/cache@v5
         with:
@@ -846,6 +819,10 @@ jobs:
         with:
           node-version: '24'
 
+      # Required here: the compiled binary runs with the daemon-default sandbox
+      # enabled, and the SDK subprocess hard-fails at spawn ("Sandbox required
+      # but unavailable: bubblewrap (bwrap) not installed, socat not installed")
+      # without these — breaking every no-LLM E2E test. Other jobs omit them.
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
