@@ -208,7 +208,10 @@ export class AcpTerminalManager {
   private killSession(session: TerminalSession): void {
     if (session.killed) return;
     session.killed = true;
-    if (process.platform !== 'win32' && session.processGroupGone) return;
+    if (process.platform !== 'win32') {
+      this.recordGroupGone(session);
+      if (session.processGroupGone) return;
+    }
     session.processTree.terminate('SIGTERM');
     if (process.platform === 'win32') return;
     session.killTimer = setTimeout(() => {

@@ -155,7 +155,7 @@ describe('AcpTerminalManager', () => {
   test('release kills a running terminal and removes it', async () => {
     const terminate = mock((_signal: NodeJS.Signals) => {});
     const processTreeOwner = mock(() => ({ terminate }));
-    const manager = new AcpTerminalManager({}, undefined, processTreeOwner);
+    const manager = new AcpTerminalManager({}, undefined, processTreeOwner, () => true);
     const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'command' });
 
     await manager.release(params(terminalId));
@@ -304,16 +304,18 @@ describe('AcpTerminalManager', () => {
 
   test('cancels the SIGKILL escalation when the command exits its group', async () => {
     const terminate = mock((_signal: NodeJS.Signals) => {});
+    let groupExists = true;
     const manager = new AcpTerminalManager(
       {},
       undefined,
       () => ({ terminate }),
-      () => false,
+      () => groupExists,
       50
     );
     const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'short' });
 
     await manager.kill(params(terminalId));
+    groupExists = false;
     spawned[0].emit('close', 0, null);
 
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -344,7 +346,12 @@ describe('AcpTerminalManager', () => {
 
   test('dispose terminates every active terminal process tree', async () => {
     const terminate = mock((_signal: NodeJS.Signals) => {});
-    const manager = new AcpTerminalManager({}, undefined, () => ({ terminate }));
+    const manager = new AcpTerminalManager(
+      {},
+      undefined,
+      () => ({ terminate }),
+      () => true
+    );
     await manager.create({ sessionId: 'session-1', command: 'first' });
     await manager.create({ sessionId: 'session-1', command: 'second' });
 
