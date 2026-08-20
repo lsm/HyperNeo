@@ -22,6 +22,16 @@ import {
 const logger = new Logger('AcpTerminalManager');
 const DEFAULT_OUTPUT_BYTE_LIMIT = 1024 * 1024;
 const MAX_OUTPUT_BYTE_LIMIT = 4 * 1024 * 1024;
+const DEFAULT_KILL_ESCALATION_MS = 5000;
+
+const defaultProcessGroupProbe = (pid: number): boolean => {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+};
 
 interface TerminalSession {
   process: ChildProcess;
@@ -46,7 +56,9 @@ export class AcpTerminalManager {
   constructor(
     private readonly baseEnv: Record<string, string> = {},
     private readonly defaultCwd?: string,
-    private readonly processTreeOwner?: AcpProcessTreeOwner
+    private readonly processTreeOwner?: AcpProcessTreeOwner,
+    private readonly processGroupProbe?: (pid: number) => boolean,
+    private readonly killEscalationMs: number = DEFAULT_KILL_ESCALATION_MS
   ) {}
 
   async create(params: AcpTerminalCreateParams): Promise<AcpTerminalCreateResult> {
@@ -110,6 +122,7 @@ export class AcpTerminalManager {
         waiter({ exitCode: session.exitCode, signal: session.exitSignal });
       }
       session.exitWaiters = [];
+      this.cancelStaleKillEscalation(session);
     });
 
     child.on('error', (err) => {
@@ -123,6 +136,7 @@ export class AcpTerminalManager {
         waiter({ exitCode: 1, signal: null });
       }
       session.exitWaiters = [];
+      this.cancelStaleKillEscalation(session);
     });
     child.removeListener('error', handleUnownedError);
 
@@ -195,8 +209,19 @@ export class AcpTerminalManager {
     session.killTimer = setTimeout(() => {
       session.killTimer = null;
       session.processTree.terminate('SIGKILL');
-    }, 5000);
+    }, this.killEscalationMs);
     session.killTimer.unref();
+    this.cancelStaleKillEscalation(session);
+  }
+
+  private cancelStaleKillEscalation(session: TerminalSession): void {
+    if (session.killTimer === null) return;
+    const pid = session.process.pid;
+    const groupExists = pid != null && (this.processGroupProbe ?? defaultProcessGroupProbe)(pid);
+    if (!groupExists) {
+      clearTimeout(session.killTimer);
+      session.killTimer = null;
+    }
   }
 
   private appendOutput(terminalId: string, chunk: Buffer): void {

@@ -255,17 +255,63 @@ describe('AcpTerminalManager', () => {
 
   test('signals the terminal process tree and escalates to SIGKILL', async () => {
     const terminate = mock((_signal: NodeJS.Signals) => {});
-    const manager = new AcpTerminalManager({}, undefined, () => ({ terminate }));
+    const manager = new AcpTerminalManager(
+      {},
+      undefined,
+      () => ({ terminate }),
+      () => true,
+      50
+    );
     const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'sleep' });
 
     await manager.kill(params(terminalId));
     expect(terminate).toHaveBeenCalledWith('SIGTERM');
 
     if (process.platform !== 'win32') {
-      await new Promise((resolve) => setTimeout(resolve, 5100));
+      await new Promise((resolve) => setTimeout(resolve, 200));
       expect(terminate).toHaveBeenCalledWith('SIGKILL');
     }
-  }, 6000);
+  }, 1000);
+
+  test('cancels the SIGKILL escalation when the command exits its group', async () => {
+    const terminate = mock((_signal: NodeJS.Signals) => {});
+    const manager = new AcpTerminalManager(
+      {},
+      undefined,
+      () => ({ terminate }),
+      () => false,
+      50
+    );
+    const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'short' });
+
+    await manager.kill(params(terminalId));
+    spawned[0].emit('close', 0, null);
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
+    expect(terminate).not.toHaveBeenCalledWith('SIGKILL');
+  }, 1000);
+
+  test('keeps the SIGKILL escalation for descendants after the leader exits', async () => {
+    const terminate = mock((_signal: NodeJS.Signals) => {});
+    const manager = new AcpTerminalManager(
+      {},
+      undefined,
+      () => ({ terminate }),
+      () => true,
+      50
+    );
+    const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'launcher' });
+
+    spawned[0].emit('close', 0, null);
+    await manager.release(params(terminalId));
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
+
+    if (process.platform !== 'win32') {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(terminate).toHaveBeenCalledWith('SIGKILL');
+    }
+  }, 1000);
 
   test('dispose terminates every active terminal process tree', async () => {
     const terminate = mock((_signal: NodeJS.Signals) => {});
