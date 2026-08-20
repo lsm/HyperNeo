@@ -1950,6 +1950,65 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(provider.ownsModel('gpt-scope-304-b')).toBe(false);
     });
 
+    it('updates a live bridge auth after a scheduled token refresh', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const currentToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-scheduled' },
+        jti: 'current',
+      });
+      const rotatedToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-scheduled' },
+        jti: 'rotated',
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: currentToken,
+        refresh: 'refresh-token',
+        accountId: 'acct-scheduled',
+      });
+      const catalogFetch = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      const updateAuthCalls: Array<{ apiKey?: string; accountId?: string }> = [];
+      const fakeServers = new Map<string, unknown>([
+        [
+          'responses:chatgpt:acct-scheduled:standard',
+          {
+            stop: () => undefined,
+            updateModels: () => undefined,
+            updateAuth: (auth: { apiKey?: string; accountId?: string }) =>
+              updateAuthCalls.push(auth),
+          },
+        ],
+      ]);
+      const refreshFetch = spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            access_token: rotatedToken,
+            refresh_token: 'next-refresh-token',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, catalogFetch);
+        (provider as unknown as { bridgeServers: Map<string, unknown> }).bridgeServers =
+          fakeServers;
+
+        const refreshed = await provider.refreshToken();
+
+        expect(refreshed).toBe(true);
+        expect(updateAuthCalls).toHaveLength(1);
+        expect(updateAuthCalls[0]?.apiKey).toBe(rotatedToken);
+        expect(updateAuthCalls[0]?.accountId).toBe('acct-scheduled');
+        expect([...fakeServers.keys()]).toEqual(['responses:chatgpt:acct-scheduled:standard']);
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
     it('stops live bridge servers from a replaced credential scope', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const tokenA = makeJwt({
@@ -2541,6 +2600,11 @@ describe('AnthropicToCodexBridgeProvider', () => {
         expect(provider.getModelCatalogScope()).toBe(
           'chatgpt_oauth:acct-bridge-old:acct-bridge-old:standard'
         );
+        const { setModelsCache, getModelsCache, clearModelsCache } = await import(
+          '../../../../src/lib/model-service'
+        );
+        clearModelsCache();
+        setModelsCache(new Map([['global', []]]));
 
         const refreshed = await auth.refreshAuthTokens?.();
 
@@ -2552,6 +2616,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
           'chatgpt_oauth:acct-bridge-new:acct-bridge-new:standard'
         );
         expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
+        await vi.waitFor(() => expect(getModelsCache().has('global')).toBe(false));
+        clearModelsCache();
       } finally {
         refreshFetch.mockRestore();
       }

@@ -995,10 +995,21 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.bridgeServers.delete(previousKey);
   }
 
+  private notifyCatalogScopeChanged(
+    previous: CodexModelCacheScope | undefined,
+    next: CodexModelCacheScope | undefined
+  ): void {
+    if (!previous || !next || this.sameScope(previous, next)) return;
+    void import('../model-service.js')
+      .then((module) => module.clearModelsCache())
+      .catch(() => undefined);
+  }
+
   private replaceCatalog(
     entries: CodexCatalogEntry[],
     scope: CodexModelCacheScope | undefined
   ): void {
+    this.notifyCatalogScopeChanged(this.activeCatalogScope, scope);
     this.catalogEntries = entries;
     this.activeCatalogScope = scope;
     const currentAuth = this.resolveBridgeAuth();
@@ -1711,8 +1722,14 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const credentials = await this.loadCredentials();
     if (!credentials?.refresh) return false;
 
+    const previousAuth = this.resolveBridgeAuth();
     const result = await this.refreshStoredOauthCredentials();
-    return result.credentials !== undefined;
+    if (result.credentials === undefined) return false;
+    if (previousAuth) {
+      const refreshedAuth = this.toBridgeAuth(result.credentials);
+      if (refreshedAuth) this.updateBridgeAuth(previousAuth, refreshedAuth);
+    }
+    return true;
   }
 
   async logout(): Promise<void> {

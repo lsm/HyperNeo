@@ -871,6 +871,62 @@ describe('Provider RPC handlers', () => {
       clearModelsCache();
     });
 
+    it('clears the global model cache when a health check changes the catalog but fails its probe', async () => {
+      const created = repo.createProvider({
+        providerId: 'drift-failure-provider',
+        displayName: 'Drift Failure Provider',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      let contextWindow = 100000;
+      getProviderRegistry().register({
+        id: 'drift-failure-provider',
+        displayName: 'Drift Failure Provider',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        getCachedModels: () => [
+          {
+            id: 'drift-failure-model',
+            name: 'Drift Failure Model',
+            family: 'test',
+            provider: 'drift-failure-provider',
+            contextWindow,
+          },
+        ],
+        healthCheck: async () => {
+          contextWindow = 300000;
+          throw new Error('probe failed');
+        },
+        ownsModel: () => true,
+        getModelForTier: () => 'default',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+      const { setModelsCache, getModelsCache, clearModelsCache } = await import(
+        '../../../../src/lib/model-service'
+      );
+      clearModelsCache();
+      setModelsCache(new Map([['global', []]]));
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.test')!({ id: created.id }, {})) as {
+        healthy: boolean;
+        error: string;
+      };
+
+      expect(result.healthy).toBe(false);
+      expect(result.error).toBe('probe failed');
+      expect(getModelsCache().has('global')).toBe(false);
+      clearModelsCache();
+    });
+
     it('keeps the global model cache when a health check leaves the catalog unchanged', async () => {
       const created = repo.createProvider({
         providerId: 'stable-provider',

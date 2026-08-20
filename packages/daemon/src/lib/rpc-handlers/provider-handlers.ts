@@ -372,6 +372,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       return { healthy: false, error: 'Provider not registered' };
     }
 
+    const catalogBefore = providerCatalogSignature(provider);
     try {
       const available = await provider.isAvailable();
       if (!available) {
@@ -381,14 +382,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         });
         return { healthy: false, error: 'Provider not available' };
       }
-      const catalogBefore = providerCatalogSignature(provider);
       if (provider.healthCheck) {
         await provider.healthCheck();
       } else {
         await provider.getModels();
-      }
-      if (providerCatalogSignature(provider) !== catalogBefore) {
-        await clearCacheAndNotifyProvidersChanged(internalEventBus);
       }
       providerRepo.updateProvider(data.id, {
         healthStatus: 'healthy',
@@ -402,6 +399,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         lastHealthCheckAt: Date.now(),
       });
       return { healthy: false, error };
+    } finally {
+      if (providerCatalogSignature(provider) !== catalogBefore) {
+        await clearCacheAndNotifyProvidersChanged(internalEventBus);
+      }
     }
   });
 
@@ -418,6 +419,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           });
           return { providerId: record.providerId, healthy: false, error: 'Not registered' };
         }
+        const catalogBefore = providerCatalogSignature(provider);
         try {
           const available = await provider.isAvailable();
           if (!available) {
@@ -427,14 +429,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             });
             return { providerId: record.providerId, healthy: false, error: 'Not available' };
           }
-          const catalogBefore = providerCatalogSignature(provider);
           if (provider.healthCheck) {
             await provider.healthCheck();
           } else {
             await provider.getModels();
-          }
-          if (providerCatalogSignature(provider) !== catalogBefore) {
-            await clearCacheAndNotifyProvidersChanged(internalEventBus);
           }
           providerRepo.updateProvider(record.id, {
             healthStatus: 'healthy',
@@ -448,6 +446,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             lastHealthCheckAt: Date.now(),
           });
           return { providerId: record.providerId, healthy: false, error };
+        } finally {
+          if (providerCatalogSignature(provider) !== catalogBefore) {
+            await clearCacheAndNotifyProvidersChanged(internalEventBus);
+          }
         }
       })
     );
