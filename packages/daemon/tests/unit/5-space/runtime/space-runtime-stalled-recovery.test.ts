@@ -2023,6 +2023,9 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 
       const stale = seedExec(run.id, 'deleted-node', 'Step A', 'pending');
       const sibling = seedExec(run.id, STEP_B, 'Step B', 'pending');
+      db.prepare('UPDATE node_executions SET created_at = ? WHERE id = ?').run(1, stale.id);
+      db.prepare('UPDATE node_executions SET created_at = ? WHERE id = ?').run(2, sibling.id);
+      const spawnAttempts: string[] = [];
       const tam = {
         rehydrate: async () => {},
         isExecutionSpawning: () => false,
@@ -2035,6 +2038,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
           _run: unknown,
           execution: { id: string }
         ) => {
+          spawnAttempts.push(execution.id);
           if (execution.id === stale.id) {
             throw new PermanentSpawnError(
               'Workflow node deleted-node no longer exists in workflow definition'
@@ -2056,6 +2060,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       await rt.recoverStalledRuns();
       await rt.executeTick();
 
+      expect(spawnAttempts).toEqual([stale.id, sibling.id]);
       expect(nodeExecutionRepo.getById(stale.id)!.status).toBe('cancelled');
       expect(nodeExecutionRepo.getById(sibling.id)!.status).toBe('in_progress');
       expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
