@@ -848,11 +848,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   private openAIReasoningEfforts(modelId: string): OpenAIResponsesReasoningEffort[] | undefined {
-    if (resolveCodexBridgeModelId(modelId)) return this.bundledReasoningEfforts(modelId);
     const baseModelId = this.openAIBaseModelId(modelId);
-    return baseModelId && /^o(?:1|3|4)(?:-|$)/.test(baseModelId)
-      ? ['low', 'medium', 'high']
-      : undefined;
+    if (!baseModelId) return undefined;
+    if (resolveCodexBridgeModelId(baseModelId)) return this.bundledReasoningEfforts(baseModelId);
+    return /^o(?:1|3|4)(?:-|$)/.test(baseModelId) ? ['low', 'medium', 'high'] : undefined;
   }
 
   private openAIModelPriority(modelId: string): number {

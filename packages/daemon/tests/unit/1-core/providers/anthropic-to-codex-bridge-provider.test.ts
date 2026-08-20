@@ -1088,6 +1088,23 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     );
 
+    it('preserves reasoning for fine-tuned known models', async () => {
+      const modelId = 'ft:gpt-5.4:org:custom';
+      const fetchImpl = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: modelId }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual([modelId]);
+      expect(provider.getModelThinkingMode(modelId)).toBe('granular');
+    });
+
     it('filters non-Responses models from the general OpenAI catalog', async () => {
       const fetchImpl = mock(
         async () =>
