@@ -170,6 +170,9 @@ bunRuntimeTest('rejects named pipes without blocking', async () => {
         maxBytes: 1024,
       })
     ).rejects.toThrow('Unable to read ACP filesystem path');
+    await expect(
+      writeFileWithinWorkspace(workspace, ['pipe'], 'blocked', new AbortController().signal)
+    ).rejects.toThrow('Unable to open ACP filesystem path');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -266,12 +266,13 @@ export async function writeFileWithinWorkspace(
     const fileFd = symbols.openat(
       directoryFd,
       cString(fileName),
-      constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_NONBLOCK | constants.O_NOFOLLOW,
       FILE_MODE
     );
     if (fileFd < 0) throwFsError('open', fileName);
 
     try {
+      if (!fstatSync(fileFd).isFile()) throwFsError('write', fileName);
       if (signal.aborted) throw new Error('ACP filesystem write cancelled');
       if (symbols.ftruncate(fileFd, 0) !== 0) throwFsError('truncate', fileName);
       const data = Buffer.from(content);
