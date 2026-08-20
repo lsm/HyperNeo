@@ -30,6 +30,7 @@ import {
   createOpenAIResponsesBridgeServer,
   type OpenAIResponsesBridgeAuth,
   type OpenAIResponsesBridgeServer,
+  type OpenAIResponsesReasoningEffort,
 } from './openai-responses-bridge/server.js';
 
 const logger = new Logger('anthropic-to-codex-bridge-provider');
@@ -124,7 +125,7 @@ type CodexModelVisibility = 'list' | 'hide' | 'none';
 interface CodexRemoteModel extends CodexRemoteModelMetadata {
   visibility: CodexModelVisibility;
   supportedInApi: boolean;
-  supportsReasoning: boolean;
+  supportedReasoningEfforts?: OpenAIResponsesReasoningEffort[];
   priority: number;
 }
 
@@ -147,6 +148,7 @@ interface CodexModelCache {
 interface CodexCatalogEntry {
   info: ModelInfo;
   visibility: CodexModelVisibility;
+  supportedReasoningEfforts?: OpenAIResponsesReasoningEffort[];
 }
 
 const CODEX_MODEL_CACHE_SCHEMA_VERSION = 2;
@@ -155,6 +157,12 @@ const CODEX_MODEL_FETCH_TIMEOUT_MS = 5000;
 const CODEX_COMPAT_CLIENT_VERSION = '0.148.0';
 const CODEX_MODEL_DISPLAY_NAME_MAX_LENGTH = 500;
 const CODEX_MODEL_DESCRIPTION_MAX_LENGTH = 4000;
+const CODEX_REASONING_EFFORTS = new Set<OpenAIResponsesReasoningEffort>([
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+]);
 
 export class AnthropicToCodexBridgeProvider implements Provider {
   readonly id = 'anthropic-codex';
@@ -280,7 +288,16 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       return undefined;
     if (!['list', 'hide', 'none'].includes(String(record.visibility))) return undefined;
     if (typeof record.supportedInApi !== 'boolean') return undefined;
-    if (typeof record.supportsReasoning !== 'boolean') return undefined;
+    if (
+      record.supportedReasoningEfforts !== undefined &&
+      (!Array.isArray(record.supportedReasoningEfforts) ||
+        record.supportedReasoningEfforts.some(
+          (effort) => !CODEX_REASONING_EFFORTS.has(effort as OpenAIResponsesReasoningEffort)
+        ))
+    )
+      return undefined;
+    if (record.supportsReasoning !== undefined && typeof record.supportsReasoning !== 'boolean')
+      return undefined;
     if (typeof record.priority !== 'number' || !Number.isSafeInteger(record.priority))
       return undefined;
     const contextWindow = this.optionalPositiveInteger(record.contextWindow);
@@ -295,7 +312,14 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       ...(maxContextWindow ? { maxContextWindow } : {}),
       visibility: record.visibility as CodexModelVisibility,
       supportedInApi: record.supportedInApi,
-      supportsReasoning: record.supportsReasoning,
+      ...(Array.isArray(record.supportedReasoningEfforts)
+        ? {
+            supportedReasoningEfforts:
+              record.supportedReasoningEfforts as OpenAIResponsesReasoningEffort[],
+          }
+        : record.supportsReasoning === true
+          ? { supportedReasoningEfforts: [...CODEX_REASONING_EFFORTS] }
+          : {}),
       priority: record.priority,
     };
   }
@@ -370,9 +394,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       .map((model) => ({
         info: {
           ...codexRemoteModelInfo(model),
-          thinkingModes: model.supportsReasoning ? 'granular' : 'off',
+          thinkingModes: model.supportedReasoningEfforts?.length ? 'granular' : 'off',
         },
         visibility: model.visibility,
+        supportedReasoningEfforts: model.supportedReasoningEfforts,
       }));
   }
 
@@ -618,7 +643,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   private responsesBridgeModels(isChatgptOAuth: boolean) {
-    return this.catalogEntries.map(({ info }) => ({
+    return this.catalogEntries.map(({ info, supportedReasoningEfforts }) => ({
       id: info.id,
       display_name: info.name,
       created_at: `${info.releaseDate || '2026-01-01'}T00:00:00Z`,
@@ -626,6 +651,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         ? (codexBackendContextWindow(info.id) ?? info.contextWindow)
         : info.contextWindow,
       max_tokens: info.id.startsWith('gpt-5.6-') ? 128000 : 16384,
+      supported_reasoning_efforts: supportedReasoningEfforts,
     }));
   }
 
@@ -717,9 +743,17 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const maxContextWindow = this.optionalPositiveInteger(record.max_context_window);
     if (record.context_window !== undefined && contextWindow === undefined) return undefined;
     if (record.max_context_window !== undefined && maxContextWindow === undefined) return undefined;
-    const supportedReasoningLevels = Array.isArray(record.supported_reasoning_levels)
-      ? record.supported_reasoning_levels
-      : [];
+    const supportedReasoningEfforts = Array.isArray(record.supported_reasoning_levels)
+      ? record.supported_reasoning_levels.flatMap((level) => {
+          if (!level || typeof level !== 'object' || Array.isArray(level)) return [];
+          const effort = (level as Record<string, unknown>).effort;
+          return CODEX_REASONING_EFFORTS.has(effort as OpenAIResponsesReasoningEffort)
+            ? [effort as OpenAIResponsesReasoningEffort]
+            : [];
+        })
+      : resolveCodexBridgeModelId(record.slug)
+        ? [...CODEX_REASONING_EFFORTS]
+        : [];
     return {
       slug: record.slug,
       displayName: record.display_name.trim(),
@@ -728,8 +762,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       ...(maxContextWindow ? { maxContextWindow } : {}),
       visibility: record.visibility as CodexModelVisibility,
       supportedInApi: record.supported_in_api,
-      supportsReasoning:
-        supportedReasoningLevels.length > 0 || resolveCodexBridgeModelId(record.slug) !== undefined,
+      supportedReasoningEfforts,
       priority: record.priority,
     };
   }
@@ -752,7 +785,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       displayName: record.id,
       visibility: 'list',
       supportedInApi,
-      supportsReasoning: resolveCodexBridgeModelId(record.id) !== undefined,
+      ...(resolveCodexBridgeModelId(record.id)
+        ? { supportedReasoningEfforts: [...CODEX_REASONING_EFFORTS] }
+        : {}),
       priority,
     };
   }

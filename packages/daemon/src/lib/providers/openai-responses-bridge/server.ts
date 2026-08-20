@@ -50,12 +50,15 @@ export type OpenAIResponsesBridgeAuth = {
   } | null>;
 };
 
+export type OpenAIResponsesReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+
 export type OpenAIResponsesBridgeModel = {
   id: string;
   display_name: string;
   created_at: string;
   context_window: number;
   max_tokens?: number;
+  supported_reasoning_efforts?: OpenAIResponsesReasoningEffort[];
 };
 
 export type OpenAIResponsesBridgeServer = {
@@ -133,7 +136,7 @@ type ResponsesRequest = {
   stream: true;
   parallel_tool_calls?: false;
   reasoning?: {
-    effort: 'low' | 'medium' | 'high' | 'xhigh';
+    effort: OpenAIResponsesReasoningEffort;
     summary?: 'auto' | 'concise' | 'detailed';
   };
   include?: string[];
@@ -533,17 +536,27 @@ const MODELS_SUPPORTING_XHIGH_REASONING = new Set([
   'gpt-5.5',
 ]);
 
+const REASONING_EFFORTS: OpenAIResponsesReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
+
 function mapThinkingToReasoningEffort(
   thinking: AnthropicRequest['thinking'],
-  model?: string
+  model?: string,
+  supportedEfforts?: OpenAIResponsesReasoningEffort[]
 ): ResponsesRequest['reasoning'] {
   if (!thinking || thinking.type !== 'enabled') return undefined;
   const tokens = thinking.budget_tokens;
-  if (tokens <= 8000) return { effort: 'low', summary: 'auto' };
-  if (tokens <= 16000) return { effort: 'medium', summary: 'auto' };
-  if (tokens <= 24000) return { effort: 'high', summary: 'auto' };
-  const supportsXHigh = model ? MODELS_SUPPORTING_XHIGH_REASONING.has(model) : true;
-  return { effort: supportsXHigh ? 'xhigh' : 'high', summary: 'auto' };
+  const requested =
+    tokens <= 8000 ? 'low' : tokens <= 16000 ? 'medium' : tokens <= 24000 ? 'high' : 'xhigh';
+  const fallbackEfforts = REASONING_EFFORTS.slice(
+    0,
+    REASONING_EFFORTS.indexOf(requested) + 1
+  ).reverse();
+  const effort = supportedEfforts
+    ? fallbackEfforts.find((candidate) => supportedEfforts.includes(candidate))
+    : requested === 'xhigh' && model && !MODELS_SUPPORTING_XHIGH_REASONING.has(model)
+      ? 'high'
+      : requested;
+  return effort ? { effort, summary: 'auto' } : undefined;
 }
 
 function buildResponsesRequest(
@@ -554,6 +567,7 @@ function buildResponsesRequest(
     includeMaxOutputTokens?: boolean;
     includeParallelToolCalls?: boolean;
     isChatgptOAuth?: boolean;
+    supportedReasoningEfforts?: OpenAIResponsesReasoningEffort[];
   } = {},
   reasoningItems?: ResponsesReasoningItem[]
 ): ResponsesRequest {
@@ -562,7 +576,11 @@ function buildResponsesRequest(
   const tool_choice = toolChoiceToResponsesToolChoice(body.tool_choice);
   const includeMaxOutputTokens = options.includeMaxOutputTokens ?? true;
   const includeParallelToolCalls = options.includeParallelToolCalls ?? true;
-  const reasoning = mapThinkingToReasoningEffort(body.thinking, model);
+  const reasoning = mapThinkingToReasoningEffort(
+    body.thinking,
+    model,
+    options.supportedReasoningEfforts
+  );
   return {
     model,
     ...(instructions ? { instructions } : {}),
@@ -1326,6 +1344,7 @@ export function createOpenAIResponsesBridgeServer(
   let modelsResponse = modelsListResponse(config.models);
   let modelAliases = config.modelAliases;
   const contextWindowByModelId = new Map<string, number>();
+  const reasoningEffortsByModelId = new Map<string, OpenAIResponsesReasoningEffort[]>();
   const updateModels = (
     models: OpenAIResponsesBridgeModel[],
     aliases?: Record<string, string>
@@ -1333,13 +1352,19 @@ export function createOpenAIResponsesBridgeServer(
     modelsResponse = modelsListResponse(models);
     modelAliases = aliases;
     contextWindowByModelId.clear();
+    reasoningEffortsByModelId.clear();
     for (const model of models) {
       contextWindowByModelId.set(model.id, model.context_window);
+      if (model.supported_reasoning_efforts) {
+        reasoningEffortsByModelId.set(model.id, model.supported_reasoning_efforts);
+      }
     }
     if (aliases) {
       for (const [alias, modelId] of Object.entries(aliases)) {
         const contextWindow = contextWindowByModelId.get(modelId);
         if (contextWindow !== undefined) contextWindowByModelId.set(alias, contextWindow);
+        const reasoningEfforts = reasoningEffortsByModelId.get(modelId);
+        if (reasoningEfforts) reasoningEffortsByModelId.set(alias, reasoningEfforts);
       }
     }
   };
@@ -1519,9 +1544,19 @@ export function createOpenAIResponsesBridgeServer(
       if (storedReasoning && storedReasoning.length > 0) {
         continuation = undefined;
       }
+      const requestOpts = {
+        ...buildOpts,
+        supportedReasoningEfforts: reasoningEffortsByModelId.get(model),
+      };
       let requestBody: ResponsesRequest;
       try {
-        requestBody = buildResponsesRequest(body, model, continuation, buildOpts, storedReasoning);
+        requestBody = buildResponsesRequest(
+          body,
+          model,
+          continuation,
+          requestOpts,
+          storedReasoning
+        );
       } catch (err) {
         return sendJsonError(
           400,
@@ -1559,7 +1594,7 @@ export function createOpenAIResponsesBridgeServer(
                 body,
                 model,
                 undefined,
-                buildOpts,
+                requestOpts,
                 storedReasoning
               );
             } catch (err) {
@@ -1614,7 +1649,7 @@ export function createOpenAIResponsesBridgeServer(
             'openai-responses: 400 with replayed reasoning present — retrying once without reasoning items'
           );
           try {
-            requestBody = buildResponsesRequest(body, model, continuation, buildOpts, undefined);
+            requestBody = buildResponsesRequest(body, model, continuation, requestOpts, undefined);
           } catch (err) {
             return sendJsonError(
               400,

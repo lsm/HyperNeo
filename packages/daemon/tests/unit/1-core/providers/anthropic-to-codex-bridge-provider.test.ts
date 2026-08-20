@@ -1042,6 +1042,11 @@ describe('AnthropicToCodexBridgeProvider', () => {
                   context_window: 300000,
                   visibility: 'list',
                   supported_in_api: false,
+                  supported_reasoning_levels: [
+                    { effort: 'low', description: 'Fast' },
+                    { effort: 'medium', description: 'Balanced' },
+                    { effort: 'high', description: 'Deep' },
+                  ],
                   priority: 1,
                 },
               ],
@@ -1415,6 +1420,10 @@ describe('AnthropicToCodexBridgeProvider', () => {
                   display_name: 'GPT OAuth Restart',
                   visibility: 'list',
                   supported_in_api: true,
+                  supported_reasoning_levels: [
+                    { effort: 'low', description: 'Fast' },
+                    { effort: 'medium', description: 'Balanced' },
+                  ],
                   priority: 1,
                 },
               ],
@@ -1436,9 +1445,39 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       expect(restarted.ownsModel('gpt-oauth-restart')).toBe(true);
       if (isBun) {
-        expect(() =>
-          restarted.buildSdkConfig('gpt-oauth-restart', { sessionId: 'oauth-restart' })
-        ).not.toThrow();
+        const captured = { body: undefined as Record<string, unknown> | undefined };
+        const responseFetch = spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+          if (typeof url === 'string' && url.includes('/responses')) {
+            captured.body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            return new Response(
+              `event: response.completed\ndata: ${JSON.stringify({
+                type: 'response.completed',
+                response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+              })}\n\n`,
+              { headers: { 'Content-Type': 'text/event-stream' } }
+            );
+          }
+          return new Response('not found', { status: 404 });
+        });
+        try {
+          const config = restarted.buildSdkConfig('gpt-oauth-restart', {
+            sessionId: 'oauth-restart',
+          });
+          restarted.setSessionThinkingConfig('oauth-restart', 'think32k');
+          const response = await fetch(`${config.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'gpt-oauth-restart',
+              max_tokens: 128,
+              messages: [{ role: 'user', content: 'Think deeply.' }],
+            }),
+          });
+          expect(response.status).toBe(200);
+          expect(captured.body?.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
+        } finally {
+          responseFetch.mockRestore();
+        }
       }
       restarted.stopAllBridgeServers();
     });
@@ -1712,6 +1751,75 @@ describe('AnthropicToCodexBridgeProvider', () => {
         expect(capturedHeaders[0]?.get('Authorization')).toBe(`Bearer ${refreshedToken}`);
       } finally {
         refreshFetch.mockRestore();
+      }
+    });
+
+    it.skipIf(!isBun)('clamps thinking to a discovered model reasoning level', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'oauth-access-token',
+        refresh: 'oauth-refresh-token',
+        accountId: 'acct-reasoning',
+      });
+      const catalogFetch = mock(
+        async () =>
+          new Response(
+            JSON.stringify({
+              models: [
+                {
+                  slug: 'gpt-limited-reasoning',
+                  display_name: 'GPT Limited Reasoning',
+                  visibility: 'list',
+                  supported_in_api: true,
+                  supported_reasoning_levels: [
+                    { effort: 'low', description: 'Fast' },
+                    { effort: 'medium', description: 'Balanced' },
+                  ],
+                  priority: 1,
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+      ) as unknown as typeof fetch;
+      const captured = { body: undefined as Record<string, unknown> | undefined };
+      const originalFetch = globalThis.fetch.bind(globalThis);
+      const responseFetch = spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        if (typeof url === 'string' && url.includes('/responses')) {
+          captured.body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          return new Response(
+            `event: response.completed\ndata: ${JSON.stringify({
+              type: 'response.completed',
+              response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+            })}\n\n`,
+            { headers: { 'Content-Type': 'text/event-stream' } }
+          );
+        }
+        return originalFetch(url, init);
+      });
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, catalogFetch);
+        await provider.getModels();
+        const config = provider.buildSdkConfig('gpt-limited-reasoning', {
+          sessionId: 'limited-reasoning',
+        });
+        provider.setSessionThinkingConfig('limited-reasoning', 'think32k');
+
+        const response = await fetch(`${config.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gpt-limited-reasoning',
+            max_tokens: 128,
+            messages: [{ role: 'user', content: 'Think deeply.' }],
+          }),
+        });
+
+        expect(response.status).toBe(200);
+        expect(captured.body?.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
+      } finally {
+        responseFetch.mockRestore();
       }
     });
 
