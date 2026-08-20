@@ -28,6 +28,8 @@ function makeManager(opts: {
   deliveryContent?: { sendStatus: string };
   parentTaskStatus?: string;
   reopenDbId?: string;
+  failedDbId?: string;
+  enqueueThrows?: boolean;
 }): {
   manager: TaskAgentManager;
   session: Record<string, ReturnType<typeof mock>>;
@@ -39,6 +41,7 @@ function makeManager(opts: {
   const saveUserMessage = mock(() => 'db-id');
   const jobQueueEnqueue = mock(
     (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
+      if (opts.enqueueThrows) throw new Error('job queue unavailable');
       const uuid = args?.payload?.messageUuid;
       if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
       return { id: 'job-1' };
@@ -46,6 +49,7 @@ function makeManager(opts: {
   );
   const reopenDeliveryByUuid = mock(() => opts.reopenDbId ?? null);
   const markDeliveryDeferredByUuid = mock(() => null);
+  const markDeliveryFailedByUuid = mock(() => opts.failedDbId ?? null);
   const publishStatusChanged = mock(async () => {});
 
   function makeSession(o: MockSessionOptions) {
@@ -76,7 +80,7 @@ function makeManager(opts: {
       getSDKMessageRepo: () => ({
         getDeliveryContent: () => opts.deliveryContent ?? null,
         reopenDeliveryByUuid,
-        markDeliveryFailedByUuid: () => null,
+        markDeliveryFailedByUuid,
         markDeliveryDeferredByUuid,
       }),
       getJobQueueRepo: () => ({
@@ -128,6 +132,7 @@ function makeManager(opts: {
       jobQueueEnqueue,
       reopenDeliveryByUuid,
       markDeliveryDeferredByUuid,
+      markDeliveryFailedByUuid,
       publishStatusChanged,
     },
   };
@@ -672,5 +677,21 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       .map(([, payload]) => (payload as { status: string }).status);
     expect(statuses).toContain('enqueued');
     expect(statuses).toContain('deferred');
+  });
+
+  it('publishes a failed status when the delivery job cannot be enqueued', async () => {
+    const { manager, session } = makeManager({ enqueueThrows: true, failedDbId: 'db-id' });
+    indexSession(manager, liveSession(session));
+
+    await manager
+      .injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+      .catch(() => {});
+
+    expect(session.markDeliveryFailedByUuid).toHaveBeenCalled();
+    expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
+      sessionId: SESSION_ID,
+      messageIds: ['db-id'],
+      status: 'failed',
+    });
   });
 });

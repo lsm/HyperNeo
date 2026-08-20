@@ -805,12 +805,33 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
             sessionId,
             messageUuid: messageId,
             origin: 'space_agent',
-            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+            onEnqueueFailure: () => {
+              const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
+              if (failedDbId) {
+                void deps.internalEventBus
+                  .publish('messages.statusChanged', {
+                    sessionId,
+                    messageIds: [failedDbId],
+                    status: 'failed',
+                  })
+                  .catch(() => {});
+              }
+            },
           }),
         ...(fresh
           ? {
-              terminalizeOnTimeout: () =>
-                sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+              terminalizeOnTimeout: () => {
+                const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
+                if (failedDbId) {
+                  void deps.internalEventBus
+                    .publish('messages.statusChanged', {
+                      sessionId,
+                      messageIds: [failedDbId],
+                      status: 'failed',
+                    })
+                    .catch(() => {});
+                }
+              },
             }
           : {}),
       });

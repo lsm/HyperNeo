@@ -465,10 +465,22 @@ export class SpaceRuntimeService {
             sessionId,
             messageUuid: id,
             origin: 'long_term_agent',
-            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id),
+            onEnqueueFailure: () => {
+              const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
+              if (failedDbId) {
+                void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+              }
+            },
           }),
         ...(fresh
-          ? { terminalizeOnTimeout: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id) }
+          ? {
+              terminalizeOnTimeout: () => {
+                const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
+                if (failedDbId) {
+                  void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+                }
+              },
+            }
           : {}),
       });
     } else {
@@ -483,7 +495,7 @@ export class SpaceRuntimeService {
   private async publishMessageStatusChanged(
     sessionId: string,
     dbId: string,
-    status: 'enqueued' | 'deferred'
+    status: 'enqueued' | 'deferred' | 'failed'
   ): Promise<void> {
     if (!this.config.internalEventBus) {
       return;

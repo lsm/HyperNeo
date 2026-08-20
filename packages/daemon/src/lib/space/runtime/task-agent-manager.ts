@@ -3284,12 +3284,21 @@ export class TaskAgentManager {
             sessionId,
             messageUuid: messageId,
             origin: 'space_inject',
-            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+            onEnqueueFailure: () => {
+              const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
+              if (failedDbId) {
+                void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+              }
+            },
           }),
         ...(!existing
           ? {
-              terminalizeOnTimeout: () =>
-                sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+              terminalizeOnTimeout: () => {
+                const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
+                if (failedDbId) {
+                  void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+                }
+              },
             }
           : {}),
       });
@@ -3305,7 +3314,7 @@ export class TaskAgentManager {
   private async publishMessageStatusChanged(
     sessionId: string,
     dbId: string,
-    status: 'enqueued' | 'deferred'
+    status: 'enqueued' | 'deferred' | 'failed'
   ): Promise<void> {
     await this.config.internalEventBus
       .publish('messages.statusChanged', {
