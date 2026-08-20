@@ -639,6 +639,15 @@ export class JobQueueRepository {
     return result.changes;
   }
 
+  cleanupCompleted(queue: string, beforeMs: number): number {
+    const result = this.db
+      .prepare(
+        `DELETE FROM job_queue WHERE queue = ? AND status = 'completed' AND completed_at < ?`
+      )
+      .run(queue, beforeMs);
+    return result.changes;
+  }
+
   deleteJob(id: string): boolean {
     const result = this.db.prepare(`DELETE FROM job_queue WHERE id = ?`).run(id);
     return result.changes > 0;
