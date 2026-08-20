@@ -1418,15 +1418,20 @@ export class AgentSession
                 return { kind: 'aborted' as const };
               }
             }
-            const memberUuids = (admittedBatchUuids ?? []).filter((uuid) => uuid !== messageUuid);
-            if (memberUuids.length > 0) {
-              this.markDeliveryBatchSubmitted(memberUuids);
-            }
           }
-          const existingAcknowledgment = this.messageQueue.waitForPendingOrInFlight(messageUuid);
-          freshFeed = existingAcknowledgment === null;
+          const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
+          freshFeed = existing === null;
+          if (existing && !this.deliveryContentMatches(existing.content, feedContent)) {
+            turnEnd.cancel();
+            disarmObserver();
+            return { kind: 'aborted' as const };
+          }
+          const memberUuids = (admittedBatchUuids ?? []).filter((uuid) => uuid !== messageUuid);
+          if (memberUuids.length > 0) {
+            this.markDeliveryBatchSubmitted(memberUuids);
+          }
           acknowledgment =
-            existingAcknowledgment ??
+            existing?.acknowledgment ??
             this.messageQueue.admitWithId(messageUuid, feedContent, false, {
               durable: true,
             });
@@ -1823,6 +1828,13 @@ export class AgentSession
         })
         .catch(() => {});
     }
+  }
+
+  private deliveryContentMatches(
+    queued: string | MessageContent[],
+    expected: string | MessageContent[]
+  ): boolean {
+    return JSON.stringify(queued) === JSON.stringify(expected);
   }
 
   private rebuildBatchDeliveryContent(

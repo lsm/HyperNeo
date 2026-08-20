@@ -1100,7 +1100,12 @@ describe('AgentSession', () => {
       (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
         admitWithId: admitSpy,
         waitForPendingOrInFlight: mock((uuid: string) =>
-          uuid === 'uuid-pending' ? existing.promise : null
+          uuid === 'uuid-pending'
+            ? {
+                acknowledgment: existing.promise,
+                content: '--- message 1 of 2 ---\nkickoff\n\n--- message 2 of 2 ---\nmember',
+              }
+            : null
         ),
         isRunning: mock(() => false),
         size: mock(() => 1),
@@ -1138,6 +1143,52 @@ describe('AgentSession', () => {
       memberConsumed.cancel();
     });
 
+    it('driveDeliveryTurn rejects reused content that does not match the rebuilt batch', async () => {
+      const markSubmittedSpy = mock(() => ['db-member']);
+      const markConsumedSpy = mock(() => ['db-pending', 'db-member']);
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sessionId: string, uuid: string) => ({
+          content: uuid === 'uuid-pending' ? 'kickoff' : 'member',
+          sendStatus: 'enqueued',
+        })),
+        hasTerminalResultAfter: mock(() => false),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliverySubmittedByUuids: markSubmittedSpy,
+        markDeliveryConsumedByUuids: markConsumedSpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: mock(() => Promise.resolve()),
+        waitForPendingOrInFlight: mock(() => ({
+          acknowledgment: new Promise<void>(() => {}),
+          content: 'kickoff',
+        })),
+        isRunning: mock(() => false),
+        size: mock(() => 1),
+      };
+
+      await agentSession.stateManager.setProcessing('uuid-pending');
+      const result = await agentSession.driveDeliveryTurn(
+        'uuid-pending',
+        'hello',
+        null,
+        false,
+        () => true,
+        ['uuid-pending', 'uuid-member']
+      );
+
+      expect(result).toEqual({ outcome: 'aborted' });
+      expect(markSubmittedSpy).not.toHaveBeenCalled();
+      expect(markConsumedSpy).not.toHaveBeenCalled();
+    });
+
     it('driveDeliveryTurn abort leaves a reused pending message intact', async () => {
       const markConsumedSpy = mock(() => ['db-pending']);
       mockDb.getSDKMessageRepo = mock(() => ({
@@ -1158,7 +1209,10 @@ describe('AgentSession', () => {
       const removeSpy = mock(() => true);
       (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
         admitWithId: mock(() => Promise.resolve()),
-        waitForPendingOrInFlight: mock(() => existing.promise),
+        waitForPendingOrInFlight: mock(() => ({
+          acknowledgment: existing.promise,
+          content: 'hello',
+        })),
         remove: removeSpy,
         isRunning: mock(() => false),
         size: mock(() => 1),
@@ -1202,7 +1256,10 @@ describe('AgentSession', () => {
       const existing = Promise.withResolvers<void>();
       (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
         admitWithId: mock(() => Promise.resolve()),
-        waitForPendingOrInFlight: mock(() => existing.promise),
+        waitForPendingOrInFlight: mock(() => ({
+          acknowledgment: existing.promise,
+          content: 'hello',
+        })),
         isRunning: mock(() => false),
         size: mock(() => 1),
       };

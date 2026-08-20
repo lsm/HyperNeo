@@ -195,21 +195,26 @@ export class MessageQueue {
     return false;
   }
 
-  waitForPendingOrInFlight(messageId: string): Promise<void> | null {
+  waitForPendingOrInFlight(
+    messageId: string
+  ): { acknowledgment: Promise<void>; content: string | MessageContent[] } | null {
     const message = this.findPendingOrInFlight(messageId);
     if (!message) return null;
-    return new Promise<void>((resolve, reject) => {
-      const previousResolved = message.onResolved;
-      const previousRejected = message.onRejected;
-      message.onResolved = () => {
-        previousResolved?.();
-        resolve();
-      };
-      message.onRejected = (error) => {
-        previousRejected?.(error);
-        reject(error);
-      };
-    });
+    return {
+      content: message.content,
+      acknowledgment: new Promise<void>((resolve, reject) => {
+        const previousResolved = message.onResolved;
+        const previousRejected = message.onRejected;
+        message.onResolved = () => {
+          previousResolved?.();
+          resolve();
+        };
+        message.onRejected = (error) => {
+          previousRejected?.(error);
+          reject(error);
+        };
+      }),
+    };
   }
 
   private findPendingOrInFlight(messageId: string): QueuedMessage | null {

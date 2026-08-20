@@ -174,7 +174,7 @@ describe('MessageQueue', () => {
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(true);
       expect(queue.hasPendingOrClaimed('in-flight-id')).toBe(true);
       const existing = queue.waitForPendingOrInFlight('in-flight-id');
-      expect(existing).not.toBeNull();
+      expect(existing?.content).toBe('Message 1');
 
       queue.start();
       const generator = queue.messageGenerator(testSessionId);
@@ -185,7 +185,7 @@ describe('MessageQueue', () => {
 
       result.value.onSent();
       await acknowledgment;
-      await existing;
+      await existing?.acknowledgment;
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(false);
       expect(queue.waitForPendingOrInFlight('in-flight-id')).toBeNull();
       queue.stop();
@@ -195,7 +195,9 @@ describe('MessageQueue', () => {
       const acknowledgment = queue
         .enqueueWithId('rejected-id', 'Message 1')
         .catch((error) => error);
-      const existing = queue.waitForPendingOrInFlight('rejected-id')?.catch((error) => error);
+      const existing = queue
+        .waitForPendingOrInFlight('rejected-id')
+        ?.acknowledgment.catch((error) => error);
 
       queue.clear();
 
