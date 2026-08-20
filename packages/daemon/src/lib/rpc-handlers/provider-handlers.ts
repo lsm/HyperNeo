@@ -187,29 +187,30 @@ function validateAcpConfigCommand(configJson: string | undefined): string | unde
   return parsed.command;
 }
 
+async function disposePersistedAcpSessions(
+  previousCommand: string | undefined,
+  listPersistedAcpSessionIds?: () => Array<{ sessionId: string; acpSessionId: string }>
+): Promise<void> {
+  if (!previousCommand || !listPersistedAcpSessionIds) return;
+  const sessionIds = listPersistedAcpSessionIds().map((entry) => entry.acpSessionId);
+  if (sessionIds.length === 0) return;
+  const disposeController = new AbortController();
+  const disposeTimer = setTimeout(() => disposeController.abort(), ACP_DISPOSE_TIMEOUT_MS);
+  disposeTimer.unref();
+  await disposeAcpSessions(previousCommand, sessionIds, undefined, disposeController.signal).catch(
+    () => {}
+  );
+  clearTimeout(disposeTimer);
+}
+
 async function invalidateAcpSessions(
   sessionManager: Pick<SessionManager, 'interruptProviderSessions'> | undefined,
   clearPersistedAcpSessionIds: (() => void) | undefined,
   previousCommand: string | undefined,
   listPersistedAcpSessionIds?: () => Array<{ sessionId: string; acpSessionId: string }>
 ): Promise<void> {
-  const sessionIds =
-    previousCommand && listPersistedAcpSessionIds
-      ? listPersistedAcpSessionIds().map((entry) => entry.acpSessionId)
-      : [];
+  await disposePersistedAcpSessions(previousCommand, listPersistedAcpSessionIds);
   clearPersistedAcpSessionIds?.();
-  if (previousCommand && sessionIds.length > 0) {
-    const disposeController = new AbortController();
-    const disposeTimer = setTimeout(() => disposeController.abort(), ACP_DISPOSE_TIMEOUT_MS);
-    disposeTimer.unref();
-    await disposeAcpSessions(
-      previousCommand,
-      sessionIds,
-      undefined,
-      disposeController.signal
-    ).catch(() => {});
-    clearTimeout(disposeTimer);
-  }
   await sessionManager?.interruptProviderSessions('acp');
 }
 
@@ -434,6 +435,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             (acpCommandChanged || enablingChangedAcpCommand) &&
             !(acpCommandChanged && existing.isEnabled === false && updates.isEnabled !== true);
           if (acpCommandChanged && existing.isEnabled === false && updates.isEnabled !== true) {
+            await disposePersistedAcpSessions(
+              effectiveAcpCommandBeforeEnable,
+              listPersistedAcpSessionIds
+            );
             clearPersistedAcpSessionIds?.();
           }
 
