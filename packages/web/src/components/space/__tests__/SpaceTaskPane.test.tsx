@@ -948,6 +948,71 @@ describe('SpaceTaskPane — canvas toggle', () => {
       );
     });
 
+    it('opens canvas node sessions read-only for stopped tasks', () => {
+      setupMultiNodeWorkflow(
+        [{ id: 'node-1', name: 'Coding', agents: [{ name: 'coder', agentId: 'a-coder' }] }],
+        { status: 'stopped' }
+      );
+      mockNodeExecutions.value = [
+        {
+          id: 'exec-coder',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-1',
+          agentName: 'coder',
+          agentId: 'a-coder',
+          agentSessionId: 'session-coder',
+          status: 'in_progress',
+        } as NodeExecution,
+      ];
+      mockTaskActivity.value = new Map([
+        ['task-1', [activityFor('node-1', 'coder', 'session-coder')]],
+      ]);
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+
+      mockWorkflowCanvasOnNodeClick('node-1', 'Coding', ['coder']);
+
+      expect(mockPushOverlayHistory).toHaveBeenCalledWith(
+        'session-coder',
+        'coder',
+        undefined,
+        expect.objectContaining({ taskId: 'task-1', readonly: true })
+      );
+    });
+
+    it('does not offer pending-agent activation from the canvas for stopped tasks', () => {
+      setupMultiNodeWorkflow(
+        [
+          { id: 'node-1', name: 'Coding', agents: [{ name: 'coder', agentId: 'a-coder' }] },
+          { id: 'node-2', name: 'Review', agents: [{ name: 'reviewer', agentId: 'a-reviewer' }] },
+        ],
+        { status: 'stopped' }
+      );
+      mockNodeExecutions.value = [
+        {
+          id: 'exec-coder',
+          workflowRunId: 'run-1',
+          workflowNodeId: 'node-1',
+          agentName: 'coder',
+          agentId: 'a-coder',
+          agentSessionId: 'session-coder',
+          status: 'in_progress',
+        } as NodeExecution,
+      ];
+      mockTaskActivity.value = new Map([
+        ['task-1', [activityFor('node-1', 'coder', 'session-coder')]],
+      ]);
+      const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+      fireEvent.click(getByTestId('canvas-toggle'));
+      mockPushOverlayHistoryForPendingAgent.mockClear();
+      mockPushOverlayHistory.mockClear();
+
+      mockWorkflowCanvasOnNodeClick('node-2', 'Review', ['reviewer']);
+
+      expect(mockPushOverlayHistoryForPendingAgent).not.toHaveBeenCalled();
+      expect(mockPushOverlayHistory).not.toHaveBeenCalled();
+    });
+
     it('two nodes reusing the same slot name are disambiguated by node ID', () => {
       setupMultiNodeWorkflow([
         { id: 'node-1', name: 'First Review', agents: [{ name: 'reviewer', agentId: 'a-r' }] },

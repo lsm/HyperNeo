@@ -579,7 +579,7 @@ export function SpaceTaskPane({
     return () => resizeObserver.disconnect();
   }, [showInlineComposer, taskComposerElement, threadSendError]);
 
-  const canSendThreadMessage = !isTerminalTask && !sendingThread && composerTargets.length > 0;
+  const canSendThreadMessage = showInlineComposer && !sendingThread && composerTargets.length > 0;
 
   const dropFilesRef = useRef<FileDropHandler | null>(null);
   const registerDropTarget = useCallback((fn: FileDropHandler | null) => {
@@ -800,16 +800,17 @@ export function SpaceTaskPane({
 
     switch (outcome.type) {
       case 'open_session': {
-        const currentIsTerminal =
+        const currentOverlayReadonly =
           currentTask.status === 'done' ||
           currentTask.status === 'cancelled' ||
-          currentTask.status === 'archived';
+          currentTask.status === 'archived' ||
+          currentTask.status === 'stopped';
         const taskContext = {
           taskId: currentTask.id,
           agentName: outcome.session.agentName,
           workflowNodeId: nodeId,
           sessionId: outcome.session.sessionId,
-          ...(currentIsTerminal ? { readonly: true } : {}),
+          ...(currentOverlayReadonly ? { readonly: true } : {}),
           ...(outcome.session.nodeExecutionId
             ? { nodeExecutionId: outcome.session.nodeExecutionId }
             : {}),
@@ -826,7 +827,8 @@ export function SpaceTaskPane({
         if (
           currentTask.status === 'done' ||
           currentTask.status === 'cancelled' ||
-          currentTask.status === 'archived'
+          currentTask.status === 'archived' ||
+          currentTask.status === 'stopped'
         ) {
           setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: [] });
           return;
@@ -841,7 +843,8 @@ export function SpaceTaskPane({
         if (
           currentTask.status === 'done' ||
           currentTask.status === 'cancelled' ||
-          currentTask.status === 'archived'
+          currentTask.status === 'archived' ||
+          currentTask.status === 'stopped'
         ) {
           setNodeChoice({
             taskId: currentTask.id,
@@ -878,7 +881,7 @@ export function SpaceTaskPane({
       } = {
         taskId: task.id,
         agentName: choice.agentName,
-        ...(isTerminalTask ? { readonly: true } : {}),
+        ...(isTerminalTask || task.status === 'stopped' ? { readonly: true } : {}),
         ...(clickedNodeId ? { workflowNodeId: clickedNodeId } : {}),
         ...(choice.nodeExecutionId ? { nodeExecutionId: choice.nodeExecutionId } : {}),
       };
@@ -904,7 +907,7 @@ export function SpaceTaskPane({
           );
           if (!currentWorkerForSlot) return;
           liveSessionId = task.postApprovalSessionId;
-        } else if (isTerminalTask) {
+        } else if (isTerminalTask || task.status === 'stopped') {
           liveSessionId = choice.sessionId;
           pushOverlayHistory(liveSessionId, choice.label, undefined, {
             taskId: task.id,
