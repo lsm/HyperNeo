@@ -9494,6 +9494,6 @@ function addStoppedStatusToSpaceTasks(createSql: string): string {
 export function runMigration197(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status_timestamp
-    ON sdk_messages(session_id, send_status, timestamp, id)`);
+    ON sdk_messages(session_id, send_status, timestamp)`);
   db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_send_status`);
 }

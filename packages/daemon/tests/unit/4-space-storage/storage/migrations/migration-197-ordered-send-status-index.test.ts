@@ -80,8 +80,8 @@ describe('Migration 197: ordered sdk_messages (session_id, send_status, timestam
       expect(indexExists(db, 'idx_sdk_messages_send_status')).toBe(false);
       expect(indexExists(db, 'idx_sdk_messages_send_status_timestamp')).toBe(true);
       const cols = indexColumns(db, 'idx_sdk_messages_send_status_timestamp');
-      expect(cols.map((c) => c.name)).toEqual(['session_id', 'send_status', 'timestamp', 'id']);
-      expect(cols.map((c) => c.desc)).toEqual([false, false, false, false]);
+      expect(cols.map((c) => c.name)).toEqual(['session_id', 'send_status', 'timestamp']);
+      expect(cols.map((c) => c.desc)).toEqual([false, false, false]);
     });
   });
 
@@ -97,7 +97,7 @@ describe('Migration 197: ordered sdk_messages (session_id, send_status, timestam
       expect(indexExists(db, 'idx_sdk_messages_send_status')).toBe(false);
       expect(indexExists(db, 'idx_sdk_messages_send_status_timestamp')).toBe(true);
       const cols = indexColumns(db, 'idx_sdk_messages_send_status_timestamp');
-      expect(cols.map((c) => c.name)).toEqual(['session_id', 'send_status', 'timestamp', 'id']);
+      expect(cols.map((c) => c.name)).toEqual(['session_id', 'send_status', 'timestamp']);
     });
 
     test('getMessagesByStatus uses the index without a temp sort', () => {
@@ -106,13 +106,31 @@ describe('Migration 197: ordered sdk_messages (session_id, send_status, timestam
         db,
         `SELECT id, sdk_message, timestamp FROM sdk_messages
          WHERE session_id = ? AND send_status = ?
-         ORDER BY timestamp ASC`,
+         ORDER BY timestamp ASC, rowid ASC`,
         ['session-1', 'enqueued']
       );
       const joined = plan.join(' | ');
       expect(joined).toContain('idx_sdk_messages_send_status_timestamp');
       expect(joined).not.toContain('USE TEMP B-TREE FOR ORDER BY');
       expect(joined).not.toMatch(/SCAN sdk_messages/);
+    });
+
+    test('equal timestamps are returned in insertion (rowid) order, not id order', () => {
+      runMigration197(db);
+      const insert = db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+         VALUES (?, 'session-fifo', 'user', '{"type":"text"}', ?, 'enqueued', ?)`
+      );
+      insert.run('z-id', '2024-01-01T00:00:00.000Z', 'uuid-z');
+      insert.run('a-id', '2024-01-01T00:00:00.000Z', 'uuid-a');
+      insert.run('m-id', '2024-01-01T00:00:01.000Z', 'uuid-m');
+      const rows = db
+        .prepare(
+          `SELECT id FROM sdk_messages WHERE session_id = 'session-fifo' AND send_status = 'enqueued'
+           ORDER BY timestamp ASC, rowid ASC`
+        )
+        .all() as Array<{ id: string }>;
+      expect(rows.map((r) => r.id)).toEqual(['z-id', 'a-id', 'm-id']);
     });
 
     test('getMessageCountByStatus is a covering index scan', () => {

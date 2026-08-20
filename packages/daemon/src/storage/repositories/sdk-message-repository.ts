@@ -1100,7 +1100,7 @@ export class SDKMessageRepository {
     const stmt = this.db.prepare(
       `SELECT id, sdk_message, timestamp FROM sdk_messages
        WHERE session_id = ? AND send_status = ?
-       ORDER BY timestamp ASC`
+       ORDER BY timestamp ASC, rowid ASC`
     );
     const rows = stmt.all(sessionId, status) as Array<{
       id: string;
