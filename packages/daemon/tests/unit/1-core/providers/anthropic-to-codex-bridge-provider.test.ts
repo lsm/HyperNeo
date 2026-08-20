@@ -1303,6 +1303,51 @@ describe('AnthropicToCodexBridgeProvider', () => {
       });
     });
 
+    it('probes OAuth Responses access with Codex backend routing', async () => {
+      const access = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-health' },
+      });
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access,
+        refresh: 'oauth-refresh-token',
+        accountId: 'acct-health',
+      });
+      const fetchImpl = mock()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data: [{ id: 'o3' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        )
+        .mockResolvedValueOnce(new Response(null, { status: 200 })) as unknown as typeof fetch;
+      provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+
+      await expect(provider.healthCheck()).resolves.toBeUndefined();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      const [url, init] = (fetchImpl.mock.calls[1] as [URL, RequestInit]) ?? [];
+      expect(String(url)).toBe('https://chatgpt.com/backend-api/codex/responses');
+      expect(init.method).toBe('POST');
+      const headers = new Headers(init.headers);
+      expect(headers.get('authorization')).toBe(`Bearer ${access}`);
+      expect(headers.get('ChatGPT-Account-ID')).toBe('acct-health');
+      expect(JSON.parse(String(init.body))).toEqual({
+        model: 'o3',
+        input: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: '.' }],
+          },
+        ],
+        instructions: 'You are a concise assistant.',
+        store: false,
+        stream: true,
+      });
+    });
+
     it('reports failed Responses access after successful discovery', async () => {
       const fetchImpl = mock()
         .mockResolvedValueOnce(

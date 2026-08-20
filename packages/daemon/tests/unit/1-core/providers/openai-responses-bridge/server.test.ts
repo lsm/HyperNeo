@@ -4863,11 +4863,13 @@ describe('openai-responses-bridge server', () => {
       },
     });
 
-    const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+    const sessionUrl = server.baseUrlForSession?.('session-a');
+    server.setSessionModelConfig?.('session-a', 'session-model', 'gpt-5.3-codex');
+    const first = await fetch(`${sessionUrl}/v1/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-5.3-codex',
+        model: 'session-model',
         max_tokens: 128,
         messages: [{ role: 'user', content: 'First.' }],
         thinking: { type: 'enabled', budget_tokens: 16000 },
@@ -4875,21 +4877,22 @@ describe('openai-responses-bridge server', () => {
     });
     await readSSEEvents(first.body);
 
+    server.setSessionModelConfig?.('session-a', 'session-model', 'gpt-no-reasoning');
     const nextBody = {
-      model: 'gpt-no-reasoning',
+      model: 'session-model',
       max_tokens: 128,
       messages: [
         { role: 'assistant', content: 'Response 1.' },
         { role: 'user', content: 'Second.' },
       ],
     };
-    const countResponse = await fetch(`http://127.0.0.1:${server.port}/v1/messages/count_tokens`, {
+    const countResponse = await fetch(`${sessionUrl}/v1/messages/count_tokens`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(nextBody),
     });
     const count = (await countResponse.json()) as { input_tokens: number };
-    const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+    const second = await fetch(`${sessionUrl}/v1/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(nextBody),
@@ -4899,6 +4902,7 @@ describe('openai-responses-bridge server', () => {
     const message = messageStart?.message as { usage?: { input_tokens?: number } } | undefined;
 
     expect(count.input_tokens).toBe(message?.usage?.input_tokens);
+    expect(count.input_tokens).toBeLessThan(20);
   });
 
   it.skipIf(!isBun)('reports reasoning_tokens in message_delta usage', async () => {

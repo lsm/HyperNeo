@@ -719,17 +719,30 @@ describe('inferProviderForModel', () => {
           }
         })()
       );
-      getProviderRegistry().register(makeAnthropicCodexProvider());
+      getProviderRegistry().register(
+        new (class extends MockProvider {
+          readonly id = 'anthropic-codex' as const;
+          readonly displayName = 'Anthropic Codex';
+          ownsModel(modelId: string): boolean {
+            return modelId === 'gpt-5.3-codex' || modelId.startsWith('o3');
+          }
+        })()
+      );
       getProviderRegistry().register(
         new (class extends MockProvider {
           readonly id = 'anthropic-copilot' as const;
           readonly displayName = 'Anthropic Copilot';
           ownsModel(modelId: string): boolean {
-            return modelId === 'gpt-5-mini' || modelId === 'ft:gpt-5-mini:team:custom';
+            return (
+              modelId === 'gpt-5.3-codex' ||
+              modelId === 'gpt-5-mini' ||
+              modelId === 'ft:gpt-5-mini:team:custom'
+            );
           }
         })()
       );
 
+      expect(inferProviderForModel('gpt-5.3-codex')).toBe('anthropic-codex');
       expect(inferProviderForModel('gpt-5-mini')).toBe('anthropic-copilot');
       expect(inferProviderForModel('ft:gpt-5-mini:team:custom')).toBe('anthropic-copilot');
       expect(inferProviderForModel('o3')).toBe('anthropic-codex');
@@ -793,24 +806,6 @@ describe('inferPersistableProviderForModel', () => {
     expect(await inferPersistableProviderForModel('acp-default')).toBe('acp');
     expect(await inferPersistableProviderForModel('gpt-oss:20b')).toBe('ollama');
     expect(await inferPersistableProviderForModel('openai/gpt-5.4')).toBe('openrouter');
-  });
-
-  it('uses an explicit gpt-* owner over the Codex fallback', async () => {
-    const claimant = (id: string) =>
-      ({
-        id,
-        displayName: id,
-        ownsModel: () => true,
-        isAvailable: async () => true,
-      }) as unknown as Provider;
-
-    getProviderRegistry().register(claimant('anthropic-codex'));
-    getProviderRegistry().register(claimant('anthropic-copilot'));
-    try {
-      expect(await inferPersistableProviderForModel('gpt-5.4')).toBe('anthropic-copilot');
-    } finally {
-      resetProviderRegistry();
-    }
   });
 
   it('persists the static codex default for gpt-* when no live provider contests it', async () => {

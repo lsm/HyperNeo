@@ -191,7 +191,6 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
       .find(
         (provider) =>
           provider.id !== 'anthropic' &&
-          provider.id !== 'anthropic-codex' &&
           (!normalizedModelId.startsWith('ft:') ||
             (provider.id !== 'ollama' && provider.id !== 'ollama-cloud')) &&
           typeof provider.ownsModel === 'function' &&
