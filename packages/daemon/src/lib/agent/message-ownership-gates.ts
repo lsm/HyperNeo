@@ -1,8 +1,4 @@
-import {
-  BATCH_DELIVERY_MAX_CHARS,
-  buildBatchedDeliveryContent,
-  type MessageDeliveryRole,
-} from './message-delivery';
+import { BATCH_DELIVERY_MAX_CHARS, type MessageDeliveryRole } from './message-delivery';
 
 export type MessageOwnership = 'job_queue' | 'memory_queue' | 'unowned';
 
@@ -27,6 +23,8 @@ export interface FlushSkipEntry {
   uuid: string;
   ownership: FlushSkipOwnership;
 }
+
+const BATCH_EXECUTION_COST_PER_MESSAGE_CHARS = 32;
 
 export type FlushDeliveryPlan =
   | { action: 'noop' }
@@ -72,8 +70,9 @@ export function planFlushDelivery(args: {
         !message.flattenedText.startsWith('/') &&
         !args.activeInJobQueue.has(message.uuid)
     );
-  const wrapperChars = buildBatchedDeliveryContent(deliverableTexts.map(() => '')).length;
-  const combinedChars = deliverableTexts.reduce((sum, text) => sum + text.length, 0) + wrapperChars;
+  const combinedChars =
+    deliverableTexts.reduce((sum, text) => sum + text.length, 0) +
+    deliverableTexts.length * BATCH_EXECUTION_COST_PER_MESSAGE_CHARS;
   if (
     deliver.length >= 2 &&
     allBatchable &&

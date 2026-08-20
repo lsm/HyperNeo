@@ -337,9 +337,8 @@ describe('planFlushDelivery', () => {
     });
   });
 
-  test('combined batched content exactly at the char cap still batches', () => {
-    const overhead = buildBatchedDeliveryContent(['', '']).length;
-    const budget = BATCH_DELIVERY_MAX_CHARS - overhead;
+  test('combined content exactly at the execution-time batch budget still batches', () => {
+    const budget = BATCH_DELIVERY_MAX_CHARS - 2 * 32;
     const result = planFlushDelivery({
       messages: [
         makeFlushMessage({ uuid: 'cap-1', flattenedText: 'a'.repeat(Math.ceil(budget / 2)) }),
@@ -352,10 +351,27 @@ describe('planFlushDelivery', () => {
     expect(result).toEqual({ action: 'batch', uuids: ['cap-1', 'cap-2'] });
   });
 
-  test('combined content measurement matches the batched builder across message counts', () => {
+  test('content inside the exact wrapper size but over the execution budget forces each', () => {
+    const wrapper = buildBatchedDeliveryContent(['', '']).length;
+    const perText = Math.floor((BATCH_DELIVERY_MAX_CHARS - wrapper) / 2);
+    const texts = ['a'.repeat(perText), 'b'.repeat(perText)];
+    expect(buildBatchedDeliveryContent(texts).length).toBeLessThanOrEqual(BATCH_DELIVERY_MAX_CHARS);
+    const result = planFlushDelivery({
+      messages: texts.map((text, i) => makeFlushMessage({ uuid: `cap-${i}`, flattenedText: text })),
+      activeInJobQueue: new Set(),
+      pendingInMemoryUuids: new Set(),
+      activeTurnInJobQueue: false,
+    });
+    expect(result).toEqual({
+      action: 'each',
+      deliver: ['cap-0', 'cap-1'],
+      skip: [],
+    });
+  });
+
+  test('budget sizing holds across message counts', () => {
     for (const count of [2, 9, 10, 11, 101]) {
-      const overhead = buildBatchedDeliveryContent(Array.from({ length: count }, () => '')).length;
-      const budget = BATCH_DELIVERY_MAX_CHARS - overhead;
+      const budget = BATCH_DELIVERY_MAX_CHARS - count * 32;
       const base = Math.floor(budget / count);
       const texts = Array.from({ length: count }, (_, i) =>
         'x'.repeat(i === count - 1 ? budget - base * (count - 1) : base)
@@ -389,9 +405,8 @@ describe('planFlushDelivery', () => {
     }
   });
 
-  test('combined batched content one char over the cap forces per-message delivery', () => {
-    const overhead = buildBatchedDeliveryContent(['', '']).length;
-    const budget = BATCH_DELIVERY_MAX_CHARS - overhead;
+  test('combined content one char over the execution-time budget forces per-message delivery', () => {
+    const budget = BATCH_DELIVERY_MAX_CHARS - 2 * 32;
     const result = planFlushDelivery({
       messages: [
         makeFlushMessage({ uuid: 'cap-1', flattenedText: 'a'.repeat(Math.ceil(budget / 2)) }),
