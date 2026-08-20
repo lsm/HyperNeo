@@ -90,16 +90,12 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // already closed
-    }
+    } catch {}
     try {
       rmSync(dbPath, { force: true });
       rmSync(dbPath + '-wal', { force: true });
       rmSync(dbPath + '-shm', { force: true });
-    } catch {
-      // ignore cleanup errors
-    }
+    } catch {}
   });
 
   function taskIdsOf(sessionId: string): Array<{ task_id: string | null }> {
