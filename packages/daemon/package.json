@@ -36,7 +36,7 @@
     "@modelcontextprotocol/sdk": "1.29.0",
     "croner": "10.0.1",
     "simple-git": "3.36.0",
-    "superpipe": "^0.17.0",
+    "superpipe": "0.17.0",
     "ws": "8.18.0",
     "zod": "4.4.3"
   },
