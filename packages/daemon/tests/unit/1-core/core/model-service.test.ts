@@ -1320,7 +1320,7 @@ describe('Model Service', () => {
       expect(getModelsCache().get('global')).toEqual([]);
     });
 
-    it('should remove models when a provider becomes unavailable', async () => {
+    it('should retain models when every provider becomes unavailable', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
       getProviderRegistry().register({
@@ -1333,7 +1333,7 @@ describe('Model Service', () => {
       const { refreshModels } = await import('../../../../src/lib/model-service');
       await refreshModels();
 
-      expect(getModelsCache().get('global')).toEqual([]);
+      expect(getModelsCache().get('global')).toEqual(mockModels);
     });
 
     it('should accept a successful provider catalog shrink', async () => {

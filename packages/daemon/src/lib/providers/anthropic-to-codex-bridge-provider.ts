@@ -217,6 +217,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private discoveryError: Error | undefined;
 
+  private discoveryErrorScope: CodexModelCacheScope | undefined;
+
   private cachedCredentials: StoredCredentials | null = null;
   private readonly credentialListeners = new Set<
     (credentials: ProviderCredentials) => void | Promise<void>
@@ -471,6 +473,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   private ensureCatalogForScope(scope: CodexModelCacheScope): void {
+    this.discardDiscoveryErrorForOtherScopes(scope);
     if (!this.hasActiveCatalog(scope) && !this.activateCachedCatalog(scope)) {
       this.replaceCatalog(this.bundledCatalogEntries(), scope);
     }
@@ -960,6 +963,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const server = this.bridgeServers.get(previousKey);
     if (!server) return;
 
+    if (previousAuth.source !== refreshedAuth.source) {
+      this.stopBridgeServerByKey(previousKey);
+      return;
+    }
+
     server.updateAuth(refreshedAuth);
     if (previousKey === refreshedKey) return;
 
@@ -1018,7 +1026,22 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   ): void {
     if (!this.currentAuthMatches(auth, scope)) return;
     this.discoveryError = new Error(message);
+    this.discoveryErrorScope = scope;
     logger.warn(message);
+  }
+
+  private clearDiscoveryError(scope: CodexModelCacheScope): void {
+    if (this.discoveryErrorScope && this.sameScope(this.discoveryErrorScope, scope)) {
+      this.discoveryError = undefined;
+      this.discoveryErrorScope = undefined;
+    }
+  }
+
+  private discardDiscoveryErrorForOtherScopes(scope: CodexModelCacheScope): void {
+    if (this.discoveryErrorScope && !this.sameScope(this.discoveryErrorScope, scope)) {
+      this.discoveryError = undefined;
+      this.discoveryErrorScope = undefined;
+    }
   }
 
   private async refreshExpiringOauthAuth(
@@ -1158,7 +1181,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
     if (response.status === 304 && matchingCache) {
       if (!this.currentAuthMatches(auth, scope)) return;
-      this.discoveryError = undefined;
+      this.clearDiscoveryError(scope);
       const cache = { ...matchingCache, fetchedAt: new Date().toISOString() };
       this.modelCache = cache;
       this.activateCachedCatalog(scope);
@@ -1172,7 +1195,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       await response.body?.cancel().catch(() => undefined);
       const message = `AnthropicToCodexBridgeProvider: model discovery HTTP ${response.status}`;
       if (response.status === 403) {
-        if (this.currentAuthMatches(auth, scope)) this.discoveryError = undefined;
+        if (this.currentAuthMatches(auth, scope)) this.clearDiscoveryError(scope);
         logger.warn(message);
       } else {
         this.setDiscoveryError(message, auth, scope);
@@ -1197,7 +1220,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     }
     if (!this.currentAuthMatches(auth, scope)) return;
 
-    this.discoveryError = undefined;
+    this.clearDiscoveryError(scope);
     this.replaceCatalog(entries, scope);
     const cache: CodexModelCache = {
       schemaVersion: CODEX_MODEL_CACHE_SCHEMA_VERSION,
@@ -1307,6 +1330,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   async healthCheck(): Promise<void> {
     this.discoveryError = undefined;
+    this.discoveryErrorScope = undefined;
     await this.refreshModels();
     const auth = await this.getBridgeAuth();
     const modelId = this.getModelForTier('default');

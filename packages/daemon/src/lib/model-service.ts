@@ -179,9 +179,23 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 
   const refreshPromise = (async () => {
     try {
-      const { models, failedProviderIds, rejectedProviderIds, changedProviderIds } =
-        await loadModelsFromProviders();
+      const {
+        models,
+        failedProviderIds,
+        rejectedProviderIds,
+        changedProviderIds,
+        noProviderAvailable,
+      } = await loadModelsFromProviders();
       if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) return;
+      if (
+        previousModels?.length &&
+        models.length === 0 &&
+        failedProviderIds.size === 0 &&
+        noProviderAvailable
+      ) {
+        cacheTimestamps.delete(cacheKey);
+        return;
+      }
       const mergedModels = reconcileProviderModels(
         models.length > 0 ? mergeWithFallbackModels(models) : [],
         previousModels,
@@ -220,6 +234,7 @@ interface ProviderModelLoadResult {
   failedProviderIds: Set<string>;
   rejectedProviderIds: Set<string>;
   changedProviderIds: Set<string>;
+  noProviderAvailable: boolean;
 }
 
 async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
@@ -274,10 +289,12 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
   const failedProviderIds = new Set<string>();
   const rejectedProviderIds = new Set<string>();
   const changedProviderIds = new Set<string>();
+  let availableProviderCount = 0;
   results.forEach((result, index) => {
     if (result.status === 'rejected') {
       failedProviderIds.add(providers[index].id);
     } else if (result.value.available) {
+      availableProviderCount += 1;
       models.push(...result.value.models);
       if (result.value.failed) failedProviderIds.add(providers[index].id);
       if (result.value.rejected) rejectedProviderIds.add(providers[index].id);
@@ -285,7 +302,13 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
     }
   });
 
-  return { models, failedProviderIds, rejectedProviderIds, changedProviderIds };
+  return {
+    models,
+    failedProviderIds,
+    rejectedProviderIds,
+    changedProviderIds,
+    noProviderAvailable: providers.length > 0 && availableProviderCount === 0,
+  };
 }
 
 function isCacheStale(cacheKey: string): boolean {
@@ -321,8 +344,13 @@ export async function initializeModels(): Promise<void> {
   await waitForOptionalProviderRegistration();
 
   try {
-    const { models, failedProviderIds, rejectedProviderIds, changedProviderIds } =
-      await loadModelsFromProviders();
+    const {
+      models,
+      failedProviderIds,
+      rejectedProviderIds,
+      changedProviderIds,
+      noProviderAvailable,
+    } = await loadModelsFromProviders();
     const mergedModels = reconcileProviderModels(
       mergeWithFallbackModels(models),
       undefined,
@@ -331,7 +359,7 @@ export async function initializeModels(): Promise<void> {
       changedProviderIds
     );
     modelsCache.set(cacheKey, mergedModels);
-    if (failedProviderIds.size === 0) {
+    if (failedProviderIds.size === 0 && !(noProviderAvailable && models.length === 0)) {
       cacheTimestamps.set(cacheKey, Date.now());
       backgroundRefreshFailures.delete(cacheKey);
     } else {
@@ -414,9 +442,23 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
       if (signal?.aborted) {
         return;
       }
-      const { models, failedProviderIds, rejectedProviderIds, changedProviderIds } =
-        await loadModelsFromProviders();
+      const {
+        models,
+        failedProviderIds,
+        rejectedProviderIds,
+        changedProviderIds,
+        noProviderAvailable,
+      } = await loadModelsFromProviders();
       if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
+        return;
+      }
+      if (
+        previousModels?.length &&
+        models.length === 0 &&
+        failedProviderIds.size === 0 &&
+        noProviderAvailable
+      ) {
+        cacheTimestamps.delete(cacheKey);
         return;
       }
       const mergedModels = reconcileProviderModels(

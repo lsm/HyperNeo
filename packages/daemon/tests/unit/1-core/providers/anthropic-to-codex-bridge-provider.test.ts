@@ -2302,6 +2302,68 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(models.map((model) => model.id)).toEqual(['gpt-stable']);
     });
 
+    it.skipIf(!isBun)('rebuilds the bridge when a refresh flips the auth source', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const oauthToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-flip' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: oauthToken,
+        refresh: 'refresh-token',
+        accountId: 'acct-flip',
+        expires: Date.now() + 60_000,
+      });
+      const catalogFetch = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-5.3-codex' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        if (typeof url === 'string' && url.includes('/oauth/token')) {
+          return new Response(
+            JSON.stringify({
+              access_token: 'plain-api-key-token',
+              refresh_token: 'next-refresh-token',
+              expires_in: 3600,
+              token_type: 'Bearer',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (typeof url === 'string' && url.includes('/responses')) {
+          return new Response(
+            `event: response.completed\ndata: ${JSON.stringify({
+              type: 'response.completed',
+              response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+            })}\n\n`,
+            { headers: { 'Content-Type': 'text/event-stream' } }
+          );
+        }
+        return new Response('not found', { status: 404 });
+      });
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, catalogFetch);
+        await provider.getApiKey();
+        provider.buildSdkConfig('gpt-5.3-codex', { sessionId: 'auth-source-flip' });
+
+        await provider.getModels();
+
+        const servers = (provider as unknown as { bridgeServers: Map<string, { port: number }> })
+          .bridgeServers;
+        expect([...servers.keys()]).toEqual([]);
+        const rebuilt = provider.buildSdkConfig('gpt-5.3-codex', {
+          sessionId: 'auth-source-flip-2',
+        });
+        expect([...servers.keys()].every((key) => key.startsWith('responses:api_key:'))).toBe(true);
+        expect(rebuilt.envVars.ANTHROPIC_BASE_URL).toBeDefined();
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
     it.skipIf(!isBun)('rekeys an active bridge after proactive OAuth refresh', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const staleToken = makeJwt({
@@ -2834,6 +2896,56 @@ describe('AnthropicToCodexBridgeProvider', () => {
       } finally {
         refreshFetch.mockRestore();
       }
+    });
+
+    it('does not carry a failed scope discovery error into a replacement scope', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const tokenA = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-error-a' },
+      });
+      const tokenB = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-error-b' },
+      });
+      const seedFetch = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-scope-b' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      const seeder = makeProvider({}, hyperneoDir, tmpDir, seedFetch);
+      seeder.setCredentials({
+        type: 'oauth',
+        accessToken: tokenB,
+        refreshToken: 'refresh-b',
+        raw: { accountId: 'acct-error-b' },
+      });
+      await seeder.getModels();
+      seeder.stopAllBridgeServers();
+
+      const offlineFetch = mock(async () => {
+        throw new Error('offline');
+      }) as unknown as typeof fetch;
+      provider = makeProvider({}, hyperneoDir, tmpDir, offlineFetch);
+      provider.setCredentials({
+        type: 'oauth',
+        accessToken: tokenA,
+        refreshToken: 'refresh-a',
+        raw: { accountId: 'acct-error-a' },
+      });
+      await expect(provider.refreshModels()).rejects.toThrow('model discovery failed');
+
+      provider.setCredentials({
+        type: 'oauth',
+        accessToken: tokenB,
+        refreshToken: 'refresh-b',
+        raw: { accountId: 'acct-error-b' },
+      });
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(['gpt-scope-b']);
+      expect(offlineFetch).toHaveBeenCalledTimes(1);
+      expect((provider as unknown as { discoveryError?: Error }).discoveryError).toBeUndefined();
     });
 
     it('retries with replacement credentials when a pending refresh is superseded after a 401', async () => {
