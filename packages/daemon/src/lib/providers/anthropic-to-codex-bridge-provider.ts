@@ -1067,9 +1067,22 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return currentAuth.apiKey === initialAuth.apiKey ? initialAuth : currentAuth;
   }
 
+  private rekeyModelRefresh(fromKey: string, toKey: string): void {
+    const pending = this.modelRefreshes.get(fromKey);
+    if (!pending || fromKey === toKey || this.modelRefreshes.has(toKey)) return;
+    this.modelRefreshes.set(toKey, pending);
+    this.modelRefreshes.delete(fromKey);
+    pending
+      .finally(() => {
+        if (this.modelRefreshes.get(toKey) === pending) this.modelRefreshes.delete(toKey);
+      })
+      .catch(() => undefined);
+  }
+
   private async fetchModelCatalog(
     initialAuth: OpenAIResponsesBridgeAuth,
-    revalidate: boolean
+    revalidate: boolean,
+    refreshKey: string
   ): Promise<void> {
     let auth = initialAuth;
     let scope = this.authScope(auth);
@@ -1102,6 +1115,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       ) {
         auth = currentAuth;
         scope = currentScope;
+        this.rekeyModelRefresh(refreshKey, this.scopeKey(scope));
         this.ensureCatalogForScope(scope);
         try {
           response = await this.requestModelCatalog(auth);
@@ -1122,6 +1136,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           this.updateBridgeAuth(auth, refreshedAuth);
           auth = refreshedAuth;
           scope = this.authScope(auth);
+          this.rekeyModelRefresh(refreshKey, this.scopeKey(scope));
           this.ensureCatalogForScope(scope);
           try {
             response = await this.requestModelCatalog(auth);
@@ -1143,6 +1158,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           ) {
             auth = replacementAuth;
             scope = this.authScope(auth);
+            this.rekeyModelRefresh(refreshKey, this.scopeKey(scope));
             this.ensureCatalogForScope(scope);
             try {
               response = await this.requestModelCatalog(auth);
@@ -1285,7 +1301,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       ) {
         const revalidate = !this.forceModelRefresh;
         this.forceModelRefresh = false;
-        const refresh = this.fetchModelCatalog(auth, revalidate).finally(() => {
+        const refresh = this.fetchModelCatalog(auth, revalidate, refreshKey).finally(() => {
           if (this.modelRefreshes.get(refreshKey) === refresh) {
             this.modelRefreshes.delete(refreshKey);
           }
