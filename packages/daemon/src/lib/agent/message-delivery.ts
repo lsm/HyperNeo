@@ -214,6 +214,7 @@ export async function reconcileStrandedDeliveries(args: {
   stateManager?: {
     setQueuedIfIdle(messageId: string): Promise<boolean>;
   };
+  isInFlight?: (uuid: string) => boolean;
 }): Promise<number> {
   if (!isMessageDeliveryV2Enabled()) return 0;
   return withSessionLock(args.sessionId, async () => {
@@ -222,7 +223,12 @@ export async function reconcileStrandedDeliveries(args: {
     const stranded: string[] = [];
     for (const msg of enqueued) {
       const uuid = msg.uuid;
-      if (typeof uuid === 'string' && uuid.length > 0 && !active.has(uuid)) {
+      if (
+        typeof uuid === 'string' &&
+        uuid.length > 0 &&
+        !active.has(uuid) &&
+        !(args.isInFlight?.(uuid) ?? false)
+      ) {
         stranded.push(uuid);
       }
     }

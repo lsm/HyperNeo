@@ -28,6 +28,8 @@ interface QueuedMessage {
   internal?: boolean;
   timeoutId?: ReturnType<typeof setTimeout>;
   durable?: boolean;
+  onResolved?: () => void;
+  onRejected?: (error: Error) => void;
 }
 
 export class MessageQueue {
@@ -87,12 +89,14 @@ export class MessageQueue {
           if (queuedMessage.timeoutId) {
             clearTimeout(queuedMessage.timeoutId);
           }
+          queuedMessage.onResolved?.();
           resolve();
         },
         reject: (error: Error) => {
           if (queuedMessage.timeoutId) {
             clearTimeout(queuedMessage.timeoutId);
           }
+          queuedMessage.onRejected?.(error);
           reject(error);
         },
         internal,
@@ -179,15 +183,71 @@ export class MessageQueue {
     return this.queue.length + this.claimed.size + this.yielded.size;
   }
 
+  getPendingOrInFlightContent(messageId: string): string | MessageContent[] | null {
+    return this.findPendingOrInFlight(messageId)?.content ?? null;
+  }
+
   hasPendingOrInFlight(messageId: string): boolean {
+    return this.getPendingOrInFlightContent(messageId) !== null;
+  }
+
+  hasPendingOrClaimed(messageId: string): boolean {
     if (this.queue.some((message) => message.id === messageId)) return true;
     for (const message of this.claimed) {
       if (message.id === messageId) return true;
     }
+    return false;
+  }
+
+  hasYielded(messageId: string): boolean {
     for (const message of this.yielded) {
       if (message.id === messageId) return true;
     }
     return false;
+  }
+
+  acknowledgeYielded(messageId: string): boolean {
+    for (const message of this.yielded) {
+      if (message.id !== messageId) continue;
+      this.yielded.delete(message);
+      message.resolve(message.id);
+      return true;
+    }
+    return false;
+  }
+
+  waitForPendingOrInFlight(
+    messageId: string
+  ): { acknowledgment: Promise<void>; content: string | MessageContent[] } | null {
+    const message = this.findPendingOrInFlight(messageId);
+    if (!message) return null;
+    return {
+      content: message.content,
+      acknowledgment: new Promise<void>((resolve, reject) => {
+        const previousResolved = message.onResolved;
+        const previousRejected = message.onRejected;
+        message.onResolved = () => {
+          previousResolved?.();
+          resolve();
+        };
+        message.onRejected = (error) => {
+          previousRejected?.(error);
+          reject(error);
+        };
+      }),
+    };
+  }
+
+  private findPendingOrInFlight(messageId: string): QueuedMessage | null {
+    const queued = this.queue.find((message) => message.id === messageId);
+    if (queued) return queued;
+    for (const message of this.claimed) {
+      if (message.id === messageId) return message;
+    }
+    for (const message of this.yielded) {
+      if (message.id === messageId) return message;
+    }
+    return null;
   }
 
   start(): void {

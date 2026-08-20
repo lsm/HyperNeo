@@ -8,6 +8,7 @@ import type {
   McpServerConfig,
 } from '@hyperneo/shared';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
+import { waitForDeliveryConsumption } from '../../../../src/lib/agent/message-delivery';
 import type { Database } from '../../../../src/storage/database';
 import type { MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -1050,6 +1051,7 @@ describe('AgentSession', () => {
       );
       (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
         admitWithId: mock(() => Promise.resolve()),
+        waitForPendingOrInFlight: mock(() => null),
         isRunning: mock(() => false),
         size: mock(() => 0),
       };
@@ -1069,6 +1071,516 @@ describe('AgentSession', () => {
       await agentSession.stateManager.setProcessing('uuid-spurious');
       await agentSession.stateManager.setIdle();
       await expect(drive).resolves.toEqual({ outcome: 'completed' });
+    });
+
+    it('driveDeliveryTurn re-arms through a spurious turn-end after reusing an acknowledgment', async () => {
+      let resultLanded = false;
+      let sendStatus = 'enqueued';
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus })),
+        hasTerminalResultAfter: mock(() => resultLanded),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryConsumedByUuids: mock(() => {
+          sendStatus = 'consumed';
+          return [];
+        }),
+        markDeliveryRetryableByUuid: mock(() => 'db-1'),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: mock(() => Promise.resolve()),
+        waitForPendingOrInFlight: mock(() => ({
+          acknowledgment: Promise.resolve(),
+          content: 'hello',
+        })),
+        isRunning: mock(() => false),
+        size: mock(() => 1),
+      };
+
+      await agentSession.stateManager.setProcessing('uuid-spurious-reused');
+      const drive = agentSession.driveDeliveryTurn(
+        'uuid-spurious-reused',
+        'hello',
+        null,
+        false,
+        () => true
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await agentSession.stateManager.setIdle();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      resultLanded = true;
+      await agentSession.stateManager.setProcessing('uuid-spurious-reused');
+      await agentSession.stateManager.setIdle();
+      await expect(drive).resolves.toEqual({ outcome: 'completed' });
+    });
+
+    it('driveDeliveryTurn aborts when startup consumes the pending queue entry', async () => {
+      let sendStatus = 'enqueued';
+      let queuePending = true;
+      const getPendingOrInFlightContentSpy = mock(() => (queuePending ? 'hello' : null));
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'hello', sendStatus })),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => {
+        queuePending = false;
+        sendStatus = 'consumed';
+        return 'ok' as never;
+      });
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const admitSpy = mock(() => Promise.resolve());
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        getPendingOrInFlightContent: getPendingOrInFlightContentSpy,
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => true),
+        size: mock(() => 0),
+      };
+
+      const result = await agentSession.driveDeliveryTurn(
+        'uuid-startup-consumed',
+        'hello',
+        null,
+        false,
+        () => true
+      );
+
+      expect(result).toEqual({ outcome: 'aborted' });
+      expect(getPendingOrInFlightContentSpy).toHaveBeenCalledTimes(1);
+      expect(admitSpy).not.toHaveBeenCalled();
+    });
+
+    it('driveDeliveryTurn aborts fresh admission when startup consumes an untracked row', async () => {
+      let sendStatus = 'enqueued';
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'hello', sendStatus })),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => {
+        sendStatus = 'consumed';
+        return 'ok' as never;
+      });
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const admitSpy = mock(() => Promise.resolve());
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        getPendingOrInFlightContent: mock(() => null),
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => true),
+        size: mock(() => 0),
+      };
+
+      const result = await agentSession.driveDeliveryTurn(
+        'uuid-startup-untracked',
+        'hello',
+        null,
+        false,
+        () => true
+      );
+
+      expect(result).toEqual({ outcome: 'aborted' });
+      expect(admitSpy).not.toHaveBeenCalled();
+    });
+
+    it('driveDeliveryTurn admits refreshed content after startup', async () => {
+      let content = 'before startup';
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content, sendStatus: 'enqueued' })),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => {
+        content = 'after startup';
+        return 'ok' as never;
+      });
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const admitSpy = mock(() => new Promise<void>(() => {}));
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        getPendingOrInFlightContent: mock(() => null),
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => true),
+        size: mock(() => 0),
+      };
+
+      void agentSession.driveDeliveryTurn(
+        'uuid-startup-refreshed',
+        'before startup',
+        null,
+        false,
+        () => true
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(admitSpy).toHaveBeenCalledWith('uuid-startup-refreshed', 'after startup', false, {
+        durable: true,
+      });
+    });
+
+    it('driveDeliveryTurn retries when a matching pending entry vanishes during startup', async () => {
+      let queuePending = true;
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'hello', sendStatus: 'enqueued' })),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => {
+        queuePending = false;
+        return 'ok' as never;
+      });
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const admitSpy = mock(() => Promise.resolve());
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        getPendingOrInFlightContent: mock(() => (queuePending ? 'hello' : null)),
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => true),
+        size: mock(() => 0),
+      };
+
+      await expect(
+        agentSession.driveDeliveryTurn('uuid-startup-vanished', 'hello', null, false, () => true)
+      ).rejects.toThrow('Pending queue entry disappeared before delivery admission');
+      expect(admitSpy).not.toHaveBeenCalled();
+    });
+
+    it('driveDeliveryTurn aborts when vanished pending content differs after startup', async () => {
+      let queuePending = true;
+      let content = 'before startup';
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content, sendStatus: 'enqueued' })),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => {
+        queuePending = false;
+        content = 'after startup';
+        return 'ok' as never;
+      });
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const admitSpy = mock(() => Promise.resolve());
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        getPendingOrInFlightContent: mock(() => (queuePending ? 'before startup' : null)),
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => true),
+        size: mock(() => 0),
+      };
+
+      const result = await agentSession.driveDeliveryTurn(
+        'uuid-startup-changed',
+        'before startup',
+        null,
+        false,
+        () => true
+      );
+
+      expect(result).toEqual({ outcome: 'aborted' });
+      expect(admitSpy).not.toHaveBeenCalled();
+    });
+
+    it('driveDeliveryTurn aborts when fresh batch rebuild omits the kickoff', async () => {
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sessionId: string, uuid: string) =>
+          uuid === 'kickoff-omitted'
+            ? {
+                content: [
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'x' },
+                  },
+                ],
+                sendStatus: 'enqueued',
+              }
+            : { content: 'member', sendStatus: 'enqueued' }
+        ),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({}));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const admitSpy = mock(() => Promise.resolve());
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        getPendingOrInFlightContent: mock(() => null),
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => true),
+        size: mock(() => 0),
+      };
+
+      const result = await agentSession.driveDeliveryTurn(
+        'kickoff-omitted',
+        'before startup',
+        null,
+        false,
+        () => true,
+        ['kickoff-omitted', 'member-kept']
+      );
+
+      expect(result).toEqual({ outcome: 'aborted' });
+      expect(admitSpy).not.toHaveBeenCalled();
+    });
+
+    it('driveDeliveryTurn reuses a pending batch acknowledgment on retry', async () => {
+      let resultLanded = false;
+      const markSubmittedSpy = mock(() => ['db-member']);
+      const markConsumedSpy = mock(() => ['db-pending', 'db-member']);
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sessionId: string, uuid: string) => ({
+          content: uuid === 'uuid-pending' ? 'kickoff' : 'member',
+          sendStatus: 'enqueued',
+        })),
+        hasTerminalResultAfter: mock(() => resultLanded),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliverySubmittedByUuids: markSubmittedSpy,
+        markDeliveryConsumedByUuids: markConsumedSpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const admitSpy = mock(() => Promise.resolve());
+      const existing = Promise.withResolvers<void>();
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        waitForPendingOrInFlight: mock((uuid: string) =>
+          uuid === 'uuid-pending'
+            ? {
+                acknowledgment: existing.promise,
+                content: '--- message 1 of 2 ---\nkickoff\n\n--- message 2 of 2 ---\nmember',
+              }
+            : null
+        ),
+        isRunning: mock(() => false),
+        size: mock(() => 1),
+      };
+
+      await agentSession.stateManager.setProcessing('uuid-pending');
+      const kickoffConsumed = waitForDeliveryConsumption('test-session-id', 'uuid-pending');
+      const memberConsumed = waitForDeliveryConsumption('test-session-id', 'uuid-member');
+      const drive = agentSession.driveDeliveryTurn(
+        'uuid-pending',
+        'hello',
+        null,
+        false,
+        () => true,
+        ['uuid-pending', 'uuid-member']
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(admitSpy).not.toHaveBeenCalled();
+      expect(markSubmittedSpy).toHaveBeenCalledWith('test-session-id', ['uuid-member']);
+      expect(markConsumedSpy).not.toHaveBeenCalled();
+
+      existing.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(markConsumedSpy).toHaveBeenCalledWith('test-session-id', [
+        'uuid-pending',
+        'uuid-member',
+      ]);
+      await expect(kickoffConsumed.promise).resolves.toBeUndefined();
+      await expect(memberConsumed.promise).resolves.toBeUndefined();
+
+      resultLanded = true;
+      await agentSession.stateManager.setIdle();
+      await expect(drive).resolves.toEqual({ outcome: 'completed' });
+      kickoffConsumed.cancel();
+      memberConsumed.cancel();
+    });
+
+    it('driveDeliveryTurn rejects reused content that does not match the rebuilt batch', async () => {
+      const markSubmittedSpy = mock(() => ['db-member']);
+      const markConsumedSpy = mock(() => ['db-pending', 'db-member']);
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sessionId: string, uuid: string) => ({
+          content: uuid === 'uuid-pending' ? 'kickoff' : 'member',
+          sendStatus: 'enqueued',
+        })),
+        hasTerminalResultAfter: mock(() => false),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliverySubmittedByUuids: markSubmittedSpy,
+        markDeliveryConsumedByUuids: markConsumedSpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const existing = Promise.withResolvers<void>();
+      const removeSpy = mock(() => true);
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: mock(() => Promise.resolve()),
+        waitForPendingOrInFlight: mock(() => ({
+          acknowledgment: existing.promise,
+          content: 'kickoff',
+        })),
+        hasYielded: mock(() => false),
+        remove: removeSpy,
+        isRunning: mock(() => false),
+        size: mock(() => 1),
+      };
+
+      await agentSession.stateManager.setProcessing('uuid-pending');
+      const result = await agentSession.driveDeliveryTurn(
+        'uuid-pending',
+        'hello',
+        null,
+        false,
+        () => true,
+        ['uuid-pending', 'uuid-member']
+      );
+
+      expect(result).toEqual({ outcome: 'aborted' });
+      expect(removeSpy).toHaveBeenCalledWith('uuid-pending');
+      expect(markSubmittedSpy).not.toHaveBeenCalled();
+      expect(markConsumedSpy).not.toHaveBeenCalled();
+      existing.reject(new Error('Interrupted by user'));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    it('driveDeliveryTurn preserves yielded content that does not match a rebuilt batch', async () => {
+      const removeSpy = mock(() => true);
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sessionId: string, uuid: string) => ({
+          content: uuid === 'uuid-yielded' ? 'kickoff' : 'member',
+          sendStatus: 'enqueued',
+        })),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({}));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        waitForPendingOrInFlight: mock(() => ({
+          acknowledgment: new Promise<void>(() => {}),
+          content: 'kickoff',
+        })),
+        hasYielded: mock(() => true),
+        remove: removeSpy,
+        isRunning: mock(() => false),
+        size: mock(() => 1),
+      };
+
+      const result = await agentSession.driveDeliveryTurn(
+        'uuid-yielded',
+        'hello',
+        null,
+        false,
+        () => true,
+        ['uuid-yielded', 'uuid-member']
+      );
+
+      expect(result).toEqual({ outcome: 'aborted' });
+      expect(removeSpy).not.toHaveBeenCalled();
+    });
+
+    it('driveDeliveryTurn abort leaves a reused pending message intact', async () => {
+      const markConsumedSpy = mock(() => ['db-pending']);
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'enqueued' })),
+        hasTerminalResultAfter: mock(() => false),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryConsumedByUuids: markConsumedSpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const existing = Promise.withResolvers<void>();
+      const removeSpy = mock(() => true);
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: mock(() => Promise.resolve()),
+        waitForPendingOrInFlight: mock(() => ({
+          acknowledgment: existing.promise,
+          content: 'hello',
+        })),
+        remove: removeSpy,
+        isRunning: mock(() => false),
+        size: mock(() => 1),
+      };
+      const controller = new AbortController();
+
+      await agentSession.stateManager.setProcessing('uuid-pending');
+      const drive = agentSession.driveDeliveryTurn(
+        'uuid-pending',
+        'hello',
+        null,
+        false,
+        () => true,
+        undefined,
+        controller.signal
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      controller.abort();
+
+      await expect(drive).rejects.toThrow();
+      expect(removeSpy).not.toHaveBeenCalled();
+      expect(markConsumedSpy).not.toHaveBeenCalled();
+    });
+
+    it('driveDeliveryTurn rejects when a reused pending message fails', async () => {
+      const markConsumedSpy = mock(() => ['db-pending']);
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'enqueued' })),
+        hasTerminalResultAfter: mock(() => false),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryConsumedByUuids: markConsumedSpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const existing = Promise.withResolvers<void>();
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: mock(() => Promise.resolve()),
+        waitForPendingOrInFlight: mock(() => ({
+          acknowledgment: existing.promise,
+          content: 'hello',
+        })),
+        isRunning: mock(() => false),
+        size: mock(() => 1),
+      };
+
+      await agentSession.stateManager.setProcessing('uuid-pending');
+      const drive = agentSession.driveDeliveryTurn(
+        'uuid-pending',
+        'hello',
+        null,
+        false,
+        () => true
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      existing.reject(new Error('Interrupted by user'));
+
+      await expect(drive).rejects.toThrow('Interrupted by user');
+      expect(markConsumedSpy).not.toHaveBeenCalled();
     });
 
     it('driveDeliveryTurn narrows the batch payload even when only the kickoff is admitted', async () => {
@@ -1096,6 +1608,7 @@ describe('AgentSession', () => {
       );
       (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
         admitWithId: mock(() => new Promise<void>(() => {})),
+        waitForPendingOrInFlight: mock(() => null),
         isRunning: mock(() => false),
         size: mock(() => 0),
       };
@@ -1109,6 +1622,46 @@ describe('AgentSession', () => {
 
       expect(narrowSpy).toHaveBeenCalledTimes(1);
       expect(narrowSpy.mock.calls[0]).toEqual(['test-session-id', 'kick-only', ['kick-only']]);
+    });
+
+    it('driveDeliveryTurn neutralizes reused acknowledgment when batch narrowing aborts', async () => {
+      const catchSpy = mock(() => Promise.resolve());
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sid: string, uuid: string) =>
+          uuid === 'kick-reused'
+            ? { content: 'kickoff', sendStatus: 'enqueued' }
+            : uuid === 'member-reused'
+              ? { content: 'member', sendStatus: 'deferred' }
+              : null
+        ),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        narrowActiveDeliveryBatchUuids: mock(() => false),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        waitForPendingOrInFlight: mock(() => ({
+          acknowledgment: { catch: catchSpy } as unknown as Promise<void>,
+          content: 'kickoff',
+        })),
+        isRunning: mock(() => false),
+        size: mock(() => 1),
+      };
+
+      const outcome = await agentSession.driveDeliveryTurn(
+        'kick-reused',
+        'estimate',
+        null,
+        false,
+        () => true,
+        ['kick-reused', 'member-reused']
+      );
+
+      expect(outcome).toEqual({ outcome: 'aborted' });
+      expect(catchSpy).toHaveBeenCalledTimes(1);
     });
 
     it('driveDeliveryTurn refuses to feed a reduced batch when narrowing cannot persist', async () => {
@@ -1137,6 +1690,7 @@ describe('AgentSession', () => {
       );
       (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
         admitWithId: admitSpy,
+        waitForPendingOrInFlight: mock(() => null),
         isRunning: mock(() => false),
         size: mock(() => 0),
       };

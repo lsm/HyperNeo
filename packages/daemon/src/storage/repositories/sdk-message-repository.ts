@@ -1152,7 +1152,7 @@ export class SDKMessageRepository {
   updateMessageStatus(
     messageIds: string[],
     newStatus: SendStatus,
-    options?: { sharedTurn?: boolean }
+    options?: { sharedTurn?: boolean; consumedSeq?: number }
   ): void {
     if (messageIds.length === 0) return;
 
@@ -1220,7 +1220,7 @@ export class SDKMessageRepository {
             timeStmt.run(now, row.id);
           }
           if (newStatus === 'consumed') {
-            consumedSeqStmt.run(this.nextConsumedSeq(), now, row.id);
+            consumedSeqStmt.run(options?.consumedSeq ?? this.nextConsumedSeq(), now, row.id);
           }
         }
       }
@@ -1591,6 +1591,55 @@ export class SDKMessageRepository {
     return row.id;
   }
 
+  markDeliveryConsumedAtTurnEnd(
+    sessionId: string,
+    uuid: string,
+    resultUuid: string
+  ): string | null {
+    return this.markDeliveriesConsumedAtTurnEnd(sessionId, [uuid], resultUuid).ids[0] ?? null;
+  }
+
+  markDeliveriesConsumedAtTurnEnd(
+    sessionId: string,
+    uuids: string[],
+    resultUuid: string
+  ): { ids: string[]; uuids: string[] } {
+    return this.db.transaction(() => {
+      const result = this.db
+        .prepare(
+          `SELECT consumed_seq FROM sdk_messages
+             WHERE session_id = ? AND message_type = 'result' AND sdk_uuid = ?
+               AND message_subtype = 'success' AND is_terminal = 1
+               AND parent_tool_use_id IS NULL AND consumed_seq IS NOT NULL
+             LIMIT 1`
+        )
+        .get(sessionId, resultUuid) as { consumed_seq: number } | undefined;
+      if (!result) return { ids: [], uuids: [] };
+      const ids: string[] = [];
+      const consumedUuids: string[] = [];
+      for (const [index, uuid] of [...new Set(uuids)].entries()) {
+        const row = this.db
+          .prepare(
+            `SELECT id FROM sdk_messages
+               WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+                 AND send_status IN ('enqueued', 'submitted')
+               ORDER BY timestamp ASC LIMIT 1`
+          )
+          .get(sessionId, uuid) as { id: string } | undefined;
+        if (index === 0 && !row) return { ids: [], uuids: [] };
+        if (row) {
+          ids.push(row.id);
+          consumedUuids.push(uuid);
+        }
+      }
+      this.updateMessageStatus(ids, 'consumed', {
+        sharedTurn: true,
+        consumedSeq: result.consumed_seq,
+      });
+      return { ids, uuids: consumedUuids };
+    })();
+  }
+
   markDeliveryConsumedByUuids(sessionId: string, uuids: string[]): string[] {
     return this.db.transaction(() => {
       const ids: string[] = [];
@@ -1603,10 +1652,9 @@ export class SDKMessageRepository {
                ORDER BY timestamp ASC LIMIT 1`
           )
           .get(sessionId, uuid) as { id: string } | undefined;
-        if (!row) continue;
-        this.updateMessageStatus([row.id], 'consumed', { sharedTurn: true });
-        ids.push(row.id);
+        if (row) ids.push(row.id);
       }
+      this.updateMessageStatus(ids, 'consumed', { sharedTurn: true });
       return ids;
     })();
   }

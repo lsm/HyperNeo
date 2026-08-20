@@ -323,24 +323,49 @@ export class SDKMessageHandler {
     await this.publishToolResultConsumedEvents(sdkReplayMessage);
   }
 
-  private async acknowledgeOldestQueuedUserOnTurnEnd(): Promise<void> {
-    const { session, db, internalEventBus, messageHub } = this.ctx;
+  private async acknowledgeOldestQueuedUserOnTurnEnd(
+    activeMessageId: string | null,
+    resultUuid: string
+  ): Promise<void> {
+    const { session, db, internalEventBus, messageHub, messageQueue } = this.ctx;
     const durableOwned =
       db.getJobQueueRepo?.()?.activeDeliveryMessageUuids(session.id) ?? new Set();
-    const enqueuedUsers = db
-      .getMessagesByStatus(session.id, 'enqueued')
-      .filter((enqueued) => isSDKUserMessage(enqueued) && !durableOwned.has(enqueued.uuid ?? ''));
+    const enqueuedUsers = db.getMessagesByStatus(session.id, 'enqueued').filter((enqueued) => {
+      const uuid = enqueued.uuid ?? '';
+      const activeYielded = uuid === activeMessageId && messageQueue.hasYielded(uuid);
+      return (
+        isSDKUserMessage(enqueued) &&
+        (!durableOwned.has(uuid) || activeYielded) &&
+        !messageQueue.hasPendingOrClaimed(uuid)
+      );
+    });
 
     let lastConsumedAt = 0;
     for (const enqueuedUser of enqueuedUsers) {
       let consumedAt = Date.now();
       if (consumedAt <= lastConsumedAt) consumedAt = lastConsumedAt + 1;
       lastConsumedAt = consumedAt;
-      db.updateMessageStatus([enqueuedUser.dbId], 'consumed');
-      db.updateMessageTimestamp(enqueuedUser.dbId, consumedAt);
+      const messageId = enqueuedUser.uuid ?? '';
+      const batchUuids = messageQueue.hasYielded(messageId)
+        ? db.getJobQueueRepo?.()?.getActiveDeliveryBatchUuids?.(session.id, messageId)
+        : null;
+      const deliveryUuids = batchUuids?.includes(messageId)
+        ? [messageId, ...batchUuids.filter((uuid) => uuid !== messageId)]
+        : [messageId];
+      const consumed = db
+        .getSDKMessageRepo()
+        .markDeliveriesConsumedAtTurnEnd(session.id, deliveryUuids, resultUuid);
+      const consumedId = consumed.ids[0];
+      if (!consumedId) continue;
+      if (messageQueue.acknowledgeYielded(messageId)) {
+        for (const uuid of consumed.uuids) {
+          signalDeliveryConsumed(session.id, uuid);
+        }
+      }
+      db.updateMessageTimestamp(consumedId, consumedAt);
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: session.id,
-        messageIds: [enqueuedUser.dbId],
+        messageIds: consumed.ids,
         status: 'consumed',
       });
 
@@ -403,9 +428,13 @@ export class SDKMessageHandler {
       messageId
     );
     if (consumed) {
-      signalDeliveryConsumed(this.ctx.session.id, messageId);
-      this.consumeBatchMembersAtAcceptance(messageId);
+      this.completeDeliveryAcceptance(messageId);
     }
+  }
+
+  private completeDeliveryAcceptance(messageId: string): void {
+    signalDeliveryConsumed(this.ctx.session.id, messageId);
+    this.consumeBatchMembersAtAcceptance(messageId);
   }
 
   private consumeBatchMembersAtAcceptance(kickoffUuid: string): void {
@@ -684,6 +713,11 @@ export class SDKMessageHandler {
       .parent_tool_use_id;
     const isTopLevelResult =
       isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
+    const processingState = stateManager.getState();
+    const activeMessageId =
+      isTopLevelResult && processingState.status === 'processing'
+        ? processingState.messageId
+        : null;
     if (isTopLevelResult && !this.suppressIdleOnNextResult) {
       stateManager.beginTerminalIdle();
     }
@@ -730,7 +764,7 @@ export class SDKMessageHandler {
     }
 
     if (isTopLevelResult && isSDKResultSuccess(message)) {
-      await this.handleResultMessage(message);
+      await this.handleResultMessage(message, activeMessageId);
     }
 
     if (isSDKAssistantMessage(message)) {
@@ -806,7 +840,10 @@ export class SDKMessageHandler {
     }
   }
 
-  private async handleResultMessage(message: SDKMessage): Promise<void> {
+  private async handleResultMessage(
+    message: SDKMessage,
+    activeMessageId: string | null
+  ): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
 
     if (!isSDKResultSuccess(message)) return;
@@ -862,7 +899,7 @@ export class SDKMessageHandler {
     }
 
     if (!this.acknowledgedPersistedUserThisTurn) {
-      await this.acknowledgeOldestQueuedUserOnTurnEnd();
+      await this.acknowledgeOldestQueuedUserOnTurnEnd(activeMessageId, message.uuid ?? '');
     }
     this.acknowledgedPersistedUserThisTurn = false;
 

@@ -168,20 +168,47 @@ describe('MessageQueue', () => {
   describe('hasPendingOrInFlight', () => {
     it('reports false for an unknown id and true while queued/claimed/yielded', async () => {
       expect(queue.hasPendingOrInFlight('nope')).toBe(false);
+      expect(queue.hasPendingOrClaimed('nope')).toBe(false);
+      expect(queue.hasYielded('nope')).toBe(false);
 
       const acknowledgment = queue.enqueueWithId('in-flight-id', 'Message 1');
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(true);
+      expect(queue.hasPendingOrClaimed('in-flight-id')).toBe(true);
+      expect(queue.hasYielded('in-flight-id')).toBe(false);
+      const existing = queue.waitForPendingOrInFlight('in-flight-id');
+      expect(existing?.content).toBe('Message 1');
 
       queue.start();
       const generator = queue.messageGenerator(testSessionId);
       const result = await generator.next();
       expect(result.done).toBe(false);
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(true);
+      expect(queue.hasPendingOrClaimed('in-flight-id')).toBe(false);
+      expect(queue.hasYielded('in-flight-id')).toBe(true);
+      expect(queue.acknowledgeYielded('in-flight-id')).toBe(true);
 
       result.value.onSent();
       await acknowledgment;
+      await existing?.acknowledgment;
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(false);
+      expect(queue.hasYielded('in-flight-id')).toBe(false);
+      expect(queue.acknowledgeYielded('in-flight-id')).toBe(false);
+      expect(queue.waitForPendingOrInFlight('in-flight-id')).toBeNull();
       queue.stop();
+    });
+
+    it('rejects a reused wait when the original queue entry fails', async () => {
+      const acknowledgment = queue
+        .enqueueWithId('rejected-id', 'Message 1')
+        .catch((error) => error);
+      const existing = queue
+        .waitForPendingOrInFlight('rejected-id')
+        ?.acknowledgment.catch((error) => error);
+
+      queue.clear();
+
+      expect(await acknowledgment).toMatchObject({ message: 'Interrupted by user' });
+      expect(await existing).toMatchObject({ message: 'Interrupted by user' });
     });
   });
 

@@ -1348,6 +1348,9 @@ export class AgentSession
             this.deliveryResponseObserver = null;
           }
         };
+        const pendingContentBeforeStart = alreadyConsumed
+          ? null
+          : (this.messageQueue.getPendingOrInFlightContent?.(messageUuid) ?? null);
         const ensureStartedAt = Date.now();
         let queryStartResult: EnsureQueryStartedResult;
         try {
@@ -1381,6 +1384,7 @@ export class AgentSession
           recordTurnEndMarker
         );
         let acknowledgment: Promise<void> | null = null;
+        let freshFeed = false;
         let admittedBatchUuids: string[] | undefined;
         let feedContent: string | MessageContent[] = content;
         if (!alreadyConsumed) {
@@ -1389,10 +1393,32 @@ export class AgentSession
             disarmObserver();
             return { kind: 'aborted' as const };
           }
+          const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
+          void existing?.acknowledgment.catch(() => {});
+          freshFeed = existing === null;
+          if (freshFeed) {
+            const loaded = this.db
+              .getSDKMessageRepo()
+              .getDeliveryContent(this.session.id, messageUuid);
+            if (
+              this.db.getSession(this.session.id)?.status === 'archived' ||
+              loaded?.sendStatus !== 'enqueued'
+            ) {
+              turnEnd.cancel();
+              disarmObserver();
+              return { kind: 'aborted' as const };
+            }
+            feedContent = loaded.content;
+          }
           if (batchUuids && batchUuids.length > 1) {
-            const rebuilt = this.rebuildBatchDeliveryContent(messageUuid, content, batchUuids);
+            const rebuilt = this.rebuildBatchDeliveryContent(messageUuid, feedContent, batchUuids);
             feedContent = rebuilt.content;
             admittedBatchUuids = rebuilt.admittedUuids;
+            if (freshFeed && !admittedBatchUuids?.includes(messageUuid)) {
+              turnEnd.cancel();
+              disarmObserver();
+              return { kind: 'aborted' as const };
+            }
             if (admittedBatchUuids && admittedBatchUuids.length !== batchUuids.length) {
               let narrowed = false;
               try {
@@ -1417,20 +1443,43 @@ export class AgentSession
                 return { kind: 'aborted' as const };
               }
             }
-            const memberUuids = (admittedBatchUuids ?? []).filter((uuid) => uuid !== messageUuid);
-            if (memberUuids.length > 0) {
-              this.markDeliveryBatchSubmitted(memberUuids);
-            }
           }
-          acknowledgment = this.messageQueue.admitWithId(messageUuid, feedContent, false, {
-            durable: true,
-          });
+          if (freshFeed && pendingContentBeforeStart !== null) {
+            if (!this.deliveryContentMatches(pendingContentBeforeStart, feedContent)) {
+              turnEnd.cancel();
+              disarmObserver();
+              return { kind: 'aborted' as const };
+            }
+            turnEnd.cancel();
+            disarmObserver();
+            throw new MessageDeliveryRecoverableTurnError(
+              'Pending queue entry disappeared before delivery admission'
+            );
+          }
+          if (existing && !this.deliveryContentMatches(existing.content, feedContent)) {
+            if (!this.messageQueue.hasYielded(messageUuid)) {
+              this.messageQueue.remove(messageUuid);
+            }
+            turnEnd.cancel();
+            disarmObserver();
+            return { kind: 'aborted' as const };
+          }
+          const memberUuids = (admittedBatchUuids ?? []).filter((uuid) => uuid !== messageUuid);
+          if (memberUuids.length > 0) {
+            this.markDeliveryBatchSubmitted(memberUuids);
+          }
+          acknowledgment =
+            existing?.acknowledgment ??
+            this.messageQueue.admitWithId(messageUuid, feedContent, false, {
+              durable: true,
+            });
         }
         return {
           kind: 'driving' as const,
           queryPromise,
           turnEnd,
           acknowledgment,
+          freshFeed,
           admittedBatchUuids,
           generation,
           responseObserver: armedObserver,
@@ -1464,6 +1513,7 @@ export class AgentSession
           await Promise.race([started.acknowledgment, aborted.promise]);
         } catch (error) {
           if (signal?.aborted) {
+            if (!started.freshFeed) throw error;
             if (this.messageQueue.remove(messageUuid)) throw error;
             await started.acknowledgment;
           } else {
@@ -1495,7 +1545,7 @@ export class AgentSession
       stallPromise = this.armDeliveryTurnStall(signal, claimGuard);
       stallWatchdog = this.deliveryTurnStall;
       const SPURIOUS_TURN_END_GRACE_MS = 250;
-      const freshFeed = !!started.acknowledgment;
+      const feedAcknowledged = started.acknowledgment !== null;
       let raceArmedAt = Date.now();
       let graceRearms = 0;
       let turnEndFired = false;
@@ -1525,7 +1575,7 @@ export class AgentSession
           !!turnResultRepo?.hasTerminalResultAfter(this.session.id, messageUuid) ||
           !!turnResultRepo?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
         const spuriousFire =
-          freshFeed &&
+          feedAcknowledged &&
           turnEndFired &&
           !queryEnded &&
           Date.now() - raceArmedAt <= SPURIOUS_TURN_END_GRACE_MS &&
@@ -1818,6 +1868,13 @@ export class AgentSession
     }
   }
 
+  private deliveryContentMatches(
+    queued: string | MessageContent[],
+    expected: string | MessageContent[]
+  ): boolean {
+    return JSON.stringify(queued) === JSON.stringify(expected);
+  }
+
   private rebuildBatchDeliveryContent(
     kickoffUuid: string,
     kickoffContent: string | MessageContent[],
@@ -1880,6 +1937,7 @@ export class AgentSession
       db: this.db,
       jobQueue,
       stateManager: this.stateManager,
+      isInFlight: (uuid) => this.messageQueue.hasPendingOrInFlight(uuid),
     });
     let settled = 0;
     const sdkRepo = this.db.getSDKMessageRepo();
