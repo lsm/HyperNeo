@@ -50,11 +50,21 @@ function sortByTimestampRowid(messages: ChatMessage[]): ChatMessage[] {
   return [...messages].sort(compareByTimestampRowid);
 }
 
+function isSortedByTimestampRowid(messages: ChatMessage[]): boolean {
+  for (let i = 1; i < messages.length; i++) {
+    if (compareByTimestampRowid(messages[i - 1], messages[i]) > 0) return false;
+  }
+  return true;
+}
+
 function insertByTimestampRowid(existing: ChatMessage[], rows: ChatMessage[]): ChatMessage[] {
   const added = [...rows].sort(compareByTimestampRowid);
   if (existing.length === 0) return added;
   if (compareByTimestampRowid(existing[existing.length - 1], added[0]) <= 0) {
     return [...existing, ...added];
+  }
+  if (!isSortedByTimestampRowid(existing)) {
+    return sortByTimestampRowid([...existing, ...added]);
   }
   const next = existing.slice();
   for (const row of added) {

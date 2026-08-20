@@ -674,6 +674,49 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
         expect(uuids()).toEqual(['u-b', 'u-a']);
       });
+
+      it('full-sorts instead of binary-inserting when the transcript carries snapshot jitter', async () => {
+        const hub = installLiveQueryHub();
+        await sessionStore.select('session-1');
+        const subId = hub.subscriptionId;
+        hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows: [row('p1', 101, 2)] });
+        sessionStore.prependMessages([row('q', 50, 1)]);
+        hub.fire('liveQuery.snapshot', {
+          subscriptionId: subId,
+          rows: [row('w1', 100, 5), row('w2', 110, 6)],
+        });
+        expect(uuids()).toEqual(['u-q', 'u-p1', 'u-w1', 'u-w2']);
+
+        hub.fire('liveQuery.delta', {
+          subscriptionId: subId,
+          added: [row('jit', 100, 1)],
+          updated: [],
+          removed: [],
+        });
+
+        expect(uuids()).toEqual(['u-q', 'u-jit', 'u-w1', 'u-p1', 'u-w2']);
+      });
+
+      it('appends tail rows without disturbing a jittered prefix', async () => {
+        const hub = installLiveQueryHub();
+        await sessionStore.select('session-1');
+        const subId = hub.subscriptionId;
+        hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows: [row('p1', 101, 2)] });
+        sessionStore.prependMessages([row('q', 50, 1)]);
+        hub.fire('liveQuery.snapshot', {
+          subscriptionId: subId,
+          rows: [row('w1', 100, 5), row('w2', 110, 6)],
+        });
+
+        hub.fire('liveQuery.delta', {
+          subscriptionId: subId,
+          added: [row('tail', 300, 9)],
+          updated: [],
+          removed: [],
+        });
+
+        expect(uuids()).toEqual(['u-q', 'u-p1', 'u-w1', 'u-w2', 'u-tail']);
+      });
     });
 
     it('ignores snapshot/delta events for a different subscriptionId', async () => {
