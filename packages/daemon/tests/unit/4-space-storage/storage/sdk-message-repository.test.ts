@@ -1638,27 +1638,29 @@ describe('SDKMessageRepository', () => {
       expect(result.total).toBe(3);
     });
 
-    it('selects and counts only normalized user rows', () => {
+    it('skips malformed, mismatched, and replay user rows', () => {
       const timestamp = '2026-01-01T00:00:00.000Z';
-      insertStatusMessage(
-        'user',
-        'session-1',
-        'user',
-        JSON.stringify(createUserMessage('User')),
-        timestamp
-      );
-      insertStatusMessage(
-        'assistant',
-        'session-1',
-        'assistant',
-        JSON.stringify(createAssistantMessage('Assistant')),
-        timestamp
-      );
+      const rows: Array<[string, string, string]> = [
+        ['user', 'user', JSON.stringify(createUserMessage('User'))],
+        [
+          'non-replay',
+          'user',
+          JSON.stringify({ ...createUserMessage('Non-replay'), isReplay: false }),
+        ],
+        ['replay', 'user', JSON.stringify({ ...createUserMessage('Replay'), isReplay: true })],
+        ['null-replay', 'user', JSON.stringify({ ...createUserMessage('Null'), isReplay: null })],
+        ['assistant', 'assistant', JSON.stringify(createAssistantMessage('Assistant'))],
+        ['mismatched', 'user', JSON.stringify(createAssistantMessage('Mismatched'))],
+        ['malformed', 'user', '{not-json'],
+      ];
+      for (const [id, messageType, sdkMessage] of rows) {
+        insertStatusMessage(id, 'session-1', messageType, sdkMessage, timestamp);
+      }
 
       const result = repository.getUserMessagesByStatus('session-1', 'consumed', 20);
 
-      expect(result.messages.map((message) => message.dbId)).toEqual(['user']);
-      expect(result.total).toBe(1);
+      expect(result.messages.map((message) => message.dbId)).toEqual(['user', 'non-replay']);
+      expect(result.total).toBe(2);
     });
 
     it('hydrates multiple chunks without changing projected order', () => {

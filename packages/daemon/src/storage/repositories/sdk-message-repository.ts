@@ -31,7 +31,13 @@ const SEARCHABLE_MESSAGE_TYPES = new Set(['system', 'user', 'assistant']);
 const RENDERABLE_TEXT_MESSAGE_BATCH_SIZE = 50;
 const RENDERABLE_TEXT_MESSAGE_MAX_SCAN = 250;
 const STATUS_MESSAGE_HYDRATION_BATCH_SIZE = 900;
-const USER_STATUS_MESSAGE_SQL = "message_type = 'user'";
+const USER_STATUS_MESSAGE_SQL = `message_type = 'user'
+  AND json_valid(sdk_message)
+  AND json_extract(sdk_message, '$.type') = 'user'
+  AND (
+    json_type(sdk_message, '$.isReplay') IS NULL
+    OR json_type(sdk_message, '$.isReplay') = 'false'
+  )`;
 
 const LAST_MESSAGE_PROGRESS_SUBTYPES = new Set(['task_started', 'task_progress', 'task_updated']);
 const BACKGROUND_TASK_METADATA_SUBTYPES = ['task_started', 'task_updated', 'task_notification'];
