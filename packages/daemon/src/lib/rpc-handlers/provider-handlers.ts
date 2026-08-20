@@ -151,12 +151,18 @@ export interface ProviderHandlerDeps {
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 }
 
-function providerCatalogSignature(provider: Provider): string {
+async function providerCatalogSignature(provider: Provider): Promise<string> {
   const scope = provider.getModelCatalogScope?.() ?? '';
+  let available = 'unknown';
+  try {
+    available = String(await provider.isAvailable());
+  } catch {
+    available = 'error';
+  }
   const serialized = (provider.getCachedModels?.() ?? []).map((model: { id: string }) =>
     JSON.stringify(model)
   );
-  return `${scope}|${serialized.join(',')}`;
+  return `${scope}|${available}|${serialized.join(',')}`;
 }
 
 async function clearCacheAndNotifyProvidersChanged(
@@ -372,7 +378,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       return { healthy: false, error: 'Provider not registered' };
     }
 
-    const catalogBefore = providerCatalogSignature(provider);
+    const catalogBefore = await providerCatalogSignature(provider);
     try {
       const available = await provider.isAvailable();
       if (!available) {
@@ -400,7 +406,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       });
       return { healthy: false, error };
     } finally {
-      if (providerCatalogSignature(provider) !== catalogBefore) {
+      if ((await providerCatalogSignature(provider)) !== catalogBefore) {
         await clearCacheAndNotifyProvidersChanged(internalEventBus);
       }
     }
@@ -419,7 +425,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           });
           return { providerId: record.providerId, healthy: false, error: 'Not registered' };
         }
-        const catalogBefore = providerCatalogSignature(provider);
+        const catalogBefore = await providerCatalogSignature(provider);
         try {
           const available = await provider.isAvailable();
           if (!available) {
@@ -447,7 +453,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           });
           return { providerId: record.providerId, healthy: false, error };
         } finally {
-          if (providerCatalogSignature(provider) !== catalogBefore) {
+          if ((await providerCatalogSignature(provider)) !== catalogBefore) {
             await clearCacheAndNotifyProvidersChanged(internalEventBus);
           }
         }

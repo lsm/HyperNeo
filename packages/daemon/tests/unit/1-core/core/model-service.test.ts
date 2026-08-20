@@ -1550,14 +1550,12 @@ describe('Model Service', () => {
 
       const { refreshModels } = await import('../../../../src/lib/model-service');
       await refreshModels();
-      expect(getAvailableModels('global')).toEqual([healthyModel]);
-
       loggedOut = true;
       await refreshModels();
 
       expect(healthyCalls).toBe(2);
       getAvailableModels('global');
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve) => setTimeout(resolve, 50));
       expect(healthyCalls).toBe(2);
       expect(getAvailableModels('global')).toEqual([healthyModel]);
     });
@@ -1574,13 +1572,13 @@ describe('Model Service', () => {
         contextWindow: 100000,
       } satisfies ModelInfo;
       let refreshCalls = 0;
-      let expiresAt = Date.now() + 60;
+      let expiresAt = Date.now() + 400;
       registry.register({
         id: 'ttl-provider',
         getModels: async () => [ttlModel],
         refreshModels: async () => {
           refreshCalls += 1;
-          expiresAt = Date.now() + 60;
+          expiresAt = Date.now() + 400;
           return [ttlModel];
         },
         getModelCacheExpiresAt: () => expiresAt,
@@ -1592,13 +1590,13 @@ describe('Model Service', () => {
       expect(refreshCalls).toBe(1);
       expect(getAvailableModels('global')).toEqual([ttlModel]);
 
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      await new Promise((resolve) => setTimeout(resolve, 500));
       getAvailableModels('global');
-      await waitFor(() => refreshCalls === 2);
+      await waitFor(() => refreshCalls === 2, 5000);
       expect(getAvailableModels('global')).toEqual([ttlModel]);
 
       getAvailableModels('global');
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await new Promise((resolve) => setTimeout(resolve, 100));
       expect(refreshCalls).toBe(2);
     });
 

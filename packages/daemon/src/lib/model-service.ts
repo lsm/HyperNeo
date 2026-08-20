@@ -450,6 +450,10 @@ export function clearModelsCache(cacheKey?: string): void {
   }
 }
 
+export function isModelsCacheStale(cacheKey: string): boolean {
+  return isCacheStale(cacheKey);
+}
+
 export function invalidateModelsCacheEntry(cacheKey: string): void {
   modelsCache.delete(cacheKey);
   cacheTimestamps.delete(cacheKey);

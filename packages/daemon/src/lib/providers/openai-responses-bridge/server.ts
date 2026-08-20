@@ -1380,9 +1380,11 @@ export function createOpenAIResponsesBridgeServer(
   const sessionThinkingConfigs = new Map<string, SessionThinkingConfigEntry>();
   let activeAuth = config.auth;
   let resolvedAuth: ResolvedResponsesAuth | undefined;
+  let authGeneration = 0;
   const updateAuth = (auth: OpenAIResponsesBridgeAuth): void => {
     activeAuth = auth;
     resolvedAuth = undefined;
+    authGeneration += 1;
     for (const continuation of continuations.values()) {
       clearTimeout(continuation.cleanupTimer);
     }
@@ -1407,7 +1409,13 @@ export function createOpenAIResponsesBridgeServer(
     continuations.delete(key);
   };
 
-  const storeContinuation = (sessionId: string, callId: string, responseId: string): void => {
+  const storeContinuation = (
+    sessionId: string,
+    callId: string,
+    responseId: string,
+    minGeneration = 0
+  ): void => {
+    if (minGeneration !== authGeneration) return;
     deleteContinuation(sessionId, callId);
     const key = continuationKey(sessionId, callId);
     const cleanupTimer = setTimeout(() => {
@@ -1426,7 +1434,12 @@ export function createOpenAIResponsesBridgeServer(
     sessionReasoningItems.delete(sessionId);
   };
 
-  const storeReasoningItems = (sessionId: string, items: ResponsesReasoningItem[]): void => {
+  const storeReasoningItems = (
+    sessionId: string,
+    items: ResponsesReasoningItem[],
+    minGeneration = 0
+  ): void => {
+    if (minGeneration !== authGeneration) return;
     deleteReasoningItems(sessionId);
     const cleanupTimer = setTimeout(() => {
       logger.warn(`openai-responses: reasoning items TTL expired sessionId=${sessionId}`);
@@ -1589,30 +1602,37 @@ export function createOpenAIResponsesBridgeServer(
         );
       }
       const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
+      const requestAuthGeneration = authGeneration;
       let openAIResponse: Response;
       try {
-        const requestAuth = activeAuth;
-        const requestResolvedAuth = resolvedAuth;
+        let requestAuth = activeAuth;
+        let requestResolvedAuth = resolvedAuth;
         openAIResponse = await fetchImpl(upstreamUrl, {
           method: 'POST',
           headers: buildOpenAIHeaders(requestAuth, requestResolvedAuth),
           body: JSON.stringify(requestBody),
         });
-        if (openAIResponse.status === 401) {
+        let authRetries = 0;
+        while (openAIResponse.status === 401 && authRetries < 3) {
+          authRetries += 1;
           if (activeAuth !== requestAuth || resolvedAuth !== requestResolvedAuth) {
             openAIResponse = await fetchImpl(upstreamUrl, {
               method: 'POST',
               headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
               body: JSON.stringify(requestBody),
             });
+            requestAuth = activeAuth;
+            requestResolvedAuth = resolvedAuth;
           } else {
             const refreshed = await refreshOpenAIResponsesAuth(requestAuth);
-            if (activeAuth !== requestAuth) {
+            if (activeAuth !== requestAuth || resolvedAuth !== requestResolvedAuth) {
               openAIResponse = await fetchImpl(upstreamUrl, {
                 method: 'POST',
                 headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
                 body: JSON.stringify(requestBody),
               });
+              requestAuth = activeAuth;
+              requestResolvedAuth = resolvedAuth;
             } else if (refreshed) {
               resolvedAuth = refreshed;
               openAIResponse = await fetchImpl(upstreamUrl, {
@@ -1620,6 +1640,9 @@ export function createOpenAIResponsesBridgeServer(
                 headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
                 body: JSON.stringify(requestBody),
               });
+              requestResolvedAuth = resolvedAuth;
+            } else {
+              break;
             }
           }
         }
@@ -1797,11 +1820,11 @@ export function createOpenAIResponsesBridgeServer(
               ? {}
               : {
                   onFunctionCallResponse(callId: string, responseId: string) {
-                    storeContinuation(sessionId, callId, responseId);
+                    storeContinuation(sessionId, callId, responseId, requestAuthGeneration);
                   },
                 }),
             onReasoningItems(items) {
-              storeReasoningItems(sessionId, items);
+              storeReasoningItems(sessionId, items, requestAuthGeneration);
             },
             onProductive() {
               consumeContinuation(sessionId, resolvedContinuation);

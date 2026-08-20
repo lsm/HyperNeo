@@ -1281,7 +1281,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           await running;
           return;
         }
-        return this.fetchModelCatalog(replacementAuth, false, refreshKey);
+        return this.fetchModelCatalog(
+          replacementAuth,
+          false,
+          this.scopeKey(this.authScope(replacementAuth))
+        );
       }
       await this.clearUnrefreshableOauthCredentials(auth);
       throw Object.assign(new Error('Codex credentials rejected (HTTP 401)'), {
