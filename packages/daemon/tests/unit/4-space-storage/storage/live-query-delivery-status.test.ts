@@ -40,13 +40,15 @@ function insertDeliveryJob(
     messageUuid: string;
     status?: 'pending' | 'processing' | 'completed' | 'failed' | 'dead';
     retryCount?: number;
+    maxRetries?: number;
+    runAt?: number;
     role?: 'turn' | 'steer';
   }
 ): void {
   db.prepare(
     `INSERT INTO job_queue
        (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
-     VALUES (?, 'message_delivery', ?, ?, ?, 8, ?, ?)`
+     VALUES (?, 'message_delivery', ?, ?, ?, ?, ?, ?)`
   ).run(
     args.id,
     args.status ?? 'pending',
@@ -57,7 +59,8 @@ function insertDeliveryJob(
       origin: 'chat',
     }),
     args.retryCount ?? 0,
-    Date.now(),
+    args.maxRetries ?? 8,
+    args.runAt ?? Date.now(),
     Date.now()
   );
 }
@@ -111,7 +114,9 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
 
   test('a send_status transition emits an UPDATED delta on the same row (no duplicate)', async () => {
     const diffs: QueryDiff<MessageRow>[] = [];
-    engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff));
+    engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff), {
+      rowFingerprint: NAMED_QUERY_REGISTRY.get('messages.bySession')!.rowFingerprint,
+    });
     await flush();
     expect(diffs[0].type).toBe('snapshot');
     expect(diffs[0].rows).toHaveLength(0);
@@ -165,7 +170,9 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
     bunDb.prepare(`UPDATE sdk_messages SET send_status = 'consumed' WHERE id = ?`).run(rowId);
 
     const diffs: QueryDiff<MessageRow>[] = [];
-    engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff));
+    engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff), {
+      rowFingerprint: NAMED_QUERY_REGISTRY.get('messages.bySession')!.rowFingerprint,
+    });
     await flush();
 
     expect(diffs[0].type).toBe('snapshot');
@@ -183,7 +190,9 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
     );
 
     const diffs: QueryDiff<MessageRow>[] = [];
-    engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff));
+    engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff), {
+      rowFingerprint: NAMED_QUERY_REGISTRY.get('messages.bySession')!.rowFingerprint,
+    });
     await flush();
     expect(diffs[0].type).toBe('snapshot');
     expect(diffs[0].rows![0].deliveryRetryInfo).toBeNull();
@@ -194,6 +203,8 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
       messageUuid: 'u-job',
       status: 'pending',
       retryCount: 1,
+      maxRetries: 6,
+      runAt: 1_700_000_000_001,
     });
     reactiveDb.notifyChange('job_queue');
     await flush();
@@ -202,8 +213,26 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
     expect(retryDelta.type).toBe('delta');
     expect(retryDelta.updated?.length).toBe(1);
     expect(retryDelta.updated?.[0].id).toBe(rowId);
-    const info = JSON.parse(retryDelta.updated?.[0].deliveryRetryInfo ?? 'null');
-    expect(info?.count).toBe(1);
+    expect(JSON.parse(retryDelta.updated?.[0].deliveryRetryInfo ?? 'null')).toEqual({
+      count: 1,
+      runAt: 1_700_000_000_001,
+      max: 6,
+    });
     expect(retryDelta.added ?? []).toHaveLength(0);
+
+    bunDb
+      .prepare(`UPDATE job_queue SET retry_count = 2, run_at = ? WHERE id = 'job-retry'`)
+      .run(1_700_000_000_002);
+    reactiveDb.notifyChange('job_queue');
+    await flush();
+
+    const countdownDelta = diffs[2];
+    expect(countdownDelta.updated?.length).toBe(1);
+    expect(JSON.parse(countdownDelta.updated?.[0].deliveryRetryInfo ?? 'null')).toEqual({
+      count: 2,
+      runAt: 1_700_000_000_002,
+      max: 6,
+    });
+    expect(countdownDelta.added ?? []).toHaveLength(0);
   });
 });

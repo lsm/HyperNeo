@@ -4,6 +4,7 @@ import type { MessageHub } from '@hyperneo/shared';
 import { createTables } from '../../../../src/storage/schema';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { LiveQueryEngine } from '../../../../src/storage/live-query';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import {
   BACKGROUND_TASK_METADATA_SQL,
   NAMED_QUERY_REGISTRY,
@@ -83,24 +84,29 @@ function insertDeliveryJob(
     messageUuid: string;
     status?: 'pending' | 'processing' | 'completed' | 'failed' | 'dead';
     retryCount?: number;
+    maxRetries?: number;
+    runAt?: number;
+    batchUuids?: string[];
     role?: 'turn' | 'steer';
   }
 ): void {
   db.prepare(
     `INSERT INTO job_queue
        (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
-     VALUES (?, 'message_delivery', ?, ?, ?, 8, ?, ?)`
+     VALUES (?, 'message_delivery', ?, ?, ?, ?, ?, ?)`
   ).run(
     args.id,
     args.status ?? 'pending',
     JSON.stringify({
       sessionId: args.sessionId,
       messageUuid: args.messageUuid,
+      batchUuids: args.batchUuids,
       role: args.role ?? 'turn',
       origin: 'chat',
     }),
     args.retryCount ?? 0,
-    Date.now(),
+    args.maxRetries ?? 8,
+    args.runAt ?? Date.now(),
     Date.now()
   );
 }
@@ -188,6 +194,10 @@ describe('messages.bySession — registry metadata', () => {
 
   test('messages.bySession has a mapRow function', () => {
     expect(typeof NAMED_QUERY_REGISTRY.get('messages.bySession')!.mapRow).toBe('function');
+  });
+
+  test('messages.bySession debounces SDK-message changes to bound re-evaluation frequency', () => {
+    expect(NAMED_QUERY_REGISTRY.get('messages.bySession')!.debounceMs).toBe(250);
   });
 });
 
@@ -804,6 +814,13 @@ describe('messages.bySession — SQL behavior', () => {
     expect(plan).not.toContain('SCAN sdk_messages USING');
   });
 
+  test('materialises active delivery retries once through the session index', () => {
+    const plan = queryPlan(db, 's1', 200);
+    expect(plan).toContain('MATERIALIZE active_delivery_jobs');
+    expect(plan).toContain('idx_message_delivery_session_active');
+    expect(plan.match(/CORRELATED SCALAR SUBQUERY/g) ?? []).toHaveLength(1);
+  });
+
   test('uses the materialised parent_tool_use_id index for subagent lookups', () => {
     const plan = queryPlan(db, 's1', 200);
     expect(plan).toContain('idx_sdk_messages_parent_tool_use_id');
@@ -1062,6 +1079,8 @@ describe('messages.bySession — mapRow', () => {
       messageUuid: 'u-enq',
       status: 'pending',
       retryCount: 1,
+      maxRetries: 6,
+      runAt: 1_700_000_000_001,
     });
     insertDeliveryJob(db, {
       id: 'job-sub',
@@ -1069,12 +1088,68 @@ describe('messages.bySession — mapRow', () => {
       messageUuid: 'u-sub',
       status: 'processing',
       retryCount: 2,
+      maxRetries: 7,
+      runAt: 1_700_000_000_002,
       role: 'steer',
     });
 
     byUuid = new Map(query(db, 's1', 10).map((r) => [r.uuid as string, r]));
-    expect(byUuid.get('u-enq')!.deliveryStatus).toBe('retrying');
-    expect(byUuid.get('u-sub')!.deliveryStatus).toBe('retrying');
+    expect(byUuid.get('u-enq')).toMatchObject({
+      deliveryStatus: 'retrying',
+      deliveryRetry: { count: 1, runAt: 1_700_000_000_001, maxRetries: 6 },
+    });
+    expect(byUuid.get('u-sub')).toMatchObject({
+      deliveryStatus: 'retrying',
+      deliveryRetry: { count: 2, runAt: 1_700_000_000_002, maxRetries: 7 },
+    });
+  });
+
+  test('uses the highest retry count for canonical and batch-owned messages', () => {
+    insertSdkMessage(db, {
+      id: 'm-batch',
+      sessionId: 's1',
+      messageType: 'user',
+      sdkMessage: { type: 'user', uuid: 'u-batch', message: { content: 'batched' } },
+      timestamp: '2024-01-01 00:00:01',
+      sendStatus: 'enqueued',
+    });
+    insertSdkMessage(db, {
+      id: 'm-batch-only',
+      sessionId: 's1',
+      messageType: 'user',
+      sdkMessage: { type: 'user', uuid: 'u-batch-only', message: { content: 'batched only' } },
+      timestamp: '2024-01-01 00:00:02',
+      sendStatus: 'enqueued',
+    });
+    insertDeliveryJob(db, {
+      id: 'job-batch',
+      sessionId: 's1',
+      messageUuid: 'u-kickoff',
+      batchUuids: ['u-batch', 'u-batch-only'],
+      retryCount: 2,
+      maxRetries: 5,
+      runAt: 1_700_000_000_002,
+      role: 'steer',
+    });
+    insertDeliveryJob(db, {
+      id: 'job-direct',
+      sessionId: 's1',
+      messageUuid: 'u-batch',
+      retryCount: 4,
+      maxRetries: 9,
+      runAt: 1_700_000_000_004,
+      role: 'steer',
+    });
+
+    const byUuid = new Map(query(db, 's1', 10).map((row) => [row.uuid as string, row]));
+    expect(byUuid.get('u-batch')).toMatchObject({
+      deliveryStatus: 'retrying',
+      deliveryRetry: { count: 4, runAt: 1_700_000_000_004, maxRetries: 9 },
+    });
+    expect(byUuid.get('u-batch-only')).toMatchObject({
+      deliveryStatus: 'retrying',
+      deliveryRetry: { count: 2, runAt: 1_700_000_000_002, maxRetries: 5 },
+    });
   });
 
   test('a delivery job with retry_count 0 does not mark the message retrying', () => {
@@ -1096,5 +1171,80 @@ describe('messages.bySession — mapRow', () => {
 
     const [row] = query(db, 's1', 10);
     expect(row.deliveryStatus).toBe('queued');
+  });
+});
+
+describe('messages.bySession — content replacement rewrite', () => {
+  let db: BunDatabase;
+
+  beforeEach(() => {
+    db = makeDb();
+    insertSession(db, { id: 's1' });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  test('registry supplies a rowFingerprint so the engine skips full payload hashing', () => {
+    const entry = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
+    expect(typeof entry.rowFingerprint).toBe('function');
+  });
+
+  test('a content rewrite through the repository replacement path emits an updated diff', async () => {
+    const entry = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
+    const reactiveDb = createReactiveDatabase({ getDatabase: () => db } as never);
+    const engine = new LiveQueryEngine(db, reactiveDb);
+    const diffs: Array<{ added?: unknown[]; removed?: unknown[]; updated?: unknown[] }> = [];
+    engine.subscribe(entry.sql, ['s1', 100], (diff) => diffs.push(diff), {
+      debounceMs: 0,
+      rowFingerprint: entry.rowFingerprint,
+    });
+    expect(diffs).toHaveLength(1);
+
+    insertSdkMessage(db, {
+      id: 'action-1',
+      sessionId: 's1',
+      messageType: 'hyperneo_action',
+      messageSubtype: 'sdk_resume_choice',
+      sdkMessage: {
+        type: 'hyperneo_action',
+        uuid: 'u-action',
+        session_id: 's1',
+        action: 'sdk_resume_choice',
+        resolved: false,
+        chosenOption: 'start_fresh',
+        timestamp: 1,
+      },
+      timestamp: '2024-01-01 00:00:01',
+    });
+    reactiveDb.notifyChange('sdk_messages', { sessionId: 's1' });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(diffs).toHaveLength(2);
+    expect(diffs[1].added).toHaveLength(1);
+
+    const repo = new SDKMessageRepository(db, reactiveDb);
+    repo.updateHyperNeoActionMessage('action-1', {
+      type: 'hyperneo_action',
+      uuid: 'u-action',
+      session_id: 's1',
+      action: 'sdk_resume_choice',
+      resolved: false,
+      chosenOption: 'leave_as_is',
+      timestamp: 1,
+    });
+
+    reactiveDb.notifyChange('sdk_messages', { sessionId: 's1' });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(diffs).toHaveLength(3);
+    const updated = diffs[2].updated as Array<{ id: string; content: string }>;
+    expect(updated.map((row) => row.id)).toContain('action-1');
+    const rewritten = updated.find((row) => row.id === 'action-1');
+    expect(rewritten?.content).toContain('"chosenOption":"leave_as_is"');
+
+    engine.dispose();
   });
 });

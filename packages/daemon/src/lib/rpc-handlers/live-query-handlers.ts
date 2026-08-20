@@ -37,13 +37,25 @@ export interface NamedQuery {
     params: ReadonlyArray<unknown>,
     db: BunDatabase
   ) => ((scope: TableChangeScope) => boolean) | undefined;
+  rowFingerprint?: (row: Record<string, unknown>) => unknown;
 }
 
-const DEBOUNCE_SDK_MESSAGES_MS = 100;
+const DEBOUNCE_SDK_MESSAGES_MS = 250;
 const DEBOUNCE_SESSION_GROUP_MESSAGES_MS = 150;
 const DEBOUNCE_SESSION_LIST_MS = 150;
 const DEBOUNCE_SPACE_SESSIONS_MS = 150;
 const DEBOUNCE_SPACE_TASK_FEEDS_MS = 250;
+
+const SESSION_LIST_EXCLUDED_TYPES = new Set<string>([
+  'lobby',
+  'spaces_global',
+  'room_chat',
+  'planner',
+  'coder',
+  'leader',
+  'space_chat',
+  'space_task_agent',
+]);
 
 function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string, unknown> {
   const sourceType = row.sourceType;
@@ -2991,7 +3003,62 @@ ORDER BY timestamp DESC, rowid DESC
 `.trim();
 
 const MESSAGES_BY_SESSION_SQL = `
-WITH top_level AS (
+WITH active_delivery_jobs AS MATERIALIZED (
+  SELECT
+    jq.rowid AS job_rowid,
+    json_extract(jq.payload, '$.messageUuid') AS message_uuid,
+    CASE
+      WHEN json_type(jq.payload, '$.batchUuids') = 'array'
+      THEN json_extract(jq.payload, '$.batchUuids')
+      ELSE '[]'
+    END AS batch_uuids,
+    jq.retry_count,
+    jq.run_at,
+    jq.max_retries
+  FROM job_queue jq
+  WHERE jq.queue = 'message_delivery'
+    AND jq.status IN ('pending', 'processing')
+    AND json_extract(jq.payload, '$.sessionId') = ?1
+),
+active_delivery_candidates AS (
+  SELECT
+    message_uuid,
+    job_rowid,
+    retry_count,
+    run_at,
+    max_retries
+  FROM active_delivery_jobs
+  WHERE message_uuid IS NOT NULL
+  UNION ALL
+  SELECT
+    je.value AS message_uuid,
+    jobs.job_rowid,
+    jobs.retry_count,
+    jobs.run_at,
+    jobs.max_retries
+  FROM active_delivery_jobs jobs, json_each(jobs.batch_uuids) je
+  WHERE je.value IS NOT NULL
+),
+active_delivery_ranked AS (
+  SELECT
+    message_uuid,
+    json_object(
+      'count', retry_count,
+      'runAt', run_at,
+      'max', max_retries
+    ) AS deliveryRetryInfo,
+    ROW_NUMBER() OVER (
+      PARTITION BY message_uuid
+      ORDER BY retry_count DESC, job_rowid DESC
+    ) AS retry_rank
+  FROM active_delivery_candidates
+),
+active_delivery_retry AS MATERIALIZED (
+  SELECT message_uuid, deliveryRetryInfo
+  FROM active_delivery_ranked
+  WHERE retry_rank = 1
+),
+top_level AS (
   SELECT
     id,
     sdk_message,
@@ -2999,34 +3066,10 @@ WITH top_level AS (
     send_status,
     origin,
     rowid,
-    -- Active-delivery retry info for the "retrying" UI state (task #862):
-    -- the pending/processing message_delivery job for this row's canonical
-    -- uuid, packed as {count, runAt, max}. count > 0 drives the "retrying"
-    -- badge; runAt (next attempt epoch ms) + max drive the countdown +
-    -- "attempt N/M" affordance. Scoped to this session's active jobs (few) via
-    -- idx_message_delivery_session_active; one bounded lookup. NULL when no
-    -- active job (delivered / failed / idle).
-    (
-      SELECT json_object(
-        'count', jq.retry_count,
-        'runAt', jq.run_at,
-        'max', jq.max_retries
-      )
-      FROM job_queue jq
-      WHERE jq.queue = 'message_delivery'
-        AND jq.status IN ('pending', 'processing')
-        AND json_extract(jq.payload, '$.sessionId') = ?1
-        AND (json_extract(jq.payload, '$.messageUuid') = sdk_messages.sdk_uuid
-        OR EXISTS (
-          SELECT 1 FROM json_each(
-            CASE WHEN json_type(jq.payload, '$.batchUuids') = 'array'
-                 THEN json_extract(jq.payload, '$.batchUuids') ELSE '[]' END
-          ) AS je WHERE je.value = sdk_messages.sdk_uuid
-        ))
-      ORDER BY jq.retry_count DESC
-      LIMIT 1
-    ) AS deliveryRetryInfo
+    message_type,
+    active_delivery_retry.deliveryRetryInfo AS deliveryRetryInfo
   FROM sdk_messages
+  LEFT JOIN active_delivery_retry ON active_delivery_retry.message_uuid = sdk_messages.sdk_uuid
   WHERE session_id = ?1
     AND parent_tool_use_id IS NULL
     -- Task #862: surface ALL user-message delivery states (deferred / enqueued
@@ -3095,27 +3138,10 @@ subagent AS (
     sm.send_status AS send_status,
     sm.origin AS origin,
     sm.rowid AS rowid,
-    (
-      SELECT json_object(
-        'count', jq.retry_count,
-        'runAt', jq.run_at,
-        'max', jq.max_retries
-      )
-      FROM job_queue jq
-      WHERE jq.queue = 'message_delivery'
-        AND jq.status IN ('pending', 'processing')
-        AND json_extract(jq.payload, '$.sessionId') = ?1
-        AND (json_extract(jq.payload, '$.messageUuid') = sm.sdk_uuid
-                 OR EXISTS (
-                   SELECT 1 FROM json_each(
-                     CASE WHEN json_type(jq.payload, '$.batchUuids') = 'array'
-                          THEN json_extract(jq.payload, '$.batchUuids') ELSE '[]' END
-                   ) AS je WHERE je.value = sm.sdk_uuid
-                 ))
-      ORDER BY jq.retry_count DESC
-      LIMIT 1
-    ) AS deliveryRetryInfo
+    sm.message_type AS message_type,
+    active_delivery_retry.deliveryRetryInfo AS deliveryRetryInfo
   FROM sdk_messages sm
+  LEFT JOIN active_delivery_retry ON active_delivery_retry.message_uuid = sm.sdk_uuid
   WHERE sm.session_id = ?1
     AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
     AND sm.message_subtype_norm != 'thinking_tokens'
@@ -3127,6 +3153,7 @@ SELECT
   send_status                                                       AS sendStatus,
   origin                                                            AS origin,
   rowid                                                             AS rowid,
+  message_type                                                      AS messageType,
   deliveryRetryInfo                                                 AS deliveryRetryInfo
 FROM top_level
 UNION ALL
@@ -3137,6 +3164,7 @@ SELECT
   send_status                                                       AS sendStatus,
   origin                                                            AS origin,
   rowid                                                             AS rowid,
+  message_type                                                      AS messageType,
   deliveryRetryInfo                                                 AS deliveryRetryInfo
 FROM subagent
 ORDER BY timestamp ASC, rowid ASC
@@ -3495,6 +3523,17 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
           return scope.sessionId === targetSessionId;
         };
       },
+      rowFingerprint: (row) =>
+        row.messageType === 'hyperneo_action'
+          ? row
+          : {
+              content: typeof row.content === 'string' ? row.content.length : row.content,
+              timestamp: row.timestamp,
+              sendStatus: row.sendStatus,
+              origin: row.origin,
+              rowid: row.rowid,
+              deliveryRetryInfo: row.deliveryRetryInfo,
+            },
     },
   ],
   [
@@ -3512,6 +3551,30 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
           };
         }
         return { totalCount: 0, archivedCount: 0 };
+      },
+      buildScopeFilter: (_params, db) => {
+        const stmt = db.prepare(
+          `SELECT type,
+             json_extract(session_context, '$.roomId') AS room_id,
+             json_extract(session_context, '$.spaceId') AS space_id
+           FROM sessions WHERE id = ?`
+        );
+        return (scope) => {
+          if (scope.sessionType && SESSION_LIST_EXCLUDED_TYPES.has(scope.sessionType)) {
+            return false;
+          }
+          if (scope.roomId || scope.spaceId) return false;
+          if (scope.sessionId) {
+            const row = stmt.get(scope.sessionId) as
+              | { type: string | null; room_id: string | null; space_id: string | null }
+              | undefined;
+            if (row) {
+              if (row.type && SESSION_LIST_EXCLUDED_TYPES.has(row.type)) return false;
+              if (row.room_id || row.space_id) return false;
+            }
+          }
+          return true;
+        };
       },
     },
   ],
@@ -3807,6 +3870,7 @@ export function setupLiveQueryHandlers(
         debounceMs: namedQuery.debounceMs,
         getMetadata: namedQuery.mapResult,
         scopeFilter: namedQuery.buildScopeFilter?.(params, db),
+        rowFingerprint: namedQuery.rowFingerprint,
       }
     );
 

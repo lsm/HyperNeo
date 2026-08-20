@@ -1,4 +1,7 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { rmSync } from 'node:fs';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigration74, runMigrations } from '../../../../src/storage/schema';
 import { runMigration191 } from '../../../../src/storage/schema/migrations';
@@ -9,7 +12,12 @@ import {
   extractParentToolUseId,
 } from '../../../../src/storage/repositories/sdk-message-repository';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { NeoTask, RoomGoal } from '@hyperneo/shared';
+import type { NeoTask, RoomGoal, Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
+import { Database } from '../../../../src/storage/index';
+import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
+import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
+import { LiveQueryEngine } from '../../../../src/storage/live-query';
+import type { QueryDiff } from '../../../../src/storage/live-query';
 
 describe('NAMED_QUERY_REGISTRY', () => {
   let db: BunDatabase;
@@ -5057,9 +5065,75 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
   describe('scope filters', () => {
     describe('sessions.list', () => {
-      test('has no scope filter so visible→hidden updateSession transitions invalidate', () => {
+      function buildFilter() {
         const entry = NAMED_QUERY_REGISTRY.get('sessions.list')!;
-        expect(entry.buildScopeFilter).toBeUndefined();
+        expect(entry.buildScopeFilter).toBeDefined();
+        return entry.buildScopeFilter!([0], db)!;
+      }
+
+      test('human chat session writes re-run the list', () => {
+        const filter = buildFilter();
+        expect(filter({ sessionId: 'human-1', sessionType: 'worker' })).toBe(true);
+        expect(filter({ sessionId: 'human-2', sessionType: 'general' })).toBe(true);
+        expect(filter({ sessionId: 'human-3', sessionType: 'neo' })).toBe(true);
+      });
+
+      test('excluded session types skip the list', () => {
+        const filter = buildFilter();
+        for (const type of [
+          'lobby',
+          'spaces_global',
+          'room_chat',
+          'planner',
+          'coder',
+          'leader',
+          'space_chat',
+          'space_task_agent',
+        ]) {
+          expect(filter({ sessionId: 's', sessionType: type })).toBe(false);
+        }
+      });
+
+      test('worker/space machinery writes skip the list via context', () => {
+        const filter = buildFilter();
+        expect(
+          filter({ sessionId: 'space-worker', sessionType: 'worker', spaceId: 'space-1' })
+        ).toBe(false);
+        expect(
+          filter({ sessionId: 'task-agent', sessionType: 'space_task_agent', spaceId: 'space-1' })
+        ).toBe(false);
+        expect(filter({ sessionId: 'room-chat', sessionType: 'room_chat', roomId: 'room-1' })).toBe(
+          false
+        );
+        expect(filter({ sessionId: 'space-session', spaceId: 'space-1' })).toBe(false);
+        expect(filter({ sessionId: 'room-session', roomId: 'room-1' })).toBe(false);
+      });
+
+      test('unscoped or absent-sessionType scopes still re-run', () => {
+        const filter = buildFilter();
+        expect(filter({})).toBe(true);
+        expect(filter({ sessionId: 's' })).toBe(true);
+        expect(filter({ sessionId: 's', taskId: 'task-1' })).toBe(true);
+      });
+
+      test('session-ID-only scopes resolve visibility from the database', () => {
+        db.exec(`
+          INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
+          VALUES ('db-worker', 'Worker', '2026-08-20', '2026-08-20', 'active', '{}', '{}', 'worker', '{"spaceId":"space-1"}')
+        `);
+        db.exec(`
+          INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
+          VALUES ('db-task-agent', 'Task Agent', '2026-08-20', '2026-08-20', 'active', '{}', '{}', 'space_task_agent', NULL)
+        `);
+        db.exec(`
+          INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type, session_context)
+          VALUES ('db-human', 'Human', '2026-08-20', '2026-08-20', 'active', '{}', '{}', 'general', NULL)
+        `);
+        const filter = buildFilter();
+        expect(filter({ sessionId: 'db-worker' })).toBe(false);
+        expect(filter({ sessionId: 'db-task-agent' })).toBe(false);
+        expect(filter({ sessionId: 'db-human' })).toBe(true);
+        expect(filter({ sessionId: 'missing-session' })).toBe(true);
       });
     });
 
@@ -5278,5 +5352,259 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(readCount()).toBe(6);
       });
     });
+  });
+});
+
+describe('sessions.list reactive scope filter', () => {
+  let dbPath: string;
+  let db: Database;
+  let reactiveDb: ReactiveDatabase;
+  let engine: LiveQueryEngine;
+
+  const SESSIONS_LIST_SQL = NAMED_QUERY_REGISTRY.get('sessions.list')!.sql;
+
+  function makeSession(
+    id: string,
+    context?: Session['context'],
+    type: Session['type'] = 'worker'
+  ): Session {
+    const now = new Date().toISOString();
+    const config: SessionConfig = {
+      model: 'claude-sonnet-4-5-20250929',
+      maxTokens: 4096,
+      temperature: 0.7,
+    };
+    const metadata: SessionMetadata = {
+      messageCount: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalCost: 0,
+      toolCallCount: 0,
+    };
+    return {
+      id,
+      title: `Session ${id}`,
+      workspacePath: '/workspace/test',
+      createdAt: now,
+      lastActiveAt: now,
+      status: 'active',
+      config,
+      metadata,
+      type,
+      context,
+    };
+  }
+
+  function spyOnEvaluate() {
+    const proto = LiveQueryEngine.prototype as unknown as {
+      evaluateQuery: (cacheKey: string) => void;
+    };
+    return spyOn(proto, 'evaluateQuery');
+  }
+
+  beforeEach(async () => {
+    dbPath = join(
+      tmpdir(),
+      `sessions-list-${Date.now()}-${Math.random().toString(36).slice(2)}.db`
+    );
+    db = new Database(dbPath);
+    reactiveDb = createReactiveDatabase(db);
+    await db.initialize(reactiveDb);
+    engine = new LiveQueryEngine(db.getDatabase(), reactiveDb);
+  });
+
+  afterEach(() => {
+    engine.dispose();
+    try {
+      db.close();
+    } catch {}
+    try {
+      rmSync(dbPath, { force: true });
+      rmSync(dbPath + '-wal', { force: true });
+      rmSync(dbPath + '-shm', { force: true });
+    } catch {}
+  });
+
+  async function flush(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  function subscribeToList(onChange: (diff: QueryDiff<Record<string, unknown>>) => void) {
+    const entry = NAMED_QUERY_REGISTRY.get('sessions.list')!;
+    return engine.subscribe(SESSIONS_LIST_SQL, [0], onChange, {
+      scopeFilter: entry.buildScopeFilter!([0], db.getDatabase()),
+    });
+  }
+
+  test('human session create re-runs the list and emits the new row', async () => {
+    const diffs: QueryDiff<Record<string, unknown>>[] = [];
+    subscribeToList((diff) => diffs.push(diff));
+    await flush();
+    expect(diffs).toHaveLength(1);
+    expect(diffs[0].type).toBe('snapshot');
+    expect(diffs[0].rows).toHaveLength(0);
+
+    reactiveDb.db.createSession(makeSession('human-1'));
+    await flush();
+
+    expect(diffs).toHaveLength(2);
+    expect(diffs[1].type).toBe('delta');
+    expect(diffs[1].rows).toHaveLength(1);
+    expect(diffs[1].rows[0].id).toBe('human-1');
+  });
+
+  test('space and worker session writes do not re-run the list', async () => {
+    const spy = spyOnEvaluate();
+    const diffs: QueryDiff<Record<string, unknown>>[] = [];
+    subscribeToList((diff) => diffs.push(diff));
+    await flush();
+    spy.mockClear();
+
+    reactiveDb.db.createSession(makeSession('space-worker-1', { spaceId: 'space-1' }));
+    await flush();
+    expect(spy.mock.calls).toHaveLength(0);
+    expect(diffs).toHaveLength(1);
+
+    reactiveDb.db.createSession(
+      makeSession('task-agent-1', { spaceId: 'space-1' }, 'space_task_agent')
+    );
+    await flush();
+    expect(spy.mock.calls).toHaveLength(0);
+    expect(diffs).toHaveLength(1);
+
+    reactiveDb.db.createSession(makeSession('room-chat-1', { roomId: 'room-1' }, 'room_chat'));
+    await flush();
+    expect(spy.mock.calls).toHaveLength(0);
+    expect(diffs).toHaveLength(1);
+
+    reactiveDb.db.updateSession('space-worker-1', { status: 'active' });
+    await flush();
+    expect(spy.mock.calls).toHaveLength(0);
+    expect(diffs).toHaveLength(1);
+  });
+
+  function makeAssistantMessage(uuid: string): SDKMessage {
+    return {
+      type: 'assistant',
+      uuid,
+      parent_tool_use_id: null,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+    } as SDKMessage;
+  }
+
+  test('worker session message saves do not re-run the list', async () => {
+    reactiveDb.db.createSession(makeSession('space-worker-1', { spaceId: 'space-1' }));
+    const spy = spyOnEvaluate();
+    const diffs: QueryDiff<Record<string, unknown>>[] = [];
+    subscribeToList((diff) => diffs.push(diff));
+    await flush();
+    spy.mockClear();
+
+    reactiveDb.db.saveSDKMessage('space-worker-1', makeAssistantMessage('worker-msg-1'));
+    await flush();
+
+    expect(spy.mock.calls).toHaveLength(0);
+    expect(diffs).toHaveLength(1);
+  });
+
+  test('human session message saves re-run the list', async () => {
+    reactiveDb.db.createSession(makeSession('human-1'));
+    const spy = spyOnEvaluate();
+    subscribeToList(() => {});
+    await flush();
+    spy.mockClear();
+
+    reactiveDb.db.saveSDKMessage('human-1', makeAssistantMessage('human-msg-1'));
+    await flush();
+
+    expect(spy.mock.calls).toHaveLength(1);
+  });
+
+  test('archiving a human session re-runs and drops it from the list', async () => {
+    reactiveDb.db.createSession(makeSession('human-1'));
+    const diffs: QueryDiff<Record<string, unknown>>[] = [];
+    subscribeToList((diff) => diffs.push(diff));
+    await flush();
+    expect(diffs[0].rows).toHaveLength(1);
+
+    reactiveDb.db.updateSession('human-1', {
+      status: 'archived',
+      archivedAt: new Date().toISOString(),
+    });
+    await flush();
+
+    expect(diffs).toHaveLength(2);
+    expect(diffs[1].rows).toHaveLength(0);
+  });
+
+  test('deleting a human session re-runs and drops it from the list', async () => {
+    reactiveDb.db.createSession(makeSession('human-1'));
+    const diffs: QueryDiff<Record<string, unknown>>[] = [];
+    subscribeToList((diff) => diffs.push(diff));
+    await flush();
+    expect(diffs[0].rows).toHaveLength(1);
+
+    reactiveDb.db.deleteSession('human-1');
+    await flush();
+
+    expect(diffs).toHaveLength(2);
+    expect(diffs[1].rows).toHaveLength(0);
+  });
+
+  test('visible session gaining a spaceId context re-runs and leaves the list', async () => {
+    reactiveDb.db.createSession(makeSession('human-1'));
+    const diffs: QueryDiff<Record<string, unknown>>[] = [];
+    subscribeToList((diff) => diffs.push(diff));
+    await flush();
+    expect(diffs[0].rows).toHaveLength(1);
+
+    reactiveDb.db.updateSession('human-1', { context: { spaceId: 'space-1' } });
+    await flush();
+
+    expect(diffs).toHaveLength(2);
+    expect(diffs[1].rows).toHaveLength(0);
+  });
+
+  test('visible session changing to an excluded type re-runs and leaves the list', async () => {
+    reactiveDb.db.createSession(makeSession('human-1'));
+    const diffs: QueryDiff<Record<string, unknown>>[] = [];
+    subscribeToList((diff) => diffs.push(diff));
+    await flush();
+    expect(diffs[0].rows).toHaveLength(1);
+
+    reactiveDb.db.updateSession('human-1', { type: 'space_task_agent' });
+    await flush();
+
+    expect(diffs).toHaveLength(2);
+    expect(diffs[1].rows).toHaveLength(0);
+  });
+
+  test('unscoped sessions-table events still re-run the list', async () => {
+    const spy = spyOnEvaluate();
+    subscribeToList(() => {});
+    await flush();
+    spy.mockClear();
+
+    reactiveDb.notifyChange('sessions');
+    await flush();
+
+    expect(spy.mock.calls).toHaveLength(1);
+  });
+
+  test('transaction with mixed scopes still re-runs the list', async () => {
+    const spy = spyOnEvaluate();
+    subscribeToList(() => {});
+    await flush();
+    spy.mockClear();
+
+    reactiveDb.beginTransaction();
+    reactiveDb.db.createSession(makeSession('human-1'));
+    reactiveDb.notifyChange('sessions');
+    reactiveDb.commitTransaction();
+    await flush();
+
+    expect(spy.mock.calls).toHaveLength(1);
   });
 });
