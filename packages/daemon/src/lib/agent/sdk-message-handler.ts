@@ -332,7 +332,7 @@ export class SDKMessageHandler {
       return (
         isSDKUserMessage(enqueued) &&
         !durableOwned.has(uuid) &&
-        !messageQueue.hasPendingOrInFlight(uuid)
+        !messageQueue.hasPendingOrClaimed(uuid)
       );
     });
 

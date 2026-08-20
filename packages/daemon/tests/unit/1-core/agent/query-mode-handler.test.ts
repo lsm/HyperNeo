@@ -562,6 +562,27 @@ describe('QueryModeHandler', () => {
       expect(ownedWhenPublished).toBe(true);
     });
 
+    it('handleQueryTrigger publishes enqueued status when durable enqueue fails', async () => {
+      getMessagesByStatusSpy.mockReturnValue([
+        { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+      ] as unknown as SDKMessage[]);
+      const enqueue = jobQueue.enqueue.bind(jobQueue);
+      jobQueue.enqueue = mock(() => {
+        throw new Error('queue unavailable');
+      });
+
+      handler = new QueryModeHandler(createContext());
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: false, messageCount: 0, error: 'queue unavailable' });
+      expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'test-session-id',
+        messageIds: ['db-1'],
+        status: 'enqueued',
+      });
+      jobQueue.enqueue = enqueue;
+    });
+
     it('handleQueryTrigger falls back to per-message jobs when a turn is already active', async () => {
       jobQueue.enqueue({
         queue: 'message_delivery',

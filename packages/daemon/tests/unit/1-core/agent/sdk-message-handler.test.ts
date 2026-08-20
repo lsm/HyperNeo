@@ -86,7 +86,7 @@ describe('SDKMessageHandler', () => {
   let handleErrorSpy: ReturnType<typeof mock>;
   let lifecycleStopSpy: ReturnType<typeof mock>;
   let messageQueueClearSpy: ReturnType<typeof mock>;
-  let hasPendingOrInFlightSpy: ReturnType<typeof mock>;
+  let hasPendingOrClaimedSpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
   let bumpDeliveryTurnActivitySpy: ReturnType<typeof mock>;
 
@@ -175,12 +175,12 @@ describe('SDKMessageHandler', () => {
 
     enqueueMessageSpy = mock(async () => 'context-id');
     messageQueueClearSpy = mock(() => {});
-    hasPendingOrInFlightSpy = mock(() => false);
+    hasPendingOrClaimedSpy = mock(() => false);
     mockMessageQueue = {
       enqueue: enqueueMessageSpy,
       enqueueWithId: mock(async () => {}),
       clear: messageQueueClearSpy,
-      hasPendingOrInFlight: hasPendingOrInFlightSpy,
+      hasPendingOrClaimed: hasPendingOrClaimedSpy,
     } as unknown as MessageQueue;
 
     handleErrorSpy = mock(async () => {});
@@ -1287,7 +1287,7 @@ describe('SDKMessageHandler', () => {
         }
         return [];
       });
-      hasPendingOrInFlightSpy.mockImplementation((uuid: string) => uuid === 'queued-user-uuid');
+      hasPendingOrClaimedSpy.mockImplementation((uuid: string) => uuid === 'queued-user-uuid');
 
       await handler.handleMessage({
         type: 'result',
@@ -1299,6 +1299,35 @@ describe('SDKMessageHandler', () => {
       } as unknown as SDKMessage);
 
       expect(updateMessageStatusSpy).not.toHaveBeenCalledWith(['db-queued'], 'consumed');
+    });
+
+    it('acknowledges a yielded message at turn end when replay is absent', async () => {
+      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+        if (status === 'enqueued') {
+          return [
+            {
+              dbId: 'db-yielded',
+              uuid: 'yielded-user-uuid',
+              type: 'user',
+              timestamp: 1700000000000,
+              message: { role: 'user', content: [{ type: 'text', text: 'yielded' }] },
+            },
+          ];
+        }
+        return [];
+      });
+      hasPendingOrClaimedSpy.mockReturnValue(false);
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-uuid',
+        usage: { input_tokens: 1, output_tokens: 1 },
+        total_cost_usd: 0,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-yielded'], 'consumed');
     });
 
     it('leaves an active durable steer enqueued and claimable at turn end (#3744401261)', async () => {

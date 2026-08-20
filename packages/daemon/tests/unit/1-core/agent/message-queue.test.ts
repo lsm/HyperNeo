@@ -168,9 +168,11 @@ describe('MessageQueue', () => {
   describe('hasPendingOrInFlight', () => {
     it('reports false for an unknown id and true while queued/claimed/yielded', async () => {
       expect(queue.hasPendingOrInFlight('nope')).toBe(false);
+      expect(queue.hasPendingOrClaimed('nope')).toBe(false);
 
       const acknowledgment = queue.enqueueWithId('in-flight-id', 'Message 1');
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(true);
+      expect(queue.hasPendingOrClaimed('in-flight-id')).toBe(true);
       const existing = queue.waitForPendingOrInFlight('in-flight-id');
       expect(existing).not.toBeNull();
 
@@ -179,6 +181,7 @@ describe('MessageQueue', () => {
       const result = await generator.next();
       expect(result.done).toBe(false);
       expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(true);
+      expect(queue.hasPendingOrClaimed('in-flight-id')).toBe(false);
 
       result.value.onSent();
       await acknowledgment;

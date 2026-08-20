@@ -48,7 +48,16 @@ export class QueryModeHandler {
       db.updateMessageStatus(dbIds, 'enqueued');
 
       if (isMessageDeliveryV2Enabled()) {
-        await this.deliverFlushUnderV2(deferredMessages, 'recovery');
+        try {
+          await this.deliverFlushUnderV2(deferredMessages, 'recovery');
+        } catch (error) {
+          await internalEventBus.publish('messages.statusChanged', {
+            sessionId: session.id,
+            messageIds: dbIds,
+            status: 'enqueued',
+          });
+          throw error;
+        }
       }
 
       await internalEventBus.publish('messages.statusChanged', {
