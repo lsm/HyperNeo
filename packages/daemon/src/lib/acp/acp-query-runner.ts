@@ -381,7 +381,7 @@ async function handleAcpPermissionRequest(
 
   const permissionSignal = signal ?? new AbortController().signal;
   const question = acpPermissionQuestion(params);
-  const result = await canUseTool('AskUserQuestion', acpPermissionQuestionInput(params), {
+  const permission = canUseTool('AskUserQuestion', acpPermissionQuestionInput(params), {
     signal: permissionSignal,
     toolUseID: params.toolCall.toolCallId,
     title: question,
@@ -389,6 +389,19 @@ async function handleAcpPermissionRequest(
     description: params.toolCall.kind,
     requestId: generateUUID(),
   });
+  let resolveAbort: (() => void) | undefined;
+  const aborted = new Promise<undefined>((resolve) => {
+    resolveAbort = () => resolve(undefined);
+    permissionSignal.addEventListener('abort', resolveAbort, { once: true });
+    if (permissionSignal.aborted) resolveAbort();
+  });
+  const result = await Promise.race([permission, aborted]).finally(() => {
+    if (resolveAbort) permissionSignal.removeEventListener('abort', resolveAbort);
+  });
+
+  if (permissionSignal.aborted) {
+    return { outcome: { outcome: 'cancelled' } };
+  }
 
   if (!result || result.behavior === 'deny') {
     return { outcome: { outcome: 'cancelled' } };

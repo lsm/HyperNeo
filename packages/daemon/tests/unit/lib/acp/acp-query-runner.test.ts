@@ -799,18 +799,18 @@ describe('AcpQueryRunner', () => {
     }
   });
 
-  test('cancels pending terminal approval when the query ends', async () => {
-    let approveTerminal: (() => void) | undefined;
-    const terminalApproved = new Promise<void>((resolve) => {
-      approveTerminal = resolve;
-    });
+  test('cancels pending terminal approval promptly when the query ends', async () => {
+    const terminalApprovalStarted = Promise.withResolvers<void>();
+    const terminalApproval = Promise.withResolvers<{
+      behavior: 'allow';
+      updatedInput: { answers: Record<string, string> };
+    }>();
     const { client, promptStarted, releasePrompt } = createHeldPromptClient();
     const { runner, ctx, constructorOptions } = createRunnerFixture({
       client,
-      canUseTool: async (_toolName, input) => {
-        await terminalApproved;
-        const question = (input.questions as Array<{ question: string }>)[0].question;
-        return { behavior: 'allow', updatedInput: { answers: { [question]: 'Allow once' } } };
+      canUseTool: async () => {
+        terminalApprovalStarted.resolve();
+        return terminalApproval.promise;
       },
     });
 
@@ -821,8 +821,8 @@ describe('AcpQueryRunner', () => {
       command: process.execPath,
       args: ['-e', 'process.exit(0)'],
     });
+    await terminalApprovalStarted.promise;
     ctx.queryAbortController?.abort();
-    approveTerminal?.();
 
     await expect(terminal).rejects.toThrow('ACP terminal command cancelled');
     releasePrompt();

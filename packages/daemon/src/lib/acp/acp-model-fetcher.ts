@@ -1,5 +1,6 @@
 import { AcpClient } from './acp-client';
 import { buildAcpSafeEnv, parseAcpCommand } from './acp-command';
+import { getAcpProcessTreeOwner } from './acp-process-tree';
 import {
   flattenModelChoices,
   type AcpConfiguredModel,
@@ -20,6 +21,7 @@ export async function fetchAcpModels(
   }
   const { command, args } = parseAcpCommand(commandLine);
   const workspace = options.cwd ?? process.cwd();
+  const processTreeOwner = await getAcpProcessTreeOwner();
   const client = new AcpClient({
     command,
     args,
@@ -27,6 +29,7 @@ export async function fetchAcpModels(
     env: buildAcpDiscoveryEnv(),
     replaceEnv: true,
     requestTimeoutMs: FETCH_REQUEST_TIMEOUT_MS,
+    processTreeOwner,
   });
   try {
     await client.initialize();
