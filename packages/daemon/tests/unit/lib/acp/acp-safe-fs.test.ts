@@ -108,26 +108,28 @@ bunRuntimeTest('writes maximum-length filenames through a short temporary name',
   }
 });
 
-bunRuntimeTest('preserves permissions when replacing an existing file', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-mode-'));
-  const workspace = join(root, 'workspace');
-  const target = join(workspace, 'script.sh');
-  await mkdir(workspace);
-  await writeFile(target, 'original');
-  await chmod(target, 0o755);
+for (const mode of [0o755, 0o200]) {
+  bunRuntimeTest(`preserves mode ${mode.toString(8)} when replacing an existing file`, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-mode-'));
+    const workspace = join(root, 'workspace');
+    const target = join(workspace, 'script.sh');
+    await mkdir(workspace);
+    await writeFile(target, 'original');
+    await chmod(target, mode);
 
-  try {
-    await writeFileWithinWorkspace(
-      workspace,
-      ['script.sh'],
-      'replacement',
-      new AbortController().signal
-    );
-    expect((await stat(target)).mode & 0o777).toBe(0o755);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+    try {
+      await writeFileWithinWorkspace(
+        workspace,
+        ['script.sh'],
+        'replacement',
+        new AbortController().signal
+      );
+      expect((await stat(target)).mode & 0o777).toBe(mode);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
 
 bunRuntimeTest('replaces workspace hard links without modifying the linked file', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-hardlink-'));
