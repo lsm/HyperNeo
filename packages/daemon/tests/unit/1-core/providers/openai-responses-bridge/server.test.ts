@@ -507,6 +507,70 @@ describe('openai-responses-bridge server', () => {
     expect(capturedHeaders[1]?.get('X-OpenAI-Fedramp')).toBe('true');
   });
 
+  it.skipIf(!isBun)(
+    'retries with replacement auth when it swaps during a pending refresh',
+    async () => {
+      const capturedHeaders: Headers[] = [];
+      let resolveRefresh: (() => void) | undefined;
+      const refreshPending = new Promise<void>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      server = createOpenAIResponsesBridgeServer({
+        auth: {
+          source: 'chatgpt_oauth',
+          apiKey: 'stale-token',
+          accountId: 'account-1',
+          refreshAuthTokens: async () => {
+            await refreshPending;
+            return null;
+          },
+        },
+        models,
+        fetchImpl: async (_url, init) => {
+          capturedHeaders.push(new Headers(init?.headers));
+          if (capturedHeaders.length === 1) return new Response('unauthorized', { status: 401 });
+          return sse([
+            {
+              event: 'response.completed',
+              data: {
+                type: 'response.completed',
+                response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+              },
+            },
+          ]);
+        },
+      });
+      const port = server.port;
+      const response = fetch(`http://127.0.0.1:${port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'Say hello.' }],
+        }),
+      });
+      while (capturedHeaders.length === 0) await Bun.sleep(1);
+      server.updateAuth({
+        source: 'chatgpt_oauth',
+        apiKey: 'replacement-token',
+        accountId: 'account-2',
+        isFedrampAccount: true,
+        refreshAuthTokens: async () => null,
+      });
+      resolveRefresh?.();
+
+      const resp = await response;
+
+      expect(resp.status).toBe(200);
+      expect(capturedHeaders).toHaveLength(2);
+      expect(capturedHeaders[0]?.get('Authorization')).toBe('Bearer stale-token');
+      expect(capturedHeaders[1]?.get('Authorization')).toBe('Bearer replacement-token');
+      expect(capturedHeaders[1]?.get('ChatGPT-Account-ID')).toBe('account-2');
+      expect(capturedHeaders[1]?.get('X-OpenAI-Fedramp')).toBe('true');
+    }
+  );
+
   it.skipIf(!isBun)('streams OpenAI text deltas as Anthropic text SSE', async () => {
     let capturedBody: Record<string, unknown> | undefined;
     server = createOpenAIResponsesBridgeServer({

@@ -1595,7 +1595,13 @@ export function createOpenAIResponsesBridgeServer(
             });
           } else {
             const refreshed = await refreshOpenAIResponsesAuth(requestAuth);
-            if (refreshed) {
+            if (activeAuth !== requestAuth) {
+              openAIResponse = await fetchImpl(upstreamUrl, {
+                method: 'POST',
+                headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
+                body: JSON.stringify(requestBody),
+              });
+            } else if (refreshed) {
               resolvedAuth = refreshed;
               openAIResponse = await fetchImpl(upstreamUrl, {
                 method: 'POST',

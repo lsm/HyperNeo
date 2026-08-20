@@ -625,23 +625,38 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (!accountId) {
       return { source: 'api_key', apiKey: credentials.access };
     }
+    const isFedrampAccount =
+      credentials.isFedrampAccount ?? this.extractIsFedrampAccount(credentials.access);
 
     return {
       source: 'chatgpt_oauth',
       apiKey: credentials.access,
       accountId,
-      isFedrampAccount:
-        credentials.isFedrampAccount ?? this.extractIsFedrampAccount(credentials.access),
+      isFedrampAccount,
       refreshAuthTokens: async () => {
         const { credentials: refreshed } = await this.refreshStoredOauthCredentials();
         if (!refreshed?.access) return null;
         const refreshedAccountId = refreshed.accountId ?? this.extractAccountId(refreshed.access);
         if (!refreshedAccountId) return null;
+        const refreshedIsFedramp =
+          refreshed.isFedrampAccount ?? this.extractIsFedrampAccount(refreshed.access);
+        const refreshedAuth = this.toBridgeAuth(refreshed);
+        if (refreshedAuth) {
+          this.updateBridgeAuth(
+            {
+              source: 'chatgpt_oauth',
+              apiKey: credentials.access ?? '',
+              accountId,
+              isFedrampAccount,
+            },
+            refreshedAuth
+          );
+          this.ensureCatalogForScope(this.authScope(refreshedAuth));
+        }
         return {
           accessToken: refreshed.access,
           accountId: refreshedAccountId,
-          isFedrampAccount:
-            refreshed.isFedrampAccount ?? this.extractIsFedrampAccount(refreshed.access),
+          isFedrampAccount: refreshedIsFedramp,
         };
       },
     };

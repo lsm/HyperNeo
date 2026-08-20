@@ -2364,6 +2364,77 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('activates the refreshed scope after a bridge-initiated OAuth refresh', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const oldToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-bridge-old' },
+      });
+      const refreshedToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-bridge-new' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: oldToken,
+        refresh: 'refresh-token',
+        accountId: 'acct-bridge-old',
+      });
+      const catalogFetch = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            access_token: refreshedToken,
+            refresh_token: 'next-refresh-token',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, catalogFetch);
+        const auth = (
+          provider as unknown as {
+            toBridgeAuth(credentials: Record<string, unknown>): {
+              refreshAuthTokens?: () => Promise<{
+                accessToken: string;
+                accountId: string;
+                isFedrampAccount: boolean;
+              } | null>;
+            };
+          }
+        ).toBridgeAuth({
+          type: 'oauth',
+          access: oldToken,
+          refresh: 'refresh-token',
+          accountId: 'acct-bridge-old',
+        });
+        provider.setCredentials({
+          type: 'oauth',
+          accessToken: oldToken,
+          refreshToken: 'refresh-token',
+          raw: { accountId: 'acct-bridge-old' },
+        });
+        expect(provider.getModelCatalogScope()).toBe(
+          'chatgpt_oauth:acct-bridge-old:acct-bridge-old:standard'
+        );
+
+        const refreshed = await auth.refreshAuthTokens?.();
+
+        expect(refreshed).toMatchObject({
+          accessToken: refreshedToken,
+          accountId: 'acct-bridge-new',
+        });
+        expect(provider.getModelCatalogScope()).toBe(
+          'chatgpt_oauth:acct-bridge-new:acct-bridge-new:standard'
+        );
+        expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
     it.skipIf(!isBun)('rekeys an active bridge after proactive OAuth refresh', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const staleToken = makeJwt({
