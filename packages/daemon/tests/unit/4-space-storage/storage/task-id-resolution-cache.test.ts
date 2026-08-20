@@ -100,7 +100,7 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
 
   function taskIdsOf(sessionId: string): Array<{ task_id: string | null }> {
     return bunDb
-      .prepare('SELECT task_id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp')
+      .prepare('SELECT task_id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp, rowid')
       .all(sessionId) as Array<{ task_id: string | null }>;
   }
 
