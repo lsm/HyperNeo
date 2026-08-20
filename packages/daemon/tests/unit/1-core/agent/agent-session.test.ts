@@ -1478,6 +1478,46 @@ describe('AgentSession', () => {
       expect(narrowSpy.mock.calls[0]).toEqual(['test-session-id', 'kick-only', ['kick-only']]);
     });
 
+    it('driveDeliveryTurn neutralizes reused acknowledgment when batch narrowing aborts', async () => {
+      const catchSpy = mock(() => Promise.resolve());
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sid: string, uuid: string) =>
+          uuid === 'kick-reused'
+            ? { content: 'kickoff', sendStatus: 'enqueued' }
+            : uuid === 'member-reused'
+              ? { content: 'member', sendStatus: 'deferred' }
+              : null
+        ),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        narrowActiveDeliveryBatchUuids: mock(() => false),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        waitForPendingOrInFlight: mock(() => ({
+          acknowledgment: { catch: catchSpy } as unknown as Promise<void>,
+          content: 'kickoff',
+        })),
+        isRunning: mock(() => false),
+        size: mock(() => 1),
+      };
+
+      const outcome = await agentSession.driveDeliveryTurn(
+        'kick-reused',
+        'estimate',
+        null,
+        false,
+        () => true,
+        ['kick-reused', 'member-reused']
+      );
+
+      expect(outcome).toEqual({ outcome: 'aborted' });
+      expect(catchSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('driveDeliveryTurn refuses to feed a reduced batch when narrowing cannot persist', async () => {
       const admitSpy = mock(() => new Promise<void>(() => {}));
       mockDb.getSDKMessageRepo = mock(() => ({

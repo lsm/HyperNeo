@@ -1394,6 +1394,7 @@ export class AgentSession
             return { kind: 'aborted' as const };
           }
           const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
+          void existing?.acknowledgment.catch(() => {});
           freshFeed = existing === null;
           if (freshFeed) {
             const loaded = this.db
@@ -1456,7 +1457,6 @@ export class AgentSession
             );
           }
           if (existing && !this.deliveryContentMatches(existing.content, feedContent)) {
-            void existing.acknowledgment.catch(() => {});
             turnEnd.cancel();
             disarmObserver();
             return { kind: 'aborted' as const };
