@@ -160,6 +160,9 @@ export function extractReplacementEdges(message: SDKMessage): SDKMessageReplacem
 export class SDKMessageRepository {
   private logger = new Logger('Database');
 
+  private tableExistsCache = new Map<string, boolean>();
+  private tableColumnsCache = new Map<string, Set<string> | null>();
+
   constructor(
     private db: BunDatabase,
     private reactiveDb?: ReactiveDatabase
@@ -170,23 +173,40 @@ export class SDKMessageRepository {
   }
 
   private tableExists(tableName: string): boolean {
+    const cached = this.tableExistsCache.get(tableName);
+    if (cached !== undefined) return cached;
+    let exists = false;
     try {
       const row = this.db.prepare(`SELECT name FROM sqlite_master WHERE name = ?`).get(tableName);
-      return !!row;
+      exists = !!row;
     } catch {
-      return false;
+      exists = false;
     }
+    this.tableExistsCache.set(tableName, exists);
+    return exists;
   }
 
   private tableHasColumn(tableName: string, columnName: string): boolean {
+    const columns = this.tableColumns(tableName);
+    return columns !== null && columns.has(columnName);
+  }
+
+  private tableColumns(tableName: string): Set<string> | null {
+    const cached = this.tableColumnsCache.get(tableName);
+    if (cached !== undefined) return cached;
+    let columns: Set<string> | null = null;
     try {
       const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
         name?: string;
       }>;
-      return rows.some((row) => row.name === columnName);
+      columns = new Set(
+        rows.map((row) => row.name).filter((name): name is string => name !== undefined)
+      );
     } catch {
-      return false;
+      columns = null;
     }
+    this.tableColumnsCache.set(tableName, columns);
+    return columns;
   }
 
   private saveReplacementEdges(
@@ -207,8 +227,21 @@ export class SDKMessageRepository {
     }
   }
 
-  private upsertMessageSearchRow(rowId: string): void {
-    if (!this.hasMessageSearchIndex()) return;
+  private searchRowQueryFragments: {
+    sessionTitleSelect: string;
+    sessionPolicySelect: string;
+    spaceTaskSelect: string;
+    sessionJoin: string;
+    spaceTaskJoin: string;
+  } | null = null;
+
+  private computeSearchRowQueryFragments(): {
+    sessionTitleSelect: string;
+    sessionPolicySelect: string;
+    spaceTaskSelect: string;
+    sessionJoin: string;
+    spaceTaskJoin: string;
+  } {
     const hasSessions = this.tableExists('sessions');
     const hasSpaceTasks = this.tableExists('space_tasks');
     const hasSessionTitle = hasSessions && this.tableHasColumn('sessions', 'title');
@@ -219,24 +252,45 @@ export class SDKMessageRepository {
     const hasTaskStatus = hasSpaceTasks && this.tableHasColumn('space_tasks', 'status');
     const hasTaskCompletedAt = hasSpaceTasks && this.tableHasColumn('space_tasks', 'completed_at');
     const hasTaskUpdatedAt = hasSpaceTasks && this.tableHasColumn('space_tasks', 'updated_at');
-    const sessionTitleSelect = hasSessionTitle
-      ? 's.title AS session_title'
-      : 'sm.session_id AS session_title';
-    const sessionPolicySelect = `${hasSessionStatus ? 's.status' : 'NULL'} AS session_status,
-			   ${hasSessionType ? 's.type' : 'NULL'} AS session_type,
-			   ${hasSessionLastActiveAt ? 's.last_active_at' : 'NULL'} AS session_last_active_at,
-			   ${hasSessionContext ? 's.session_context' : 'NULL'} AS session_context`;
-    const spaceTaskSelect = hasSpaceTasks
-      ? `st.space_id, st.task_number,
-			   ${hasTaskStatus ? 'st.status' : 'NULL'} AS task_status,
-			   ${hasTaskCompletedAt ? 'st.completed_at' : 'NULL'} AS task_completed_at,
-			   ${hasTaskUpdatedAt ? 'st.updated_at' : 'NULL'} AS task_updated_at`
-      : `NULL AS space_id, NULL AS task_number,
-			   NULL AS task_status,
-			   NULL AS task_completed_at,
-			   NULL AS task_updated_at`;
-    const sessionJoin = hasSessions ? 'LEFT JOIN sessions s ON s.id = sm.session_id' : '';
-    const spaceTaskJoin = hasSpaceTasks ? 'LEFT JOIN space_tasks st ON st.id = sm.task_id' : '';
+    return {
+      sessionTitleSelect: hasSessionTitle
+        ? 's.title AS session_title'
+        : 'sm.session_id AS session_title',
+      sessionPolicySelect: `${hasSessionStatus ? 's.status' : 'NULL'} AS session_status,
+				   ${hasSessionType ? 's.type' : 'NULL'} AS session_type,
+				   ${hasSessionLastActiveAt ? 's.last_active_at' : 'NULL'} AS session_last_active_at,
+				   ${hasSessionContext ? 's.session_context' : 'NULL'} AS session_context`,
+      spaceTaskSelect: hasSpaceTasks
+        ? `st.space_id, st.task_number,
+				   ${hasTaskStatus ? 'st.status' : 'NULL'} AS task_status,
+				   ${hasTaskCompletedAt ? 'st.completed_at' : 'NULL'} AS task_completed_at,
+				   ${hasTaskUpdatedAt ? 'st.updated_at' : 'NULL'} AS task_updated_at`
+        : `NULL AS space_id, NULL AS task_number,
+				   NULL AS task_status,
+				   NULL AS task_completed_at,
+				   NULL AS task_updated_at`,
+      sessionJoin: hasSessions ? 'LEFT JOIN sessions s ON s.id = sm.session_id' : '',
+      spaceTaskJoin: hasSpaceTasks ? 'LEFT JOIN space_tasks st ON st.id = sm.task_id' : '',
+    };
+  }
+
+  private getSearchRowQueryFragments(): {
+    sessionTitleSelect: string;
+    sessionPolicySelect: string;
+    spaceTaskSelect: string;
+    sessionJoin: string;
+    spaceTaskJoin: string;
+  } {
+    if (this.searchRowQueryFragments === null) {
+      this.searchRowQueryFragments = this.computeSearchRowQueryFragments();
+    }
+    return this.searchRowQueryFragments;
+  }
+
+  private upsertMessageSearchRow(rowId: string): void {
+    if (!this.hasMessageSearchIndex()) return;
+    const { sessionTitleSelect, sessionPolicySelect, spaceTaskSelect, sessionJoin, spaceTaskJoin } =
+      this.getSearchRowQueryFragments();
     const row = this.db
       .prepare(
         `SELECT sm.id, sm.session_id, sm.task_id, sm.message_type, sm.sdk_message, sm.timestamp,
