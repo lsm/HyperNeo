@@ -2009,6 +2009,51 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('updates live bridge auth when a same-scope token rotates', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const firstToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-rotate' },
+        jti: 'first',
+      });
+      const secondToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-rotate' },
+        jti: 'second',
+      });
+      const catalogFetch = mock(
+        async () => new Response('{}', { status: 200 })
+      ) as unknown as typeof fetch;
+      const updateAuthCalls: Array<{ apiKey?: string }> = [];
+      const fakeServers = new Map<string, unknown>([
+        [
+          'responses:chatgpt:acct-rotate:standard',
+          {
+            stop: () => undefined,
+            updateModels: () => undefined,
+            updateAuth: (auth: { apiKey?: string }) => updateAuthCalls.push(auth),
+          },
+        ],
+      ]);
+      provider = makeProvider({}, hyperneoDir, tmpDir, catalogFetch);
+      provider.setCredentials({
+        type: 'oauth',
+        accessToken: firstToken,
+        refreshToken: 'refresh-token',
+        raw: { accountId: 'acct-rotate' },
+      });
+      (provider as unknown as { bridgeServers: Map<string, unknown> }).bridgeServers = fakeServers;
+
+      provider.setCredentials({
+        type: 'oauth',
+        accessToken: secondToken,
+        refreshToken: 'next-refresh-token',
+        raw: { accountId: 'acct-rotate' },
+      });
+
+      expect(updateAuthCalls).toHaveLength(1);
+      expect(updateAuthCalls[0]?.apiKey).toBe(secondToken);
+      expect([...fakeServers.keys()]).toEqual(['responses:chatgpt:acct-rotate:standard']);
+    });
+
     it('stops live bridge servers from a replaced credential scope', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const tokenA = makeJwt({

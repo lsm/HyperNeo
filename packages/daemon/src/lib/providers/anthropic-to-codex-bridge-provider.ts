@@ -512,11 +512,14 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   setCredentials(credentials: ProviderCredentials): void {
+    const previousAuth = this.resolveBridgeAuth();
     if (credentials.type === 'api_key') {
       this.cachedCredentials = { type: 'api_key', access: credentials.apiKey };
       this.cachedBridgeAuth = { source: 'api_key', apiKey: credentials.apiKey };
       this.cachedApiKey = credentials.apiKey;
-      this.ensureCatalogForScope(this.authScope(this.cachedBridgeAuth));
+      const scope = this.authScope(this.cachedBridgeAuth);
+      this.ensureCatalogForScope(scope);
+      this.syncBridgeAuth(previousAuth, this.cachedBridgeAuth);
       return;
     }
 
@@ -535,8 +538,21 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedBridgeAuth = this.toBridgeAuth(stored) ?? null;
     this.cachedApiKey = stored.access ?? '';
     if (this.cachedBridgeAuth) {
-      this.ensureCatalogForScope(this.authScope(this.cachedBridgeAuth));
+      const scope = this.authScope(this.cachedBridgeAuth);
+      this.ensureCatalogForScope(scope);
+      this.syncBridgeAuth(previousAuth, this.cachedBridgeAuth);
     }
+  }
+
+  private syncBridgeAuth(
+    previousAuth: OpenAIResponsesBridgeAuth | undefined,
+    nextAuth: OpenAIResponsesBridgeAuth | undefined
+  ): void {
+    if (!previousAuth || !nextAuth) return;
+    if (previousAuth.source === nextAuth.source && previousAuth.apiKey === nextAuth.apiKey) {
+      return;
+    }
+    this.updateBridgeAuth(previousAuth, nextAuth);
   }
 
   async getCredentials(): Promise<ProviderCredentials | null> {
