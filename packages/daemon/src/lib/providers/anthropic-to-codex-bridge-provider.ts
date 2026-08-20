@@ -981,6 +981,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           this.updateBridgeAuth(auth, refreshedAuth);
           auth = refreshedAuth;
           this.ensureCatalogForScope(this.authScope(auth));
+        } else if (!this.resolveBridgeAuth()) {
+          throw new Error('Codex credentials unavailable after OAuth refresh');
         }
       }
     }
@@ -1005,7 +1007,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       await response.body?.cancel().catch(() => undefined);
       const currentAuth = await this.getBridgeAuth();
       const currentScope = currentAuth ? this.authScope(currentAuth) : undefined;
-      if (currentAuth && currentScope && !this.sameScope(scope, currentScope)) {
+      if (
+        currentAuth &&
+        currentScope &&
+        (currentAuth.apiKey !== auth.apiKey || !this.sameScope(scope, currentScope))
+      ) {
         auth = currentAuth;
         scope = currentScope;
         this.ensureCatalogForScope(scope);

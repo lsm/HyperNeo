@@ -1546,6 +1546,64 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('retries stale OAuth 401s with a replacement token for the same account', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const oldAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-same' },
+        jti: 'old-token',
+      });
+      const replacementAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-same' },
+        jti: 'replacement-token',
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: oldAccess,
+        refresh: 'old-refresh-token',
+        accountId: 'acct-same',
+      });
+      let resolveOld: ((response: Response) => void) | undefined;
+      const oldResponse = new Promise<Response>((resolve) => {
+        resolveOld = resolve;
+      });
+      const fetchImpl = mock()
+        .mockImplementationOnce(async () => oldResponse)
+        .mockImplementationOnce(
+          async () =>
+            new Response(JSON.stringify({ data: [{ id: 'gpt-replacement-token' }] }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+        ) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch');
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+        const oldModels = provider.getModels();
+        await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+        provider.setCredentials({
+          type: 'oauth',
+          accessToken: replacementAccess,
+          refreshToken: 'new-refresh-token',
+          raw: { accountId: 'acct-same' },
+        });
+        resolveOld?.(new Response('unauthorized', { status: 401 }));
+
+        await expect(oldModels).resolves.toEqual([
+          expect.objectContaining({ id: 'gpt-replacement-token' }),
+        ]);
+        expect(refreshFetch).not.toHaveBeenCalled();
+        const [, retryInit] = (fetchImpl as ReturnType<typeof mock>).mock.calls[1] as [
+          URL,
+          RequestInit,
+        ];
+        const headers = new Headers(retryInit.headers);
+        expect(headers.get('authorization')).toBe(`Bearer ${replacementAccess}`);
+        expect(headers.get('ChatGPT-Account-ID')).toBe('acct-same');
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
     it('ignores discovery failures from a replaced credential scope', async () => {
       let rejectOld: ((error: Error) => void) | undefined;
       const oldRequest = new Promise<Response>((_resolve, reject) => {
@@ -1954,6 +2012,42 @@ describe('AnthropicToCodexBridgeProvider', () => {
           .bridgeServers;
         expect([...servers.keys()]).toEqual(['responses:chatgpt:acct-new:fedramp']);
         expect(servers.values().next().value?.port).toBe(Number(port));
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
+    it('rejects discovery when proactive OAuth refresh logs out', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'stale-access-token',
+        refresh: 'invalid-refresh-token',
+        accountId: 'acct-invalid',
+        expires: Date.now() + 60_000,
+      });
+      const catalogFetch = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-stale-token' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('{"error":"invalid_grant"}', {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, catalogFetch);
+
+        await expect(provider.healthCheck()).rejects.toThrow(
+          'Codex credentials unavailable after OAuth refresh'
+        );
+        expect(catalogFetch).not.toHaveBeenCalled();
+        expect(await provider.isAvailable()).toBe(false);
+        expect(existsSync(path.join(hyperneoDir, 'auth.json'))).toBe(false);
       } finally {
         refreshFetch.mockRestore();
       }

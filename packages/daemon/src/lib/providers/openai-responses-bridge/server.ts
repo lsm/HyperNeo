@@ -1538,13 +1538,18 @@ export function createOpenAIResponsesBridgeServer(
         ? undefined
         : resolveContinuation(sessionId, body.messages, continuations);
       let continuation = resolvedContinuation;
-      const storedReasoning = sessionReasoningItems.get(sessionId)?.items;
+      const supportedReasoningEfforts = reasoningEffortsByModelId.get(model);
+      let storedReasoning = sessionReasoningItems.get(sessionId)?.items;
+      if (supportedReasoningEfforts?.length === 0) {
+        deleteReasoningItems(sessionId);
+        storedReasoning = undefined;
+      }
       if (storedReasoning && storedReasoning.length > 0) {
         continuation = undefined;
       }
       const requestOpts = {
         ...buildOpts,
-        supportedReasoningEfforts: reasoningEffortsByModelId.get(model),
+        supportedReasoningEfforts,
       };
       let requestBody: ResponsesRequest;
       try {
