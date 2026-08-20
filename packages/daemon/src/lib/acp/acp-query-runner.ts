@@ -31,9 +31,11 @@ import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy';
+import { parseAcpCommand } from './acp-command';
 import { AcpClient, type AcpClientOptions } from './acp-client';
 import { AcpQueryAdapter } from './acp-query-adapter';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
+import { AcpTerminalManager } from './acp-terminal-manager';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
@@ -105,56 +107,7 @@ function parseThoughtTokenValue(choice: { name: string; value: string }): number
   return undefined;
 }
 
-export function parseAcpCommand(commandLine: string): { command: string; args: string[] } {
-  const tokens: string[] = [];
-  let current = '';
-  let quote: 'single' | 'double' | null = null;
-  let escaping = false;
-
-  for (const char of commandLine.trim()) {
-    if (escaping) {
-      current += char;
-      escaping = false;
-      continue;
-    }
-
-    if (char === '\\') {
-      escaping = true;
-      continue;
-    }
-
-    if (char === "'" && quote !== 'double') {
-      quote = quote === 'single' ? null : 'single';
-      continue;
-    }
-
-    if (char === '"' && quote !== 'single') {
-      quote = quote === 'double' ? null : 'double';
-      continue;
-    }
-
-    if (/\s/.test(char) && !quote) {
-      if (current) {
-        tokens.push(current);
-        current = '';
-      }
-      continue;
-    }
-
-    current += char;
-  }
-
-  if (escaping) current += '\\';
-  if (quote) {
-    throw new Error('Invalid HYPERNEO_ACP_COMMAND: unmatched quote');
-  }
-  if (current) tokens.push(current);
-  if (tokens.length === 0) {
-    throw new Error('Invalid HYPERNEO_ACP_COMMAND: command is empty');
-  }
-
-  return { command: tokens[0], args: tokens.slice(1) };
-}
+export { parseAcpCommand } from './acp-command';
 
 function toAcpPromptContent(message: SDKUserMessage): AcpContentBlock[] {
   const content = message.message.content;
@@ -402,6 +355,7 @@ export class AcpQueryRunner {
     uuid: string;
     content: string | MessageContent[];
   } | null = null;
+  private terminalManager = new AcpTerminalManager();
 
   get lastConsumedUserMessage() {
     return this._lastConsumedUserMessage;
@@ -488,7 +442,10 @@ export class AcpQueryRunner {
       let queryOptions = await optionsBuilder.build();
       queryOptions = await this.ensureRequiredMcpServersForAcp(queryOptions);
 
-      const acpCommand = process.env.HYPERNEO_ACP_COMMAND;
+      const acpCommand =
+        provider instanceof AcpProvider
+          ? provider.getAcpCommand()
+          : process.env.HYPERNEO_ACP_COMMAND;
       if (!acpCommand) {
         throw new Error('Set HYPERNEO_ACP_COMMAND to enable ACP agents.');
       }
@@ -590,6 +547,13 @@ export class AcpQueryRunner {
           this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
         onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
         onPermissionRequest: (params) => handleAcpPermissionRequest(params, canUseTool),
+        onTerminalCreate: (params) => this.terminalManager.create(params),
+        onTerminalOutput: (params) => this.terminalManager.output(params),
+        onTerminalWaitForExit: (params) => this.terminalManager.waitForExit(params),
+        onTerminalKill: (params) => this.terminalManager.kill(params),
+        onTerminalRelease: (params) => this.terminalManager.release(params),
+        onFsRead: (params) => this.handleFsRead(params),
+        onFsWrite: (params) => this.handleFsWrite(params),
       });
 
       if (messageQueue.size() > 0) {
@@ -776,6 +740,7 @@ export class AcpQueryRunner {
       );
     } finally {
       restoreMessageEnqueuedHandler?.();
+      this.terminalManager.dispose();
       await proxyBridge?.close();
       proxyBridge = null;
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
@@ -975,6 +940,23 @@ export class AcpQueryRunner {
   private async handleSDKMessage(message: SDKMessage): Promise<void> {
     await this.ctx.onSDKMessage(message);
     await this.ctx.onMarkApiSuccess(message);
+  }
+
+  private async handleFsRead(params: { path: string }): Promise<{ content: string }> {
+    const { readFile } = await import('node:fs/promises');
+    const content = await readFile(params.path, 'utf-8');
+    return { content };
+  }
+
+  private async handleFsWrite(params: {
+    path: string;
+    content: string;
+  }): Promise<{ _meta?: object | null }> {
+    const { writeFile, mkdir } = await import('node:fs/promises');
+    const { dirname } = await import('node:path');
+    await mkdir(dirname(params.path), { recursive: true });
+    await writeFile(params.path, params.content, 'utf-8');
+    return {};
   }
 
   private async ensureRequiredMcpServersForAcp(queryOptions: Options): Promise<Options> {

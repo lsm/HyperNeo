@@ -764,6 +764,7 @@ describe('AcpQueryRunner', () => {
       },
       options: [
         { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'allow-session', name: 'Allow for session', kind: 'allow_always' },
         { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' },
       ],
     });
@@ -781,6 +782,47 @@ describe('AcpQueryRunner', () => {
       expect.objectContaining({ toolUseID: 'tool-1' })
     );
     expect(result).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } });
+  });
+
+  test('cancels ACP permission requests denied by the approval callback', async () => {
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      canUseTool: async () => ({ behavior: 'deny', message: 'Denied' }),
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    const result = await constructorOptions[0].onPermissionRequest?.({
+      sessionId: 'acp-session-1',
+      toolCall: {
+        toolCallId: 'tool-1',
+        title: 'Edit file',
+        kind: 'edit',
+      },
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
+    });
+
+    expect(result).toEqual({ outcome: { outcome: 'cancelled' } });
+  });
+
+  test('cancels empty ACP permission requests without prompting', async () => {
+    const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture();
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    const result = await constructorOptions[0].onPermissionRequest?.({
+      sessionId: 'acp-session-1',
+      toolCall: {
+        toolCallId: 'tool-1',
+        title: 'Edit file',
+        kind: 'edit',
+      },
+      options: [],
+    });
+
+    expect(canUseTool).not.toHaveBeenCalled();
+    expect(result).toEqual({ outcome: { outcome: 'cancelled' } });
   });
 
   test('persists new ACP session ids', async () => {

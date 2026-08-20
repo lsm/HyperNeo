@@ -125,6 +125,31 @@ describe('AcpMessageTranslator', () => {
     expect(msg.tool_name).toBe('unknown');
   });
 
+  test('emits one tool_progress and one tool_result for a complete tool update', () => {
+    const call = toolCall('tc-6', 'Read file', { path: '/tmp' });
+    const start = translator.processUpdate(call);
+    expect(start.length).toBe(1);
+    expect(start[0].type).toBe('assistant');
+
+    const progress = translator.processUpdate(toolCallUpdate('tc-6', undefined));
+    expect(progress.length).toBe(1);
+    expect(progress[0].type).toBe('tool_progress');
+    expect((progress[0] as { tool_name: string }).tool_name).toBe('Read file');
+
+    const emptyUpdate = translator.processUpdate(toolCallUpdate('tc-6', undefined));
+    expect(emptyUpdate.length).toBe(0);
+
+    const result = translator.processUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-6',
+      title: undefined,
+      rawOutput: 'hello',
+    } as never);
+    expect(result.length).toBe(1);
+    expect(result[0].type).toBe('user');
+    expect((result[0] as { parent_tool_use_id: string }).parent_tool_use_id).toBe('tc-6');
+  });
+
   test('translateResult produces success result', () => {
     const msg = translator.translateResult('end_turn');
 
@@ -156,8 +181,8 @@ describe('AcpMessageTranslator', () => {
       translator.processUpdate({
         sessionUpdate: 'config_option_update',
         configOptions: [],
-      } as never)[0].type
-    ).toBe('assistant');
+      } as never)
+    ).toEqual([]);
     expect(
       translator.processUpdate({
         sessionUpdate: 'session_info_update',

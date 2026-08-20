@@ -477,6 +477,24 @@ describe('AcpClient', () => {
     expect(transport.sendResponse).toHaveBeenCalledWith(12, { terminalId: 't1' });
   });
 
+  test('delegates terminal/wait_for_exit alias to onTerminalWaitForExit callback', async () => {
+    const onTerminalWaitForExit = mock(async () => ({ exitCode: 0, signal: null }));
+    const client = new AcpClient({ command: 'acp-agent', onTerminalWaitForExit });
+    const transport = lastMockTransport!;
+
+    transport.emitRequest({
+      jsonrpc: '2.0',
+      id: 21,
+      method: 'terminal/wait_for_exit',
+      params: { sessionId: 's1', terminalId: 't1' },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(onTerminalWaitForExit).toHaveBeenCalledWith({ sessionId: 's1', terminalId: 't1' });
+    expect(transport.sendResponse).toHaveBeenCalledWith(21, { exitCode: 0, signal: null });
+  });
+
   test('delegates session/request_permission to onPermissionRequest callback', async () => {
     const onPermissionRequest = mock(async () => ({
       outcome: { outcome: 'selected' as const, optionId: 'allow_once' },

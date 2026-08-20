@@ -441,6 +441,7 @@ export class AcpClient {
           ? async (params) => this.callbacks.onTerminalOutput!(params as AcpTerminalOutputParams)
           : undefined;
       case 'terminal/waitForExit':
+      case 'terminal/wait_for_exit':
         return this.callbacks.onTerminalWaitForExit
           ? async (params) =>
               this.callbacks.onTerminalWaitForExit!(params as AcpTerminalWaitForExitParams)

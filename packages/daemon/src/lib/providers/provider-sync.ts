@@ -2,6 +2,7 @@ import type { ProviderRecord, CustomEndpointConfig } from '@hyperneo/shared';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import { getProviderRegistry } from './registry.js';
 import { initializeProviders, registerBuiltInProvider } from './factory.js';
+import type { AcpConfiguredModel } from './acp-provider.js';
 import { CustomEndpointProvider, customProviderIdFor } from './custom-endpoint-provider.js';
 import { Logger } from '../logger.js';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.js';
@@ -29,6 +30,37 @@ export async function syncProviderToRegistry(
       const region = resolveKimiRegion(parsedRegion);
       (provider as { setDefaultRegion: (r: 'china' | 'global') => void }).setDefaultRegion(region);
       logger.info(`Kimi provider region set to '${region}'`);
+    }
+    if (provider && provider.id === 'acp' && 'setAcpCommand' in provider) {
+      let command: string | undefined;
+      let models: AcpConfiguredModel[] | undefined;
+      try {
+        const parsed = record.configJson ? JSON.parse(record.configJson) : undefined;
+        command = typeof parsed?.command === 'string' ? parsed.command : undefined;
+        if (Array.isArray(parsed?.models)) {
+          models = parsed.models
+            .filter(
+              (model: unknown) =>
+                !!model &&
+                typeof model === 'object' &&
+                typeof (model as AcpConfiguredModel).id === 'string'
+            )
+            .map((model: AcpConfiguredModel) => ({
+              id: model.id,
+              name: typeof model.name === 'string' ? model.name : undefined,
+            }));
+        }
+      } catch {
+        command = undefined;
+        models = undefined;
+      }
+      const acpProvider = provider as unknown as {
+        setAcpCommand: (c: string | undefined) => void;
+        setAcpModels: (m: AcpConfiguredModel[] | undefined) => void;
+      };
+      acpProvider.setAcpCommand(command);
+      acpProvider.setAcpModels(models);
+      logger.info(`ACP provider command ${command ? 'configured' : 'reset to env default'}`);
     }
     if (provider?.setCredentials && credentials) {
       if (isStartupSync && provider.logout && provider.getCredentials) {

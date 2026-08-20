@@ -66,6 +66,8 @@ export class AcpMessageTranslator {
   private costUsdEstimate = 0;
   private contextUsageEstimate = 0;
   private reportedContextUsage: number | null = null;
+  private inProgressToolUseIds = new Set<string>();
+  private toolCallTitles = new Map<string, string>();
 
   constructor(
     sessionId: string,
@@ -89,9 +91,13 @@ export class AcpMessageTranslator {
       case 'tool_call':
         return [...this.flush(), this.translateToolCall(update)];
       case 'tool_call_update': {
-        const messages: SDKMessage[] = [this.translateToolCallUpdate(update)];
+        const messages: SDKMessage[] = [];
         if (update.content || update.rawOutput !== undefined) {
+          this.inProgressToolUseIds.delete(update.toolCallId);
           messages.push(this.translateToolResult(update));
+        } else if (!this.inProgressToolUseIds.has(update.toolCallId)) {
+          this.inProgressToolUseIds.add(update.toolCallId);
+          messages.push(this.translateToolCallUpdate(update));
         }
         return messages;
       }
@@ -102,13 +108,10 @@ export class AcpMessageTranslator {
           ...this.flush(),
           this.translateSyntheticAssistant('Current mode', update.currentModeId),
         ];
-      case 'config_option_update':
-        return [
-          ...this.flush(),
-          this.translateSyntheticAssistant('Config options', update.configOptions),
-        ];
       case 'session_info_update':
         return [...this.flush(), this.translateSyntheticAssistant('Session info', update)];
+      case 'available_commands_update':
+        return [...this.flush()];
       case 'usage_update':
         this.reportedContextUsage = update.used;
         this.contextWindow = update.size;
@@ -146,6 +149,7 @@ export class AcpMessageTranslator {
     this.contextUsageEstimate += estimateTokens(
       JSON.stringify({ name: call.title, input: call.rawInput ?? {} })
     );
+    this.toolCallTitles.set(call.toolCallId, call.title);
 
     return {
       type: 'assistant',
@@ -172,7 +176,7 @@ export class AcpMessageTranslator {
       uuid: generateUUID() as UUID,
       session_id: this.sessionId,
       tool_use_id: update.toolCallId,
-      tool_name: update.title ?? 'unknown',
+      tool_name: update.title ?? this.toolCallTitles.get(update.toolCallId) ?? 'unknown',
       parent_tool_use_id: null,
       elapsed_time_seconds: 0,
     };
