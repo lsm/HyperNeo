@@ -184,6 +184,27 @@ describe('DatabaseCore', () => {
 
       expect(existsSync(dbPath + '.lock')).toBe(false);
     });
+
+    it('should run PRAGMA optimize before the final WAL checkpoint', async () => {
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      const db = dbCore.getDb();
+      const originalExec = db.exec.bind(db);
+      const executed: string[] = [];
+      db.exec = (sql: string) => {
+        executed.push(sql);
+        return originalExec(sql);
+      };
+
+      dbCore.close();
+      dbCore = null as unknown as typeof dbCore;
+
+      const optimizeIndex = executed.indexOf('PRAGMA optimize');
+      const checkpointIndex = executed.indexOf('PRAGMA wal_checkpoint(TRUNCATE)');
+      expect(optimizeIndex).toBeGreaterThanOrEqual(0);
+      expect(checkpointIndex).toBeGreaterThan(optimizeIndex);
+    });
   });
 
   describe('backup creation', () => {
@@ -231,6 +252,58 @@ describe('DatabaseCore', () => {
         );
         expect(backups.length).toBeLessThanOrEqual(3);
       }
+    });
+  });
+
+  describe('migration backup size bound', () => {
+    const envKey = 'HYPERNEO_DB_MIGRATION_BACKUP_MAX_BYTES';
+    let previousValue: string | undefined;
+
+    beforeEach(() => {
+      previousValue = process.env[envKey];
+    });
+
+    afterEach(() => {
+      if (previousValue === undefined) {
+        delete process.env[envKey];
+      } else {
+        process.env[envKey] = previousValue;
+      }
+    });
+
+    const listBackups = (): string[] => {
+      const backupDir = join(testDir, 'backups');
+      return existsSync(backupDir)
+        ? readdirSync(backupDir).filter((f) => f.startsWith('daemon-') && f.endsWith('.db'))
+        : [];
+    };
+
+    it('should skip the migration backup when the database exceeds the bound', async () => {
+      process.env[envKey] = '1';
+
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      expect(existsSync(dbPath)).toBe(true);
+      expect(listBackups()).toHaveLength(0);
+    });
+
+    it('should still create the migration backup when the bound is disabled', async () => {
+      process.env[envKey] = '0';
+
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      expect(listBackups()).toHaveLength(1);
+    });
+
+    it('should fall back to the default bound for invalid values', async () => {
+      process.env[envKey] = 'not-a-number';
+
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      expect(listBackups()).toHaveLength(1);
     });
   });
 
