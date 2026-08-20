@@ -14,7 +14,8 @@ export const buildAcpDiscoveryEnv = buildAcpSafeEnv;
 export async function disposeAcpSessions(
   commandLine: string,
   sessionIds: string[],
-  processTreeOwner?: AcpProcessTreeOwner
+  processTreeOwner?: AcpProcessTreeOwner,
+  signal?: AbortSignal
 ): Promise<void> {
   if (sessionIds.length === 0) return;
   const { command, args } = parseAcpCommand(commandLine);
@@ -29,12 +30,15 @@ export async function disposeAcpSessions(
     requestTimeoutMs: FETCH_REQUEST_TIMEOUT_MS,
     processTreeOwner: owner,
   });
+  const abortDispose = () => client.close();
+  signal?.addEventListener('abort', abortDispose, { once: true });
   try {
     await client.initialize();
     await client.authenticate();
     if (!client.canCloseSession()) return;
     await Promise.allSettled(sessionIds.map((id) => client.closeSession(id)));
   } finally {
+    signal?.removeEventListener('abort', abortDispose);
     client.close();
   }
 }

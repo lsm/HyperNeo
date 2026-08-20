@@ -199,10 +199,16 @@ async function invalidateAcpSessions(
       : [];
   clearPersistedAcpSessionIds?.();
   if (previousCommand && sessionIds.length > 0) {
-    await Promise.race([
-      disposeAcpSessions(previousCommand, sessionIds).catch(() => {}),
-      new Promise((resolve) => setTimeout(resolve, ACP_DISPOSE_TIMEOUT_MS)),
-    ]);
+    const disposeController = new AbortController();
+    const disposeTimer = setTimeout(() => disposeController.abort(), ACP_DISPOSE_TIMEOUT_MS);
+    disposeTimer.unref();
+    await disposeAcpSessions(
+      previousCommand,
+      sessionIds,
+      undefined,
+      disposeController.signal
+    ).catch(() => {});
+    clearTimeout(disposeTimer);
   }
   await sessionManager?.interruptProviderSessions('acp');
 }
@@ -410,17 +416,14 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             registeredAcpProvider instanceof AcpProvider
               ? registeredAcpProvider.getAcpCommand()
               : process.env.HYPERNEO_ACP_COMMAND;
+          const effectiveAcpCommandBeforeEnable =
+            readAcpCommand(existing.configJson) ?? liveAcpCommand;
           const enablingChangedAcpCommand =
             existing.providerId === 'acp' &&
             existing.isEnabled === false &&
             updates.isEnabled === true &&
-            liveAcpCommand !== undefined &&
-            acpCommandsDiffer(
-              liveAcpCommand,
-              updates.configJson !== undefined
-                ? updatedAcpCommand
-                : readAcpCommand(existing.configJson)
-            );
+            updates.configJson !== undefined &&
+            acpCommandsDiffer(effectiveAcpCommandBeforeEnable, updatedAcpCommand);
           const acpCommandChanged =
             existing.providerId === 'acp' &&
             updates.configJson !== undefined &&

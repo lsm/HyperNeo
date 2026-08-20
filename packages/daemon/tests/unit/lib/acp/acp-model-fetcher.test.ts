@@ -8,6 +8,7 @@ let lastClient: MockAcpClient | undefined;
 let authenticateError: Error | undefined;
 let configOptions: AcpConfigOption[] = [];
 let clientCanCloseSession = false;
+let initializeGate: Promise<void> | null = null;
 
 class MockAcpClient {
   constructor(options: AcpClientOptions) {
@@ -17,6 +18,7 @@ class MockAcpClient {
 
   initialize = mock(async () => {
     calls.push('initialize');
+    if (initializeGate) await initializeGate;
     return { protocolVersion: 1 };
   });
 
@@ -65,6 +67,7 @@ describe('fetchAcpModels', () => {
     lastClient = undefined;
     authenticateError = undefined;
     clientCanCloseSession = false;
+    initializeGate = null;
     configOptions = [
       {
         id: 'model',
@@ -162,5 +165,30 @@ describe('fetchAcpModels', () => {
     await disposeAcpSessions('devin acp', ['session-a'], undefined);
 
     expect(calls).toEqual(['initialize', 'authenticate', 'close']);
+  });
+
+  test('closes the disposal client when its signal aborts', async () => {
+    clientCanCloseSession = true;
+    let releaseInitialize: () => void;
+    initializeGate = new Promise<void>((resolve) => {
+      releaseInitialize = resolve;
+    });
+    const controller = new AbortController();
+
+    const disposePromise = disposeAcpSessions(
+      'devin acp',
+      ['session-a'],
+      undefined,
+      controller.signal
+    );
+    for (let i = 0; i < 20 && !calls.includes('initialize'); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    controller.abort();
+    initializeGate = null;
+    releaseInitialize!();
+    await disposePromise;
+
+    expect(lastClient?.close).toHaveBeenCalled();
   });
 });

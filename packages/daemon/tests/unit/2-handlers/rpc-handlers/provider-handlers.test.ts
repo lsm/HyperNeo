@@ -503,7 +503,7 @@ describe('Provider RPC handlers', () => {
       expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
     });
 
-    it('invalidates ACP sessions when enabling a stored command that differs from live', async () => {
+    it('preserves ACP sessions when re-enabling a stored override that differs from env', async () => {
       const provider = new AcpProvider({}, async () => {});
       provider.setAcpCommand('old acp');
       getProviderRegistry().register(provider);
@@ -520,8 +520,8 @@ describe('Provider RPC handlers', () => {
       await handlers.get('providers.update')!({ id: created.id, params: { isEnabled: true } }, {});
 
       expect(provider.getAcpCommand()).toBe('new acp');
-      expect(sessionManager.interruptProviderSessions).toHaveBeenCalledWith('acp');
-      expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
+      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
     });
 
     it('invalidates ACP sessions when enabling with a new command', async () => {
