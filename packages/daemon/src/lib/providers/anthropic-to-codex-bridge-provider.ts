@@ -939,17 +939,22 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       !this.modelCache ||
       !this.isModelCacheFresh(this.modelCache, scope)
     ) {
-      const revalidate = !this.forceModelRefresh;
-      this.forceModelRefresh = false;
       const refreshKey = this.scopeKey(scope);
-      let refresh = this.modelRefreshes.get(refreshKey);
-      if (!refresh) {
-        refresh = this.fetchModelCatalog(auth, revalidate).finally(() => {
+      const activeRefresh = this.modelRefreshes.get(refreshKey);
+      if (activeRefresh) await activeRefresh;
+      if (
+        this.forceModelRefresh ||
+        !this.modelCache ||
+        !this.isModelCacheFresh(this.modelCache, scope)
+      ) {
+        const revalidate = !this.forceModelRefresh;
+        this.forceModelRefresh = false;
+        const refresh = this.fetchModelCatalog(auth, revalidate).finally(() => {
           this.modelRefreshes.delete(refreshKey);
         });
         this.modelRefreshes.set(refreshKey, refresh);
+        await refresh;
       }
-      await refresh;
     }
     return this.catalogEntries
       .filter((entry) => entry.visibility === 'list')

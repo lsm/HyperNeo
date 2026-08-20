@@ -1418,6 +1418,44 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect((init.headers as Record<string, string>)['if-none-match']).toBeUndefined();
     });
 
+    it('queues a forced refresh behind an in-flight conditional request', async () => {
+      let resolveFirst: ((response: Response) => void) | undefined;
+      const firstResponse = new Promise<Response>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const fetchImpl = mock()
+        .mockImplementationOnce(async () => firstResponse)
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data: [{ id: 'gpt-forced-after-flight' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      const initial = provider.getModels();
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+      provider.clearModelCache();
+      const forced = provider.getModels();
+      resolveFirst?.(
+        new Response(JSON.stringify({ data: [{ id: 'gpt-in-flight' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', ETag: 'catalog-v1' },
+        })
+      );
+
+      await initial;
+      const models = await forced;
+
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      const [, forcedInit] = (fetchImpl as ReturnType<typeof mock>).mock.calls[1] as [
+        URL,
+        RequestInit,
+      ];
+      expect((forcedInit.headers as Record<string, string>)['if-none-match']).toBeUndefined();
+      expect(models.map((model) => model.id)).toEqual(['gpt-forced-after-flight']);
+    });
+
     it('keeps the last valid catalog when a forced refresh is malformed', async () => {
       const fetchImpl = mock()
         .mockResolvedValueOnce(
