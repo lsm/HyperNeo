@@ -1,10 +1,5 @@
-import {
-  isRateOrUsageLimited,
-  isWorkflowRunSucceeded,
-  isWorkflowRunWaiting,
-  type SpaceTaskStatus,
-  type WorkflowRunStatus,
-} from '@hyperneo/shared';
+import type { SpaceTaskStatus, WorkflowRunStatus } from '@hyperneo/shared';
+import { decideRunTickAdmissionViaPipeline } from './run-tick-decision-pipeline';
 
 export interface RunTickAdmissionInput {
   runStatus: WorkflowRunStatus | null;
@@ -40,32 +35,7 @@ export type RunTickAdmissionDecision =
   | { action: 'proceed' };
 
 export function decideRunTickAdmission(input: RunTickAdmissionInput): RunTickAdmissionDecision {
-  if (input.runStatus === null) return { action: 'skip', reason: 'missing_run' };
-  if (input.runStatus === 'cancelled' || isWorkflowRunSucceeded(input.runStatus)) {
-    return { action: 'clearFinishedRun' };
-  }
-  if (isWorkflowRunWaiting(input.runStatus)) return { action: 'recoverWaitingRun' };
-  if (!input.hasExecutorMeta) return { action: 'skip', reason: 'no_executor_meta' };
-  if (input.runTaskCount === 0) return { action: 'skip', reason: 'no_run_tasks' };
-  if (!input.hasCanonicalTask) return { action: 'skip', reason: 'no_canonical_task' };
-  if (!input.hasEndNodeId) return { action: 'blockInvalidWorkflow' };
-  if (input.canonicalTaskStatus !== null && isRateOrUsageLimited(input.canonicalTaskStatus)) {
-    return { action: 'skip', reason: 'rate_or_usage_limited' };
-  }
-  if (input.canonicalTaskStatus === 'stopped') {
-    return { action: 'skip', reason: 'task_stopped' };
-  }
-  if (input.executionCount === 0) return { action: 'skip', reason: 'no_executions' };
-  if (!input.runIsComplete && input.hasBlockedExecution) {
-    return {
-      action: 'blockOnBlockedExecutions',
-      blockedReason: input.firstBlockedResult ?? 'One or more workflow agents are blocked',
-    };
-  }
-  if (input.canonicalTaskStatus === 'open' && input.availableTaskSlots <= 0) {
-    return { action: 'deferNoAvailableSlots' };
-  }
-  return { action: 'proceed' };
+  return decideRunTickAdmissionViaPipeline(input);
 }
 
 export interface TimedExecutionSnapshot {
