@@ -352,20 +352,20 @@ export class SDKMessageHandler {
       const deliveryUuids = batchUuids?.includes(messageId)
         ? [messageId, ...batchUuids.filter((uuid) => uuid !== messageId)]
         : [messageId];
-      const consumedIds = db
+      const consumed = db
         .getSDKMessageRepo()
         .markDeliveriesConsumedAtTurnEnd(session.id, deliveryUuids, resultUuid);
-      const consumedId = consumedIds[0];
+      const consumedId = consumed.ids[0];
       if (!consumedId) continue;
-      db.updateMessageTimestamp(consumedId, consumedAt);
       if (messageQueue.acknowledgeYielded(messageId)) {
-        for (const uuid of deliveryUuids) {
+        for (const uuid of consumed.uuids) {
           signalDeliveryConsumed(session.id, uuid);
         }
       }
+      db.updateMessageTimestamp(consumedId, consumedAt);
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: session.id,
-        messageIds: consumedIds,
+        messageIds: consumed.ids,
         status: 'consumed',
       });
 

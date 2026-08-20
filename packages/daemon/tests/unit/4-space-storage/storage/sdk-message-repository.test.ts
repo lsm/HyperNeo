@@ -2151,7 +2151,10 @@ describe('SDKMessageRepository', () => {
           ['yielded-msg', 'member-msg'],
           resultUuid
         )
-      ).toEqual([kickoffId, memberId]);
+      ).toEqual({
+        ids: [kickoffId, memberId],
+        uuids: ['yielded-msg', 'member-msg'],
+      });
       const rows = db
         .prepare(
           'SELECT send_status AS status, conversation_turn_index AS turn, consumed_seq AS seq FROM sdk_messages WHERE id IN (?, ?) ORDER BY id'
@@ -2164,6 +2167,37 @@ describe('SDKMessageRepository', () => {
       expect(rows.map((row) => row.status)).toEqual(['consumed', 'consumed']);
       expect(new Set(rows.map((row) => row.turn))).toEqual(new Set([1]));
       expect(new Set(rows.map((row) => row.seq))).toEqual(new Set([result.consumed_seq]));
+    });
+
+    it('returns only batch members actually consumed at turn end', () => {
+      const kickoffId = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('yielded prompt', 'yielded-msg'),
+        'enqueued'
+      );
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('held member', 'held-member-msg'),
+        'deferred'
+      );
+      const resultUuid = 'partial-batch-result-uuid';
+      repository.saveSDKMessage('session-1', {
+        type: 'result',
+        subtype: 'success',
+        uuid: resultUuid,
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage);
+
+      expect(
+        repository.markDeliveriesConsumedAtTurnEnd(
+          'session-1',
+          ['yielded-msg', 'held-member-msg'],
+          resultUuid
+        )
+      ).toEqual({ ids: [kickoffId], uuids: ['yielded-msg'] });
+      expect(repository.getDeliveryContent('session-1', 'held-member-msg')?.sendStatus).toBe(
+        'deferred'
+      );
     });
 
     it('does not consume at turn end without the matching successful top-level result', () => {

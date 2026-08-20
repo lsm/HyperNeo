@@ -1231,7 +1231,10 @@ describe('SDKMessageHandler', () => {
         }
         return [];
       });
-      const markDeliveriesConsumedAtTurnEndSpy = mock(() => ['db-msg-1']);
+      const markDeliveriesConsumedAtTurnEndSpy = mock(() => ({
+        ids: ['db-msg-1'],
+        uuids: ['enqueued-user-uuid'],
+      }));
       mockDb.getSDKMessageRepo = mock(() => ({
         markDeliveriesConsumedAtTurnEnd: markDeliveriesConsumedAtTurnEndSpy,
       })) as never;
@@ -1330,7 +1333,10 @@ describe('SDKMessageHandler', () => {
         }
         return [];
       });
-      const markDeliveriesConsumedAtTurnEndSpy = mock(() => ['db-yielded', 'db-batch-member']);
+      const markDeliveriesConsumedAtTurnEndSpy = mock(() => ({
+        ids: ['db-yielded', 'db-batch-member'],
+        uuids: ['yielded-user-uuid', 'batch-member-uuid'],
+      }));
       mockDb.getJobQueueRepo = mock(() => ({
         activeDeliveryMessageUuids: () => new Set(['yielded-user-uuid']),
         getActiveDeliveryBatchUuids: () => ['yielded-user-uuid', 'batch-member-uuid'],
@@ -1380,6 +1386,115 @@ describe('SDKMessageHandler', () => {
         messageIds: ['db-yielded', 'db-batch-member'],
         status: 'consumed',
       });
+    });
+
+    it('signals only batch members actually consumed at turn end', async () => {
+      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+        if (status === 'enqueued') {
+          return [
+            {
+              dbId: 'db-yielded',
+              uuid: 'yielded-user-uuid',
+              type: 'user',
+              timestamp: 1700000000000,
+              message: { role: 'user', content: [{ type: 'text', text: 'yielded' }] },
+            },
+          ];
+        }
+        return [];
+      });
+      mockDb.getJobQueueRepo = mock(() => ({
+        activeDeliveryMessageUuids: () => new Set(['yielded-user-uuid']),
+        getActiveDeliveryBatchUuids: () => ['yielded-user-uuid', 'held-member-uuid'],
+      })) as never;
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markDeliveriesConsumedAtTurnEnd: mock(() => ({
+          ids: ['db-yielded'],
+          uuids: ['yielded-user-uuid'],
+        })),
+      })) as never;
+      const kickoffWaiter = waitForDeliveryConsumption(mockSession.id, 'yielded-user-uuid');
+      const memberWaiter = waitForDeliveryConsumption(mockSession.id, 'held-member-uuid');
+      getStateSpy.mockReturnValue({
+        status: 'processing',
+        messageId: 'yielded-user-uuid',
+        phase: 'streaming',
+      });
+      hasPendingOrClaimedSpy.mockReturnValue(false);
+      hasYieldedSpy.mockImplementation((uuid: string) => uuid === 'yielded-user-uuid');
+      acknowledgeYieldedSpy.mockImplementation((uuid: string) => uuid === 'yielded-user-uuid');
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-uuid',
+        usage: { input_tokens: 1, output_tokens: 1 },
+        total_cost_usd: 0,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      await expect(kickoffWaiter.promise).resolves.toBeUndefined();
+      let memberSettled = false;
+      void memberWaiter.promise.then(() => {
+        memberSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(memberSettled).toBe(false);
+      kickoffWaiter.cancel();
+      memberWaiter.cancel();
+    });
+
+    it('settles yielded delivery before timestamp maintenance', async () => {
+      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+        if (status === 'enqueued') {
+          return [
+            {
+              dbId: 'db-yielded',
+              uuid: 'yielded-user-uuid',
+              type: 'user',
+              timestamp: 1700000000000,
+              message: { role: 'user', content: [{ type: 'text', text: 'yielded' }] },
+            },
+          ];
+        }
+        return [];
+      });
+      mockDb.getJobQueueRepo = mock(() => ({
+        activeDeliveryMessageUuids: () => new Set(['yielded-user-uuid']),
+      })) as never;
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markDeliveriesConsumedAtTurnEnd: mock(() => ({
+          ids: ['db-yielded'],
+          uuids: ['yielded-user-uuid'],
+        })),
+      })) as never;
+      mockDb.updateMessageTimestamp = mock(() => {
+        throw new Error('search maintenance failed');
+      });
+      const kickoffWaiter = waitForDeliveryConsumption(mockSession.id, 'yielded-user-uuid');
+      getStateSpy.mockReturnValue({
+        status: 'processing',
+        messageId: 'yielded-user-uuid',
+        phase: 'streaming',
+      });
+      hasPendingOrClaimedSpy.mockReturnValue(false);
+      hasYieldedSpy.mockImplementation((uuid: string) => uuid === 'yielded-user-uuid');
+      acknowledgeYieldedSpy.mockImplementation((uuid: string) => uuid === 'yielded-user-uuid');
+
+      await expect(
+        handler.handleMessage({
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: { input_tokens: 1, output_tokens: 1 },
+          total_cost_usd: 0,
+          modelUsage: {},
+        } as unknown as SDKMessage)
+      ).rejects.toThrow('search maintenance failed');
+
+      expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('yielded-user-uuid');
+      await expect(kickoffWaiter.promise).resolves.toBeUndefined();
+      kickoffWaiter.cancel();
     });
 
     it('leaves an active durable steer enqueued and claimable at turn end (#3744401261)', async () => {

@@ -1596,14 +1596,14 @@ export class SDKMessageRepository {
     uuid: string,
     resultUuid: string
   ): string | null {
-    return this.markDeliveriesConsumedAtTurnEnd(sessionId, [uuid], resultUuid)[0] ?? null;
+    return this.markDeliveriesConsumedAtTurnEnd(sessionId, [uuid], resultUuid).ids[0] ?? null;
   }
 
   markDeliveriesConsumedAtTurnEnd(
     sessionId: string,
     uuids: string[],
     resultUuid: string
-  ): string[] {
+  ): { ids: string[]; uuids: string[] } {
     return this.db.transaction(() => {
       const result = this.db
         .prepare(
@@ -1614,8 +1614,9 @@ export class SDKMessageRepository {
              LIMIT 1`
         )
         .get(sessionId, resultUuid) as { consumed_seq: number } | undefined;
-      if (!result) return [];
+      if (!result) return { ids: [], uuids: [] };
       const ids: string[] = [];
+      const consumedUuids: string[] = [];
       for (const [index, uuid] of [...new Set(uuids)].entries()) {
         const row = this.db
           .prepare(
@@ -1625,14 +1626,17 @@ export class SDKMessageRepository {
                ORDER BY timestamp ASC LIMIT 1`
           )
           .get(sessionId, uuid) as { id: string } | undefined;
-        if (index === 0 && !row) return [];
-        if (row) ids.push(row.id);
+        if (index === 0 && !row) return { ids: [], uuids: [] };
+        if (row) {
+          ids.push(row.id);
+          consumedUuids.push(uuid);
+        }
       }
       this.updateMessageStatus(ids, 'consumed', {
         sharedTurn: true,
         consumedSeq: result.consumed_seq,
       });
-      return ids;
+      return { ids, uuids: consumedUuids };
     })();
   }
 
