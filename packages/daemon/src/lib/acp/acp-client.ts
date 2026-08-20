@@ -4,6 +4,7 @@ import type {
   AcpAuthenticateParams,
   AcpSessionNewParams,
   AcpSessionNewResult,
+  AcpSessionCloseParams,
   AcpSessionPromptParams,
   AcpSessionPromptResult,
   AcpSessionCancelParams,
@@ -248,6 +249,20 @@ export class AcpClient {
     if (this.agentCapabilities?.loadSession) return true;
     const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
     return !!sessionCapabilities && 'resume' in sessionCapabilities;
+  }
+
+  canCloseSession(): boolean {
+    return !!this.agentCapabilities?.sessionCapabilities?.close;
+  }
+
+  async closeSession(): Promise<void> {
+    if (!this.sessionId) return;
+    const response = await this.transport.sendRequest('session/close', {
+      sessionId: this.sessionId,
+    } as AcpSessionCloseParams);
+    if ('error' in response) {
+      throw new Error(`session/close failed: ${response.error.message}`);
+    }
   }
 
   async *sendPrompt(

@@ -42,6 +42,9 @@ export async function fetchAcpModels(
       name: choice.name,
     }));
   } finally {
+    if (client.canCloseSession()) {
+      await client.closeSession().catch(() => {});
+    }
     client.close();
   }
 }

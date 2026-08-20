@@ -6,6 +6,7 @@ const calls: string[] = [];
 let clientOptions: AcpClientOptions | undefined;
 let authenticateError: Error | undefined;
 let configOptions: AcpConfigOption[] = [];
+let clientCanCloseSession = false;
 
 class MockAcpClient {
   constructor(options: AcpClientOptions) {
@@ -25,6 +26,12 @@ class MockAcpClient {
   createSession = mock(async () => {
     calls.push('createSession');
     return { sessionId: 'session-1', configOptions };
+  });
+
+  canCloseSession = mock(() => clientCanCloseSession);
+
+  closeSession = mock(async () => {
+    calls.push('closeSession');
   });
 
   close = mock(() => {
@@ -52,6 +59,7 @@ describe('fetchAcpModels', () => {
     calls.length = 0;
     clientOptions = undefined;
     authenticateError = undefined;
+    clientCanCloseSession = false;
     configOptions = [
       {
         id: 'model',
@@ -125,5 +133,13 @@ describe('fetchAcpModels', () => {
       if (originalSecret === undefined) delete process.env.UNRELATED_PROVIDER_TOKEN;
       else process.env.UNRELATED_PROVIDER_TOKEN = originalSecret;
     }
+  });
+
+  test('disposes the discovery session before closing when supported', async () => {
+    clientCanCloseSession = true;
+
+    await fetchAcpModels(new AcpProvider(), { command: 'devin acp', cwd: '/tmp' });
+
+    expect(calls).toEqual(['initialize', 'authenticate', 'createSession', 'closeSession', 'close']);
   });
 });
