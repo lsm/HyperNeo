@@ -1,8 +1,8 @@
-import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
 import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error-taxonomy';
-import { isJsonContentType, normalizeUpstreamError } from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
 import type { AnthropicRequest } from '../provider-anthropic-compat/translator.js';
+import { type AnthropicErrorType, createAnthropicErrorBody } from '../shared/error-envelope.js';
+import { isJsonContentType, normalizeUpstreamError } from '../shared/normalize-upstream-error.js';
 
 const logger = new Logger('anthropic-messages-bridge-server');
 
@@ -96,6 +96,8 @@ function enforceThinking(bodyBytes: ArrayBuffer, desired: SessionThinkingConfig)
   const body: Partial<AnthropicRequest> = JSON.parse(text);
   if (desired === undefined) {
     delete body.thinking;
+  } else if (typeof body.max_tokens !== 'number' || body.max_tokens <= desired.budget_tokens) {
+    return bodyBytes;
   } else {
     body.thinking = desired;
   }
@@ -161,9 +163,13 @@ export function createAnthropicMessagesBridgeServer(
       }
 
       const sessionId = extractSessionIdFromRequest(req);
-      if (sessionId && sessionThinking.has(sessionId)) {
+      if (isMessages && sessionId && sessionThinking.has(sessionId)) {
         const desired = sessionThinking.get(sessionId);
-        bodyBytes = enforceThinking(bodyBytes, desired);
+        try {
+          bodyBytes = enforceThinking(bodyBytes, desired);
+        } catch {
+          return sendJsonError(400, 'invalid_request_error', 'Bad Request: invalid JSON');
+        }
       }
 
       const target = isMessages ? messagesUrl : countTokensUrl;
