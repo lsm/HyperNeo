@@ -173,7 +173,7 @@ describe('ACP Integration', () => {
 
     const types = messages.map((m) => (m as { type: string }).type);
     expect(types).toContain('assistant');
-    expect(types).toContain('tool_progress');
+    expect(types).toContain('user');
     expect(types).toContain('result');
 
     const assistantMsgs = messages.filter((m) => (m as { type: string }).type === 'assistant');
@@ -200,6 +200,12 @@ describe('ACP Integration', () => {
     ).message.content.find((c) => c.type === 'tool_use');
     expect(toolBlock?.id).toBe('tc-mock-1');
     expect(toolBlock?.name).toBe('Read file');
+
+    const toolResult = messages.find((m) => (m as { type: string }).type === 'user') as
+      | { parent_tool_use_id: string; tool_use_result: unknown }
+      | undefined;
+    expect(toolResult?.parent_tool_use_id).toBe('tc-mock-1');
+    expect(toolResult?.tool_use_result).toBe('');
 
     adapter.close();
   });
