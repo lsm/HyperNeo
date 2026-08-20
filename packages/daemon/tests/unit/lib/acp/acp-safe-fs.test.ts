@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -124,6 +125,51 @@ bunRuntimeTest('does not follow a final read symlink', async () => {
         maxBytes: 1024,
       })
     ).rejects.toThrow('Unable to open ACP filesystem path');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+bunRuntimeTest('rejects path segments containing NUL bytes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-nul-'));
+  const workspace = join(root, 'workspace');
+  await mkdir(workspace);
+
+  try {
+    await expect(
+      readFileWithinWorkspace(workspace, ['..\0ignored', 'secret.txt'], {
+        startLine: 0,
+        lineLimit: undefined,
+        maxBytes: 1024,
+      })
+    ).rejects.toThrow('Unable to access ACP filesystem path');
+    await expect(
+      writeFileWithinWorkspace(
+        workspace,
+        ['..\0ignored', 'secret.txt'],
+        'blocked',
+        new AbortController().signal
+      )
+    ).rejects.toThrow('Unable to access ACP filesystem path');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+bunRuntimeTest('rejects named pipes without blocking', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-fifo-'));
+  const workspace = join(root, 'workspace');
+  await mkdir(workspace);
+  execFileSync('mkfifo', [join(workspace, 'pipe')]);
+
+  try {
+    await expect(
+      readFileWithinWorkspace(workspace, ['pipe'], {
+        startLine: 0,
+        lineLimit: undefined,
+        maxBytes: 1024,
+      })
+    ).rejects.toThrow('Unable to read ACP filesystem path');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -1,4 +1,4 @@
-import { constants } from 'node:fs';
+import { constants, fstatSync } from 'node:fs';
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -67,7 +67,8 @@ function throwFsError(operation: string, path: string): never {
 function platformLibraryCandidates(): string[] {
   if (process.platform === 'darwin') return ['/usr/lib/libSystem.B.dylib'];
   if (process.platform !== 'linux') return [];
-  const muslArch = process.arch === 'arm64' ? 'aarch64' : process.arch;
+  const muslArch =
+    process.arch === 'arm64' ? 'aarch64' : process.arch === 'x64' ? 'x86_64' : process.arch;
   return [
     'libc.so.6',
     `libc.musl-${muslArch}.so.1`,
@@ -131,7 +132,9 @@ function getSafeFsBackend(): Promise<SafeFsBackend> {
 function validateSegments(segments: string[]): void {
   if (
     segments.length === 0 ||
-    segments.some((segment) => !segment || segment === '.' || segment === '..')
+    segments.some(
+      (segment) => !segment || segment === '.' || segment === '..' || segment.includes('\0')
+    )
   ) {
     throwFsError('access', segments.join('/'));
   }
@@ -191,11 +194,15 @@ export async function readFileWithinWorkspace(
   const fileFd = symbols.openat(
     directoryFd,
     cString(fileName),
-    constants.O_RDONLY | constants.O_NOFOLLOW,
+    constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
     0
   );
   closeFile(symbols, directoryFd);
   if (fileFd < 0) throwFsError('open', fileName);
+  if (!fstatSync(fileFd).isFile()) {
+    closeFile(symbols, fileFd);
+    throwFsError('read', fileName);
+  }
 
   const endLine =
     options.lineLimit === undefined
