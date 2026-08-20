@@ -1,18 +1,22 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import {
-  createAnthropicMessagesBridgeServer,
   type AnthropicMessagesBridgeServer,
+  createAnthropicMessagesBridgeServer,
 } from '../../../../../src/lib/providers/anthropic-messages-bridge/server';
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
 type FetchImpl = typeof fetch;
 
-function makeServer(upstream: FetchImpl): AnthropicMessagesBridgeServer {
+function makeServer(
+  upstream: FetchImpl,
+  thinkingSupported?: boolean
+): AnthropicMessagesBridgeServer {
   return createAnthropicMessagesBridgeServer({
     baseUrl: 'https://open.bigmodel.cn/api/anthropic',
     apiKey: 'test-key',
     fetchImpl: upstream,
+    thinkingSupported,
   });
 }
 
@@ -199,3 +203,209 @@ describe.skipIf(!isBun)(
     });
   }
 );
+
+describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement', () => {
+  let server: AnthropicMessagesBridgeServer | undefined;
+
+  afterEach(() => {
+    server?.stop();
+    server = undefined;
+  });
+
+  async function postWithSession(
+    port: number,
+    sessionId: string | undefined,
+    body: object | string,
+    path = '/v1/messages'
+  ): Promise<Response> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (sessionId) headers.Authorization = `Bearer custom-endpoint:${sessionId}`;
+    return await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: 'POST',
+      headers,
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+    });
+  }
+
+  it('rewrites an adaptive thinking body to the session-configured enabled budget', async () => {
+    let upstreamThinking: unknown = 'not-captured';
+    server = makeServer(async (_url, init) => {
+      const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
+        thinking?: unknown;
+      };
+      upstreamThinking = body.thinking ?? null;
+      return new Response(JSON.stringify({ input_tokens: 1 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    server.setSessionThinkingConfig?.('sess-1', { type: 'enabled', budget_tokens: 31999 });
+
+    const res = await postWithSession(server.port, 'sess-1', {
+      model: 'swe-1-7',
+      max_tokens: 32000,
+      messages: [{ role: 'user', content: 'hi' }],
+      thinking: { type: 'adaptive' },
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(upstreamThinking).toEqual({ type: 'enabled', budget_tokens: 31999 });
+  });
+
+  it('strips enabled thinking when the model does not support it', async () => {
+    let upstreamThinking: unknown = 'not-captured';
+    server = makeServer(async (_url, init) => {
+      const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
+        thinking?: unknown;
+      };
+      upstreamThinking = body.thinking ?? null;
+      return new Response(JSON.stringify({ input_tokens: 1 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }, false);
+    server.setSessionThinkingConfig?.('sess-unsupported', {
+      type: 'enabled',
+      budget_tokens: 31999,
+    });
+
+    const res = await postWithSession(server.port, 'sess-unsupported', {
+      model: 'swe-1-7',
+      max_tokens: 32000,
+      messages: [{ role: 'user', content: 'hi' }],
+      thinking: { type: 'adaptive' },
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(upstreamThinking).toBeNull();
+  });
+
+  it('strips thinking entirely for a session configured as off', async () => {
+    let upstreamHadThinking: boolean | null = null;
+    server = makeServer(async (_url, init) => {
+      const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
+        thinking?: unknown;
+      };
+      upstreamHadThinking = 'thinking' in body;
+      return new Response(JSON.stringify({ input_tokens: 1 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    server.setSessionThinkingConfig?.('sess-off', undefined);
+
+    const res = await postWithSession(server.port, 'sess-off', {
+      model: 'swe-1-7',
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'hi' }],
+      thinking: { type: 'adaptive' },
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(upstreamHadThinking).toBe(false);
+  });
+
+  it('leaves unknown sessions untouched (no rewrite without an explicit config)', async () => {
+    let upstreamThinking: unknown = 'not-captured';
+    server = makeServer(async (_url, init) => {
+      const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
+        thinking?: unknown;
+      };
+      upstreamThinking = body.thinking ?? null;
+      return new Response(JSON.stringify({ input_tokens: 1 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    const res = await postWithSession(server.port, 'never-configured', {
+      model: 'swe-1-7',
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'hi' }],
+      thinking: { type: 'adaptive' },
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(upstreamThinking).toEqual({ type: 'adaptive' });
+  });
+
+  it('leaves short-output requests unchanged when their max tokens cannot fit the budget', async () => {
+    let upstreamThinking: unknown = 'not-captured';
+    server = makeServer(async (_url, init) => {
+      const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
+        thinking?: unknown;
+      };
+      upstreamThinking = body.thinking ?? null;
+      return new Response(JSON.stringify({ input_tokens: 1 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    server.setSessionThinkingConfig?.('sess-short', {
+      type: 'enabled',
+      budget_tokens: 31999,
+    });
+
+    const res = await postWithSession(server.port, 'sess-short', {
+      model: 'swe-1-7',
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'hi' }],
+      thinking: { type: 'adaptive' },
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(upstreamThinking).toEqual({ type: 'adaptive' });
+  });
+
+  it('leaves count-token request bodies unchanged', async () => {
+    let upstreamBody: unknown;
+    server = makeServer(async (_url, init) => {
+      upstreamBody = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer));
+      return new Response(JSON.stringify({ input_tokens: 1 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    server.setSessionThinkingConfig?.('sess-count', {
+      type: 'enabled',
+      budget_tokens: 31999,
+    });
+    const body = {
+      model: 'swe-1-7',
+      messages: [{ role: 'user', content: 'hi' }],
+      thinking: { type: 'adaptive' },
+    };
+
+    const res = await postWithSession(server.port, 'sess-count', body, '/v1/messages/count_tokens');
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(upstreamBody).toEqual(body);
+  });
+
+  it('returns an Anthropic bad-request envelope for malformed configured-session JSON', async () => {
+    let upstreamCalled = false;
+    server = makeServer(async () => {
+      upstreamCalled = true;
+      return new Response('{}');
+    });
+    server.setSessionThinkingConfig?.('sess-invalid', {
+      type: 'enabled',
+      budget_tokens: 31999,
+    });
+
+    const res = await postWithSession(server.port, 'sess-invalid', '{');
+
+    expect(res.status).toBe(400);
+    expect(upstreamCalled).toBe(false);
+    expect(await res.json()).toEqual({
+      type: 'error',
+      error: { type: 'invalid_request_error', message: 'Bad Request: invalid JSON' },
+    });
+  });
+});

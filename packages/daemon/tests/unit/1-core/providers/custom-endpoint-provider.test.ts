@@ -481,7 +481,11 @@ describe('CustomEndpointProvider', () => {
     });
 
     it('routes anthropic-messages endpoints through the anthropic bridge factory', () => {
-      const anthropicConfigs: Array<{ baseUrl: string; apiKey?: string }> = [];
+      const anthropicConfigs: Array<{
+        baseUrl: string;
+        apiKey?: string;
+        thinkingSupported?: boolean;
+      }> = [];
       const openaiFake = makeFakeBridge();
       const p = new CustomEndpointProvider(
         {
@@ -489,13 +493,22 @@ describe('CustomEndpointProvider', () => {
           id: 'self-hosted-claude',
           type: 'anthropic-messages',
           baseUrl: 'https://claude.example.com',
-          models: [{ id: 'claude-sonnet-proxied' }],
+          models: [
+            {
+              id: 'claude-sonnet-proxied',
+              capabilities: { thinking: false },
+            },
+          ],
           defaultModelId: 'claude-sonnet-proxied',
         },
         {
           bridgeFactories: {
             'anthropic-messages': (config) => {
-              anthropicConfigs.push({ baseUrl: config.baseUrl, apiKey: config.apiKey });
+              anthropicConfigs.push({
+                baseUrl: config.baseUrl,
+                apiKey: config.apiKey,
+                thinkingSupported: config.thinkingSupported,
+              });
               return { port: 40500, stop: () => {} };
             },
             'openai-chat': openaiFake.factory,
@@ -505,7 +518,10 @@ describe('CustomEndpointProvider', () => {
       p.buildSdkConfig('claude-sonnet-proxied');
       expect(anthropicConfigs).toHaveLength(1);
       expect(openaiFake.configs).toHaveLength(0);
-      expect(anthropicConfigs[0].baseUrl).toBe('https://claude.example.com');
+      expect(anthropicConfigs[0]).toMatchObject({
+        baseUrl: 'https://claude.example.com',
+        thinkingSupported: false,
+      });
     });
 
     it('routes ollama-native endpoints through the ollama bridge factory with num_ctx', () => {

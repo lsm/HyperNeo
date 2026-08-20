@@ -1,13 +1,17 @@
-import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
 import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error-taxonomy';
-import { isJsonContentType, normalizeUpstreamError } from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
+import type { AnthropicRequest } from '../provider-anthropic-compat/translator.js';
+import { type AnthropicErrorType, createAnthropicErrorBody } from '../shared/error-envelope.js';
+import { isJsonContentType, normalizeUpstreamError } from '../shared/normalize-upstream-error.js';
 
 const logger = new Logger('anthropic-messages-bridge-server');
+
+type SessionThinkingConfig = { type: 'enabled'; budget_tokens: number } | undefined;
 
 export type AnthropicMessagesBridgeServer = {
   port: number;
   stop(): void;
+  setSessionThinkingConfig?(sessionId: string, thinking: SessionThinkingConfig): void;
 };
 
 export type AnthropicMessagesBridgeModel = {
@@ -23,6 +27,7 @@ export type AnthropicMessagesBridgeConfig = {
   headers?: Record<string, string>;
   fetchImpl?: typeof fetch;
   models?: AnthropicMessagesBridgeModel[];
+  thinkingSupported?: boolean;
 };
 
 function sendJsonError(
@@ -75,6 +80,32 @@ export function buildUpstreamUrl(
   return parsed.toString();
 }
 
+function extractSessionIdFromRequest(req: Request): string | undefined {
+  for (const headerName of ['Authorization', 'x-api-key']) {
+    const value = req.headers.get(headerName);
+    if (!value) continue;
+    const token = value.startsWith('Bearer ') ? value.slice(7) : value;
+    if (token.startsWith('custom-endpoint:')) {
+      return token.slice('custom-endpoint:'.length);
+    }
+  }
+  return undefined;
+}
+
+function enforceThinking(bodyBytes: ArrayBuffer, desired: SessionThinkingConfig): ArrayBuffer {
+  const text = new TextDecoder().decode(bodyBytes);
+  const body: Partial<AnthropicRequest> = JSON.parse(text);
+  if (desired === undefined) {
+    delete body.thinking;
+  } else if (typeof body.max_tokens !== 'number' || body.max_tokens <= desired.budget_tokens) {
+    return bodyBytes;
+  } else {
+    body.thinking = desired;
+  }
+  const encoded = new TextEncoder().encode(JSON.stringify(body));
+  return encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
+}
+
 export function createAnthropicMessagesBridgeServer(
   config: AnthropicMessagesBridgeConfig
 ): AnthropicMessagesBridgeServer {
@@ -85,6 +116,8 @@ export function createAnthropicMessagesBridgeServer(
   const countTokensUrl = buildUpstreamUrl(config.baseUrl, '/v1/messages/count_tokens', [
     '/v1/messages',
   ]);
+
+  const sessionThinking = new Map<string, SessionThinkingConfig>();
 
   const server = Bun.serve({
     hostname: '127.0.0.1',
@@ -128,6 +161,17 @@ export function createAnthropicMessagesBridgeServer(
         bodyBytes = await req.arrayBuffer();
       } catch {
         return sendJsonError(400, 'invalid_request_error', 'Bad Request');
+      }
+
+      const sessionId = extractSessionIdFromRequest(req);
+      if (isMessages && sessionId && sessionThinking.has(sessionId)) {
+        const desired =
+          config.thinkingSupported === false ? undefined : sessionThinking.get(sessionId);
+        try {
+          bodyBytes = enforceThinking(bodyBytes, desired);
+        } catch {
+          return sendJsonError(400, 'invalid_request_error', 'Bad Request: invalid JSON');
+        }
       }
 
       const target = isMessages ? messagesUrl : countTokensUrl;
@@ -226,5 +270,8 @@ export function createAnthropicMessagesBridgeServer(
   return {
     port,
     stop: () => server.stop(true),
+    setSessionThinkingConfig(sessionId: string, thinking: SessionThinkingConfig) {
+      sessionThinking.set(sessionId, thinking);
+    },
   };
 }
