@@ -10,6 +10,9 @@ import type {
 import type { ModelInfo } from '@hyperneo/shared';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
+import { Logger } from '../logger.js';
+
+const logger = new Logger('anthropic-provider');
 
 const CANONICAL_SDK_IDS = new Set(['default', 'sonnet', 'opus', 'haiku', 'fable', 'sonnet[1m]']);
 
@@ -130,6 +133,16 @@ export class AnthropicProvider implements Provider {
       return [];
     }
 
+    try {
+      return await this.refreshModels();
+    } catch (error) {
+      logger.warn('AnthropicProvider: SDK model discovery failed:', error);
+      return [];
+    }
+  }
+
+  async refreshModels(): Promise<ModelInfo[]> {
+    if (!this.isAvailable()) return [];
     const models = await this.loadModelsFromSdk();
     this.modelCache = models;
     return models;

@@ -1155,7 +1155,8 @@ describe('Model Service', () => {
       };
       registry.register({
         id: 'shrinking-provider',
-        getModels: async () => [retained],
+        getModels: async () => [removed],
+        refreshModels: async () => [retained],
         isAvailable: async () => true,
       } as ProviderLike);
       setModelsCache(new Map([['global', [retained, removed]]]));

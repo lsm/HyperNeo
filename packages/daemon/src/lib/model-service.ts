@@ -213,7 +213,9 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
       const available = await provider.isAvailable();
       return {
         available,
-        models: available ? await provider.getModels() : [],
+        models: available
+          ? await (provider.refreshModels ? provider.refreshModels() : provider.getModels())
+          : [],
       };
     })
   );

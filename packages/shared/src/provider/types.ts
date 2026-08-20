@@ -70,6 +70,8 @@ export interface Provider {
 
   getModels(): Promise<ModelInfo[]>;
 
+  refreshModels?(): Promise<ModelInfo[]>;
+
   healthCheck?(): Promise<void>;
 
   ownsModel(modelId: string): boolean;

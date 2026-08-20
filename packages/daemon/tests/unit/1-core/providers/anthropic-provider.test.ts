@@ -246,7 +246,9 @@ describe('AnthropicProvider', () => {
       const providerWithCreds = new AnthropicProvider();
       providerWithCreds.clearModelCache();
 
-      await expect(providerWithCreds.getModels()).rejects.toThrow('SDK unavailable');
+      await expect(providerWithCreds.getModels()).resolves.toEqual([]);
+      await expect(providerWithCreds.refreshModels()).rejects.toThrow('SDK unavailable');
+      expect(providerWithCreds.isAvailable()).toBe(true);
     });
   });
 
