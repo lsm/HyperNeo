@@ -1050,6 +1050,7 @@ describe('AgentSession', () => {
       );
       (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
         admitWithId: mock(() => Promise.resolve()),
+        hasPendingOrInFlight: mock(() => false),
         isRunning: mock(() => false),
         size: mock(() => 0),
       };
@@ -1069,6 +1070,45 @@ describe('AgentSession', () => {
       await agentSession.stateManager.setProcessing('uuid-spurious');
       await agentSession.stateManager.setIdle();
       await expect(drive).resolves.toEqual({ outcome: 'completed' });
+    });
+
+    it('driveDeliveryTurn does not re-admit a pending message on retry', async () => {
+      let resultLanded = false;
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'enqueued' })),
+        hasTerminalResultAfter: mock(() => resultLanded),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const admitSpy = mock(() => Promise.resolve());
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        hasPendingOrInFlight: mock((uuid: string) => uuid === 'uuid-pending'),
+        isRunning: mock(() => false),
+        size: mock(() => 1),
+      };
+
+      await agentSession.stateManager.setProcessing('uuid-pending');
+      const drive = agentSession.driveDeliveryTurn(
+        'uuid-pending',
+        'hello',
+        null,
+        false,
+        () => true
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      resultLanded = true;
+      await agentSession.stateManager.setIdle();
+
+      await expect(drive).resolves.toEqual({ outcome: 'completed' });
+      expect(admitSpy).not.toHaveBeenCalled();
     });
 
     it('driveDeliveryTurn narrows the batch payload even when only the kickoff is admitted', async () => {
@@ -1096,6 +1136,7 @@ describe('AgentSession', () => {
       );
       (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
         admitWithId: mock(() => new Promise<void>(() => {})),
+        hasPendingOrInFlight: mock(() => false),
         isRunning: mock(() => false),
         size: mock(() => 0),
       };
@@ -1137,6 +1178,7 @@ describe('AgentSession', () => {
       );
       (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
         admitWithId: admitSpy,
+        hasPendingOrInFlight: mock(() => false),
         isRunning: mock(() => false),
         size: mock(() => 0),
       };

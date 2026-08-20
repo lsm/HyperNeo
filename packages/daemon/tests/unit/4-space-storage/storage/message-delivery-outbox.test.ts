@@ -268,6 +268,20 @@ describe('reconcileStrandedDeliveries (task #861 item 4 — orphan reconciler)',
     expect(activeJobCount()).toBe(1);
   });
 
+  it('does NOT re-enqueue a message still in-flight in the message queue', async () => {
+    persistEnqueued('inflight-1');
+
+    const count = await reconcileStrandedDeliveries({
+      sessionId: SESSION,
+      db: sdkRepo,
+      jobQueue,
+      isInFlight: (uuid) => uuid === 'inflight-1',
+    });
+
+    expect(count).toBe(0);
+    expect(activeJobCount()).toBe(0);
+  });
+
   it('is idempotent: a second run after re-enqueue is a no-op', async () => {
     persistEnqueued('once-1');
     expect(await reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue })).toBe(

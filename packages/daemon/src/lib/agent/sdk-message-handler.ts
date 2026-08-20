@@ -324,12 +324,17 @@ export class SDKMessageHandler {
   }
 
   private async acknowledgeOldestQueuedUserOnTurnEnd(): Promise<void> {
-    const { session, db, internalEventBus, messageHub } = this.ctx;
+    const { session, db, internalEventBus, messageHub, messageQueue } = this.ctx;
     const durableOwned =
       db.getJobQueueRepo?.()?.activeDeliveryMessageUuids(session.id) ?? new Set();
-    const enqueuedUsers = db
-      .getMessagesByStatus(session.id, 'enqueued')
-      .filter((enqueued) => isSDKUserMessage(enqueued) && !durableOwned.has(enqueued.uuid ?? ''));
+    const enqueuedUsers = db.getMessagesByStatus(session.id, 'enqueued').filter((enqueued) => {
+      const uuid = enqueued.uuid ?? '';
+      return (
+        isSDKUserMessage(enqueued) &&
+        !durableOwned.has(uuid) &&
+        !messageQueue.hasPendingOrInFlight(uuid)
+      );
+    });
 
     let lastConsumedAt = 0;
     for (const enqueuedUser of enqueuedUsers) {

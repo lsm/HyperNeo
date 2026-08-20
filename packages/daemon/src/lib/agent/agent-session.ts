@@ -1422,9 +1422,11 @@ export class AgentSession
               this.markDeliveryBatchSubmitted(memberUuids);
             }
           }
-          acknowledgment = this.messageQueue.admitWithId(messageUuid, feedContent, false, {
-            durable: true,
-          });
+          if (!this.messageQueue.hasPendingOrInFlight(messageUuid)) {
+            acknowledgment = this.messageQueue.admitWithId(messageUuid, feedContent, false, {
+              durable: true,
+            });
+          }
         }
         return {
           kind: 'driving' as const,
@@ -1880,6 +1882,7 @@ export class AgentSession
       db: this.db,
       jobQueue,
       stateManager: this.stateManager,
+      isInFlight: (uuid) => this.messageQueue.hasPendingOrInFlight(uuid),
     });
     let settled = 0;
     const sdkRepo = this.db.getSDKMessageRepo();

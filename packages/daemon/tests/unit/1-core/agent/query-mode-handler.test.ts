@@ -26,6 +26,7 @@ describe('QueryModeHandler', () => {
   let updateMessageStatusSpy: ReturnType<typeof mock>;
   let emitSpy: ReturnType<typeof mock>;
   let enqueueWithIdSpy: ReturnType<typeof mock>;
+  let hasPendingOrInFlightSpy: ReturnType<typeof mock>;
   let ensureQueryStartedSpy: ReturnType<typeof mock>;
   let v2Previous: string | undefined;
 
@@ -73,8 +74,10 @@ describe('QueryModeHandler', () => {
     } as unknown as DaemonHub;
 
     enqueueWithIdSpy = mock(async () => {});
+    hasPendingOrInFlightSpy = mock(() => false);
     mockMessageQueue = {
       enqueueWithId: enqueueWithIdSpy,
+      hasPendingOrInFlight: hasPendingOrInFlightSpy,
     } as unknown as MessageQueue;
 
     mockLogger = {
@@ -338,6 +341,25 @@ describe('QueryModeHandler', () => {
       expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-1', 'Queued message');
     });
 
+    it('should skip enqueued messages already owned by the message queue', async () => {
+      const queuedMessages: SDKMessage[] = [
+        {
+          dbId: 'db-1',
+          uuid: 'uuid-1',
+          type: 'user',
+          message: { role: 'user', content: 'Already queued' },
+        } as unknown as SDKMessage,
+      ];
+      getMessagesByStatusSpy.mockReturnValue(queuedMessages);
+      hasPendingOrInFlightSpy.mockImplementation((uuid: string) => uuid === 'uuid-1');
+      handler = createHandler();
+
+      await handler.sendEnqueuedMessagesOnTurnEnd();
+
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
+    });
+
     it('should skip non-user messages', async () => {
       const queuedMessages: SDKMessage[] = [
         {
@@ -521,6 +543,23 @@ describe('QueryModeHandler', () => {
       expect(JSON.parse(row.payload).batchUuids).toEqual(['uuid-1', 'uuid-2', 'uuid-3']);
       expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+    });
+
+    it('handleQueryTrigger creates durable ownership before publishing enqueued status', async () => {
+      getMessagesByStatusSpy.mockReturnValue([
+        { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+      ] as unknown as SDKMessage[]);
+      let ownedWhenPublished = false;
+      emitSpy.mockImplementation(async (event: string) => {
+        if (event === 'messages.statusChanged') {
+          ownedWhenPublished = jobQueue.activeDeliveryMessageUuids('test-session-id').has('uuid-1');
+        }
+      });
+
+      handler = new QueryModeHandler(createContext());
+      await handler.handleQueryTrigger();
+
+      expect(ownedWhenPublished).toBe(true);
     });
 
     it('handleQueryTrigger falls back to per-message jobs when a turn is already active', async () => {

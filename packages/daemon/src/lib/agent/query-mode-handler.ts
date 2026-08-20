@@ -47,15 +47,17 @@ export class QueryModeHandler {
       const dbIds = deferredMessages.map((m) => m.dbId);
       db.updateMessageStatus(dbIds, 'enqueued');
 
+      if (isMessageDeliveryV2Enabled()) {
+        await this.deliverFlushUnderV2(deferredMessages, 'recovery');
+      }
+
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: session.id,
         messageIds: dbIds,
         status: 'enqueued',
       });
 
-      if (isMessageDeliveryV2Enabled()) {
-        await this.deliverFlushUnderV2(deferredMessages, 'recovery');
-      } else {
+      if (!isMessageDeliveryV2Enabled()) {
         const v2Owned =
           db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
         await this.ctx.ensureQueryStarted();
@@ -127,7 +129,11 @@ export class QueryModeHandler {
     const { session, db, messageQueue, logger } = this.ctx;
 
     try {
-      const queuedMessages = db.getMessagesByStatus(session.id, 'enqueued');
+      const queuedMessages = db
+        .getMessagesByStatus(session.id, 'enqueued')
+        .filter(
+          (msg) => typeof msg.uuid !== 'string' || !messageQueue.hasPendingOrInFlight(msg.uuid)
+        );
 
       if (queuedMessages.length === 0) {
         return;
