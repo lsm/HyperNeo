@@ -152,11 +152,16 @@ export class AcpMessageTranslator {
     this.thinkingBuffer = '';
     this.textBuffer = '';
 
-    if (blocks.length === 0) {
-      return [];
-    }
+    return blocks.length === 0 ? [] : [this.buildAssistantMessage(blocks)];
+  }
 
-    return [this.buildAssistantMessage(blocks)];
+  flushToolResults(): SDKUserMessage[] {
+    const results = [...this.toolCallUpdates.values()]
+      .filter((update) => update.content !== undefined || update.rawOutput !== undefined)
+      .map((update) => this.translateToolResult(update));
+    this.toolCallUpdates.clear();
+    this.inProgressToolUseIds.clear();
+    return results;
   }
 
   translateToolCall(call: AcpToolCallUpdateNotification): SDKAssistantMessage {

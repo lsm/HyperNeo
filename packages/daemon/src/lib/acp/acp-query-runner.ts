@@ -45,6 +45,7 @@ import { AcpClient, type AcpClientOptions } from './acp-client';
 import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from './acp-command';
 import { AcpQueryAdapter } from './acp-query-adapter';
 import { AcpTerminalManager } from './acp-terminal-manager';
+import { writeFileWithinWorkspace } from './acp-safe-fs';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
@@ -1089,14 +1090,11 @@ export class AcpQueryRunner {
     workspace: string,
     signal: AbortSignal
   ): Promise<AcpFsWriteResult> {
-    const { writeFile, mkdir } = await import('node:fs/promises');
-    const { dirname } = await import('node:path');
     if (signal.aborted) throw new Error('ACP filesystem write cancelled');
+    const workspacePath = await this.resolveWorkspacePath('.', workspace);
     const filePath = await this.resolveWorkspacePath(params.path, workspace);
-    if (signal.aborted) throw new Error('ACP filesystem write cancelled');
-    await mkdir(dirname(filePath), { recursive: true });
-    if (signal.aborted) throw new Error('ACP filesystem write cancelled');
-    await writeFile(filePath, params.content, { encoding: 'utf-8', signal });
+    const relativePath = relative(workspacePath, filePath);
+    await writeFileWithinWorkspace(workspacePath, relativePath.split(sep), params.content, signal);
     return {};
   }
 

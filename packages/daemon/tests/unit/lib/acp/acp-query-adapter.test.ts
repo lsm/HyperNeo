@@ -202,6 +202,35 @@ describe('AcpQueryAdapter', () => {
     expect((msg.value as { tool_use_id: string }).tool_use_id).toBe('tc-2');
   });
 
+  test('flushes incomplete tool output before the turn result', async () => {
+    const client = new MockAcpClient('sess-partial');
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'go' }]
+    );
+
+    client.queueNotification({
+      sessionId: 'sess-partial',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'tc-partial',
+        title: 'Build',
+        status: 'in_progress',
+        rawOutput: 'partial output',
+      },
+    });
+
+    const messages: SDKMessage[] = [];
+    for await (const message of adapter) {
+      messages.push(message);
+    }
+
+    expect(messages.map((message) => message.type)).toEqual(['tool_progress', 'user', 'result']);
+    expect((messages[1] as { tool_use_result: unknown }).tool_use_result).toBe('partial output');
+  });
+
   test('counts prompt estimate in result input tokens', async () => {
     const client = new MockAcpClient('sess-usage');
     const adapter = new AcpQueryAdapter(
@@ -248,6 +277,40 @@ describe('AcpQueryAdapter', () => {
 
     const msg3 = await iterator.next();
     expect(msg3.done).toBe(true);
+  });
+
+  test('flushes incomplete tool output when iteration fails', async () => {
+    class FailingClient extends MockAcpClient {
+      async *sendPrompt(): AsyncGenerator<AcpSessionUpdateNotification> {
+        yield {
+          sessionId: 'sess-failed',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'tc-failed',
+            status: 'in_progress',
+            rawOutput: 'partial output',
+          },
+        };
+        throw new Error('prompt failed');
+      }
+    }
+    const client = new FailingClient('sess-failed');
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
+    const messages: SDKMessage[] = [];
+
+    await expect(async () => {
+      for await (const message of adapter) {
+        messages.push(message);
+      }
+    }).toThrow('prompt failed');
+
+    expect(messages.map((message) => message.type)).toEqual(['tool_progress', 'user', 'result']);
+    expect((messages[1] as { tool_use_result: unknown }).tool_use_result).toBe('partial output');
   });
 
   test('returns early when closed before iteration', async () => {

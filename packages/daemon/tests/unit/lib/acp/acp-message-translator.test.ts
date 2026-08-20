@@ -163,6 +163,41 @@ describe('AcpMessageTranslator', () => {
     ]);
   });
 
+  test('flushes buffered non-terminal tool output once', () => {
+    translator.processUpdate(toolCall('tc-partial', 'Partial tool', {}));
+    translator.processUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-partial',
+      status: 'in_progress',
+      rawOutput: 'partial output',
+    });
+
+    const results = translator.flushToolResults();
+
+    expect(results).toHaveLength(1);
+    expect(results[0].parent_tool_use_id).toBe('tc-partial');
+    expect(results[0].tool_use_result).toBe('partial output');
+    expect(translator.flushToolResults()).toEqual([]);
+  });
+
+  test('does not duplicate terminal tool results when flushing', () => {
+    translator.processUpdate(toolCall('tc-complete', 'Complete tool', {}));
+    translator.processUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-complete',
+      status: 'in_progress',
+      rawOutput: 'complete output',
+    });
+    const result = translator.processUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-complete',
+      status: 'completed',
+    });
+
+    expect(result).toHaveLength(1);
+    expect(translator.flushToolResults()).toEqual([]);
+  });
+
   test('emits a tool result for completed status without output', () => {
     translator.processUpdate(toolCall('tc-empty', 'No output', {}));
 

@@ -69,7 +69,7 @@ export class AcpQueryAdapter implements QueryLike {
         }
       }
 
-      const flushMessages = this.translator.flush();
+      const flushMessages = [...this.translator.flush(), ...this.translator.flushToolResults()];
       for (const msg of flushMessages) {
         yield msg;
       }
@@ -80,6 +80,9 @@ export class AcpQueryAdapter implements QueryLike {
       const isError = stopReason !== 'end_turn';
       yield this.translator.translateResult(stopReason, isError);
     } catch (err) {
+      for (const msg of this.translator.flushToolResults()) {
+        yield msg;
+      }
       const errorReason = this.interrupted ? 'cancelled' : 'end_turn';
       yield this.translator.translateResult(errorReason, !this.interrupted);
       if (!this.interrupted) {
