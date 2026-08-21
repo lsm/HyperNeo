@@ -10,6 +10,11 @@ if (isBun) {
   class CachedDatabase extends BunDatabaseImpl {
     private readonly statementCache = new StatementCache<BunStatement>(STATEMENT_CACHE_CAPACITY);
 
+    constructor(...args: ConstructorParameters<typeof BunDatabaseImpl>) {
+      super(...args);
+      this.exec('PRAGMA case_sensitive_like = ON');
+    }
+
     // @ts-expect-error — return type is the concrete bun statement, not the generic base's
     override prepare(sql: string, options?: unknown): BunStatement {
       if (options !== undefined) {

@@ -105,6 +105,22 @@ describe('DatabaseCore', () => {
       expect(result.foreign_keys).toBe(1);
     });
 
+    it('should enable case-sensitive LIKE so prefix patterns can use indexes', async () => {
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      const db = dbCore.getDb();
+      db.exec('CREATE TABLE like_index_test (x TEXT PRIMARY KEY)');
+      db.exec("INSERT INTO like_index_test VALUES ('hello')");
+
+      const plan = db
+        .prepare("EXPLAIN QUERY PLAN SELECT * FROM like_index_test WHERE x LIKE 'h%' LIMIT 1")
+        .all() as Array<{ detail: string }>;
+      const detail = plan[0]?.detail ?? '';
+      expect(detail).toContain('SEARCH');
+      expect(detail).not.toContain('SCAN');
+    });
+
     it('should create database tables', async () => {
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();

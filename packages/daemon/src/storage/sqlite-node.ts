@@ -63,6 +63,7 @@ export class Database extends DatabaseSync {
       ...(readonly ? { readOnly: true } : {}),
       ...rest,
     });
+    this.exec('PRAGMA case_sensitive_like = ON');
   }
 
   close(): void {
