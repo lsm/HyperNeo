@@ -34,6 +34,17 @@ interface LibcSymbols {
   renameat: (oldFd: number, oldPath: Buffer, newFd: number, newPath: Buffer) => number;
   unlinkat: (fd: number, path: Buffer, flags: number) => number;
   write: (fd: number, buffer: Buffer, length: number) => number | bigint;
+  acl_get_fd?: (fd: number) => unknown;
+  acl_set_fd?: (fd: number, acl: unknown) => number;
+  acl_free?: (acl: unknown) => number;
+  fgetxattr?: (fd: number, name: Buffer, value: Buffer, size: number) => number | bigint;
+  fsetxattr?: (
+    fd: number,
+    name: Buffer,
+    value: Buffer,
+    size: number,
+    flags: number
+  ) => number | bigint;
 }
 
 interface SafeFsBackend {
@@ -128,6 +139,31 @@ async function loadSafeFsBackend(): Promise<SafeFsBackend> {
         args: [ffi.FFIType.i32, ffi.FFIType.ptr, ffi.FFIType.u64],
         returns: ffi.FFIType.i64,
       },
+      ...(process.platform === 'darwin'
+        ? {
+            acl_get_fd: { args: [ffi.FFIType.i32], returns: ffi.FFIType.ptr },
+            acl_set_fd: {
+              args: [ffi.FFIType.i32, ffi.FFIType.ptr],
+              returns: ffi.FFIType.i32,
+            },
+            acl_free: { args: [ffi.FFIType.ptr], returns: ffi.FFIType.i32 },
+          }
+        : {
+            fgetxattr: {
+              args: [ffi.FFIType.i32, ffi.FFIType.cstring, ffi.FFIType.ptr, ffi.FFIType.u64],
+              returns: ffi.FFIType.i64,
+            },
+            fsetxattr: {
+              args: [
+                ffi.FFIType.i32,
+                ffi.FFIType.cstring,
+                ffi.FFIType.ptr,
+                ffi.FFIType.u64,
+                ffi.FFIType.i32,
+              ],
+              returns: ffi.FFIType.i64,
+            },
+          }),
     };
 
     for (const candidate of candidates) {
@@ -191,6 +227,58 @@ export function decodeStatMode(statBuf: Buffer, modeOffset: number, modeWidth: 2
   const mode =
     modeWidth === 2 ? statBuf.readUInt16LE(modeOffset) : statBuf.readUInt32LE(modeOffset);
   return (mode & 0o170000) === 0o100000 ? mode & 0o777 : FILE_MODE;
+}
+
+const POSIX_ACL_ACCESS_XATTR = 'system.posix_acl_access';
+const ACL_BUFFER_BYTES = 64 * 1024;
+
+function copyPosixAcl(symbols: LibcSymbols, sourceFd: number, temporaryFd: number): void {
+  const name = cString(POSIX_ACL_ACCESS_XATTR);
+  let value = Buffer.alloc(ACL_BUFFER_BYTES);
+  let size = Number(symbols.fgetxattr?.(sourceFd, name, value, value.length) ?? -1);
+  if (size < 0) return;
+  if (size > value.length) {
+    value = Buffer.alloc(size);
+    size = Number(symbols.fgetxattr?.(sourceFd, name, value, value.length) ?? -1);
+    if (size < 0 || size > value.length) return;
+  }
+  symbols.fsetxattr?.(temporaryFd, name, value, size, 0);
+}
+
+function copyDarwinAcl(symbols: LibcSymbols, sourceFd: number, temporaryFd: number): void {
+  const acl = symbols.acl_get_fd?.(sourceFd);
+  if (!acl) return;
+  try {
+    symbols.acl_set_fd?.(temporaryFd, acl);
+  } finally {
+    symbols.acl_free?.(acl);
+  }
+}
+
+function copyAccessControlMetadata(
+  symbols: LibcSymbols,
+  directoryFd: number,
+  fileName: string,
+  temporaryFd: number
+): void {
+  try {
+    const sourceFd = symbols.openat(
+      directoryFd,
+      cString(fileName),
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+      0
+    );
+    if (sourceFd < 0) return;
+    try {
+      if (process.platform === 'darwin') {
+        copyDarwinAcl(symbols, sourceFd, temporaryFd);
+      } else {
+        copyPosixAcl(symbols, sourceFd, temporaryFd);
+      }
+    } finally {
+      closeFile(symbols, sourceFd);
+    }
+  } catch {}
 }
 
 function replacementMode(symbols: LibcSymbols, directoryFd: number, fileName: string): number {
@@ -377,6 +465,7 @@ export async function writeFileWithinWorkspace(
         if (written <= 0) throwFsError('write', fileName);
         offset += written;
       }
+      copyAccessControlMetadata(symbols, directoryFd, fileName, fileFd);
     } finally {
       closeFile(symbols, fileFd);
     }

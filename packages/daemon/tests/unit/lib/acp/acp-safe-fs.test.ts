@@ -156,6 +156,31 @@ for (const mode of [0o755, 0o200, 0o400, 0o000]) {
   });
 }
 
+if (process.platform === 'darwin') {
+  bunRuntimeTest('preserves ACLs when replacing an existing file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-acl-'));
+    const workspace = join(root, 'workspace');
+    const target = join(workspace, 'guarded.txt');
+    await mkdir(workspace);
+    await writeFile(target, 'original');
+    execFileSync('chmod', ['+a', 'user:root allow read', target]);
+
+    try {
+      await writeFileWithinWorkspace(
+        workspace,
+        ['guarded.txt'],
+        'replacement',
+        new AbortController().signal
+      );
+      const listing = execFileSync('ls', ['-le', target]).toString();
+      expect(listing).toContain('user:root allow read');
+      expect(await readFile(target, 'utf-8')).toBe('replacement');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
 bunRuntimeTest('replaces workspace hard links without modifying the linked file', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-hardlink-'));
   const workspace = join(root, 'workspace');
