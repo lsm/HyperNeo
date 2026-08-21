@@ -319,10 +319,14 @@ interpreters over three extracted cores:
   throw site). Workflow-derived requirements are deliberately outside the table:
   `approve_task`'s threshold is gathered by the caller — `space-agent-tools.ts`
   derives the workflow's `completionAutonomyLevel` (default 5) and passes it in
-  as `required` — while `routeApproveTask` only compares its inputs. Changing
-  the approval threshold therefore means changing the caller-side derivation
-  (or the workflows' `completionAutonomyLevel` values), not the router or the
-  map; the router owns only the denial routing — reason, message, and
+  as `required` — while `routeApproveTask` only compares its inputs. The
+  threshold default has further owners: the bound node-agent approval path
+  (`end-node-handlers.ts`) independently derives `workflow?
+  .completionAutonomyLevel ?? 5` and enforces its own denial wording, and
+  `task-agent-manager.ts` repeats the same default when advertising
+  `approve_task` availability in end-node prompts — so a threshold or default
+  change must touch every owner until the derivation is centralized. The
+  router owns only the denial routing — reason, message, and
   precedence against the target check (see the second recorded asymmetry
   below).
 - `task-transition-routing.ts` — pure routing tables: `routeTaskUpdate` (the
@@ -344,7 +348,16 @@ action. The stage order is the precedence contract and is the *implemented*
 order in `update_task`'s `decisionRun` (autonomy → arg-changes → target →
 routing arbiter), which preserves the pre-pilot precedence: a no-fields call
 fails with the argument error even for a missing or cross-space task id. A new
-handler following this shape inherits that arg-before-target ordering. Audit
+handler following this shape inherits that arg-before-target ordering. The
+gather layer itself sits *ahead* of that contract: `update_task`'s shell awaits
+`getSpaceAutonomyLevel` before computing `hasChanges` or reading the task, even
+though `update_task` has no entry in `TOOL_AUTONOMY_REQUIREMENTS` and its
+autonomy gate is consequently a structural no-op — so a failing level lookup
+surfaces before the documented argument/target errors, and the read adds an
+async window the pre-pilot handler did not have (the gather was introduced by
+the pilot). The pure gate order is the precedence contract of the core, not
+the complete observable precedence of the tool call; gathering autonomy only
+when the tool has a requirement is the code-level follow-up. Audit
 and emission coverage is as-implemented, not uniform: every handler folds to
 a JSON result, `update_task`/`publish_task`/`archive_task`/`approve_task` both
 audit and emit, `create_standalone_task` audits without emitting, `cancel_task`
@@ -420,7 +433,8 @@ predicate (succeeded by the exported type guard), and the
 oxlint, and `tsc --noEmit` are clean; every core export is production-consumed
 or pinned directly by the gate/routing suites per Decision item 6. Live
 near-duplicates remain only in never-converted surfaces — the hand-rolled
-target checks in `get_task_detail`, `send_message_to_task`, `list_task_members`,
+target checks in `get_task_detail`, the node-agent `get_task`,
+`send_message_to_task`, `list_task_members`,
 `approve_pending_completion`, `attach_forge_task_evidence`, and the task branch
 of `resolve_forge_scope`; the bound task-agent surface's `onArchiveTask`
 (`runtime/task-agent-manager.ts`), which re-implements the archive-active-run
