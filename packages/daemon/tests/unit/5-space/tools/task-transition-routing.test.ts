@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { isWorkflowRecoveryTransition } from '@hyperneo/shared';
 import {
+  routeApproveTask,
+  routeArchiveTask,
+  routeCancelTask,
+  routePublishTask,
+  routeReassignTask,
+  routeRetryTask,
+  routeTaskTarget,
   routeTaskUpdate,
   type TaskUpdateRoutingInput,
 } from '../../../../src/lib/space/tools/task-transition-routing.ts';
@@ -512,6 +519,309 @@ describe('routeTaskUpdate rate-limit-limited boundaries', () => {
       action: 'recover_transition',
       auditParamsShape: 'transition',
       emitTaskUpdated: 'only_with_field_updates',
+    });
+  });
+});
+
+describe('routeTaskTarget shared gate', () => {
+  test('a missing task rejects before the space check', () => {
+    expect(routeTaskTarget({ taskExists: false, taskInSpace: false, taskId: 'task-1' })).toEqual({
+      action: 'reject',
+      reason: 'task_not_found',
+      message: 'Task not found: task-1',
+    });
+  });
+
+  test('a task outside the space rejects with the interpolated task id', () => {
+    expect(routeTaskTarget({ taskExists: true, taskInSpace: false, taskId: 'task-1' })).toEqual({
+      action: 'reject',
+      reason: 'task_not_in_space',
+      message: 'Task task-1 does not belong to this space.',
+    });
+  });
+
+  test('an in-space task proceeds', () => {
+    expect(routeTaskTarget({ taskExists: true, taskInSpace: true, taskId: 'task-1' })).toEqual({
+      action: 'proceed',
+    });
+  });
+});
+
+describe('routeRetryTask', () => {
+  function retryInput(overrides: Partial<Parameters<typeof routeRetryTask>[0]> = {}) {
+    return {
+      taskExists: true,
+      taskInSpace: true,
+      currentStatus: 'blocked',
+      hasWorkflowRun: false,
+      taskId: 'task-1',
+      ...overrides,
+    };
+  }
+
+  test('missing task and foreign-space rejects win before the status gate', () => {
+    expect(routeRetryTask(retryInput({ taskExists: false, currentStatus: 'in_progress' }))).toEqual(
+      {
+        action: 'reject',
+        reason: 'task_not_found',
+        message: 'Task not found: task-1',
+      }
+    );
+    expect(
+      routeRetryTask(retryInput({ taskInSpace: false, currentStatus: 'in_progress' }))
+    ).toEqual({
+      action: 'reject',
+      reason: 'task_not_in_space',
+      message: 'Task task-1 does not belong to this space.',
+    });
+  });
+
+  test('a workflow-backed task outside the retryable statuses rejects with its status', () => {
+    for (const currentStatus of ['open', 'in_progress', 'review', 'archived'] as const) {
+      expect(routeRetryTask(retryInput({ currentStatus, hasWorkflowRun: true }))).toEqual({
+        action: 'reject',
+        reason: 'status_not_retryable',
+        message: `Cannot retry task in '${currentStatus}' status. Task must be in 'blocked', 'cancelled', or 'done' status.`,
+      });
+    }
+  });
+
+  test('a workflow-backed blocked task recovers to open', () => {
+    expect(routeRetryTask(retryInput({ currentStatus: 'blocked', hasWorkflowRun: true }))).toEqual({
+      action: 'recover_workflow_task',
+      targetStatus: 'open',
+    });
+  });
+
+  test('workflow-backed cancelled and done tasks recover to in_progress', () => {
+    for (const currentStatus of ['cancelled', 'done'] as const) {
+      expect(routeRetryTask(retryInput({ currentStatus, hasWorkflowRun: true }))).toEqual({
+        action: 'recover_workflow_task',
+        targetStatus: 'in_progress',
+      });
+    }
+  });
+
+  test('the status gate never fires without a workflow run', () => {
+    expect(routeRetryTask(retryInput({ currentStatus: 'in_progress' }))).toEqual({
+      action: 'retry_task',
+    });
+  });
+});
+
+describe('routeCancelTask', () => {
+  test('cancels the run only when requested, workflow-backed, and the run row exists', () => {
+    expect(
+      routeCancelTask({ cancelWorkflowRunRequested: true, hasWorkflowRun: true, runExists: true })
+    ).toEqual({ action: 'cancel_run', runExists: true });
+  });
+
+  test('a missing run row still routes to cancel_run so the envelope is preserved', () => {
+    expect(
+      routeCancelTask({ cancelWorkflowRunRequested: true, hasWorkflowRun: true, runExists: false })
+    ).toEqual({ action: 'cancel_run', runExists: false });
+  });
+
+  test('an unrequested or non-workflow cancellation is cancel-only', () => {
+    expect(
+      routeCancelTask({ cancelWorkflowRunRequested: false, hasWorkflowRun: true, runExists: true })
+    ).toEqual({ action: 'cancel_only' });
+    expect(
+      routeCancelTask({ cancelWorkflowRunRequested: true, hasWorkflowRun: false, runExists: true })
+    ).toEqual({ action: 'cancel_only' });
+  });
+});
+
+describe('routePublishTask', () => {
+  function publishInput(overrides: Partial<Parameters<typeof routePublishTask>[0]> = {}) {
+    return {
+      taskExists: true,
+      taskInSpace: true,
+      currentStatus: 'draft',
+      taskId: 'task-1',
+      ...overrides,
+    };
+  }
+
+  test('missing task and foreign-space rejects win before the draft gate', () => {
+    expect(routePublishTask(publishInput({ taskExists: false, currentStatus: 'open' }))).toEqual({
+      action: 'reject',
+      reason: 'task_not_found',
+      message: 'Task not found: task-1',
+    });
+    expect(routePublishTask(publishInput({ taskInSpace: false, currentStatus: 'open' }))).toEqual({
+      action: 'reject',
+      reason: 'task_not_in_space',
+      message: 'Task task-1 does not belong to this space.',
+    });
+  });
+
+  test('a non-draft status rejects with its status interpolated', () => {
+    for (const currentStatus of ['open', 'in_progress', 'review', 'done', 'archived'] as const) {
+      expect(routePublishTask(publishInput({ currentStatus }))).toEqual({
+        action: 'reject',
+        reason: 'not_draft',
+        message: `Task is in '${currentStatus}' status, not 'draft'. Only draft tasks can be published.`,
+      });
+    }
+  });
+
+  test('a draft task publishes', () => {
+    expect(routePublishTask(publishInput())).toEqual({ action: 'publish' });
+  });
+});
+
+describe('routeArchiveTask', () => {
+  function archiveInput(overrides: Partial<Parameters<typeof routeArchiveTask>[0]> = {}) {
+    return {
+      taskExists: true,
+      taskInSpace: true,
+      hasWorkflowRun: false,
+      runActive: false,
+      taskId: 'task-1',
+      workflowRunId: 'run-1',
+      ...overrides,
+    };
+  }
+
+  test('missing task and foreign-space rejects win before the active-run guard', () => {
+    expect(
+      routeArchiveTask(archiveInput({ taskExists: false, hasWorkflowRun: true, runActive: true }))
+    ).toEqual({
+      action: 'reject',
+      reason: 'task_not_found',
+      message: 'Task not found: task-1',
+    });
+    expect(
+      routeArchiveTask(archiveInput({ taskInSpace: false, hasWorkflowRun: true, runActive: true }))
+    ).toEqual({
+      action: 'reject',
+      reason: 'task_not_in_space',
+      message: 'Task task-1 does not belong to this space.',
+    });
+  });
+
+  test('an active workflow run rejects and points at cancelling the run', () => {
+    expect(
+      routeArchiveTask(
+        archiveInput({ hasWorkflowRun: true, runActive: true, workflowRunId: 'run-9' })
+      )
+    ).toEqual({
+      action: 'reject',
+      reason: 'archive_active_run',
+      message:
+        `Cannot archive task task-1: it belongs to an active workflow run ` +
+        `(run-9). Cancel the run instead so its agents and ` +
+        `lifecycle are torn down — archiving would leave the run stranded.`,
+    });
+  });
+
+  test('a terminal or missing workflow run still archives', () => {
+    expect(routeArchiveTask(archiveInput({ hasWorkflowRun: true, runActive: false }))).toEqual({
+      action: 'archive',
+    });
+    expect(routeArchiveTask(archiveInput({ hasWorkflowRun: false, runActive: true }))).toEqual({
+      action: 'archive',
+    });
+  });
+});
+
+describe('routeReassignTask', () => {
+  test('an unknown worker agent id rejects', () => {
+    expect(routeReassignTask({ customAgentId: 'agent-x', workerAgentExists: false })).toEqual({
+      action: 'reject',
+      reason: 'worker_agent_not_found',
+      message: 'Worker agent not found: agent-x',
+    });
+  });
+
+  test('a known worker agent id, a null id, and an omitted id all reassign', () => {
+    expect(routeReassignTask({ customAgentId: 'agent-x', workerAgentExists: true })).toEqual({
+      action: 'reassign',
+    });
+    expect(routeReassignTask({ customAgentId: null, workerAgentExists: false })).toEqual({
+      action: 'reassign',
+    });
+    expect(routeReassignTask({ customAgentId: undefined, workerAgentExists: false })).toEqual({
+      action: 'reassign',
+    });
+  });
+});
+
+describe('routeApproveTask', () => {
+  function approveInput(overrides: Partial<Parameters<typeof routeApproveTask>[0]> = {}) {
+    return {
+      taskExists: true,
+      taskInSpace: true,
+      currentStatus: 'review',
+      taskId: 'task-1',
+      level: 5,
+      required: 5,
+      agentLevel: null,
+      spaceLevel: 5,
+      ...overrides,
+    };
+  }
+
+  test('missing task and foreign-space rejects win before the autonomy gate', () => {
+    expect(
+      routeApproveTask(
+        approveInput({ taskExists: false, level: 1, spaceLevel: 1, currentStatus: 'open' })
+      )
+    ).toEqual({
+      action: 'reject',
+      reason: 'task_not_found',
+      message: 'Task not found: task-1',
+    });
+    expect(
+      routeApproveTask(
+        approveInput({ taskInSpace: false, level: 1, spaceLevel: 1, currentStatus: 'open' })
+      )
+    ).toEqual({
+      action: 'reject',
+      reason: 'task_not_in_space',
+      message: 'Task task-1 does not belong to this space.',
+    });
+  });
+
+  test('a binding agent ceiling denies before the review-state gate', () => {
+    expect(
+      routeApproveTask(
+        approveInput({ level: 1, agentLevel: 1, spaceLevel: 5, required: 5, currentStatus: 'open' })
+      )
+    ).toEqual({
+      action: 'deny',
+      reason: 'agent_autonomy_ceiling',
+      agentLevel: 1,
+      spaceLevel: 5,
+      required: 5,
+      message:
+        'approve_task not permitted: agent autonomy ceiling 1 (space 5) < workflow completionAutonomyLevel 5. Use submit_for_approval to request human review.',
+    });
+  });
+
+  test('a space-level shortfall denies with the space reason', () => {
+    expect(routeApproveTask(approveInput({ level: 3, spaceLevel: 3, required: 5 }))).toEqual({
+      action: 'deny',
+      reason: 'space_autonomy_level',
+      spaceLevel: 3,
+      required: 5,
+      message:
+        'approve_task not permitted: space autonomy level 3 < workflow completionAutonomyLevel 5. Use submit_for_approval to request human review.',
+    });
+  });
+
+  test('the min() boundary — an agent level meeting the requirement approves', () => {
+    expect(
+      routeApproveTask(approveInput({ level: 3, agentLevel: 3, spaceLevel: 5, required: 3 }))
+    ).toEqual({ action: 'approve' });
+  });
+
+  test('a non-review status rejects only once autonomy passes', () => {
+    expect(routeApproveTask(approveInput({ currentStatus: 'open' }))).toEqual({
+      action: 'reject',
+      reason: 'not_in_review',
+      message: "Task is in 'open' status, not 'review'. Only tasks in review can be approved.",
     });
   });
 });

@@ -38,7 +38,7 @@ export interface AutonomyAdmissionInput {
   spaceLevel: number;
 }
 
-function isAgentCeilingBinding(
+export function isAgentCeilingBinding(
   spaceLevel: number,
   agentLevel: number | null
 ): agentLevel is number {
