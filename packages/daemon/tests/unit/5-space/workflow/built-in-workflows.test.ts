@@ -1,4 +1,3 @@
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,30 +13,34 @@ import {
   exportWorkflow,
   validateExportedWorkflow,
 } from '../../../../src/lib/space/export-format.ts';
-import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
-import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './fixtures/retired-post-approval-merge-template.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { isWorkflowTerminalNode } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import {
-  CODING_WORKFLOW,
-  CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
-  CODING_WITH_QA_WORKFLOW,
-  CODER_OWNED_PR_SUBSCRIBE_GUIDANCE,
-  REVIEWER_ZERO_FINDINGS_GATE,
   builtInWorkflowRequiresPrMerge,
+  CODER_ONLY_MERGE_INSTRUCTIONS,
+  CODER_ONLY_PROMPT,
+  CODER_ONLY_WORKFLOW,
+  CODER_OWNED_PR_SUBSCRIBE_GUIDANCE,
+  CODING_WITH_QA_WORKFLOW,
+  CODING_WORKFLOW,
+  getBuiltInWorkflows,
   LEGACY_CODING_TEMPLATE_IDENTITIES,
   mergeChannelsFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
-  getBuiltInWorkflows,
   RESEARCH_WORKFLOW,
-  REVIEW_ONLY_WORKFLOW,
-  RETIRED_PR_MERGER_SLOT_PROMPT,
   RETIRED_MERGER_RAW_MERGE_GUARD,
+  RETIRED_PR_MERGER_SLOT_PROMPT,
+  REVIEW_ONLY_WORKFLOW,
+  REVIEWER_ZERO_FINDINGS_GATE,
+  CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
   seedBuiltInWorkflows,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
+import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
 import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
-import { isWorkflowTerminalNode } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './fixtures/retired-post-approval-merge-template.ts';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -249,6 +252,55 @@ describe('stable coding workflow templates', () => {
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).not.toMatch(/--json [^\n]*autoMergeRequest/);
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).not.toMatch(/--json state --jq \.state/);
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toMatch(/~10 attempts|up to ~10/);
+  });
+});
+
+describe('coder-only workflow template', () => {
+  test('is a single Coding node that starts and ends itself', () => {
+    expect(CODER_ONLY_WORKFLOW.nodes).toHaveLength(1);
+    expect(CODER_ONLY_WORKFLOW.nodes[0]!.name).toBe('Coding');
+    expect(CODER_ONLY_WORKFLOW.startNodeId).toBe(CODER_ONLY_WORKFLOW.endNodeId);
+    expect(CODER_ONLY_WORKFLOW.channels ?? []).toHaveLength(0);
+    expect(CODER_ONLY_WORKFLOW.tags).not.toContain('default');
+  });
+
+  test('coder owns the post-approval merge via the node-level route', () => {
+    const codingNode = CODER_ONLY_WORKFLOW.nodes[0]!;
+    expect(codingNode.postApproval?.targetAgent).toBe('coder');
+    expect(codingNode.postApproval?.requirePrMerge).toBe(true);
+    expect(codingNode.postApproval?.instructions).toBe(CODER_ONLY_MERGE_INSTRUCTIONS);
+    const coder = codingNode.agents.find((agent) => agent.name === 'coder')!;
+    expect(coder.eventInterests).toEqual([
+      {
+        topicFrom: {
+          source: 'primaryLink',
+          pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+        },
+        label: 'My PR events',
+      },
+    ]);
+  });
+
+  test('coder prompt gates on Codex and Devon, runs an informal review, and requests human sign-off', () => {
+    expect(CODER_ONLY_PROMPT).toContain(CODER_OWNED_PR_SUBSCRIBE_GUIDANCE);
+    expect(CODER_ONLY_PROMPT).toContain('Codex');
+    expect(CODER_ONLY_PROMPT).toContain('Devon');
+    expect(CODER_ONLY_PROMPT).toContain('informal review');
+    expect(CODER_ONLY_PROMPT).toContain('submit_for_approval');
+    expect(CODER_ONLY_PROMPT).toContain('Runtime Execution Contract');
+    expect(CODER_ONLY_PROMPT).not.toContain('approve_task(');
+    expect(CODER_ONLY_PROMPT).not.toContain('Do NOT merge PRs');
+  });
+
+  test('requires human sign-off structurally', () => {
+    expect(CODER_ONLY_WORKFLOW.completionAutonomyLevel).toBeGreaterThanOrEqual(3);
+  });
+
+  test('merge instructions verify the external gate and the Space checkout sync', () => {
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('mergeStateStatus');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('space-checkout-ahead');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).not.toContain('Recommendation: APPROVE');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).not.toContain('{{approval_authority}}');
   });
 });
 
@@ -563,8 +615,8 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 });
 
 describe('getBuiltInWorkflows()', () => {
-  test('returns exactly four templates', () => {
-    expect(getBuiltInWorkflows()).toHaveLength(4);
+  test('returns exactly five templates', () => {
+    expect(getBuiltInWorkflows()).toHaveLength(5);
   });
 
   test('includes CODING_WORKFLOW', () => {
@@ -592,12 +644,18 @@ describe('getBuiltInWorkflows()', () => {
     expect(names).toContain(REVIEW_ONLY_WORKFLOW.name);
   });
 
+  test('includes CODER_ONLY_WORKFLOW', () => {
+    const names = getBuiltInWorkflows().map((w) => w.name);
+    expect(names).toContain(CODER_ONLY_WORKFLOW.name);
+  });
+
   test('identifies merge-required workflows by durable template identity', () => {
     expect(builtInWorkflowRequiresPrMerge('Coding')).toBe(true);
     expect(builtInWorkflowRequiresPrMerge('Coding Workflow')).toBe(true);
     expect(builtInWorkflowRequiresPrMerge('Coding with QA')).toBe(true);
     expect(builtInWorkflowRequiresPrMerge('Research Workflow')).toBe(true);
     expect(builtInWorkflowRequiresPrMerge('Review-Only')).toBe(false);
+    expect(builtInWorkflowRequiresPrMerge('Coder-Only Workflow')).toBe(true);
     expect(builtInWorkflowRequiresPrMerge('custom workflow')).toBe(false);
     expect(builtInWorkflowRequiresPrMerge(null)).toBe(false);
   });
@@ -789,7 +847,7 @@ describe('seedBuiltInWorkflows()', () => {
   test('seeds all built-in templates for an empty space', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(4);
+    expect(workflows).toHaveLength(5);
   });
 
   test('seeded workflow names match all templates', async () => {
@@ -972,7 +1030,7 @@ describe('seedBuiltInWorkflows()', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(4);
+    expect(workflows).toHaveLength(5);
   });
 
   test('threads node-level postApproval through to Coding, Research, QA seeded rows', () => {
@@ -1006,7 +1064,7 @@ describe('seedBuiltInWorkflows()', () => {
   test('result exposes restamped=[] on a fresh seed', () => {
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     expect(result.skipped).toBe(false);
-    expect(result.seeded).toHaveLength(4);
+    expect(result.seeded).toHaveLength(5);
     expect(result.restamped).toEqual([]);
   });
 
@@ -1868,9 +1926,9 @@ describe('seedBuiltInWorkflows()', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(5);
+    expect(workflows).toHaveLength(6);
     expect(workflows.some((workflow) => workflow.name === 'My Custom Workflow')).toBe(true);
-    expect(workflows.filter((workflow) => workflow.templateName)).toHaveLength(4);
+    expect(workflows.filter((workflow) => workflow.templateName)).toHaveLength(5);
   });
 
   function revertToLegacyIdentity(workflowId: string, legacyName: string, legacyHandle: string) {
@@ -2147,12 +2205,12 @@ describe('seedBuiltInWorkflows()', () => {
 
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
-    expect(result.seeded).toHaveLength(3);
+    expect(result.seeded).toHaveLength(4);
     expect(result.seeded).not.toContain(STABLE_CODING_WORKFLOW.name);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].name).toBe(STABLE_CODING_WORKFLOW.name);
     expect(result.errors[0].error).toContain('coding');
-    expect(manager.listWorkflows(SPACE_ID)).toHaveLength(4);
+    expect(manager.listWorkflows(SPACE_ID)).toHaveLength(5);
   });
 
   test('partial legacy migration: a rename collision stamps templateName so the row still groups for cleanup', () => {
@@ -2329,11 +2387,12 @@ describe('seedBuiltInWorkflows()', () => {
 
     expect(result.skipped).toBe(false);
     expect(result.errors).toHaveLength(0);
-    expect(result.seeded).toHaveLength(4);
+    expect(result.seeded).toHaveLength(5);
     expect(result.seeded).toContain('Coding');
     expect(result.seeded).toContain('Coding with QA');
     expect(result.seeded).toContain('Research Workflow');
     expect(result.seeded).toContain('Review-Only Workflow');
+    expect(result.seeded).toContain('Coder-Only Workflow');
   });
 
   test('returns skipped=true when workflows already exist', () => {
@@ -2358,13 +2417,13 @@ describe('seedBuiltInWorkflows()', () => {
 
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
-    expect(result.seeded).toHaveLength(3);
+    expect(result.seeded).toHaveLength(4);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].error).toContain('Simulated DB constraint error');
     expect(result.skipped).toBe(false);
 
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(3);
+    expect(workflows).toHaveLength(4);
   });
 
   test('per-workflow error isolation — captures error name correctly', () => {
@@ -2394,7 +2453,7 @@ describe('seedBuiltInWorkflows()', () => {
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
     expect(result.seeded).toHaveLength(0);
-    expect(result.errors).toHaveLength(4);
+    expect(result.errors).toHaveLength(5);
     expect(result.skipped).toBe(false);
     for (const err of result.errors) {
       expect(err.error).toContain('DB is read-only');
