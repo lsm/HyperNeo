@@ -134,6 +134,59 @@ describe('ReactiveDatabase', () => {
     });
   });
 
+  describe('change event scope from persisted session context', () => {
+    test('updateSession emits roomId/spaceId/taskId read from the sessions row', () => {
+      db.createSession(
+        makeSession('scoped-1', {
+          context: { roomId: 'room-1', spaceId: 'space-1', taskId: 'task-1' },
+        })
+      );
+
+      const events: Array<{ scope?: { roomId?: string; spaceId?: string; taskId?: string } }> = [];
+      reactiveDb.on('change', (data) => events.push(data));
+
+      reactiveDb.db.updateSession('scoped-1', { title: 'Updated' });
+
+      expect(events.length).toBe(1);
+      expect(events[0].scope).toEqual({
+        sessionId: 'scoped-1',
+        sessionType: 'worker',
+        roomId: 'room-1',
+        spaceId: 'space-1',
+        taskId: 'task-1',
+      });
+    });
+
+    test('updateSession on a contextless session emits a bare session scope', () => {
+      db.createSession(makeSession('plain-1'));
+
+      const events: Array<{ scope?: { roomId?: string; spaceId?: string; taskId?: string } }> = [];
+      reactiveDb.on('change', (data) => events.push(data));
+
+      reactiveDb.db.updateSession('plain-1', { title: 'Updated' });
+
+      expect(events.length).toBe(1);
+      expect(events[0].scope).toEqual({ sessionId: 'plain-1', sessionType: 'worker' });
+    });
+
+    test('deleteSession emits a bare session scope once the row is removed', () => {
+      db.createSession(
+        makeSession('scoped-2', {
+          type: 'space_task_agent',
+          context: { spaceId: 'space-2', taskId: 'task-2' },
+        })
+      );
+
+      const events: Array<{ scope?: { spaceId?: string; taskId?: string } }> = [];
+      reactiveDb.on('change', (data) => events.push(data));
+
+      reactiveDb.db.deleteSession('scoped-2');
+
+      expect(events.length).toBe(1);
+      expect(events[0].scope).toEqual({ sessionId: 'scoped-2' });
+    });
+  });
+
   describe('change:<table> event', () => {
     test('emits change:sessions after createSession', () => {
       const events: Array<{ table: string; version: number }> = [];

@@ -19,7 +19,7 @@ import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
 import type { TableChangeScope } from '../../storage/reactive-database';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat';
-import { humanSessionPredicate } from '../../storage/schema/session-counters';
+import { humanSessionColumnsPredicate } from '../../storage/schema/session-counters';
 import { Logger } from '../logger';
 import { mapActiveTurnEntryRow } from './activity-preview';
 
@@ -2769,7 +2769,7 @@ SELECT
   s.type as type,
   s.session_context as session_context
 FROM sessions s
-WHERE ${humanSessionPredicate('s')}
+WHERE ${humanSessionColumnsPredicate('s')}
   AND (s.status != 'archived' OR ?1 = 1)
 ORDER BY s.last_active_at DESC, s.id DESC
 `.trim();
@@ -3518,12 +3518,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
       debounceMs: DEBOUNCE_SESSION_LIST_MS,
       mapRow: mapSessionRow,
       buildScopeFilter: (_params, db) => {
-        const stmt = db.prepare(
-          `SELECT type,
-             json_extract(session_context, '$.roomId') AS room_id,
-             json_extract(session_context, '$.spaceId') AS space_id
-           FROM sessions WHERE id = ?`
-        );
+        const stmt = db.prepare(`SELECT type, room_id, space_id FROM sessions WHERE id = ?`);
         return (scope) => {
           if (scope.sessionType && SESSION_LIST_EXCLUDED_TYPES.has(scope.sessionType)) {
             return false;

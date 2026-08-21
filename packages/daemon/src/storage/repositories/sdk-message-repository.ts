@@ -202,7 +202,7 @@ export class SDKMessageRepository {
     const cached = this.tableColumnsCache.get(tableName);
     if (cached !== undefined) return cached;
     try {
-      const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+      const rows = this.db.prepare(`PRAGMA table_xinfo(${tableName})`).all() as Array<{
         name?: string;
       }>;
       const columns = new Set(
@@ -241,7 +241,7 @@ export class SDKMessageRepository {
     const hasSessionStatus = hasSessions && this.tableHasColumn('sessions', 'status');
     const hasSessionType = hasSessions && this.tableHasColumn('sessions', 'type');
     const hasSessionLastActiveAt = hasSessions && this.tableHasColumn('sessions', 'last_active_at');
-    const hasSessionContext = hasSessions && this.tableHasColumn('sessions', 'session_context');
+    const hasSessionRoomId = hasSessions && this.tableHasColumn('sessions', 'room_id');
     const hasTaskStatus = hasSpaceTasks && this.tableHasColumn('space_tasks', 'status');
     const hasTaskCompletedAt = hasSpaceTasks && this.tableHasColumn('space_tasks', 'completed_at');
     const hasTaskUpdatedAt = hasSpaceTasks && this.tableHasColumn('space_tasks', 'updated_at');
@@ -251,7 +251,7 @@ export class SDKMessageRepository {
     const sessionPolicySelect = `${hasSessionStatus ? 's.status' : 'NULL'} AS session_status,
 			   ${hasSessionType ? 's.type' : 'NULL'} AS session_type,
 			   ${hasSessionLastActiveAt ? 's.last_active_at' : 'NULL'} AS session_last_active_at,
-			   ${hasSessionContext ? 's.session_context' : 'NULL'} AS session_context`;
+			   ${hasSessionRoomId ? 's.room_id' : 'NULL'} AS session_room_id`;
     const spaceTaskSelect = hasSpaceTasks
       ? `st.space_id, st.task_number,
 			   ${hasTaskStatus ? 'st.status' : 'NULL'} AS task_status,
@@ -284,7 +284,7 @@ export class SDKMessageRepository {
           session_status: string | null;
           session_type: string | null;
           session_last_active_at: string | null;
-          session_context: string | null;
+          session_room_id: string | null;
           space_id: string | null;
           task_number: number | null;
           task_status: string | null;
@@ -337,7 +337,7 @@ export class SDKMessageRepository {
     session_status: string | null;
     session_type: string | null;
     session_last_active_at: string | null;
-    session_context: string | null;
+    session_room_id: string | null;
     task_status: string | null;
     task_completed_at: number | null;
     task_updated_at: number | null;
@@ -352,14 +352,7 @@ export class SDKMessageRepository {
     }
 
     if (row.session_type && ROOM_SESSION_TYPES.has(row.session_type)) return false;
-    if (row.session_context) {
-      try {
-        const context = JSON.parse(row.session_context) as { roomId?: unknown };
-        if (typeof context.roomId === 'string') return false;
-      } catch {
-        // Malformed historical context should not make an otherwise-normal session unsearchable.
-      }
-    }
+    if (row.session_room_id) return false;
 
     const isSpaceSession =
       row.session_id.startsWith('space:') ||
@@ -492,22 +485,13 @@ export class SDKMessageRepository {
     try {
       if (
         !this.tableExists('sessions') ||
-        !this.tableHasColumn('sessions', 'session_context') ||
+        !this.tableHasColumn('sessions', 'task_id') ||
         !this.tableHasColumn('sessions', 'type')
       ) {
         return null;
       }
       const row = this.db
-        .prepare(
-          `SELECT
-						CASE
-							WHEN session_context IS NULL THEN NULL
-							WHEN NOT json_valid(session_context) THEN NULL
-							ELSE json_extract(session_context, '$.taskId')
-						END AS task_id,
-						type
-					 FROM sessions WHERE id = ?`
-        )
+        .prepare(`SELECT task_id, type FROM sessions WHERE id = ?`)
         .get(sessionId) as { task_id: string | null; type: string | null } | undefined;
       if (!row) return null;
       const allowedTypes = ['space_task_agent', 'worker'];

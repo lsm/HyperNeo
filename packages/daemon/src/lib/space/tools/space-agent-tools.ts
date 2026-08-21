@@ -585,7 +585,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
                 is_worktree, git_branch, processing_state, type, session_context
            FROM sessions
           WHERE id = ?
-            AND json_extract(session_context, '$.spaceId') = ?
+            AND space_id = ?
           LIMIT 1`
       )
       .get(sessionId, spaceId) as SpaceSessionRow | undefined;
@@ -991,7 +991,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         const limit = Math.min(args.limit ?? SPACE_SESSION_DEFAULT_LIMIT, SPACE_SESSION_MAX_LIMIT);
         const offset = Math.max(args.offset ?? 0, 0);
-        const clauses = [`json_extract(session_context, '$.spaceId') = ?`];
+        const clauses = [`space_id = ?`];
         const params: Array<string | number> = [spaceId];
         const processingStatus = `COALESCE(json_extract(processing_state, '$.status'), 'idle')`;
         if (args.status === 'archived') {
@@ -1012,13 +1012,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           );
         }
         if (args.type === 'worker') {
-          clauses.push(
-            `(type = 'space_task_agent' OR json_type(session_context, '$.taskId') = 'text')`
-          );
+          clauses.push(`(type = 'space_task_agent' OR task_id IS NOT NULL)`);
         } else if (args.type === 'ad-hoc') {
-          clauses.push(
-            `(type != 'space_task_agent' AND json_type(session_context, '$.taskId') IS NULL)`
-          );
+          clauses.push(`(type != 'space_task_agent' AND task_id IS NULL)`);
         }
         params.push(limit, offset);
         const rows = requireDb()

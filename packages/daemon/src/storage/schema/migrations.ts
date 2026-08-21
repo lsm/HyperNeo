@@ -435,6 +435,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(197), () => runMigration197(db));
 
   run(migrationMarkerKey(198), () => runMigration198(db));
+
+  run(migrationMarkerKey(199), () => runMigration199(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -9499,4 +9501,35 @@ export function runMigration197(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status_timestamp
     ON sdk_messages(session_id, send_status, timestamp)`);
   db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_send_status`);
+}
+
+export function runMigration199(db: BunDatabase): void {
+  if (!tableExists(db, 'sessions') || !tableHasColumn(db, 'sessions', 'session_context')) {
+    return;
+  }
+  const contextKeyColumns: Array<[string, string]> = [
+    ['room_id', '$.roomId'],
+    ['space_id', '$.spaceId'],
+    ['task_id', '$.taskId'],
+  ];
+  for (const [column, path] of contextKeyColumns) {
+    const columnAlreadyAdded = !!db
+      .prepare(`SELECT name FROM pragma_table_xinfo('sessions') WHERE name = ?`)
+      .get(column);
+    if (columnAlreadyAdded) continue;
+    db.exec(
+      `ALTER TABLE sessions ADD COLUMN ${column} TEXT GENERATED ALWAYS AS ` +
+        `(CASE WHEN json_valid(session_context) THEN json_extract(session_context, '${path}') END) VIRTUAL`
+    );
+  }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_sessions_room_id ON sessions(room_id) WHERE room_id IS NOT NULL`
+  );
+  if (tableHasColumn(db, 'sessions', 'metadata')) {
+    db.exec(`DROP INDEX IF EXISTS idx_sessions_space_agent_provenance`);
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_sessions_space_agent_provenance ` +
+        `ON sessions(space_id, json_extract(metadata, '$.promptProvenance.agentId'))`
+    );
+  }
 }

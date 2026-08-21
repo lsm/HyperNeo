@@ -64,7 +64,7 @@ function userMessage(text: string, uuid: string): SDKMessage {
   } as unknown as SDKMessage;
 }
 
-const TASK_RESOLUTION_SQL = /\$\.taskId/;
+const TASK_RESOLUTION_SQL = /SELECT task_id, type FROM sessions/;
 
 describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
   let dbPath: string;

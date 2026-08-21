@@ -64,10 +64,10 @@ export class SessionRepository {
   }): Session[] {
     let sql = `SELECT * FROM sessions
 				WHERE type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
-				AND json_extract(session_context, '$.roomId') IS NULL`;
+				AND room_id IS NULL`;
     const params: string[] = [];
     if (!options?.includeSpaceSessions) {
-      sql += ` AND json_extract(session_context, '$.spaceId') IS NULL`;
+      sql += ` AND space_id IS NULL`;
     }
 
     if (options?.status) {
@@ -284,7 +284,7 @@ export class SessionRepository {
 				  AND COALESCE(s.status, '') != 'archived'
 				  AND NOT (COALESCE(s.status, '') = 'ended' AND strftime('%s', s.last_active_at) < strftime('%s', 'now', '-30 days'))
 				  AND COALESCE(s.type, 'worker') NOT IN ('room_chat', 'planner', 'coder', 'leader', 'general')
-				  AND (s.session_context IS NULL OR json_valid(s.session_context) = 0 OR COALESCE(json_extract(s.session_context, '$.roomId'), '') = '')
+				  AND COALESCE(s.room_id, '') = ''
 				  AND (
 					(sm.session_id NOT LIKE '%:%' AND COALESCE(s.type, 'worker') = 'worker')
 					OR sm.session_id LIKE 'space:%'
@@ -367,9 +367,7 @@ export class SessionRepository {
   }
 
   findByRoomId(roomId: string): Session | null {
-    const stmt = this.db.prepare(
-      `SELECT * FROM sessions WHERE type = 'room' AND json_extract(session_context, '$.roomId') = ?`
-    );
+    const stmt = this.db.prepare(`SELECT * FROM sessions WHERE type = 'room' AND room_id = ?`);
     const row = stmt.get(roomId) as Record<string, unknown> | undefined;
 
     if (!row) return null;
@@ -398,7 +396,7 @@ export class SessionRepository {
   listSessionsBySpaceAgent(spaceId: string, agentId: string): Session[] {
     const stmt = this.db.prepare(
       `SELECT * FROM sessions
-			 WHERE json_extract(session_context, '$.spaceId') = ?
+			 WHERE space_id = ?
 			   AND json_extract(metadata, '$.promptProvenance.agentId') = ?
 			 ORDER BY last_active_at DESC`
     );
