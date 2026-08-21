@@ -5,7 +5,6 @@ import {
   generateUUID,
   getWorkflowRunExecutionStatusLabel,
   isKnownToolEntry,
-  isRateOrUsageLimited,
   isWorkflowRecoveryTransition,
   KNOWN_TOOLS,
 } from '@hyperneo/shared';
@@ -69,6 +68,8 @@ import { mapPostApprovalDispatchWarning } from '../runtime/post-approval-router'
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
+import { decideUpdateTask } from './space-tool-pipeline';
+import { routeCreateTaskWorkflowRef } from './task-transition-routing';
 import { SpaceTaskStatusSchema, UpdateTaskStatusParamDescription } from './task-agent-tool-schemas';
 import { validateGlobPattern, validateSource } from '../../external-events/topic-validator';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
@@ -1910,57 +1911,29 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       depends_on?: string[];
       draft?: boolean;
     }): Promise<ToolResult> {
-      let preferredWorkflowId = args.workflow_id ?? null;
-      if (preferredWorkflowId) {
-        const wf = workflowManager.getWorkflow(preferredWorkflowId);
-        const isUnusable = !wf || wf.spaceId !== spaceId || !!wf.disabled;
-        if (isUnusable && typeof args.workflow_handle === 'string') {
-          const trimmedHandle = args.workflow_handle.trim();
-          if (trimmedHandle === '') {
-            return jsonResult({
-              success: false,
-              error: 'workflow_handle must be a non-empty string.',
-            });
-          }
-          const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
-          if (byHandle) {
-            if (byHandle.disabled) {
-              return jsonResult({
-                success: false,
-                error: `Workflow is disabled: ${trimmedHandle}`,
-              });
-            }
-            preferredWorkflowId = byHandle.id;
-          } else {
-            return jsonResult({
-              success: false,
-              error: `Workflow not found by id or handle: ${trimmedHandle}`,
-            });
-          }
-        }
-      } else if (typeof args.workflow_handle === 'string') {
-        const trimmedHandle = args.workflow_handle.trim();
-        if (trimmedHandle === '') {
-          return jsonResult({
-            success: false,
-            error: 'workflow_handle must be a non-empty string.',
-          });
-        }
-        const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
-        if (!byHandle) {
-          return jsonResult({
-            success: false,
-            error: `Workflow not found by handle: ${trimmedHandle}`,
-          });
-        }
-        if (byHandle.disabled) {
-          return jsonResult({
-            success: false,
-            error: `Workflow is disabled: ${trimmedHandle}`,
-          });
-        }
-        preferredWorkflowId = byHandle.id;
+      const workflowIdArg = args.workflow_id ?? null;
+      const idWorkflow = workflowIdArg ? workflowManager.getWorkflow(workflowIdArg) : null;
+      const workflowIdUsable =
+        idWorkflow !== null && idWorkflow.spaceId === spaceId && !idWorkflow.disabled;
+      const hasHandleArg = typeof args.workflow_handle === 'string';
+      const trimmedHandle =
+        typeof args.workflow_handle === 'string' ? args.workflow_handle.trim() : '';
+      const handleWorkflow =
+        typeof args.workflow_handle === 'string' && trimmedHandle !== ''
+          ? workflowManager.getWorkflowByHandle(spaceId, trimmedHandle)
+          : null;
+      const ref = routeCreateTaskWorkflowRef({
+        workflowIdArg,
+        workflowIdUsable,
+        hasHandleArg,
+        trimmedHandle,
+        handleWorkflowId: handleWorkflow?.id ?? null,
+        handleWorkflowDisabled: handleWorkflow?.disabled ?? false,
+      });
+      if (ref.action === 'reject') {
+        return jsonResult({ success: false, error: ref.message });
       }
+      const preferredWorkflowId = ref.preferredWorkflowId;
       try {
         const task = await taskManager.createTask({
           title: args.title,
@@ -2005,25 +1978,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         args.priority !== undefined ||
         args.depends_on !== undefined ||
         args.status !== undefined;
-      if (!hasChanges) {
-        return jsonResult({
-          success: false,
-          error:
-            'No fields to update. Provide at least one of: title, description, priority, depends_on, status.',
-        });
-      }
-
       const task = taskRepo.getTask(args.task_id);
-      if (!task) {
-        return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
-      }
-      if (task.spaceId !== spaceId) {
-        return jsonResult({
-          success: false,
-          error: `Task ${args.task_id} does not belong to this space.`,
-        });
-      }
-
       const fieldParams: UpdateSpaceTaskParams = {};
       if (args.title !== undefined) fieldParams.title = args.title;
       if (args.description !== undefined) fieldParams.description = args.description;
@@ -2042,31 +1997,40 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         priority: args.priority,
         depends_on: args.depends_on,
         status: args.status,
-        previousStatus: task.status,
+        previousStatus: task?.status,
       };
+      const { level, agentLevel, spaceLevel } = await resolveEffectiveAutonomy();
+      const plan = decideUpdateTask({
+        toolName: 'update_task',
+        level,
+        agentLevel,
+        spaceLevel,
+        hasChanges,
+        taskExists: task !== null,
+        taskInSpace: task?.spaceId === spaceId,
+        currentStatus: task?.status ?? '',
+        requestedStatus: args.status,
+        statusDiffers: args.status !== undefined && args.status !== task?.status,
+        hasWorkflowRun: task?.workflowRunId != null,
+        runActive:
+          task?.workflowRunId != null
+            ? (config.isWorkflowRunActive?.(task.workflowRunId) ?? false)
+            : false,
+        isRecoveryTransition:
+          args.status !== undefined && task !== null && args.status !== task.status
+            ? isWorkflowRecoveryTransition(task.status, args.status)
+            : false,
+        hasFieldUpdates,
+        taskId: args.task_id,
+        workflowRunId: task?.workflowRunId ?? undefined,
+      });
+      if (plan.action === 'reject' || plan.action === 'deny') {
+        return jsonResult({ success: false, error: plan.message });
+      }
 
       try {
-        if (args.status !== undefined && args.status !== task.status) {
-          if (args.status === 'review') {
-            return jsonResult({
-              success: false,
-              error:
-                `update_task cannot transition a task into 'review' directly. ` +
-                `Use submit_for_approval so the pending-completion fields get stamped ` +
-                `and the approval banner renders.`,
-            });
-          }
-          if (args.status === 'approved') {
-            return jsonResult({
-              success: false,
-              error:
-                `update_task cannot transition a task into 'approved' directly. ` +
-                `Use approve_pending_completion after submit_for_approval, or let the ` +
-                `runtime's post-approval router handle the transition — both stamp ` +
-                `the approval metadata and dispatch the configured post-approval step.`,
-            });
-          }
-          if (args.status === 'stopped' && task.workflowRunId) {
+        switch (plan.action) {
+          case 'park_stopped': {
             const parked = await runtime.parkStoppedWorkflowTask(spaceId, args.task_id);
             if (!parked) {
               return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
@@ -2076,55 +2040,22 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             if (hasFieldUpdates) emitTaskUpdated(updated);
             return jsonResult({ success: true, task: updated });
           }
-          if (args.status === 'done' && task.status === 'review') {
-            return jsonResult({
-              success: false,
-              error:
-                `update_task cannot transition a task from 'review' to 'done' directly. ` +
-                `Use approve_task (subject to the workflow's completion autonomy level) ` +
-                `or submit_for_approval so a human can approve via the UI — both stamp ` +
-                `the approval metadata and dispatch the configured post-approval step.`,
-            });
-          }
-          if (
-            args.status === 'archived' &&
-            task.workflowRunId &&
-            config.isWorkflowRunActive?.(task.workflowRunId)
-          ) {
-            return jsonResult({
-              success: false,
-              error:
-                `Cannot archive task ${args.task_id}: it belongs to an active workflow run ` +
-                `(${task.workflowRunId}). Cancel the task instead (cancel_task) so its ` +
-                `agents and lifecycle are torn down — archiving would leave the run stranded.`,
-            });
-          }
-
-          if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, args.status)) {
+          case 'recover_transition': {
             const { task: recovered } = await runtime.recoverWorkflowBackedTask(
               spaceId,
               args.task_id,
-              args.status
+              args.status as 'open' | 'in_progress'
             );
             const updated = hasFieldUpdates ? await applyFieldUpdates() : recovered;
             logAudit('update_task', transitionAuditParams, args.task_id);
             if (hasFieldUpdates) emitTaskUpdated(updated);
             return jsonResult({ success: true, task: updated });
           }
-
-          const fromActivePaused =
-            task.status === 'in_progress' ||
-            task.status === 'blocked' ||
-            task.status === 'stopped' ||
-            isRateOrUsageLimited(task.status);
-          const toStopped = args.status === 'open' || args.status === 'cancelled';
-          const toBlockedFromPaused =
-            args.status === 'blocked' && isRateOrUsageLimited(task.status);
-          if (task.workflowRunId && fromActivePaused && (toStopped || toBlockedFromPaused)) {
+          case 'stop_for_status': {
             const stopped =
               (await runtime.stopWorkflowBackedTaskForStatus(spaceId, args.task_id, {
                 ...fieldParams,
-                status: args.status,
+                status: args.status!,
               })) ?? taskRepo.getTask(args.task_id);
             if (!stopped) {
               return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
@@ -2132,39 +2063,35 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             logAudit('update_task', transitionAuditParams, args.task_id);
             return jsonResult({ success: true, task: stopped });
           }
-
-          let updated = await taskManager.setTaskStatus(args.task_id, args.status, {
-            onCascadedTasks: async (cascadedTasks) => {
-              for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
-            },
-          });
-          if (hasFieldUpdates) {
-            updated = await applyFieldUpdates();
+          case 'set_status': {
+            let updated = await taskManager.setTaskStatus(args.task_id, args.status!, {
+              onCascadedTasks: async (cascadedTasks) => {
+                for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
+              },
+            });
+            if (hasFieldUpdates) {
+              updated = await applyFieldUpdates();
+            }
+            logAudit('update_task', transitionAuditParams, args.task_id);
+            emitTaskUpdated(updated);
+            return jsonResult({ success: true, task: updated });
           }
-
-          logAudit('update_task', transitionAuditParams, args.task_id);
-
-          emitTaskUpdated(updated);
-
-          return jsonResult({ success: true, task: updated });
+          case 'fields_only': {
+            const updated = await applyFieldUpdates();
+            logAudit(
+              'update_task',
+              {
+                title: args.title,
+                description: args.description,
+                priority: args.priority,
+                depends_on: args.depends_on,
+              },
+              args.task_id
+            );
+            emitTaskUpdated(updated);
+            return jsonResult({ success: true, task: updated });
+          }
         }
-
-        const updated = await applyFieldUpdates();
-
-        logAudit(
-          'update_task',
-          {
-            title: args.title,
-            description: args.description,
-            priority: args.priority,
-            depends_on: args.depends_on,
-          },
-          args.task_id
-        );
-
-        emitTaskUpdated(updated);
-
-        return jsonResult({ success: true, task: updated });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });
