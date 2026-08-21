@@ -8518,6 +8518,22 @@ describe('createSpaceAgentToolHandlers — update_task status parameter (task #1
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
   });
 
+  test('a status flip during the autonomy await cannot bypass the review → done guard', async () => {
+    const task = createTaskWithStatus('open');
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => {
+        ctx.taskRepo.updateTask(task.id, { status: 'review' });
+        return 4;
+      },
+    });
+
+    const result = parseResult(await handlers.update_task({ task_id: task.id, status: 'done' }));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("cannot transition a task from 'review' to 'done' directly");
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
+  });
+
   test('rejects archiving a task belonging to an active workflow run', async () => {
     const runId = createRun();
     const task = createTaskWithStatus('cancelled', runId);

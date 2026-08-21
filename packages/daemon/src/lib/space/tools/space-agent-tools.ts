@@ -1972,35 +1972,35 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       depends_on?: string[];
       status?: SpaceTaskStatus;
     }): Promise<ToolResult> {
-      const hasChanges =
-        args.title !== undefined ||
-        args.description !== undefined ||
-        args.priority !== undefined ||
-        args.depends_on !== undefined ||
-        args.status !== undefined;
-      const task = taskRepo.getTask(args.task_id);
-      const fieldParams: UpdateSpaceTaskParams = {};
-      if (args.title !== undefined) fieldParams.title = args.title;
-      if (args.description !== undefined) fieldParams.description = args.description;
-      if (args.priority !== undefined) fieldParams.priority = args.priority;
-      if (args.depends_on !== undefined) fieldParams.dependsOn = args.depends_on;
-      const hasFieldUpdates = Object.keys(fieldParams).length > 0;
-      const applyFieldUpdates = async (): Promise<SpaceTask> =>
-        taskManager.updateTask(args.task_id, fieldParams, {
-          onCascadedTasks: async (cascadedTasks) => {
-            for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
-          },
-        });
-      const transitionAuditParams = {
-        title: args.title,
-        description: args.description,
-        priority: args.priority,
-        depends_on: args.depends_on,
-        status: args.status,
-        previousStatus: task?.status,
-      };
       try {
         const { level, agentLevel, spaceLevel } = await resolveEffectiveAutonomy();
+        const hasChanges =
+          args.title !== undefined ||
+          args.description !== undefined ||
+          args.priority !== undefined ||
+          args.depends_on !== undefined ||
+          args.status !== undefined;
+        const task = taskRepo.getTask(args.task_id);
+        const fieldParams: UpdateSpaceTaskParams = {};
+        if (args.title !== undefined) fieldParams.title = args.title;
+        if (args.description !== undefined) fieldParams.description = args.description;
+        if (args.priority !== undefined) fieldParams.priority = args.priority;
+        if (args.depends_on !== undefined) fieldParams.dependsOn = args.depends_on;
+        const hasFieldUpdates = Object.keys(fieldParams).length > 0;
+        const applyFieldUpdates = async (): Promise<SpaceTask> =>
+          taskManager.updateTask(args.task_id, fieldParams, {
+            onCascadedTasks: async (cascadedTasks) => {
+              for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
+            },
+          });
+        const transitionAuditParams = {
+          title: args.title,
+          description: args.description,
+          priority: args.priority,
+          depends_on: args.depends_on,
+          status: args.status,
+          previousStatus: task?.status,
+        };
         const plan = decideUpdateTask({
           toolName: 'update_task',
           level,
