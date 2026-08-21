@@ -172,6 +172,12 @@ present) back together — a sidecar exists exactly when the backup depends on W
 committed frames, and restoring only the `.db` would silently lose every post-checkpoint
 transaction — then open the database once so SQLite folds the WAL in with a checkpoint.
 
+Each backup is written under a `.tmp` name and published by atomic rename once the pair
+completes, so a crash mid-copy never leaves a partial file at a retained name. Leftover
+`.tmp` artifacts are only swept once they have seen no write progress for an hour, which
+keeps the sweep safe when several daemons with different `DB_PATH` files share one
+`backups/` directory (their PID locks are per database file).
+
 Disk cost: on APFS (and reflink-capable Linux filesystems) retained backups are
 copy-on-write clones, so keeping 3 costs almost nothing until the files diverge. On
 filesystems without clone support every backup is a full copy, and an `fs-copy` backup

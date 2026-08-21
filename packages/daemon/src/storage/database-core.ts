@@ -15,6 +15,7 @@ import { configureMessageSearchFts, createTables, runMigrations } from './schema
 import { Database as BunDatabase } from './sqlite-compat';
 
 const MIGRATION_BACKUP_RETENTION = 3;
+const MIGRATION_BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
 
 export class DatabaseCore {
   private db: BunDatabase;
@@ -245,11 +246,14 @@ export class DatabaseCore {
         .sort((a, b) => b.mtime - a.mtime);
 
       const kept = new Set(databases.slice(0, keepCount).map((f) => f.name));
+      const staleCutoff = Date.now() - MIGRATION_BACKUP_TEMP_STALE_MS;
 
       for (const name of entries) {
         if (!name.endsWith('.tmp') && !name.endsWith('.tmp-wal')) continue;
+        const path = join(backupDir, name);
         try {
-          unlinkSync(join(backupDir, name));
+          if (statSync(path).mtime.getTime() > staleCutoff) continue;
+          unlinkSync(path);
         } catch {}
       }
       for (const file of databases.slice(keepCount)) {

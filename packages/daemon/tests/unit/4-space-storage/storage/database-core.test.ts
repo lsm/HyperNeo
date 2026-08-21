@@ -585,11 +585,13 @@ describe('DatabaseCore', () => {
     it('should publish backups via temporary names and sweep crashed leftovers', async () => {
       const backupDir = join(testDir, 'backups');
       mkdirSync(backupDir, { recursive: true });
-      writeFileSync(join(backupDir, 'daemon-2026-03-01T00-00-00-000Z.db.tmp'), 'crashed partial');
-      writeFileSync(
-        join(backupDir, 'daemon-2026-03-01T00-00-00-000Z.db.tmp-wal'),
-        'crashed partial wal'
-      );
+      const crashed = join(backupDir, 'daemon-2026-03-01T00-00-00-000Z.db.tmp');
+      const crashedWal = join(backupDir, 'daemon-2026-03-01T00-00-00-000Z.db.tmp-wal');
+      writeFileSync(crashed, 'crashed partial');
+      writeFileSync(crashedWal, 'crashed partial wal');
+      const stale = Date.now() / 1000 - 7200;
+      utimesSync(crashed, stale, stale);
+      utimesSync(crashedWal, stale, stale);
 
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
@@ -597,6 +599,24 @@ describe('DatabaseCore', () => {
       const remaining = readdirSync(backupDir);
       expect(remaining.some((f) => f.endsWith('.tmp') || f.endsWith('.tmp-wal'))).toBe(false);
       expect(remaining.filter((f) => f.endsWith('.db'))).toHaveLength(1);
+    });
+
+    it('should not sweep temporary artifacts from concurrent in-progress backups', async () => {
+      const backupDir = join(testDir, 'backups');
+      mkdirSync(backupDir, { recursive: true });
+      const inProgress = join(backupDir, 'daemon-2026-04-01T00-00-00-000Z.db.tmp');
+      const stale = join(backupDir, 'daemon-2026-04-02T00-00-00-000Z.db.tmp-wal');
+      writeFileSync(inProgress, 'being written by another daemon');
+      writeFileSync(stale, 'abandoned long ago');
+      const now = Date.now() / 1000;
+      utimesSync(inProgress, now, now);
+      utimesSync(stale, now - 7200, now - 7200);
+
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      expect(existsSync(inProgress)).toBe(true);
+      expect(existsSync(stale)).toBe(false);
     });
 
     it('should prune expired backups together with their WAL sidecars', async () => {
