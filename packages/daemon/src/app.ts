@@ -802,9 +802,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid) ?? null,
         isSessionArchived: (sessionId: string) =>
           reactiveDb?.db.getSession(sessionId)?.status === 'archived',
-        markDeliveryFailed: (sessionId: string, messageUuid: string) => {
-          reactiveDb?.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageUuid);
-        },
+        markDeliveryFailed: (sessionId: string, messageUuid: string) =>
+          reactiveDb?.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageUuid) ??
+          null,
+        publishStatusChanged: (sessionId: string, messageIds: string[]) =>
+          internalEventBus.publish('messages.statusChanged', {
+            sessionId,
+            messageIds,
+            status: 'failed',
+          }),
       }),
       {
         exemptJobs: { path: '$.role', equals: 'steer' },

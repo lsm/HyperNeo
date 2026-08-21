@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockAgentWorking = signal(false);
+const mockConnectionState = signal<'connected' | 'disconnected'>('connected');
 let mockDraftContent = '';
 
 const mockSetContent = vi.fn(() => {});
@@ -13,6 +14,27 @@ const mockClearAttachments = vi.fn(() => {});
 const mockRestoreAttachments = vi.fn(() => {});
 const mockGetImagesForSend = vi.fn(() => undefined);
 const mockRequest = vi.fn(async () => ({ messages: [] }));
+const mockEventHandlers = new Map<string, Array<(payload: unknown, context: unknown) => void>>();
+const mockOnEvent = vi.fn(
+  (method: string, handler: (payload: unknown, context: unknown) => void) => {
+    const existing = mockEventHandlers.get(method) ?? [];
+    existing.push(handler);
+    mockEventHandlers.set(method, existing);
+    return () => {
+      const handlers = mockEventHandlers.get(method);
+      if (handlers) {
+        const idx = handlers.indexOf(handler);
+        if (idx !== -1) handlers.splice(idx, 1);
+      }
+    };
+  }
+);
+
+function emitStatusChanged(sessionId: string) {
+  for (const handler of mockEventHandlers.get('messages.statusChanged') ?? []) {
+    handler({ sessionId }, { channel: 'global' });
+  }
+}
 
 function setQueueResponses({
   enqueued = [],
@@ -34,6 +56,9 @@ function setQueueResponses({
 
 vi.mock('../../lib/state.ts', () => ({
   globalSettings: { value: { voice: { enabled: false } } },
+  get connectionState() {
+    return mockConnectionState;
+  },
   get isAgentWorking() {
     return {
       get value() {
@@ -108,7 +133,10 @@ vi.mock('../../hooks', () => ({
 
 vi.mock('../../lib/connection-manager', () => ({
   connectionManager: {
-    getHubIfConnected: () => ({ request: mockRequest }),
+    getHubIfConnected: () =>
+      mockConnectionState.value === 'connected'
+        ? { request: mockRequest, onEvent: mockOnEvent }
+        : null,
   },
 }));
 
@@ -119,6 +147,7 @@ describe('MessageInput queue mode', () => {
     cleanup();
     mockDraftContent = '';
     mockAgentWorking.value = false;
+    mockConnectionState.value = 'connected';
     mockSetContent.mockClear();
     mockClearDraft.mockClear();
     mockClearAttachments.mockClear();
@@ -126,6 +155,8 @@ describe('MessageInput queue mode', () => {
     mockGetImagesForSend.mockClear();
     mockGetImagesForSend.mockReturnValue(undefined);
     mockRequest.mockClear();
+    mockOnEvent.mockClear();
+    mockEventHandlers.clear();
     setQueueResponses({});
 
     Object.defineProperty(window, 'matchMedia', {
@@ -450,5 +481,269 @@ describe('MessageInput queue mode', () => {
     });
 
     expect(container.querySelector('[data-testid="queue-overlay"]')).toBeNull();
+  });
+
+  function byStatusCallCount() {
+    return mockRequest.mock.calls.filter(([method]) => method === 'session.messages.byStatus')
+      .length;
+  }
+
+  it('does not poll while idle', async () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      const initialCalls = byStatusCallCount();
+      expect(initialCalls).toBeGreaterThanOrEqual(2);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000);
+      });
+
+      expect(byStatusCallCount()).toBe(initialCalls);
+      expect(container.querySelector('[data-testid="queue-overlay"]')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refreshes the queue after the socket reconnects', async () => {
+    vi.useFakeTimers();
+    try {
+      setQueueResponses({
+        deferred: [
+          {
+            dbId: 'db-deferred',
+            uuid: 'uuid-deferred',
+            timestamp: 1,
+            status: 'deferred',
+            text: 'queued during outage',
+          },
+        ],
+      });
+      const { container } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      const initialCalls = byStatusCallCount();
+
+      await act(async () => {
+        mockConnectionState.value = 'disconnected';
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await act(async () => {
+        mockConnectionState.value = 'connected';
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(byStatusCallCount()).toBeGreaterThan(initialCalls);
+      expect(container.querySelector('[data-testid="queued-next-turn-bubble"]')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('discards a superseded queue refresh response', async () => {
+    vi.useFakeTimers();
+    try {
+      const deferredResponses: Array<{
+        resolve: (value: { messages?: Array<Record<string, unknown>> }) => void;
+      }> = [];
+      mockRequest.mockImplementation(async (_method: string, payload: { status?: string }) => {
+        if (payload?.status !== 'deferred') {
+          return { messages: [] };
+        }
+        return new Promise((resolve) => {
+          deferredResponses.push({ resolve });
+        });
+      });
+
+      const { container } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(deferredResponses.length).toBeGreaterThanOrEqual(2);
+
+      const staleRefresh = deferredResponses[0];
+      const freshRefresh = deferredResponses[deferredResponses.length - 1];
+
+      await act(async () => {
+        freshRefresh.resolve({
+          messages: [
+            {
+              dbId: 'db-fresh',
+              uuid: 'uuid-fresh',
+              timestamp: 1,
+              status: 'deferred',
+              text: 'fresh message',
+            },
+          ],
+        });
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(
+        container.querySelector('[data-testid="queued-next-turn-bubble"]')?.textContent
+      ).toContain('fresh message');
+
+      await act(async () => {
+        staleRefresh.resolve({ messages: [] });
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(
+        container.querySelector('[data-testid="queued-next-turn-bubble"]')?.textContent
+      ).toContain('fresh message');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps an earlier successful refresh when its replacement fails', async () => {
+    vi.useFakeTimers();
+    try {
+      const deferredResponses: Array<{
+        resolve: (value: { messages?: Array<Record<string, unknown>> } | Error) => void;
+      }> = [];
+      mockRequest.mockImplementation(async (_method: string, payload: { status?: string }) => {
+        if (payload?.status !== 'deferred') {
+          return { messages: [] };
+        }
+        return new Promise((resolve, reject) => {
+          deferredResponses.push({
+            resolve: (value) => (value instanceof Error ? reject(value) : resolve(value)),
+          });
+        });
+      });
+
+      const { container } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(deferredResponses.length).toBeGreaterThanOrEqual(2);
+
+      const earlierRefresh = deferredResponses[0];
+      const laterRefresh = deferredResponses[deferredResponses.length - 1];
+
+      await act(async () => {
+        laterRefresh.resolve(new Error('socket hiccup'));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      await act(async () => {
+        earlierRefresh.resolve({
+          messages: [
+            {
+              dbId: 'db-earlier',
+              uuid: 'uuid-earlier',
+              timestamp: 1,
+              status: 'deferred',
+              text: 'earlier message',
+            },
+          ],
+        });
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(
+        container.querySelector('[data-testid="queued-next-turn-bubble"]')?.textContent
+      ).toContain('earlier message');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refreshes the queue from messages.statusChanged events with a debounce', async () => {
+    vi.useFakeTimers();
+    try {
+      render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      mockRequest.mockClear();
+
+      await act(async () => {
+        emitStatusChanged('session-1');
+        emitStatusChanged('session-1');
+        emitStatusChanged('session-1');
+        await vi.advanceTimersByTimeAsync(299);
+      });
+      expect(byStatusCallCount()).toBe(0);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(byStatusCallCount()).toBe(2);
+
+      await act(async () => {
+        emitStatusChanged('other-session');
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(byStatusCallCount()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to a slow poll while the agent works and pauses when hidden', async () => {
+    vi.useFakeTimers();
+    const originalHidden = Object.getOwnPropertyDescriptor(document, 'hidden');
+    try {
+      mockAgentWorking.value = true;
+      render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      mockRequest.mockClear();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4999);
+      });
+      expect(byStatusCallCount()).toBe(0);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(byStatusCallCount()).toBe(2);
+
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000);
+      });
+      expect(byStatusCallCount()).toBe(2);
+
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(byStatusCallCount()).toBe(4);
+    } finally {
+      if (originalHidden) {
+        Object.defineProperty(document, 'hidden', originalHidden);
+      }
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops refreshing from events after unmount', async () => {
+    vi.useFakeTimers();
+    try {
+      const { unmount } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      mockRequest.mockClear();
+      unmount();
+
+      await act(async () => {
+        emitStatusChanged('session-1');
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(byStatusCallCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

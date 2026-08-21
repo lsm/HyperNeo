@@ -9,6 +9,7 @@ const handleFileDrop = vi.fn(async () => {});
 
 vi.mock('../../lib/state.ts', () => ({
   globalSettings: { value: { voice: { enabled: false } } },
+  connectionState: { value: 'connected' },
   get isAgentWorking() {
     return {
       get value() {
@@ -75,7 +76,9 @@ vi.mock('../../hooks', () => ({
 }));
 
 vi.mock('../../lib/connection-manager', () => ({
-  connectionManager: { getHubIfConnected: () => ({ request: vi.fn(async () => ({})) }) },
+  connectionManager: {
+    getHubIfConnected: () => ({ request: vi.fn(async () => ({})), onEvent: vi.fn(() => vi.fn()) }),
+  },
 }));
 
 import MessageInput from '../MessageInput';

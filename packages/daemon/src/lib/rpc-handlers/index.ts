@@ -772,11 +772,27 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       const existing = sdkMessageRepo.getDeliveryContent(sessionId, messageId);
       const fresh = !existing;
       if (!existing) {
-        deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+        const dbId = deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+        await deps.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId,
+            messageIds: [dbId],
+            status: 'enqueued',
+          })
+          .catch(() => {});
       } else if (existing.sendStatus === 'consumed') {
         return;
       } else if (existing.sendStatus === 'failed') {
-        sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
+        const reopenedDbId = sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
+        if (reopenedDbId) {
+          await deps.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId,
+              messageIds: [reopenedDbId],
+              status: 'enqueued',
+            })
+            .catch(() => {});
+        }
       }
       await awaitDeliveryConsumption({
         sessionId,
@@ -789,18 +805,46 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
             sessionId,
             messageUuid: messageId,
             origin: 'space_agent',
-            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+            onEnqueueFailure: () => {
+              const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
+              if (failedDbId) {
+                void deps.internalEventBus
+                  .publish('messages.statusChanged', {
+                    sessionId,
+                    messageIds: [failedDbId],
+                    status: 'failed',
+                  })
+                  .catch(() => {});
+              }
+            },
           }),
         ...(fresh
           ? {
-              terminalizeOnTimeout: () =>
-                sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+              terminalizeOnTimeout: () => {
+                const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
+                if (failedDbId) {
+                  void deps.internalEventBus
+                    .publish('messages.statusChanged', {
+                      sessionId,
+                      messageIds: [failedDbId],
+                      status: 'failed',
+                    })
+                    .catch(() => {});
+                }
+              },
             }
           : {}),
       });
     } else {
       await session.ensureQueryStarted();
-      deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      const dbId = deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      await deps.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId,
+          messageIds: [dbId],
+          status: 'enqueued',
+        })
+        .catch(() => {});
       await session.messageQueue.enqueueWithId(messageId, message);
     }
   };

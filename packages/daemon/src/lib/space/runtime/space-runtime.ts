@@ -1422,7 +1422,9 @@ export class SpaceRuntime {
     }
 
     if (dispatchable.length > 1) {
-      dispatchable.sort((a, b) => a.createdAt - b.createdAt);
+      dispatchable.sort(
+        (a, b) => a.createdAt - b.createdAt || a.event.occurredAt - b.event.occurredAt
+      );
     }
 
     let dispatched = 0;
@@ -1496,7 +1498,9 @@ export class SpaceRuntime {
 
     if (dispatchable.length === 0) return { targetWithExecution, dispatchable };
 
-    dispatchable.sort((a, b) => a.createdAt - b.createdAt);
+    dispatchable.sort(
+      (a, b) => a.createdAt - b.createdAt || a.event.occurredAt - b.event.occurredAt
+    );
 
     return { targetWithExecution, dispatchable };
   }

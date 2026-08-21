@@ -33,6 +33,7 @@ describe('InterruptHandler', () => {
   let markFailedSpy: ReturnType<typeof mock>;
   let mockDb: InterruptHandlerContext['db'];
   let busPublishAsyncSpy: ReturnType<typeof mock>;
+  let busPublishSpy: ReturnType<typeof mock>;
   let mockEventBus: InterruptHandlerContext['internalEventBus'];
 
   beforeEach(() => {
@@ -102,9 +103,10 @@ describe('InterruptHandler', () => {
     } as unknown as InterruptHandlerContext['db'];
 
     busPublishAsyncSpy = mock(async () => {});
+    busPublishSpy = mock(async () => {});
     mockEventBus = {
       publishAsync: busPublishAsyncSpy,
-      publish: mock(async () => {}),
+      publish: busPublishSpy,
     } as unknown as InterruptHandlerContext['internalEventBus'];
   });
 
@@ -170,6 +172,28 @@ describe('InterruptHandler', () => {
       await handler.handleInterrupt();
 
       expect(setInterruptedSpy).toHaveBeenCalled();
+    });
+
+    it('should publish a failed status change for terminalized enqueued deliveries', async () => {
+      cancelForSessionSpy.mockImplementation(() => ['uuid-a', 'uuid-b']);
+      markFailedSpy.mockImplementation((_sessionId: string, uuid: string) => `db-${uuid}`);
+      handler = createHandler();
+
+      await handler.handleInterrupt();
+
+      expect(busPublishSpy).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'test-session-id',
+        messageIds: ['db-uuid-a', 'db-uuid-b'],
+        status: 'failed',
+      });
+    });
+
+    it('should not publish a failed status change when nothing terminalized', async () => {
+      handler = createHandler();
+
+      await handler.handleInterrupt();
+
+      expect(busPublishSpy).not.toHaveBeenCalledWith('messages.statusChanged', expect.anything());
     });
 
     it('should clear message queue if has pending messages', async () => {

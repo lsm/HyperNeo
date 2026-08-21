@@ -444,11 +444,15 @@ export class SpaceRuntimeService {
       const existing = sdkMessageRepo.getDeliveryContent(sessionId, id);
       const fresh = !existing;
       if (!existing) {
-        reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+        const dbId = reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+        await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
       } else if (existing.sendStatus === 'consumed') {
         return id;
       } else if (existing.sendStatus === 'failed') {
-        sdkMessageRepo.reopenDeliveryByUuid(sessionId, id);
+        const reopenedDbId = sdkMessageRepo.reopenDeliveryByUuid(sessionId, id);
+        if (reopenedDbId) {
+          await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
+        }
       }
       await awaitDeliveryConsumption({
         sessionId,
@@ -461,18 +465,48 @@ export class SpaceRuntimeService {
             sessionId,
             messageUuid: id,
             origin: 'long_term_agent',
-            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id),
+            onEnqueueFailure: () => {
+              const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
+              if (failedDbId) {
+                void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+              }
+            },
           }),
         ...(fresh
-          ? { terminalizeOnTimeout: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id) }
+          ? {
+              terminalizeOnTimeout: () => {
+                const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
+                if (failedDbId) {
+                  void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+                }
+              },
+            }
           : {}),
       });
     } else {
       await session.ensureQueryStarted();
-      reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      const dbId = reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
       await session.messageQueue.enqueueWithId(id, message);
     }
     return id;
+  }
+
+  private async publishMessageStatusChanged(
+    sessionId: string,
+    dbId: string,
+    status: 'enqueued' | 'deferred' | 'failed'
+  ): Promise<void> {
+    if (!this.config.internalEventBus) {
+      return;
+    }
+    await this.config.internalEventBus
+      .publish('messages.statusChanged', {
+        sessionId,
+        messageIds: [dbId],
+        status,
+      })
+      .catch(() => {});
   }
 
   private async buildLongHorizonAgentSessionConfig(
