@@ -47,6 +47,31 @@ describe('assessLimitError', () => {
     expect(assessment.resetAtMs).toBeNull();
   });
 
+  it('parses a relative reset delay from a 400 authentication_error wrapper', () => {
+    const assessment = assessLimitError(
+      {
+        rawText:
+          'devin stream error permission_denied: Reached overall message rate limit. ' +
+          'Please try again later. Your limit will reset in 3 minutes. ' +
+          '(trace ID: 01a4b19cff4f3d160109fe9fae2e4b32)',
+        httpStatus: 400,
+      },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(true);
+    expect(assessment.resetAtMs).toBe(NOW + 3 * 60 * 1000);
+    expect(assessment.source).toBe('parsed:relative-delay');
+    expect(assessment.kind).toBe('usage_limit');
+  });
+
+  it('parses hourly relative delays from retry phrasing', () => {
+    const assessment = assessLimitError(
+      { rawText: 'too many requests — please retry in 2 hours' },
+      NOW
+    );
+    expect(assessment.resetAtMs).toBe(NOW + 2 * 60 * 60 * 1000);
+  });
+
   it('treats an HTTP 429 status as a limit even with an unparseable body', () => {
     const assessment = assessLimitError(
       { rawText: '<html>Blocked by firewall</html>', httpStatus: 429 },

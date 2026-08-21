@@ -162,6 +162,31 @@ describe('extractResetTimestamp', () => {
     expect(r?.resetAtMs).toBe(target);
   });
 
+  test('relative delay in minutes', () => {
+    const r = extractResetTimestamp('Your limit will reset in 3 minutes.', NOW);
+    expect(r?.strategy).toBe('relative-delay');
+    expect(r?.resetAtMs).toBe(NOW + 3 * 60 * 1000);
+  });
+
+  test('relative delay in hours with retry phrasing', () => {
+    const r = extractResetTimestamp('too many requests — please retry in 2 hours', NOW);
+    expect(r?.strategy).toBe('relative-delay');
+    expect(r?.resetAtMs).toBe(NOW + 2 * 60 * 60 * 1000);
+  });
+
+  test('relative delay across a sentence with try-again phrasing', () => {
+    const r = extractResetTimestamp(
+      'Reached overall message rate limit. Please try again later. Your limit will reset in 3 minutes. (trace ID: 01a4b19cff4f3d160109fe9fae2e4b32)',
+      NOW
+    );
+    expect(r?.strategy).toBe('relative-delay');
+    expect(r?.resetAtMs).toBe(NOW + 3 * 60 * 1000);
+  });
+
+  test('relative delay beyond the horizon → null', () => {
+    expect(extractResetTimestamp('Your limit will reset in 30 days', NOW)).toBeNull();
+  });
+
   test('past date → null', () => {
     expect(extractResetTimestamp('resets 2020-01-01 00:00:00', NOW)).toBeNull();
   });
