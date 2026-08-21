@@ -485,7 +485,14 @@ interpreters over three extracted cores:
   summary's displayed required
   level — so a threshold or default change must touch every owner until the
   derivation is centralized, or backend approval behavior diverges from the
-  UI's auto-close count and displayed level. The
+  UI's auto-close count and displayed level. Distinct from that runtime
+  missing-value fallback, creation and storage default the level to **3**: the
+  visual editor's state init and serialization (`?? 3`), import handling
+  (`space-export-import-handlers.ts`), and the `completion_autonomy_level`
+  column backfill (DEFAULT 3, with per-template overrides) — so newly created,
+  edited, or imported workflows persist 3 while an absent value at runtime
+  reads as 5; the two defaults disagree, which is part of the same
+  centralization question. The
   router owns only the denial routing — reason, message, and
   precedence against the target check (see the second recorded asymmetry
   below).
@@ -621,9 +628,12 @@ task-agent surface's `onArchiveTask`
 (`runtime/task-agent-manager.ts`), which re-implements the archive-active-run
 gate with its own message variant; and the largest ones: the UI-side RPC surface
 in `rpc-handlers/space-task-handlers.ts`, which re-implements the update
-routing by hand with UI-flavored messages and whose `spaceTask.publish`
-repeats the publish target resolution and draft-only gate with its own wording,
-publishing `space.task.updated` itself. These are follow-up mini-pilot
+routing by hand with UI-flavored messages, whose `spaceTask.publish` repeats
+the publish target resolution and draft-only gate, and whose
+`spaceTask.approvePendingCompletion` repeats the scoped lookup,
+pending-checkpoint/review gates, approval effects, and `space.task.updated`
+emission of the MCP `approve_pending_completion` handler — each with its own
+wording. These are follow-up mini-pilot
 material (below), deliberately not folded into a cleanup PR.
 
 **Costs:** production net +458 daemon lines across the pilot — +556 in the
