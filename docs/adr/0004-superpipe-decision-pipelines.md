@@ -530,11 +530,12 @@ no-op beyond validation: `SpaceTaskManager.reassignTask` ignores its agent
 parameters, checks existence and an allowed-status list, and returns the task
 unchanged — nothing is mutated to audit or emit, a review question in its own
 right (deliberate deprecation or lost implementation?), not merely an emission
-asymmetry. Two gather caveats bound the always-JSON claim: `approve_task`
-awaits its autonomy snapshot reads (`getSpace`/`getSpaceAutonomyLevel`) before
-entering its try block, so a rejected read rejects the MCP call rather than
-folding into JSON, while `update_task` performs the same gather inside its try
-and folds. That
+asymmetry. Pre-try gathers bound the always-JSON claim as a rule: any read
+taken before a handler's try block — `approve_task`'s awaited autonomy snapshot
+(`getSpace`/`getSpaceAutonomyLevel`), `publish_task`/`archive_task`'s
+`taskRepo.getTask`, `create_standalone_task`'s workflow resolution — rejects
+the MCP call on error rather than folding into JSON, while `update_task`
+performs the same autonomy gather inside its try and folds. That
 spread is another facet of the emission-ownership question below. `update_task` is the fullest instance: its `TaskUpdateRouting` union —
 reject `no_updatable_fields` → target reject → `review_direct` →
 `approved_direct` → `park_stopped` → `review_to_done` → `archive_active_run` →
