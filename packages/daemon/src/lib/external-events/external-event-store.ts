@@ -232,6 +232,22 @@ export class ExternalEventStore {
     this.setEventState(eventId, 'failed');
   }
 
+  markPublishedEventsFailedBefore(createdAtBefore: number, now: number = Date.now()): number {
+    const result = this.db
+      .prepare(
+        `UPDATE space_external_events
+         SET state = 'failed', updated_at = ?
+         WHERE state = 'published'
+           AND created_at < ?
+           AND NOT EXISTS (
+             SELECT 1 FROM space_external_event_deliveries d WHERE d.event_id = space_external_events.id
+           )`
+      )
+      .run(now, createdAtBefore);
+    if (result.changes > 0) this.notify(['space_external_events']);
+    return result.changes ?? 0;
+  }
+
   markEventIgnored(eventId: string, _reason: 'no_matching_subscriptions'): void {
     const event = this.getById(eventId);
     if (!event || TERMINAL_EVENT_STATES.has(event.state)) return;
