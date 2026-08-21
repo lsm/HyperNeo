@@ -213,7 +213,11 @@ done/cancelled/blocked/approved) and spawn terminal
 intentionally differ: 'blocked' settles a finished attempt, while 'stopped'
 (user-parked) short-circuits the entire tick at admission
 (`applyTaskStoppedGate` → skip, so no crash recovery, handoff repair,
-settlement, or spawn runs for a task parked before the tick). Mid-tick parking
+settlement, or spawn runs for a task parked before the tick) — with one
+precedence exception: workflow validity is gated first, so a parked task on a
+workflow missing `endNodeId` is instead transitioned to `blocked` (pre-existing
+precedence, preserved by the pilot; parking is authoritative only for valid
+workflows). Mid-tick parking
 is only partially guarded: the canonical task is re-read before spawn
 admission, so the ordinary spawn path is suppressed, but both earlier stages
 run on the admission-era task — queued-handoff repair's terminal check
