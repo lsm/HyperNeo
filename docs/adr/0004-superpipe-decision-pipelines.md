@@ -186,8 +186,9 @@ repository primitives, which effect stages must call.
    effect contract; whether the flow then re-snapshots or halts for this tick
    is the outcome's routing, never the effect's choice. Correlated transitions
    (an execution, its run, the canonical task) compose into one transactional
-   primitive per set or compensate already-committed writes before halting — a
-   `superseded` halt never leaves a half-applied set.
+   primitive per set or compensate already-committed writes before either
+   route — halt or re-snapshot — so a `superseded` outcome never continues
+   from a half-applied set.
 4. **Microtask pinning.** Decision item 5's proof obligation carries over: any
    `stagedRun` invoked from the run tick pins its microtask profile in tests.
    `decide` stages stay synchronous; `snapshot`/`effect` stages may use
@@ -200,10 +201,12 @@ or a throwing `effect` — fails the pass: the interpreter catches, logs, and
 returns an error outcome; no in-flow retry. Before returning, it unwinds the
 compensations of every effect stage it *started*, in reverse order — including
 the failing stage's own partial work (a compensation is registered when the
-stage starts, not when it completes) — and each compensation failure is itself
-caught, logged, and durably recorded while unwinding continues, so a failed
-pass leaves no compensable-but-uncompensated effect behind and an incomplete
-unwind is discoverable. Recovery is the caller's re-entry with a fresh snapshot
+stage starts, not when it completes). Persistent compensations are conditional
+inverse operations — CAS-guarded or durable saga steps: a compensation that
+finds newer state records an incomplete unwind instead of clobbering it. Each
+compensation failure is itself caught, logged, and durably recorded while
+unwinding continues, so a failed pass leaves no compensable-but-uncompensated
+effect behind and an incomplete unwind is discoverable. Recovery is the caller's re-entry with a fresh snapshot
 plus condition 5 (for the run tick, the next tick). In-memory compensation
 covers only the live process: correlated persistent-transition sets commit as
 one database transaction or carry a durable saga record completed or reversed
@@ -480,7 +483,7 @@ production-unreachable defensive code outside the sweep's PR-6 scope — the
 
   | Phase | Scope | Notes |
   | --- | --- | --- |
-  | 0 | Task CAS (`casStatus`), transition-table enforcement in `updateTaskAndEmit`, spawn reservation, run/execution CAS | Product behavior change, not refactor; needs characterization pins. The `update_task` tool layer delegates to the repo-layer table — one source of truth (aligns with Pilot 5). |
+  | 0 | Task CAS (`casStatus`), transition-table enforcement in `updateTaskAndEmit`, spawn reservation, run/execution CAS, durable intent/outbox + compensation-record repositories | Product behavior change, not refactor; needs characterization pins. The `update_task` tool layer delegates to the repo-layer table — one source of truth (aligns with Pilot 5). |
   | 1 | `repairQueuedWorkflowNodeHandoffs` as a staged sub-pipeline | Proves the pattern on one opaque effect. |
   | 2 | `handleAliveStuckExecutions` + crash reset | First recovery handler; the `withSignal` candidate lands here only if a test demonstrates the race. |
   | 3 | `handleWaitingRebindExecutions` | |
