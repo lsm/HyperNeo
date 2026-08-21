@@ -204,7 +204,7 @@ export async function deliverBatchAndMarkQueued(args: {
 }
 
 export interface StrandedDeliveryDb {
-  getMessagesByStatus(sessionId: string, status: 'enqueued'): Array<{ uuid?: string }>;
+  getUserMessageIdsByStatus(sessionId: string, status: 'enqueued'): Array<{ uuid?: string }>;
 }
 
 export async function reconcileStrandedDeliveries(args: {
@@ -219,7 +219,7 @@ export async function reconcileStrandedDeliveries(args: {
   if (!isMessageDeliveryV2Enabled()) return 0;
   return withSessionLock(args.sessionId, async () => {
     const active = args.jobQueue.activeDeliveryMessageUuids(args.sessionId);
-    const enqueued = args.db.getMessagesByStatus(args.sessionId, 'enqueued');
+    const enqueued = args.db.getUserMessageIdsByStatus(args.sessionId, 'enqueued');
     const stranded: string[] = [];
     for (const msg of enqueued) {
       const uuid = msg.uuid;

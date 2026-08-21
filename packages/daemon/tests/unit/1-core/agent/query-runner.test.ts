@@ -43,7 +43,6 @@ describe('QueryRunner', () => {
   let publishSpy: ReturnType<typeof mock>;
   let saveSDKMessageSpy: ReturnType<typeof mock>;
   let updateSessionSpy: ReturnType<typeof mock>;
-  let getMessagesByStatusSpy: ReturnType<typeof mock>;
   let getSDKMessagesSpy: ReturnType<typeof mock>;
   let updateMessageStatusSpy: ReturnType<typeof mock>;
   let buildSpy: ReturnType<typeof mock>;
@@ -98,13 +97,11 @@ describe('QueryRunner', () => {
 
     saveSDKMessageSpy = mock(() => {});
     updateSessionSpy = mock(() => {});
-    getMessagesByStatusSpy = mock(() => []);
     getSDKMessagesSpy = mock(() => ({ messages: [], hasMore: false }));
     updateMessageStatusSpy = mock(() => {});
     mockDb = {
       saveSDKMessage: saveSDKMessageSpy,
       updateSession: updateSessionSpy,
-      getMessagesByStatus: getMessagesByStatusSpy,
       getSDKMessages: getSDKMessagesSpy,
       updateMessageStatus: updateMessageStatusSpy,
       getNodeExecutionRepo: mock(() => ({

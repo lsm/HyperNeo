@@ -488,11 +488,22 @@ export class SessionLifecycle {
     completedPhases.push('db-mark-archived');
 
     try {
+      const failedDbIds: string[] = [];
       const messageUuids =
         this.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(sessionId) ?? [];
       const sdkRepo = this.db.getSDKMessageRepo?.();
       for (const messageUuid of messageUuids) {
-        sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid);
+        const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid) ?? null;
+        if (failedDbId) failedDbIds.push(failedDbId);
+      }
+      if (failedDbIds.length > 0) {
+        await this.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId,
+            messageIds: failedDbIds,
+            status: 'failed',
+          })
+          .catch(() => {});
       }
       completedPhases.push('delivery-cancel');
     } catch (error) {
@@ -608,11 +619,22 @@ export class SessionLifecycle {
         completedPhases.push('db-mark-archived');
       }
       try {
+        const failedDbIds: string[] = [];
         const messageUuids =
           this.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(sessionId) ?? [];
         const sdkRepo = this.db.getSDKMessageRepo?.();
         for (const messageUuid of messageUuids) {
-          sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid);
+          const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid) ?? null;
+          if (failedDbId) failedDbIds.push(failedDbId);
+        }
+        if (failedDbIds.length > 0) {
+          await this.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId,
+              messageIds: failedDbIds,
+              status: 'failed',
+            })
+            .catch(() => {});
         }
         completedPhases.push('delivery-cancel');
       } catch (error) {

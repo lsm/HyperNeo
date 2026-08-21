@@ -3226,7 +3226,12 @@ export class TaskAgentManager {
       return messageId;
     }
     if (existing?.sendStatus === 'failed') {
-      this.config.db.getSDKMessageRepo().reopenDeliveryByUuid(sessionId, messageId);
+      const reopenedDbId = this.config.db
+        .getSDKMessageRepo()
+        .reopenDeliveryByUuid(sessionId, messageId);
+      if (reopenedDbId) {
+        await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
+      }
     }
 
     const inRateLimitCooldown = state.status === 'rate_limit_cooldown';
@@ -3240,6 +3245,7 @@ export class TaskAgentManager {
       const dbId = existing
         ? messageId
         : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
+      await this.publishMessageStatusChanged(sessionId, dbId, 'deferred');
       return dbId;
     }
 
@@ -3278,6 +3284,7 @@ export class TaskAgentManager {
       const dbId = existing
         ? messageId
         : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
+      await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
       const sdkMessageRepo = this.config.db.getSDKMessageRepo();
       await awaitDeliveryConsumption({
         sessionId,
@@ -3290,12 +3297,21 @@ export class TaskAgentManager {
             sessionId,
             messageUuid: messageId,
             origin: 'space_inject',
-            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+            onEnqueueFailure: () => {
+              const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
+              if (failedDbId) {
+                void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+              }
+            },
           }),
         ...(!existing
           ? {
-              terminalizeOnTimeout: () =>
-                sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+              terminalizeOnTimeout: () => {
+                const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
+                if (failedDbId) {
+                  void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+                }
+              },
             }
           : {}),
       });
@@ -3303,8 +3319,23 @@ export class TaskAgentManager {
     }
     await session.ensureQueryStarted();
     const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
+    await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
     await session.messageQueue.enqueueWithId(messageId, hasImages ? sdkContent : message);
     return dbId;
+  }
+
+  private async publishMessageStatusChanged(
+    sessionId: string,
+    dbId: string,
+    status: 'enqueued' | 'deferred' | 'failed'
+  ): Promise<void> {
+    await this.config.internalEventBus
+      .publish('messages.statusChanged', {
+        sessionId,
+        messageIds: [dbId],
+        status,
+      })
+      .catch(() => {});
   }
 
   private async stopSessionPreserveDb(

@@ -71,7 +71,7 @@ describe('SDKMessageHandler', () => {
 
   let saveSDKMessageSpy: ReturnType<typeof mock>;
   let updateSessionSpy: ReturnType<typeof mock>;
-  let getMessagesByStatusSpy: ReturnType<typeof mock>;
+  let getUserMessagesByStatusSpy: ReturnType<typeof mock>;
   let getMessageByStatusAndUuidSpy: ReturnType<typeof mock>;
   let updateMessageStatusSpy: ReturnType<typeof mock>;
   let publishSpy: ReturnType<typeof mock>;
@@ -119,13 +119,13 @@ describe('SDKMessageHandler', () => {
 
     saveSDKMessageSpy = mock(() => true);
     updateSessionSpy = mock(() => {});
-    getMessagesByStatusSpy = mock(() => []);
+    getUserMessagesByStatusSpy = mock(() => ({ messages: [], total: 0 }));
     getMessageByStatusAndUuidSpy = mock(() => null);
     updateMessageStatusSpy = mock(() => {});
     mockDb = {
       saveSDKMessage: saveSDKMessageSpy,
       updateSession: updateSessionSpy,
-      getMessagesByStatus: getMessagesByStatusSpy,
+      getUserMessagesByStatus: getUserMessagesByStatusSpy,
       getMessageByStatusAndUuid: getMessageByStatusAndUuidSpy,
       updateMessageStatus: updateMessageStatusSpy,
       updateMessageTimestamp: mock(() => {}),
@@ -460,7 +460,7 @@ describe('SDKMessageHandler', () => {
     });
 
     it('should acknowledge persisted enqueued user messages without duplicate save', async () => {
-      getMessagesByStatusSpy.mockImplementation(() => {
+      getUserMessagesByStatusSpy.mockImplementation(() => {
         throw new Error('bulk status scan should not be used for direct SDK replay ack');
       });
       getMessageByStatusAndUuidSpy.mockImplementation(
@@ -1214,22 +1214,25 @@ describe('SDKMessageHandler', () => {
     });
 
     it('should fallback-ack oldest enqueued user on turn end when replay is absent', async () => {
-      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+      getUserMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
         if (status === 'enqueued') {
-          return [
-            {
-              dbId: 'db-msg-1',
-              uuid: 'enqueued-user-uuid',
-              type: 'user',
-              timestamp: 1700000000000,
-              message: {
-                role: 'user',
-                content: [{ type: 'tool_result', tool_use_id: 'tool-fallback', content: 'ok' }],
+          return {
+            messages: [
+              {
+                dbId: 'db-msg-1',
+                uuid: 'enqueued-user-uuid',
+                type: 'user',
+                timestamp: 1700000000000,
+                message: {
+                  role: 'user',
+                  content: [{ type: 'tool_result', tool_use_id: 'tool-fallback', content: 'ok' }],
+                },
               },
-            },
-          ];
+            ],
+            total: 1,
+          };
         }
-        return [];
+        return { messages: [], total: 0 };
       });
       const markDeliveriesConsumedAtTurnEndSpy = mock(() => ({
         ids: ['db-msg-1'],
@@ -1290,19 +1293,22 @@ describe('SDKMessageHandler', () => {
     });
 
     it('leaves a message owned by the message queue enqueued at turn end', async () => {
-      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+      getUserMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
         if (status === 'enqueued') {
-          return [
-            {
-              dbId: 'db-queued',
-              uuid: 'queued-user-uuid',
-              type: 'user',
-              timestamp: 1700000000000,
-              message: { role: 'user', content: [{ type: 'text', text: 'queued' }] },
-            },
-          ];
+          return {
+            messages: [
+              {
+                dbId: 'db-queued',
+                uuid: 'queued-user-uuid',
+                type: 'user',
+                timestamp: 1700000000000,
+                message: { role: 'user', content: [{ type: 'text', text: 'queued' }] },
+              },
+            ],
+            total: 1,
+          };
         }
-        return [];
+        return { messages: [], total: 0 };
       });
       hasPendingOrClaimedSpy.mockImplementation((uuid: string) => uuid === 'queued-user-uuid');
 
@@ -1319,19 +1325,22 @@ describe('SDKMessageHandler', () => {
     });
 
     it('acknowledges a yielded durable message at turn end when replay is absent', async () => {
-      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+      getUserMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
         if (status === 'enqueued') {
-          return [
-            {
-              dbId: 'db-yielded',
-              uuid: 'yielded-user-uuid',
-              type: 'user',
-              timestamp: 1700000000000,
-              message: { role: 'user', content: [{ type: 'text', text: 'yielded' }] },
-            },
-          ];
+          return {
+            messages: [
+              {
+                dbId: 'db-yielded',
+                uuid: 'yielded-user-uuid',
+                type: 'user',
+                timestamp: 1700000000000,
+                message: { role: 'user', content: [{ type: 'text', text: 'yielded' }] },
+              },
+            ],
+            total: 1,
+          };
         }
-        return [];
+        return { messages: [], total: 0 };
       });
       const markDeliveriesConsumedAtTurnEndSpy = mock(() => ({
         ids: ['db-yielded', 'db-batch-member'],
@@ -1389,19 +1398,22 @@ describe('SDKMessageHandler', () => {
     });
 
     it('signals only batch members actually consumed at turn end', async () => {
-      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+      getUserMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
         if (status === 'enqueued') {
-          return [
-            {
-              dbId: 'db-yielded',
-              uuid: 'yielded-user-uuid',
-              type: 'user',
-              timestamp: 1700000000000,
-              message: { role: 'user', content: [{ type: 'text', text: 'yielded' }] },
-            },
-          ];
+          return {
+            messages: [
+              {
+                dbId: 'db-yielded',
+                uuid: 'yielded-user-uuid',
+                type: 'user',
+                timestamp: 1700000000000,
+                message: { role: 'user', content: [{ type: 'text', text: 'yielded' }] },
+              },
+            ],
+            total: 1,
+          };
         }
-        return [];
+        return { messages: [], total: 0 };
       });
       mockDb.getJobQueueRepo = mock(() => ({
         activeDeliveryMessageUuids: () => new Set(['yielded-user-uuid']),
@@ -1445,19 +1457,22 @@ describe('SDKMessageHandler', () => {
     });
 
     it('settles yielded delivery before timestamp maintenance', async () => {
-      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+      getUserMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
         if (status === 'enqueued') {
-          return [
-            {
-              dbId: 'db-yielded',
-              uuid: 'yielded-user-uuid',
-              type: 'user',
-              timestamp: 1700000000000,
-              message: { role: 'user', content: [{ type: 'text', text: 'yielded' }] },
-            },
-          ];
+          return {
+            messages: [
+              {
+                dbId: 'db-yielded',
+                uuid: 'yielded-user-uuid',
+                type: 'user',
+                timestamp: 1700000000000,
+                message: { role: 'user', content: [{ type: 'text', text: 'yielded' }] },
+              },
+            ],
+            total: 1,
+          };
         }
-        return [];
+        return { messages: [], total: 0 };
       });
       mockDb.getJobQueueRepo = mock(() => ({
         activeDeliveryMessageUuids: () => new Set(['yielded-user-uuid']),
@@ -1498,19 +1513,22 @@ describe('SDKMessageHandler', () => {
     });
 
     it('leaves an active durable steer enqueued and claimable at turn end (#3744401261)', async () => {
-      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+      getUserMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
         if (status === 'enqueued') {
-          return [
-            {
-              dbId: 'db-steer',
-              uuid: 'durable-steer-uuid',
-              type: 'user',
-              timestamp: 1700000000000,
-              message: { role: 'user', content: [{ type: 'text', text: 'steer' }] },
-            },
-          ];
+          return {
+            messages: [
+              {
+                dbId: 'db-steer',
+                uuid: 'durable-steer-uuid',
+                type: 'user',
+                timestamp: 1700000000000,
+                message: { role: 'user', content: [{ type: 'text', text: 'steer' }] },
+              },
+            ],
+            total: 1,
+          };
         }
-        return [];
+        return { messages: [], total: 0 };
       });
       mockDb.getJobQueueRepo = mock(() => ({
         activeDeliveryMessageUuids: () => new Set(['durable-steer-uuid']),
@@ -1529,19 +1547,22 @@ describe('SDKMessageHandler', () => {
     });
 
     it('leaves a yielded durable steer enqueued when another message owns the turn', async () => {
-      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+      getUserMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
         if (status === 'enqueued') {
-          return [
-            {
-              dbId: 'db-steer',
-              uuid: 'durable-steer-uuid',
-              type: 'user',
-              timestamp: 1700000000000,
-              message: { role: 'user', content: [{ type: 'text', text: 'steer' }] },
-            },
-          ];
+          return {
+            messages: [
+              {
+                dbId: 'db-steer',
+                uuid: 'durable-steer-uuid',
+                type: 'user',
+                timestamp: 1700000000000,
+                message: { role: 'user', content: [{ type: 'text', text: 'steer' }] },
+              },
+            ],
+            total: 1,
+          };
         }
-        return [];
+        return { messages: [], total: 0 };
       });
       mockDb.getJobQueueRepo = mock(() => ({
         activeDeliveryMessageUuids: () => new Set(['durable-steer-uuid']),

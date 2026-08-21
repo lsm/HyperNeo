@@ -23,6 +23,7 @@ const mockCommandHandleKeyDown = vi.fn(() => false);
 
 vi.mock('../../lib/state.ts', () => ({
   globalSettings: { value: { voice: { enabled: false } } },
+  connectionState: { value: 'connected' },
   get isAgentWorking() {
     return {
       get value() {
@@ -98,7 +99,7 @@ vi.mock('../../hooks', () => ({
 
 vi.mock('../../lib/connection-manager', () => ({
   connectionManager: {
-    getHubIfConnected: () => ({ request: mockRequest }),
+    getHubIfConnected: () => ({ request: mockRequest, onEvent: vi.fn(() => vi.fn()) }),
   },
 }));
 

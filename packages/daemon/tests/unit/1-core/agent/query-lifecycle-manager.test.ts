@@ -23,7 +23,7 @@ describe('QueryLifecycleManager', () => {
 
   let updateSessionSpy: ReturnType<typeof mock>;
   let updateMessageStatusSpy: ReturnType<typeof mock>;
-  let getMessagesByStatusSpy: ReturnType<typeof mock>;
+  let getMessageByStatusAndUuidSpy: ReturnType<typeof mock>;
   let saveHyperNeoActionMessageSpy: ReturnType<typeof mock>;
   let publishSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
@@ -56,21 +56,19 @@ describe('QueryLifecycleManager', () => {
 
     updateSessionSpy = mock(() => {});
     updateMessageStatusSpy = mock(() => {});
-    getMessagesByStatusSpy = mock((_sessionId: string, status: string) => {
-      if (status !== 'enqueued') {
-        return [];
+    getMessageByStatusAndUuidSpy = mock((_sessionId: string, status: string, uuid: string) => {
+      if (status !== 'enqueued' || uuid !== 'msg-123') {
+        return null;
       }
-      return [
-        {
-          dbId: 'db-msg-123',
-          type: 'user',
-          uuid: 'msg-123',
-          session_id: 'test-session',
-          parent_tool_use_id: null,
-          message: { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
-          timestamp: Date.now(),
-        },
-      ];
+      return {
+        dbId: 'db-msg-123',
+        type: 'user',
+        uuid: 'msg-123',
+        session_id: 'test-session',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+        timestamp: Date.now(),
+      };
     });
     hasUnresolvedResumeChoice = false;
     saveHyperNeoActionMessageSpy = mock(() => {
@@ -98,7 +96,7 @@ describe('QueryLifecycleManager', () => {
       db: {
         updateSession: updateSessionSpy,
         updateMessageStatus: updateMessageStatusSpy,
-        getMessagesByStatus: getMessagesByStatusSpy,
+        getMessageByStatusAndUuid: getMessageByStatusAndUuidSpy,
         saveHyperNeoActionMessage: saveHyperNeoActionMessageSpy,
         getSDKMessageRepo: () => ({
           hasUnresolvedHyperNeoAction: () => hasUnresolvedResumeChoice,

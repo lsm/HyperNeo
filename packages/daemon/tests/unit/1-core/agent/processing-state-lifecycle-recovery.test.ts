@@ -29,7 +29,6 @@ describe('chat/thread lifecycle recovery — stale waiting_for_input', () => {
       getSession: mock(() => stored),
       updateSession,
       saveSDKMessage: mock(() => true),
-      getMessagesByStatus: mock(() => []),
       getMessageByStatusAndUuid: mock(() => null),
       updateMessageStatus: mock(() => {}),
       updateMessageTimestamp: mock(() => {}),
