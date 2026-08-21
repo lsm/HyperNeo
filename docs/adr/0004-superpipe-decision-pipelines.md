@@ -169,7 +169,7 @@ The shell keeps every effect and re-snapshots `nodeExecutionRepo.listByWorkflowR
 after each effectful stage (crash reset, recovery handlers, handoff repair,
 promotion) before the next decision.
 
-Three boundary caveats, recorded so the section is not read as a cleaner
+Four boundary caveats, recorded so the section is not read as a cleaner
 validation of the sandwich than it is. First, slot availability is modeled by a
 pipeline gate but defused at the production call site
 (`availableTaskSlots: Number.MAX_SAFE_INTEGER`): `space` — and with it
@@ -189,7 +189,13 @@ are lazy thunks forced inside the gates, so their repository/detector reads
 happen within the core run rather than pre-gathered by the shell — a deliberate
 exception so cheap skip paths never pay for the executions snapshot. The reads
 are read-only and memoized (one shared `loadNodeExecutions` snapshot), and no
-effects run inside the core.
+effects run inside the core. Fourth, spawn-failure classification has shadowed
+outcomes: the interpreter handles permanent and transient errors inline
+(cancelling the execution, deferring with a log) before calling
+`classifySpawnFailure`, so the production call always supplies
+`isPermanent: false` and `isTransient: false` and the core's `cancel_permanent`
+and `defer_transient` arms are unreachable outside unit tests — in production
+the core only chooses between preserve-stale-terminal and reset-retry.
 
 Deliberate non-goals: the four `handle*Executions` recovery sub-flows
 (alive-stuck, waiting-rebind, non-terminal-idle, terminal-error-idle) and
@@ -203,11 +209,15 @@ done/cancelled/blocked/approved) and spawn terminal
 intentionally differ: 'blocked' settles a finished attempt, while 'stopped'
 (user-parked) short-circuits the entire tick at admission
 (`applyTaskStoppedGate` → skip, so no crash recovery, handoff repair,
-settlement, or spawn runs for a parked task) and, because the canonical task is
-re-read before spawn admission, still suppresses spawn when the task is parked
-mid-tick after admission — it is never settled. The terminal-handoff-cleanup
-check in the interpreter is a third, narrower set (done/cancelled/archived).
-These are distinct decisions, not duplicate predicates to unify.
+settlement, or spawn runs for a task parked before the tick) — it is never
+settled. Mid-tick parking is only partially guarded: the canonical task is
+re-read before spawn admission, so the ordinary spawn path is suppressed, but
+queued-handoff repair runs earlier with the admission-era task, its terminal
+check (done/cancelled/archived) excludes 'stopped', and it can still spawn —
+a known gap to close with the `repairQueuedWorkflowNodeHandoffs` mini-pilot.
+The terminal-handoff-cleanup check in the interpreter is a third, narrower set
+(done/cancelled/archived). These are distinct decisions, not duplicate
+predicates to unify.
 
 Costs: production net +374 lines across the pilot — 368 lines of new pure
 modules, `space-runtime.ts` net +6 (`processRunTick` 535 → 533 lines; the value
@@ -219,7 +229,9 @@ the closing cleanup/dead-code sweep. The sweep confirmed no dead inline copies
 remained: every leftover near-duplicate (pre-admission finished/waiting
 fast-path, post-snapshot slot check, the post-approval session ternary that
 narrows the `PostApprovalRouteResult` union) is live adapter code, deliberately
-kept.
+kept. The dual phenomenon — core decision arms that production never reaches —
+is recorded in the boundary caveats above (shadowed admission gates, the slot
+gate, spawn-failure outcomes).
 
 ## Roadmap
 
