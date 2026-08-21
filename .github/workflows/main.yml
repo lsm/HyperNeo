@@ -583,7 +583,7 @@ jobs:
           retention-days: 7
 
       - name: Upload lcov artifact
-        if: hashFiles('packages/web/coverage-web-${{ matrix.shard }}/lcov.info') != ''
+        if: hashFiles(format('packages/web/coverage-web-{0}/lcov.info', matrix.shard)) != ''
         uses: actions/upload-artifact@v7
         with:
           name: lcov-web-${{ matrix.shard }}
