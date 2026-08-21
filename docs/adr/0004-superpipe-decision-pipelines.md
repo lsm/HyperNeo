@@ -176,11 +176,12 @@ repository primitives, which effect stages must call.
    in-tick retry loops. The recovery-handler-overwrites-`stopped`-with-`blocked`
    race class becomes structurally impossible instead of tested away. Effect
    stages return their primitives' CAS outcomes and the interpreter — not the
-   effect body — stamps `superseded` and halts, keeping decision-stamping out of
-   the effect contract. Correlated transitions (an execution, its run, the
-   canonical task) compose into one transactional primitive per set or
-   compensate already-committed writes before halting — a `superseded` halt
-   never leaves a half-applied set.
+   effect body — stamps `superseded`, keeping decision-stamping out of the
+   effect contract; whether the flow then re-snapshots or halts for this tick
+   is the outcome's routing, never the effect's choice. Correlated transitions
+   (an execution, its run, the canonical task) compose into one transactional
+   primitive per set or compensate already-committed writes before halting — a
+   `superseded` halt never leaves a half-applied set.
 4. **Microtask pinning.** Decision item 5's proof obligation carries over: any
    `stagedRun` invoked from the run tick pins its microtask profile in tests.
    `decide` stages stay synchronous; `snapshot`/`effect` stages may use
@@ -191,7 +192,9 @@ repository primitives, which effect stages must call.
 **Effect-stage errors.** A throwing effect stage fails the pass: the interpreter
 catches, logs, and returns an error outcome — no in-flow retry. Recovery is the
 caller's re-entry with a fresh snapshot plus condition 5's idempotence or
-compensation (for the run tick, the next tick).
+compensation (for the run tick, the next tick). Replay that crosses a process
+crash needs the durable arm of condition 5 — a persistent idempotency key or
+outbox record — because in-memory compensation does not survive the crash.
 
 **The RFC's open questions, answered:**
 
