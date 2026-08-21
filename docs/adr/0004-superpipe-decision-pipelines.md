@@ -142,8 +142,10 @@ interpreter never distinguishes them). The five contracts:
   union member.
 - **`effect`** — mutating; declares `reads`/`writes` state keys; persistent
   writes go through atomic repository primitives (condition 1), while external
-  side effects — network, publishes, session injects — carry condition 5's
-  idempotence/compensation obligation instead.
+  side effects — network, publishes, session injects — are gated by a durable
+  intent row whose conditional write validates the stage's declared read
+  preconditions (the Phase 0 reservation mechanism, which also dedups replay)
+  and carry condition 5's idempotence/compensation obligation.
 - **`resnapshot`** — re-reads the specific keys a later stage depends on.
 - **`halt`** — terminal; returns the outcome.
 
@@ -194,11 +196,14 @@ repository primitives, which effect stages must call.
    Decision item 4).
 
 **Effect-stage errors.** A throwing effect stage fails the pass: the interpreter
-catches, logs, and returns an error outcome — no in-flow retry. Recovery is the
-caller's re-entry with a fresh snapshot plus condition 5's idempotence or
-compensation (for the run tick, the next tick). Replay that crosses a process
-crash needs the durable arm of condition 5 — a persistent idempotency key or
-outbox record — because in-memory compensation does not survive the crash.
+catches, logs, and returns an error outcome — no in-flow retry. Before
+returning, it unwinds already-completed effect stages' compensations in reverse
+order (idempotent effects need no entry), so a failed pass never leaves a
+compensable-but-uncompensated effect behind. Recovery is the caller's re-entry
+with a fresh snapshot plus condition 5's idempotence or compensation (for the
+run tick, the next tick). Replay that crosses a process crash needs the durable
+arm of condition 5 — a persistent idempotency key or outbox record — because
+in-memory compensation does not survive the crash.
 
 **The RFC's open questions, answered:**
 
