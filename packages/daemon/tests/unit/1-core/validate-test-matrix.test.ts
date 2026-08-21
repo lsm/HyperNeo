@@ -712,6 +712,37 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: 'rejects an empty shard-axis value (P2)',
+    expectExit: 1,
+    expectInStderr: 'not a positive integer',
+    mutate: (root) => {
+      edit(root, MAIN, (s) => s.replace('        shard: [1, 2]', "        shard: [1, 2, '']"));
+    },
+  },
+  {
+    name: 'rejects an empty matrix.exclude record that drops every leg (P2)',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace('        shard: [1, 2]', '        shard: [1, 2]\n        exclude: [{}]')
+      );
+    },
+  },
+  {
+    name: 'rejects an include value whose YAML type differs from the axis (P2)',
+    expectExit: 1,
+    expectInStderr: 'matches no axis value',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          "        shard: [1, 2]\n        include:\n          - shard: '1'"
+        )
+      );
+    },
+  },
+  {
     name: 'rejects a shard axis inflated by an env block scalar (P2)',
     expectExit: 1,
     expectInStderr: "does not pass exactly one '--shard=",

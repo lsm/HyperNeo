@@ -1105,35 +1105,41 @@ _web_matrix_lines=$(WEB_YML="$REPO_ROOT/.github/workflows/main.yml" bun -e '
 	const fs = await import("node:fs");
 	const doc = Bun.YAML.parse(fs.readFileSync(process.env.WEB_YML, "utf8"));
 	const m = doc?.jobs?.["test-web"]?.strategy?.matrix ?? {};
+	const tag = (v) => (typeof v === "number" || typeof v === "string" ? typeof v : "other") + ":" + v;
 	const axis = m.shard;
 	const vals = Array.isArray(axis) ? axis : axis === undefined || axis === null ? [] : Object.keys(axis);
-	for (const v of vals) console.log("axis\t" + v);
+	for (const v of vals) console.log("axis\t" + tag(v));
 	for (const row of m.include ?? []) {
 		if (row === null || typeof row !== "object" || Array.isArray(row)) continue;
-		if ("shard" in row) console.log("include\t" + row.shard);
+		if ("shard" in row) console.log("include\t" + tag(row.shard));
 		for (const k of Object.keys(row)) if (k !== "shard") console.log("include-key\t" + k);
 	}
 	const excl = m.exclude ?? [];
 	for (const row of Array.isArray(excl) ? excl : [excl]) {
 		if (row !== null && typeof row === "object" && !Array.isArray(row)) {
-			if ("shard" in row) console.log("exclude\t" + row.shard);
+			console.log("exclude\t" + ("shard" in row ? tag(row.shard) : "*"));
 		} else if (row !== undefined && row !== null) {
-			console.log("exclude\t" + row);
+			console.log("exclude\t" + tag(row));
 		}
 	}
 	for (const k of Object.keys(m)) if (k !== "shard" && k !== "include" && k !== "exclude") console.log("sibling\t" + k);
 ' 2>/dev/null) || _web_matrix_lines=""
-web_matrix=$(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "axis" { print $2 }')
+# Axis values are tagged with their YAML scalar type so the include check can
+# compare typed values (GitHub keeps number/string distinct; a string include
+# value does not merge into a numeric axis and adds a duplicate leg). The
+# numeric checks below run on the untagged value.
+web_matrix_tagged=$(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "axis" { print $2 }')
+web_matrix=$(printf '%s\n' "$web_matrix_tagged" | sed 's/^[a-z]*://')
 web_shard_n=$(printf '%s\n' "$web_matrix" | grep -c .)
 if [ "$web_shard_n" -eq 0 ]; then
 	err "test-web has no 'shard: [ ... ]' matrix axis — the web suite is modeled here as a vitest --shard matrix, so a missing axis means the runner's --shard forwarding no longer matches a scheduled leg set"
 	echo "     → restore 'shard: [1, 2]' under test-web's strategy.matrix (and the runner's --shard forwarding), or revert this validator to the single-job model" >&2
 fi
 while IFS= read -r _bad; do
-	[ -n "$_bad" ] || continue
-	err "test-web shard axis value '$_bad' is not a positive integer — vitest --shard needs numeric <index>/<total> legs"
+	[ -n "$_bad" ] || _bad="(empty)"
+	err "test-web shard axis value '$_bad' is not a positive integer — vitest --shard needs numeric <index>/<total> legs, and an empty value still creates a GitHub leg that fails"
 	echo "     → use plain integers 1..N in the shard axis" >&2
-done < <(printf '%s\n' "$web_matrix" | grep -vE '^[0-9]+$' | sort -u)
+done < <(printf '%s\n' "$web_matrix_tagged" | sed 's/^[a-z]*://' | grep -vE '^[0-9]+$' | sort -u)
 if [ "$web_shard_n" -ge 1 ]; then
 	for _i in $(seq 1 "$web_shard_n"); do
 		_count=$(printf '%s\n' "$web_matrix" | grep -xF "$_i" | wc -l | tr -d ' ')
@@ -1145,9 +1151,9 @@ if [ "$web_shard_n" -ge 1 ]; then
 fi
 while IFS= read -r _wiv; do
 	[ -n "$_wiv" ] || continue
-	if ! printf '%s\n' "$web_matrix" | grep -qxF "$_wiv"; then
-		err "test-web matrix include row adds shard value '$_wiv' outside the 1..$web_shard_n axis — GitHub schedules an extra leg whose vitest --shard index exceeds the denominator and fails that job, while this guard reports the axis consistent"
-		echo "     → keep include rows to existing axis values, or extend the axis and the runner denominator together" >&2
+	if ! printf '%s\n' "$web_matrix_tagged" | grep -qxF "$_wiv"; then
+		err "test-web matrix include row adds shard value '$_wiv' (tagged with its YAML type) that matches no axis value — GitHub schedules it as an extra or out-of-range combination (duplicate flag upload, or a vitest --shard beyond the denominator) while this guard reports the axis consistent"
+		echo "     → keep include values identical to an axis value (same YAML type), or extend the axis and the runner denominator together" >&2
 	fi
 done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "include" { print $2 }')
 while IFS= read -r _wik; do
@@ -1157,7 +1163,7 @@ while IFS= read -r _wik; do
 done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "include-key" && !seen[$2]++ { print $2 }')
 while IFS= read -r _we; do
 	[ -n "$_we" ] || continue
-	err "test-web shard '$_we' is removed by matrix.exclude — GitHub drops the combination, so vitest's shard-$_we files never run while this guard reports them covered"
+	err "test-web combination(s) matching '$_we' are removed by matrix.exclude — GitHub drops those legs ('*' matches EVERY combination, emptying the matrix), so their files never run while this guard reports them covered"
 	echo "     → remove the exclude entry, or drop the shard from the axis AND shrink the runner's --shard denominator" >&2
 done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "exclude" { print $2 }')
 while IFS= read -r _ax; do
