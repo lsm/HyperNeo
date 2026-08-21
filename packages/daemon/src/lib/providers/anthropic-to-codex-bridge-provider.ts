@@ -219,6 +219,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private discoveryErrorScope: CodexModelCacheScope | undefined;
 
+  private rejectedCodexImportKey: string | undefined;
+
   private cachedCredentials: StoredCredentials | null = null;
   private readonly credentialListeners = new Set<
     (credentials: ProviderCredentials) => void | Promise<void>
@@ -767,6 +769,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         logger.warn(
           'AnthropicToCodexBridgeProvider: OAuth token refresh failed — clearing stale credentials'
         );
+        await this.recordRejectedCodexImport();
         await this.logout();
       } else if (!result.definitive) {
         logger.warn(
@@ -1120,11 +1123,21 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       : currentAuth;
   }
 
+  private async recordRejectedCodexImport(): Promise<void> {
+    try {
+      const raw = await fs.readFile(this.codexAuthPath, 'utf-8');
+      this.rejectedCodexImportKey = this.codexImportKey(JSON.parse(raw) as CodexAuthFile);
+    } catch {
+      this.rejectedCodexImportKey = undefined;
+    }
+  }
+
   private async clearUnrefreshableOauthCredentials(auth: OpenAIResponsesBridgeAuth): Promise<void> {
     if (auth.source !== 'chatgpt_oauth') return;
     const credentials = await this.loadCredentials();
     if (!credentials || credentials.type !== 'oauth' || credentials.refresh) return;
     if (credentials.access !== auth.apiKey) return;
+    await this.recordRejectedCodexImport();
     await this.logout();
   }
 
@@ -1877,6 +1890,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       return;
     }
 
+    const importKey = this.codexImportKey(codexData);
+    if (importKey !== undefined && importKey === this.rejectedCodexImportKey) return;
+    this.rejectedCodexImportKey = undefined;
+
     if (codexData.OPENAI_API_KEY && typeof codexData.OPENAI_API_KEY === 'string') {
       const creds: StoredCredentials = {
         type: 'api_key',
@@ -1928,6 +1945,19 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedBridgeAuth = this.toBridgeAuth(creds) ?? null;
     this.cachedApiKey = creds.access ?? '';
     logger.info('AnthropicToCodexBridgeProvider: imported OAuth token from ~/.codex/auth.json');
+  }
+
+  private codexImportKey(codexData: CodexAuthFile): string | undefined {
+    if (codexData.OPENAI_API_KEY && typeof codexData.OPENAI_API_KEY === 'string') {
+      return `api_key:${codexData.OPENAI_API_KEY}`;
+    }
+    if (!codexData.tokens?.access_token) return undefined;
+    return [
+      'oauth',
+      codexData.tokens.access_token,
+      codexData.tokens.refresh_token ?? '',
+      codexData.tokens.account_id ?? '',
+    ].join(':');
   }
 
   private tryRefreshCodexToken(refreshToken: string): Promise<CodexRefreshResult> {

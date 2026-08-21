@@ -2847,6 +2847,43 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('does not re-import definitively rejected codex credentials', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      mkdirSync(codexDir, { recursive: true });
+      writeCodexAuth(codexDir, {
+        tokens: {
+          access_token: 'codex-rejected-token',
+          refresh_token: 'codex-refresh-token',
+          account_id: 'acct-codex-rejected',
+        },
+      });
+      const fetchImpl = mock(
+        async () => new Response('unauthorized', { status: 401 })
+      ) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch').mockImplementation(
+        async () =>
+          new Response('{"error":"invalid_grant"}', {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      );
+      try {
+        provider = makeProvider({}, hyperneoDir, codexDir, fetchImpl);
+
+        expect(await provider.isAvailable()).toBe(true);
+
+        await expect(provider.refreshModels()).rejects.toThrow(
+          'Codex credentials rejected (HTTP 401)'
+        );
+
+        expect(await provider.isAvailable()).toBe(false);
+        expect(await provider.getApiKey()).toBeUndefined();
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
     it('clears unrefreshable OAuth credentials on a definitive 401', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       writeHyperNeoAuth(hyperneoDir, {
