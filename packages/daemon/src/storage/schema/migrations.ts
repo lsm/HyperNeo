@@ -437,6 +437,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(198), () => runMigration198(db));
 
   run(migrationMarkerKey(199), () => runMigration199(db));
+
+  run(migrationMarkerKey(200), () => runMigration200(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -9504,6 +9506,12 @@ export function runMigration197(db: BunDatabase): void {
 }
 
 export function runMigration199(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+  db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_type`);
+  db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_consumed_seq`);
+}
+
+export function runMigration200(db: BunDatabase): void {
   if (!tableExists(db, 'sessions') || !tableHasColumn(db, 'sessions', 'session_context')) {
     return;
   }

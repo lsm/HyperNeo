@@ -4571,18 +4571,12 @@ export class SpaceRuntime {
   private expirePublishedExternalEventsPastTtl(now = Date.now()): void {
     const store = this.config.externalEventStore;
     if (!store) return;
-    for (const eventRecord of store.listPublishedEventsWithoutDeliveries()) {
-      if (now - eventRecord.createdAt <= EXTERNAL_EVENT_QUEUE_TTL_MS) continue;
-      try {
-        store.markEventFailed(eventRecord.event.id, {
-          terminal: true,
-          reason: 'ttl_expired',
-        });
-      } catch (err) {
-        log.warn(
-          `SpaceRuntime: TTL sweep failed for ${eventRecord.event.id}: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
+    try {
+      store.markPublishedEventsFailedBefore(now - EXTERNAL_EVENT_QUEUE_TTL_MS, now);
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: TTL sweep failed: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   }
 

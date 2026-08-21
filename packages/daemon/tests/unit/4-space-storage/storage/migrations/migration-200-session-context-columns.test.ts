@@ -3,7 +3,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables, runMigrations } from '../../../../../src/storage/schema';
-import { runMigration199 } from '../../../../../src/storage/schema/migrations.ts';
+import { runMigration200 } from '../../../../../src/storage/schema/migrations.ts';
 import { SessionRepository } from '../../../../../src/storage/repositories/session-repository';
 
 function tableExists(db: BunDatabase, name: string): boolean {
@@ -30,7 +30,7 @@ function queryPlan(db: BunDatabase, sql: string, ...params: Array<string | numbe
     .join(' | ');
 }
 
-function createPreM199SessionsTable(db: BunDatabase): void {
+function createPreM200SessionsTable(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
@@ -72,7 +72,7 @@ function insertSession(
   ).run(id, metadata, type, context);
 }
 
-describe('Migration 199: sessions session_context generated columns', () => {
+describe('Migration 200: sessions session_context generated columns', () => {
   let testDir: string;
   let db: BunDatabase;
 
@@ -80,7 +80,7 @@ describe('Migration 199: sessions session_context generated columns', () => {
     testDir = join(
       process.cwd(),
       'tmp',
-      'test-migration-199',
+      'test-migration-200',
       `test-${Date.now()}-${Math.random()}`
     );
     mkdirSync(testDir, { recursive: true });
@@ -101,22 +101,22 @@ describe('Migration 199: sessions session_context generated columns', () => {
     }
   });
 
-  describe('pre-M199 schema — add generated columns', () => {
+  describe('pre-M200 schema — add generated columns', () => {
     test('adds room_id, space_id and task_id as VIRTUAL generated columns', () => {
-      createPreM199SessionsTable(db);
+      createPreM200SessionsTable(db);
       expect(generatedColumnNames(db)).toEqual([]);
-      runMigration199(db);
+      runMigration200(db);
       expect(generatedColumnNames(db)).toEqual(['room_id', 'space_id', 'task_id']);
     });
 
     test('derives values from existing session_context rows', () => {
-      createPreM199SessionsTable(db);
+      createPreM200SessionsTable(db);
       insertSession(db, 'full', 'worker', '{"roomId":"r-1","spaceId":"sp-1","taskId":"t-1"}');
       insertSession(db, 'partial', 'worker', '{"spaceId":"sp-1"}');
       insertSession(db, 'empty', 'worker', '{}');
       insertSession(db, 'nullctx', 'worker', null);
 
-      runMigration199(db);
+      runMigration200(db);
 
       const rows = db
         .prepare(`SELECT id, room_id, space_id, task_id FROM sessions ORDER BY id`)
@@ -135,9 +135,9 @@ describe('Migration 199: sessions session_context generated columns', () => {
     });
 
     test('tracks session_context updates written after the migration', () => {
-      createPreM199SessionsTable(db);
+      createPreM200SessionsTable(db);
       insertSession(db, 's1', 'worker', null);
-      runMigration199(db);
+      runMigration200(db);
 
       db.prepare(
         `UPDATE sessions SET session_context = '{"roomId":"r-9","taskId":"t-9"}' WHERE id = 's1'`
@@ -149,11 +149,11 @@ describe('Migration 199: sessions session_context generated columns', () => {
     });
 
     test('tolerates malformed session_context rows without throwing', () => {
-      createPreM199SessionsTable(db);
+      createPreM200SessionsTable(db);
       insertSession(db, 'corrupt', 'worker', 'not-json');
       insertSession(db, 'fine', 'worker', '{"spaceId":"sp-1"}');
 
-      expect(() => runMigration199(db)).not.toThrow();
+      expect(() => runMigration200(db)).not.toThrow();
       const row = db
         .prepare(`SELECT room_id, space_id, task_id FROM sessions WHERE id = 'corrupt'`)
         .get() as { room_id: string | null; space_id: string | null; task_id: string | null };
@@ -165,13 +165,13 @@ describe('Migration 199: sessions session_context generated columns', () => {
     });
 
     test('replaces the provenance expression index with the space_id column form', () => {
-      createPreM199SessionsTable(db);
+      createPreM200SessionsTable(db);
       db.exec(
         `CREATE INDEX idx_sessions_space_agent_provenance
            ON sessions(json_extract(session_context, '$.spaceId'), json_extract(metadata, '$.promptProvenance.agentId'))`
       );
 
-      runMigration199(db);
+      runMigration200(db);
 
       const sql = indexSql(db, 'idx_sessions_space_agent_provenance');
       expect(sql).toContain('(space_id,');
@@ -180,30 +180,30 @@ describe('Migration 199: sessions session_context generated columns', () => {
     });
 
     test('is idempotent — a second run does not throw or duplicate columns', () => {
-      createPreM199SessionsTable(db);
+      createPreM200SessionsTable(db);
       insertSession(db, 's1', 'worker', '{"roomId":"r-1"}');
-      runMigration199(db);
-      expect(() => runMigration199(db)).not.toThrow();
+      runMigration200(db);
+      expect(() => runMigration200(db)).not.toThrow();
       expect(generatedColumnNames(db)).toEqual(['room_id', 'space_id', 'task_id']);
     });
 
     test('no-ops on an empty DB', () => {
-      expect(() => runMigration199(db)).not.toThrow();
+      expect(() => runMigration200(db)).not.toThrow();
       expect(tableExists(db, 'sessions')).toBe(false);
     });
 
     test('no-ops when sessions lacks session_context', () => {
       db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, type TEXT)`);
-      expect(() => runMigration199(db)).not.toThrow();
+      expect(() => runMigration200(db)).not.toThrow();
       expect(generatedColumnNames(db)).toEqual([]);
     });
   });
 
   describe('query plans use the generated columns', () => {
     test('findByRoomId resolves through idx_sessions_room_id', () => {
-      createPreM199SessionsTable(db);
+      createPreM200SessionsTable(db);
       insertSession(db, 'room-1', 'room', '{"roomId":"r-1"}');
-      runMigration199(db);
+      runMigration200(db);
 
       const plan = queryPlan(
         db,
@@ -214,9 +214,9 @@ describe('Migration 199: sessions session_context generated columns', () => {
     });
 
     test('space + provenance lookups resolve through the provenance index', () => {
-      createPreM199SessionsTable(db);
+      createPreM200SessionsTable(db);
       insertSession(db, 'sp-worker', 'worker', '{"spaceId":"sp-1"}');
-      runMigration199(db);
+      runMigration200(db);
 
       const plan = queryPlan(
         db,
@@ -231,14 +231,14 @@ describe('Migration 199: sessions session_context generated columns', () => {
 
   describe('repository filters behave identically on the persisted columns', () => {
     test('listSessions excludes room/space sessions and includes human ones', () => {
-      createPreM199SessionsTable(db);
+      createPreM200SessionsTable(db);
       insertSession(db, 'human-1', 'worker', null);
       insertSession(db, 'human-2', 'general', '{"other":"value"}');
       insertSession(db, 'room-1', 'room', '{"roomId":"r-1"}');
       insertSession(db, 'room-member', 'worker', '{"roomId":"r-1"}');
       insertSession(db, 'space-worker', 'worker', '{"spaceId":"sp-1"}');
       insertSession(db, 'room-chat', 'room_chat', '{"roomId":"r-1"}');
-      runMigration199(db);
+      runMigration200(db);
 
       const repository = new SessionRepository(db as any);
       const listed = repository.listSessions();
@@ -252,7 +252,7 @@ describe('Migration 199: sessions session_context generated columns', () => {
     });
 
     test('listSessionsBySpaceAgent matches on spaceId and provenance agentId', () => {
-      createPreM199SessionsTable(db);
+      createPreM200SessionsTable(db);
       insertSession(
         db,
         'a1',
@@ -268,7 +268,7 @@ describe('Migration 199: sessions session_context generated columns', () => {
         '{"promptProvenance":{"agentId":"agent-2"}}'
       );
       insertSession(db, 'other-space', 'worker', '{"spaceId":"sp-2"}');
-      runMigration199(db);
+      runMigration200(db);
 
       const repository = new SessionRepository(db as any);
       expect(repository.listSessionsBySpaceAgent('sp-1', 'agent-1').map((s) => s.id)).toEqual([
