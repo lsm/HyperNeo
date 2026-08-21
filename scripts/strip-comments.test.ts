@@ -51,6 +51,23 @@ describe('strip-comments', () => {
     expect(stripComments(source, 'a.ts', false)).toBe(source);
   });
 
+  it('keeps eslint disable and enable directives', () => {
+    const source = [
+      '// eslint-disable-next-line react-hooks/exhaustive-deps -- explanation',
+      'call();',
+      '/* eslint-disable no-console */',
+      'console.log();',
+      '/* eslint-enable no-console */',
+      '',
+    ].join('\n');
+    expect(stripComments(source, 'a.tsx', false)).toBe(source);
+  });
+
+  it('strips comments that merely mention eslint', () => {
+    const source = 'call(); // explain this eslint behavior\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('call();\n');
+  });
+
   it('does not treat comment markers inside string and template literals as comments', () => {
     const source = 'const a = "/* not a comment */";\nconst b = `// not a comment`;\n';
     expect(stripComments(source, 'a.ts', false)).toBe(source);

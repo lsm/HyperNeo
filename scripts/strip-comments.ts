@@ -7,7 +7,7 @@ const KEEP_PATTERNS: RegExp[] = [
   /^\/\/\/\s*</,
   /@ts-(ignore|expect-error|nocheck|check)\b/,
   /biome-ignore/,
-  /\beslint\b/,
+  /^(?:\/\/|\/\*)\s*eslint-/,
   /oxlint-(disable|enable)/,
   /@public\b/,
   /(v8|istanbul|c8) ignore/,
