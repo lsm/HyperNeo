@@ -227,13 +227,15 @@ export const CODER_ONLY_PROMPT =
   'REST-style strings: content `THUMBS_UP` (the GraphQL form of +1) means Codex passed, content ' +
   '`EYES` means Codex is still reviewing, and no such reaction means it has not started or has ' +
   'not reported yet. If no codex bot login has reacted at all, comment `@codex review` on the PR ' +
-  'to trigger its review, then wait for an `EYES` or `THUMBS_UP` reaction. A `THUMBS_UP` only ' +
-  'counts when its `createdAt` is on or after the PR `pushedAt` returned by the same query — ' +
-  'pushedAt is when the current head was last pushed, so a `THUMBS_UP` from a previous cycle ' +
-  '(or one posted while an older head was current) is stale and will not satisfy the gate; never ' +
-  'compare against the commit authored date, which can predate the push. If the pass is stale, ' +
-  'retrigger Codex with a fresh `@codex review` comment and wait for a new `THUMBS_UP` while the ' +
-  'head stays unchanged. ' +
+  'to trigger its review, then wait for an `EYES` or `THUMBS_UP` reaction. Bind every pass to the ' +
+  'review CYCLE, not just to timestamps: after each push that changes the head, post a fresh ' +
+  '`@codex review` trigger comment yourself (the trigger must postdate the push), find your own ' +
+  'latest such comment in `gh pr view <pr_url> --json comments`, and accept a `THUMBS_UP` ONLY ' +
+  'when its `createdAt` is on or after the PR `pushedAt` AND later than that trigger comment AND ' +
+  'the headRefOid has not changed since the trigger. A review cycle started on an older head can ' +
+  'finish after a push and drop a late `THUMBS_UP` that clears the pushedAt check — such a pass ' +
+  'belongs to the old head and must be ignored; post a new trigger and wait again. Never compare ' +
+  'against the commit authored date, which can predate the push. ' +
   'Devon gate: wait for a Devon-authored PR review on the current head that does NOT request changes ' +
   'and does NOT flag a major or blocking issue. Inspect the reviews with the paginated GraphQL ' +
   'lookup (`gh pr view --json reviews` can silently truncate past 100 reviews, hiding a newer ' +
@@ -835,7 +837,7 @@ export const CODER_ONLY_MERGE_INSTRUCTIONS: string = [
   '  - there are zero unresolved review conversations;',
   '  - there is NO effective outstanding `CHANGES_REQUESTED` review — even one on an OLDER head that no other reviewer superseded. A `CHANGES_REQUESTED` from Devon or from a human reviewer blocks the merge until that reviewer dismisses it or approves;',
   '  - if the base repository requires approving GitHub reviews (`reviewDecision` is `REVIEW_REQUIRED`), that is an ADMINISTRATIVE blocker — this gate does not supply GitHub approvals, so escalate per step 4 and never bypass it with `--admin`;',
-  '  - the Codex `THUMBS_UP` (+1) reaction covers the CURRENT head (its `createdAt` is on or after the PR `pushedAt`, the time the current head was last pushed; a `THUMBS_UP` from before that push is stale);',
+  '  - the Codex `THUMBS_UP` (+1) reaction belongs to a review cycle started on the CURRENT head — posted after a `@codex review` trigger that itself postdates the last push, with the head unchanged since that trigger (a late `THUMBS_UP` from a cycle begun on an older head does not count);',
   '  - a Devon-authored review covers the CURRENT head, carries an EXPLICIT clean verdict (APPROVED state or a body with an explicit no-issues statement), and does NOT request changes or flag a severe issue;',
   '  - your informal-review gate artifact (`external-review-gate`) was recorded for the CURRENT head (or an earlier head with no intervening push).',
   '',
@@ -856,7 +858,7 @@ export const CODER_ONLY_MERGE_INSTRUCTIONS: string = [
   '     HEAD_OID=$(gh pr view {{pr_url}} --json headRefOid --jq .headRefOid)',
   '     REVIEW_DECISION=$(gh pr view {{pr_url}} --json reviewDecision --jq .reviewDecision)',
   '     case "$REVIEW_DECISION" in CHANGES_REQUESTED) echo "GitHub reviewDecision is CHANGES_REQUESTED — an outstanding change request stands; do NOT merge." >&2; exit 1;; REVIEW_REQUIRED) echo "GitHub reviewDecision is REVIEW_REQUIRED — the base repository requires an approving GitHub review this gate cannot supply; treat it as an ADMINISTRATIVE blocker per step 4 and never use --admin." >&2; exit 1;; esac',
-  '   Re-run the external gate from the coding phase against the CURRENT head: the Codex `THUMBS_UP` (+1) reaction must carry a `createdAt` on or after the PR `pushedAt`, and a Devon-authored review must cover the current head (commit.oid equality) with an explicit clean verdict and no changes-requested. If either is stale or missing, re-trigger the reviewer (`@codex review` / `@devon review`), re-wait for both to pass, and do NOT merge until both are fresh on the CURRENT head.',
+  '   Re-run the external gate from the coding phase against the CURRENT head: the Codex `THUMBS_UP` (+1) reaction must come from a cycle triggered after the last push with the head unchanged since (see the coding-phase gate), and a Devon-authored review must cover the current head (commit.oid equality) with an explicit clean verdict and no changes-requested. If either is stale or missing, re-trigger the reviewer (`@codex review` / `@devon review`), re-wait for both to pass, and do NOT merge until both are fresh on the CURRENT head.',
   '   Confirm your keyed `external-review-gate` note artifact (key "gate") exists and its head OID equals $HEAD_OID; if the head changed after approval, BOTH the gate AND the human approval are stale — re-run the FULL external gate and your informal review against the CURRENT head, re-record the artifact, and obtain fresh human sign-off on the new head via space-agent (as in step 4b) BEFORE merging.',
   '   Otherwise merge, bound to the verified head:',
   '     gh pr merge {{pr_url}} --squash --match-head-commit "$HEAD_OID"',
