@@ -1173,6 +1173,207 @@ describe('NAMED_QUERY_REGISTRY', () => {
       }
     });
 
+    test('spaceTaskMessages.byTask retrying resolves via batch uuids, nonzero retries, and active jobs only', () => {
+      const workflowRunId = 'wr-stm-retry-shapes';
+      const sessionIdValue = 'session-stm-retry-shapes';
+      const taskId = insertSpaceTask({
+        id: 'task-stm-retry-shapes',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      sessionTaskIds.set(sessionIdValue, taskId);
+      const userPayload = (uuid: string) => ({
+        type: 'user',
+        uuid,
+        message: { role: 'user', content: [{ type: 'text', text: 'handoff' }] },
+      });
+      const cases: Array<{
+        id: string;
+        uuid: string;
+        expected: string;
+        sendStatus?: string;
+      }> = [
+        { id: 'stm-batch-owned', uuid: 'u-stm-batch-owned', expected: 'retrying' },
+        { id: 'stm-zero-retry', uuid: 'u-stm-zero-retry', expected: 'queued' },
+        { id: 'stm-settled-job', uuid: 'u-stm-settled-job', expected: 'queued' },
+        { id: 'stm-mixed-jobs', uuid: 'u-stm-mixed-jobs', expected: 'retrying' },
+        { id: 'stm-no-job', uuid: 'u-stm-no-job', expected: 'queued' },
+        {
+          id: 'stm-failed-with-job',
+          uuid: 'u-stm-failed-with-job',
+          expected: 'failed',
+          sendStatus: 'failed',
+        },
+        { id: 'stm-uuid-collide', uuid: 'u-stm-other-task', expected: 'queued' },
+      ];
+      for (const c of cases) {
+        insertSdkMessageAt(
+          c.id,
+          sessionIdValue,
+          now + 1000,
+          'user',
+          c.sendStatus ?? 'enqueued',
+          'human',
+          null,
+          userPayload(c.uuid)
+        );
+        db.prepare(`UPDATE sdk_messages SET sdk_uuid = ? WHERE id = ?`).run(c.uuid, c.id);
+      }
+      const jobs: Array<{
+        id: string;
+        messageUuid: string;
+        batchUuids?: string[];
+        retryCount: number;
+        status: 'pending' | 'processing' | 'completed';
+        role: 'turn' | 'steer';
+      }> = [
+        {
+          id: 'job-stm-batch-owner',
+          messageUuid: 'u-stm-kickoff',
+          batchUuids: ['u-stm-batch-owned'],
+          retryCount: 2,
+          status: 'pending',
+          role: 'turn',
+        },
+        {
+          id: 'job-stm-zero-retry',
+          messageUuid: 'u-stm-zero-retry',
+          retryCount: 0,
+          status: 'pending',
+          role: 'steer',
+        },
+        {
+          id: 'job-stm-settled',
+          messageUuid: 'u-stm-settled-job',
+          retryCount: 3,
+          status: 'completed',
+          role: 'turn',
+        },
+        {
+          id: 'job-stm-mixed-zero',
+          messageUuid: 'u-stm-mixed-jobs',
+          retryCount: 0,
+          status: 'pending',
+          role: 'steer',
+        },
+        {
+          id: 'job-stm-mixed-retry',
+          messageUuid: 'u-stm-mixed-jobs',
+          retryCount: 1,
+          status: 'processing',
+          role: 'steer',
+        },
+        {
+          id: 'job-stm-failed-with-job',
+          messageUuid: 'u-stm-failed-with-job',
+          retryCount: 2,
+          status: 'pending',
+          role: 'steer',
+        },
+      ];
+      for (const j of jobs) {
+        db.prepare(
+          `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+           VALUES (?, 'message_delivery', ?, ?, ?, 8, ?, ?)`
+        ).run(
+          j.id,
+          j.status,
+          JSON.stringify({
+            sessionId: sessionIdValue,
+            messageUuid: j.messageUuid,
+            batchUuids: j.batchUuids,
+            role: j.role,
+            origin: 'space_inject',
+          }),
+          j.retryCount,
+          now,
+          now
+        );
+      }
+
+      const secondSessionId = 'session-stm-retry-shapes-b';
+      sessionTaskIds.set(secondSessionId, taskId);
+      insertSdkMessageAt(
+        'stm-cross-session',
+        secondSessionId,
+        now + 1500,
+        'user',
+        'enqueued',
+        'human',
+        null,
+        userPayload('u-stm-cross-session')
+      );
+      db.prepare(`UPDATE sdk_messages SET sdk_uuid = ? WHERE id = ?`).run(
+        'u-stm-cross-session',
+        'stm-cross-session'
+      );
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+         VALUES (?, 'message_delivery', 'pending', ?, 3, 8, ?, ?)`
+      ).run(
+        'job-stm-cross-session',
+        JSON.stringify({
+          sessionId: sessionIdValue,
+          messageUuid: 'u-stm-cross-session',
+          role: 'steer',
+          origin: 'space_inject',
+        }),
+        now,
+        now
+      );
+
+      const otherTaskId = insertSpaceTask({
+        id: 'task-stm-retry-other',
+        workflowRunId: 'wr-stm-retry-other',
+        status: 'in_progress',
+      });
+      const otherSessionId = 'session-stm-retry-other';
+      sessionTaskIds.set(otherSessionId, otherTaskId);
+      insertSdkMessageAt(
+        'stm-other-task',
+        otherSessionId,
+        now + 2000,
+        'user',
+        'enqueued',
+        'human',
+        null,
+        userPayload('u-stm-other-task')
+      );
+      db.prepare(`UPDATE sdk_messages SET sdk_uuid = ? WHERE id = ?`).run(
+        'u-stm-other-task',
+        'stm-other-task'
+      );
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+         VALUES (?, 'message_delivery', 'pending', ?, 4, 8, ?, ?)`
+      ).run(
+        'job-stm-other-task',
+        JSON.stringify({
+          sessionId: otherSessionId,
+          messageUuid: 'u-stm-other-task',
+          role: 'turn',
+          origin: 'space_inject',
+        }),
+        now,
+        now
+      );
+
+      const byId = new Map(queryMessages(taskId).map((r) => [r.id as string, r]));
+      for (const c of cases) {
+        expect((byId.get(c.id) as Record<string, unknown> | undefined)?.deliveryState).toBe(
+          c.expected
+        );
+      }
+      expect(
+        (byId.get('stm-cross-session') as Record<string, unknown> | undefined)?.deliveryState
+      ).toBe('queued');
+
+      const otherById = new Map(queryMessages(otherTaskId).map((r) => [r.id as string, r]));
+      expect(
+        (otherById.get('stm-other-task') as Record<string, unknown> | undefined)?.deliveryState
+      ).toBe('retrying');
+    });
+
     test('a pending user row does not become the turnId for subsequent assistant rows (full feed)', () => {
       const workflowRunId = 'wr-stm-sentinel';
       const sessionIdValue = 'session-stm-sentinel';
@@ -2905,6 +3106,138 @@ describe('NAMED_QUERY_REGISTRY', () => {
             c.expected
           );
         }
+      });
+
+      test('retrying resolves via batch uuids, nonzero retries, and active jobs only (compact feed)', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        const userPayload = (uuid: string) => ({
+          type: 'user',
+          uuid,
+          message: { role: 'user', content: [{ type: 'text', text: 'handoff' }] },
+        });
+        const cases: Array<{ id: string; uuid: string; expected: string }> = [
+          { id: 'c-batch-owned', uuid: 'u-c-batch-owned', expected: 'retrying' },
+          { id: 'c-zero-retry', uuid: 'u-c-zero-retry', expected: 'queued' },
+          { id: 'c-no-job', uuid: 'u-c-no-job', expected: 'queued' },
+          { id: 'c-uuid-collide', uuid: 'u-c-other-task', expected: 'queued' },
+        ];
+        for (const c of cases) {
+          insertSdkMessageAt(c.id, sessionId, now + 1000, userPayload(c.uuid), 'user');
+          db.prepare(`UPDATE sdk_messages SET send_status = ?, sdk_uuid = ? WHERE id = ?`).run(
+            'enqueued',
+            c.uuid,
+            c.id
+          );
+        }
+        const jobs: Array<{
+          id: string;
+          messageUuid: string;
+          batchUuids?: string[];
+          retryCount: number;
+          role: 'turn' | 'steer';
+        }> = [
+          {
+            id: 'job-c-batch-owner',
+            messageUuid: 'u-c-kickoff',
+            batchUuids: ['u-c-batch-owned'],
+            retryCount: 2,
+            role: 'turn',
+          },
+          { id: 'job-c-zero-retry', messageUuid: 'u-c-zero-retry', retryCount: 0, role: 'steer' },
+        ];
+        for (const j of jobs) {
+          db.prepare(
+            `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+             VALUES (?, 'message_delivery', 'pending', ?, ?, 8, ?, ?)`
+          ).run(
+            j.id,
+            JSON.stringify({
+              sessionId,
+              messageUuid: j.messageUuid,
+              batchUuids: j.batchUuids,
+              role: j.role,
+              origin: 'space_inject',
+            }),
+            j.retryCount,
+            now,
+            now
+          );
+        }
+
+        const secondSessionId = 'sess-compact-retry-b';
+        sessionTaskIds.set(secondSessionId, taskId);
+        insertSdkMessageAt(
+          'c-cross-session',
+          secondSessionId,
+          now + 1500,
+          userPayload('u-c-cross-session'),
+          'user'
+        );
+        db.prepare(`UPDATE sdk_messages SET send_status = ?, sdk_uuid = ? WHERE id = ?`).run(
+          'enqueued',
+          'u-c-cross-session',
+          'c-cross-session'
+        );
+        db.prepare(
+          `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+           VALUES (?, 'message_delivery', 'pending', ?, 3, 8, ?, ?)`
+        ).run(
+          'job-c-cross-session',
+          JSON.stringify({
+            sessionId,
+            messageUuid: 'u-c-cross-session',
+            role: 'steer',
+            origin: 'space_inject',
+          }),
+          now,
+          now
+        );
+
+        const otherSessionId = 'sess-compact-retry-other';
+        const otherTaskId = insertSpaceTask({ id: 'task-compact-retry-other' });
+        sessionTaskIds.set(otherSessionId, otherTaskId);
+        insertSdkMessageAt(
+          'c-other-task',
+          otherSessionId,
+          now + 2000,
+          userPayload('u-c-other-task'),
+          'user'
+        );
+        db.prepare(`UPDATE sdk_messages SET send_status = ?, sdk_uuid = ? WHERE id = ?`).run(
+          'enqueued',
+          'u-c-other-task',
+          'c-other-task'
+        );
+        db.prepare(
+          `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+           VALUES (?, 'message_delivery', 'pending', ?, 4, 8, ?, ?)`
+        ).run(
+          'job-c-other-task',
+          JSON.stringify({
+            sessionId: otherSessionId,
+            messageUuid: 'u-c-other-task',
+            role: 'turn',
+            origin: 'space_inject',
+          }),
+          now,
+          now
+        );
+
+        const byId = new Map(queryCompact(taskId).map((r) => [r.id as string, r]));
+        for (const c of cases) {
+          expect((byId.get(c.id) as Record<string, unknown> | undefined)?.deliveryState).toBe(
+            c.expected
+          );
+        }
+        expect(
+          (byId.get('c-cross-session') as Record<string, unknown> | undefined)?.deliveryState
+        ).toBe('queued');
+
+        const otherById = new Map(queryCompact(otherTaskId).map((r) => [r.id as string, r]));
+        expect(
+          (otherById.get('c-other-task') as Record<string, unknown> | undefined)?.deliveryState
+        ).toBe('retrying');
       });
 
       test('keeps anchor + last-assistant summary + result per conversation turn', () => {

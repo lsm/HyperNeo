@@ -1746,12 +1746,75 @@ ORDER BY
   st.id ASC
 `.trim();
 
+function activeDeliveryJobsCtes(sessionFilterSql: string = ''): string {
+  const sessionFilter = sessionFilterSql.length > 0 ? `\n    ${sessionFilterSql}` : '';
+  return `active_delivery_jobs AS MATERIALIZED (
+  SELECT
+    jq.rowid AS job_rowid,
+    json_extract(jq.payload, '$.sessionId') AS session_id,
+    json_extract(jq.payload, '$.messageUuid') AS message_uuid,
+    CASE
+      WHEN json_type(jq.payload, '$.batchUuids') = 'array'
+      THEN json_extract(jq.payload, '$.batchUuids')
+      ELSE '[]'
+    END AS batch_uuids,
+    jq.retry_count,
+    jq.run_at,
+    jq.max_retries
+  FROM job_queue jq
+  WHERE jq.queue = 'message_delivery'
+    AND jq.status IN ('pending', 'processing')${sessionFilter}
+),
+active_delivery_candidates AS (
+  SELECT
+    message_uuid,
+    session_id,
+    job_rowid,
+    retry_count,
+    run_at,
+    max_retries
+  FROM active_delivery_jobs
+  WHERE message_uuid IS NOT NULL
+  UNION ALL
+  SELECT
+    je.value AS message_uuid,
+    jobs.session_id,
+    jobs.job_rowid,
+    jobs.retry_count,
+    jobs.run_at,
+    jobs.max_retries
+  FROM active_delivery_jobs jobs, json_each(jobs.batch_uuids) je
+  WHERE je.value IS NOT NULL
+)`;
+}
+
+const ACTIVE_DELIVERY_RETRYING_CTE = `${activeDeliveryJobsCtes(`AND json_extract(jq.payload, '$.sessionId') IN (
+    SELECT session_id
+    FROM sdk_messages
+    WHERE task_id = (SELECT id FROM target_task)
+  )`)},
+active_delivery_retrying AS MATERIALIZED (
+  SELECT message_uuid, session_id, MAX(retry_count) > 0 AS retrying
+  FROM active_delivery_candidates
+  GROUP BY message_uuid, session_id
+)`;
+
+const SPACE_TASK_DELIVERY_STATE_CASE = `CASE
+      WHEN sm.message_type != 'user' THEN NULL
+      WHEN COALESCE(sm.send_status, 'consumed') = 'failed' THEN 'failed'
+      WHEN adr.retrying THEN 'retrying'
+      WHEN COALESCE(sm.send_status, 'consumed') = 'consumed' THEN 'delivered'
+      WHEN COALESCE(sm.send_status, 'consumed') = 'submitted' THEN 'processing'
+      ELSE 'queued'
+    END AS deliveryState,`;
+
 const SPACE_TASK_MESSAGES_BASE_CTE = `
 WITH target_task AS (
   SELECT *
   FROM space_tasks
   WHERE id = ?
 ),
+${ACTIVE_DELIVERY_RETRYING_CTE},
 github_events AS (
   SELECT
     ge.id AS id,
@@ -1841,29 +1904,7 @@ sdk_rows_raw AS (
     sm.message_type AS messageType,
     sm.sdk_message AS content,
     sm.origin AS origin,
-    CASE
-      WHEN sm.message_type != 'user' THEN NULL
-      WHEN COALESCE(sm.send_status, 'consumed') = 'failed' THEN 'failed'
-      WHEN EXISTS (
-             SELECT 1
-             FROM job_queue jq
-             WHERE jq.queue = 'message_delivery'
-               AND jq.status IN ('pending', 'processing')
-               AND json_extract(jq.payload, '$.sessionId') = sm.session_id
-               AND (json_extract(jq.payload, '$.messageUuid') = sm.sdk_uuid
-                 OR EXISTS (
-                   SELECT 1 FROM json_each(
-                     CASE WHEN json_type(jq.payload, '$.batchUuids') = 'array'
-                          THEN json_extract(jq.payload, '$.batchUuids') ELSE '[]' END
-                   ) AS je WHERE je.value = sm.sdk_uuid
-                 ))
-               AND jq.retry_count > 0
-           )
-      THEN 'retrying'
-      WHEN COALESCE(sm.send_status, 'consumed') = 'consumed' THEN 'delivered'
-      WHEN COALESCE(sm.send_status, 'consumed') = 'submitted' THEN 'processing'
-      ELSE 'queued'
-    END AS deliveryState,
+    ${SPACE_TASK_DELIVERY_STATE_CASE}
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
     sm.parent_tool_use_id AS parentToolUseId,
     sm.is_renderable AS isRenderable,
@@ -1875,6 +1916,9 @@ sdk_rows_raw AS (
     sm.rowid AS insOrder
   FROM target_task tt
   JOIN sdk_messages sm ON sm.task_id = tt.id
+  LEFT JOIN active_delivery_retrying adr
+    ON adr.message_uuid = sm.sdk_uuid
+   AND adr.session_id = sm.session_id
   LEFT JOIN sessions s_kind ON s_kind.id = sm.session_id
   LEFT JOIN session_node_exec sne
     ON sne.task_id = tt.id
@@ -2032,6 +2076,7 @@ WITH target_task AS (
   FROM space_tasks
   WHERE id = ?
 ),
+${ACTIVE_DELIVERY_RETRYING_CTE},
 github_events AS (
   SELECT
     ge.id AS id,
@@ -2123,29 +2168,7 @@ sdk_rows AS (
     sm.message_type AS messageType,
     sm.sdk_message AS content,
     sm.origin AS origin,
-    CASE
-      WHEN sm.message_type != 'user' THEN NULL
-      WHEN COALESCE(sm.send_status, 'consumed') = 'failed' THEN 'failed'
-      WHEN EXISTS (
-             SELECT 1
-             FROM job_queue jq
-             WHERE jq.queue = 'message_delivery'
-               AND jq.status IN ('pending', 'processing')
-               AND json_extract(jq.payload, '$.sessionId') = sm.session_id
-               AND (json_extract(jq.payload, '$.messageUuid') = sm.sdk_uuid
-                 OR EXISTS (
-                   SELECT 1 FROM json_each(
-                     CASE WHEN json_type(jq.payload, '$.batchUuids') = 'array'
-                          THEN json_extract(jq.payload, '$.batchUuids') ELSE '[]' END
-                   ) AS je WHERE je.value = sm.sdk_uuid
-                 ))
-               AND jq.retry_count > 0
-           )
-      THEN 'retrying'
-      WHEN COALESCE(sm.send_status, 'consumed') = 'consumed' THEN 'delivered'
-      WHEN COALESCE(sm.send_status, 'consumed') = 'submitted' THEN 'processing'
-      ELSE 'queued'
-    END AS deliveryState,
+    ${SPACE_TASK_DELIVERY_STATE_CASE}
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
     sm.parent_tool_use_id AS parentToolUseId,
     sm.is_renderable AS isRenderable,
@@ -2154,6 +2177,9 @@ sdk_rows AS (
     sm.rowid AS insOrder
   FROM target_task tt
   JOIN sdk_messages sm ON sm.task_id = tt.id
+  LEFT JOIN active_delivery_retrying adr
+    ON adr.message_uuid = sm.sdk_uuid
+   AND adr.session_id = sm.session_id
   CROSS JOIN recent_turns rt
   LEFT JOIN sessions s_kind ON s_kind.id = sm.session_id
   LEFT JOIN session_node_exec sne
@@ -2997,42 +3023,7 @@ WITH latest_shutdown_boundary AS MATERIALIZED (
   ORDER BY timestamp DESC, id DESC
   LIMIT 1
 ),
-active_delivery_jobs AS MATERIALIZED (
-  SELECT
-    jq.rowid AS job_rowid,
-    json_extract(jq.payload, '$.messageUuid') AS message_uuid,
-    CASE
-      WHEN json_type(jq.payload, '$.batchUuids') = 'array'
-      THEN json_extract(jq.payload, '$.batchUuids')
-      ELSE '[]'
-    END AS batch_uuids,
-    jq.retry_count,
-    jq.run_at,
-    jq.max_retries
-  FROM job_queue jq
-  WHERE jq.queue = 'message_delivery'
-    AND jq.status IN ('pending', 'processing')
-    AND json_extract(jq.payload, '$.sessionId') = ?1
-),
-active_delivery_candidates AS (
-  SELECT
-    message_uuid,
-    job_rowid,
-    retry_count,
-    run_at,
-    max_retries
-  FROM active_delivery_jobs
-  WHERE message_uuid IS NOT NULL
-  UNION ALL
-  SELECT
-    je.value AS message_uuid,
-    jobs.job_rowid,
-    jobs.retry_count,
-    jobs.run_at,
-    jobs.max_retries
-  FROM active_delivery_jobs jobs, json_each(jobs.batch_uuids) je
-  WHERE je.value IS NOT NULL
-),
+${activeDeliveryJobsCtes(`AND json_extract(jq.payload, '$.sessionId') = ?1`)},
 active_delivery_ranked AS (
   SELECT
     message_uuid,
