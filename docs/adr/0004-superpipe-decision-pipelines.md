@@ -149,7 +149,10 @@ interpreter never distinguishes them). The five contracts:
 
 Branching is deliberately not a stage type: a `decide` stage's output drives
 superpipe's native `!`/`?` control flow. A separate `branch` stage would duplicate
-the library.
+the library. Action routing rides the same machinery: a decision member's payload
+enters ctx, action-specific stages declare it as an optional dependency (`?dep`
+skips the stage when the decision is not that member) or end the flow with a halt
+(`!dep`) — the P3/P4 idioms, no per-action dispatcher.
 
 **Conditions on `effect` stages.** The prior boundary — effects at pipeline
 boundaries, a pipeline never owns atomicity — was drawn because superpipe provides
