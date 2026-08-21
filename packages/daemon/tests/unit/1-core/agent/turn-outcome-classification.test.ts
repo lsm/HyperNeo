@@ -111,6 +111,25 @@ describe('classifyTurnCompletion', () => {
       expect(result.category).toBe('authentication');
     });
 
+    for (const category of ['authentication', 'provider_auth_error'] as const) {
+      for (const subtype of ['error_during_execution', 'invalid_api_key'] as const) {
+        it(`ignores errorResultSubtype ${subtype} when turnError category ${category} is terminal`, () => {
+          const result = classifyTurnCompletion({
+            producedResult: false,
+            turnError: { message: 'Auth failed', category, recoverable: true },
+            errorResultSubtype: subtype,
+            deliveryTurnStalled: false,
+            claimGuardHeld: true,
+          });
+          if (result.outcome !== 'terminal_error') {
+            throw new Error(`expected terminal_error, got ${result.outcome}`);
+          }
+          expect(result.detail).toBe('Auth failed');
+          expect(result.category).toBe(category);
+        });
+      }
+    }
+
     it('turn error that is not recoverable is terminal regardless of category', () => {
       const result = classifyTurnCompletion({
         producedResult: false,
