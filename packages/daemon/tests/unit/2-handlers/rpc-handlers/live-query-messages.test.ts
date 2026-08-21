@@ -961,6 +961,60 @@ describe('messages.bySession — SQL behavior', () => {
     const uuids = rows.map((r) => r.uuid as string).sort();
     expect(uuids).toEqual(['u-child', 'u-parent']);
   });
+
+  test('subagent tool-result rows do not surface delivery retry info', () => {
+    insertSdkMessage(db, {
+      id: 'parent-tool',
+      sessionId: 's1',
+      messageType: 'assistant',
+      sdkMessage: {
+        type: 'assistant',
+        uuid: 'u-parent-tool',
+        message: {
+          content: [
+            { type: 'text', text: 'calling tool' },
+            { type: 'tool_use', id: 'tool-use-2', name: 'sub', input: {} },
+          ],
+        },
+      },
+      timestamp: '2024-01-01 00:00:01',
+    });
+
+    insertSdkMessage(db, {
+      id: 'tool-result',
+      sessionId: 's1',
+      messageType: 'user',
+      sdkMessage: {
+        type: 'user',
+        uuid: 'u-tool-result',
+        parent_tool_use_id: 'tool-use-2',
+        isSynthetic: true,
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'tool-use-2', content: 'ok' }],
+        },
+      },
+      timestamp: '2024-01-01 00:00:02',
+      sendStatus: 'consumed',
+      origin: 'system',
+    });
+
+    insertDeliveryJob(db, {
+      id: 'job-tool-result',
+      sessionId: 's1',
+      messageUuid: 'u-tool-result',
+      status: 'pending',
+      retryCount: 3,
+      maxRetries: 6,
+      runAt: 1_700_000_000_001,
+    });
+
+    const rows = query(db, 's1', 100);
+    const resultRow = rows.find((r) => r.uuid === 'u-tool-result')!;
+    expect(resultRow).toBeDefined();
+    expect(resultRow.deliveryRetry).toBeUndefined();
+    expect(resultRow.deliveryStatus).not.toBe('retrying');
+  });
 });
 
 describe('messages.bySession — mapRow', () => {

@@ -3123,9 +3123,8 @@ subagent AS (
     sm.origin AS origin,
     sm.rowid AS rowid,
     sm.message_type AS message_type,
-    active_delivery_retry.deliveryRetryInfo AS deliveryRetryInfo
+    NULL AS deliveryRetryInfo
   FROM sdk_messages sm
-  LEFT JOIN active_delivery_retry ON active_delivery_retry.message_uuid = sm.sdk_uuid
   WHERE sm.session_id = ?1
     AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
     AND sm.message_subtype_norm != 'thinking_tokens'
