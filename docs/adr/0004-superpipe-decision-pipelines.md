@@ -237,11 +237,14 @@ spawns fail — and `attemptBlockedRunRecovery` all test a task snapshot taken
 before one or more awaited effects and then write through `updateTaskAndEmit`,
 which does not enforce the task-transition table — so a park completing inside
 any of those windows is flipped `stopped` → `blocked` (or back to
-`in_progress` on the recovery path below). `attemptBlockedRunRecovery` — the pre-admission path
-for blocked runs — carries the inverse race: a park landing after its
+`in_progress` on the resume paths: `attemptBlockedRunRecovery` — the pre-admission path
+for blocked runs, where a park landing after its
 stopped-task check is undone, because the helper resets blocked executions to
 pending, flips the run back to `in_progress`, and writes the stale-snapshot
-task to `in_progress` through the same unvalidated update. Queued-handoff
+task to `in_progress` through the same unvalidated update — and the successful
+`handleWaitingRebindExecutions` recovery, which resets the execution to
+pending, transitions the run, and then writes the stale `blocked`/`open`
+snapshot back to `in_progress`. Queued-handoff
 repair's terminal check
 (done/cancelled/archived) excludes 'stopped' and can still spawn, and the
 completion branch, gated on the admission-time-cached `runIsComplete`, runs
