@@ -20,7 +20,8 @@ export HYPERNEO_ALLOW_ROOT_TEST=1
 
 SHARDS=(
 	shared
-	0-shared-handlers-workflow
+	2-handlers-github
+	2-handlers-other
 	1-core
 	4-space-storage
 	4-space-migrations-a
@@ -293,19 +294,37 @@ shard_paths() {
 	fi
 
 	case "$1" in
-	0-shared-handlers-workflow)
-		# Under Vitest each test file is module-isolated, so the old "shared first"
-		# ordering (to avoid bun mock.module leakage) no longer applies. Shared runs
-		# as its own shard below with its own vitest config.
-		printf '%s\n' \
-			"$TEST_ROOT/2-handlers" \
-			"$TEST_ROOT/5-space/workflow"
-		;;
 	shared)
+		# Under Vitest each test file is module-isolated, so the old "shared first"
+		# ordering (to avoid bun mock.module leakage) no longer applies; shared runs
+		# here with its own vitest config.
 		printf '%s\n' "$REPO_ROOT/packages/shared/tests"
 		;;
 	1-core)
 		printf '%s\n' "$TEST_ROOT/1-core" "$TEST_ROOT/helpers" "$TEST_ROOT/lib"
+		;;
+	2-handlers-github)
+		# github/ is split out of 2-handlers by directory, NOT by the stable-hash
+		# machinery: its 19 files carry ~102s of local test time vs ~115s for the
+		# other seven dirs combined, while a 2-way hash split lands 41s/175s (the
+		# three heaviest files collide in one bucket) — a skew that would keep the
+		# slow bucket near the unsplit ~117s CI step. Revisit if duration-aware
+		# sharding ever lands; until then keep this boundary duration-balanced.
+		printf '%s\n' "$TEST_ROOT/2-handlers/github"
+		;;
+	2-handlers-other)
+		# Everything under 2-handlers/ except github/ (see above). A new
+		# 2-handlers subdirectory must be listed here — validate-test-matrix.sh
+		# fails loudly on any uncovered unit test file, so it cannot be silently
+		# dropped from CI.
+		printf '%s\n' \
+			"$TEST_ROOT/2-handlers/db-query" \
+			"$TEST_ROOT/2-handlers/job-handlers" \
+			"$TEST_ROOT/2-handlers/mcp" \
+			"$TEST_ROOT/2-handlers/routes" \
+			"$TEST_ROOT/2-handlers/rpc" \
+			"$TEST_ROOT/2-handlers/rpc-handlers" \
+			"$TEST_ROOT/2-handlers/short-id"
 		;;
 	4-space-storage)
 		printf '%s\n' "$TEST_ROOT/4-space-storage"/*.test.ts "$TEST_ROOT/4-space-storage/app"
@@ -323,7 +342,7 @@ shard_paths() {
 		migration_shard_paths 1
 		;;
 	5-space-agent-other)
-		printf '%s\n' "$TEST_ROOT/5-space"/*.test.ts "$TEST_ROOT/5-space/agent" "$TEST_ROOT/5-space/other"
+		printf '%s\n' "$TEST_ROOT/5-space"/*.test.ts "$TEST_ROOT/5-space/agent" "$TEST_ROOT/5-space/other" "$TEST_ROOT/5-space/workflow"
 		;;
 	# 5-space-runtime-a/b are resolved by hash_split_resolve above (stable hash
 	# over the full 5-space/runtime tree, so no file is ever hand-listed or dropped).

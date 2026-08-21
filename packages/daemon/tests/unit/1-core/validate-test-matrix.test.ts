@@ -38,7 +38,11 @@ printf '{"name":"@preact/preset-vite","version":"0.0.0","type":"module","main":"
 printf 'export default () => [{ name: "preact:config" }];\\n' \\
   > "$FX/node_modules/@preact/preset-vite/index.mjs"
 U="$FX/packages/daemon/tests/unit"
-for f in 1-core/c.test.ts helpers/h.test.ts lib/l.test.ts 2-handlers/h.test.ts \\
+for f in 1-core/c.test.ts helpers/h.test.ts lib/l.test.ts \\
+  2-handlers/github/h.test.ts 2-handlers/db-query/d.test.ts \\
+  2-handlers/job-handlers/j.test.ts 2-handlers/mcp/m.test.ts \\
+  2-handlers/routes/ro.test.ts 2-handlers/rpc/p.test.ts \\
+  2-handlers/rpc-handlers/rh.test.ts 2-handlers/short-id/si.test.ts \\
   5-space/workflow/w.test.ts 4-space-storage/s.test.ts 4-space-storage/app/a.test.ts \\
   4-space-storage/storage/st.test.ts 4-space-storage/storage/migrations/m1.test.ts \\
   4-space-storage/storage/migrations/m2.test.ts 5-space/s.test.ts 5-space/agent/a.test.ts \\
