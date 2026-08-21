@@ -1999,36 +1999,35 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         status: args.status,
         previousStatus: task?.status,
       };
-      const { level, agentLevel, spaceLevel } = await resolveEffectiveAutonomy();
-      const plan = decideUpdateTask({
-        toolName: 'update_task',
-        level,
-        agentLevel,
-        spaceLevel,
-        hasChanges,
-        taskExists: task !== null,
-        taskInSpace: task?.spaceId === spaceId,
-        currentStatus: task?.status ?? '',
-        requestedStatus: args.status,
-        statusDiffers: args.status !== undefined && args.status !== task?.status,
-        hasWorkflowRun: task?.workflowRunId != null,
-        runActive:
-          task?.workflowRunId != null
-            ? (config.isWorkflowRunActive?.(task.workflowRunId) ?? false)
-            : false,
-        isRecoveryTransition:
-          args.status !== undefined && task !== null && args.status !== task.status
-            ? isWorkflowRecoveryTransition(task.status, args.status)
-            : false,
-        hasFieldUpdates,
-        taskId: args.task_id,
-        workflowRunId: task?.workflowRunId ?? undefined,
-      });
-      if (plan.action === 'reject' || plan.action === 'deny') {
-        return jsonResult({ success: false, error: plan.message });
-      }
-
       try {
+        const { level, agentLevel, spaceLevel } = await resolveEffectiveAutonomy();
+        const plan = decideUpdateTask({
+          toolName: 'update_task',
+          level,
+          agentLevel,
+          spaceLevel,
+          hasChanges,
+          taskExists: task !== null,
+          taskInSpace: task?.spaceId === spaceId,
+          currentStatus: task?.status ?? '',
+          requestedStatus: args.status,
+          statusDiffers: args.status !== undefined && args.status !== task?.status,
+          hasWorkflowRun: task?.workflowRunId != null,
+          runActive:
+            task?.workflowRunId != null
+              ? (config.isWorkflowRunActive?.(task.workflowRunId) ?? false)
+              : false,
+          isRecoveryTransition:
+            args.status !== undefined && task !== null && args.status !== task.status
+              ? isWorkflowRecoveryTransition(task.status, args.status)
+              : false,
+          hasFieldUpdates,
+          taskId: args.task_id,
+          workflowRunId: task?.workflowRunId ?? undefined,
+        });
+        if (plan.action === 'reject' || plan.action === 'deny') {
+          return jsonResult({ success: false, error: plan.message });
+        }
         switch (plan.action) {
           case 'park_stopped': {
             const parked = await runtime.parkStoppedWorkflowTask(spaceId, args.task_id);
