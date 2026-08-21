@@ -158,7 +158,7 @@ Extracted:
   rate-limit, task-stopped, executions-present, blocked-executions) plus pure
   timed-out-execution selection.
 - `run-tick-decision-pipeline.ts` — the admission gates composed as a
-  `decisionRun` pipeline; the gate list is the precedence document.
+  `decisionRun` pipeline.
 - `run-completion-settlement.ts` — completion-summary resolution,
   already-resolved and final-status mapping, spawned post-approval session
   resolution, quiesce source selection, and sibling-quiesce selection.
@@ -169,13 +169,21 @@ The shell keeps every effect and re-snapshots `nodeExecutionRepo.listByWorkflowR
 after each effectful stage (crash reset, recovery handlers, handoff repair,
 promotion) before the next decision.
 
-Two boundary caveats, recorded so the section is not read as a cleaner
+Three boundary caveats, recorded so the section is not read as a cleaner
 validation of the sandwich than it is. First, slot availability is modeled by a
 pipeline gate but defused at the production call site
 (`availableTaskSlots: Number.MAX_SAFE_INTEGER`): `space` — and with it
 `getAvailableTaskSlots` — only loads after admission, and the authoritative
 check stays in the shell, after the timeout-notification stage; the gate list
-does not encode slot precedence. Second, four admission inputs
+does not encode slot precedence. Second, six admission gates (missing/finished/
+waiting run, executor meta, run tasks, canonical task) are shadowed by shell
+short-circuits ahead of the admission call: the interpreter returns for each of
+those conditions first and then hardcodes the corresponding inputs (an active
+`runStatus`, `hasExecutorMeta: true`, a positive task count,
+`hasCanonicalTask: true`), so those gates are unreachable in production. The
+authoritative ordering of the tick is therefore shell short-circuits first,
+then the pipeline gates; the gate list alone is the precedence document of the
+core, not of the production tick. Third, four admission inputs
 (`executionCount`, `runIsComplete`, `hasBlockedExecution`, `firstBlockedResult`)
 are lazy thunks forced inside the gates, so their repository/detector reads
 happen within the core run rather than pre-gathered by the shell — a deliberate
