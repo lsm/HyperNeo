@@ -464,7 +464,10 @@ Pilot 5 carried the pattern from the runtime into the Space MCP tool surface. Al
 eight task-mutation tools in `packages/daemon/src/lib/space/tools/space-agent-tools.ts`
 (`create_standalone_task`, `update_task`, `retry_task`, `cancel_task`,
 `publish_task`, `archive_task`, `reassign_task`, `approve_task`) are now staged
-interpreters over three extracted cores:
+interpreters over extracted routing cores — `update_task` alone runs the full
+three-core pipeline, the other seven call `task-transition-routing.ts` routers
+directly, and only `approve_task` additionally consumes the autonomy-admission
+core:
 
 - `tool-admission-gates.ts` — the shared autonomy-admission core:
   `resolveEffectiveAutonomyLevel`, `decideAutonomyAdmission`, and
@@ -620,8 +623,8 @@ predicate (succeeded by the exported type guard), and the
 oxlint, and `tsc --noEmit` are clean; every core export is production-consumed
 or pinned directly by the gate/routing suites per Decision item 6. Live
 near-duplicates remain only in never-converted surfaces — the hand-rolled
-target checks in `get_task_detail`, the node-agent `get_task`,
-`send_message_to_task`, `list_task_members`,
+target checks in `get_task_detail`, the node-agent `get_task`, the RPC
+`spaceTask.get`, `send_message_to_task`, `list_task_members`,
 `approve_pending_completion`, `attach_forge_task_evidence`, the task branch
 of `resolve_forge_scope`, and the RPC message handlers
 `space.task.sendMessage`/`space.task.activateNodeAgent`
