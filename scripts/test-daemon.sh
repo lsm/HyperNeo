@@ -51,7 +51,7 @@ source "$REPO_ROOT/scripts/lib/shard-split.sh"
 # rebalancing is editing one number (the split count) plus adding/removing the
 # matching -a/-b/… shard entry, never editing individual files (see below).
 #
-# One line per split. Format:  <prefix>|<split_count>|<globs>
+# One line per split. Format:  <prefix>|<split_count>|<globs>[|<weights>]
 #   <prefix>       public shard-name prefix; buckets are <prefix>-a, -b, -c, …
 #                  with the suffix letter mapping to a 0-based bucket index
 #                  (a→0, b→1, … up to z→25).
@@ -61,12 +61,20 @@ source "$REPO_ROOT/scripts/lib/shard-split.sh"
 #                  `*_test.ts`, so list that glob too wherever such files exist
 #                  (--verify's find cross-check covers both suffixes and will
 #                  flag a missing one).
+#   <weights>      OPTIONAL opt-in to duration-aware bucket assignment: path of
+#                  a weights manifest (repo-root-relative, e.g.
+#                  scripts/shard-weights.tsv) mapping test files to measured
+#                  durations. Files listed there are assigned by greedy
+#                  time-packing instead of the hash; files absent keep
+#                  stableHash % N, so new test files still auto-route. The
+#                  manifest is generated, never hand-edited:
+#                  bun run scripts/generate-shard-weights.ts --suite daemon-unit <junit...>
 #
 # Changing N also means adding/removing the matching -a/-b/… entry in the SHARDS
 # list below and in the CI matrix at .github/workflows/main.yml — but a FILE LIST
 # is never edited by hand. Validate any change with: ./scripts/test-daemon.sh --verify
 HASH_SPLIT_SPECS=(
-	"5-space-runtime|7|5-space/runtime/*.test.ts;5-space/runtime/connectors/*.test.ts"
+	"5-space-runtime|7|5-space/runtime/*.test.ts;5-space/runtime/connectors/*.test.ts|scripts/shard-weights.tsv"
 	"1-core|2|1-core/*.test.ts;1-core/agent/*.test.ts;1-core/core/*.test.ts;1-core/credentials/*.test.ts;1-core/lib/*.test.ts;1-core/providers/*.test.ts;1-core/providers/anthropic-copilot/*.test.ts;1-core/providers/anthropic-messages-bridge/*.test.ts;1-core/providers/openai-chat-bridge/*.test.ts;1-core/providers/openai-responses-bridge/*.test.ts;1-core/providers/shared/*.test.ts;1-core/session/*.test.ts;helpers/*.test.ts;lib/acp/*.test.ts;lib/job-handlers/*.test.ts"
 )
 
@@ -89,11 +97,13 @@ shard_index_to_suffix() {
 
 # Resolve a hash-split shard name (e.g. 5-space-runtime-a) to its bucket's files.
 # Prints absolute test paths and returns 0 on a match, 1 if $1 is not a hash split.
+# A spec with a 4th <weights> field resolves its bucket by duration-aware packing
+# (see HASH_SPLIT_SPECS above); the union of buckets is the full glob set either way.
 hash_split_resolve() {
 	local shard="$1"
-	local spec prefix count globs suffix bucket
+	local spec prefix count globs weights suffix bucket
 	for spec in "${HASH_SPLIT_SPECS[@]}"; do
-		IFS='|' read -r prefix count globs <<<"$spec"
+		IFS='|' read -r prefix count globs weights <<<"$spec"
 		case "$shard" in
 			"$prefix"-*)
 				suffix="${shard#"$prefix"-}"
@@ -101,7 +111,11 @@ hash_split_resolve() {
 				local abs=() g
 				local IFS=';'
 				for g in $globs; do abs+=("$TEST_ROOT/$g"); done
-				shard_split_bucket "$REPO_ROOT" "$count" "$bucket" "${abs[@]}"
+				if [ -n "$weights" ]; then
+					shard_split_bucket_weighted "$REPO_ROOT" "$REPO_ROOT/$weights" "$count" "$bucket" "${abs[@]}"
+				else
+					shard_split_bucket "$REPO_ROOT" "$count" "$bucket" "${abs[@]}"
+				fi
 				return $?
 				;;
 		esac
@@ -120,7 +134,10 @@ hash_split_resolve() {
 #     *_test.ts, matching vitest.config) so its net is strictly wider than the
 #     spec globs — a file the globs miss (new suffix, new subdir) shows up as
 #     find_count != total and fails --verify;
-#   - buckets partition that set with no overlap;
+#   - buckets partition that set with no overlap (weighted specs partition by
+#     their PACKED assignment — the one CI actually runs);
+#   - a spec with a <weights> manifest gets a manifest audit (present,
+#     well-formed, no stale paths) plus per-bucket TIME balance in the report;
 #   - per-bucket balance is reported, and an empty bucket is warned about.
 # Exits non-zero on any error. Used by CI (see .github/workflows/main.yml).
 verify_shards() {
@@ -147,9 +164,13 @@ verify_shards() {
 	done
 
 	# 2. Each hash-split is internally consistent and covers its directory tree.
-	local spec prefix count globs
+	local spec prefix count globs weights manifest
 	for spec in "${HASH_SPLIT_SPECS[@]}"; do
-		IFS='|' read -r prefix count globs <<<"$spec"
+		IFS='|' read -r prefix count globs weights <<<"$spec"
+		manifest=""
+		if [ -n "$weights" ]; then
+			manifest="$REPO_ROOT/$weights"
+		fi
 
 		# 2a. split_count ↔ SHARDS + CI-matrix consistency. Derive the expected
 		# bucket shard names (prefix-a … prefix-<letter(count-1)>) and require
@@ -220,6 +241,16 @@ verify_shards() {
 			dirs+=("$TEST_ROOT/$(dirname "$g")")
 		done
 
+		# 2b-w. A spec that opts into a weights manifest gets the manifest audit:
+		# present on disk, well-formed lines, no stale paths, and a coverage
+		# summary (weighted vs hash-fallback). A rotted manifest fails loudly
+		# here instead of silently degrading to hash-only balance.
+		if [ -n "$manifest" ]; then
+			if ! shard_split_weights_check "$REPO_ROOT" "$manifest" "$count" "${abs[@]}"; then
+				errors=$((errors + 1))
+			fi
+		fi
+
 		local total find_count
 		total=$(shard_split_count "$REPO_ROOT" "${abs[@]}")
 		# Independent enumeration over both *.test.ts and *_test.ts (vitest runs
@@ -232,9 +263,14 @@ verify_shards() {
 		fi
 
 		# 2c. Union of all buckets must equal the total (no file dropped/doubled).
+		# Weighted specs union their PACKED buckets — the assignment CI runs.
 		local i=0 union=""
 		while [ "$i" -lt "$count" ]; do
-			union+=$(shard_split_bucket "$REPO_ROOT" "$count" "$i" "${abs[@]}")$'\n'
+			if [ -n "$manifest" ]; then
+				union+=$(shard_split_bucket_weighted "$REPO_ROOT" "$manifest" "$count" "$i" "${abs[@]}")$'\n'
+			else
+				union+=$(shard_split_bucket "$REPO_ROOT" "$count" "$i" "${abs[@]}")$'\n'
+			fi
 			i=$((i + 1))
 		done
 		local union_unique
@@ -245,10 +281,18 @@ verify_shards() {
 		fi
 
 		# 2d. Report balance; warn on empty buckets (a CI shard would run nothing).
+		# Weighted specs also report the packed TIME per bucket (sum of measured
+		# durations) — the balance dimension that motivated the manifest.
 		local rep zero z
-		rep=$(shard_split_report "$REPO_ROOT" "$count" "${abs[@]}")
-		printf '  %-18s %d-way split, %d files:\n' "$prefix" "$count" "$total"
-		printf '%s\n' "$rep" | awk -F'\t' '{printf "      bucket %s: %s file(s)\n", $1, $2}'
+		if [ -n "$manifest" ]; then
+			rep=$(shard_split_report_weighted "$REPO_ROOT" "$manifest" "$count" "${abs[@]}")
+			printf '  %-18s %d-way split, %d files (duration-weighted via %s):\n' "$prefix" "$count" "$total" "$weights"
+			printf '%s\n' "$rep" | awk -F'\t' '{printf "      bucket %s: %s file(s), %.1fs weighted\n", $1, $2, $3 / 1000}'
+		else
+			rep=$(shard_split_report "$REPO_ROOT" "$count" "${abs[@]}")
+			printf '  %-18s %d-way split, %d files:\n' "$prefix" "$count" "$total"
+			printf '%s\n' "$rep" | awk -F'\t' '{printf "      bucket %s: %s file(s)\n", $1, $2}'
+		fi
 		zero=$(printf '%s\n' "$rep" | awk -F'\t' '$2 == 0 {print $1}')
 		for z in $zero; do
 			echo "  WARNING: '$prefix' bucket $z resolved to 0 files — a CI shard would run nothing" >&2
