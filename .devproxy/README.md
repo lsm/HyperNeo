@@ -148,7 +148,7 @@ Because ordering is load-bearing, list specific mocks before catch-all entries t
 2. Add a new mock entry with:
    - `request.url` - The API endpoint
    - `request.method` - HTTP method (usually POST)
-   - `request.bodyFragment` - Optional request body matcher
+   - `request.bodyFragment` - Optional case-insensitive substring matched against the request body (must be a string)
    - `response.statusCode` - HTTP status code
    - `response.headers` - Response headers
    - `response.body` - Anthropic API response format
@@ -160,13 +160,7 @@ Example:
   "request": {
     "url": "http://127.0.0.1:8000/v1/messages?beta=true",
     "method": "POST",
-    "bodyFragment": {
-      "messages": [
-        {
-          "content": "your trigger phrase here"
-        }
-      ]
-    }
+    "bodyFragment": "your trigger phrase here"
   },
   "response": {
     "statusCode": 200,
