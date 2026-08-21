@@ -209,13 +209,17 @@ done/cancelled/blocked/approved) and spawn terminal
 intentionally differ: 'blocked' settles a finished attempt, while 'stopped'
 (user-parked) short-circuits the entire tick at admission
 (`applyTaskStoppedGate` → skip, so no crash recovery, handoff repair,
-settlement, or spawn runs for a task parked before the tick) — it is never
-settled. Mid-tick parking is only partially guarded: the canonical task is
-re-read before spawn admission, so the ordinary spawn path is suppressed, but
-queued-handoff repair runs earlier with the admission-era task, its terminal
-check (done/cancelled/archived) excludes 'stopped', and it can still spawn —
-a known gap to close with the `repairQueuedWorkflowNodeHandoffs` mini-pilot.
-The terminal-handoff-cleanup check in the interpreter is a third, narrower set
+settlement, or spawn runs for a task parked before the tick). Mid-tick parking
+is only partially guarded: the canonical task is re-read before spawn
+admission, so the ordinary spawn path is suppressed, but both earlier stages
+run on the admission-era task — queued-handoff repair's terminal check
+(done/cancelled/archived) excludes 'stopped' and can still spawn, and the
+completion branch, gated on the admission-time-cached `runIsComplete`, runs
+before the re-read and can still transition the run to `done` and settle the
+task, overwriting a mid-tick 'stopped'. Both gaps close by re-reading the task
+before those stages; that change is deliberately not slipped into this closing
+sweep and belongs with the `repairQueuedWorkflowNodeHandoffs` mini-pilot. The
+terminal-handoff-cleanup check in the interpreter is a third, narrower set
 (done/cancelled/archived). These are distinct decisions, not duplicate
 predicates to unify.
 
