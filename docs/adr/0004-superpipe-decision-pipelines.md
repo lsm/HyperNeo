@@ -233,7 +233,12 @@ rather than merely act stale: the recovery handlers' blocking paths call
 transition (alive-stuck, crash, waiting-rebind, and terminal-error alike), and
 `updateTaskAndEmit` writes through the task repository without enforcing the
 task-transition table, so a park completing during that await is flipped
-`stopped` → `blocked`. Queued-handoff repair's terminal check
+`stopped` → `blocked`. `attemptBlockedRunRecovery` — the pre-admission path
+for blocked runs — carries the inverse race: a park landing after its
+stopped-task check is undone, because the helper resets blocked executions to
+pending, flips the run back to `in_progress`, and writes the stale-snapshot
+task to `in_progress` through the same unvalidated update. Queued-handoff
+repair's terminal check
 (done/cancelled/archived) excludes 'stopped' and can still spawn, and the
 completion branch, gated on the admission-time-cached `runIsComplete`, runs
 before the re-read and can still transition the run to `done` and write task
@@ -248,8 +253,8 @@ already re-reads the task while `validateTaskAllowsSpawn` rejects only
 archived/cancelled and rate/usage-limited statuses, so a parked task passes
 and the spawn proceeds. Truly closing the races requires atomic coordination
 — a lock, a CAS on the task row, or a spawn reservation — plus the equivalent
-guards in handoff repair and the recovery handlers' task writes; that work is
-deliberately not slipped into this
+guards in handoff repair, `attemptBlockedRunRecovery`, and the recovery
+handlers' task writes; that work is deliberately not slipped into this
 closing sweep and belongs with the `repairQueuedWorkflowNodeHandoffs`
 mini-pilot. The terminal-handoff-cleanup check in the interpreter is a third,
 narrower set (done/cancelled/archived). These are distinct decisions, not
