@@ -15,6 +15,10 @@ export function CopyButton({ text, label = 'Copy to clipboard' }: CopyButtonProp
     return () => clearTimeout(timer);
   }, [copied]);
 
+  useEffect(() => {
+    setCopied(false);
+  }, [text]);
+
   const handleCopy = async () => {
     const success = await copyToClipboard(text);
     if (success) {

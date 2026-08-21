@@ -115,6 +115,36 @@ describe('MarkdownRenderer', () => {
         vi.useRealTimers();
       }
     });
+
+    it('should reserve a right gutter for the copy button on touch devices', () => {
+      const { container } = render(<MarkdownRenderer content="Test" />);
+      const prose = container.querySelector('.prose');
+      expect(prose?.className).toContain('[@media(hover:none)]:pr-7');
+    });
+
+    it('should reset the copied confirmation when content changes', async () => {
+      vi.useFakeTimers();
+
+      try {
+        const { container, rerender } = render(<MarkdownRenderer content="first" />);
+        const button = container.querySelector('button');
+        button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(button?.getAttribute('title')).toBe('Copied!');
+
+        rerender(<MarkdownRenderer content="second **streamed**" />);
+
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(container.querySelector('button')?.getAttribute('title')).toBe('Copy markdown');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe('Markdown Parsing', () => {

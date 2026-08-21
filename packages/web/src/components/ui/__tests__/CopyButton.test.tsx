@@ -136,6 +136,30 @@ describe('CopyButton', () => {
 
       vi.useRealTimers();
     });
+
+    it('should reset copied state when text changes', async () => {
+      vi.useFakeTimers();
+      (copyToClipboard as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+      const { rerender } = render(<CopyButton text="first" />);
+      const button = document.body.querySelector('button');
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(button?.classList.contains('text-green-400')).toBe(true);
+
+      rerender(<CopyButton text="second" />);
+
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(button?.classList.contains('text-green-400')).toBe(false);
+      expect(button?.getAttribute('title')).toBe('Copy to clipboard');
+
+      vi.useRealTimers();
+    });
   });
 
   describe('Styling', () => {
