@@ -10,8 +10,8 @@ Use this runbook when:
   SQLite only reuses lazily — the file never shrinks on its own).
 - Queries pick bad plans after large data changes (planner statistics in `sqlite_stat1` are
   missing or stale).
-- You are about to upgrade a daemon whose DB is too large for the automatic migration
-  backup (see [Migration backups](#migration-backups)).
+- You want to know what the automatic migration backups cost on disk, or shrink a DB whose
+  backups are full copies (see [Migration backups](#migration-backups)).
 
 The daemon opens the DB in WAL mode with `busy_timeout=5000`, `synchronous=NORMAL`,
 `foreign_keys=ON`, and holds a PID lock (`<db>.lock`) so only one daemon uses a DB at a time.
@@ -144,26 +144,61 @@ followed by a full VACUUM anyway), only returns trailing pages, and adds write o
 
 ## Migration backups
 
-Before running schema migrations the daemon copies the whole DB file into
-`<db-dir>/backups/daemon-<timestamp>.db` (keeping the 3 most recent). On a very large DB
-that copy is itself an operational hazard — a 31 GB DB meant a 31 GB copy per upgrade and
-up to ~93 GB retained.
+Before running schema migrations the daemon always writes a backup into
+`<db-dir>/backups/<db-file-name>/daemon-<timestamp>.db` — unconditionally, regardless of
+database size. A backup is only attempted when a migration is actually pending, so plain
+daemon restarts create no backups. Backups are namespaced per database file, so several
+databases sharing one directory (for example the per-worktree development pattern) never
+prune each other's snapshots; within a namespace the 3 most recent backups are kept, room
+for the next backup is freed before it is written (retaining the two newest known-good
+backups meanwhile), and WAL sidecar files are pruned with their backups. Releases before
+this layout stored backups flat in `backups/` — those are not auto-pruned; remove them
+manually after upgrading.
 
-Databases larger than **1 GiB** therefore skip the automatic migration backup; the daemon
-logs a warning when this happens. Before upgrading a large production DB, take an offline
-backup manually (step 3 above) while the daemon is stopped.
+The copy strategy is picked per attempt, fastest first, and logged
+(`Migration backup created via <strategy> in <ms>ms`):
 
-The bound is controlled by `HYPERNEO_DB_MIGRATION_BACKUP_MAX_BYTES`:
+| Strategy          | When it runs                          | What it does                                                                                                         |
+| ----------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `fs-copy`         | Bun runtime (the pinned runtime)      | File copy that clonefiles on APFS (near-instant, ~zero extra disk until divergence) and uses `copy_file_range` on Linux, which reflinks on btrfs/XFS and falls back to a full copy elsewhere. A non-empty `-wal` sidecar is copied next to the backup so committed WAL frames survive. |
+| `vacuum-into`     | non-Bun runtimes                      | `VACUUM INTO` — SQLite's own consistent snapshot: includes committed WAL content without a checkpoint, and compacts free pages. |
+| `checkpoint-copy` | last resort if the above two fail     | `PRAGMA wal_checkpoint(TRUNCATE)` followed by a plain full-file copy; a blocked checkpoint (`busy ≠ 0`, for example a long-lived reader) also copies the `-wal` sidecar, and the attempt fails closed if that copy fails. |
 
-| Value        | Behavior                                                |
-| ------------ | ------------------------------------------------------ |
-| unset        | skip the migration backup above 1 GiB (default)        |
-| `1073741824` | same as unset (explicit 1 GiB)                          |
-| `0`          | always create migration backups, regardless of size     |
-| other number | custom bound in bytes (whole non-negative number)       |
+If every strategy fails (for example the backups directory is not writable), the daemon
+logs an error and proceeds with the migration — the same behavior as before. A failed
+WAL-sidecar copy likewise discards the `fs-copy` attempt and falls through to a
+self-contained snapshot, and only after the partial artifacts are confirmed removed, so a
+stale sidecar can never sit beside a newer snapshot; a reported backup never silently
+misses WAL-resident data.
 
-Values that are not whole non-negative numbers (including partially numeric ones like
-`1GB`) fall back to the 1 GiB default.
+To restore from a backup, copy the `.db` file and its `-wal` sidecar (when one is
+present) back together — a sidecar exists exactly when the backup depends on WAL-resident
+committed frames, and restoring only the `.db` would silently lose every post-checkpoint
+transaction — then open the database once so SQLite folds the WAL in with a checkpoint.
+
+Each backup is written under a `.tmp` name and published by atomic rename once the pair
+completes, so a crash mid-copy never leaves a partial file at a retained name. Sweeping
+runs when the next backup is created, not on a timer: leftover `.tmp` artifacts and
+orphaned `.db-wal` sidecars are only removed once they have seen no write progress for an
+hour, so a sidecar that is mid-publish (renamed before its database) or a long-running
+copy is never mistaken for a crashed leftover.
+
+Disk cost: on APFS (and reflink-capable Linux filesystems) retained backups are
+copy-on-write clones, so keeping 3 costs almost nothing until the files diverge. On
+filesystems without clone support every backup is a full copy, and an `fs-copy` backup
+whose WAL holds committed frames (for example after an unclean shutdown, or while a
+long-lived reader keeps checkpoints from completing) also retains a full copy of that
+`-wal` sidecar — budget up to 3 × (DB + WAL) for an upgrade on such a volume, and run the
+offline VACUUM procedure above first if that is a concern. The
+`HYPERNEO_DB_MIGRATION_BACKUP_MAX_BYTES` size bound (which skipped backups for DBs over
+1 GiB) was removed: large databases are exactly where a pre-migration backup matters most,
+and with clone-based copies it is no longer expensive.
+
+Measured on a 28.9 GB production clone (Apple Silicon laptop, APFS SSD, Bun runtime): the
+`fs-copy` pre-migration backup completed in **1 ms** with ~0 bytes of net disk added
+(APFS clone; volume free space unchanged), the whole pending-migration startup took ~4 s
+(migration, catalog, and FTS work — not the backup), a restart with no pending migrations
+created no new backup, and the backup opened and passed `PRAGMA integrity_check`.
 
 ## Measured reference numbers
 

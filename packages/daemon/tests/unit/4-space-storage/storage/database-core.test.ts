@@ -1,8 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { configureLogger, LogLevel, subscribeToStructuredLogs } from '../../../../src/lib/logger';
 import { DatabaseCore } from '../../../../src/storage/database-core';
+import { Database as RawDatabase } from '../../../../src/storage/sqlite-compat';
 
 describe('DatabaseCore', () => {
   let testDir: string;
@@ -223,7 +234,7 @@ describe('DatabaseCore', () => {
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
 
-      const backupDir = join(testDir, 'backups');
+      const backupDir = join(testDir, 'backups', 'test.db');
       expect(existsSync(backupDir)).toBe(true);
     });
 
@@ -245,7 +256,7 @@ describe('DatabaseCore', () => {
         dbCore.close();
       }
 
-      const backupDir = join(testDir, 'backups');
+      const backupDir = join(testDir, 'backups', 'test.db');
       if (existsSync(backupDir)) {
         const backups = readdirSync(backupDir).filter(
           (f) => f.startsWith('daemon-') && f.endsWith('.db')
@@ -255,7 +266,7 @@ describe('DatabaseCore', () => {
     });
   });
 
-  describe('migration backup size bound', () => {
+  describe('pre-migration backups', () => {
     const envKey = 'HYPERNEO_DB_MIGRATION_BACKUP_MAX_BYTES';
     let previousValue: string | undefined;
 
@@ -272,65 +283,405 @@ describe('DatabaseCore', () => {
     });
 
     const listBackups = (): string[] => {
-      const backupDir = join(testDir, 'backups');
+      const backupDir = join(testDir, 'backups', 'test.db');
       return existsSync(backupDir)
         ? readdirSync(backupDir).filter((f) => f.startsWith('daemon-') && f.endsWith('.db'))
         : [];
     };
 
-    it('should skip the migration backup when the database exceeds the bound', async () => {
+    const seedWalData = (db: RawDatabase): void => {
+      db.exec('PRAGMA journal_mode = WAL');
+      db.exec('CREATE TABLE backup_probe (id INTEGER PRIMARY KEY, value TEXT)');
+      db.exec("INSERT INTO backup_probe (value) VALUES ('pre-migration')");
+    };
+
+    it('should create a backup before pending migrations even with the legacy size bound set to skip', async () => {
       process.env[envKey] = '1';
 
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
 
-      expect(existsSync(dbPath)).toBe(true);
+      expect(listBackups()).toHaveLength(1);
+    });
+
+    it('should not create a backup when no migrations are pending', async () => {
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+      dbCore.close();
+
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+      dbCore.close();
+
+      expect(listBackups()).toHaveLength(1);
+    });
+
+    it('should create a valid backup that includes data committed to the WAL', async () => {
+      const raw = new RawDatabase(dbPath);
+      seedWalData(raw);
+
+      configureLogger({ level: LogLevel.INFO });
+      const strategies: string[] = [];
+      const unsubscribe = subscribeToStructuredLogs((event) => {
+        const match = /Migration backup created via (\S+)/.exec(event.message);
+        if (match) strategies.push(match[1]);
+      });
+
+      try {
+        dbCore = new DatabaseCore(dbPath);
+        await dbCore.initialize();
+      } finally {
+        unsubscribe();
+        configureLogger({ level: LogLevel.SILENT });
+        raw.close();
+      }
+
+      const backups = listBackups();
+      expect(backups).toHaveLength(1);
+      expect(strategies).toHaveLength(1);
+      const backupPath = join(testDir, 'backups', 'test.db', backups[0]);
+      if (typeof Bun === 'undefined') {
+        expect(strategies[0]).toBe('vacuum-into');
+      } else {
+        expect(strategies[0]).toBe('fs-copy');
+        expect(statSync(`${backupPath}-wal`).size).toBeGreaterThan(0);
+      }
+
+      const backup = new RawDatabase(backupPath);
+      try {
+        expect(backup.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+        expect(backup.prepare('SELECT value FROM backup_probe').all()).toEqual([
+          { value: 'pre-migration' },
+        ]);
+        expect(
+          backup
+            .prepare(`SELECT COUNT(*) as count FROM migration_markers WHERE key = 'migration_001'`)
+            .get()
+        ).toEqual({ count: 0 });
+      } finally {
+        backup.close();
+      }
+    });
+
+    it('should fall back to checkpoint and copy when faster backup strategies fail', async () => {
+      const raw = new RawDatabase(dbPath);
+      seedWalData(raw);
+
+      configureLogger({ level: LogLevel.INFO });
+      const strategies: string[] = [];
+      const unsubscribe = subscribeToStructuredLogs((event) => {
+        const match = /Migration backup created via (\S+)/.exec(event.message);
+        if (match) strategies.push(match[1]);
+      });
+
+      try {
+        dbCore = new DatabaseCore(dbPath);
+        const internals = dbCore as unknown as Record<string, unknown>;
+        internals.tryFastCopy = () => false;
+        internals.tryVacuumInto = () => false;
+        await dbCore.initialize();
+      } finally {
+        unsubscribe();
+        configureLogger({ level: LogLevel.SILENT });
+        raw.close();
+      }
+
+      const backups = listBackups();
+      expect(backups).toHaveLength(1);
+      expect(strategies).toEqual(['checkpoint-copy']);
+      expect(existsSync(join(testDir, 'backups', 'test.db', `${backups[0]}-wal`))).toBe(false);
+
+      const backup = new RawDatabase(join(testDir, 'backups', 'test.db', backups[0]));
+      try {
+        expect(backup.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+        expect(backup.prepare('SELECT value FROM backup_probe').all()).toEqual([
+          { value: 'pre-migration' },
+        ]);
+      } finally {
+        backup.close();
+      }
+    });
+
+    it('should copy the WAL sidecar when the checkpoint is blocked by a concurrent reader', async () => {
+      const raw = new RawDatabase(dbPath);
+      seedWalData(raw);
+      raw.exec('BEGIN');
+      raw.prepare('SELECT COUNT(*) as c FROM backup_probe').get();
+
+      configureLogger({ level: LogLevel.INFO });
+      const strategies: string[] = [];
+      const unsubscribe = subscribeToStructuredLogs((event) => {
+        const match = /Migration backup created via (\S+)/.exec(event.message);
+        if (match) strategies.push(match[1]);
+      });
+
+      try {
+        dbCore = new DatabaseCore(dbPath);
+        const internals = dbCore as unknown as Record<string, unknown>;
+        internals.tryFastCopy = () => false;
+        internals.tryVacuumInto = () => false;
+        await dbCore.initialize();
+      } finally {
+        unsubscribe();
+        configureLogger({ level: LogLevel.SILENT });
+        raw.exec('ROLLBACK');
+        raw.close();
+      }
+
+      const backups = listBackups();
+      expect(backups).toHaveLength(1);
+      expect(strategies).toEqual(['checkpoint-copy']);
+      expect(
+        statSync(join(testDir, 'backups', 'test.db', `${backups[0]}-wal`)).size
+      ).toBeGreaterThan(0);
+
+      const backup = new RawDatabase(join(testDir, 'backups', 'test.db', backups[0]));
+      try {
+        expect(backup.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+        expect(backup.prepare('SELECT value FROM backup_probe').all()).toEqual([
+          { value: 'pre-migration' },
+        ]);
+      } finally {
+        backup.close();
+      }
+    }, 15000);
+
+    it('should fall back to a self-contained snapshot when the WAL sidecar copy fails', async () => {
+      const raw = new RawDatabase(dbPath);
+      seedWalData(raw);
+
+      configureLogger({ level: LogLevel.INFO });
+      const strategies: string[] = [];
+      const unsubscribe = subscribeToStructuredLogs((event) => {
+        const match = /Migration backup created via (\S+)/.exec(event.message);
+        if (match) strategies.push(match[1]);
+      });
+
+      try {
+        dbCore = new DatabaseCore(dbPath);
+        const internals = dbCore as unknown as Record<string, unknown>;
+        internals.tryFastCopy = (backupPath: string) => {
+          copyFileSync(dbPath, backupPath);
+          return true;
+        };
+        internals.copyWalSidecar = () => false;
+        await dbCore.initialize();
+      } finally {
+        unsubscribe();
+        configureLogger({ level: LogLevel.SILENT });
+        raw.close();
+      }
+
+      const backups = listBackups();
+      expect(backups).toHaveLength(1);
+      expect(strategies).toEqual(['vacuum-into']);
+      expect(existsSync(join(testDir, 'backups', 'test.db', `${backups[0]}-wal`))).toBe(false);
+
+      const backup = new RawDatabase(join(testDir, 'backups', 'test.db', backups[0]));
+      try {
+        expect(backup.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+        expect(backup.prepare('SELECT value FROM backup_probe').all()).toEqual([
+          { value: 'pre-migration' },
+        ]);
+      } finally {
+        backup.close();
+      }
+    });
+
+    it('should fail closed when partial backup artifacts cannot be removed', async () => {
+      const raw = new RawDatabase(dbPath);
+      seedWalData(raw);
+
+      configureLogger({ level: LogLevel.INFO });
+      const strategies: string[] = [];
+      const errors: string[] = [];
+      const unsubscribe = subscribeToStructuredLogs((event) => {
+        const match = /Migration backup created via (\S+)/.exec(event.message);
+        if (match) strategies.push(match[1]);
+        if (event.level === 'error') errors.push(event.message);
+      });
+
+      try {
+        dbCore = new DatabaseCore(dbPath);
+        const internals = dbCore as unknown as Record<string, unknown>;
+        internals.tryFastCopy = (backupPath: string) => {
+          copyFileSync(dbPath, backupPath);
+          writeFileSync(`${backupPath}-wal`, 'stale sidecar');
+          return true;
+        };
+        internals.copyWalSidecar = () => false;
+        internals.removePartialBackup = (backupPath: string) => {
+          rmSync(backupPath, { force: true });
+          return false;
+        };
+        await dbCore.initialize();
+      } finally {
+        unsubscribe();
+        configureLogger({ level: LogLevel.SILENT });
+        raw.close();
+      }
+
+      expect(strategies).toHaveLength(0);
       expect(listBackups()).toHaveLength(0);
+      expect(errors).toHaveLength(1);
     });
 
-    it('should still create the migration backup when the bound is disabled', async () => {
-      process.env[envKey] = '0';
+    it('should complete initialization without a backup when the backup directory is unusable', async () => {
+      mkdirSync(join(testDir, 'backups'), { recursive: true });
+      const backupDir = join(testDir, 'backups', 'test.db');
+      writeFileSync(backupDir, 'not a directory');
+
+      configureLogger({ level: LogLevel.INFO });
+      const errors: string[] = [];
+      const unsubscribe = subscribeToStructuredLogs((event) => {
+        if (event.level === 'error') errors.push(event.message);
+      });
+
+      try {
+        dbCore = new DatabaseCore(dbPath);
+        await dbCore.initialize();
+      } finally {
+        unsubscribe();
+        configureLogger({ level: LogLevel.SILENT });
+      }
+
+      let backups: string[] = [];
+      try {
+        backups = readdirSync(backupDir).filter((f) => f.startsWith('daemon-'));
+      } catch {}
+      expect(backups).toHaveLength(0);
+      expect(errors).toHaveLength(1);
+    });
+
+    it('should free room for a new backup before writing it', async () => {
+      const backupDir = join(testDir, 'backups', 'test.db');
+      mkdirSync(backupDir, { recursive: true });
+      const now = Date.now() / 1000;
+      for (let i = 0; i < 3; i++) {
+        const stale = join(backupDir, `daemon-2026-02-0${i + 1}T00-00-00-000Z.db`);
+        writeFileSync(stale, 'stale');
+        utimesSync(stale, now - (4 - i) * 60, now - (4 - i) * 60);
+      }
+
+      let listingAtWrite: string[] = [];
+      dbCore = new DatabaseCore(dbPath);
+      const internals = dbCore as unknown as Record<string, unknown>;
+      const originalWriteBackup = internals.writeBackup as (path: string) => string | null;
+      internals.writeBackup = (backupPath: string) => {
+        listingAtWrite = readdirSync(backupDir)
+          .filter((f) => f.endsWith('.db'))
+          .sort();
+        return originalWriteBackup.call(dbCore, backupPath);
+      };
+
+      await dbCore.initialize();
+
+      expect(listingAtWrite).toEqual([
+        'daemon-2026-02-02T00-00-00-000Z.db',
+        'daemon-2026-02-03T00-00-00-000Z.db',
+      ]);
+      const remaining = readdirSync(backupDir).filter((f) => f.endsWith('.db'));
+      expect(remaining).toHaveLength(3);
+      expect(remaining).toContain('daemon-2026-02-03T00-00-00-000Z.db');
+    });
+
+    it('should publish backups via temporary names and sweep crashed leftovers', async () => {
+      const backupDir = join(testDir, 'backups', 'test.db');
+      mkdirSync(backupDir, { recursive: true });
+      const crashed = join(backupDir, 'daemon-2026-03-01T00-00-00-000Z.db.tmp');
+      const crashedWal = join(backupDir, 'daemon-2026-03-01T00-00-00-000Z.db.tmp-wal');
+      writeFileSync(crashed, 'crashed partial');
+      writeFileSync(crashedWal, 'crashed partial wal');
+      const stale = Date.now() / 1000 - 7200;
+      utimesSync(crashed, stale, stale);
+      utimesSync(crashedWal, stale, stale);
 
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
 
-      expect(listBackups()).toHaveLength(1);
+      const remaining = readdirSync(backupDir);
+      expect(remaining.some((f) => f.endsWith('.tmp') || f.endsWith('.tmp-wal'))).toBe(false);
+      expect(remaining.filter((f) => f.endsWith('.db'))).toHaveLength(1);
     });
 
-    it('should fall back to the default bound for invalid values', async () => {
-      process.env[envKey] = 'not-a-number';
+    it('should not sweep temporary artifacts from concurrent in-progress backups', async () => {
+      const backupDir = join(testDir, 'backups', 'test.db');
+      mkdirSync(backupDir, { recursive: true });
+      const inProgress = join(backupDir, 'daemon-2026-04-01T00-00-00-000Z.db.tmp');
+      const stale = join(backupDir, 'daemon-2026-04-02T00-00-00-000Z.db.tmp-wal');
+      writeFileSync(inProgress, 'being written by another daemon');
+      writeFileSync(stale, 'abandoned long ago');
+      const now = Date.now() / 1000;
+      utimesSync(inProgress, now, now);
+      utimesSync(stale, now - 7200, now - 7200);
 
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
 
-      expect(listBackups()).toHaveLength(1);
+      expect(existsSync(inProgress)).toBe(true);
+      expect(existsSync(stale)).toBe(false);
     });
 
-    it('should fall back to the default bound for partially numeric values like 1GB', async () => {
-      process.env[envKey] = '1GB';
+    it('should scope retention to the source database when databases share a directory', async () => {
+      const backupDir = join(testDir, 'backups', 'test.db');
+      mkdirSync(backupDir, { recursive: true });
+      const now = Date.now() / 1000;
+      for (let i = 0; i < 3; i++) {
+        const stale = join(backupDir, `daemon-2026-05-0${i + 1}T00-00-00-000Z.db`);
+        writeFileSync(stale, 'owned by the first database');
+        utimesSync(stale, now - (4 - i) * 60, now - (4 - i) * 60);
+      }
+
+      dbCore = new DatabaseCore(join(testDir, 'other.db'));
+      await dbCore.initialize();
+      dbCore.close();
+
+      const firstDbBackups = readdirSync(backupDir).filter((f) => f.endsWith('.db'));
+      expect(firstDbBackups).toHaveLength(3);
+      const otherDbBackups = readdirSync(join(testDir, 'backups', 'other.db')).filter((f) =>
+        f.endsWith('.db')
+      );
+      expect(otherDbBackups).toHaveLength(1);
+    });
+
+    it('should prune expired backups together with their WAL sidecars', async () => {
+      const backupDir = join(testDir, 'backups', 'test.db');
+      mkdirSync(backupDir, { recursive: true });
+      const now = Date.now() / 1000;
+      const staleWalOwner = 'daemon-2026-01-01T00-00-00-000Z.db';
+      const orphanWal = 'daemon-2025-12-31T00-00-00-000Z.db-wal';
+      const undeletable = 'daemon-2025-06-01T00-00-00-000Z.db';
+      for (let i = 0; i < 4; i++) {
+        const stale = join(backupDir, `daemon-2026-01-0${i + 1}T00-00-00-000Z.db`);
+        writeFileSync(stale, 'stale');
+        if (i === 0) {
+          writeFileSync(`${stale}-wal`, 'stale-wal');
+          utimesSync(`${stale}-wal`, now - 7200, now - 7200);
+        }
+        utimesSync(stale, now - (5 - i) * 60, now - (5 - i) * 60);
+      }
+      writeFileSync(join(backupDir, orphanWal), 'orphan-wal');
+      utimesSync(join(backupDir, orphanWal), now - 7200, now - 7200);
+      const freshOrphanWal = 'daemon-2025-12-30T00-00-00-000Z.db-wal';
+      writeFileSync(join(backupDir, freshOrphanWal), 'sidecar mid-publish elsewhere');
+      mkdirSync(join(backupDir, undeletable));
+      writeFileSync(join(backupDir, undeletable, 'filler'), 'blocks unlink');
+      writeFileSync(join(backupDir, `${undeletable}-wal`), 'must survive with its database');
+      utimesSync(join(backupDir, undeletable), now - 270, now - 270);
 
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
 
-      expect(listBackups()).toHaveLength(1);
-    });
-
-    it('should fall back to the default bound for negative values', async () => {
-      process.env[envKey] = '-1';
-
-      dbCore = new DatabaseCore(dbPath);
-      await dbCore.initialize();
-
-      expect(listBackups()).toHaveLength(1);
-    });
-
-    it('should fall back to the default bound for whitespace-only values', async () => {
-      process.env[envKey] = '   ';
-
-      dbCore = new DatabaseCore(dbPath);
-      await dbCore.initialize();
-
-      expect(listBackups()).toHaveLength(1);
+      const remainingDbs = readdirSync(backupDir).filter(
+        (f) => f.endsWith('.db') && f.startsWith('daemon-')
+      );
+      expect(remainingDbs).toHaveLength(4);
+      expect(remainingDbs).toContain(undeletable);
+      expect(remainingDbs).not.toContain(staleWalOwner);
+      expect(existsSync(join(backupDir, `${staleWalOwner}-wal`))).toBe(false);
+      expect(existsSync(join(backupDir, orphanWal))).toBe(false);
+      expect(existsSync(join(backupDir, freshOrphanWal))).toBe(true);
+      expect(existsSync(join(backupDir, `${undeletable}-wal`))).toBe(true);
     });
   });
 
