@@ -433,7 +433,7 @@ export class JobQueueRepository {
     return row != null;
   }
 
-  hasActiveTurnDelivery(sessionId: string): boolean {
+  hasActiveTurnDeliveryJob(sessionId: string): boolean {
     const row = this.db
       .prepare(
         `SELECT 1

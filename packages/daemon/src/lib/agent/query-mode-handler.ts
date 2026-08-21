@@ -119,7 +119,7 @@ export class QueryModeHandler {
           .filter((msg) => this.ctx.messageQueue.hasPendingOrInFlight(msg.uuid))
           .map((msg) => msg.uuid)
       ),
-      activeTurnInJobQueue: jobQueue.hasActiveTurnDelivery(this.ctx.session.id),
+      activeTurnInJobQueue: jobQueue.hasActiveTurnDeliveryJob(this.ctx.session.id),
       slotResetsContext: false,
     });
     if (plan.action === 'noop') return;
