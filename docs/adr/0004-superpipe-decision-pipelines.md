@@ -390,13 +390,13 @@ in `rpc-handlers/space-task-handlers.ts`, which re-implements the update
 routing by hand with UI-flavored messages. These are follow-up mini-pilot
 material (below), deliberately not folded into a cleanup PR.
 
-**Costs:** production net +457 daemon lines across the pilot — +556 in the
+**Costs:** production net +458 daemon lines across the pilot — +556 in the
 three new pure modules (82 + 414 + 60) against −98 in `space-agent-tools.ts`
 (5,143 at pilot start, 5,029 now; 16 of that difference came from unrelated
 interleaved PRs). The eight handlers shrank 521 → 420 lines (−19%:
 create 89→61, update 179→134, retry 36→29, cancel 30→33, publish 30→24,
 archive 33→29, reassign 27→28, approve 97→82 — the two that grew host their
-routing call plus plan interpretation). Tests +1,520 (three new core suites —
+routing call plus plan interpretation). Tests +1,519 (three new core suites —
 268 + 827 + 407 — plus parity additions).
 
 **Group roadmap.** The same skeleton — admission gates + routing tables, with
