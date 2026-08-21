@@ -91,6 +91,13 @@ function mergeRanges(ranges: Range[]): Range[] {
   return merged;
 }
 
+const IDENT_CONTINUE = /[\p{L}\p{N}_$]/u;
+
+function mergesTokens(text: string, before: number, after: number): boolean {
+  if (before < 0 || after >= text.length) return false;
+  return IDENT_CONTINUE.test(text[before]) && IDENT_CONTINUE.test(text[after]);
+}
+
 export function stripComments(text: string, fileName: string, isTsx: boolean): string {
   const comments = collectCommentRanges(text, fileName, isTsx);
   if (comments.length === 0) return text;
@@ -99,6 +106,7 @@ export function stripComments(text: string, fileName: string, isTsx: boolean): s
   let cursor = 0;
   for (const { start, end } of removals) {
     out += text.slice(cursor, start);
+    if (mergesTokens(text, start - 1, end)) out += ' ';
     cursor = end;
   }
   out += text.slice(cursor);

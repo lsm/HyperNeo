@@ -108,6 +108,21 @@ describe('strip-comments', () => {
     const source = 'export const C = () => (<p>see https://example.com // not a comment</p>);\n';
     expect(stripComments(source, 'a.tsx', true)).toBe(source);
   });
+
+  it('inserts a space when an inline comment is the only separator between words', () => {
+    const source = 'const result = typeof/* note */value;\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('const result = typeof value;\n');
+  });
+
+  it('keeps adjacent words separated across consecutive inline comments', () => {
+    const source = 'let/* decl */x = 1;\nasync/* fn */function f() {}\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('let x = 1;\nasync function f() {}\n');
+  });
+
+  it('does not insert a space when a neighbor is not an identifier character', () => {
+    const source = 'f(/* why */ a);\nvalue./* member */prop;\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('f(a);\nvalue.prop;\n');
+  });
 });
 
 describe('zero-comments wiring', () => {
