@@ -130,9 +130,16 @@ export class DatabaseCore {
       if (this.copyWalSidecar(backupPath)) {
         return 'fs-copy';
       }
-      this.removePartialBackup(backupPath);
+      if (!this.removePartialBackup(backupPath)) {
+        this.logger.error('Failed to create migration backup: partial artifacts remain');
+        return null;
+      }
     }
     if (this.tryVacuumInto(backupPath)) return 'vacuum-into';
+    if (!this.removePartialBackup(backupPath)) {
+      this.logger.error('Failed to create migration backup: partial artifacts remain');
+      return null;
+    }
     return this.tryCheckpointCopy(backupPath) ? 'checkpoint-copy' : null;
   }
 
@@ -146,18 +153,21 @@ export class DatabaseCore {
     }
   }
 
-  private removePartialBackup(backupPath: string): void {
+  private removePartialBackup(backupPath: string): boolean {
     try {
       rmSync(backupPath, { force: true });
       rmSync(`${backupPath}-wal`, { force: true });
-    } catch {}
+      return !existsSync(backupPath) && !existsSync(`${backupPath}-wal`);
+    } catch {
+      return false;
+    }
   }
 
   private tryVacuumInto(backupPath: string): boolean {
+    if (!this.removePartialBackup(backupPath)) return false;
     try {
-      this.removePartialBackup(backupPath);
       this.db.prepare('VACUUM INTO ?').run(backupPath);
-      return existsSync(backupPath);
+      return existsSync(backupPath) && !existsSync(`${backupPath}-wal`);
     } catch {
       return false;
     }

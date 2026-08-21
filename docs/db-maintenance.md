@@ -163,7 +163,9 @@ The copy strategy is picked per attempt, fastest first, and logged
 If every strategy fails (for example the backups directory is not writable), the daemon
 logs an error and proceeds with the migration — the same behavior as before. A failed
 WAL-sidecar copy likewise discards the `fs-copy` attempt and falls through to a
-self-contained snapshot, so a reported backup never silently misses WAL-resident data.
+self-contained snapshot, and only after the partial artifacts are confirmed removed, so a
+stale sidecar can never sit beside a newer snapshot; a reported backup never silently
+misses WAL-resident data.
 
 To restore from a backup, copy the `.db` file and its `-wal` sidecar (when one is
 present) back together — a sidecar exists exactly when the backup depends on WAL-resident

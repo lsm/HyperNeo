@@ -486,6 +486,44 @@ describe('DatabaseCore', () => {
       }
     });
 
+    it('should fail closed when partial backup artifacts cannot be removed', async () => {
+      const raw = new RawDatabase(dbPath);
+      seedWalData(raw);
+
+      configureLogger({ level: LogLevel.INFO });
+      const strategies: string[] = [];
+      const errors: string[] = [];
+      const unsubscribe = subscribeToStructuredLogs((event) => {
+        const match = /Migration backup created via (\S+)/.exec(event.message);
+        if (match) strategies.push(match[1]);
+        if (event.level === 'error') errors.push(event.message);
+      });
+
+      try {
+        dbCore = new DatabaseCore(dbPath);
+        const internals = dbCore as unknown as Record<string, unknown>;
+        internals.tryFastCopy = (backupPath: string) => {
+          copyFileSync(dbPath, backupPath);
+          writeFileSync(`${backupPath}-wal`, 'stale sidecar');
+          return true;
+        };
+        internals.copyWalSidecar = () => false;
+        internals.removePartialBackup = (backupPath: string) => {
+          rmSync(backupPath, { force: true });
+          return false;
+        };
+        await dbCore.initialize();
+      } finally {
+        unsubscribe();
+        configureLogger({ level: LogLevel.SILENT });
+        raw.close();
+      }
+
+      expect(strategies).toHaveLength(0);
+      expect(listBackups()).toHaveLength(0);
+      expect(errors).toHaveLength(1);
+    });
+
     it('should complete initialization without a backup when the backup directory is unusable', async () => {
       const backupDir = join(testDir, 'backups');
       writeFileSync(backupDir, 'not a directory');
