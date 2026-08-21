@@ -586,6 +586,45 @@ describe('SpaceTaskRepository', () => {
     });
   });
 
+  describe('casStatus', () => {
+    it("returns 'won' and flips the status on an exact match", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      expect(repo.casStatus(task.id, 'open', 'in_progress')).toBe('won');
+      expect(repo.getTask(task.id)?.status).toBe('in_progress');
+    });
+
+    it("returns 'won' when the current status is in the expected set", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      expect(repo.casStatus(task.id, ['draft', 'open'], 'review')).toBe('won');
+      expect(repo.getTask(task.id)?.status).toBe('review');
+    });
+
+    it("returns 'superseded' and leaves the row unchanged when the status moved first", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      expect(repo.casStatus(task.id, 'open', 'done')).toBe('superseded');
+      expect(repo.getTask(task.id)?.status).toBe('in_progress');
+    });
+
+    it("returns 'superseded' for an unknown task id", () => {
+      expect(repo.casStatus('nonexistent', 'open', 'done')).toBe('superseded');
+    });
+
+    it("returns 'superseded' for an empty expected set without writing", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      expect(repo.casStatus(task.id, [], 'done')).toBe('superseded');
+      expect(repo.getTask(task.id)?.status).toBe('open');
+    });
+
+    it('touches no other rows', () => {
+      const target = repo.createTask({ spaceId, title: 'Target', description: '' });
+      const other = repo.createTask({ spaceId, title: 'Other', description: '' });
+      const otherBefore = repo.getTask(other.id);
+      expect(repo.casStatus(target.id, 'open', 'in_progress')).toBe('won');
+      expect(repo.getTask(other.id)).toEqual(otherBefore);
+    });
+  });
+
   describe('getTaskBySessionId', () => {
     it('returns the task matching the session ID', () => {
       const task = repo.createTask({

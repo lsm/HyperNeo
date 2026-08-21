@@ -575,6 +575,20 @@ export class SpaceTaskRepository {
     return this.getTask(id);
   }
 
+  casStatus(
+    taskId: string,
+    expected: SpaceTaskStatus | readonly SpaceTaskStatus[],
+    next: SpaceTaskStatus
+  ): 'won' | 'superseded' {
+    const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
+    if (expectedStatuses.length === 0) return 'superseded';
+    const placeholders = expectedStatuses.map(() => '?').join(', ');
+    const result = this.db
+      .prepare(`UPDATE space_tasks SET status = ? WHERE id = ? AND status IN (${placeholders})`)
+      .run(next, taskId, ...expectedStatuses);
+    return result.changes > 0 ? 'won' : 'superseded';
+  }
+
   archiveTask(id: string): SpaceTask | null {
     const now = Date.now();
     const stmt = this.db.prepare(
