@@ -317,6 +317,12 @@ matrix_excludes() {
 			quotes = sprintf("[%c%c]", 39, 34)
 			excl = sprintf("[%c%c]?exclude[%c%c]?", 39, 34, 39, 34)
 		}
+		function scan_keys(text,   v) {
+			while (match(text, key ":[[:space:]]*[^][,}[:space:]]+")) {
+				v=substr(text, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); gsub(/[^a-z0-9-]/, "", v); if (v != "") print v
+				text=substr(text, RSTART + RLENGTH)
+			}
+		}
 		# Strip an inline YAML comment (whitespace + #) before any key matching:
 		# "exclude: # note" is a valid block header GitHub still applies, and the
 		# end-anchored parent patterns would otherwise miss it. Values in these
@@ -342,10 +348,16 @@ matrix_excludes() {
 				}
 			}
 			gsub(quotes, "", s)
-			while (match(s, key ":[[:space:]]*[^][,}[:space:]]+")) {
-				v=substr(s, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); gsub(/[^a-z0-9-]/, "", v); if (v != "") print v
-				s=substr(s, RSTART + RLENGTH)
-			}
+			scan_keys(s)
+			next
+		}
+		# Flow-form matrix mapping with exclude embedded mid-line:
+		# matrix: { shard: [1, 2], exclude: [{ shard: 2 }] } — scan only the
+		# exclude part onward so the axis entry itself is not misread.
+		injob && $0 ~ /[{,][[:space:]]*exclude[[:space:]]*:/ {
+			s=$0; gsub(quotes, "", s)
+			if (match(s, /exclude[[:space:]]*:/)) s=substr(s, RSTART)
+			scan_keys(s)
 			next
 		}
 		# Block form: "exclude:" alone, then indented "- key: value" lines.
@@ -1083,7 +1095,11 @@ reject_effective_config_drift "$WEB_CFG" "packages/web" \
 # the matrix token, leaves part of the suite unrun (or run twice) while this
 # guard reports every file covered.
 web_matrix=$(awk '
-	BEGIN { mtx = sprintf("[%c%c]?matrix[%c%c]?", 39, 34, 39, 34) }
+	BEGIN {
+		mtx = sprintf("[%c%c]?matrix[%c%c]?", 39, 34, 39, 34)
+		qspan = sprintf("%c[^%c]*%c", 39, 39, 39)
+		dqspan = sprintf("%c[^%c]*%c", 34, 34, 34)
+	}
 	{ c=$0; sub(/[[:space:]]+#.*$/, "", c); $0=c }
 	$0 ~ "^  test-web:" { injob=1; next }
 	injob && /^  [a-z]/ { injob=0; inmatrix=0; next }
@@ -1094,9 +1110,16 @@ web_matrix=$(awk '
 	# carry the axis inline (flow mapping), so the enter line is not skipped.
 	$0 ~ "^[[:space:]]{4,6}" mtx ":" { inmatrix=1 }
 	/^[[:space:]]{0,6}[a-z"]/ && $0 !~ "^[[:space:]]{4,6}" mtx ":" { inmatrix=0 }
-	inmatrix && /shard:[[:space:]]*\[/ {
-		s=$0; sub(/.*shard:[[:space:]]*\[/, "", s); sub(/\].*/, "", s)
-		n=split(s, a, ","); for (i=1; i<=n; i++) { gsub(/[[:space:]]/, "", a[i]); if (a[i] != "") print a[i] }
+	# The axis must be the shard KEY (block form at line start, or a flow-form
+	# mapping entry after "{" or ","), with quoted spans removed first — text
+	# like note: "shard: [2]" inside an include row is a scalar, not an axis.
+	inmatrix {
+		t=$0; sub(/^[[:space:]]+/, "", t)
+		gsub(qspan, "", t); gsub(dqspan, "", t)
+		if (t ~ /^shard:[[:space:]]*\[/ || t ~ /[{,][[:space:]]*shard:[[:space:]]*\[/) {
+			s=t; sub(/.*shard:[[:space:]]*\[/, "", s); sub(/\].*/, "", s)
+			n=split(s, a, ","); for (i=1; i<=n; i++) { gsub(/[[:space:]]/, "", a[i]); if (a[i] != "") print a[i] }
+		}
 	}
 ' "$REPO_ROOT/.github/workflows/main.yml")
 web_shard_n=$(printf '%s\n' "$web_matrix" | grep -c .)
@@ -1160,10 +1183,12 @@ _web_cmd=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/
 # compared as ONE whitespace-delimited token (the expression itself contains
 # spaces); exact-token equality then also rejects a stale LONGER denominator
 # (e.g. --shard=${{ matrix.shard }}/20 with a 2-entry axis), which a substring
-# match would accept.
+# match would accept. The token must also START a command-line word — the same
+# text embedded inside another flag value (e.g. a --coverage.* argument) is not
+# a real --shard option and must not satisfy the check.
 _web_shard_tok=$(printf '%s' "$_web_cmd" | sed 's/.*bunx vitest run//' \
 	| sed -E 's/[$][{][{][[:space:]]*matrix[.]shard[[:space:]]*[}][}]/MSHARD/g' \
-	| grep -oE -- "--shard=[^[:space:]']+" || true)
+	| grep -oE "(^|[[:space:]])--shard=[^[:space:]']+" | sed 's/^[[:space:]]*//' || true)
 if [ "$(count_enabled_run_cmds "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web')" -gt 1 ]; then
 	err "test-web has more than one enabled 'cd packages/web && bunx vitest run' step — each runs the web suite (duplicate runs + duplicate Coveralls uploads) while this guard reports each file covered once"
 	echo "     → keep exactly one enabled web runner step" >&2

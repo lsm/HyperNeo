@@ -684,6 +684,50 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: 'rejects an exclude embedded in a flow-form matrix mapping (P2)',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          `      matrix:
+        # vitest --shard distributes test FILES across legs; the union of
+        # shards 1..N runs the whole suite. scripts/validate-test-matrix.sh
+        # pins the axis against the runner's --shard denominator.
+        shard: [1, 2]
+`,
+          '      matrix: { shard: [1, 2], exclude: [{ shard: 2 }] }\n'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects an axis inflated by shard text inside a quoted include value (P2)',
+    expectExit: 1,
+    expectInStderr: "does not pass exactly one '--shard=",
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]\n',
+          "        shard: [1]\n        include:\n          - shard: 1\n            note: 'shard: [2]'\n"
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects --shard text embedded inside another flag value (P2)',
+    expectExit: 1,
+    expectInStderr: "does not pass exactly one '--shard=",
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          "          --shard=${{ matrix.shard }}/2\n          --coverage\n          --coverage.reportsDirectory=coverage-web-${{ matrix.shard }}'",
+          "          --coverage\n          --coverage.reportsDirectory=coverage-web-${{ matrix.shard }}--shard=${{ matrix.shard }}/2'"
+        )
+      );
+    },
+  },
+  {
     name: 'rejects a sibling axis under a quoted matrix parent (P2)',
     expectExit: 1,
     expectInStderr: 'extra axis',
