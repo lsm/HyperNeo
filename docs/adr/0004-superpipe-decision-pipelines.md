@@ -518,13 +518,23 @@ async window the pre-pilot handler did not have (the gather was introduced by
 the pilot). The pure gate order is the precedence contract of the core, not
 the complete observable precedence of the tool call; gathering autonomy only
 when the tool has a requirement is the code-level follow-up. Audit
-and emission coverage is as-implemented, not uniform: every handler folds to
+and emission coverage is as-implemented, not uniform: every handler that
+reaches its try block folds to
 a JSON result, `update_task`/`publish_task`/`archive_task`/`approve_task` both
 audit and emit, `create_standalone_task` audits without emitting, `cancel_task`
 emits without auditing, and `retry_task`'s standalone branch and
-`reassign_task` do neither — `taskManager.retryTask`/`reassignTask` publish
-nothing, so those mutations reach no `space.task.updated` subscriber (the
-workflow-backed retry branch does, via the runtime's recovery emit). That
+`reassign_task` do neither — `taskManager.retryTask` publishes nothing, so that
+mutation reaches no `space.task.updated` subscriber (the workflow-backed retry
+branch does, via the runtime's recovery emit). `reassign_task` is moreover a
+no-op beyond validation: `SpaceTaskManager.reassignTask` ignores its agent
+parameters, checks existence and an allowed-status list, and returns the task
+unchanged — nothing is mutated to audit or emit, a review question in its own
+right (deliberate deprecation or lost implementation?), not merely an emission
+asymmetry. Two gather caveats bound the always-JSON claim: `approve_task`
+awaits its autonomy snapshot reads (`getSpace`/`getSpaceAutonomyLevel`) before
+entering its try block, so a rejected read rejects the MCP call rather than
+folding into JSON, while `update_task` performs the same gather inside its try
+and folds. That
 spread is another facet of the emission-ownership question below. `update_task` is the fullest instance: its `TaskUpdateRouting` union —
 reject `no_updatable_fields` → target reject → `review_direct` →
 `approved_direct` → `park_stopped` → `review_to_done` → `archive_active_run` →
