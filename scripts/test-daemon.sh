@@ -30,6 +30,11 @@ SHARDS=(
 	5-space-agent-other
 	5-space-runtime-a
 	5-space-runtime-b
+	5-space-runtime-c
+	5-space-runtime-d
+	5-space-runtime-e
+	5-space-runtime-f
+	5-space-runtime-g
 )
 RESULTS_DIR="$REPO_ROOT/test-results/daemon"
 FAILURES_FILE="$RESULTS_DIR/failures.txt"
@@ -61,7 +66,7 @@ source "$REPO_ROOT/scripts/lib/shard-split.sh"
 # list below and in the CI matrix at .github/workflows/main.yml — but a FILE LIST
 # is never edited by hand. Validate any change with: ./scripts/test-daemon.sh --verify
 HASH_SPLIT_SPECS=(
-	"5-space-runtime|2|5-space/runtime/*.test.ts;5-space/runtime/connectors/*.test.ts"
+	"5-space-runtime|7|5-space/runtime/*.test.ts;5-space/runtime/connectors/*.test.ts"
 	"1-core|2|1-core/*.test.ts;1-core/agent/*.test.ts;1-core/core/*.test.ts;1-core/credentials/*.test.ts;1-core/lib/*.test.ts;1-core/providers/*.test.ts;1-core/providers/anthropic-copilot/*.test.ts;1-core/providers/anthropic-messages-bridge/*.test.ts;1-core/providers/openai-chat-bridge/*.test.ts;1-core/providers/openai-responses-bridge/*.test.ts;1-core/providers/shared/*.test.ts;1-core/session/*.test.ts;helpers/*.test.ts;lib/acp/*.test.ts;lib/job-handlers/*.test.ts"
 )
 

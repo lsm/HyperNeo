@@ -387,8 +387,8 @@ const SCENARIOS: Scenario[] = [
     mutate: (root) => {
       edit(root, MAIN, (s) =>
         s.replace(
-          '5-space-runtime-a, 5-space-runtime-b]\n',
-          '5-space-runtime-a, 5-space-runtime-b]\n        exclude:\n          - shard: shared\n'
+          '5-space-runtime-g]\n',
+          '5-space-runtime-g]\n        exclude:\n          - shard: shared\n'
         )
       );
     },
