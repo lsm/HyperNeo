@@ -215,8 +215,11 @@ intentionally differ: 'blocked' settles a finished attempt, while 'stopped'
 → skip for an active run (no crash recovery, handoff repair, settlement, or
 spawn runs for a task parked before the tick), though pre-admission
 reconciliation still runs first: duplicate run tasks are archived (cancelling
-their agents' sessions where applicable) and the canonical task's
-`workflowRunId` is rebound before admission, even for a parked task. Non-active
+their agents' sessions where applicable) even for a parked task. The
+`workflowRunId` rebind guard beside it never fires in production —
+`listByWorkflowRun` selects rows whose `workflow_run_id` already equals the
+run, so the mismatch condition is always false; it stays as defensive
+self-heal. Non-active
 runs exit even earlier in the shell: a finished run returns after clearing stuck state, and a blocked run
 diverts into `attemptBlockedRunRecovery`, which returns on its own stopped-task
 check — so the admission gates, validity included, are never reached there.
@@ -291,7 +294,9 @@ fast-path, post-snapshot slot check, the post-approval session ternary that
 narrows the `PostApprovalRouteResult` union) is live adapter code, deliberately
 kept. The dual phenomenon — core decision arms that production never reaches —
 is recorded in the boundary caveats above (shadowed admission gates, the slot
-gate, spawn-failure outcomes).
+gate, spawn-failure outcomes). The review round also surfaced pre-existing
+production-unreachable defensive code outside the sweep's PR-6 scope — the
+`workflowRunId` rebind guard — recorded above rather than removed.
 
 ## Roadmap
 
