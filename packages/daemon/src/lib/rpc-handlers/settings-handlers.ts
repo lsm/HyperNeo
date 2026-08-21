@@ -262,8 +262,8 @@ export function registerSettingsHandlers(
 				COUNT(*) as sessionCount
 				FROM sessions
 				WHERE type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
-					  AND json_extract(session_context, '$.roomId') IS NULL
-					  AND json_extract(session_context, '$.spaceId') IS NULL`
+					  AND room_id IS NULL
+					  AND space_id IS NULL`
       )
       .get() as {
       totalCost: number;
@@ -282,8 +282,8 @@ export function registerSettingsHandlers(
 					json_extract(metadata, '$.messageCount') as messages
 				FROM sessions
 				WHERE type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
-				  AND json_extract(session_context, '$.roomId') IS NULL
-				  AND json_extract(session_context, '$.spaceId') IS NULL
+				  AND room_id IS NULL
+				  AND space_id IS NULL
 				  AND json_extract(metadata, '$.totalCost') > 0
 				ORDER BY cost DESC
 				LIMIT 10`
@@ -303,8 +303,8 @@ export function registerSettingsHandlers(
 					COALESCE(SUM(json_extract(metadata, '$.totalCost')), 0) as cost
 				FROM sessions
 				WHERE type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
-				  AND json_extract(session_context, '$.roomId') IS NULL
-				  AND json_extract(session_context, '$.spaceId') IS NULL
+				  AND room_id IS NULL
+				  AND space_id IS NULL
 				  AND created_at >= date('now', '-14 days')
 				GROUP BY date(created_at)
 				ORDER BY date ASC`
