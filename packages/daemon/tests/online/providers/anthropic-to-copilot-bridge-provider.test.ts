@@ -28,9 +28,7 @@ function parseSseEvents(text: string): SseEvent[] {
     if (!eventName || !dataStr) continue;
     try {
       events.push({ event: eventName, data: JSON.parse(dataStr) as Record<string, unknown> });
-    } catch {
-      // ignore unparseable lines
-    }
+    } catch {}
   }
   return events;
 }
@@ -224,9 +222,7 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
           if (attempt < MAX_ATTEMPTS) {
             try {
               await interrupt(daemon, sessionId);
-            } catch {
-              /* ignore */
-            }
+            } catch {}
             continue;
           }
           throw error;

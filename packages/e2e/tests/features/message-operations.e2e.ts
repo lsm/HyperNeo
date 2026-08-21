@@ -18,9 +18,7 @@ test.describe('Message Operations', () => {
     if (sessionId) {
       try {
         await cleanupTestSession(page, sessionId);
-      } catch {
-        // Cleanup errors are logged but don't fail the test
-      }
+      } catch {}
       sessionId = null;
     }
   });

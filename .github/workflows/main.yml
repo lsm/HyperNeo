@@ -60,9 +60,20 @@ jobs:
     if: github.event.inputs.run_e2e_only != 'true'
 
     steps:
+      # Shallow checkout: nothing in this job walks history except the
+      # space-task handler gate, which diffs HEAD against a fetched base tip
+      # (tree diff — no merge-base walk), so depth 1 suffices.
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+
+      # Give the handler gate its comparison tip. On pull_request the checkout
+      # only fetches refs/pull/N/merge; on workflow_dispatch it only fetches the
+      # dispatched branch. Push-to-dev needs no extra fetch (origin/dev == HEAD,
+      # so the gate diff is empty and it no-ops).
+      - name: Fetch base branch for the space-task handler gate
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -104,6 +115,20 @@ jobs:
 
       - name: Test strip-comments argument handling
         run: bun run test:strip-comments
+
+      # Actually enforce the zero-comments policy in CI. strip-comments.ts
+      # enumerates files via `git ls-files` (index-only), so the shallow
+      # checkout is fine. Until now CI only ran the script's unit test.
+      - name: Check for comments in TS/TSX sources
+        run: bun run check:no-comments
+
+      # Folded in from the former test-cli job: ~2s of tests that used to occupy
+      # a whole runner. Gated to the same events test-cli ran on (push to dev,
+      # workflow_dispatch) — skipped on PRs, exactly as before.
+      - name: Run CLI tests
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch'
+        working-directory: packages/cli
+        run: bunx vitest run
 
       - name: Run linter
         id: lint
@@ -377,7 +402,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [shared, 0-shared-handlers-workflow, 1-core, 4-space-storage, 4-space-migrations-a, 4-space-migrations-b, 5-space-agent-other, 5-space-runtime-a, 5-space-runtime-b]
+        shard: [shared, 2-handlers-github, 2-handlers-other, 1-core, 4-space-storage, 4-space-migrations-a, 4-space-migrations-b, 5-space-agent-other, 5-space-runtime-a, 5-space-runtime-b]
 
     steps:
       - uses: actions/checkout@v6
@@ -511,47 +536,6 @@ jobs:
           fail-on-error: false
 
   # ============================================
-  # CLI TESTS
-  # Run on: push to dev, workflow_dispatch (skip on PR to dev)
-  # ============================================
-
-  test-cli:
-    name: CLI Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.3.14
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Run CLI tests
-        working-directory: packages/cli
-        run: bunx vitest run
-
-  # ============================================
   # COVERALLS FINALIZATION
   # Merges all parallel coverage uploads
   # Run on: PR to dev, push to dev, workflow_dispatch
@@ -669,7 +653,7 @@ jobs:
   build:
     name: Build Binary (linux-x64)
     runs-on: ubuntu-latest
-    needs: [check, test-daemon-online, test-daemon-shared-unit, test-web, test-cli, discover]
+    needs: [check, test-daemon-online, test-daemon-shared-unit, test-web, discover]
     if: >-
       always() &&
       (github.event_name == 'push' && github.ref == 'refs/heads/dev' ||
@@ -679,8 +663,7 @@ jobs:
         contains(fromJSON('["success", "skipped"]'), needs.check.result) &&
         contains(fromJSON('["success", "skipped"]'), needs.test-daemon-online.result) &&
         contains(fromJSON('["success", "skipped"]'), needs.test-daemon-shared-unit.result) &&
-        contains(fromJSON('["success", "skipped"]'), needs.test-web.result) &&
-        contains(fromJSON('["success", "skipped"]'), needs.test-cli.result)))
+        contains(fromJSON('["success", "skipped"]'), needs.test-web.result)))
     timeout-minutes: 10
 
     steps:
@@ -939,7 +922,6 @@ jobs:
       - test-daemon-online
       - test-daemon-shared-unit
       - test-web
-      - test-cli
       - coverage-gate
       - build
       - discover
@@ -974,12 +956,6 @@ jobs:
             FAILED=1
           fi
 
-          # test-cli: push to dev, workflow_dispatch
-          if [[ "${{ needs.test-cli.result }}" == "failure" ]]; then
-            echo "❌ test-cli failed"
-            FAILED=1
-          fi
-
           # coverage-gate: PR to dev, push to dev
           if [[ "${{ needs.coverage-gate.result }}" == "failure" ]]; then
             echo "❌ coverage-gate failed"
@@ -1011,7 +987,6 @@ jobs:
             echo "  test-daemon-online: ${{ needs.test-daemon-online.result }}"
             echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
             echo "  test-web: ${{ needs.test-web.result }}"
-            echo "  test-cli: ${{ needs.test-cli.result }}"
             echo "  coverage-gate: ${{ needs.coverage-gate.result }}"
             echo "  build: ${{ needs.build.result }}"
             echo "  discover: ${{ needs.discover.result }}"

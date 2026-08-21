@@ -158,9 +158,7 @@ describe('SpaceRuntime — orphaned-question cleanup (Task #138)', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   describe('Step 1 (liveness) orphans pending questions on dead sessions', () => {

@@ -31,14 +31,10 @@ describe.skipIf(!isBun)('ensureBunNodeWrapper (running under Bun in bun test)', 
   afterEach(() => {
     try {
       nodefs.unlinkSync(NODE_LINK);
-    } catch {
-      // Ignore
-    }
+    } catch {}
     try {
       nodefs.rmdirSync(WRAPPER_DIR);
-    } catch {
-      // Ignore
-    }
+    } catch {}
   });
 
   it('returns the wrapper directory path', () => {
@@ -93,14 +89,10 @@ describe.skipIf(!isBun)('buildCopilotEnv (running under Bun in bun test)', () =>
   afterEach(() => {
     try {
       nodefs.unlinkSync(NODE_LINK);
-    } catch {
-      // Ignore
-    }
+    } catch {}
     try {
       nodefs.rmdirSync(WRAPPER_DIR);
-    } catch {
-      // Ignore
-    }
+    } catch {}
   });
 
   it('prepends the bun-node-wrapper dir to PATH (non-Linux + sqlite only)', () => {

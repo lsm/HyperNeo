@@ -91,9 +91,7 @@ function extractThinkingBlockSignatures(
           results.push({ sigLen, sigPrefix });
         }
       }
-    } catch {
-      // skip
-    }
+    } catch {}
   }
 
   if (results.length === 0) {

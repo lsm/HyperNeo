@@ -55,9 +55,7 @@ function resolveGraphifyPython(): string {
         candidates.push(python);
       }
     }
-  } catch {
-    // fall through
-  }
+  } catch {}
 
   candidates.push('python3');
 

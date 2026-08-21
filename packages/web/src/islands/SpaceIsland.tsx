@@ -170,9 +170,7 @@ export default function SpaceIsland({
   const space = spaceStore.space.value;
 
   useEffect(() => {
-    spaceStore.selectSpace(spaceId).catch(() => {
-      // Error is tracked in spaceStore.error
-    });
+    spaceStore.selectSpace(spaceId).catch(() => {});
   }, [spaceId]);
 
   useEffect(() => {

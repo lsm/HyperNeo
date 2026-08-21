@@ -41,7 +41,6 @@ test.describe('Message Send and Receive', () => {
     });
 
     if (IS_MOCK) {
-      // no-op: completion is validated by send button returning
     } else {
       await expect(page.locator('text=/TEST_OK|test_ok/i')).toBeVisible({
         timeout: 60000,

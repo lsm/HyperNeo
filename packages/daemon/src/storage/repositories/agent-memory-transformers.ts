@@ -350,9 +350,7 @@ class TransformersFileCache {
       }
       try {
         await unlink(tmpPath);
-      } catch {
-        // ignore cleanup failure
-      }
+      } catch {}
       throw error;
     }
   }

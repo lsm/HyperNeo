@@ -174,10 +174,7 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     let inputHost: string | undefined;
     try {
       inputHost = new URL(prUrl).hostname || undefined;
-    } catch {
-      // not an absolute URL (branch/number/owner#N selector) — gh resolves it
-      // against its default host, so no credential-exfil risk.
-    }
+    } catch {}
     if (inputHost) {
       const allowedHost = process.env.GH_HOST || 'github.com';
       if (inputHost !== 'github.com' && inputHost !== allowedHost) {

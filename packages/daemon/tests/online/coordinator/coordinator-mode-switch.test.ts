@@ -52,9 +52,7 @@ async function waitForSystemInit(
       }
     });
 
-    daemon.messageHub.joinChannel('session:' + sessionId).catch(() => {
-      // Join failed, but continue - events might still work
-    });
+    daemon.messageHub.joinChannel('session:' + sessionId).catch(() => {});
   });
 }
 

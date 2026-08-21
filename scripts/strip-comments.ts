@@ -5,13 +5,13 @@ import * as ts from 'typescript';
 const KEEP_PATTERNS: RegExp[] = [
   /^#!/,
   /^\/\/\/\s*</,
-  /@ts-(ignore|expect-error|nocheck|check)\b/,
-  /biome-ignore/,
-  /\beslint\b/,
-  /oxlint-(disable|enable)/,
-  /@public\b/,
-  /(v8|istanbul|c8) ignore/,
-  /knip-ignore/,
+  /^(?:\/\/|\/\*+)\s*@ts-(ignore|expect-error|nocheck|check)\b/,
+  /^(?:\/\/|\/\*+)\s*biome-ignore\b/,
+  /^(?:\/\/|\/\*+)\s*eslint-/,
+  /^(?:\/\/|\/\*+)\s*oxlint-(disable|enable)\b/,
+  /^(?:\/\/|\/\*+)[\s*]*@public\b/,
+  /^(?:\/\/|\/\*+)\s*(?:v8|istanbul|c8) ignore\b/,
+  /^(?:\/\/|\/\*+)\s*knip-ignore\b/,
 ];
 
 interface Range {
@@ -43,9 +43,10 @@ function collectCommentRanges(text: string, fileName: string, isTsx: boolean): R
       }
     }
     const fullStart = node.getFullStart();
-    if (!seenWindows.has(fullStart)) {
+    const start = node.getStart(sourceFile);
+    if (fullStart < start && !seenWindows.has(fullStart)) {
       seenWindows.add(fullStart);
-      const trivia = text.slice(fullStart, node.getStart(sourceFile));
+      const trivia = text.slice(fullStart, start);
       COMMENT_RE.lastIndex = 0;
       for (let m = COMMENT_RE.exec(trivia); m !== null; m = COMMENT_RE.exec(trivia)) {
         if (KEEP_PATTERNS.some((p) => p.test(m[0]))) continue;

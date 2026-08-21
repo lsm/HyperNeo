@@ -278,9 +278,7 @@ export function useGroupMessages(
 
       activeSubIdRef.current = null;
 
-      Promise.resolve(request('liveQuery.unsubscribe', { subscriptionId })).catch(() => {
-        // Ignore cleanup errors.
-      });
+      Promise.resolve(request('liveQuery.unsubscribe', { subscriptionId })).catch(() => {});
     };
   }, [groupId, isConnected, request, onEvent]);
 

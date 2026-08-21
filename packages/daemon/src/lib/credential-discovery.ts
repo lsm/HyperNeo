@@ -76,10 +76,7 @@ export function discoverCredentials(
             process.env.CLAUDE_CODE_OAUTH_TOKEN = keychainData.claudeAiOauth.accessToken;
             credentialSource = 'keychain';
           }
-        } catch {
-          // Keychain access denied or command failed - silently continue
-          // This is expected if the user hasn't granted keychain access
-        }
+        } catch {}
       }
     }
 
@@ -219,9 +216,7 @@ export async function migrateProvidersIfNeeded(
 
     try {
       await credentialManager.storeApiKey(mapping.providerId, apiKey);
-    } catch {
-      // Non-fatal: the provider record exists; credentials can be re-entered.
-    }
+    } catch {}
   }
 
   const hyperneoAuth = readHyperNeoAuthJson();
@@ -250,9 +245,7 @@ export async function migrateProvidersIfNeeded(
           refreshToken: openaiCreds.refresh,
           expiresAt: openaiCreds.expires,
         });
-      } catch {
-        // Non-fatal: the provider record exists; credentials can be re-entered.
-      }
+      } catch {}
     }
   }
 
@@ -275,9 +268,7 @@ export async function migrateProvidersIfNeeded(
         await credentialManager.storeOAuthTokens('anthropic-copilot', {
           accessToken: copilotCreds.refresh,
         });
-      } catch {
-        // Non-fatal: the provider record exists; credentials can be re-entered.
-      }
+      } catch {}
     }
   }
 
@@ -323,9 +314,7 @@ export async function backfillDeepSeekProvider(
     if (!existingCredentials) {
       await credentialManager.storeApiKey('deepseek', apiKey);
     }
-  } catch {
-    // Non-fatal: retry on the next startup when the credential store recovers.
-  }
+  } catch {}
 }
 
 const STALE_GLM_DISPLAY_NAMES = new Set(['GLM', 'GLM (智谱AI)']);

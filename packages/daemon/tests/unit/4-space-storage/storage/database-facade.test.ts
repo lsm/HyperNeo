@@ -47,9 +47,7 @@ describe('Database Facade', () => {
     }
     try {
       require('fs').unlinkSync(dbPath);
-    } catch {
-      // Ignore cleanup errors
-    }
+    } catch {}
   });
 
   describe('constructor and initialize', () => {

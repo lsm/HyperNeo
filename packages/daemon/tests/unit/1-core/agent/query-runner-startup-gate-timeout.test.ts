@@ -133,9 +133,7 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
       size: () => 1,
       getGeneration: () => 0,
       enqueueWithId: async () => {},
-      messageGenerator: mock(async function* () {
-        // The silent SDK never consumes the queued prompt.
-      }),
+      messageGenerator: mock(async function* () {}),
     } as unknown as MessageQueue;
 
     const ctx: QueryRunnerContext = {
@@ -143,7 +141,6 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
       db: {
         saveSDKMessage: () => {},
         updateSession: () => {},
-        getMessagesByStatus: () => [],
         getSDKMessages: () => ({ messages: [], hasMore: false }),
         updateMessageStatus: () => {},
         getNodeExecutionRepo: () => ({ getByAgentSessionId: () => null }),

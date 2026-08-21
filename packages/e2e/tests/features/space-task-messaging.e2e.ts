@@ -64,9 +64,7 @@ async function deleteSessionViaRpc(
       if (!hub?.request) return;
       await hub.request('session.delete', { sessionId: id });
     }, sessionId);
-  } catch {
-    // Best-effort cleanup
-  }
+  } catch {}
 }
 
 test.describe('Space Task Messaging & @mention Autocomplete', () => {
@@ -100,9 +98,7 @@ test.describe('Space Task Messaging & @mention Autocomplete', () => {
     if (wsPath && existsSync(wsPath)) {
       try {
         rmSync(wsPath, { recursive: true, force: true });
-      } catch {
-        // Best-effort cleanup
-      }
+      } catch {}
       wsPath = '';
     }
   });

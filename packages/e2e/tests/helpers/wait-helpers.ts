@@ -230,9 +230,7 @@ export async function cleanupTestSession(page: Page, sessionId: string): Promise
           await page.goto('/').catch(() => {});
           await page.waitForTimeout(300);
         }
-      } catch {
-        // Ignore navigation errors
-      }
+      } catch {}
     } else {
       console.warn(`⚠️  Failed to cleanup session ${sessionId}: ${result.error}`);
     }

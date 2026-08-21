@@ -66,14 +66,10 @@ describe('Sentinel replacement startup hook', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('replaces sentinel with workspaceRoot when workspaceRoot is available', () => {

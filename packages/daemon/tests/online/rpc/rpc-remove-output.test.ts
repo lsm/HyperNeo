@@ -32,9 +32,7 @@ describe('Message Remove Output', () => {
     if (process.env.TEST_SDK_SESSION_DIR && existsSync(process.env.TEST_SDK_SESSION_DIR)) {
       try {
         rmSync(process.env.TEST_SDK_SESSION_DIR, { recursive: true, force: true });
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
 
     if (originalTestSdkSessionDir !== undefined) {

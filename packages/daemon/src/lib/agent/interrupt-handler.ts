@@ -42,22 +42,34 @@ export class InterruptHandler {
     const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
 
     if (!opts?.preserveDeliveryJobs) {
+      const failedDbIds: string[] = [];
       await withSessionLock(session.id, async () => {
         const messageUuids =
           this.ctx.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(session.id) ?? [];
         const sdkRepo = this.ctx.db.getSDKMessageRepo?.();
         for (const messageUuid of messageUuids) {
-          sdkRepo?.markDeliveryFailedByUuid(session.id, messageUuid);
+          const failedDbId = sdkRepo?.markDeliveryFailedByUuid(session.id, messageUuid) ?? null;
+          if (failedDbId) failedDbIds.push(failedDbId);
         }
         const cancelled = new Set(messageUuids);
-        const enqueued = this.ctx.db.getMessagesByStatus?.(session.id, 'enqueued') ?? [];
+        const enqueued = this.ctx.db.getUserMessageIdsByStatus?.(session.id, 'enqueued') ?? [];
         for (const msg of enqueued) {
-          const uuid = (msg as { uuid?: string }).uuid;
+          const uuid = msg.uuid;
           if (uuid && !cancelled.has(uuid)) {
-            sdkRepo?.markDeliveryFailedByUuid(session.id, uuid);
+            const failedDbId = sdkRepo?.markDeliveryFailedByUuid(session.id, uuid) ?? null;
+            if (failedDbId) failedDbIds.push(failedDbId);
           }
         }
       });
+      if (failedDbIds.length > 0) {
+        await this.ctx.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId: session.id,
+            messageIds: failedDbIds,
+            status: 'failed',
+          })
+          .catch(() => {});
+      }
       this.ctx.db.notifyChange?.('sdk_messages', { sessionId: session.id });
       this.ctx.db.notifyChange?.('job_queue', { sessionId: session.id });
     }

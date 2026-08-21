@@ -95,16 +95,12 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
     engine.dispose();
     try {
       db.close();
-    } catch {
-      // already closed
-    }
+    } catch {}
     try {
       rmSync(dbPath, { force: true });
       rmSync(dbPath + '-wal', { force: true });
       rmSync(dbPath + '-shm', { force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   async function flush(): Promise<void> {

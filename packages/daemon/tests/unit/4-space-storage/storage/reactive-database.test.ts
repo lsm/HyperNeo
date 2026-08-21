@@ -54,16 +54,12 @@ describe('ReactiveDatabase', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // already closed
-    }
+    } catch {}
     try {
       rmSync(dbPath, { force: true });
       rmSync(dbPath + '-wal', { force: true });
       rmSync(dbPath + '-shm', { force: true });
-    } catch {
-      // ignore cleanup errors
-    }
+    } catch {}
   });
 
   describe('change event', () => {
@@ -302,9 +298,7 @@ describe('ReactiveDatabase', () => {
 
       try {
         reactiveDb.db.createSession(session);
-      } catch {
-        // expected
-      }
+      } catch {}
 
       expect(reactiveDb.getTableVersion('sessions')).toBe(1);
     });

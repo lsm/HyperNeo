@@ -76,14 +76,10 @@ describe('Migration 177: sessions.visible_message_count counter + backfill', () 
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   describe('pre-M177 schema — add column + backfill', () => {

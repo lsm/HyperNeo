@@ -33,14 +33,10 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('fresh DB: autonomy_level column exists after full migration', () => {
@@ -327,14 +323,10 @@ describe('Migration 86 regression: partial migration (spaces numeric, tasks colu
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('adds pending_checkpoint_type when spaces.autonomy_level is already INTEGER but column is missing', () => {

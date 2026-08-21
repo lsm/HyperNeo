@@ -350,9 +350,7 @@ async function restorePriorVoiceCredential(
     } else {
       await credentialManager.removeCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
     }
-  } catch {
-    // Store is broken; nothing more we can do — surface the original error.
-  }
+  } catch {}
 }
 
 async function prepareGlobalSettingsUpdate(

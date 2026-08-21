@@ -235,11 +235,22 @@ export class SessionManager {
       );
 
       if (!options.restartQuery) {
+        const failedDbIds: string[] = [];
         const messageUuids =
           this.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(sessionId) ?? [];
         const sdkRepo = this.db.getSDKMessageRepo?.();
         for (const messageUuid of messageUuids) {
-          sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid);
+          const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid) ?? null;
+          if (failedDbId) failedDbIds.push(failedDbId);
+        }
+        if (failedDbIds.length > 0) {
+          await this.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId,
+              messageIds: failedDbIds,
+              status: 'failed',
+            })
+            .catch(() => {});
         }
       }
 
@@ -554,9 +565,7 @@ export class SessionManager {
             startTimeByPid.set(snap.pid, now - snap.elapsedSeconds * 1000);
           }
         }
-      } catch {
-        // Process listing failed â start times remain unknown.
-      }
+      } catch {}
     }
 
     for (const pid of split.live) {

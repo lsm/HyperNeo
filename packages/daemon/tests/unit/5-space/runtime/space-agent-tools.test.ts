@@ -37,7 +37,6 @@ import type { SpaceTask, SpaceTaskStatus, SpaceWorkflow } from '@hyperneo/shared
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
 import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
-
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
@@ -4384,6 +4383,29 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
     expect(parsed.error).toContain('nonexistent-handle');
   });
 
+  test('returns error when workflow_handle is whitespace-only (handle-only path)', async () => {
+    const result = await makeHandlers(ctx).create_standalone_task({
+      title: 'Task',
+      description: 'Desc',
+      workflow_handle: '   ',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('workflow_handle must be a non-empty string');
+  });
+
+  test('returns error when workflow_handle is empty beside an unusable workflow_id', async () => {
+    const result = await makeHandlers(ctx).create_standalone_task({
+      title: 'Task',
+      description: 'Desc',
+      workflow_id: 'wf-stale-id',
+      workflow_handle: '   ',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('workflow_handle must be a non-empty string');
+  });
+
   test('returns error when workflow_handle resolves to a disabled workflow (handle-only path)', async () => {
     const disabled = buildSingleStepWorkflow(
       ctx.spaceId,
@@ -4673,6 +4695,83 @@ describe('createSpaceAgentToolHandlers — retry_task', () => {
     const after = ctx.taskRepo.getTask(taskId)!;
     expect(after.status).toBe('in_progress');
   });
+
+  test('recovers a blocked workflow-backed task to open with the retry description', async () => {
+    const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Retry WF');
+    const runId = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: wf.id,
+      title: 'blocked run',
+    }).id;
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Blocked task',
+      description: '',
+      status: 'blocked',
+      workflowRunId: runId,
+    });
+    const run = ctx.workflowRunRepo.getRun(runId);
+    if (!run) throw new Error(`run missing: ${runId}`);
+    const recoverSpy = spyOn(ctx.runtime, 'recoverWorkflowBackedTask').mockImplementation(
+      async (_spaceId, taskId, targetStatus) => {
+        return { task: await ctx.taskManager.setTaskStatus(taskId, targetStatus), run };
+      }
+    );
+
+    const parsed = parseResult(
+      await makeHandlers(ctx).retry_task({
+        task_id: task.id,
+        description: 'retry with fresh instructions',
+      })
+    );
+
+    expect(recoverSpy).toHaveBeenCalledTimes(1);
+    expect(recoverSpy).toHaveBeenCalledWith(ctx.spaceId, task.id, 'open', {
+      description: 'retry with fresh instructions',
+    });
+    expect(parsed.success).toBe(true);
+    expect((parsed.task as SpaceTask).status).toBe('open');
+  });
+
+  test('recovers a cancelled workflow-backed task to in_progress', async () => {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      'Retry Cancelled WF'
+    );
+    const runId = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: wf.id,
+      title: 'cancelled run',
+    }).id;
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Cancelled workflow task',
+      description: '',
+      status: 'cancelled',
+      workflowRunId: runId,
+    });
+    const run = ctx.workflowRunRepo.getRun(runId);
+    if (!run) throw new Error(`run missing: ${runId}`);
+    const recoverSpy = spyOn(ctx.runtime, 'recoverWorkflowBackedTask').mockImplementation(
+      async (_spaceId, taskId, targetStatus) => {
+        return { task: await ctx.taskManager.setTaskStatus(taskId, targetStatus), run };
+      }
+    );
+
+    const parsed = parseResult(await makeHandlers(ctx).retry_task({ task_id: task.id }));
+
+    expect(recoverSpy).toHaveBeenCalledTimes(1);
+    expect(recoverSpy).toHaveBeenCalledWith(
+      ctx.spaceId,
+      task.id,
+      'in_progress',
+      expect.objectContaining({ description: undefined })
+    );
+    expect(parsed.success).toBe(true);
+    expect((parsed.task as SpaceTask).status).toBe('in_progress');
+  });
 });
 
 describe('createSpaceAgentToolHandlers — cancel_task', () => {
@@ -4777,6 +4876,67 @@ describe('createSpaceAgentToolHandlers — cancel_task', () => {
     const result = await makeHandlers(ctx).cancel_task({ task_id: t.id });
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
+  });
+
+  test('emits space.task.updated for every task in the cascade', async () => {
+    const emitted: Array<Record<string, unknown>> = [];
+    const mockBus = {
+      publish: mock(async (event: string, payload: Record<string, unknown>) => {
+        if (event === 'space.task.updated') emitted.push(payload);
+      }),
+    };
+    const t1 = await ctx.taskManager.createTask({ title: 'T1', description: 'First' });
+    const t2 = await ctx.taskManager.createTask({
+      title: 'T2',
+      description: 'Depends on T1',
+      dependsOn: [t1.id],
+    });
+    const handlers = makeHandlers(ctx, {
+      internalEventBus:
+        mockBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
+          import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap
+        >,
+    });
+
+    const parsed = parseResult(await handlers.cancel_task({ task_id: t1.id }));
+
+    expect(parsed.success).toBe(true);
+    expect(emitted).toHaveLength(2);
+    expect(emitted.map((payload) => payload.taskId)).toEqual(
+      expect.arrayContaining([t1.id, t2.id])
+    );
+  });
+
+  test('cancel_workflow_run on a missing run row skips run cancellation but keeps the envelope', async () => {
+    const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Cancel WF');
+    const runId = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: wf.id,
+      title: 'Run to delete',
+    }).id;
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Dangling run task',
+      description: '',
+      status: 'open',
+      workflowRunId: runId,
+    });
+    ctx.db.exec('PRAGMA foreign_keys = OFF');
+    ctx.db.prepare('DELETE FROM space_workflow_runs WHERE id = ?').run(runId);
+    ctx.db.exec('PRAGMA foreign_keys = ON');
+    const cancelRunSpy = spyOn(ctx.runtime, 'cancelWorkflowRun').mockImplementation(
+      async () => undefined
+    );
+
+    const parsed = parseResult(
+      await makeHandlers(ctx).cancel_task({ task_id: task.id, cancel_workflow_run: true })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.workflowRunCancelled).toBe(true);
+    expect(parsed.workflowRunId).toBe(runId);
+    expect(cancelRunSpy).not.toHaveBeenCalled();
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('cancelled');
   });
 });
 
@@ -5158,6 +5318,51 @@ describe('createSpaceAgentToolHandlers — approve_task plain path', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(true);
     expect(parsed.task.status).toBe('done');
+  });
+
+  test('rejects a task that is not in review status', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const createResult = await makeHandlers(ctx).create_standalone_task({
+      title: 'still open',
+      description: 'never reached review',
+    });
+    const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+    const result = await makeHandlers(ctx).approve_task({ task_id: taskId });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain("is in 'open' status, not 'review'");
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('open');
+  });
+
+  test('returns error when task not found', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+
+    const result = await makeHandlers(ctx).approve_task({ task_id: 'task-missing' });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('task-missing');
+  });
+
+  test('returns error when task belongs to a different space', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const otherSpaceId = 'space-other';
+    seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-approve-workspace');
+    const otherTask = ctx.taskRepo.createTask({
+      spaceId: otherSpaceId,
+      title: 'Foreign review task',
+      description: '',
+      status: 'review',
+    });
+
+    const result = await makeHandlers(ctx).approve_task({ task_id: otherTask.id });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('does not belong to this space');
+    expect(ctx.taskRepo.getTask(otherTask.id)?.status).toBe('review');
   });
 
   test('falls back to reported summary when review approval result is generic', async () => {
@@ -6296,10 +6501,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 
     const tam = makeFakeTaskAgentManager(ctx);
     const handlers = makeHandlersWith(tam, {
-      activateNode: async () => {
-        // Activation succeeded but did not attach a live session id — the tick
-        // loop will spawn one later. The handler surfaces `delivered: false`.
-      },
+      activateNode: async () => {},
     });
 
     const result = await handlers.send_message_to_task({
@@ -6335,9 +6537,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     const tam = makeFakeTaskAgentManager(ctx);
     const fakeQueue = makeFakePendingMessageQueue();
     const handlers = makeHandlersWith(tam, {
-      activateNode: async () => {
-        // Activation succeeded but the tick loop has not spawned the session yet.
-      },
+      activateNode: async () => {},
       pendingMessageQueue: fakeQueue,
     });
 
@@ -7720,9 +7920,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const tam = makeFakeTaskAgentManager(ctx);
       const handlers = makeHandlersWith(tam, {
         auditLogRepo,
-        activateNode: async () => {
-          // Activation accepted but no live session yet — message is queued.
-        },
+        activateNode: async () => {},
         pendingMessageQueue: makeFakePendingMessageQueue(),
       });
 
@@ -7949,6 +8147,22 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
     expect(parsed.error).toContain('No fields to update');
   });
 
+  test('no-fields error lists every updatable field', async () => {
+    const created = await ctx.taskManager.createTask({
+      title: 'Task',
+      description: 'Desc',
+    });
+    const result = await makeHandlers(ctx).update_task({
+      task_id: created.id,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    for (const field of ['title', 'description', 'priority', 'depends_on', 'status']) {
+      expect(parsed.error).toContain(field);
+    }
+  });
+
   test('publishes space.task.updated event via InternalEventBus', async () => {
     const emitted: Array<Record<string, unknown>> = [];
     const mockBus = {
@@ -8040,6 +8254,31 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
       expect.objectContaining({ title: 'Updated title' }),
       expect.objectContaining({ onCascadedTasks: expect.any(Function) })
     );
+  });
+
+  test('fields-only audit omits previousStatus — unlike transition audits', async () => {
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const created = await ctx.taskManager.createTask({
+      title: 'Task',
+      description: 'Desc',
+    });
+
+    const result = await makeHandlers(ctx, { auditLogRepo }).update_task({
+      task_id: created.id,
+      title: 'Field-only title',
+      priority: 'high',
+    });
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    const entries = auditLogRepo.listByTask(created.id);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].toolName).toBe('update_task');
+    const params = JSON.parse(entries[0].paramsSummary ?? '{}') as Record<string, unknown>;
+    expect(params.title).toBe('Field-only title');
+    expect(params.priority).toBe('high');
+    expect('previousStatus' in params).toBe(false);
+    expect('status' in params).toBe(false);
   });
 
   test('registers update_task in createSpaceAgentMcpServer', () => {
@@ -8189,6 +8428,88 @@ describe('createSpaceAgentToolHandlers — update_task status parameter (task #1
     expect((result.task as SpaceTask).status).toBe('stopped');
   });
 
+  test('parking a workflow-backed task without field updates audits but emits nothing', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('in_progress', runId);
+    const emitted: Array<Record<string, unknown>> = [];
+    const mockBus = {
+      publish: mock(async (event: string, payload: Record<string, unknown>) => {
+        if (event === 'space.task.updated') emitted.push(payload);
+      }),
+    };
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    spyOn(ctx.runtime, 'parkStoppedWorkflowTask').mockImplementation(async (_spaceId, taskId) =>
+      ctx.taskManager.setTaskStatus(taskId, 'stopped')
+    );
+    const handlers = makeHandlers(ctx, {
+      internalEventBus:
+        mockBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
+          import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap
+        >,
+      auditLogRepo,
+    });
+
+    const result = parseResult(await handlers.update_task({ task_id: task.id, status: 'stopped' }));
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('stopped');
+    expect(emitted).toHaveLength(0);
+    const entries = auditLogRepo.listByTask(task.id);
+    expect(entries).toHaveLength(1);
+    const params = JSON.parse(entries[0].paramsSummary ?? '{}') as Record<string, unknown>;
+    expect(params.status).toBe('stopped');
+    expect(params.previousStatus).toBe('in_progress');
+  });
+
+  test('parking a workflow-backed task with field updates applies them and emits', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('in_progress', runId);
+    const emitted: Array<Record<string, unknown>> = [];
+    const mockBus = {
+      publish: mock(async (event: string, payload: Record<string, unknown>) => {
+        if (event === 'space.task.updated') emitted.push(payload);
+      }),
+    };
+    spyOn(ctx.runtime, 'parkStoppedWorkflowTask').mockImplementation(async (_spaceId, taskId) =>
+      ctx.taskManager.setTaskStatus(taskId, 'stopped')
+    );
+    const handlers = makeHandlers(ctx, {
+      internalEventBus:
+        mockBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
+          import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap
+        >,
+    });
+
+    const result = parseResult(
+      await handlers.update_task({
+        task_id: task.id,
+        status: 'stopped',
+        title: 'Parked and renamed',
+      })
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('stopped');
+    expect((result.task as SpaceTask).title).toBe('Parked and renamed');
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].taskId).toBe(task.id);
+    expect((emitted[0].task as SpaceTask).title).toBe('Parked and renamed');
+  });
+
+  test('a park that cannot find the task folds into the not-found error', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('in_progress', runId);
+    spyOn(ctx.runtime, 'parkStoppedWorkflowTask').mockImplementation(async () => null);
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'stopped' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(String(result.error)).toContain(`Task not found: ${task.id}`);
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
   test('rejects review → done (owned by the approval pipeline)', async () => {
     const task = createTaskWithStatus('review');
     const result = parseResult(
@@ -8334,6 +8655,47 @@ describe('createSpaceAgentToolHandlers — update_task status parameter (task #1
     expect((result.task as SpaceTask).status).toBe('open');
   });
 
+  test('teardown transitions forward field updates but never emit space.task.updated', async () => {
+    const runId = createRun();
+    const task = createTaskWithStatus('in_progress', runId);
+    const emitted: Array<Record<string, unknown>> = [];
+    const mockBus = {
+      publish: mock(async (event: string, payload: Record<string, unknown>) => {
+        if (event === 'space.task.updated') emitted.push(payload);
+      }),
+    };
+    const stopSpy = spyOn(ctx.runtime, 'stopWorkflowBackedTaskForStatus').mockImplementation(
+      async (_spaceId, taskId, params) => {
+        const stopped = await ctx.taskManager.setTaskStatus(taskId, params.status ?? 'open');
+        return params.title ? ctx.taskRepo.updateTask(taskId, { title: params.title }) : stopped;
+      }
+    );
+    const handlers = makeHandlers(ctx, {
+      internalEventBus:
+        mockBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
+          import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap
+        >,
+    });
+
+    const result = parseResult(
+      await handlers.update_task({
+        task_id: task.id,
+        status: 'open',
+        title: 'Torn down and renamed',
+      })
+    );
+
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(stopSpy).toHaveBeenCalledWith(ctx.spaceId, task.id, {
+      status: 'open',
+      title: 'Torn down and renamed',
+    });
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('open');
+    expect((result.task as SpaceTask).title).toBe('Torn down and renamed');
+    expect(emitted).toHaveLength(0);
+  });
+
   test('agent resume of a standalone stopped task is a plain status write', async () => {
     const task = createTaskWithStatus('stopped');
     ctx.taskRepo.updateTask(task.id, {
@@ -8428,6 +8790,41 @@ describe('createSpaceAgentToolHandlers — publish_task', () => {
     expect(publishParsed.task.id).toBe(taskId);
   });
 
+  test('publishing audits the previous status and emits space.task.updated', async () => {
+    const createResult = await makeHandlers(ctx).create_standalone_task({
+      title: 'Draft task',
+      description: 'Created as draft',
+      draft: true,
+    });
+    const taskId = JSON.parse(createResult.content[0].text).task.id;
+    const emitted: Array<Record<string, unknown>> = [];
+    const mockBus = {
+      publish: mock(async (event: string, payload: Record<string, unknown>) => {
+        if (event === 'space.task.updated') emitted.push(payload);
+      }),
+    };
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const handlers = makeHandlers(ctx, {
+      internalEventBus:
+        mockBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
+          import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap
+        >,
+      auditLogRepo,
+    });
+
+    const parsed = parseResult(await handlers.publish_task({ task_id: taskId }));
+
+    expect(parsed.success).toBe(true);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].taskId).toBe(taskId);
+    expect((emitted[0].task as SpaceTask).status).toBe('open');
+    const entries = auditLogRepo.listByTask(taskId);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].toolName).toBe('publish_task');
+    const params = JSON.parse(entries[0].paramsSummary ?? '{}') as Record<string, unknown>;
+    expect(params.previousStatus).toBe('draft');
+  });
+
   test('returns error when task is not in draft status', async () => {
     const createResult = await makeHandlers(ctx).create_standalone_task({
       title: 'Open task',
@@ -8510,6 +8907,38 @@ describe('createSpaceAgentToolHandlers — archive_task', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(true);
     expect(parsed.task.status).toBe('archived');
+  });
+
+  test('archiving audits the previous status and emits space.task.updated', async () => {
+    const t = await ctx.taskManager.createTask({ title: 'T', description: 'Done' });
+    await ctx.taskManager.startTask(t.id);
+    await ctx.taskManager.completeTask(t.id, 'done');
+    const emitted: Array<Record<string, unknown>> = [];
+    const mockBus = {
+      publish: mock(async (event: string, payload: Record<string, unknown>) => {
+        if (event === 'space.task.updated') emitted.push(payload);
+      }),
+    };
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const handlers = makeHandlers(ctx, {
+      internalEventBus:
+        mockBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
+          import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap
+        >,
+      auditLogRepo,
+    });
+
+    const parsed = parseResult(await handlers.archive_task({ task_id: t.id }));
+
+    expect(parsed.success).toBe(true);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].taskId).toBe(t.id);
+    expect((emitted[0].task as SpaceTask).status).toBe('archived');
+    const entries = auditLogRepo.listByTask(t.id);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].toolName).toBe('archive_task');
+    const params = JSON.parse(entries[0].paramsSummary ?? '{}') as Record<string, unknown>;
+    expect(params.previousStatus).toBe('done');
   });
 
   test('archives a cancelled task', async () => {
@@ -9103,5 +9532,128 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
 
     expect(parsed.success).toBe(true);
     expect((parsed.agent as { autonomyLevel: number | null }).autonomyLevel).toBeNull();
+  });
+
+  test('worker agent in this space is uncapped — falls back to the space level', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 3 });
+    seedAgentRow(ctx.db, 'worker-ceiling-agent', ctx.spaceId, 'Worker');
+    seedTargetSession('ceiling-target-worker');
+    const handlers = makeHandlers(ctx, {
+      myAgentId: 'worker-ceiling-agent',
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'ceiling-target-worker',
+        message: 'proceed',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    const error = String(parsed.error);
+    expect(error).toContain('space autonomy level 3');
+    expect(error).not.toContain('agent autonomy ceiling');
+  });
+
+  test('space-level denial writes no audit entry — the ceiling path alone is audited', async () => {
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    seedTargetSession('ceiling-target-space-denial');
+    const handlers = makeHandlers(ctx, {
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      auditLogRepo,
+      getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
+    });
+
+    await handlers.send_session_message({
+      session_id: 'ceiling-target-space-denial',
+      message: 'proceed',
+    });
+
+    const denials = auditLogRepo
+      .listBySpace(ctx.spaceId)
+      .filter((entry) => entry.toolName === 'send_session_message');
+    expect(denials).toHaveLength(0);
+  });
+
+  test('interrupt_session denies below level 4 with the space autonomy message', async () => {
+    seedTargetSession('ceiling-target-interrupt-space');
+    let interrupted = false;
+    const handlers = makeHandlers(ctx, {
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () =>
+        ({
+          handleInterrupt: async () => {
+            interrupted = true;
+          },
+        }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.interrupt_session({ session_id: 'ceiling-target-interrupt-space' })
+    );
+
+    expect(parsed.success).toBe(false);
+    const error = String(parsed.error);
+    expect(error).toContain('interrupt_session not permitted');
+    expect(error).toContain('space autonomy level 3 < required level 4');
+    expect(error).not.toContain('agent autonomy ceiling');
+    expect(interrupted).toBe(false);
+  });
+
+  test('interrupt_session denies a ceiling-bound agent with the agent ceiling message', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(2);
+    seedTargetSession('ceiling-target-interrupt-agent');
+    let interrupted = false;
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 5,
+      getRuntimeSession: () =>
+        ({
+          handleInterrupt: async () => {
+            interrupted = true;
+          },
+        }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.interrupt_session({ session_id: 'ceiling-target-interrupt-agent' })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('agent autonomy ceiling 2');
+    expect(interrupted).toBe(false);
+  });
+
+  test('update_session_state denies a ceiling-bound agent with the agent ceiling message', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const agentId = seedLongHorizonAgent(2);
+    seedTargetSession('ceiling-target-state-agent');
+    const handlers = makeHandlers(ctx, {
+      myAgentId: agentId,
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 5,
+    });
+
+    const parsed = parseResult(
+      await handlers.update_session_state({
+        session_id: 'ceiling-target-state-agent',
+        processing_state: 'idle',
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('agent autonomy ceiling 2');
+    expect(String(parsed.error)).toContain('space 5');
+    const row = ctx.db
+      .prepare(`SELECT processing_state FROM sessions WHERE id = ?`)
+      .get('ceiling-target-state-agent') as { processing_state: string };
+    expect(JSON.parse(row.processing_state)).toEqual({ status: 'idle' });
   });
 });

@@ -477,9 +477,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         autoReconnect: false,
       });
 
-      transport.initialize().catch(() => {
-        // Ignore errors since we expect it to timeout
-      });
+      transport.initialize().catch(() => {});
 
       await new Promise((resolve) => setTimeout(resolve, 100));
 

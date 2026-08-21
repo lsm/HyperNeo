@@ -112,7 +112,15 @@ const queries: Array<{ name: string; sql: string; params: unknown[] }> = [
   {
     name: 'backgroundTaskMetadata',
     sql: BACKGROUND_TASK_METADATA_SQL,
-    params: [smallSession, smallSession, smallSession, smallSession, smallSession],
+    params: [
+      smallSession,
+      smallSession,
+      smallSession,
+      smallSession,
+      smallSession,
+      smallSession,
+      smallSession,
+    ],
   },
   { name: 'status.count', sql: STATUS_COUNT_SQL, params: [largeSession, 'consumed'] },
   { name: 'status.userCount', sql: STATUS_USER_COUNT_SQL, params: [largeSession, 'consumed'] },

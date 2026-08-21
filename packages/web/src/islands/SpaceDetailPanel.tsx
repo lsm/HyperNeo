@@ -494,9 +494,7 @@ export function SpaceDetailPanel({
         });
         navigateToSpaceSession(routeSpaceId, response.sessionId);
         onNavigate?.();
-      } catch {
-        // Session creation failed silently
-      }
+      } catch {}
     },
     [spaceId, routeSpaceId, space?.workspacePath, onNavigate]
   );

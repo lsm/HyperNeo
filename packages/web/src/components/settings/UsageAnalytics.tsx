@@ -97,7 +97,6 @@ export function UsageAnalytics() {
       const result = await hub.request<UsageData>('usage.calculate', {});
       setData(result);
     } catch {
-      // Fetch failed silently
     } finally {
       setLoading(false);
     }

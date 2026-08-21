@@ -33,9 +33,7 @@ describe('Migration 29: Space system tables', () => {
   afterAll(() => {
     try {
       rmSync(templateDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   beforeEach(() => {
@@ -47,14 +45,10 @@ describe('Migration 29: Space system tables', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('all Space tables are created after migration', () => {
@@ -87,9 +81,7 @@ describe('Migration 29: Space system tables', () => {
   test('legacy space_tasks without custom_agent_id is upgraded safely', () => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     db = openEmptyDb(testDir);
     db.exec(`
 			CREATE TABLE space_tasks (

@@ -104,7 +104,9 @@ vi.mock('../../hooks', () => ({
 }));
 
 vi.mock('../../lib/connection-manager', () => ({
-  connectionManager: { getHubIfConnected: vi.fn(() => ({ request: hubRequest })) },
+  connectionManager: {
+    getHubIfConnected: vi.fn(() => ({ request: hubRequest, onEvent: vi.fn(() => vi.fn()) })),
+  },
 }));
 
 const enqueueTranscript = vi.hoisted(() => vi.fn());
@@ -138,7 +140,7 @@ describe('MessageInput — recording UI', () => {
     vi.stubGlobal('cancelAnimationFrame', (id: ReturnType<typeof setTimeout>) => clearTimeout(id));
     vi.mocked(connectionManager.getHubIfConnected)
       .mockReset()
-      .mockImplementation(() => ({ request: hubRequest }));
+      .mockImplementation(() => ({ request: hubRequest, onEvent: vi.fn(() => vi.fn()) }));
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
       value: vi.fn().mockReturnValue({ matches: false }),

@@ -39,14 +39,10 @@ describe('Migration 68: Add origin column to sdk_messages', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('origin column is added to existing sdk_messages table', () => {

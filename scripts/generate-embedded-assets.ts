@@ -90,9 +90,7 @@ let skillsExist = false;
 try {
   statSync(SKILLS_DIR);
   skillsExist = true;
-} catch {
-  // packages/skills dir not present — skip
-}
+} catch {}
 
 if (skillsExist) {
   const skillFiles = walkDir(SKILLS_DIR);

@@ -86,9 +86,7 @@ function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string,
         },
       };
       content = JSON.stringify(enriched);
-    } catch {
-      // Keep original content if parsing fails.
-    }
+    } catch {}
   }
 
   return {
@@ -185,9 +183,7 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
         turnId,
       },
     });
-  } catch {
-    // Keep original content when sdk_message is not valid JSON.
-  }
+  } catch {}
 
   const mapped: Record<string, unknown> = {
     id,
@@ -2871,25 +2867,35 @@ function toSqlStringList(subtypes: Iterable<string>): string {
   return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
 }
 
-const BACKGROUND_TASK_METADATA_SQL_LIST = toSqlStringList(BACKGROUND_TASK_METADATA_SUBTYPES);
+const BACKGROUND_TASK_METADATA_ARMS_SQL = BACKGROUND_TASK_METADATA_SUBTYPES.map(
+  (subtype) => `SELECT * FROM (
+    SELECT
+      id,
+      sdk_message,
+      timestamp,
+      send_status,
+      origin,
+      rowid,
+      COALESCE(
+        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+        task_id
+      ) AS task_id
+    FROM sdk_messages
+    WHERE session_id = ?
+      AND parent_tool_use_id IS NULL
+      AND message_subtype_norm = '${subtype.replace(/'/g, "''")}'
+    ORDER BY timestamp DESC, rowid DESC
+    LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
+  )`
+).join(`
+  UNION ALL
+`);
 
 export const BACKGROUND_TASK_METADATA_SQL = `
 WITH recent_metadata AS (
-  SELECT
-    id,
-    sdk_message,
-    timestamp,
-    send_status,
-    origin,
-    rowid,
-    COALESCE(
-      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-      task_id
-    ) AS task_id
-  FROM sdk_messages
-  WHERE session_id = ?
-    AND parent_tool_use_id IS NULL
-    AND message_subtype_norm IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
+  SELECT * FROM (
+    ${BACKGROUND_TASK_METADATA_ARMS_SQL}
+  )
   ORDER BY timestamp DESC, rowid DESC
   LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
 ),
@@ -3169,9 +3175,7 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
       try {
         retryInfo = JSON.parse(raw) as { count?: number; runAt?: number; max?: number };
         retryCount = Number(retryInfo?.count ?? 0);
-      } catch {
-        // malformed blob — treat as no active job
-      }
+      } catch {}
     }
     const deliveryStatus = sendStatusToDeliveryStatus(row.sendStatus as string | null, {
       retrying: retryCount > 0,
@@ -3203,9 +3207,7 @@ function buildTaskScopeFilter(
     if (taskAgent?.task_agent_session_id) {
       linkedSessions.add(taskAgent.task_agent_session_id);
     }
-  } catch {
-    // space_tasks may not exist in minimal test schemas
-  }
+  } catch {}
   try {
     const nodeAgents = db
       .prepare(
@@ -3219,9 +3221,7 @@ function buildTaskScopeFilter(
     for (const row of nodeAgents) {
       if (row.agent_session_id) linkedSessions.add(row.agent_session_id);
     }
-  } catch {
-    // node_executions may not exist in minimal test schemas
-  }
+  } catch {}
   try {
     const messageSessions = db
       .prepare('SELECT DISTINCT session_id FROM sdk_messages WHERE task_id = ?')
@@ -3229,9 +3229,7 @@ function buildTaskScopeFilter(
     for (const row of messageSessions) {
       if (row.session_id) linkedSessions.add(row.session_id);
     }
-  } catch {
-    // sdk_messages may not exist in minimal test schemas
-  }
+  } catch {}
 
   const messageStmt = db.prepare(
     `SELECT 1 FROM sdk_messages WHERE task_id = ? AND session_id = ? LIMIT 1`
@@ -3275,9 +3273,7 @@ function buildWorkflowRunScopeFilter(
         taskIds.add(row.id);
         if (row.task_agent_session_id) sessionIds.add(row.task_agent_session_id);
       }
-    } catch {
-      // space_tasks may not exist in minimal test schemas
-    }
+    } catch {}
     try {
       const executions = db
         .prepare('SELECT agent_session_id FROM node_executions WHERE workflow_run_id = ?')
@@ -3285,9 +3281,7 @@ function buildWorkflowRunScopeFilter(
       for (const row of executions) {
         if (row.agent_session_id) sessionIds.add(row.agent_session_id);
       }
-    } catch {
-      // node_executions may not exist in minimal test schemas
-    }
+    } catch {}
     try {
       const messages = db
         .prepare(
@@ -3297,9 +3291,7 @@ function buildWorkflowRunScopeFilter(
       for (const row of messages) {
         if (row.session_id) sessionIds.add(row.session_id);
       }
-    } catch {
-      // sdk_messages may not exist in minimal test schemas
-    }
+    } catch {}
   };
   loadScope();
   return (scope) => {
@@ -3562,6 +3554,8 @@ export function setupLiveQueryHandlers(
       const sessionId = params[0];
       if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined;
       const rows = stmtBackgroundTaskMetadata.all(
+        sessionId,
+        sessionId,
         sessionId,
         sessionId,
         sessionId,

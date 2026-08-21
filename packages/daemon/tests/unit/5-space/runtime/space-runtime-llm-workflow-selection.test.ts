@@ -85,13 +85,9 @@ describe('SpaceRuntime — LLM workflow selection', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     try {
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   function buildRuntime(selector?: SelectWorkflowWithLlm): SpaceRuntime {

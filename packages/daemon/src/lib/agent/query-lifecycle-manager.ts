@@ -192,28 +192,20 @@ export class QueryLifecycleManager {
       if (this.ctx.firstMessageReceived) {
         try {
           await queryObject.interrupt();
-        } catch {
-          // Continue - query might already be stopped
-        }
+        } catch {}
       }
     }
 
     const queryPromise = this.ctx.queryPromise;
     if (queryPromise) {
       try {
-        const promiseToAwait = catchQueryErrors
-          ? queryPromise.catch(() => {
-              // Ignore errors during cleanup
-            })
-          : queryPromise;
+        const promiseToAwait = catchQueryErrors ? queryPromise.catch(() => {}) : queryPromise;
 
         await Promise.race([
           promiseToAwait,
           new Promise((resolve) => setTimeout(resolve, timeoutMs)),
         ]);
-      } catch {
-        // Ignore errors during termination
-      }
+      } catch {}
     }
 
     this.ctx.terminateTrackedAgentProcesses({
@@ -225,9 +217,7 @@ export class QueryLifecycleManager {
     if (queryObject && this.ctx.queryObject === queryObject) {
       try {
         queryObject.close();
-      } catch {
-        // Ignore close errors — subprocess may already be terminated
-      }
+      } catch {}
     }
 
     if (processExitedPromise) {
@@ -613,9 +603,7 @@ export class QueryLifecycleManager {
 
   private async markEnqueuedMessageFailed(messageId: string): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
-    const enqueuedMessage = db
-      .getMessagesByStatus(session.id, 'enqueued')
-      .find((message) => message.uuid === messageId);
+    const enqueuedMessage = db.getMessageByStatusAndUuid(session.id, 'enqueued', messageId);
     if (!enqueuedMessage) {
       return;
     }
@@ -658,9 +646,7 @@ export class QueryLifecycleManager {
 
     try {
       await this.restart();
-    } catch {
-      // Log but don't throw - deferred restart is best-effort
-    }
+    } catch {}
   }
 
   async cleanup(): Promise<void> {
@@ -675,8 +661,6 @@ export class QueryLifecycleManager {
     try {
       await this.stop({ timeoutMs: 15000, catchQueryErrors: true });
       await new Promise((r) => setTimeout(r, 1000));
-    } catch {
-      // Ignore cleanup errors
-    }
+    } catch {}
   }
 }

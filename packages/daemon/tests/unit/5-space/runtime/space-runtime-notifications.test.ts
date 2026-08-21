@@ -310,13 +310,9 @@ describe('SpaceRuntime — notification events', () => {
     collector.destroy();
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     try {
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   describe('task_blocked', () => {

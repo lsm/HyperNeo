@@ -124,9 +124,7 @@ function WorkflowCard({
             customized: result.customized,
           });
       })
-      .catch(() => {
-        // Ignore drift detection errors silently
-      });
+      .catch(() => {});
 
     return () => {
       cancelled = true;
@@ -523,9 +521,7 @@ export function WorkflowList({
         }
         setDuplicateDriftMap(map);
       })
-      .catch(() => {
-        // Non-fatal — drift reporting is best-effort.
-      });
+      .catch(() => {});
 
     return () => {
       cancelled = true;

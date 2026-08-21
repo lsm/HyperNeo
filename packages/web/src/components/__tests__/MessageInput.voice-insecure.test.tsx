@@ -17,6 +17,7 @@ vi.mock('../../lib/state.ts', () => ({
   globalSettings: {
     value: { voice: { enabled: true, endpoint: 'https://asr.example.com/v1', model: 'whisper-1' } },
   },
+  connectionState: { value: 'connected' },
   get isAgentWorking() {
     return {
       get value() {
@@ -92,7 +93,9 @@ vi.mock('../../hooks', () => ({
 }));
 
 vi.mock('../../lib/connection-manager', () => ({
-  connectionManager: { getHubIfConnected: () => ({ request: vi.fn(async () => ({})) }) },
+  connectionManager: {
+    getHubIfConnected: () => ({ request: vi.fn(async () => ({})), onEvent: vi.fn(() => vi.fn()) }),
+  },
 }));
 
 import MessageInput from '../MessageInput';

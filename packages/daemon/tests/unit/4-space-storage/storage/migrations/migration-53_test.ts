@@ -44,14 +44,10 @@ describe('Migration 53: channels column on space_workflows', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('space_workflows has channels column after migration', () => {

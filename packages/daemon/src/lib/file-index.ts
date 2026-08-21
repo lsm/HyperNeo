@@ -168,9 +168,7 @@ export class FileIndex {
       if (!existsSync(gitignorePath)) return;
       const content = await readFile(gitignorePath, 'utf-8');
       this.ignorePatterns = parseGitignoreLines(content.split('\n'));
-    } catch {
-      // Non-fatal: continue without .gitignore patterns
-    }
+    } catch {}
   }
 
   private get allPatterns(): IgnorePattern[] {
@@ -197,9 +195,7 @@ export class FileIndex {
           const symType = targetStat.isDirectory() ? 'folder' : 'file';
           if (shouldIgnore(relPath, symType === 'folder', this.allPatterns)) continue;
           this.cache.set(relPath, { path: relPath, name: entry.name, type: symType });
-        } catch {
-          // Broken symlink -- skip
-        }
+        } catch {}
         continue;
       }
 
@@ -241,9 +237,7 @@ export class FileIndex {
           if (!this.cache.has(relPath)) {
             this.cache.set(relPath, { path: relPath, name: entry.name, type: symType });
           }
-        } catch {
-          // Broken symlink -- skip
-        }
+        } catch {}
         continue;
       }
 

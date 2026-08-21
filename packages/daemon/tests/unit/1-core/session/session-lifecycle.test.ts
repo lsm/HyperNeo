@@ -843,6 +843,28 @@ describe('SessionLifecycle', () => {
       expect(markFailedSpy).toHaveBeenCalledWith('test-id', 'msg-uuid-1');
       expect(order).toEqual(['mark-archived', 'delivery-cancel', 'db-delete']);
     });
+
+    it('should publish a failed status change for cancelled deliveries', async () => {
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        id: 'delete-id',
+        workspacePath: '/test',
+        metadata: {},
+      });
+      mockDb.getJobQueueRepo = mock(() => ({
+        cancelForSessionWithMessages: mock(() => ['msg-uuid-1', 'msg-uuid-2']),
+      }));
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markDeliveryFailedByUuid: mock((_sessionId: string, uuid: string) => `db-${uuid}`),
+      }));
+
+      await lifecycle.deleteResources('delete-id', 'ui_session_delete');
+
+      expect(mockInternalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'delete-id',
+        messageIds: ['db-msg-uuid-1', 'db-msg-uuid-2'],
+        status: 'failed',
+      });
+    });
   });
 
   describe('archiveResources (UI-only: session.archive + task.archive)', () => {
@@ -886,6 +908,28 @@ describe('SessionLifecycle', () => {
 
       expect(mockDb.deleteSession).not.toHaveBeenCalled();
       expect(mockDb.updateSession).toHaveBeenCalled();
+    });
+
+    it('should publish a failed status change for cancelled deliveries', async () => {
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        id: 'archive-id',
+        workspacePath: '/test',
+        metadata: {},
+      });
+      mockDb.getJobQueueRepo = mock(() => ({
+        cancelForSessionWithMessages: mock(() => ['msg-uuid-1', 'msg-uuid-2']),
+      }));
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markDeliveryFailedByUuid: mock((_sessionId: string, uuid: string) => `db-${uuid}`),
+      }));
+
+      await lifecycle.archiveResources('archive-id', 'ui_session_archive');
+
+      expect(mockInternalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'archive-id',
+        messageIds: ['db-msg-uuid-1', 'db-msg-uuid-2'],
+        status: 'failed',
+      });
     });
   });
 

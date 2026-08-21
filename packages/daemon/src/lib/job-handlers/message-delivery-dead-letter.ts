@@ -26,9 +26,7 @@ export async function settleMessageDeliveryDeadLetter(
   if (payload.origin === 'space_inject' && payload.role === 'turn') {
     try {
       await settlement.publishSessionError(payload.sessionId, DEAD_LETTER_SESSION_ERROR);
-    } catch {
-      /* best-effort — settlement must still run */
-    }
+    } catch {}
   }
   await settlement.settleSkippedDelivery(payload.messageUuid);
 }

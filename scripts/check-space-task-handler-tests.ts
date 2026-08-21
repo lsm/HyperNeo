@@ -28,8 +28,7 @@ function parseHandlers(source: string): Set<string> {
 
 function changedFiles(): Set<string> {
   try {
-    const mergeBase = runGit(['merge-base', baseRef, 'HEAD']);
-    const output = runGit(['diff', '--name-only', `${mergeBase}...HEAD`]);
+    const output = runGit(['diff', '--name-only', baseRef, 'HEAD']);
     return new Set(output ? output.split('\n') : []);
   } catch (err) {
     const message = `Unable to compare branch against ${baseRef}. Ensure base ref is fetched. ${

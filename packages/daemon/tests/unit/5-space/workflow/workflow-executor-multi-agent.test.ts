@@ -118,9 +118,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   test('creates one workflow task and one node_execution per start agent', async () => {
@@ -532,9 +530,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   test('rejects reserved built-in agent names in workflow declarations', () => {

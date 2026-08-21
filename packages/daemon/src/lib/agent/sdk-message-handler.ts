@@ -330,18 +330,15 @@ export class SDKMessageHandler {
     const { session, db, internalEventBus, messageHub, messageQueue } = this.ctx;
     const durableOwned =
       db.getJobQueueRepo?.()?.activeDeliveryMessageUuids(session.id) ?? new Set();
-    const enqueuedUsers = db.getMessagesByStatus(session.id, 'enqueued').filter((enqueued) => {
+    const { messages: enqueuedUsers } = db.getUserMessagesByStatus(session.id, 'enqueued');
+    const consumedUsers = enqueuedUsers.filter((enqueued) => {
       const uuid = enqueued.uuid ?? '';
       const activeYielded = uuid === activeMessageId && messageQueue.hasYielded(uuid);
-      return (
-        isSDKUserMessage(enqueued) &&
-        (!durableOwned.has(uuid) || activeYielded) &&
-        !messageQueue.hasPendingOrClaimed(uuid)
-      );
+      return (!durableOwned.has(uuid) || activeYielded) && !messageQueue.hasPendingOrClaimed(uuid);
     });
 
     let lastConsumedAt = 0;
-    for (const enqueuedUser of enqueuedUsers) {
+    for (const enqueuedUser of consumedUsers) {
       let consumedAt = Date.now();
       if (consumedAt <= lastConsumedAt) consumedAt = lastConsumedAt + 1;
       lastConsumedAt = consumedAt;
@@ -416,12 +413,7 @@ export class SDKMessageHandler {
   markMessageAccepted(messageId: string): void {
     try {
       this.handleMessageYielded(messageId, Date.now());
-    } catch {
-      // The consumed-status transition commits BEFORE the fallible post-commit
-      // search-index work; a throw there must NOT prevent the delivery-waiter
-      // signal below — else LTA/task-agent callers time out despite a durably
-      // consumed prompt + a fresh caller retries the work twice. (Codex review.)
-    }
+    } catch {}
     const consumed = this.ctx.db.getMessageByStatusAndUuid(
       this.ctx.session.id,
       'consumed',

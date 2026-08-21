@@ -140,9 +140,7 @@ describe('SpaceRuntime.listSubscriptions', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   test('returns all three layers reconciled when declared + dynamic are active', () => {

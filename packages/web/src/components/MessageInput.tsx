@@ -25,7 +25,7 @@ import {
 import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
 import { connectionManager } from '../lib/connection-manager';
 import type { SessionStore } from '../lib/session-store.ts';
-import { globalSettings, isAgentWorking } from '../lib/state.ts';
+import { connectionState, globalSettings, isAgentWorking } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';
@@ -73,6 +73,8 @@ function suppressLeadingSpace(before: string): boolean {
 const COMPOSER_CHAR_LIMIT = 100000;
 
 const QUEUE_FETCH_LIMIT = 1000;
+const QUEUE_EVENT_REFRESH_DEBOUNCE_MS = 300;
+const QUEUE_FALLBACK_POLL_MS = 5000;
 
 function buildTranscriptInsertion(
   before: string,
@@ -483,9 +485,7 @@ export default function MessageInput({
               sessionId: targetSessionId,
               expected: payload.full,
             });
-          } catch {
-            /* ignore — the send already succeeded */
-          }
+          } catch {}
         }
       }
       return {
@@ -624,6 +624,9 @@ export default function MessageInput({
     };
   }, [content, getImagesForSend]);
 
+  const queueRefreshSeqRef = useRef(0);
+  const queueRefreshAppliedSeqRef = useRef(0);
+
   const refreshQueuedMessages = useCallback(async () => {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
@@ -631,6 +634,8 @@ export default function MessageInput({
     }
 
     const targetSessionId = sessionId;
+    const refreshSeq = queueRefreshSeqRef.current + 1;
+    queueRefreshSeqRef.current = refreshSeq;
     try {
       const [enqueuedResponse, deferredResponse] = (await Promise.all([
         hub.request('session.messages.byStatus', {
@@ -650,13 +655,15 @@ export default function MessageInput({
       if (sessionIdRef.current !== targetSessionId) {
         return;
       }
+      if (refreshSeq <= queueRefreshAppliedSeqRef.current) {
+        return;
+      }
+      queueRefreshAppliedSeqRef.current = refreshSeq;
       setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
       setQueuedForNextTurn(deferredResponse.messages ?? []);
       setQueuedCurrentTurnTotal(enqueuedResponse.total);
       setQueuedNextTurnTotal(deferredResponse.total);
-    } catch {
-      // Best-effort queue refresh.
-    }
+    } catch {}
   }, [sessionId]);
 
   const handleRemoveQueuedMessage = useCallback(
@@ -766,11 +773,41 @@ export default function MessageInput({
   }, [sessionId]);
 
   useEffect(() => {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      return;
+    }
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = hub.onEvent<{ sessionId?: string }>('messages.statusChanged', (payload) => {
+      if (payload?.sessionId !== sessionId) {
+        return;
+      }
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        void refreshQueuedMessages();
+      }, QUEUE_EVENT_REFRESH_DEBOUNCE_MS);
+    });
+    void refreshQueuedMessages();
+    return () => {
+      unsubscribe();
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
+    };
+  }, [sessionId, refreshQueuedMessages, connectionState.value]);
+
+  useEffect(() => {
     if (!agentWorking && queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0)
       return;
     const timer = setInterval(() => {
+      if (document.hidden) {
+        return;
+      }
       void refreshQueuedMessages();
-    }, 700);
+    }, QUEUE_FALLBACK_POLL_MS);
     return () => clearInterval(timer);
   }, [agentWorking, queuedForCurrentTurn.length, queuedForNextTurn.length, refreshQueuedMessages]);
 

@@ -66,9 +66,7 @@ export function NewChatModelPicker({
         }
         setProviderAuthStatuses(statusMap);
       })
-      .catch(() => {
-        // Provider dots stay gray if auth status is unavailable.
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };

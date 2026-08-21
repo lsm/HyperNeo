@@ -180,6 +180,15 @@ const SESSION_BRIDGE_MAPPINGS: BridgeMapping[] = [
     clientEvent: 'providers.changed',
     channel: () => Channels.global(),
   },
+  {
+    event: 'messages.statusChanged',
+    clientEvent: 'messages.statusChanged',
+    channel: () => Channels.global(),
+    transform: (payload) => {
+      const p = payload as DaemonInternalEventMap['messages.statusChanged'];
+      return { sessionId: p.sessionId };
+    },
+  },
 ];
 
 export class ClientEventBridge {
