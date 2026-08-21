@@ -488,10 +488,13 @@ interpreters over three extracted cores:
   UI's auto-close count and displayed level. Distinct from that runtime
   missing-value fallback, creation and storage default the level to **3**: the
   visual editor's state init and serialization (`?? 3`), import handling
-  (`space-export-import-handlers.ts`), and the `completion_autonomy_level`
-  column backfill (DEFAULT 3, with per-template overrides) — so newly created,
-  edited, or imported workflows persist 3 while an absent value at runtime
-  reads as 5; the two defaults disagree, which is part of the same
+  (`space-export-import-handlers.ts`), the `completion_autonomy_level`
+  column backfill (DEFAULT 3, with per-template overrides), and the workflow
+  repository itself, which defaults omitted values to 3 both when creating
+  workflows and when mapping nullable rows — so newly created, edited,
+  imported, or legacy-null workflows resolve to 3 through the repository, and
+  the `?? 5` runtime fallbacks apply only to values that bypass repository
+  mapping; the two defaults disagree, which is part of the same
   centralization question. The
   router owns only the denial routing — reason, message, and
   precedence against the target check (see the second recorded asymmetry
