@@ -3,6 +3,7 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('SpaceTaskRepository', () => {
@@ -622,6 +623,84 @@ describe('SpaceTaskRepository', () => {
       const otherBefore = repo.getTask(other.id);
       expect(repo.casStatus(target.id, 'open', 'in_progress')).toBe('won');
       expect(repo.getTask(other.id)).toEqual(otherBefore);
+    });
+  });
+
+  describe('reserveSpawnForTick / releaseSpawnReservation', () => {
+    const runningStatuses = ['in_progress', 'review'] as const;
+
+    it('wins the reservation while the task is in a running status', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      expect(repo.reserveSpawnForTick(task.id, runningStatuses)).toBe('won');
+    });
+
+    it('park between two sequential spawn attempts: first wins while running, second is superseded and spawns nothing', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      const spawns: string[] = [];
+
+      const first = repo.reserveSpawnForTick(task.id, runningStatuses);
+      if (first === 'won') spawns.push('agent-1');
+
+      repo.updateTask(task.id, { status: 'stopped' });
+
+      const second = repo.reserveSpawnForTick(task.id, runningStatuses);
+      if (second === 'won') spawns.push('agent-2');
+
+      expect(first).toBe('won');
+      expect(second).toBe('superseded');
+      expect(spawns).toEqual(['agent-1']);
+    });
+
+    it('holds the reservation: a second reserve while running is superseded until release', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      expect(repo.reserveSpawnForTick(task.id, runningStatuses)).toBe('won');
+      expect(repo.reserveSpawnForTick(task.id, runningStatuses)).toBe('superseded');
+      repo.releaseSpawnReservation(task.id);
+      expect(repo.reserveSpawnForTick(task.id, runningStatuses)).toBe('won');
+    });
+
+    it("returns 'superseded' when the status is outside the allowed set", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      expect(repo.reserveSpawnForTick(task.id, runningStatuses)).toBe('superseded');
+    });
+
+    it("returns 'superseded' for an unknown task id", () => {
+      expect(repo.reserveSpawnForTick('nonexistent', runningStatuses)).toBe('superseded');
+    });
+
+    it("returns 'superseded' for an empty allowed set without claiming", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      expect(repo.reserveSpawnForTick(task.id, [])).toBe('superseded');
+      expect(repo.reserveSpawnForTick(task.id, runningStatuses)).toBe('won');
+    });
+
+    it('release on an unknown task id does not throw', () => {
+      expect(() => repo.releaseSpawnReservation('nonexistent')).not.toThrow();
+    });
+
+    it('does not churn updated_at or notify reactive watchers', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      const before = repo.getTask(task.id);
+      const notifiedTables: string[] = [];
+      const observingRepo = new SpaceTaskRepository(
+        db as any,
+        {
+          notifyChange: (table: string) => notifiedTables.push(table),
+        } as unknown as ReactiveDatabase
+      );
+
+      expect(observingRepo.reserveSpawnForTick(task.id, runningStatuses)).toBe('won');
+      repo.releaseSpawnReservation(task.id);
+
+      const after = repo.getTask(task.id);
+      expect(after?.updatedAt).toBe(before?.updatedAt);
+      expect(after?.status).toBe('in_progress');
+      expect(notifiedTables).toEqual([]);
     });
   });
 
