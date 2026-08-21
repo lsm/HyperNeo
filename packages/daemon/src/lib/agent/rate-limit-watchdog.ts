@@ -5,9 +5,11 @@ import {
   classifyLimitKind,
   computeCooldown,
   entryKey,
+  MAX_RESET_HORIZON_MS,
   selectNextFallback,
   type CooldownDecision,
 } from './fallback-recovery';
+import { cooldownFromReset, type LimitRetryHint } from './limit-error-classifier';
 import { Logger } from '../logger';
 
 export interface RateLimitWatchdogConfig {
@@ -84,6 +86,7 @@ export class RateLimitWatchdog {
   private startupExhausted = false;
   private bannerCancelled = false;
   private episodeMessageUuid: string | null = null;
+  private lastHint: LimitRetryHint | null = null;
 
   constructor(
     sessionId: string,
@@ -123,12 +126,14 @@ export class RateLimitWatchdog {
 
   async scheduleRetry(
     errorMessage: string,
-    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
+    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
+    hint?: LimitRetryHint
   ): Promise<boolean> {
     const entryGeneration = this.generation;
 
     this.cancelCooldownTimer();
     this.lastErrorMessage = errorMessage;
+    if (hint) this.lastHint = hint;
 
     if (!lastUserMessage) {
       this.logger.warn('Cannot schedule rate limit recovery: no user message to retry.');
@@ -144,6 +149,7 @@ export class RateLimitWatchdog {
       this.startupRetries = 0;
       this.startupExhausted = false;
       this.bannerCancelled = false;
+      this.lastHint = hint ?? null;
     }
 
     const { provider, model } = this.deps.getCurrentModel();
@@ -192,7 +198,16 @@ export class RateLimitWatchdog {
       );
     }
 
-    const decision = computeCooldown(errorMessage, this.retryCount);
+    const now = Date.now();
+    const hintedReset = this.lastHint?.resetAtMs ?? null;
+    const usableHintedReset =
+      hintedReset !== null && hintedReset > now && hintedReset < now + MAX_RESET_HORIZON_MS
+        ? hintedReset
+        : null;
+    const decision =
+      usableHintedReset !== null
+        ? cooldownFromReset(usableHintedReset, now)
+        : computeCooldown(errorMessage, this.retryCount, now);
 
     if (!decision.freeWait && this.retryCount >= this.config.maxAutoRetries) {
       this.logger.warn(
@@ -221,7 +236,7 @@ export class RateLimitWatchdog {
     decision: CooldownDecision,
     episodeGeneration: number
   ): Promise<void> {
-    const kind = classifyLimitKind(errorMessage, decision);
+    const kind = this.lastHint?.kind ?? classifyLimitKind(errorMessage, decision);
     this.limitKind = kind;
 
     const retryAt = decision.retryAtMs;
@@ -470,6 +485,7 @@ export class RateLimitWatchdog {
     this.triedKeys.clear();
     this.chain = null;
     this.limitKind = null;
+    this.lastHint = null;
   }
 
   private getRemainingMs(): number {

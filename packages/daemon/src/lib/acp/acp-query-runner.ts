@@ -22,6 +22,8 @@ import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-s
 import { AcpProvider } from '../providers/acp-provider';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery';
+import { isNonRetryableBillingError } from '../agent/fallback-recovery';
+import { assessLimitError } from '../agent/limit-error-classifier';
 import {
   refreshQueryEnvFromProcess,
   type QueryRunnerContext,
@@ -810,7 +812,11 @@ export class AcpQueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
-        if (!this.ctx.isCleaningUp() && !recoveryState.rateLimitCooldownScheduled) {
+        if (
+          !this.ctx.isCleaningUp() &&
+          !recoveryState.rateLimitCooldownScheduled &&
+          stateManager.getState().status !== 'rate_limit_cooldown'
+        ) {
           await stateManager.setIdle();
           void processExitSnapshot.then(() => {
             if (
@@ -938,10 +944,15 @@ export class AcpQueryRunner {
         category = ErrorCategory.PERMISSION;
       }
 
-      const is429Error = category === ErrorCategory.RATE_LIMIT;
+      const isBillingError = isNonRetryableBillingError(errorMessage);
+      const limitAssessment = assessLimitError({ rawText: errorMessage });
       const rateLimitCooldownScheduled =
-        is429Error &&
-        !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
+        limitAssessment.isLimit &&
+        !isBillingError &&
+        !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage, {
+          resetAtMs: limitAssessment.resetAtMs,
+          kind: limitAssessment.kind,
+        }));
       if (rateLimitCooldownScheduled) {
         recoveryState.rateLimitCooldownScheduled = true;
       }

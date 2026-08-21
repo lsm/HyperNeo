@@ -73,7 +73,12 @@ export function selectNextFallback(
   return { next: null, exhausted: true, skipReason: lastSkip };
 }
 
-export type ResetTimestampStrategy = 'iso8601' | 'yyyymmdd-hms' | 'epoch-millis' | 'epoch-seconds';
+export type ResetTimestampStrategy =
+  | 'iso8601'
+  | 'yyyymmdd-hms'
+  | 'epoch-millis'
+  | 'epoch-seconds'
+  | 'structured';
 
 export interface ParsedReset {
   resetAtMs: number;
@@ -188,7 +193,7 @@ export function computeCooldown(
   };
 }
 
-const USAGE_CAP_KEYWORDS = [
+export const USAGE_CAP_KEYWORDS = [
   'usage',
   'cap',
   'quota',
@@ -214,6 +219,8 @@ export function classifyLimitKind(
   return 'rate_limit';
 }
 
+const HTTP_402_STATUS_RE = /\b402\b/;
+
 export function isNonRetryableBillingError(
   errorMessage: string,
   now: number = Date.now()
@@ -221,7 +228,7 @@ export function isNonRetryableBillingError(
   const lower = errorMessage.toLowerCase();
   const resettable = !!extractResetTimestamp(errorMessage, now);
   return (
-    errorMessage.includes('402') ||
+    HTTP_402_STATUS_RE.test(errorMessage) ||
     (!resettable &&
       (lower.includes('no quota') ||
         lower.includes('quota exceeded') ||

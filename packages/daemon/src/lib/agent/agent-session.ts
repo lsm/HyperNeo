@@ -124,6 +124,7 @@ import {
   type EventSubscriptionSetupContext,
 } from './event-subscription-setup';
 import { resolveFallbackChain } from './fallback-recovery';
+import type { LimitRetryHint } from './limit-error-classifier';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
 import {
   BATCH_DELIVERY_MAX_CHARS,
@@ -1276,16 +1277,25 @@ export class AgentSession
 
   async onMarkApiSuccess(message: import('@hyperneo/shared/sdk').SDKMessage): Promise<void> {
     this.errorManager.markApiSuccess();
-    if (isSDKResultSuccess(message)) {
+    if (isSDKResultSuccess(message) && message.is_error !== true) {
+      const wasPending = this.rateLimitWatchdog.isPending();
       this.rateLimitWatchdog.reset();
+      if (wasPending && this.stateManager.getState().status === 'rate_limit_cooldown') {
+        await this.stateManager.setIdle();
+      }
     }
   }
 
   async onRateLimitExhausted(
     errorMessage: string,
-    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
+    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
+    hint?: LimitRetryHint
   ): Promise<boolean> {
-    return this.rateLimitWatchdog.scheduleRetry(errorMessage, lastUserMessage);
+    return this.rateLimitWatchdog.scheduleRetry(errorMessage, lastUserMessage, hint);
+  }
+
+  async onResultLimitError(errorText: string, hint: LimitRetryHint): Promise<boolean> {
+    return this.onRateLimitExhausted(errorText, this.queryRunner.lastConsumedUserMessage, hint);
   }
 
   setCleaningUp(value: boolean): void {

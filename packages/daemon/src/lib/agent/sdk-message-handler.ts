@@ -4,7 +4,12 @@ import { signalDeliveryConsumed } from './message-delivery';
 import type { ContextInfo, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
+import type {
+  SDKMessage,
+  SDKRateLimitInfo,
+  SDKResultSuccess,
+  SDKUserMessage,
+} from '@hyperneo/shared/sdk';
 import {
   isSDKAPIRetryMessage,
   isSDKAssistantMessage,
@@ -17,6 +22,7 @@ import {
   isSDKConversationResetMessage,
   isSDKActiveGoalMessage,
   isSDKModelRefusalFallbackMessage,
+  isSDKRateLimitEvent,
   isSDKResultMessage,
   isSDKResultSuccess,
   isSDKSessionStateChangedMessage,
@@ -36,6 +42,7 @@ import type { ProcessingStateManager } from './processing-state-manager';
 import type { ContextTracker } from './context-tracker';
 import { ContextFetcher } from './context-fetcher';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
+import { assessLimitError, type LimitRetryHint } from './limit-error-classifier';
 import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail';
@@ -64,6 +71,8 @@ export interface SDKMessageHandlerContext {
 
   onCommandsChanged: (commands: string[]) => Promise<void>;
 
+  onResultLimitError?(errorText: string, hint: LimitRetryHint): Promise<boolean>;
+
   bumpDeliveryTurnActivity?(): void;
   reportFirstDeliverySDKResponse?(responseType: string): void;
 }
@@ -80,6 +89,7 @@ export class SDKMessageHandler {
   private expectsSessionStateIdleAfterResult: boolean = false;
   private lastResultWasSuccess: boolean | null = null;
   private suppressIdleOnNextResult: boolean = false;
+  private lastRateLimitInfo: SDKRateLimitInfo | null = null;
 
   private eventsSinceContextRefresh: number = 0;
 
@@ -662,6 +672,10 @@ export class SDKMessageHandler {
 
     await stateManager.detectPhaseFromMessage(message);
 
+    if (isSDKRateLimitEvent(message)) {
+      this.lastRateLimitInfo = message.rate_limit_info;
+    }
+
     if (await this.acknowledgePersistedUserMessage(message)) {
       this.maybeRefreshContextOnEvent(message);
       return;
@@ -748,8 +762,18 @@ export class SDKMessageHandler {
     }
 
     if (isTopLevelResult) {
-      this.lastResultWasSuccess = isSDKResultSuccess(message);
       this.resetThinkingTokenTracking();
+      const limitError = this.assessResultLimitError(message);
+      if (limitError) {
+        const engaged =
+          (await this.ctx.onResultLimitError?.(limitError.errorText, limitError.hint)) ?? false;
+        if (engaged) {
+          this.lastResultWasSuccess = false;
+          void this.refreshContextUsage('turn-end');
+          return;
+        }
+      }
+      this.lastResultWasSuccess = isSDKResultSuccess(message);
     }
 
     if (isSDKUserMessage(message)) {
@@ -845,6 +869,8 @@ export class SDKMessageHandler {
 
     if (!isSDKResultSuccess(message)) return;
 
+    this.lastRateLimitInfo = null;
+
     const usage = message.usage ?? {
       input_tokens: 0,
       output_tokens: 0,
@@ -911,8 +937,37 @@ export class SDKMessageHandler {
     }
   }
 
+  private assessResultLimitError(
+    message: SDKMessage
+  ): { errorText: string; hint: LimitRetryHint } | null {
+    if (!isSDKResultSuccess(message)) return null;
+    const result = message as SDKResultSuccess;
+    if (result.is_error !== true) return null;
+    const terminalReason = result.terminal_reason;
+    const apiErrorStatus = result.api_error_status;
+    const isApiErrorTerminal =
+      terminalReason === 'blocking_limit' ||
+      terminalReason === 'api_error' ||
+      typeof apiErrorStatus === 'number';
+    if (!isApiErrorTerminal) return null;
+    const errorText = typeof result.result === 'string' ? result.result : '';
+    const assessment = assessLimitError({
+      rawText: errorText,
+      httpStatus: typeof apiErrorStatus === 'number' ? apiErrorStatus : undefined,
+      terminalReason,
+      rateLimitInfo: this.lastRateLimitInfo ?? undefined,
+    });
+    if (!assessment.isLimit) return null;
+    return { errorText, hint: { resetAtMs: assessment.resetAtMs, kind: assessment.kind } };
+  }
+
   private async finishTurn(allowQueueReplay = true): Promise<void> {
     const { session, internalEventBus, stateManager } = this.ctx;
+
+    if (stateManager.getState().status === 'rate_limit_cooldown') {
+      this.logger.info('Skipping turn-end idle and replay: rate limit cooldown is armed.');
+      return;
+    }
 
     await stateManager.setIdle();
 

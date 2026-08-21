@@ -19,6 +19,7 @@ import {
 } from '../space/runtime/space-mcp-session-policy';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import { isNonRetryableBillingError } from './fallback-recovery';
+import { assessLimitError, type LimitRetryHint } from './limit-error-classifier';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
@@ -316,7 +317,8 @@ export interface QueryRunnerContext {
 
   onRateLimitExhausted?: (
     errorMessage: string,
-    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
+    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
+    hint?: LimitRetryHint
   ) => Promise<boolean>;
 }
 
@@ -1247,15 +1249,15 @@ export class QueryRunner {
 
           const processingState = stateManager.getState();
 
-          const lowerMsg = errorMessage.toLowerCase();
           const isBillingError = isNonRetryableBillingError(errorMessage);
-          const is429Error =
-            category === ErrorCategory.RATE_LIMIT &&
-            !isBillingError &&
-            (errorMessage.includes('429') || lowerMsg.includes('rate limit'));
+          const limitAssessment = assessLimitError({ rawText: errorMessage });
           recoveryState.rateLimitCooldownScheduled =
-            is429Error &&
-            !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
+            limitAssessment.isLimit &&
+            !isBillingError &&
+            !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage, {
+              resetAtMs: limitAssessment.resetAtMs,
+              kind: limitAssessment.kind,
+            }));
           if (!recoveryState.rateLimitCooldownScheduled) {
             stateManager.beginTerminalIdle();
           }
@@ -1346,7 +1348,11 @@ export class QueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
-        if (!this.ctx.isCleaningUp() && !recoveryState.rateLimitCooldownScheduled) {
+        if (
+          !this.ctx.isCleaningUp() &&
+          !recoveryState.rateLimitCooldownScheduled &&
+          stateManager.getState().status !== 'rate_limit_cooldown'
+        ) {
           await stateManager.setIdle();
         }
 

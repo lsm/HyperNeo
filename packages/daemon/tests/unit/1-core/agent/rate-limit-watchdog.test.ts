@@ -199,6 +199,97 @@ describe('RateLimitWatchdog', () => {
     });
   });
 
+  describe('structured limit hints', () => {
+    it('prefers a hinted reset time over the backoff ladder and reports the hinted kind', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const resetAt = Date.now() + 2 * 60 * 60 * 1000;
+      const result = await watchdog.scheduleRetry(
+        '429',
+        { uuid: 'm1', content: 'x' },
+        { resetAtMs: resetAt, kind: 'usage_limit' }
+      );
+      expect(result).toBe(true);
+      expect(notifyPause.mock.calls[0][0]).toMatchObject({
+        kind: 'usage_limit',
+        resetAt: resetAt + RESET_BUFFER_MS,
+      });
+      const cooldownArgs = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock
+        .calls[0][0];
+      expect(cooldownArgs.retryAt).toBe(resetAt + RESET_BUFFER_MS);
+      expect(watchdog.getState().retryCount).toBe(0);
+      watchdog.cancel();
+    });
+
+    it('ignores a stale (past) hinted reset and falls back to the backoff ladder', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const result = await watchdog.scheduleRetry(
+        '429',
+        { uuid: 'm1', content: 'x' },
+        { resetAtMs: Date.now() - 1000, kind: 'usage_limit' }
+      );
+      expect(result).toBe(true);
+      expect(notifyPause.mock.calls[0][0]).toMatchObject({ kind: 'usage_limit' });
+      expect(watchdog.getState().retryCount).toBe(1);
+      watchdog.cancel();
+    });
+
+    it('free-waits on a hinted weekly-scale reset even with a zero retry budget', async () => {
+      const { deps } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 0 });
+      const resetAt = Date.now() + 5 * 24 * 60 * 60 * 1000;
+      const result = await watchdog.scheduleRetry(
+        '429',
+        { uuid: 'm1', content: 'x' },
+        {
+          resetAtMs: resetAt,
+          kind: 'usage_limit',
+        }
+      );
+      expect(result).toBe(true);
+      expect(watchdog.getState().retryCount).toBe(0);
+      watchdog.cancel();
+    });
+
+    it('retains the hint across fallback re-entries within one episode', async () => {
+      const A: FallbackModelEntry = { provider: 'p2', model: 'm2' };
+      const { deps, notifyPause } = createMockDeps({ chain: [A], switchSucceeds: false });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const resetAt = Date.now() + 90 * 60 * 1000;
+      const result = await watchdog.scheduleRetry(
+        '429',
+        { uuid: 'm1', content: 'x' },
+        { resetAtMs: resetAt, kind: 'usage_limit' }
+      );
+      expect(result).toBe(true);
+      await flush();
+      expect(notifyPause).toHaveBeenCalledTimes(1);
+      expect(notifyPause.mock.calls[0][0]).toMatchObject({
+        kind: 'usage_limit',
+        resetAt: resetAt + RESET_BUFFER_MS,
+      });
+      watchdog.cancel();
+    });
+
+    it('clears the hint when the episode turns over to a new user message', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      await watchdog.scheduleRetry(
+        '429',
+        { uuid: 'm1', content: 'x' },
+        { resetAtMs: Date.now() + 60 * 60 * 1000, kind: 'usage_limit' }
+      );
+      await watchdog.scheduleRetry('429', { uuid: 'm2', content: 'y' });
+      const payload = notifyPause.mock.calls[1][0] as { kind: string; resetAt?: number };
+      expect(payload.kind).toBe('rate_limit');
+      expect(payload.resetAt === undefined || payload.resetAt < Date.now() + 60 * 60 * 1000).toBe(
+        true
+      );
+      watchdog.cancel();
+    });
+  });
+
   describe('Phase A — immediate fallback switch', () => {
     const A: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
     const B: FallbackModelEntry = { provider: 'minimax', model: 'abab6.5' };
