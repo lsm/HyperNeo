@@ -173,19 +173,32 @@ async function main() {
     );
   };
 
-  const biggest = db
+  const envBiggest = process.env.BENCH_SESSION_ID;
+  const envSmall = process.env.BENCH_SMALL_SESSION_ID;
+  const discoveredBiggest = db
     .query(
       'SELECT session_id, COUNT(*) AS c FROM sdk_messages GROUP BY session_id ORDER BY c DESC LIMIT 1'
     )
     .get() as { session_id: string; c: number };
-  const small = db
+  const biggest = envBiggest
+    ? { session_id: envBiggest, c: 0 }
+    : {
+        session_id: discoveredBiggest.session_id,
+        c: discoveredBiggest.c,
+      };
+  const discoveredSmall = db
     .query(
       'SELECT session_id, COUNT(*) AS c FROM sdk_messages GROUP BY session_id HAVING c BETWEEN 1000 AND 3000 ORDER BY c DESC LIMIT 1'
     )
     .get() as { session_id: string; c: number };
+  const small = envSmall
+    ? { session_id: envSmall, c: 0 }
+    : { session_id: discoveredSmall.session_id, c: discoveredSmall.c };
   console.log(`db: ${dbPath}`);
-  console.log(`largest session: ${biggest.session_id} (${biggest.c} messages)`);
-  console.log(`small reference session: ${small.session_id} (${small.c} messages)`);
+  console.log(
+    `largest session: ${biggest.session_id}${envBiggest ? ' (via BENCH_SESSION_ID)' : ` (${biggest.c} messages, discovery queries warmed the page cache)`}`
+  );
+  console.log(`small reference session: ${small.session_id}`);
 
   const reset = () => {
     mainSqlStats.count = 0;
@@ -215,10 +228,10 @@ async function main() {
     console.log(`  ${deliveredSummary()}`);
   };
 
-  console.log('\n== messages.bySession via production liveQuery.subscribe (cold) ==');
+  console.log('\n== messages.bySession via production liveQuery.subscribe (first run) ==');
   const t0 = performance.now();
   subscribe('messages.bySession', [biggest.session_id, 200]);
-  console.log(`cold subscribe wall: ${(performance.now() - t0).toFixed(1)}ms`);
+  console.log(`first subscribe wall: ${(performance.now() - t0).toFixed(1)}ms`);
   console.log(fmt('  main sql', mainSqlStats));
   console.log(fmt('  evaluate', evalStats));
   console.log(`  ${deliveredSummary()}`);
@@ -374,6 +387,40 @@ async function main() {
     console.log(`  ${label}: avg=${(stats.totalMs / stats.count).toFixed(2)}ms`);
   }
 
+  console.log('\n== digest sentinel candidates (same session, warm) ==');
+  const digestSql = `SELECT COUNT(*),
+      COALESCE(SUM(length(id) + length(timestamp) + length(COALESCE(send_status, ''))), 0),
+      COALESCE(SUM(CASE message_type WHEN 'user' THEN 1 ELSE 2 END), 0)
+    FROM sdk_messages WHERE session_id = ?`;
+  const digestStmt = db.prepare(digestSql);
+  digestStmt.get(sessionId);
+  const digestStats = newStats();
+  for (let i = 0; i < 10; i++) {
+    const start = performance.now();
+    digestStmt.get(sessionId);
+    record(digestStats, performance.now() - start);
+  }
+  console.log(fmt('  session mutation-column digest', digestStats));
+
+  const queueDigestSql = `SELECT jq.rowid, jq.status, jq.retry_count, jq.run_at, jq.max_retries, jq.payload
+    FROM job_queue jq
+    WHERE jq.queue = 'message_delivery'
+      AND jq.status IN ('pending', 'processing')
+      AND json_extract(jq.payload, '$.sessionId') = ?`;
+  const queueDigestStmt = db.prepare(queueDigestSql);
+  const queueDigest = (): string => {
+    const rows = queueDigestStmt.all(sessionId) as Record<string, unknown>[];
+    return JSON.stringify(rows);
+  };
+  queueDigest();
+  const queueDigestStats = newStats();
+  for (let i = 0; i < 50; i++) {
+    const start = performance.now();
+    queueDigest();
+    record(queueDigestStats, performance.now() - start);
+  }
+  console.log(fmt('  job_queue active-row digest (sound shape)', queueDigestStats));
+
   console.log('\n== high-fanout subagent children under one in-window tool use ==');
   const windowToolUse = db
     .query(
@@ -401,7 +448,17 @@ async function main() {
       { count: 1000, payloadKb: 50 },
     ];
     for (const { count, payloadKb } of fanoutCases) {
-      db.run(`DELETE FROM sdk_messages WHERE id LIKE 'bench-fanout-%'`);
+      const deleted = db
+        .prepare(`SELECT COUNT(*) AS n FROM sdk_messages WHERE id LIKE 'bench-fanout-%'`)
+        .get() as { n: number };
+      if (deleted.n > 0) {
+        db.run(`DELETE FROM sdk_messages WHERE id LIKE 'bench-fanout-%'`);
+        await settle(
+          `settling removal of previous fan-out case (${deleted.n} rows)`,
+          ['sdk_messages'],
+          { sessionId: biggest.session_id }
+        );
+      }
       const payload = JSON.stringify({
         type: 'progress',
         subtype: 'task_progress',
