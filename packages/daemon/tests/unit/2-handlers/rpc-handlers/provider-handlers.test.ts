@@ -137,6 +137,7 @@ describe('Provider RPC handlers', () => {
   let sessionManager: {
     interruptCachedProviderSessions: ReturnType<typeof mock>;
     interruptProviderSessions: ReturnType<typeof mock>;
+    interruptProviderSessionsById: ReturnType<typeof mock>;
   };
   let clearPersistedAcpSessionIds: ReturnType<typeof mock>;
   let listPersistedAcpSessionIds: ReturnType<typeof mock>;
@@ -150,6 +151,7 @@ describe('Provider RPC handlers', () => {
     sessionManager = {
       interruptCachedProviderSessions: mock(async () => {}),
       interruptProviderSessions: mock(async () => {}),
+      interruptProviderSessionsById: mock(async () => {}),
     };
     clearPersistedAcpSessionIds = mock(() => {});
     listPersistedAcpSessionIds = mock(() => []);
@@ -340,7 +342,7 @@ describe('Provider RPC handlers', () => {
         {}
       );
 
-      expect(sessionManager.interruptProviderSessions).toHaveBeenCalledWith('acp');
+      expect(sessionManager.interruptProviderSessionsById).toHaveBeenCalledWith([]);
       expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
     });
 
@@ -366,7 +368,7 @@ describe('Provider RPC handlers', () => {
 
       expect(result.provider.isEnabled).toBe(false);
       expect(provider.getAcpCommand()).toBe('old acp');
-      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(sessionManager.interruptProviderSessionsById).not.toHaveBeenCalled();
       expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
     });
 
@@ -480,7 +482,7 @@ describe('Provider RPC handlers', () => {
       provider.setAcpCommand = mock((command: string | undefined) => {
         callOrder.push(`sync:${command}`);
       });
-      sessionManager.interruptProviderSessions = mock(async () => {
+      sessionManager.interruptProviderSessionsById = mock(async () => {
         callOrder.push('interrupt');
       });
       clearPersistedAcpSessionIds = mock(() => {
@@ -527,7 +529,7 @@ describe('Provider RPC handlers', () => {
       disposeAcpSessions = mock(async () => {
         callOrder.push('dispose');
       });
-      sessionManager.interruptProviderSessions = mock(async () => {
+      sessionManager.interruptProviderSessionsById = mock(async () => {
         callOrder.push('interrupt');
       });
       const created = repo.createProvider({
@@ -554,6 +556,33 @@ describe('Provider RPC handlers', () => {
         undefined,
         expect.any(AbortSignal)
       );
+      expect(sessionManager.interruptProviderSessionsById).toHaveBeenCalledWith(['s1', 's2']);
+    });
+
+    it('interrupts only the snapshotted ACP sessions, not sessions created during disposal', async () => {
+      const provider = new AcpProvider({}, async () => {});
+      provider.setAcpCommand('old acp');
+      getProviderRegistry().register(provider);
+      listPersistedAcpSessionIds = mock(() => [{ sessionId: 'old-1', acpSessionId: 'acp-old-1' }]);
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'old acp', models: [] }),
+      });
+      const handlers = setup();
+
+      await handlers.get('providers.update')!(
+        {
+          id: created.id,
+          params: { configJson: JSON.stringify({ command: 'new acp', models: [] }) },
+        },
+        {}
+      );
+
+      expect(sessionManager.interruptProviderSessionsById).toHaveBeenCalledWith(['old-1']);
+      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
     });
 
     it('disposes snapshotted ACP session ids when a disabled record changes its command', async () => {
@@ -587,7 +616,7 @@ describe('Provider RPC handlers', () => {
         undefined,
         expect.any(AbortSignal)
       );
-      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(sessionManager.interruptProviderSessionsById).not.toHaveBeenCalled();
     });
 
     it('invalidates ACP sessions when the stored command is removed and the env command differs', async () => {
@@ -614,7 +643,7 @@ describe('Provider RPC handlers', () => {
         else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
       }
 
-      expect(sessionManager.interruptProviderSessions).toHaveBeenCalledWith('acp');
+      expect(sessionManager.interruptProviderSessionsById).toHaveBeenCalledWith([]);
       expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
     });
 
@@ -645,7 +674,7 @@ describe('Provider RPC handlers', () => {
         else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
       }
 
-      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(sessionManager.interruptProviderSessionsById).not.toHaveBeenCalled();
       expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
     });
 
@@ -666,7 +695,7 @@ describe('Provider RPC handlers', () => {
       await handlers.get('providers.update')!({ id: created.id, params: { isEnabled: true } }, {});
 
       expect(provider.getAcpCommand()).toBe('new acp');
-      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(sessionManager.interruptProviderSessionsById).not.toHaveBeenCalled();
       expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
     });
 
@@ -696,7 +725,7 @@ describe('Provider RPC handlers', () => {
       );
 
       expect(provider.getAcpCommand()).toBe('new acp');
-      expect(sessionManager.interruptProviderSessions).toHaveBeenCalledWith('acp');
+      expect(sessionManager.interruptProviderSessionsById).toHaveBeenCalledWith([]);
       expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
     });
 
@@ -717,19 +746,55 @@ describe('Provider RPC handlers', () => {
           { id: created.id, params: { isEnabled: false } },
           {}
         );
-        sessionManager.interruptProviderSessions.mockClear();
+        sessionManager.interruptProviderSessionsById.mockClear();
         clearPersistedAcpSessionIds.mockClear();
         await handlers.get('providers.update')!(
           { id: created.id, params: { isEnabled: true } },
           {}
         );
 
-        expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+        expect(sessionManager.interruptProviderSessionsById).not.toHaveBeenCalled();
         expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
       } finally {
         if (originalCommand === undefined) delete process.env.HYPERNEO_ACP_COMMAND;
         else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
       }
+    });
+
+    it('preserves ACP sessions when enabling a command-less record with a matching env command', async () => {
+      const originalCommand = process.env.HYPERNEO_ACP_COMMAND;
+      process.env.HYPERNEO_ACP_COMMAND = 'devin acp';
+      const provider = new AcpProvider({}, async () => {});
+      provider.setAcpCommand('devin acp');
+      getProviderRegistry().register(provider);
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        isEnabled: false,
+        configJson: JSON.stringify({ models: [{ id: 'old-model' }] }),
+      });
+      const handlers = setup();
+
+      try {
+        await handlers.get('providers.update')!(
+          {
+            id: created.id,
+            params: {
+              isEnabled: true,
+              configJson: JSON.stringify({ models: [{ id: 'new-model' }] }),
+            },
+          },
+          {}
+        );
+      } finally {
+        if (originalCommand === undefined) delete process.env.HYPERNEO_ACP_COMMAND;
+        else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
+      }
+
+      expect(sessionManager.interruptProviderSessionsById).not.toHaveBeenCalled();
+      expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
     });
 
     it('clears persisted ACP sessions when the command changes while disabled', async () => {
@@ -751,7 +816,7 @@ describe('Provider RPC handlers', () => {
         {}
       );
 
-      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(sessionManager.interruptProviderSessionsById).not.toHaveBeenCalled();
       expect(clearPersistedAcpSessionIds).toHaveBeenCalledTimes(1);
     });
 
@@ -818,7 +883,7 @@ describe('Provider RPC handlers', () => {
       );
 
       expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
-      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(sessionManager.interruptProviderSessionsById).not.toHaveBeenCalled();
     });
 
     it('preserves ACP session ids for model-only configuration changes', async () => {
@@ -842,7 +907,7 @@ describe('Provider RPC handlers', () => {
       );
 
       expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
-      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(sessionManager.interruptProviderSessionsById).not.toHaveBeenCalled();
     });
 
     it('interrupts cached ACP sessions when disabling the provider', async () => {
@@ -858,7 +923,7 @@ describe('Provider RPC handlers', () => {
       await handlers.get('providers.update')!({ id: created.id, params: { isEnabled: false } }, {});
 
       expect(sessionManager.interruptCachedProviderSessions).toHaveBeenCalledWith('acp');
-      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(sessionManager.interruptProviderSessionsById).not.toHaveBeenCalled();
       expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
     });
 
@@ -946,7 +1011,7 @@ describe('Provider RPC handlers', () => {
       await handlers.get('providers.delete')!({ id: created.id }, {});
 
       expect(sessionManager.interruptCachedProviderSessions).toHaveBeenCalledWith('acp');
-      expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+      expect(sessionManager.interruptProviderSessionsById).not.toHaveBeenCalled();
       expect(clearPersistedAcpSessionIds).not.toHaveBeenCalled();
     });
 

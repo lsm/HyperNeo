@@ -555,20 +555,28 @@ export class SessionManager {
     await Promise.all(
       Array.from(sessionIds, async (sessionId) => {
         const session = sessionsById.get(sessionId);
-        this.db.updateSession(sessionId, {
-          acpSessionId: undefined,
-          ...(session?.metadata?.acpContextUsageEstimate !== undefined
-            ? {
-                metadata: {
-                  ...session.metadata,
-                  acpContextUsageEstimate: undefined,
-                },
-              }
-            : {}),
-        });
-        await this.interruptInMemorySession(sessionId);
+        await this.interruptProviderSession(sessionId, session);
       })
     );
+  }
+
+  async interruptProviderSessionsById(sessionIds: string[]): Promise<void> {
+    await Promise.all(sessionIds.map((sessionId) => this.interruptProviderSession(sessionId)));
+  }
+
+  private async interruptProviderSession(sessionId: string, session?: Session): Promise<void> {
+    this.db.updateSession(sessionId, {
+      acpSessionId: undefined,
+      ...(session?.metadata?.acpContextUsageEstimate !== undefined
+        ? {
+            metadata: {
+              ...session.metadata,
+              acpContextUsageEstimate: undefined,
+            },
+          }
+        : {}),
+    });
+    await this.interruptInMemorySession(sessionId);
   }
 
   getActiveSessions(): number {

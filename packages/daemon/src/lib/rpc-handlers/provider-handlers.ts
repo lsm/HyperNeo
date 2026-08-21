@@ -156,7 +156,9 @@ export interface ProviderHandlerDeps {
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   sessionManager?: Pick<
     SessionManager,
-    'interruptCachedProviderSessions' | 'interruptProviderSessions'
+    | 'interruptCachedProviderSessions'
+    | 'interruptProviderSessions'
+    | 'interruptProviderSessionsById'
   >;
   clearPersistedAcpSessionIds?: () => void;
   listPersistedAcpSessionIds?: () => Array<{ sessionId: string; acpSessionId: string }>;
@@ -202,16 +204,18 @@ async function disposeAcpSessionIds(
 }
 
 async function invalidateAcpSessions(
-  sessionManager: Pick<SessionManager, 'interruptProviderSessions'> | undefined,
+  sessionManager: Pick<SessionManager, 'interruptProviderSessionsById'> | undefined,
   clearPersistedAcpSessionIds: (() => void) | undefined,
   previousCommand: string | undefined,
   listPersistedAcpSessionIds?: () => Array<{ sessionId: string; acpSessionId: string }>,
   dispose: typeof disposeAcpSessions = disposeAcpSessions
 ): Promise<void> {
-  const sessionIds = listPersistedAcpSessionIds?.().map((entry) => entry.acpSessionId) ?? [];
+  const persisted = listPersistedAcpSessionIds?.() ?? [];
+  const sessionIds = persisted.map((entry) => entry.acpSessionId);
+  const localSessionIds = persisted.map((entry) => entry.sessionId);
   clearPersistedAcpSessionIds?.();
   await disposeAcpSessionIds(previousCommand, sessionIds, dispose);
-  await sessionManager?.interruptProviderSessions('acp');
+  await sessionManager?.interruptProviderSessionsById(localSessionIds);
 }
 
 function acpCommandsDiffer(
@@ -421,13 +425,13 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
               : process.env.HYPERNEO_ACP_COMMAND;
           const effectiveAcpCommandBeforeEnable =
             readAcpCommand(existing.configJson) ?? liveAcpCommand;
+          const envAcpCommand = process.env.HYPERNEO_ACP_COMMAND;
           const enablingChangedAcpCommand =
             existing.providerId === 'acp' &&
             existing.isEnabled === false &&
             updates.isEnabled === true &&
             updates.configJson !== undefined &&
-            acpCommandsDiffer(effectiveAcpCommandBeforeEnable, updatedAcpCommand);
-          const envAcpCommand = process.env.HYPERNEO_ACP_COMMAND;
+            acpCommandsDiffer(effectiveAcpCommandBeforeEnable, updatedAcpCommand ?? envAcpCommand);
           const acpCommandChanged =
             existing.providerId === 'acp' &&
             updates.configJson !== undefined &&
