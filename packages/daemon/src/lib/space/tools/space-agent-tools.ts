@@ -1919,7 +1919,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       const trimmedHandle =
         typeof args.workflow_handle === 'string' ? args.workflow_handle.trim() : '';
       const handleWorkflow =
-        typeof args.workflow_handle === 'string' && trimmedHandle !== ''
+        typeof args.workflow_handle === 'string' && trimmedHandle !== '' && !workflowIdUsable
           ? workflowManager.getWorkflowByHandle(spaceId, trimmedHandle)
           : null;
       const ref = routeCreateTaskWorkflowRef({
