@@ -15,12 +15,37 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  decodeStatMode,
   readFileWithinWorkspace,
   writeFileWithinWorkspace,
 } from '../../../../src/lib/acp/acp-safe-fs';
 
 const bunRuntimeTest = process.versions.bun ? test : test.skip;
 const unsupportedRuntimeTest = process.versions.bun ? test.skip : test;
+
+test('decodes regular-file mode bits from a stat buffer', () => {
+  const buf = Buffer.alloc(256);
+  buf.writeUInt16LE(0o100400, 8);
+  expect(decodeStatMode(buf, 8, 2)).toBe(0o400);
+  buf.writeUInt16LE(0o100644, 8);
+  expect(decodeStatMode(buf, 8, 2)).toBe(0o644);
+  buf.writeUInt16LE(0o100000, 8);
+  expect(decodeStatMode(buf, 8, 2)).toBe(0o000);
+});
+
+test('decodes 32-bit mode values from a stat buffer', () => {
+  const buf = Buffer.alloc(256);
+  buf.writeUInt32LE(0o100400, 16);
+  expect(decodeStatMode(buf, 16, 4)).toBe(0o400);
+});
+
+test('returns the pinned mode for non-regular stat entries', () => {
+  const buf = Buffer.alloc(256);
+  buf.writeUInt16LE(0o40700, 8);
+  expect(decodeStatMode(buf, 8, 2)).toBe(0o600);
+  buf.writeUInt16LE(0o120400, 8);
+  expect(decodeStatMode(buf, 8, 2)).toBe(0o600);
+});
 
 unsupportedRuntimeTest('rejects filesystem operations only when invoked', async () => {
   const signal = new AbortController().signal;

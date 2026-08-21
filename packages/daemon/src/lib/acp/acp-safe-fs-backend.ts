@@ -7,6 +7,7 @@ const READ_BUFFER_BYTES = 64 * 1024;
 const MAX_WRITE_BYTES = 4 * 1024 * 1024;
 const AT_SYMLINK_NOFOLLOW = process.platform === 'darwin' ? 0x20 : 0x100;
 const STAT_MODE_OFFSET = process.platform === 'darwin' ? 8 : process.arch === 'arm64' ? 16 : 24;
+let darwinStatModeOffset: number | undefined;
 
 interface BunFfiModule {
   dlopen: (
@@ -171,6 +172,27 @@ function closeFile(symbols: LibcSymbols, fd: number): void {
   if (fd >= 0) symbols.close(fd);
 }
 
+function getDarwinStatModeOffset(symbols: LibcSymbols, directoryFd: number): number {
+  if (darwinStatModeOffset !== undefined) return darwinStatModeOffset;
+  const knownMode = fstatSync(directoryFd).mode & 0xffff;
+  const statBuf = Buffer.alloc(256);
+  symbols.fstatat(directoryFd, cString('.'), statBuf, AT_SYMLINK_NOFOLLOW);
+  for (let offset = 0; offset < 32; offset += 2) {
+    if (statBuf.readUInt16LE(offset) === knownMode) {
+      darwinStatModeOffset = offset;
+      return offset;
+    }
+  }
+  darwinStatModeOffset = STAT_MODE_OFFSET;
+  return STAT_MODE_OFFSET;
+}
+
+export function decodeStatMode(statBuf: Buffer, modeOffset: number, modeWidth: 2 | 4): number {
+  const mode =
+    modeWidth === 2 ? statBuf.readUInt16LE(modeOffset) : statBuf.readUInt32LE(modeOffset);
+  return (mode & 0o170000) === 0o100000 ? mode & 0o777 : FILE_MODE;
+}
+
 function replacementMode(symbols: LibcSymbols, directoryFd: number, fileName: string): number {
   let fileFd = symbols.openat(
     directoryFd,
@@ -199,11 +221,12 @@ function replacementMode(symbols: LibcSymbols, directoryFd: number, fileName: st
   if (symbols.fstatat(directoryFd, cString(fileName), statBuf, AT_SYMLINK_NOFOLLOW) !== 0) {
     return FILE_MODE;
   }
-  const mode =
+  const modeOffset =
     process.platform === 'darwin'
-      ? statBuf.readUInt16LE(STAT_MODE_OFFSET)
-      : statBuf.readUInt32LE(STAT_MODE_OFFSET);
-  return (mode & 0o170000) === 0o100000 ? mode & 0o777 : FILE_MODE;
+      ? getDarwinStatModeOffset(symbols, directoryFd)
+      : STAT_MODE_OFFSET;
+  const modeWidth = process.platform === 'darwin' ? 2 : 4;
+  return decodeStatMode(statBuf, modeOffset, modeWidth);
 }
 
 async function openWorkspacePath(
