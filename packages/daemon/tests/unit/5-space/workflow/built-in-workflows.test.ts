@@ -389,12 +389,18 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('space-checkout-ahead');
   });
 
-  test('merge instructions scan human reviews and verify merged-state recovery', () => {
-    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('HUMAN-authored `CHANGES_REQUESTED`');
+  test('merge instructions scan all reviews and verify merged-state recovery', () => {
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('by ANY author (human or Devon)');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('a later `APPROVED` from that same author');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'gate artifact `head_oid` still equals the PR headRefOid'
     );
+  });
+
+  test('Devon pass requires an unambiguous zero-findings verdict', () => {
+    expect(CODER_ONLY_PROMPT).toContain('EXPLICIT zero-findings verdict');
+    expect(CODER_ONLY_PROMPT).toContain('"No Issues Found"');
+    expect(CODER_ONLY_PROMPT).toContain('minor findings are still findings');
   });
 
   test('requires human sign-off structurally', () => {

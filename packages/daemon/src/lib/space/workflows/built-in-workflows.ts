@@ -264,14 +264,16 @@ export const CODER_ONLY_PROMPT =
   'substitute a `submittedAt` comparison — a review started on an old head and submitted after a ' +
   'push still names the old commit and must not count. Reject `DISMISSED` and `PENDING` reviews ' +
   'outright: a dismissed review was deliberately withdrawn and its retained body must not count. ' +
-  'The pass requires an EXPLICIT clean verdict on a current-head `APPROVED` or `COMMENTED` ' +
-  'review: either state `APPROVED`, or a body containing an explicit no-issues statement ' +
-  '(e.g. "No Issues Found", "no major issues"). A `COMMENTED` review that merely lacks blocking ' +
-  'words is NOT a pass — informational or progress reviews do not count, so keep waiting or ' +
-  're-trigger. A `CHANGES_REQUESTED` review or a body flagging a major, blocking, or similarly ' +
-  'severe issue (any severity language, not just those two words) from Devon is a blocker — ' +
-  'address it, push, and re-trigger Devon. If Devon has no passing review on the current head, ' +
-  'trigger it (e.g. `@devon review`) and wait. ' +
+  'The pass requires an EXPLICIT zero-findings verdict on a current-head `APPROVED` or `COMMENTED` ' +
+  'review: either state `APPROVED`, or a body containing an unambiguous no-findings statement ' +
+  'such as "No Issues Found". A hedged verdict — "no major issues" paired with any reported ' +
+  'defect, caveat, or severity language — is NOT a pass: minor findings are still findings, so ' +
+  'address them, push, and re-trigger. A `COMMENTED` review that merely lacks blocking words is ' +
+  'NOT a pass — informational or progress reviews do not count, so keep waiting or re-trigger. ' +
+  'A `CHANGES_REQUESTED` review or a body flagging a major, blocking, or similarly severe issue ' +
+  '(any severity language, not just those two words) from Devon is a blocker — address it, push, ' +
+  'and re-trigger Devon. If Devon has no passing review on the current head, trigger it ' +
+  '(e.g. `@devon review`) and wait. ' +
   'Poll both gates every 60 seconds in a bounded loop. If either external reviewer has not passed ' +
   'within the timeout window (~2 hours), escalate via send_message to the escalation target in your ' +
   'Runtime Execution Contract, record a note artifact (kind "external-review-timeout"), and STOP — ' +
@@ -857,7 +859,7 @@ export const CODER_ONLY_MERGE_INSTRUCTIONS: string = [
   '  - there is NO effective outstanding `CHANGES_REQUESTED` review — even one on an OLDER head that no other reviewer superseded. A `CHANGES_REQUESTED` from Devon or from a human reviewer blocks the merge until that reviewer dismisses it or approves;',
   '  - if the base repository requires approving GitHub reviews (`reviewDecision` is `REVIEW_REQUIRED`), that is an ADMINISTRATIVE blocker — this gate does not supply GitHub approvals, so escalate per step 4 and never bypass it with `--admin`;',
   '  - the Codex `THUMBS_UP` (+1) reaction belongs to a review cycle started on the CURRENT head — posted after a `@codex review` trigger that itself postdates the last push, with the head unchanged since that trigger (a late `THUMBS_UP` from a cycle begun on an older head does not count);',
-  '  - a Devon-authored review covers the CURRENT head, carries an EXPLICIT clean verdict (APPROVED state or a body with an explicit no-issues statement), and does NOT request changes or flag a severe issue;',
+  '  - a Devon-authored review covers the CURRENT head, carries an EXPLICIT zero-findings verdict (APPROVED state or an unambiguous no-findings body), and does NOT request changes or flag any issue;',
   '  - your informal-review gate artifact (`external-review-gate`) was recorded for the CURRENT head (or an earlier head with no intervening push) AND for the CURRENT base branch — retargeting the PR to a different base changes the reviewed diff without changing the head, so a base change also stales the gate and the human approval;',
   '',
   'Derive the GitHub-approval requirement from the PR itself, not from any repository-specific assumption: an empty or APPROVED `reviewDecision` means the base requires no approving GitHub review beyond this gate, while REVIEW_REQUIRED is the administrative blocker above.',
@@ -877,7 +879,7 @@ export const CODER_ONLY_MERGE_INSTRUCTIONS: string = [
   '     HEAD_OID=$(gh pr view {{pr_url}} --json headRefOid --jq .headRefOid)',
   '     REVIEW_DECISION=$(gh pr view {{pr_url}} --json reviewDecision --jq .reviewDecision)',
   '     case "$REVIEW_DECISION" in CHANGES_REQUESTED) echo "GitHub reviewDecision is CHANGES_REQUESTED — an outstanding change request stands; do NOT merge." >&2; exit 1;; REVIEW_REQUIRED) echo "GitHub reviewDecision is REVIEW_REQUIRED — the base repository requires an approving GitHub review this gate cannot supply; treat it as an ADMINISTRATIVE blocker per step 4 and never use --admin." >&2; exit 1;; esac',
-  '   Re-run the external gate from the coding phase against the CURRENT head: the Codex `THUMBS_UP` (+1) reaction must come from a cycle triggered after the last push with the head unchanged since (see the coding-phase gate), and a Devon-authored review must cover the current head (commit.oid equality) with an explicit clean verdict and no changes-requested. Also scan the paginated reviews lookup for any HUMAN-authored `CHANGES_REQUESTED` review that has not been superseded by a later `APPROVED` from that same author — `reviewDecision` can miss reviews from reviewers outside branch protection, and such a review blocks the merge even when it opened no inline thread. If any of these is stale or missing, re-trigger the reviewer (`@codex review` / `@devon review`), re-wait for both to pass, and do NOT merge until both are fresh on the CURRENT head.',
+  '   Re-run the external gate from the coding phase against the CURRENT head: the Codex `THUMBS_UP` (+1) reaction must come from a cycle triggered after the last push with the head unchanged since (see the coding-phase gate), and a Devon-authored review must cover the current head (commit.oid equality) with an explicit clean verdict and no changes-requested. Also scan the paginated reviews lookup for any outstanding `CHANGES_REQUESTED` review by ANY author (human or Devon) that has not been superseded by a later `APPROVED` from that same author — `reviewDecision` can miss reviews from reviewers outside branch protection, and such a review blocks the merge even when it opened no inline thread. If any of these is stale or missing, re-trigger the reviewer (`@codex review` / `@devon review`), re-wait for both to pass, and do NOT merge until both are fresh on the CURRENT head.',
   '   Confirm your keyed `external-review-gate` note artifact (key "gate") exists, its head OID equals $HEAD_OID, and its recorded base_ref equals the current baseRefName; if the head OR the base changed after approval, BOTH the gate AND the human approval are stale — re-run the FULL external gate and your informal review against the CURRENT head, re-record the artifact, and obtain fresh human sign-off on the new head via space-agent (as in step 4b) BEFORE merging.',
   '   Otherwise merge, bound to the verified head:',
   '     gh pr merge {{pr_url}} --squash --match-head-commit "$HEAD_OID"',
