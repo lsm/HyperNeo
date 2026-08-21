@@ -5976,8 +5976,12 @@ export class SpaceRuntime {
       canonicalTask = refreshed ?? canonicalTask;
     }
 
-    let nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-    const runIsComplete = this.completionDetector.isComplete({ workflowRunId: runId });
+    let cachedNodeExecutions: NodeExecution[] | null = null;
+    const loadNodeExecutions = (): NodeExecution[] =>
+      (cachedNodeExecutions ??= this.config.nodeExecutionRepo.listByWorkflowRun(runId));
+    let cachedRunIsComplete: boolean | null = null;
+    const resolveRunIsComplete = (): boolean =>
+      (cachedRunIsComplete ??= this.completionDetector.isComplete({ workflowRunId: runId }));
 
     const admission = decideRunTickAdmission({
       runStatus: run.status,
@@ -5986,12 +5990,13 @@ export class SpaceRuntime {
       hasCanonicalTask: true,
       hasEndNodeId: !!meta.workflow.endNodeId,
       canonicalTaskStatus: canonicalTask.status,
-      executionCount: nodeExecutions.length,
-      runIsComplete,
-      hasBlockedExecution:
-        !runIsComplete && nodeExecutions.some((execution) => execution.status === 'blocked'),
-      firstBlockedResult:
-        nodeExecutions.find((execution) => execution.status === 'blocked')?.result ?? null,
+      executionCount: () => loadNodeExecutions().length,
+      runIsComplete: resolveRunIsComplete,
+      hasBlockedExecution: () =>
+        !resolveRunIsComplete() &&
+        loadNodeExecutions().some((execution) => execution.status === 'blocked'),
+      firstBlockedResult: () =>
+        loadNodeExecutions().find((execution) => execution.status === 'blocked')?.result ?? null,
       availableTaskSlots: Number.MAX_SAFE_INTEGER,
     });
 
@@ -6055,6 +6060,9 @@ export class SpaceRuntime {
       });
       return;
     }
+
+    let nodeExecutions = loadNodeExecutions();
+    const runIsComplete = resolveRunIsComplete();
 
     const space = await this.config.spaceManager.getSpace(meta.spaceId);
 
