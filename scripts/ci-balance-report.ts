@@ -240,30 +240,58 @@ export function buildReport(
     .map((row) => ({ bucket: row.bucket, path: row.file }));
 
   const suitesSeen = new Set(files.map((row) => row.suite).filter((suite) => suite !== null));
+  for (const suite of suitesFromJunitPaths(junitInputs.map((input) => input.path))) {
+    suitesSeen.add(suite);
+  }
   const coverage: CoverageRow[] = [];
   let coverageNote: string | null = null;
   if (options.coverage === false) {
     return { buckets, files, duplicates, unresolvedPaths, coverage, coverageNote };
   }
-  try {
-    for (const suite of ['daemon-unit', 'daemon-online', 'web'] as SuiteName[]) {
-      if (!suitesSeen.has(suite)) {
-        continue;
-      }
-      const expected = expectedFilesForSuite(suite);
-      const covered = new Set(
-        files
-          .filter((row) => row.suite === suite && row.repoPath !== null)
-          .map((row) => row.repoPath)
-      );
-      const missing = [...expected].filter((path) => !covered.has(path)).sort();
-      coverage.push({ suite, expected: expected.size, covered: covered.size, missing });
+  const oracleFailures: string[] = [];
+  for (const suite of ['daemon-unit', 'daemon-online', 'web'] as SuiteName[]) {
+    if (!suitesSeen.has(suite)) {
+      continue;
     }
-  } catch (error) {
-    coverageNote = `coverage check unavailable: ${error instanceof Error ? error.message : String(error)}`;
+    let expected: Set<string>;
+    try {
+      expected = expectedFilesForSuite(suite);
+    } catch (error) {
+      oracleFailures.push(`${suite}: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+    const covered = new Set(
+      files.filter((row) => row.suite === suite && row.repoPath !== null).map((row) => row.repoPath)
+    );
+    const missing = [...expected].filter((path) => !covered.has(path)).sort();
+    coverage.push({ suite, expected: expected.size, covered: covered.size, missing });
+  }
+  if (oracleFailures.length > 0) {
+    coverageNote = `coverage oracle unavailable for: ${oracleFailures.join('; ')}`;
   }
 
   return { buckets, files, duplicates, unresolvedPaths, coverage, coverageNote };
+}
+
+function suitesFromJunitPaths(paths: string[]): SuiteName[] {
+  const suites: SuiteName[] = [];
+  for (const path of paths) {
+    const segments = toPosix(path).split('/');
+    const base = segments[segments.length - 1] ?? '';
+    if (segments.some((segment) => segment.startsWith('daemon-online'))) {
+      suites.push('daemon-online');
+    }
+    if (
+      segments.some((segment) => segment.startsWith('daemon-unit-junit')) ||
+      (segments.includes('test-results') && segments.includes('daemon'))
+    ) {
+      suites.push('daemon-unit');
+    }
+    if (segments.includes('web') || segments.includes('web-junit') || base === 'junit-web.xml') {
+      suites.push('web');
+    }
+  }
+  return suites;
 }
 
 function walkTestFiles(root: string, out: string[]): void {
@@ -440,7 +468,8 @@ export function renderMarkdown(report: BalanceReport, top: number): string {
       }
     }
     lines.push('');
-  } else if (report.coverageNote !== null) {
+  }
+  if (report.coverageNote !== null) {
     lines.push(report.coverageNote, '');
   }
 
@@ -532,11 +561,12 @@ export function main(args = process.argv.slice(2)): number {
     return 2;
   }
 
-  const report = buildReport(junitPaths.map((path) => ({ path, xml: readFileSync(path, 'utf8') })));
-  if (options.noCoverage) {
-    report.coverage = [];
-    report.coverageNote = null;
-  }
+  const report = buildReport(
+    junitPaths.map((path) => ({ path, xml: readFileSync(path, 'utf8') })),
+    {
+      coverage: !options.noCoverage,
+    }
+  );
 
   if (options.json) {
     console.log(JSON.stringify(report, null, 2));

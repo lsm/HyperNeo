@@ -202,6 +202,28 @@ describe('buildReport', () => {
     expect(unitCoverage?.missing).toContain('packages/shared/tests/logger.test.ts');
     expect(report.coverage.map((row) => row.suite)).toEqual(['daemon-unit']);
   }, 30000);
+
+  it('skips the coverage oracle entirely when coverage is disabled', () => {
+    const report = buildReport(twoBucketInput, { coverage: false });
+
+    expect(report.coverage).toEqual([]);
+    expect(report.coverageNote).toBeNull();
+  });
+
+  it('reports a whole-suite empty junit as fully missing via its artifact path', () => {
+    const report = buildReport([
+      {
+        path: 'test-results/web/junit-web.xml',
+        xml: '<?xml version="1.0"?>\n<testsuites tests="0" failures="0" errors="0" time="0"></testsuites>\n',
+      },
+    ]);
+
+    const webCoverage = report.coverage.find((row) => row.suite === 'web');
+    expect(webCoverage).toBeDefined();
+    expect(webCoverage?.covered).toBe(0);
+    expect(webCoverage?.expected).toBeGreaterThan(50);
+    expect(webCoverage?.missing[0]).toContain('packages/web/src/');
+  });
 });
 
 describe('renderMarkdown', () => {
@@ -215,5 +237,15 @@ describe('renderMarkdown', () => {
     expect(markdown).toContain('## Per-file durations (top 2 of 4)');
     expect(markdown).toContain('packages/daemon/tests/online/rpc/rpc-draft-handlers.test.ts');
     expect(markdown).toContain('1 file(s) reported failures/errors');
+  });
+
+  it('renders the oracle-failure note alongside partial coverage rows', () => {
+    const report = buildReport(twoBucketInput, { coverage: false });
+    report.coverage = [{ suite: 'daemon-unit', expected: 530, covered: 530, missing: [] }];
+    report.coverageNote = 'coverage oracle unavailable for: daemon-online: boom';
+    const markdown = renderMarkdown(report, 2);
+
+    expect(markdown).toContain('- daemon-unit: 530/530 covered');
+    expect(markdown).toContain('coverage oracle unavailable for: daemon-online: boom');
   });
 });
