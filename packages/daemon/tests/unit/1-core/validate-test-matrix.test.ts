@@ -743,6 +743,16 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: 'rejects an axis value containing an escaped newline (P2)',
+    expectExit: 1,
+    expectInStderr: 'not a positive integer',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace('        shard: [1, 2]', '        shard: [1, "2\\nignored"]')
+      );
+    },
+  },
+  {
     name: 'rejects a shard axis inflated by an env block scalar (P2)',
     expectExit: 1,
     expectInStderr: "does not pass exactly one '--shard=",

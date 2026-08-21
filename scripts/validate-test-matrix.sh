@@ -1105,7 +1105,8 @@ _web_matrix_lines=$(WEB_YML="$REPO_ROOT/.github/workflows/main.yml" bun -e '
 	const fs = await import("node:fs");
 	const doc = Bun.YAML.parse(fs.readFileSync(process.env.WEB_YML, "utf8"));
 	const m = doc?.jobs?.["test-web"]?.strategy?.matrix ?? {};
-	const tag = (v) => (typeof v === "number" || typeof v === "string" ? typeof v : "other") + ":" + v;
+	const esc = (s) => s.replace(/[\x00-\x1f\x7f]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+	const tag = (v) => (typeof v === "number" || typeof v === "string" ? typeof v : "other") + ":" + esc(String(v));
 	const axis = m.shard;
 	const vals = Array.isArray(axis) ? axis : axis === undefined || axis === null ? [] : Object.keys(axis);
 	for (const v of vals) console.log("axis\t" + tag(v));
@@ -1126,8 +1127,10 @@ _web_matrix_lines=$(WEB_YML="$REPO_ROOT/.github/workflows/main.yml" bun -e '
 ' 2>/dev/null) || _web_matrix_lines=""
 # Axis values are tagged with their YAML scalar type so the include check can
 # compare typed values (GitHub keeps number/string distinct; a string include
-# value does not merge into a numeric axis and adds a duplicate leg). The
-# numeric checks below run on the untagged value.
+# value does not merge into a numeric axis and adds a duplicate leg), and any
+# control character in a scalar is escaped so a value can never inject extra
+# lines into this line-based protocol. The numeric checks below run on the
+# untagged value.
 web_matrix_tagged=$(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "axis" { print $2 }')
 web_matrix=$(printf '%s\n' "$web_matrix_tagged" | sed 's/^[a-z]*://')
 web_shard_n=$(printf '%s\n' "$web_matrix" | grep -c .)
