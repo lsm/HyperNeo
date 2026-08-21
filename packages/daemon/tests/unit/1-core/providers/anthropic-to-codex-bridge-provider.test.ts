@@ -3351,6 +3351,73 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('carries the rekeyed refresh key into chained retries', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const tokenA = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-chain-a' },
+      });
+      const tokenB = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-chain-b' },
+      });
+      const tokenC = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-chain-c' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: tokenA,
+        refresh: 'refresh-a',
+        accountId: 'acct-chain-a',
+      });
+      let resolveFirst: ((response: Response) => void) | undefined;
+      const firstResponse = new Promise<Response>((resolve) => {
+        resolveFirst = resolve;
+      });
+      let resolveB: ((response: Response) => void) | undefined;
+      const bResponse = new Promise<Response>((resolve) => {
+        resolveB = resolve;
+      });
+      const fetchImpl = mock()
+        .mockImplementationOnce(async () => firstResponse)
+        .mockImplementationOnce(async () => bResponse)
+        .mockImplementationOnce(
+          async () =>
+            new Response(JSON.stringify({ data: [{ id: 'gpt-chain-c' }] }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+        ) as unknown as typeof fetch;
+      try {
+        provider = makeProvider({}, hyperneoDir, tmpDir, fetchImpl);
+
+        const first = provider.getModels();
+        await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+        provider.setCredentials({
+          type: 'oauth',
+          accessToken: tokenB,
+          refreshToken: 'refresh-b',
+          raw: { accountId: 'acct-chain-b' },
+        });
+        resolveFirst?.(new Response('unauthorized', { status: 401 }));
+        await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
+        provider.setCredentials({
+          type: 'oauth',
+          accessToken: tokenC,
+          refreshToken: 'refresh-c',
+          raw: { accountId: 'acct-chain-c' },
+        });
+        const concurrent = provider.getModels();
+        resolveB?.(new Response('unauthorized', { status: 401 }));
+        await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(3));
+
+        const models = await Promise.all([first, concurrent]);
+        expect(models[0]?.map((model) => model.id)).toEqual(['gpt-chain-c']);
+        expect(models[1]?.map((model) => model.id)).toEqual(['gpt-chain-c']);
+        expect(fetchImpl).toHaveBeenCalledTimes(3);
+      } finally {
+        provider?.stopAllBridgeServers();
+      }
+    });
+
     it('rechecks active auth before rejecting a retried 401', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const oldAccess = makeJwt({

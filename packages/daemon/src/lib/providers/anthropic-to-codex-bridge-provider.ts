@@ -1147,8 +1147,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   private async fetchModelCatalog(
     initialAuth: OpenAIResponsesBridgeAuth,
     revalidate: boolean,
-    refreshKey: string
+    initialRefreshKey: string
   ): Promise<void> {
+    let refreshKey = initialRefreshKey;
     let auth = initialAuth;
     let scope = this.authScope(auth);
     const matchingCache =
@@ -1181,6 +1182,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         auth = currentAuth;
         scope = currentScope;
         const runningReplacement = this.rekeyModelRefresh(refreshKey, this.scopeKey(scope));
+        refreshKey = this.scopeKey(scope);
         if (runningReplacement) {
           await runningReplacement;
           return;
@@ -1206,6 +1208,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           auth = refreshedAuth;
           scope = this.authScope(auth);
           const runningReplacement = this.rekeyModelRefresh(refreshKey, this.scopeKey(scope));
+          refreshKey = this.scopeKey(scope);
           if (runningReplacement) {
             await runningReplacement;
             return;
@@ -1232,6 +1235,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
             auth = replacementAuth;
             scope = this.authScope(auth);
             const runningReplacement = this.rekeyModelRefresh(refreshKey, this.scopeKey(scope));
+            refreshKey = this.scopeKey(scope);
             if (runningReplacement) {
               await runningReplacement;
               return;
