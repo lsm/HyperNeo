@@ -258,7 +258,11 @@ before the re-read and can still transition the run to `done` and write task
 result/summary — though not status: `buildTaskOutcomeUpdates` never sets
 `status`, and `dispatchPostApproval` re-reads the task and returns `skipped`
 because `stopped → approved` is not a valid transition, so a mid-tick
-'stopped' survives settlement. Per-effect validation of the freshly-read task status — including `stopped` —
+'stopped' survives settlement. One status-dependent settlement effect does
+fire: when the admission-era status was already settlement-terminal (e.g.
+`blocked`), `finalTaskStatus` stays stale-terminal and the sibling-quiesce
+loop still idles sibling executions and interrupts their sessions after the
+park. Per-effect validation of the freshly-read task status — including `stopped` —
 narrows these gaps to a check-then-act window but does not close them: a
 concurrent park can still land after the read and before the effect, and the
 re-read alone buys nothing because `spawnWorkflowNodeAgentForExecution`
