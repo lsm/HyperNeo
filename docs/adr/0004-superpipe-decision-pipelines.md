@@ -195,15 +195,20 @@ repository primitives, which effect stages must call.
 5. **Idempotence or compensation** at every effect stage (unchanged from
    Decision item 4).
 
-**Effect-stage errors.** A throwing effect stage fails the pass: the interpreter
-catches, logs, and returns an error outcome — no in-flow retry. Before
-returning, it unwinds already-completed effect stages' compensations in reverse
-order (idempotent effects need no entry), so a failed pass never leaves a
-compensable-but-uncompensated effect behind. Recovery is the caller's re-entry
-with a fresh snapshot plus condition 5's idempotence or compensation (for the
-run tick, the next tick). Replay that crosses a process crash needs the durable
-arm of condition 5 — a persistent idempotency key or outbox record — because
-in-memory compensation does not survive the crash.
+**Stage failures.** Any failing stage — a throwing `snapshot`/`resnapshot` read
+or a throwing `effect` — fails the pass: the interpreter catches, logs, and
+returns an error outcome; no in-flow retry. Before returning, it unwinds the
+compensations of every effect stage it *started*, in reverse order — including
+the failing stage's own partial work (a compensation is registered when the
+stage starts, not when it completes) — and each compensation failure is itself
+caught, logged, and durably recorded while unwinding continues, so a failed
+pass leaves no compensable-but-uncompensated effect behind and an incomplete
+unwind is discoverable. Recovery is the caller's re-entry with a fresh snapshot
+plus condition 5 (for the run tick, the next tick). In-memory compensation
+covers only the live process: correlated persistent-transition sets commit as
+one database transaction or carry a durable saga record completed or reversed
+during recovery, and replay that crosses a process crash needs condition 5's
+durable arm — a persistent idempotency key or outbox record.
 
 **The RFC's open questions, answered:**
 
