@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { CopyButton } from '../ui/CopyButton.tsx';
 
 interface MarkdownRendererProps {
@@ -967,7 +967,7 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     };
   }, [content]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (html == null || !containerRef.current) return;
     containerRef.current.innerHTML = html;
 
