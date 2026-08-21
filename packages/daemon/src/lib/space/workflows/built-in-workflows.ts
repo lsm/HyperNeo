@@ -204,7 +204,10 @@ export const CODER_ONLY_PROMPT =
   'after `gh pr create`, also persist the primary link with ' +
   '`save_artifact({ shape: "link", kind: "pr", data: { url: "<PR URL>" } })` — the post-approval ' +
   'merge procedure interpolates `{{pr_url}}` from that artifact, and without it the merge session ' +
-  'receives an empty placeholder and cannot operate on the PR. ' +
+  'receives an empty placeholder and cannot operate on the PR. Verify the recorded value right ' +
+  'after saving it: `gh pr view "<PR URL>" --json headRefName,url` must succeed and name THIS ' +
+  "task's branch — a typo'd or stale URL would otherwise make you review and merge the wrong PR; " +
+  'if it does not match, fix the artifact before proceeding. ' +
   'Review is delegated to two external GitHub reviewers: Codex and Devon. ' +
   'Before you may request approval, BOTH must pass on the CURRENT PR head. ' +
   'Do not hand off to any internal Review node — there is none. ' +
@@ -278,7 +281,11 @@ export const CODER_ONLY_PROMPT =
   'hard-coded check name; if the base defines no required checks the command reports exactly ' +
   'that, which counts as green — only a failing or pending required check is a blocker), confirm ' +
   'zero unresolved review threads, confirm the PR is mergeable, and confirm Codex and Devon both ' +
-  'cover the CURRENT head. Record the gate with an explicit key so later notes cannot overwrite ' +
+  'cover the CURRENT head. Capture the baseRefName when you START the external gate (before ' +
+  'triggering either reviewer), and confirm it is still unchanged when you finish — a retarget ' +
+  'between the reviewer responses and the artifact write would otherwise record evidence for a ' +
+  'diff neither reviewer saw; if the base changed mid-gate, re-run BOTH gates under the new base. ' +
+  'Record the gate with an explicit key so later notes cannot overwrite ' +
   'it (an unkeyed note is stored under a shared rolling key): ' +
   '`save_artifact({ shape: "note", kind: "external-review-gate", key: "gate", summary: "...", ' +
   'data: { pr_url: "<url>", codex_reaction: { login, content: "THUMBS_UP", created_at }, ' +
@@ -890,7 +897,10 @@ export const CODER_ONLY_MERGE_INSTRUCTIONS: string = [
   '5. Delete the PR remote branch — ONLY after a successful merge, and as a SEPARATE command. Do NOT pass a delete flag to the merge command:',
   '     HEAD_REF=$(gh pr view {{pr_url}} --json headRefName --jq .headRefName)',
   '     IS_FORK=$(gh pr view {{pr_url}} --json isCrossRepository --jq .isCrossRepository)',
-  '   If IS_FORK is true, SKIP deletion — forked PRs keep their branch in the fork. Otherwise delete the ref:',
+  '   If IS_FORK is true, SKIP deletion — forked PRs keep their branch in the fork. Otherwise lease-bind the deletion so a REUSED branch is never destroyed: compare the remote ref to the merged head first,',
+  '     MERGED_OID=$(gh pr view {{pr_url}} --json headRefOid --jq .headRefOid)',
+  '     REMOTE_OID=$(git ls-remote origin "refs/heads/$HEAD_REF" | cut -f1)',
+  '   If REMOTE_OID is empty the branch is already gone (no-op). If REMOTE_OID differs from MERGED_OID, the branch name was recreated or advanced after the merge — record a NON-result `note` cleanup_warning artifact (key "branch-delete") and do NOT delete it. Only when they match, delete the ref:',
   '     git push origin --delete "$HEAD_REF"',
   '   Branch cleanup is BEST-EFFORT: on any failure (protected branch, missing delete permission, already gone), record a NON-result `note` cleanup_warning artifact (key "branch-delete") and continue — the PR is already merged.',
   '6. Sync so both this isolated worktree AND the Space checkout track the freshly-merged base branch:',
