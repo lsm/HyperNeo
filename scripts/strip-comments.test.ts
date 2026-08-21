@@ -123,6 +123,26 @@ describe('strip-comments', () => {
     const source = 'f(/* why */ a);\nvalue./* member */prop;\n';
     expect(stripComments(source, 'a.ts', false)).toBe('f(a);\nvalue.prop;\n');
   });
+
+  it('keeps a line terminator when a block comment spanning lines separates two words', () => {
+    const source = 'function f() {\n  return/* note\n   */1;\n}\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('function f() {\n  return\n1;\n}\n');
+  });
+
+  it('keeps a plain space when the same comment stays on one line', () => {
+    const source = 'function f() {\n  return/* note */1;\n}\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('function f() {\n  return 1;\n}\n');
+  });
+
+  it('preserves restricted-production ASI before punctuation after a multi-line comment', () => {
+    const source = 'function f() {\n  return /* wrap\n     */(1);\n}\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('function f() {\n  return\n(1);\n}\n');
+  });
+
+  it('does not duplicate a newline for comments that already occupied whole lines', () => {
+    const source = 'return\n/* note\n */\n(1);\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('return\n(1);\n');
+  });
 });
 
 describe('zero-comments wiring', () => {

@@ -93,9 +93,20 @@ function mergeRanges(ranges: Range[]): Range[] {
 
 const IDENT_CONTINUE = /[\p{L}\p{N}_$]/u;
 
+const ASI_KEYWORDS = new Set(['return', 'throw', 'break', 'continue', 'yield']);
+
 function mergesTokens(text: string, before: number, after: number): boolean {
   if (before < 0 || after >= text.length) return false;
   return IDENT_CONTINUE.test(text[before]) && IDENT_CONTINUE.test(text[after]);
+}
+
+function precedesAsiKeyword(text: string, before: number): boolean {
+  let end = before;
+  while (end >= 0 && /\s/.test(text[end])) end--;
+  if (end < 0 || !IDENT_CONTINUE.test(text[end])) return false;
+  let start = end;
+  while (start >= 0 && IDENT_CONTINUE.test(text[start])) start--;
+  return ASI_KEYWORDS.has(text.slice(start + 1, end + 1));
 }
 
 export function stripComments(text: string, fileName: string, isTsx: boolean): string {
@@ -106,7 +117,14 @@ export function stripComments(text: string, fileName: string, isTsx: boolean): s
   let cursor = 0;
   for (const { start, end } of removals) {
     out += text.slice(cursor, start);
-    if (mergesTokens(text, start - 1, end)) out += ' ';
+    const hadLineTerminator = text.slice(start, end).includes('\n');
+    const retainsLineTerminator =
+      (start > 0 && text[start - 1] === '\n') || (end < text.length && text[end] === '\n');
+    if (mergesTokens(text, start - 1, end)) {
+      out += hadLineTerminator ? '\n' : ' ';
+    } else if (hadLineTerminator && !retainsLineTerminator && precedesAsiKeyword(text, start - 1)) {
+      out += '\n';
+    }
     cursor = end;
   }
   out += text.slice(cursor);
