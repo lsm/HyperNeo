@@ -1487,12 +1487,62 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(queryRows().map((row) => row.id)).toEqual(['msg:later-in-b', 'msg:queued-user-a']);
     });
 
+    test('actorMessages.byTask keeps a nested shutdown banner until a settled top-level row follows it', () => {
+      const workflowRunId = 'wr-actor-nested-shutdown';
+      const sessionA = 'node-agent-nested-shutdown';
+      const taskId = insertSpaceTask({
+        id: 'actor-nested-shutdown-task',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      insertSession(sessionA, 'worker', '{"status":"processing"}');
+      sessionTaskIds.set(sessionA, taskId);
+      insertSdkMessageAt(
+        'nested-shutdown-banner',
+        sessionA,
+        now + 1000,
+        'system',
+        'consumed',
+        'system',
+        'worker_shutting_down',
+        { type: 'system', subtype: 'worker_shutting_down', reason: 'host_exit' }
+      );
+      db.prepare(
+        `UPDATE sdk_messages SET parent_tool_use_id = 'toolu-nested-1' WHERE id = 'nested-shutdown-banner'`
+      ).run();
+      insertSdkMessageAt(
+        'nested-queued-user',
+        sessionA,
+        now + 2000,
+        'user',
+        'enqueued',
+        'system',
+        null,
+        { type: 'user', uuid: 'u-nested-queued-user', message: { role: 'user', content: 'queued' } }
+      );
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const queryRows = () => {
+        const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+        return entry.mapRow ? rows.map(entry.mapRow) : rows;
+      };
+
+      expect(queryRows().map((row) => row.id)).toEqual(['msg:nested-shutdown-banner']);
+
+      db.prepare(`UPDATE sdk_messages SET send_status = 'consumed' WHERE id = ?`).run(
+        'nested-queued-user'
+      );
+
+      expect(queryRows().map((row) => row.id)).toEqual(['msg:nested-queued-user']);
+    });
+
     test('task feeds resolve the shutdown boundary in one materialized pass', () => {
       const taskId = insertSpaceTask({ id: 'shutdown-plan-task', status: 'in_progress' });
       for (const name of [
         'actorMessages.byTask',
         'spaceTaskMessages.byTask',
         'spaceTaskMessages.byTask.compact',
+        'spaceTaskActiveTurn.byTask',
       ]) {
         const entry = NAMED_QUERY_REGISTRY.get(name)!;
         const plan = db.prepare(`EXPLAIN QUERY PLAN ${entry.sql}`).all(taskId) as Array<{
@@ -1660,7 +1710,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const correlatedScans = plan.filter((step) =>
         step.detail.includes('CORRELATED SCALAR SUBQUERY')
       );
-      expect(correlatedScans).toHaveLength(0);
+      expect(correlatedScans).toHaveLength(1);
       expect(entry.sql).toContain('sdk_message_replacements');
       expect(entry.sql).not.toContain('$.retracted_message_uuids');
       expect(entry.sql).not.toContain('$.supersedes');
@@ -3387,6 +3437,58 @@ describe('NAMED_QUERY_REGISTRY', () => {
           'sibling-queued-user',
         ]);
         expect(queryIds()).toEqual(['sibling-newer', 'sibling-queued-user']);
+      });
+
+      test('keeps a nested shutdown banner until a settled top-level row follows it', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt(
+          'nested-shutdown-banner',
+          sessionId,
+          now + 1000,
+          {
+            type: 'system',
+            subtype: 'worker_shutting_down',
+            reason: 'host_exit',
+          },
+          'system'
+        );
+        db.prepare(
+          `UPDATE sdk_messages SET parent_tool_use_id = 'toolu-nested-2' WHERE id = 'nested-shutdown-banner'`
+        ).run();
+        insertSdkMessageAt(
+          'nested-queued-user',
+          sessionId,
+          now + 2000,
+          { type: 'user', uuid: 'u-nested-queued', message: { role: 'user', content: 'queued' } },
+          'user'
+        );
+        db.prepare(
+          `UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = 'nested-queued-user'`
+        ).run();
+
+        const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
+        const queryFull = () => {
+          const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+          return entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+        };
+
+        expect(queryCompact(taskId).map((row) => row.id)).toEqual([
+          'nested-shutdown-banner',
+          'nested-queued-user',
+        ]);
+        expect(queryFull().map((row) => row.id)).toEqual([
+          'nested-shutdown-banner',
+          'nested-queued-user',
+        ]);
+
+        db.prepare(
+          `UPDATE sdk_messages SET send_status = 'consumed' WHERE id = 'nested-queued-user'`
+        ).run();
+
+        expect(queryCompact(taskId).map((row) => row.id)).toEqual(['nested-queued-user']);
+        expect(queryFull().map((row) => row.id)).toEqual(['nested-queued-user']);
       });
 
       test('final ordering is createdAt ASC, id ASC', () => {

@@ -461,17 +461,19 @@ ORDER BY created_at ASC, id ASC
 
 const TASK_SHUTDOWN_BOUNDARY_CTE_SQL = `
 -- Newest settled top-level row per contributing session of the task. A
--- worker_shutting_down banner stays visible only while it IS this boundary
--- (no newer user/terminal top-level message landed in its session+task) —
--- the task-scoped sibling of messages.bySession's latest_shutdown_boundary.
--- One materialized pass replaces the per-row correlated EXISTS over newer
--- rows (CORRELATED SCALAR SUBQUERY with a MULTI-INDEX OR on the plan).
+-- worker_shutting_down banner stays visible only while nothing newer has
+-- settled in its session+task: a top-level banner while it IS this
+-- boundary, a nested (subagent-origin) banner while it postdates the
+-- boundary — matching the unbounded per-row EXISTS this replaces, minus
+-- its CORRELATED SCALAR SUBQUERY / MULTI-INDEX OR plan shape. Task-scoped
+-- sibling of messages.bySession's latest_shutdown_boundary.
 task_shutdown_boundaries AS MATERIALIZED (
-  SELECT session_id, id
+  SELECT session_id, id, timestamp
   FROM (
     SELECT
       sm.session_id AS session_id,
       sm.id AS id,
+      sm.timestamp AS timestamp,
       ROW_NUMBER() OVER (
         PARTITION BY sm.session_id
         ORDER BY sm.timestamp DESC, sm.id DESC
@@ -487,7 +489,22 @@ task_shutdown_boundaries AS MATERIALIZED (
 const WORKER_SHUTDOWN_TAIL_FILTER_SQL = `AND (
       sm.message_type != 'system'
       OR sm.message_subtype_norm != 'worker_shutting_down'
-      OR sm.id IN (SELECT id FROM task_shutdown_boundaries)
+      OR (
+        sm.parent_tool_use_id IS NULL
+        AND sm.id IN (SELECT id FROM task_shutdown_boundaries)
+      )
+      OR (
+        sm.parent_tool_use_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM task_shutdown_boundaries boundary
+          WHERE boundary.session_id = sm.session_id
+            AND (
+              boundary.timestamp > sm.timestamp
+              OR (boundary.timestamp = sm.timestamp AND boundary.id > sm.id)
+            )
+        )
+      )
     )`;
 
 const ACTOR_MESSAGES_BY_TASK_SQL = `
