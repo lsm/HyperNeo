@@ -16,7 +16,7 @@ import {
   KEYCHAIN_UNAVAILABLE_MESSAGE,
   KeychainUnavailableError,
 } from '../credentials/credential-store.js';
-import { getProviderRegistry, markProviderAvailability } from '../providers/registry';
+import { clearProviderAvailability, getProviderRegistry } from '../providers/registry';
 import { registerBuiltInProvider } from '../providers/factory.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
@@ -136,6 +136,7 @@ export function setupAuthHandlers(
             await credentialManager?.storeOAuthTokens(providerId, credentials);
           }
           unsubscribe?.();
+          clearProviderAvailability(providerId);
           await clearCacheAndNotifyProvidersChanged(internalEventBus);
         };
         unsubscribe = provider.onCredentialsChanged?.(persistCredentials);
@@ -228,7 +229,7 @@ export function setupAuthHandlers(
         if (!provider.logout && provider.setCredentials) {
           provider.setCredentials({ type: 'api_key', apiKey: '' });
         }
-        markProviderAvailability(providerId, false);
+        clearProviderAvailability(providerId);
         await clearCacheAndNotifyProvidersChanged(internalEventBus);
         return { success: true };
       } catch (error) {

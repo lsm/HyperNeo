@@ -161,6 +161,10 @@ export function markProviderAvailability(providerId: string, available: boolean)
   availabilitySnapshots.set(providerId, available);
 }
 
+export function clearProviderAvailability(providerId: string): void {
+  availabilitySnapshots.delete(providerId);
+}
+
 export function inferProviderForModel(modelId: string): ProviderIdStr {
   const normalizedModelId = modelId.toLowerCase();
 

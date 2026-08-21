@@ -172,8 +172,8 @@ async function providerCatalogSignature(provider: Provider): Promise<string> {
 async function clearCacheAndNotifyProvidersChanged(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>
 ): Promise<void> {
-  const { clearModelsCache } = await import('../model-service.js');
-  clearModelsCache();
+  const { invalidateModelsCacheEntry } = await import('../model-service.js');
+  invalidateModelsCacheEntry('global');
   internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
 }
 
