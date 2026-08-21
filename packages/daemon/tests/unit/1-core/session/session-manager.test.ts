@@ -45,7 +45,6 @@ describe('SessionManager', () => {
         mcpServers: {},
       })),
       saveGlobalToolsConfig: mock(() => {}),
-      getMessagesByStatus: mock(() => []),
       saveSDKMessage: mock(() => {}),
       getUserMessages: mock(() => []),
       getSDKMessages: mock(() => ({ messages: [], hasMore: false })),

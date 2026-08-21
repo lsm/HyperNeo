@@ -1158,24 +1158,6 @@ export class SDKMessageRepository {
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
   }
 
-  getMessagesByStatus(
-    sessionId: string,
-    status: SendStatus
-  ): Array<SDKMessage & { dbId: string; timestamp: number }> {
-    const stmt = this.db.prepare(
-      `SELECT id, sdk_message, timestamp FROM sdk_messages
-       WHERE session_id = ? AND send_status = ?
-       ORDER BY timestamp ASC, rowid ASC`
-    );
-    const rows = stmt.all(sessionId, status) as Array<{
-      id: string;
-      sdk_message: string;
-      timestamp: string;
-    }>;
-
-    return rows.map((row) => this.inflatePersistedMessage(row));
-  }
-
   getUserMessagesByStatus(
     sessionId: string,
     status: SendStatus,
