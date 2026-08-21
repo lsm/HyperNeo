@@ -104,6 +104,7 @@ export function buildMeasuredFromJunit(inputs: { path: string; xml: string }[]):
         continue;
       }
       const ms = Math.round(suite.timeSeconds * 1000);
+      if (ms <= 0) continue;
       if (ms > (measured.get(resolved.repoPath) ?? -1)) measured.set(resolved.repoPath, ms);
     }
   }
@@ -319,8 +320,10 @@ before/after balance preview per opted-in split.
 
 Merge semantics: measured durations replace existing entries; a targeted file
 without a measurement keeps its previous weight (on disk, absent from this junit
-set); unmeasured new files get no entry and hash-fallback at runtime. The
-preview's "hash today" row uses the CURRENT stable-hash buckets with the new
+set); unmeasured — including instantaneous suites that round to 0ms — and new
+files get no entry and hash-fallback at runtime. The run FAILS before writing
+when no targeted file has a measured duration (wrong --suite or artifact set).
+The preview's "hash today" row uses the CURRENT stable-hash buckets with the new
 weights summed in; "packed" is the assignment the runner would use.`;
 
 export interface MainSinks {
@@ -406,6 +409,12 @@ export function main(
   }
 
   const merge = mergeManifest({ existing, measured, covered, exists });
+  if (merge.updated.length === 0) {
+    sinks.warn(
+      `error: no targeted ${options.suite} file has a duration in this junit set — nothing to regenerate (wrong --suite, or artifacts from another suite?). Nothing was written.`
+    );
+    return 1;
+  }
   const rendered = renderManifest(merge.merged);
 
   const hashFallback = [...covered].filter((path) => !merge.merged.has(path)).sort();
@@ -429,6 +438,9 @@ export function main(
   sinks.out(
     `${options.dryRun ? 'would write' : 'wrote'} ${outRelative}: ${merge.merged.size} ${merge.merged.size === 1 ? 'entry' : 'entries'} (${merge.updated.length} updated, ${merge.kept.length} kept, ${merge.staleDropped.length} stale-dropped)`
   );
+  if (options.dryRun) {
+    for (const line of rendered.split('\n').slice(0, -1)) sinks.out(line);
+  }
   for (const spec of weighted) {
     const weightedFiles = spec.files.filter((file) => merge.merged.has(file)).length;
     const before = hashBucketSums(spec, merge.merged);

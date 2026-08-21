@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -155,6 +155,25 @@ describe('buildMeasuredFromJunit', () => {
     ).toBe(2500);
     expect(unresolved).toEqual(['nowhere/x.test.ts']);
   });
+
+  it('treats zero-duration suites as unmeasured so they hash-fallback', () => {
+    const { measured } = buildMeasuredFromJunit([
+      {
+        path: 'junit.xml',
+        xml: junitXml([
+          {
+            name: 'tests/unit/5-space/runtime/agent-message-routing-gates.test.ts',
+            time: 0.0004,
+            tests: 1,
+          },
+        ]),
+      },
+    ]);
+
+    expect(
+      measured.has('packages/daemon/tests/unit/5-space/runtime/agent-message-routing-gates.test.ts')
+    ).toBe(false);
+  });
 });
 
 describe('listSplitSpecs', () => {
@@ -212,8 +231,31 @@ describe('main', () => {
     );
     expect(out.join('\n')).toContain('hash today:');
     expect(out.join('\n')).toContain('packed:');
+    expect(out.join('\n')).toContain('# shard-weights manifest');
+    expect(out.join('\n')).toContain(
+      '4000\tpackages/daemon/tests/unit/5-space/runtime/agent-message-routing-gates.test.ts'
+    );
     expect(warn.join('\n')).toContain('references manifest scripts/shard-weights.tsv');
     expect(warn.join('\n')).toContain('hash-fallback');
+  }, 30000);
+
+  it('fails before writing when no targeted file has a measured duration', () => {
+    const dir = makeTempDir();
+    const junitPath = join(dir, 'junit-1-core.xml');
+    writeFileSync(
+      junitPath,
+      junitXml([{ name: 'tests/unit/1-core/core/main-import-order.test.ts', time: 3.0, tests: 2 }])
+    );
+    const outPath = join(dir, 'shard-weights.tsv');
+    const warn: string[] = [];
+    const code = main(['--suite', 'daemon-unit', '--out', outPath, junitPath], {
+      out: () => {},
+      warn: (line) => warn.push(line),
+    });
+
+    expect(code).toBe(1);
+    expect(warn.join('\n')).toContain('no targeted daemon-unit file has a duration');
+    expect(existsSync(outPath)).toBe(false);
   }, 30000);
 
   it('writes the manifest and merges with an existing one', () => {
