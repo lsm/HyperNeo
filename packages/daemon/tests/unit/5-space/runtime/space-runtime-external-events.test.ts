@@ -1551,6 +1551,68 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById('evt-linked-pr-expired')?.state).toBe('failed');
   });
 
+  test('TTL sweep fails only stale published events without deliveries, idempotently', async () => {
+    await runtime.executeTick();
+
+    const stale = makeEvent({
+      id: 'evt-ttl-sweep-stale',
+      topic: 'github/lsm/neokai/pull_request/99.comment_created',
+    });
+    const fresh = makeEvent({
+      id: 'evt-ttl-sweep-fresh',
+      topic: 'github/lsm/neokai/pull_request/100.comment_created',
+    });
+    const withDelivery = makeEvent({
+      id: 'evt-ttl-sweep-delivery',
+      topic: 'github/lsm/neokai/pull_request/101.comment_created',
+    });
+
+    eventStore.store(stale);
+    eventStore.store(fresh);
+    eventStore.store(withDelivery);
+    eventStore.registerExpectedDelivery(withDelivery.id, 'dk-1', {
+      workflowRunId: 'run-ttl-sweep',
+      taskId: 'task-1',
+      nodeId: 'code',
+      agentName: 'coder',
+    });
+
+    const now = Date.now();
+    db.prepare('UPDATE space_external_events SET created_at = ? WHERE id = ?').run(
+      now - 400_000,
+      stale.id
+    );
+    db.prepare('UPDATE space_external_events SET created_at = ? WHERE id = ?').run(
+      now - 400_000,
+      withDelivery.id
+    );
+
+    const originalNow = Date.now;
+    Date.now = () => now + 1000;
+    try {
+      await runtime.executeTick();
+    } finally {
+      Date.now = originalNow;
+    }
+
+    expect(eventStore.getById(stale.id)?.state).toBe('failed');
+    expect(eventStore.listDeliveries(stale.id)).toHaveLength(0);
+    expect(eventStore.getById(fresh.id)?.state).toBe('published');
+    expect(eventStore.getById(withDelivery.id)?.state).toBe('published');
+    expect(eventStore.listDeliveries(withDelivery.id)).toHaveLength(1);
+
+    Date.now = () => now + 2000;
+    try {
+      await runtime.executeTick();
+    } finally {
+      Date.now = originalNow;
+    }
+
+    expect(eventStore.getById(stale.id)?.state).toBe('failed');
+    expect(eventStore.getById(fresh.id)?.state).toBe('published');
+    expect(eventStore.getById(withDelivery.id)?.state).toBe('published');
+  });
+
   test('fails queued deliveries when an execution is unregistered', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const event = makeEvent();
