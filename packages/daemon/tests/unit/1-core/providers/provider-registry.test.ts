@@ -816,6 +816,17 @@ describe('inferPersistableProviderForModel', () => {
     expect(await inferPersistableProviderForModel('openai/gpt-5.4')).toBe('openrouter');
   });
 
+  it('excludes snapshot-unavailable owners from synchronous GPT inference', async () => {
+    const { markProviderAvailability } = await import('../../../../src/lib/providers/registry');
+    getProviderRegistry().register(claimant('anthropic-copilot', false));
+    markProviderAvailability('anthropic-copilot', false);
+    try {
+      expect(inferProviderForModel('gpt-5.4')).toBe('anthropic-codex');
+    } finally {
+      resetProviderRegistry();
+    }
+  });
+
   it('does not persist an unavailable sole owner', async () => {
     getProviderRegistry().register(claimant('anthropic-copilot', false));
     try {

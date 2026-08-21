@@ -1,7 +1,7 @@
 import type { ModelInfo, Session } from '@hyperneo/shared';
 import type { QueryLike } from './agent/query-like';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
-import { getProviderRegistry } from './providers/registry.js';
+import { getProviderRegistry, markProviderAvailability } from './providers/registry.js';
 import type { Provider, ProviderModelRefreshError } from '@hyperneo/shared/provider';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
 import { GlmProvider } from './providers/glm-provider.js';
@@ -257,6 +257,7 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
     providers.map(async (provider) => {
       const previousScope = provider.getModelCatalogScope?.();
       const available = await provider.isAvailable();
+      markProviderAvailability(provider.id, available);
       if (!available) {
         return { available, models: [], failed: false, rejected: false, scopeAfter: previousScope };
       }

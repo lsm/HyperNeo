@@ -150,8 +150,15 @@ export function getProviderRegistry(): ProviderRegistry {
  *
  * @public Exported for testing purposes
  */
+const availabilitySnapshots = new Map<string, boolean>();
+
 export function resetProviderRegistry(): void {
   registryInstance = null;
+  availabilitySnapshots.clear();
+}
+
+export function markProviderAvailability(providerId: string, available: boolean): void {
+  availabilitySnapshots.set(providerId, available);
 }
 
 export function inferProviderForModel(modelId: string): ProviderIdStr {
@@ -191,6 +198,7 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
       .find(
         (provider) =>
           provider.id !== 'anthropic' &&
+          availabilitySnapshots.get(provider.id) !== false &&
           (!normalizedModelId.startsWith('ft:') ||
             (provider.id !== 'ollama' && provider.id !== 'ollama-cloud')) &&
           typeof provider.ownsModel === 'function' &&

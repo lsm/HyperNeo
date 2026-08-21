@@ -770,18 +770,12 @@ export function setupSessionHandlers(
         await refreshModels();
       }
 
-      let availableModels = getAvailableModels('global');
-
-      if (
-        !forceRefresh &&
-        availableModels.length > 0 &&
-        isModelsCacheStale('global') &&
-        !shouldThrottleModelsRefresh('global')
-      ) {
+      if (!forceRefresh && isModelsCacheStale('global') && !shouldThrottleModelsRefresh('global')) {
         await refreshModels();
-        availableModels = getAvailableModels('global');
         didRefresh = true;
       }
+
+      let availableModels = getAvailableModels('global');
 
       if (!forceRefresh && availableModels.length === 0) {
         await refreshModels();
