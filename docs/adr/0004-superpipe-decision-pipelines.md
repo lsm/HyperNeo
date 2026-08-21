@@ -211,25 +211,35 @@ Terminal-set nuance: settlement terminal (`isSettlementTerminal` —
 done/cancelled/blocked/approved) and spawn terminal
 (`isCanonicalTaskTerminalForSpawn` — done/cancelled/archived/stopped)
 intentionally differ: 'blocked' settles a finished attempt, while 'stopped'
-(user-parked) short-circuits the entire tick at admission
-(`applyTaskStoppedGate` → skip, so no crash recovery, handoff repair,
-settlement, or spawn runs for a task parked before the tick) — with one
-precedence exception: workflow validity is gated first, so a parked task on a
-workflow missing `endNodeId` is instead transitioned to `blocked` (pre-existing
-precedence, preserved by the pilot; parking is authoritative only for valid
-workflows). Mid-tick parking
-is only partially guarded: the canonical task is re-read before spawn
-admission, so the ordinary spawn path is suppressed, but both earlier stages
-run on the admission-era task — queued-handoff repair's terminal check
+(user-parked) skips the tick body — via `applyTaskStoppedGate` → skip for an
+active run (no crash recovery, handoff repair, settlement, or spawn runs for a
+task parked before the tick), and even earlier in the shell for non-active
+runs: a finished run returns after clearing stuck state, and a blocked run
+diverts into `attemptBlockedRunRecovery`, which returns on its own stopped-task
+check — so the admission gates, validity included, are never reached there.
+Within admission, workflow validity is gated before the stopped gate, so a
+parked task on an active run whose workflow lacks `endNodeId` is transitioned
+to `blocked` instead (pre-existing precedence, preserved by the pilot; parking
+is authoritative only for active runs with valid workflows). Mid-tick parking
+is only partially guarded, and the guards are snapshots, not locks: the
+canonical task is re-read before spawn admission, so the ordinary spawn path
+is suppressed only for parks visible at that re-read — a park landing after
+it, in particular while the spawn loop awaits
+`spawnWorkflowNodeAgentForExecution` for the first of several pending
+executions, still spawns the remainder with the stale task. Earlier stages run
+on the admission-era task entirely: queued-handoff repair's terminal check
 (done/cancelled/archived) excludes 'stopped' and can still spawn, and the
 completion branch, gated on the admission-time-cached `runIsComplete`, runs
-before the re-read and can still transition the run to `done` and settle the
-task, overwriting a mid-tick 'stopped'. Both gaps close by re-reading the task
-before those stages; that change is deliberately not slipped into this closing
-sweep and belongs with the `repairQueuedWorkflowNodeHandoffs` mini-pilot. The
-terminal-handoff-cleanup check in the interpreter is a third, narrower set
-(done/cancelled/archived). These are distinct decisions, not duplicate
-predicates to unify.
+before the re-read and can still transition the run to `done` and write task
+result/summary — though not status: `buildTaskOutcomeUpdates` never sets
+`status`, and `dispatchPostApproval` re-reads the task and returns `skipped`
+because `stopped → approved` is not a valid transition, so a mid-tick
+'stopped' survives settlement. All of these gaps close by re-reading the task
+before the affected stages; that change is deliberately not slipped into this
+closing sweep and belongs with the `repairQueuedWorkflowNodeHandoffs`
+mini-pilot. The terminal-handoff-cleanup check in the interpreter is a third,
+narrower set (done/cancelled/archived). These are distinct decisions, not
+duplicate predicates to unify.
 
 Costs: production net +374 lines across the pilot — 368 lines of new pure
 modules, `space-runtime.ts` net +6 (`processRunTick` 535 → 533 lines; the value
