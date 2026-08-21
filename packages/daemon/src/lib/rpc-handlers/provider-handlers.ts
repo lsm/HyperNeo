@@ -159,6 +159,7 @@ export interface ProviderHandlerDeps {
     | 'interruptCachedProviderSessions'
     | 'interruptProviderSessions'
     | 'interruptProviderSessionsById'
+    | 'listCachedProviderSessionIds'
   >;
   clearPersistedAcpSessionIds?: () => void;
   listPersistedAcpSessionIds?: () => Array<{ sessionId: string; acpSessionId: string }>;
@@ -204,7 +205,9 @@ async function disposeAcpSessionIds(
 }
 
 async function invalidateAcpSessions(
-  sessionManager: Pick<SessionManager, 'interruptProviderSessionsById'> | undefined,
+  sessionManager:
+    | Pick<SessionManager, 'interruptProviderSessionsById' | 'listCachedProviderSessionIds'>
+    | undefined,
   clearPersistedAcpSessionIds: (() => void) | undefined,
   previousCommand: string | undefined,
   listPersistedAcpSessionIds?: () => Array<{ sessionId: string; acpSessionId: string }>,
@@ -212,7 +215,10 @@ async function invalidateAcpSessions(
 ): Promise<void> {
   const persisted = listPersistedAcpSessionIds?.() ?? [];
   const sessionIds = persisted.map((entry) => entry.acpSessionId);
-  const localSessionIds = persisted.map((entry) => entry.sessionId);
+  const cachedIds = sessionManager?.listCachedProviderSessionIds?.('acp') ?? [];
+  const localSessionIds = [
+    ...new Set([...persisted.map((entry) => entry.sessionId), ...cachedIds]),
+  ];
   clearPersistedAcpSessionIds?.();
   await disposeAcpSessionIds(previousCommand, sessionIds, dispose);
   await sessionManager?.interruptProviderSessionsById(localSessionIds);

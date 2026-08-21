@@ -138,6 +138,7 @@ describe('Provider RPC handlers', () => {
     interruptCachedProviderSessions: ReturnType<typeof mock>;
     interruptProviderSessions: ReturnType<typeof mock>;
     interruptProviderSessionsById: ReturnType<typeof mock>;
+    listCachedProviderSessionIds: ReturnType<typeof mock>;
   };
   let clearPersistedAcpSessionIds: ReturnType<typeof mock>;
   let listPersistedAcpSessionIds: ReturnType<typeof mock>;
@@ -152,6 +153,7 @@ describe('Provider RPC handlers', () => {
       interruptCachedProviderSessions: mock(async () => {}),
       interruptProviderSessions: mock(async () => {}),
       interruptProviderSessionsById: mock(async () => {}),
+      listCachedProviderSessionIds: mock(() => []),
     };
     clearPersistedAcpSessionIds = mock(() => {});
     listPersistedAcpSessionIds = mock(() => []);
@@ -583,6 +585,36 @@ describe('Provider RPC handlers', () => {
 
       expect(sessionManager.interruptProviderSessionsById).toHaveBeenCalledWith(['old-1']);
       expect(sessionManager.interruptProviderSessions).not.toHaveBeenCalled();
+    });
+
+    it('interrupts cached ACP queries that have not persisted a session id yet', async () => {
+      const provider = new AcpProvider({}, async () => {});
+      provider.setAcpCommand('old acp');
+      getProviderRegistry().register(provider);
+      listPersistedAcpSessionIds = mock(() => [{ sessionId: 'old-1', acpSessionId: 'acp-old-1' }]);
+      sessionManager.listCachedProviderSessionIds = mock(() => ['initializing-1']);
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'old acp', models: [] }),
+      });
+      const handlers = setup();
+
+      await handlers.get('providers.update')!(
+        {
+          id: created.id,
+          params: { configJson: JSON.stringify({ command: 'new acp', models: [] }) },
+        },
+        {}
+      );
+
+      expect(sessionManager.listCachedProviderSessionIds).toHaveBeenCalledWith('acp');
+      expect(sessionManager.interruptProviderSessionsById).toHaveBeenCalledWith([
+        'old-1',
+        'initializing-1',
+      ]);
     });
 
     it('disposes snapshotted ACP session ids when a disabled record changes its command', async () => {

@@ -532,10 +532,14 @@ export class SessionManager {
     this.sessionCache.remove(sessionId);
   }
 
-  async interruptCachedProviderSessions(providerId: string): Promise<void> {
-    const sessionIds = Array.from(this.sessionCache.entries())
+  listCachedProviderSessionIds(providerId: string): string[] {
+    return Array.from(this.sessionCache.entries())
       .filter(([, agentSession]) => agentSession.getSessionData().config.provider === providerId)
       .map(([sessionId]) => sessionId);
+  }
+
+  async interruptCachedProviderSessions(providerId: string): Promise<void> {
+    const sessionIds = this.listCachedProviderSessionIds(providerId);
     await Promise.all(sessionIds.map((sessionId) => this.interruptInMemorySession(sessionId)));
   }
 
