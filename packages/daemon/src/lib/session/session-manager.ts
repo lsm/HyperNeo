@@ -561,7 +561,18 @@ export class SessionManager {
   }
 
   async interruptProviderSessionsById(sessionIds: string[]): Promise<void> {
-    await Promise.all(sessionIds.map((sessionId) => this.interruptProviderSession(sessionId)));
+    const sessionIdSet = new Set(sessionIds);
+    const sessionsById = new Map(
+      this.db
+        .listSessions({ includeArchived: true, includeSpaceSessions: true })
+        .filter((session) => sessionIdSet.has(session.id))
+        .map((session) => [session.id, session])
+    );
+    await Promise.all(
+      sessionIds.map((sessionId) =>
+        this.interruptProviderSession(sessionId, sessionsById.get(sessionId))
+      )
+    );
   }
 
   private async interruptProviderSession(sessionId: string, session?: Session): Promise<void> {

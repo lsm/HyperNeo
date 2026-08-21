@@ -567,6 +567,16 @@ describe('SessionManager', () => {
     });
 
     it('interrupts only the given provider session ids', async () => {
+      const persisted = {
+        id: 'persisted-acp',
+        config: { provider: 'acp' },
+        acpSessionId: 'remote-session',
+        metadata: { acpContextUsageEstimate: 9000, preserved: true },
+      } as Session;
+      (mockDb.listSessions as ReturnType<typeof mock>).mockReturnValue([
+        persisted,
+        { id: 'anthropic', config: { provider: 'anthropic' } } as Session,
+      ]);
       const cachedSession = {
         id: 'cached-acp',
         config: { provider: 'acp' },
@@ -584,6 +594,7 @@ describe('SessionManager', () => {
 
       expect(mockDb.updateSession).toHaveBeenCalledWith('persisted-acp', {
         acpSessionId: undefined,
+        metadata: { acpContextUsageEstimate: undefined, preserved: true },
       });
       expect(cachedAgent.cleanup).not.toHaveBeenCalled();
       expect(sessionManager.getCachedSession('cached-acp')).not.toBeNull();
