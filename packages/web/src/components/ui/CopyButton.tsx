@@ -17,7 +17,10 @@ export function CopyButton({ text, label = 'Copy to clipboard' }: CopyButtonProp
     return () => clearTimeout(timer);
   }, [copied]);
 
+  const prevTextRef = useRef(text);
   useEffect(() => {
+    if (prevTextRef.current === text) return;
+    prevTextRef.current = text;
     setCopied(false);
   }, [text]);
 
