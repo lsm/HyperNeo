@@ -204,8 +204,9 @@ outbox record — because in-memory compensation does not survive the crash.
 
 1. **Location:** new module
    `packages/daemon/src/lib/space/runtime/staged-run.ts`; `space-runtime.ts` is
-   already 8k+ lines. This makes `staged-run.ts` the second sanctioned superpipe
-   import site (Decision item 3 amended above).
+   already 8k+ lines. This makes `staged-run.ts` the second blessed combinator
+   location alongside `decision-pipeline.ts` (Decision item 3 amended above) —
+   not a second import boundary; raw imports elsewhere follow the rule of three.
 2. **Stage file layout:** grouped by sub-flow — one module per recovery handler
    or sub-pipeline, stages co-located with their types and tests, mirroring the
    pilot-3 extraction modules (`run-tick-admission-gates.ts` & co). Not one file
