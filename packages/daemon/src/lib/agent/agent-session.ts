@@ -1180,8 +1180,11 @@ export class AgentSession
     return this.slashCommandManager.getSlashCommands();
   }
 
-  async handleQueryTrigger(): Promise<{ success: boolean; messageCount: number; error?: string }> {
-    return this.queryModeHandler.handleQueryTrigger();
+  async handleQueryTrigger(options?: {
+    deliverIndividually?: boolean;
+    excludeMessageUuid?: string;
+  }): Promise<{ success: boolean; messageCount: number; error?: string }> {
+    return this.queryModeHandler.handleQueryTrigger(options);
   }
 
   async restartQuery(): Promise<void> {
