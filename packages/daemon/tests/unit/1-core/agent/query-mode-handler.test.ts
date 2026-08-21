@@ -286,6 +286,49 @@ describe('QueryModeHandler', () => {
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
     });
 
+    it('should skip deferred rows without a resolvable uuid but still mark them enqueued', async () => {
+      const savedMessages: SDKMessage[] = [
+        {
+          dbId: 'db-legacy',
+          type: 'user',
+          message: { role: 'user', content: 'Legacy row without uuid' },
+        } as unknown as SDKMessage,
+        {
+          dbId: 'db-1',
+          uuid: 'uuid-1',
+          type: 'user',
+          message: { role: 'user', content: 'Hello' },
+        } as unknown as SDKMessage,
+      ];
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(savedMessages));
+      handler = createHandler();
+
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 2 });
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-legacy', 'db-1'], 'enqueued');
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-1', 'Hello');
+    });
+
+    it('should skip deferred rows with an empty uuid', async () => {
+      const savedMessages: SDKMessage[] = [
+        {
+          dbId: 'db-empty',
+          uuid: '',
+          type: 'user',
+          message: { role: 'user', content: 'Empty uuid' },
+        } as unknown as SDKMessage,
+      ];
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(savedMessages));
+      handler = createHandler();
+
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 1 });
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+    });
+
     it('should return error on failure', async () => {
       getUserMessagesByStatusSpy.mockImplementation(() => {
         throw new Error('Database error');
