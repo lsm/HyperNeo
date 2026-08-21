@@ -317,9 +317,14 @@ interpreters over three extracted cores:
   gating policy lives (previously a hardcoded `SESSION_WRITE_AUTONOMY_LEVEL = 4`
   const inside the handler factory plus prose deny strings assembled at each
   throw site). Workflow-derived requirements are deliberately outside the table:
-  `approve_task` enforces the workflow's `completionAutonomyLevel` inside
-  `routeApproveTask`, so changing an approval requirement means changing that
-  router, not the map (see the second recorded asymmetry below).
+  `approve_task`'s threshold is gathered by the caller — `space-agent-tools.ts`
+  derives the workflow's `completionAutonomyLevel` (default 5) and passes it in
+  as `required` — while `routeApproveTask` only compares its inputs. Changing
+  the approval threshold therefore means changing the caller-side derivation
+  (or the workflows' `completionAutonomyLevel` values), not the router or the
+  map; the router owns only the denial routing — reason, message, and
+  precedence against the target check (see the second recorded asymmetry
+  below).
 - `task-transition-routing.ts` — pure routing tables: `routeTaskUpdate` (the
   old seven-branch inline cascade as a typed precedence table), the shared
   `routeTaskTarget`, and one router per remaining tool.
