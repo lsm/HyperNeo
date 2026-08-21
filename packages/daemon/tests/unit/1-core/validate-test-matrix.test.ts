@@ -630,6 +630,31 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: 'rejects a quoted exclude parent property (P2)',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        "exclude":\n          - shard: 2'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects a sibling axis under a quoted matrix parent (P2)',
+    expectExit: 1,
+    expectInStderr: 'extra axis',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s
+          .replace('      matrix:\n        # vitest', '      "matrix":\n        # vitest')
+          .replace('        shard: [1, 2]', '        shard: [1, 2]\n        os: [ubuntu-latest]')
+      );
+    },
+  },
+  {
     name: 'prunes dist/ from the shared disk scan (P2)',
     expectExit: 0,
     mutate: (root) => {

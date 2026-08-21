@@ -313,15 +313,18 @@ runner_continue_on_error() {
 matrix_excludes() {
 	local job="$1" key="$2"
 	awk -v job="$1" -v key="$2" '
-		BEGIN { quotes = sprintf("[%c%c]", 39, 34) }
+		BEGIN {
+			quotes = sprintf("[%c%c]", 39, 34)
+			excl = sprintf("[%c%c]?exclude[%c%c]?", 39, 34, 39, 34)
+		}
 		$0 ~ "^  " job ":" { injob=1; next }
 		injob && /^  [a-z]/ { injob=0 }
 		# Flow form: exclude: [ ... ] on one line — pull every "key: <token>" out.
 		# The token runs up to a delimiter (], ,, }, whitespace) so optional YAML
 		# quotes (single/double) are captured and then stripped (gsub non-token);
-		# the KEY may also be quoted ("shard"/shard quoted form), so strip quote
-		# characters from the line before matching the bare key.
-		injob && $0 ~ "^[[:space:]]*exclude:[[:space:]]*\\[" {
+		# the KEY may also be quoted, and so may the parent exclude: property
+		# itself, so quote characters are stripped from the line before matching.
+		injob && $0 ~ "^[[:space:]]*" excl ":[[:space:]]*\\[" {
 			s=$0; gsub(quotes, "", s)
 			while (match(s, key ":[[:space:]]*[^][,}[:space:]]+")) {
 				v=substr(s, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); gsub(/[^a-z0-9-]/, "", v); if (v != "") print v
@@ -330,8 +333,8 @@ matrix_excludes() {
 			next
 		}
 		# Block form: "exclude:" alone, then indented "- key: value" lines.
-		# Quoted keys (- shard: 2 with quotes) normalize the same way.
-		injob && $0 ~ "^[[:space:]]*exclude:[[:space:]]*$" { inblock=1; next }
+		# Quoted keys and a quoted parent property normalize the same way.
+		injob && $0 ~ "^[[:space:]]*" excl ":[[:space:]]*$" { inblock=1; next }
 		injob && inblock && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
 			n=0; while (substr($0,n+1,1)==" ") n++
 			# n <= 8 ends the block EXCEPT YAML indentationless-sequence form,
@@ -1100,11 +1103,12 @@ if [ -n "$_web_excluded" ]; then
 	done <<< "$_web_excluded"
 fi
 _web_sibling_axes=$(awk '
+	BEGIN { mtx = sprintf("[%c%c]?matrix[%c%c]?", 39, 34, 39, 34) }
 	$0 ~ "^  test-web:" { injob=1; next }
 	injob && /^  [a-z]/ { injob=0; inmatrix=0; next }
 	!injob { next }
-	/^[[:space:]]{6}matrix:[[:space:]]*$/ { inmatrix=1; next }
-	/^[[:space:]]{0,6}[a-z]/ { inmatrix=0 }
+	$0 ~ "^[[:space:]]{6}" mtx ":[[:space:]]*$" { inmatrix=1; next }
+	/^[[:space:]]{0,6}[a-z"]/ { inmatrix=0 }
 	inmatrix && /^[[:space:]]{8}[^[:space:]][^:]*:/ {
 		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); gsub(/[^A-Za-z0-9_-]/, "", s); k=tolower(s)
 		if (k != "shard" && k != "include" && k != "exclude") print s
