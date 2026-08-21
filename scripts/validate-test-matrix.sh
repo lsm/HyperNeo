@@ -317,6 +317,11 @@ matrix_excludes() {
 			quotes = sprintf("[%c%c]", 39, 34)
 			excl = sprintf("[%c%c]?exclude[%c%c]?", 39, 34, 39, 34)
 		}
+		# Strip an inline YAML comment (whitespace + #) before any key matching:
+		# "exclude: # note" is a valid block header GitHub still applies, and the
+		# end-anchored parent patterns would otherwise miss it. Values in these
+		# blocks never legitimately contain # (banned as a shell metachar).
+		{ c=$0; sub(/[[:space:]]+#.*$/, "", c); $0=c }
 		$0 ~ "^  " job ":" { injob=1; next }
 		injob && /^  [a-z]/ { injob=0 }
 		# Flow form: exclude: [ ... ] on one line — pull every "key: <token>" out.
@@ -1104,6 +1109,8 @@ if [ -n "$_web_excluded" ]; then
 fi
 _web_sibling_axes=$(awk '
 	BEGIN { mtx = sprintf("[%c%c]?matrix[%c%c]?", 39, 34, 39, 34) }
+	# Strip inline YAML comments so "matrix: # note" still opens the block.
+	{ c=$0; sub(/[[:space:]]+#.*$/, "", c); $0=c }
 	$0 ~ "^  test-web:" { injob=1; next }
 	injob && /^  [a-z]/ { injob=0; inmatrix=0; next }
 	!injob { next }

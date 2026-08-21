@@ -643,6 +643,19 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: 'rejects an exclude parent with a trailing inline comment (P2)',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        exclude: # skip a leg\n          - shard: 2'
+        )
+      );
+    },
+  },
+  {
     name: 'rejects a sibling axis under a quoted matrix parent (P2)',
     expectExit: 1,
     expectInStderr: 'extra axis',
