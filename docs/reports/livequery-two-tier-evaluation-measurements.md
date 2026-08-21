@@ -67,38 +67,51 @@ The existing sargability plan-test passes on tiny fixtures either way — the
 planner only diverges at production scale, which is why this was invisible to
 CI and worth a benchmark harness in-tree.
 
+Dense-subtype check (the arms' `LIMIT 300` cannot be served by the subtype
+index's ordering, so SQLite sorts each arm's matching rows): with 2,000 and
+20,000 synthetic `task_updated` rows inserted into the large session, the
+full metadata query costs 2.6 ms and 2.2 ms — the per-arm sort of small
+status rows is linear but cheap. The old IN-list shape is actually fast in
+the dense case (0.6 ms — it reaches its LIMIT quickly) and catastrophic only
+in the sparse case; the new shape is uniformly sub-3 ms across both
+densities, which is the profile we want.
+
 ## messages.bySession — evaluation cost after the fix (production wiring)
 
 Window LIMIT 200 over the 167,972-message session, Bun 1.3.14, with the
-delivered-event column showing what the harness actually observed emitted:
+delivered-event column showing what the harness actually observed emitted.
+The first-subscribe row follows the session-discovery queries, so the page
+cache is already warm; pass `BENCH_SESSION_ID`/`BENCH_SMALL_SESSION_ID` to
+skip discovery and measure a genuinely cold cache:
 
 | Scenario                                                     | Full evaluation        | Delivered              |
 | ------------------------------------------------------------ | ---------------------- | ---------------------- |
-| Cold subscribe (page cache cold)                             | 67 ms                  | snapshot (200 rows)    |
-| Warm no-op evaluation, steady state (n=10)                   | p50 4.7 ms, p95 6.8 ms | none                   |
-| Same-session insert outside the window (irrelevant subagent) | 6.9 ms                 | none                   |
-| Scoped `job_queue` change                                    | 7.0 ms                 | none                   |
+| First subscribe (after discovery queries)                    | 34 ms                  | snapshot (200 rows)    |
+| Warm no-op evaluation, steady state (n=10)                   | p50 3.6 ms, p95 4.7 ms | none                   |
+| Same-session insert outside the window (irrelevant subagent) | 3.6 ms                 | none                   |
+| Scoped `job_queue` change                                    | 3.6 ms                 | none                   |
 | Different-session write                                      | 0 runs                 | none                   |
-| Relevant in-window insert                                    | 4.5 ms                 | delta (+1/−1)          |
-| `send_status` UPDATE on an old row outside the window        | 4.3 ms                 | none                   |
-| Burst: 20 same-session writes inside one debounce window     | 3.3 ms, 1 run          | none                   |
+| Relevant in-window insert                                    | 5.8 ms                 | delta (+1/−1)          |
+| `send_status` UPDATE on an old row outside the window        | 3.8 ms                 | none                   |
+| Burst: 20 same-session writes inside one debounce window     | 3.7 ms, 1 run          | none                   |
 
 Streaming load: during a sustained stream the triggering writes are relevant,
-so the honest per-evaluation figure is the ~4.5–7 ms relevant/no-op range
+so the honest per-evaluation figure is the ~3.6–5.8 ms relevant/no-op range
 rather than the no-op floor alone — at the 250 ms debounce that is up to 4
-evaluations/s ≈ 2–3% of one core per actively streaming subscribed session.
+evaluations/s ≈ 2% of one core per actively streaming subscribed session.
 
 ## Sentinel candidates cost more than the evaluation they guard
 
 | Sentinel candidate (scoped to the session)                          | Cost          |
 | ------------------------------------------------------------------ | ------------- |
-| `SELECT COUNT(*) FROM sdk_messages WHERE session_id = ?`             | 20–125 ms *   |
-| `SELECT COUNT(*), MAX(rowid) FROM sdk_messages WHERE session_id = ?` | 26–80 ms *    |
-| Aggregate digest of mutation columns over the whole session          | ~945 ms       |
-| `job_queue` active-delivery scan for the session                     | 0.01 ms       |
+| `SELECT COUNT(*) FROM sdk_messages WHERE session_id = ?`             | 18–125 ms *   |
+| `SELECT COUNT(*), MAX(rowid) FROM sdk_messages WHERE session_id = ?` | 24–80 ms *    |
+| Aggregate digest of mutation columns over the whole session          | ~395 ms †     |
+| `job_queue` active-row digest (full rows hashed — the sound shape)   | 0.01 ms       |
 
 \* depending on page-cache state across runs; always a multiple of the ~4 ms
-full evaluation.
+full evaluation. † 395 ms warm on the final harness run; 80–945 ms across
+earlier runs and cache states — the harness reproduces both digest shapes.
 
 The inversion is structural. The window query reads the ~200 newest rows plus
 their subagent children via indexes, while any session-wide aggregate scans
@@ -131,20 +144,20 @@ two-tier shape that would become worthwhile if queue traffic grows.
 ### Qualification: the subagent portion is unbounded
 
 The 200-row window bounds only the top-level rows; the `subagent` CTE returns
-every child of every windowed tool use. The harness measures this directly by
-inserting synthetic children under one in-window tool use, end-to-end
-including the delta delivery (which JSON-parses every added child): 500 /
-5,000 small rows cost 12 / 23 ms of evaluation; 200 / 1,000 children × 50 KB
-payloads (10 / 50 MB of selected content) cost 114 / 310 ms. Cost therefore
-scales with total child payload bytes, and a pathological recent tool use can
-push an evaluation back into the hundreds of ms — the tail risk is real, not
-hypothetical. The sound remedies are structural: cap children per windowed
-tool use, or paginate them; a sentinel cannot help because a sound
-fan-out-shaped sentinel must itself read the same children. Recommended as a
-follow-up task. It also does not rescue the aggregate sentinels: they are
-cheaper than a pathological fan-out evaluation, but they remain unsound
-against in-place updates, and in the common case they cost 4–6× a normal
-evaluation.
+every child of every windowed tool use. The harness measures this directly,
+case-isolated (each case's removals are settled in their own evaluation
+before the next case is inserted), end-to-end including the delta delivery
+(which JSON-parses every added child): 500 / 5,000 small rows cost 7.6 /
+23.0 ms of evaluation; 200 / 1,000 children × 50 KB payloads (10 / 50 MB of
+selected content) cost 62 / 277 ms. Cost therefore scales with total child
+payload bytes, and a pathological recent tool use can push an evaluation back
+into the hundreds of ms — the tail risk is real, not hypothetical. The sound
+remedies are structural: cap children per windowed tool use, or paginate
+them; a sentinel cannot help because a sound fan-out-shaped sentinel must
+itself read the same children. Recommended as a follow-up task. It also does
+not rescue the aggregate sentinels: they are cheaper than a pathological
+fan-out evaluation, but they remain unsound against in-place updates, and in
+the common case they cost 4–6× a normal evaluation.
 
 ## Coalescing
 
@@ -161,7 +174,7 @@ Two different ideas must be kept apart:
    ~4 evaluations/s, which is deliberate: it is what keeps the transcript
    live while an agent streams. True trailing-edge coalescing would freeze
    the UI for the duration of the stream and only pay off when evaluations
-   are expensive — at the measured 4.5–7 ms per evaluation (≈2–3% of a core
+   are expensive — at the measured 3.6–5.8 ms per evaluation (≈2% of a core
    at 4/s) there is nothing left to buy.
 
 ## Residual hot spot found while measuring (follow-up material, not engine work)
@@ -189,13 +202,14 @@ evaluation for that session's own subscribers only; no follow-up needed.
 ## Verdict
 
 Do not land the two-tier sentinel. After the metadata-scan fix in this PR,
-the production-wired evaluation it would guard costs ~4.5–7 ms while every
-session-aggregate sentinel candidate costs 4–6× more (and the digest 200×
-more); bursts coalesce into one evaluation per debounce window; overlapping
-evaluations are impossible in a synchronous engine; and every
-cheaper-than-the-query sentinel shape is unsound against in-place updates,
-which is the exact missed-change failure the task forbade. The one viable
-exception — a table-aware `job_queue` digest — is quantified above and does
-not pay for its machinery at current traffic. The remaining measured
-engine-adjacent costs (the sessions.list predicate, bounding the subagent
-fan-out) are query-shape work and should be tracked as their own tasks.
+the production-wired evaluation it would guard costs ~3.6–5.8 ms while every
+session-aggregate sentinel candidate costs 4–6× more (and the
+mutation-column digest ~100× more); bursts coalesce into one evaluation per
+debounce window; overlapping evaluations are impossible in a synchronous
+engine; and every cheaper-than-the-query sentinel shape is unsound against
+in-place updates, which is the exact missed-change failure the task forbade.
+The one viable exception — a table-aware `job_queue` digest — is quantified
+above and does not pay for its machinery at current traffic. The remaining
+measured engine-adjacent costs (the sessions.list predicate, bounding the
+subagent fan-out) are query-shape work and should be tracked as their own
+tasks.
