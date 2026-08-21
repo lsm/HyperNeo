@@ -394,9 +394,7 @@ export class ChannelRouter {
       try {
         const agents = resolveNodeAgents(node);
         if (agents.some((a) => a.name === role)) return node;
-      } catch {
-        // Skip malformed nodes (neither agentId nor agents defined)
-      }
+      } catch {}
     }
     return undefined;
   }
@@ -470,10 +468,7 @@ export class ChannelRouter {
         timestamp: new Date(now).toISOString(),
       } satisfies DaemonInternalEventMap['space.workflowRun.deadLoop'] & InternalEventPayload);
       this.deadLoopNotifiedAt.set(key, now);
-    } catch {
-      // Swallow — surfacing must not break the delivery path. Dedupe is NOT
-      // recorded, so the next blocked send retries the notification.
-    }
+    } catch {}
   }
 
   private isParentTaskArchived(runId: string): boolean {
@@ -513,8 +508,6 @@ export class ChannelRouter {
         by: event.by,
         timestamp: event.timestamp,
       } satisfies DaemonInternalEventMap['space.workflowRun.reopened'] & InternalEventPayload);
-    } catch {
-      // Swallow — bus errors must not break message delivery.
-    }
+    } catch {}
   }
 }

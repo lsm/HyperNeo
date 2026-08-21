@@ -82,9 +82,7 @@ async function cancelRunViaRpc(
       if (!hub?.request) return;
       await hub.request('spaceWorkflowRun.cancel', { id: rid });
     }, runId);
-  } catch {
-    // Best-effort cleanup
-  }
+  } catch {}
 }
 
 async function deleteSessionViaRpc(
@@ -98,9 +96,7 @@ async function deleteSessionViaRpc(
       if (!hub?.request) return;
       await hub.request('session.delete', { sessionId: id });
     }, sessionId);
-  } catch {
-    // Best-effort cleanup
-  }
+  } catch {}
 }
 
 test.describe('Canvas Mode Toggle', () => {
@@ -127,9 +123,7 @@ test.describe('Canvas Mode Toggle', () => {
     try {
       await page.goto('/');
       await waitForWebSocketConnected(page, 5000);
-    } catch {
-      // Best-effort
-    }
+    } catch {}
 
     if (runId) {
       await cancelRunViaRpc(page, runId);
@@ -147,9 +141,7 @@ test.describe('Canvas Mode Toggle', () => {
     if (wsPath && existsSync(wsPath)) {
       try {
         rmSync(wsPath, { recursive: true, force: true });
-      } catch {
-        // Best-effort cleanup
-      }
+      } catch {}
       wsPath = '';
     }
   });

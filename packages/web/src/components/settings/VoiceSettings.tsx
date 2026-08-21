@@ -96,9 +96,7 @@ export function VoiceSettings() {
     setTesting(true);
     try {
       await pendingSaveRef.current;
-    } catch {
-      // Should not reject (run catches), but guard anyway.
-    }
+    } catch {}
     if (lastSaveFailedRef.current) {
       setTesting(false);
       return;

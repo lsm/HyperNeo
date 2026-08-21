@@ -3197,10 +3197,7 @@ export class SpaceRuntime {
           for (const dep of unblocked) {
             await this.safeOnTaskUpdated(spaceId, dep);
           }
-        } catch {
-          // Best-effort: unblock failures must not abort
-          // the post-approval flow.
-        }
+        } catch {}
       }
     }
     return routeResult;

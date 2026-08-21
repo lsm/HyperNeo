@@ -253,7 +253,6 @@ describe('MessageInput submit race condition', () => {
 
       const unhandledHandler = (reason: unknown) => {
         if (reason instanceof Error && reason.message === 'network failure') {
-          // swallowed
         } else {
           process.removeListener('unhandledRejection', unhandledHandler);
           throw reason;

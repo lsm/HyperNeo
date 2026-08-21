@@ -55,14 +55,10 @@ describe('Migration 192: pending_agent_messages.delivery_mode', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   describe('pre-M192 schema — add column', () => {

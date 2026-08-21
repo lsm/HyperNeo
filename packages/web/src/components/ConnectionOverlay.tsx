@@ -26,7 +26,6 @@ export function ConnectionOverlay() {
     try {
       await connectionManager.reconnect();
     } catch {
-      // Reconnect failed — banner will remain visible
     } finally {
       setRetrying(false);
     }

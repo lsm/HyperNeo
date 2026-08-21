@@ -266,9 +266,7 @@ export class SkillsManager {
     };
     this.repo.insert(skill);
 
-    await this.ensureBuiltinPluginWrappers().catch(() => {
-      // Already logged inside the helper; non-fatal.
-    });
+    await this.ensureBuiltinPluginWrappers().catch(() => {});
 
     return this.repo.get(skill.id)!;
   }
@@ -472,10 +470,7 @@ export class SkillsManager {
         force: false,
         errorOnExist: false,
       });
-    } catch {
-      // Keep wrapper generation best-effort per skill: a missing/corrupt bundled
-      // asset path must not prevent unrelated built-in skills from registering.
-    }
+    } catch {}
   }
 
   private enqueueValidation(skillId: string): void {

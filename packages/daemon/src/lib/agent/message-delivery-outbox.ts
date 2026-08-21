@@ -77,8 +77,6 @@ export function persistAndEnqueueDelivery(
       result.core.id,
       result.core.countsTowardsBadge
     );
-  } catch {
-    // best-effort — committed state is authoritative.
-  }
+  } catch {}
   return { dbMessageId: result.core.id, role: result.role };
 }

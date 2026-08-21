@@ -19,9 +19,7 @@ describe('DatabaseLock', () => {
   afterEach(() => {
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    } catch {}
   });
 
   describe('acquire', () => {

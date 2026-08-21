@@ -82,9 +82,7 @@ class TestGlobalStore {
     for (const cleanup of this.cleanupFunctions) {
       try {
         cleanup();
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
     this.cleanupFunctions = [];
     this.initialized = false;

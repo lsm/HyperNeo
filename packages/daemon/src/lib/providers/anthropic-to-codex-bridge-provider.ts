@@ -810,9 +810,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           throw err;
         }
       }
-    } catch {
-      // file does not exist — nothing to do
-    }
+    } catch {}
   }
 
   private async loadCredentials(): Promise<StoredCredentials | null> {
@@ -826,9 +824,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         this.cachedCredentials = creds;
         return creds;
       }
-    } catch {
-      // file missing or malformed — continue to next source
-    }
+    } catch {}
     return null;
   }
 
@@ -840,9 +836,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     try {
       const existing = await fs.readFile(this.authPath, 'utf-8');
       data = JSON.parse(existing) as Record<string, unknown>;
-    } catch {
-      // file does not exist yet
-    }
+    } catch {}
 
     data['openai'] = credentials;
     const json = JSON.stringify(data, null, 2);

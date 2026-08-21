@@ -50,9 +50,7 @@ function findRepoRoot(startDir: string): string | null {
         if (pkg.workspaces) {
           return dir;
         }
-      } catch {
-        // Continue searching
-      }
+      } catch {}
     }
     dir = path.dirname(dir);
   }
@@ -203,9 +201,7 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
       const timeout = setTimeout(() => {
         try {
           proc.kill('SIGTERM');
-        } catch {
-          // Ignore process termination errors
-        }
+        } catch {}
         reject(new Error(`devproxy ${args.join(' ')} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
 
@@ -415,9 +411,7 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
           if (output) {
             fs.appendFileSync(logPath, `${output}\n`);
           }
-        } catch {
-          // Ignore log collection failures
-        }
+        } catch {}
       }
 
       await runDevProxyCommand(['stop'], 5000);

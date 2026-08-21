@@ -260,9 +260,7 @@ export class ConnectionManager {
     for (const handler of handlers) {
       try {
         handler();
-      } catch {
-        // Ignore handler errors
-      }
+      } catch {}
     }
   }
 
@@ -310,9 +308,7 @@ export class ConnectionManager {
     };
 
     document.addEventListener('visibilitychange', this.visibilityHandler);
-    this.pageHideHandler = () => {
-      // Page hiding - connection may become stale
-    };
+    this.pageHideHandler = () => {};
     document.addEventListener('pagehide', this.pageHideHandler);
   }
 

@@ -1836,9 +1836,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
             agentSessionId: null,
           },
         ],
-        activateNode: async () => {
-          // No-op: session stays null after activation
-        },
+        activateNode: async () => {},
       });
 
       const result = await call('space.task.sendMessage', {
@@ -1974,9 +1972,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
             agentSessionId: null,
           },
         ],
-        activateNode: async () => {
-          // No-op: session stays null
-        },
+        activateNode: async () => {},
       });
 
       const result = await call('space.task.sendMessage', {

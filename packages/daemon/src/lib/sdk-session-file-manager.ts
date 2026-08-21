@@ -40,9 +40,7 @@ export function findSDKSessionFileGlobally(sdkSessionId: string): string | null 
         return filePath;
       }
     }
-  } catch {
-    // Treat any scan error as "not found"
-  }
+  } catch {}
 
   return null;
 }
@@ -610,13 +608,9 @@ function findAllSDKFilesForSession(
           const stats = statSync(filePath);
           results.push({ path: filePath, size: stats.size });
         }
-      } catch {
-        // Skip files we can't read
-      }
+      } catch {}
     }
-  } catch {
-    // Silent failure - caller will handle empty results
-  }
+  } catch {}
 
   return results;
 }
@@ -758,13 +752,9 @@ export function scanSDKSessionFiles(workspacePath: string): SDKSessionFileInfo[]
           size: stats.size,
           modifiedAt: stats.mtime,
         });
-      } catch {
-        // Skip files we can't stat
-      }
+      } catch {}
     }
-  } catch {
-    // Silent failure - caller will handle empty results
-  }
+  } catch {}
 
   return results;
 }
@@ -791,9 +781,7 @@ function extractKaiSessionIds(filePath: string): string[] {
         }
       }
     }
-  } catch {
-    // Return empty if we can't read
-  }
+  } catch {}
 
   return Array.from(ids);
 }
@@ -866,9 +854,7 @@ export function stripThinkingBlocksFromSessionFile(
             return JSON.stringify(message);
           }
         }
-      } catch {
-        // Skip unparseable lines — preserve them as-is
-      }
+      } catch {}
       return line;
     });
 
@@ -878,9 +864,7 @@ export function stripThinkingBlocksFromSessionFile(
       writeFileSync(sessionFile, `${updatedLines.join('\n')}\n`, 'utf-8');
       result.stripped = true;
     }
-  } catch {
-    // Best-effort — if stripping fails, the SDK will recover by starting fresh
-  }
+  } catch {}
 
   return result;
 }
@@ -1007,9 +991,7 @@ function extractMessageUuids(content: string): Set<string> {
         messageUuids.add(parsed.uuid);
         continue;
       }
-    } catch {
-      // Fall through to a light regex fallback for partially malformed lines.
-    }
+    } catch {}
 
     for (const match of line.matchAll(/"uuid"\s*:\s*"([^"]+)"/g)) {
       messageUuids.add(match[1]);

@@ -160,18 +160,12 @@ You MUST respond with valid JSON:
   },
 ];
 
-/**
- * Get a built-in template by ID.
- * @public
- */
+/** @public */
 export function getBuiltinTemplate(id: string): PromptTemplate | undefined {
   return BUILTIN_TEMPLATES.find((t) => t.id === id);
 }
 
-/**
- * Get all templates in a category.
- * @public
- */
+/** @public */
 export function getTemplatesByCategory(category: PromptTemplateCategory): PromptTemplate[] {
   return BUILTIN_TEMPLATES.filter((t) => t.category === category);
 }

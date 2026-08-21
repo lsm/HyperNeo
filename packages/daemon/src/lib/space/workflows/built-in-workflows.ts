@@ -1608,9 +1608,7 @@ export function seedBuiltInWorkflows(
             row.id,
             migrated.tags!.filter((tag) => tag !== 'default')
           );
-        } catch {
-          // Non-fatal: tag normalization does not block the migration.
-        }
+        } catch {}
       }
     }
   }

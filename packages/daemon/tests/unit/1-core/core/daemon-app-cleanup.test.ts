@@ -440,9 +440,7 @@ describe('Daemon App Cleanup', () => {
     afterEach(() => {
       try {
         rmSync(tmpDbDir, { recursive: true, force: true });
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     });
 
     test('should remove the lock file after cleanup() when using a file-based DB', async () => {

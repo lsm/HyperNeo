@@ -356,9 +356,7 @@ export class SDKMessageRepository {
       try {
         const context = JSON.parse(row.session_context) as { roomId?: unknown };
         if (typeof context.roomId === 'string') return false;
-      } catch {
-        // Malformed historical context should not make an otherwise-normal session unsearchable.
-      }
+      } catch {}
     }
 
     const isSpaceSession =

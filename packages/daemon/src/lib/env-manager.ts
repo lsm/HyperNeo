@@ -1,8 +1,5 @@
 export class EnvManager {
-  constructor(_envPath?: string) {
-    // _envPath is kept for backward compatibility with tests but not used
-    // All credentials are read from process.env only
-  }
+  constructor(_envPath?: string) {}
 
   getApiKey(): string | undefined {
     return (

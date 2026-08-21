@@ -39,7 +39,5 @@ export function addRecentPath(path: string): void {
     const trimmed = filtered.slice(0, MAX_RECENT_PATHS);
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
-  } catch {
-    // Silently fail if localStorage is unavailable
-  }
+  } catch {}
 }

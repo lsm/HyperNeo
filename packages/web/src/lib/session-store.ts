@@ -411,9 +411,7 @@ export class SessionStore {
     this.cleanupFunctions.push(() => {
       const activeHub = connectionManager.getHubIfConnected();
       if (activeHub) {
-        activeHub.request('liveQuery.unsubscribe', { subscriptionId }).catch(() => {
-          /* best-effort — server will clean up on disconnect anyway */
-        });
+        activeHub.request('liveQuery.unsubscribe', { subscriptionId }).catch(() => {});
       }
     });
 
@@ -697,9 +695,7 @@ export class SessionStore {
     for (const cleanup of this.cleanupFunctions) {
       try {
         cleanup();
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
     this.cleanupFunctions = [];
   }

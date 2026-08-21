@@ -52,9 +52,7 @@ function execFileAsync(
       settled = true;
       try {
         child?.kill('SIGKILL');
-      } catch {
-        // Already exited — nothing to kill.
-      }
+      } catch {}
       reject(
         new KeychainUnavailableError(`Credential store subprocess timed out after ${timeoutMs}ms`)
       );
@@ -114,9 +112,7 @@ export class KeychainCredentialStore implements CredentialStore {
         settled = true;
         try {
           child.kill('SIGKILL');
-        } catch {
-          // Already exited — nothing to kill.
-        }
+        } catch {}
         reject(
           new KeychainUnavailableError(
             `security add-generic-password timed out after ${CHILD_PROCESS_TIMEOUT_MS}ms`
@@ -295,9 +291,7 @@ export class KeychainStatusCredentialStore implements CredentialStore {
       const existing = await this.fallback.get(service, account);
       if (existing === null) return;
       await this.fallback.set(service, account, data);
-    } catch {
-      // Swallow — Keychain write succeeded, refresh is best-effort.
-    }
+    } catch {}
   }
 
   async listServices(prefix: string): Promise<string[]> {
@@ -430,9 +424,7 @@ async function tryUnlockKeychainViaGUI(timeoutMs: number = 30_000): Promise<bool
     const timer = setTimeout(() => {
       try {
         child.kill('SIGKILL');
-      } catch {
-        // Already exited — nothing to kill.
-      }
+      } catch {}
       finish(false);
     }, timeoutMs);
     child.on('error', () => finish(false));
@@ -554,9 +546,7 @@ function loadOrGenerateCredentialKey(): string {
   try {
     const existing = fs.readFileSync(keyPath, 'utf-8').trim();
     if (existing) return existing;
-  } catch {
-    // File does not exist — generate a new key below.
-  }
+  } catch {}
 
   const key = randomBytes(32).toString('hex');
   try {

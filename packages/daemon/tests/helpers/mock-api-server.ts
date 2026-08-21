@@ -60,9 +60,7 @@ function findRepoRoot(startDir: string): string | null {
       if (pkg.workspaces) {
         return dir;
       }
-    } catch {
-      // Continue searching
-    }
+    } catch {}
     dir = path.dirname(dir);
   }
   return null;

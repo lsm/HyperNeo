@@ -38,14 +38,10 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('fresh DB: tasks CHECK constraint includes archived', () => {

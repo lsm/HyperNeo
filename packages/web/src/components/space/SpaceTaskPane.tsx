@@ -250,9 +250,7 @@ export function SpaceTaskPane({
 
   useEffect(() => {
     if (!taskId) return;
-    spaceStore.subscribeTaskActivity(taskId).catch(() => {
-      // Ignore subscription errors — activity list is best-effort
-    });
+    spaceStore.subscribeTaskActivity(taskId).catch(() => {});
     return () => {
       spaceStore.unsubscribeTaskActivity(taskId);
     };

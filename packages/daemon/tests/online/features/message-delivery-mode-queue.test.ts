@@ -130,9 +130,7 @@ describe('Message delivery mode queue flow', () => {
       } finally {
         try {
           await daemon.messageHub.request('client.interrupt', { sessionId });
-        } catch {
-          // Best effort
-        }
+        } catch {}
       }
     },
     TEST_TIMEOUT
@@ -253,9 +251,7 @@ describe('Message delivery mode queue flow', () => {
       } finally {
         try {
           await daemon.messageHub.request('client.interrupt', { sessionId });
-        } catch {
-          // Best effort
-        }
+        } catch {}
       }
     },
     TEST_TIMEOUT
@@ -340,9 +336,7 @@ describe('Message delivery mode queue flow', () => {
       } finally {
         try {
           await daemon.messageHub.request('client.interrupt', { sessionId });
-        } catch {
-          // Best effort
-        }
+        } catch {}
       }
     },
     TEST_TIMEOUT

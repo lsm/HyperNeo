@@ -1031,7 +1031,6 @@ ${messageText.slice(0, 2000)}`;
           const found = findInModels(availableModels, requestedModel);
           if (found) {
             if (explicitProvider && found.provider !== explicitProvider) {
-              // fall through to keep the requested model for its explicit provider
             } else {
               const suffix = /\[1m\]$/i;
               if (

@@ -1,9 +1,4 @@
-/**
- * Base class for all connection-related errors
- *
- * Consumers can use `error instanceof ConnectionError` to catch any connection error.
- * @public - Intentionally exported as base class for error hierarchy
- */
+/** @public */
 export class ConnectionError extends Error {
   constructor(message: string) {
     super(message);

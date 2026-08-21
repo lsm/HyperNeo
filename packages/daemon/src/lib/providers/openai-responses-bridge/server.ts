@@ -188,9 +188,7 @@ function extractSessionId(req: Request): { sessionId: string; pathname: string }
           sessionId: decodeURIComponent(encodedSessionId),
           pathname: remainder.slice(slashIndex) || '/',
         };
-      } catch {
-        // Fall back to legacy auth-header parsing below for malformed route IDs.
-      }
+      } catch {}
     }
   }
 

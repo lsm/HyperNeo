@@ -796,9 +796,7 @@ export class AcpQueryRunner {
         if (this.ctx.queryObject) {
           try {
             this.ctx.queryObject.close();
-          } catch {
-            // Ignore close errors — subprocess may already be terminated
-          }
+          } catch {}
           this.ctx.queryObject = null;
         } else {
           client?.close();
@@ -886,9 +884,7 @@ export class AcpQueryRunner {
       if (this.ctx.queryObject) {
         try {
           this.ctx.queryObject.close();
-        } catch {
-          // Ignore close errors
-        }
+        } catch {}
         this.ctx.queryObject = null;
       } else {
         client?.close();
@@ -1213,9 +1209,7 @@ export class AcpQueryRunner {
       signal.removeEventListener('abort', onAbort);
       try {
         await iterator.return?.();
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
   }
 

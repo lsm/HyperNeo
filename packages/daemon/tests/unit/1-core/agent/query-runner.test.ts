@@ -140,9 +140,7 @@ describe('QueryRunner', () => {
       size: sizeSpy,
       getGeneration: mock(() => 0),
       enqueueWithId: enqueueWithIdSpy,
-      messageGenerator: mock(async function* () {
-        // Empty generator for tests
-      }),
+      messageGenerator: mock(async function* () {}),
     } as unknown as MessageQueue;
 
     getStateSpy = mock(() => ({ status: 'idle' }));
@@ -544,9 +542,7 @@ describe('QueryRunner', () => {
             mcpServers: {},
           });
 
-        const onMissingMemberSpaceMcpServers = mock(async () => {
-          // Self-heal callback runs but does NOT fix the servers
-        });
+        const onMissingMemberSpaceMcpServers = mock(async () => {});
 
         const ctx = createContext({ onMissingMemberSpaceMcpServers });
         runner = new QueryRunner(ctx);
@@ -891,7 +887,6 @@ describe('QueryRunner', () => {
       const generator = runner.createMessageGeneratorWrapper(0);
 
       for await (const _msg of generator) {
-        // Consume the generator
       }
 
       expect(setProcessingSpy).toHaveBeenCalledWith('msg-1', 'initializing');
@@ -916,7 +911,6 @@ describe('QueryRunner', () => {
 
       const generator = runner.createMessageGeneratorWrapper(0);
       for await (const _msg of generator) {
-        // Consume generator
       }
 
       expect(updateMessageStatusSpy).not.toHaveBeenCalled();
@@ -943,7 +937,6 @@ describe('QueryRunner', () => {
       const generator = runner.createMessageGeneratorWrapper(0);
 
       for await (const _msg of generator) {
-        // Consume the generator
       }
 
       expect(setProcessingSpy).not.toHaveBeenCalled();
@@ -976,7 +969,6 @@ describe('QueryRunner', () => {
 
       const generator = runner.createMessageGeneratorWrapper(0);
       for await (const _msg of generator) {
-        // Consume the generator
       }
 
       const tracked = (
@@ -1014,7 +1006,6 @@ describe('QueryRunner', () => {
 
       const generator = runner.createMessageGeneratorWrapper(0);
       for await (const _msg of generator) {
-        // Consume the generator
       }
 
       const tracked = (
@@ -1051,7 +1042,6 @@ describe('QueryRunner', () => {
 
       const generator = runner.createMessageGeneratorWrapper(0);
       for await (const _msg of generator) {
-        // Consume the generator
       }
 
       expect(
@@ -1226,7 +1216,6 @@ describe('QueryRunner', () => {
       );
       const completion = (async () => {
         for await (const _message of generator) {
-          // No message should be yielded.
         }
       })();
 
@@ -1264,7 +1253,6 @@ describe('QueryRunner', () => {
       );
 
       for await (const _msg of generator) {
-        // Consume
       }
 
       expect(returnCalled).toBe(true);
@@ -1290,7 +1278,6 @@ describe('QueryRunner', () => {
 
       await expect(async () => {
         for await (const _msg of generator) {
-          // Consume
         }
       }).rejects.toThrow('Some SDK error');
     });

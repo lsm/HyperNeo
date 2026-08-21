@@ -161,9 +161,7 @@ describe('QueryRunner startup gate', () => {
       size: () => 0,
       getGeneration: () => 0,
       enqueueWithId: async () => {},
-      messageGenerator: mock(async function* () {
-        // No messages — the mocked SDK query never consumes the generator.
-      }),
+      messageGenerator: mock(async function* () {}),
     } as unknown as MessageQueue;
 
     const ctx: QueryRunnerContext = {

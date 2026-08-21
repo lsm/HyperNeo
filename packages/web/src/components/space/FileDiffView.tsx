@@ -67,7 +67,6 @@ export function parseDiff(diff: string): ParsedLine[] {
     } else if (raw.startsWith('\\')) {
       result.push({ type: 'index', content: raw, oldLineNum: null, newLineNum: null });
     } else if (!raw) {
-      // trailing newline produces an empty string — skip it
     } else {
       oldLine++;
       newLine++;

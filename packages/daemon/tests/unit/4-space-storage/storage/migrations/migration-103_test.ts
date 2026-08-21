@@ -206,14 +206,10 @@ describe('Migration 103: task status "approved" + post_approval schema', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   describe('fresh DB (all migrations applied)', () => {

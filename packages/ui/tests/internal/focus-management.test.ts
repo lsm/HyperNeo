@@ -250,9 +250,7 @@ describe('focusIn', () => {
     const spy2 = vi.spyOn(btn2, 'focus').mockImplementation(() => {
       Object.defineProperty(document, 'activeElement', { value: btn2, configurable: true });
     });
-    vi.spyOn(btn1, 'focus').mockImplementation(() => {
-      // btn1 focus should NOT become active (simulate no focus change)
-    });
+    vi.spyOn(btn1, 'focus').mockImplementation(() => {});
     const result = focusIn(container, Focus.Previous | Focus.WrapAround);
     expect(spy2).toHaveBeenCalled();
     expect(result).toBe(true);

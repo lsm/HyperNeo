@@ -270,9 +270,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
             ]).catch(() => {})
           )
         );
-      } catch {
-        // Hub may already be disconnected
-      }
+      } catch {}
       daemon.kill('SIGTERM');
       await daemon.waitForExit();
     }

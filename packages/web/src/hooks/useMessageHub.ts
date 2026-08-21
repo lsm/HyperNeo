@@ -82,9 +82,7 @@ export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHub
       subscriptionsRef.current.forEach((unsub) => {
         try {
           unsub();
-        } catch {
-          // Ignore cleanup errors
-        }
+        } catch {}
       });
       subscriptionsRef.current = [];
     };
