@@ -384,6 +384,11 @@ manager throwing, as before). `reassign_task` keeps no target gate (the manager
 throws for unknown ids), and `approve_task` gathers `spaceLevel` preferring
 `space.autonomyLevel` over the `getSpaceAutonomyLevel` path that
 `requireSessionWriteAutonomy` uses — both pre-existing divergences, preserved.
+`approve_task` also inverts the shape's admission-first order: `routeApproveTask`
+checks the target before the autonomy level, so a below-threshold caller
+supplying a missing or cross-space task id receives the target error rather
+than the autonomy denial — the reverse of `update_task`'s autonomy-first gate
+order, and pre-existing parity (the inline handler checked target first too).
 The gather layer also re-derives predicate inputs (`statusDiffers`,
 `isRecoveryTransition`) from the same snapshots the table consumes — the price
 of keeping reads out of the core.
@@ -402,7 +407,8 @@ oxlint, and `tsc --noEmit` are clean; every core export is production-consumed
 or pinned directly by the gate/routing suites per Decision item 6. Live
 near-duplicates remain only in never-converted surfaces — the hand-rolled
 target checks in `get_task_detail`, `send_message_to_task`, `list_task_members`,
-and `approve_pending_completion`, and the largest one: the UI-side RPC cascade
+`approve_pending_completion`, `attach_forge_task_evidence`, and the task branch
+of `resolve_forge_scope`, and the largest one: the UI-side RPC cascade
 in `rpc-handlers/space-task-handlers.ts`, which re-implements the update
 routing by hand with UI-flavored messages. These are follow-up mini-pilot
 material (below), deliberately not folded into a cleanup PR.
