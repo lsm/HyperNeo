@@ -330,7 +330,10 @@ matrix_excludes() {
 		injob && $0 ~ "^[[:space:]]*exclude:[[:space:]]*$" { inblock=1; next }
 		injob && inblock && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
 			n=0; while (substr($0,n+1,1)==" ") n++
-			if (n <= 8) { inblock=0; next }
+			# n <= 8 ends the block EXCEPT YAML indentationless-sequence form,
+			# where items sit at the SAME indent as the exclude key ("exclude:"
+			# then "- shard: 2", both at 8) — those dash lines are still items.
+			if (n <= 8 && !(n == 8 && $0 ~ /^[[:space:]]*- /)) { inblock=0; next }
 			if (match($0, key ":[[:space:]]*[^][,}[:space:]]+")) {
 				v=substr($0, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); gsub(/[^a-z0-9-]/, "", v); if (v != "") print v
 			}
@@ -1097,8 +1100,8 @@ _web_sibling_axes=$(awk '
 	!injob { next }
 	/^[[:space:]]{6}matrix:[[:space:]]*$/ { inmatrix=1; next }
 	/^[[:space:]]{0,6}[a-z]/ { inmatrix=0 }
-	inmatrix && /^[[:space:]]{8}[A-Za-z][A-Za-z0-9_-]*:/ {
-		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); k=tolower(s)
+	inmatrix && /^[[:space:]]{8}"?[A-Za-z][A-Za-z0-9_-]*"?:/ {
+		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); gsub(/"/, "", s); k=tolower(s)
 		if (k != "shard" && k != "include" && k != "exclude") print s
 	}
 ' "$REPO_ROOT/.github/workflows/main.yml")
@@ -1118,6 +1121,14 @@ fi
 # path — a target on a folded continuation line would otherwise evade an
 # end-of-physical-line check.
 _web_cmd=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web')
+# Normalize the matrix expression to a placeholder so the --shard flag can be
+# compared as ONE whitespace-delimited token (the expression itself contains
+# spaces); exact-token equality then also rejects a stale LONGER denominator
+# (e.g. --shard=${{ matrix.shard }}/20 with a 2-entry axis), which a substring
+# match would accept.
+_web_shard_tok=$(printf '%s' "$_web_cmd" | sed 's/.*bunx vitest run//' \
+	| sed -E 's/[$][{][{][[:space:]]*matrix[.]shard[[:space:]]*[}][}]/MSHARD/g' \
+	| grep -oE -- "--shard=[^[:space:]']+" || true)
 if [ "$(count_enabled_run_cmds "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web')" -gt 1 ]; then
 	err "test-web has more than one enabled 'cd packages/web && bunx vitest run' step — each runs the web suite (duplicate runs + duplicate Coveralls uploads) while this guard reports each file covered once"
 	echo "     → keep exactly one enabled web runner step" >&2
@@ -1149,8 +1160,9 @@ elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'cd packag
 elif runner_shell_override "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web'; then
 	err "test-web runner step (or its job) sets a non-default shell — a no-exec shell (e.g. bash -n {0}) would make the step succeed having run ZERO web tests while this guard reports them covered"
 	echo "     → remove the shell: override (use the default shell)" >&2
-elif [ "$(printf '%s' "$_web_cmd" | sed 's/.*bunx vitest run//' | grep -oF -- '--shard=' | wc -l | tr -d ' ')" -ne 1 ] ||
-     ! printf '%s' "$_web_cmd" | sed 's/.*bunx vitest run//' | grep -qF -- "--shard=\${{ matrix.shard }}/$web_shard_n"; then
+elif [ -z "$_web_shard_tok" ] ||
+     [ "$(printf '%s\n' "$_web_shard_tok" | wc -l | tr -d ' ')" -ne 1 ] ||
+     [ "$_web_shard_tok" != "--shard=MSHARD/$web_shard_n" ]; then
 	err "test-web runner does not pass exactly one '--shard=\${{ matrix.shard }}/$web_shard_n' — a fixed --shard, a stale denominator, or a missing/duplicated flag makes every leg run the same slice (or a narrower/unsharded set) while this guard reports all files covered"
 	echo "     → keep '--shard=\${{ matrix.shard }}/$web_shard_n' as the only --shard flag after 'bunx vitest run'" >&2
 elif [ -n "$(printf '%s' "$_web_cmd" \

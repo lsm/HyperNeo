@@ -574,6 +574,39 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: 'rejects a stale longer --shard denominator (/20 vs 2-entry axis)',
+    expectExit: 1,
+    expectInStderr: "does not pass exactly one '--shard=",
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace('--shard=${{ matrix.shard }}/2', '--shard=${{ matrix.shard }}/20')
+      );
+    },
+  },
+  {
+    name: 'rejects an indentationless-sequence matrix.exclude (P2)',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        exclude:\n        - shard: 2'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects a quoted sibling axis under test-web (P2)',
+    expectExit: 1,
+    expectInStderr: 'extra axis',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace('        shard: [1, 2]', '        shard: [1, 2]\n        "os": [ubuntu-latest]')
+      );
+    },
+  },
+  {
     name: 'prunes dist/ from the shared disk scan (P2)',
     expectExit: 0,
     mutate: (root) => {
