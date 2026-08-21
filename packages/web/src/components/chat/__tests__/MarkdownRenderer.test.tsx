@@ -79,9 +79,18 @@ describe('MarkdownRenderer', () => {
       expect(container.querySelector('button')).toBeFalsy();
     });
 
-    it('should not render a copy button for empty content', () => {
-      const { container } = render(<MarkdownRenderer content="   " />);
+    it('should not render a copy button for empty content', async () => {
+      const { container, rerender } = render(<MarkdownRenderer content="   " />);
+      await new Promise((resolve) => setTimeout(resolve, 50));
       expect(container.querySelector('button')).toBeFalsy();
+
+      rerender(<MarkdownRenderer content="streamed text" />);
+      expect(container.querySelector('button')).toBeFalsy();
+
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('streamed');
+      });
+      expect(container.querySelector('button')).toBeTruthy();
     });
 
     it('should copy the raw markdown source on click', async () => {
@@ -163,6 +172,15 @@ describe('MarkdownRenderer', () => {
       const { container } = render(<MarkdownRenderer content="Test" />);
       const prose = container.querySelector('.prose');
       expect(prose?.className).toContain('[@media(hover:none)]:pr-7');
+    });
+
+    it('should stay visible when focused on hover-capable devices', async () => {
+      const { container } = render(<MarkdownRenderer content="Test" />);
+      await waitFor(() => {
+        expect(container.querySelector('button')).toBeTruthy();
+      });
+      const wrapper = container.querySelector('button')?.parentElement;
+      expect(wrapper?.className).toContain('[@media(hover:hover)]:focus-within:opacity-100');
     });
 
     it('should reset the copied confirmation when content changes', async () => {
