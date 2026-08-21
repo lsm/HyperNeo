@@ -289,6 +289,46 @@ describe('SpaceWorkflowRunRepository', () => {
     });
   });
 
+  describe('casRunStatus', () => {
+    it("returns 'won' and flips the status on an exact match", () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      expect(repo.casRunStatus(run.id, 'pending', 'blocked')).toBe('won');
+      expect(repo.getRun(run.id)!.status).toBe('blocked');
+    });
+
+    it("returns 'won' when the current status is in the expected set", () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      repo.updateStatusUnchecked(run.id, 'in_progress');
+      expect(repo.casRunStatus(run.id, ['pending', 'in_progress'], 'blocked')).toBe('won');
+      expect(repo.getRun(run.id)!.status).toBe('blocked');
+    });
+
+    it("returns 'superseded' and leaves the row unchanged when the status moved first", () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      repo.updateStatusUnchecked(run.id, 'done');
+      expect(repo.casRunStatus(run.id, 'pending', 'blocked')).toBe('superseded');
+      expect(repo.getRun(run.id)!.status).toBe('done');
+    });
+
+    it("returns 'superseded' for an unknown run id", () => {
+      expect(repo.casRunStatus('nonexistent', 'pending', 'blocked')).toBe('superseded');
+    });
+
+    it("returns 'superseded' for an empty expected set without writing", () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      expect(repo.casRunStatus(run.id, [], 'blocked')).toBe('superseded');
+      expect(repo.getRun(run.id)!.status).toBe('pending');
+    });
+
+    it('touches no other rows', () => {
+      const target = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Target' });
+      const other = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Other' });
+      const otherBefore = repo.getRun(other.id);
+      expect(repo.casRunStatus(target.id, 'pending', 'blocked')).toBe('won');
+      expect(repo.getRun(other.id)).toEqual(otherBefore);
+    });
+  });
+
   describe('deleteRun', () => {
     it('deletes a run', () => {
       const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });

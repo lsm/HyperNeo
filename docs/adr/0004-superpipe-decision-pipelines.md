@@ -24,6 +24,12 @@ staged async flows (decide → effect → re-snapshot). The boundaries in
 "Where superpipe must not be used" still hold; "free-form effect executor"
 replaces the earlier blanket "effect executor".
 
+Revised 2026-08-21 after issue #2670 (stagedRun RFC): staged run pipelines are
+sanctioned — `stagedRun` composes snapshot/decide/effect/resnapshot stages, with
+effect stages permitted inside pipelines under atomicity-delegation conditions.
+Answers the RFC's five open questions; see "Staged run pipelines". The prior
+boundary is retained in substance: a pipeline still never owns atomicity.
+
 ## Context
 
 HyperNeo's Space runtime classes accumulate cascades that interleave three concerns:
@@ -42,6 +48,20 @@ primitive: dependency-injected named stages, ctx threading, boolean `!dep`
 flow-control halts, and a choice of sync (`.end`) or async (`.endAsync`) executors.
 It was hardened for this pilot upstream (tsconfig build fix, raw-boolean-dep
 support, catchable `OutputKeyError`).
+
+### Library surface vs. blessed idioms
+
+Superpipe's full surface is larger than anything blessed in this ADR: async
+pipelines, dependency-injected named inputs/outputs, per-stage error handlers,
+`!dep`/`?dep` control-flow prefixes, output picking/merging, and `withSignal`
+cancellation. The combinators below (`decisionRun`, `stagedRun`) are **blessed
+idioms** — recurring shapes with the wiring ceremony deduplicated and one
+discipline made structural — not a statement about what the library can do. A
+flow that fits no blessed idiom may use superpipe directly; when a raw shape
+recurs (≈3 uses), promote it into a named combinator so the codebase converges
+on vocabulary instead of calcifying. A combinator must earn its layer by making
+a discipline structural — dedup alone is convenience, not a layer. Phases bound
+adoption; nothing here bounds the library.
 
 ## Decision
 
@@ -66,8 +86,11 @@ shell (class): flat interpreter, one branch per decision action
    (`packages/daemon/src/lib/space/runtime/decision-pipeline.ts`): factory + cast,
    `.input(['ctx'])`, the per-gate halt guards, and `decision: null` injection.
    A new decision pipeline is a name plus a gate array (~6 lines). Do not
-   hand-write the superpipe ritual; do not import superpipe outside
-   `decision-pipeline.ts` without an ADR-level reason.
+   hand-write the gate ritual when `decisionRun` fits. Superpipe imports outside
+   `decision-pipeline.ts` and `staged-run.ts` are permitted for flows that fit no
+   blessed idiom (revised 2026-08-21 — this was earlier a monopoly, and it bred
+   false ceilings about the library); when a raw shape recurs ≈3 times, promote
+   it into a named combinator.
 4. **Pipelines are the composition primitive for sequential logic, not just
    decisions.** Two additional sanctioned forms beyond decide-once cores:
    - **Transform pipelines.** A pipeline may compose an evolving value across
@@ -104,15 +127,140 @@ shell (class): flat interpreter, one branch per decision action
    `AbortSignal` cancellation exists and is unused. Wire it when a real
    cancellation requirement appears, not to exercise the feature.
 
+### Staged run pipelines (`stagedRun`) — added 2026-08-21 (#2670)
+
+`decisionRun` answers "what happens next" in one synchronous step. The run tick's
+remaining body is a different shape: long flows interleaving snapshots, decisions,
+and guarded effects — admission, four recovery handlers, queued-handoff repair,
+completion settlement, spawn. Per issue #2670, a second combinator is sanctioned:
+`stagedRun(name, stages)`. Only the top-level composition is necessarily
+superpipe — the interpreter makes stage ordering, halts, and error wiring
+structural. Each stage is a callable obeying one of five stage contracts; the
+body may be a plain function or a composed sub-pipeline, which are
+interchangeable (after composition, a pipeline is just a function — the
+interpreter never distinguishes them). The five contracts:
+
+- **`snapshot`** — read-only; gathers declared state keys into ctx (async
+  allowed); keys that must be mutually coherent are gathered in one repository
+  read, not stitched from separate queries.
+- **`decide`** — pure and synchronous; a `decisionRun` core; stamps a decision
+  union member.
+- **`effect`** — mutating; declares `reads`/`writes` state keys; persistent
+  writes go through atomic repository primitives (condition 1), while external
+  side effects — network, publishes, session injects — are gated by a durable
+  intent row whose conditional write validates the stage's declared read
+  preconditions (the Phase 0 reservation mechanism, which also dedups replay)
+  and carry condition 5's idempotence/compensation obligation.
+- **`resnapshot`** — re-reads the specific keys a later stage depends on.
+- **`halt`** — terminal; returns the outcome.
+
+Branching is deliberately not a stage type: a `decide` stage's output drives
+superpipe's native `!`/`?` control flow. A separate `branch` stage would duplicate
+the library. Action routing rides the same machinery: a decision member's payload
+enters ctx, action-specific stages declare it as an optional dependency (`?dep`
+skips the stage when the decision is not that member) or end the flow with a halt
+(`!dep`) — the P3/P4 idioms, no per-action dispatcher.
+
+**Conditions on `effect` stages.** The prior boundary — effects at pipeline
+boundaries, a pipeline never owns atomicity — was drawn because superpipe provides
+no atomicity. It is retained in substance and relocated: atomicity moves into
+repository primitives, which effect stages must call.
+
+1. **Atomicity delegation.** Every effect stage writes persistent state through
+   CAS, reservation, or transition-table-guarded primitives (Phase 0 below) — a
+   transition-table guard qualifies only when guard and write commit as one
+   conditional update or transaction, never check-then-write. The conditional
+   update carries the stage's declared read preconditions as well (the spawn
+   reservation validates the task's status while reserving the execution), so a
+   concurrent external change to a declared read key — a mid-tick park — fails
+   the same CAS into `superseded`, not just a change to the written row. Blind
+   read-modify-write inside an effect stage is banned.
+2. **Declared read/write sets, enforced.** The interpreter refuses to run a flow
+   in which a stage reads a key that an earlier effect stage wrote unless an
+   intervening `snapshot`/`resnapshot` re-gathers it — staleness prevention made
+   structural, the same way `!hasDecided` made precedence structural. The
+   declaration is load-bearing by construction: stages access state through the
+   declared keys' accessors, not the raw context, so an undeclared read is not
+   expressible.
+3. **CAS failure is a decision, not an error.** A failed CAS stamps a
+   `superseded` outcome; the flow re-snapshots or halts for this tick. No
+   in-tick retry loops. The recovery-handler-overwrites-`stopped`-with-`blocked`
+   race class becomes structurally impossible instead of tested away. Effect
+   stages return their primitives' CAS outcomes and the interpreter — not the
+   effect body — stamps `superseded`, keeping decision-stamping out of the
+   effect contract; whether the flow then re-snapshots or halts for this tick
+   is the outcome's routing, never the effect's choice. Correlated transitions
+   (an execution, its run, the canonical task) compose into one transactional
+   primitive per set or compensate already-committed writes before either
+   route — halt or re-snapshot — so a `superseded` outcome never continues
+   from a half-applied set.
+4. **Microtask pinning.** Decision item 5's proof obligation carries over: any
+   `stagedRun` invoked from the run tick pins its microtask profile in tests.
+   `decide` stages stay synchronous; `snapshot`/`effect` stages may use
+   `.endAsync`.
+5. **Idempotence or compensation** at every effect stage (unchanged from
+   Decision item 4).
+
+**Stage failures.** Any failing stage — a throwing `snapshot`/`resnapshot` read
+or a throwing `effect` — fails the pass: the interpreter catches, logs, and
+returns an error outcome; no in-flow retry. Before returning, it unwinds the
+compensations of every effect stage it *started*, in reverse order — including
+the failing stage's own partial work (a compensation is registered when the
+stage starts, not when it completes). Persistent compensations are conditional
+inverse operations — CAS-guarded or durable saga steps: a compensation that
+finds newer state records an incomplete unwind instead of clobbering it. Each
+compensation failure is itself caught, logged, and durably recorded while
+unwinding continues, so a failed pass leaves no compensable-but-uncompensated
+effect behind and an incomplete unwind is discoverable. Recovery is the caller's re-entry with a fresh snapshot
+plus condition 5 (for the run tick, the next tick). In-memory compensation
+covers only the live process: correlated persistent-transition sets commit as
+one database transaction or carry a durable saga record completed or reversed
+during recovery, and replay that crosses a process crash needs condition 5's
+durable arm — a persistent idempotency key or outbox record.
+
+**The RFC's open questions, answered:**
+
+1. **Location:** new module
+   `packages/daemon/src/lib/space/runtime/staged-run.ts`; `space-runtime.ts` is
+   already 8k+ lines. This makes `staged-run.ts` the second blessed combinator
+   location alongside `decision-pipeline.ts` (Decision item 3 amended above) —
+   not a second import boundary; raw imports elsewhere follow the rule of three.
+2. **Stage file layout:** grouped by sub-flow — one module per recovery handler
+   or sub-pipeline, stages co-located with their types and tests, mirroring the
+   pilot-3 extraction modules (`run-tick-admission-gates.ts` & co). Not one file
+   per stage.
+3. **Spawn loop:** stays sequential — the shell owns the loop and invokes
+   per-execution effect stages, one bounded pass per execution; never
+   `Promise.all`, and never recursive re-entry that would make the pipeline
+   itself the loop (the "never the loop" boundary above). The current loop is
+   ordered and that ordering is behavior; tests pin spawn order. Spawn steps
+   are await-heavy, not
+   compute-hot, so per-stage overhead is negligible against spawn latency (the
+   hot-path rule targets tight loops, not awaited boundaries). Parallelism would
+   be its own evidence-backed change.
+4. **Cancellation:** `withSignal` stays requirement-driven (item 7). The named
+   candidate requirement: aborting in-flight stage awaits (e.g. a run-status
+   transition) when a newer tick generation supersedes this one. The signal is
+   owned by the runtime class (resource-ownership rule), introduced no earlier
+   than Phase 2, and only where a test demonstrates the race. The spawn
+   reservation, not cancellation, is the correctness mechanism. An effect that
+   commits synchronously before its first await cannot be aborted at all — the
+   condition 1 guard is its mechanism; the signal only narrows await windows.
+5. **`decisionRun` vs `stagedRun`:** both stay. `decisionRun` remains the proven
+   sync point-decision combinator; no existing call sites migrate. `stagedRun`
+   composes `decide` stages that wrap `decisionRun` cores internally. Two
+   combinators, two jobs.
+
 ### Where superpipe must not be used
 
 - **As a state machine or unbounded fold.** State lives in the runtime/DB; a
   pipeline decides one step. Stream reduction may use a pipeline as the per-event
   reducer body (Phase 3), never as the loop.
-- **As a free-form effect executor.** Effects happen at pipeline boundaries
-  (decide → effect → re-snapshot), not as arbitrary mid-pipeline steps. DB writes,
-  network, publishes, session injects stay in the interpreter or in an explicitly
-  staged effect boundary; a pipeline never owns atomicity.
+- **As a free-form effect executor.** Effects happen at pipeline boundaries, or
+  as declared `effect` stages inside `stagedRun` under the five conditions in
+  "Staged run pipelines" (revised 2026-08-21). DB writes, network, publishes,
+  session injects never appear as ad-hoc mid-pipeline steps; a pipeline still
+  never owns atomicity — effect stages delegate it to repository primitives.
 - **As a resource owner.** `AbortController`s, timers, subscriptions, query
   objects stay in classes; pipelines receive values.
 - **On hot paths.** Per-stage container allocation is not free. A six-gate,
@@ -129,12 +277,13 @@ shell (class): flat interpreter, one branch per decision action
 | Pattern | Shape | HyperNeo fit |
 | --- | --- | --- |
 | P1 pure sync transform | `pipe → end` | data mapping, projections, rendering pipelines with data-dependent early exit (Phase 5) |
-| P2 awaitable planning flow | async deciders, `endAsync` | **pilot used sync cores instead**; async variant unproven in-repo; staged effect boundaries (Decision item 4) are the sanctioned async form meanwhile |
+| P2 awaitable planning flow | async deciders, `endAsync` | **pilot used sync cores instead**; async variant unproven in-repo; staged effect boundaries (Decision item 4) are the sanctioned async form meanwhile — P8 (2026-08-21) supersedes for staged flows |
 | P3 guard/validation gate | boolean `!dep` halts | eligibility, preflight decline |
 | P4 optional stages | `?dep` skips when undefined | conditional normalization |
 | P5 callback continuation | `next` keeps run open | avoided — abort abandons retained `next` |
 | P6 per-event reducer | pipeline as reducer body | stream folds (Phase 3) |
 | P7 functional sandwich | read → plan → apply | the adopted macro; pilot + Phases 1–4 |
+| P8 staged orchestration | `stagedRun`: snapshot/decide/effect/resnapshot/halt | run-tick recovery handlers, handoff repair, settlement, spawn (rollout below) |
 
 ## Consequences
 
@@ -148,6 +297,12 @@ unchanged across all pilot PRs.
 pipeline wiring, +7 helper extraction, +19 combinator module); one new daemon
 dependency (pinned exact 0.17.0); a convention to learn; the sync-core rule means
 async deciders carry a proof obligation (microtask-profile sensitivity).
+
+**2026-08-21 addendum:** `stagedRun` adds a second combinator to learn, and its
+Phase 0 changes product behavior — racy writes that were silently tolerated
+become `superseded` outcomes — so Phase 0 carries its own characterization pins.
+Per #2670's acceptance criteria, the caveats this ADR records must narrow as
+phases land, never expand.
 
 ## Pilot 3 — run-tick staged interpreter (2026-08-21)
 
@@ -496,6 +651,29 @@ Pilot 5 PRs: #2663, #2668, #2669, #2673, #2676, plus this closing sweep.
   engine): read → plan → CAS within transaction → apply effects after commit.
 - **Phase 5 — web functional cores** (P1: `useTurnBlocks`, message projections,
   model-switcher projections).
+- **Staged rollout of `stagedRun`** (from #2670; the pilot-3 "future mini-pilots"
+  sub-flows become these phases):
+
+  | Phase | Scope | Notes |
+  | --- | --- | --- |
+  | 0 | Task CAS (`casStatus`), transition-table enforcement in `updateTaskAndEmit`, spawn reservation, run/execution CAS, durable intent/outbox + compensation-record repositories | Product behavior change, not refactor; needs characterization pins. The `update_task` tool layer delegates to the repo-layer table — one source of truth (aligns with Pilot 5). |
+  | 1 | `repairQueuedWorkflowNodeHandoffs` as a staged sub-pipeline | Proves the pattern on one opaque effect. |
+  | 2 | `handleAliveStuckExecutions` + crash reset | First recovery handler; the `withSignal` candidate lands here only if a test demonstrates the race. |
+  | 3 | `handleWaitingRebindExecutions` | |
+  | 4 | `handleNonTerminalIdleExecutions` | |
+  | 5 | `handleTerminalErrorIdleExecutions` | |
+  | 6 | Compose `processRunTick` as one top-level `stagedRun` | Sequenced strictly after the pilot-3 apply PR merges — same lines. |
+  | 7 | Same pattern beyond the tick: runtime nags, checkpoint/restore, message dispatch, startup handoff repair | |
+
+- **Candidate idioms (rule of three — extract on the ≈3rd real use, not before):**
+  `transformRun` (P1 pure transforms with data-dependent early exit:
+  github-normalizer, store delta application, message-shape normalization);
+  `requestRun` (web: generation-guarded request/apply — a stale response
+  structurally cannot apply — SpaceForge/ScopeDetail fetches, GitHubHealthPanel
+  refresh, every version-guarded panel fetch); `transactionalRun` (P7/Phase 4 —
+  effects run only after commit); `reduceRun` (P6/Phase 3 — per-event reducer
+  bodies; the web subscription-lifecycle machines decompose into this shape plus
+  a facade). See "Library surface vs. blessed idioms" for the promotion rule.
 - **Carried research:** async/`withSignal` validation if Phase 1 wants an async core.
 
 ## References
@@ -517,5 +695,8 @@ Pilot 5 PRs: #2663, #2668, #2669, #2673, #2676, plus this closing sweep.
   task-transition-routing,space-tool-pipeline}.ts`; interpreters in
   `space-agent-tools.ts` (the eight task-mutation handlers). Pilot 5 PRs:
   #2663, #2668, #2669, #2673, #2676.
+- RFC: issue #2670 (`stagedRun` rollout proposal; its open questions are answered
+  by the "Staged run pipelines" section).
+- Staged combinator (Phase 1+): `packages/daemon/src/lib/space/runtime/staged-run.ts`.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.

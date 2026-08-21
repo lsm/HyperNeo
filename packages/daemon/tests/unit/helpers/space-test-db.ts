@@ -302,6 +302,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			created_by_task_schedule_id TEXT DEFAULT NULL,
 			archived_at INTEGER,
 			restrictions TEXT,
+			spawn_reservation_token TEXT,
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,
 			completed_at INTEGER,
