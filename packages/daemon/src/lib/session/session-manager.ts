@@ -554,9 +554,7 @@ export class SessionManager {
             startTimeByPid.set(snap.pid, now - snap.elapsedSeconds * 1000);
           }
         }
-      } catch {
-        // Process listing failed â start times remain unknown.
-      }
+      } catch {}
     }
 
     for (const pid of split.live) {

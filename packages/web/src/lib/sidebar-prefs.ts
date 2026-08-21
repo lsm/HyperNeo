@@ -15,7 +15,5 @@ export function getCollapsedProjects(): Set<string> {
 export function setCollapsedProjects(paths: Set<string>): void {
   try {
     localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...paths]));
-  } catch {
-    // Silently fail if localStorage is unavailable.
-  }
+  } catch {}
 }

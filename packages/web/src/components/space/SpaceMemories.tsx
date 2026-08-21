@@ -142,9 +142,7 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
     setDeleting(false);
     deleteSpaceRef.current = spaceId;
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    memoryStore.attach(spaceId).catch(() => {
-      // Error surfaced via memoryStore.error signal.
-    });
+    memoryStore.attach(spaceId).catch(() => {});
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       memoryStore.detach();
@@ -162,9 +160,7 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
     setSearchInput(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      memoryStore.search(value).catch(() => {
-        // Error surfaced via memoryStore.error signal.
-      });
+      memoryStore.search(value).catch(() => {});
     }, SEARCH_DEBOUNCE_MS);
   };
 
@@ -208,9 +204,7 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
   };
 
   const handleRetry = () => {
-    memoryStore.reload().catch(() => {
-      // Error surfaced via memoryStore.error signal.
-    });
+    memoryStore.reload().catch(() => {});
   };
 
   if (!loaded && !error) {

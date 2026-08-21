@@ -198,9 +198,7 @@ describe('useFileAttachments', () => {
       await act(async () => {
         try {
           await result.current.handleFileSelect(event);
-        } catch {
-          // Expected in happy-dom
-        }
+        } catch {}
       });
 
       expect(input.value).toBe('');

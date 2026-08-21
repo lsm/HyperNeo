@@ -119,9 +119,7 @@ export function ProvidersSettings() {
           toast.success(`${oauthFlow.providerName} authenticated successfully`);
           await loadProviders();
         }
-      } catch {
-        // Polling error - will retry
-      }
+      } catch {}
     }, 2000);
     return () => clearInterval(pollInterval);
   }, [oauthFlow]);

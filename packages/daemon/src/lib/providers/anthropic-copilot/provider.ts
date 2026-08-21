@@ -411,9 +411,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       } else {
         await fs.writeFile(this.authPath, JSON.stringify(data, null, 2), { mode: 0o600 });
       }
-    } catch {
-      // Ignore if file doesn't exist
-    }
+    } catch {}
   }
 
   async shutdown(): Promise<void> {
@@ -493,9 +491,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       if (creds?.refresh && typeof creds.refresh === 'string') {
         return creds.refresh;
       }
-    } catch {
-      // File doesn't exist or invalid JSON
-    }
+    } catch {}
     return undefined;
   }
 
@@ -683,9 +679,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     try {
       const content = await fs.readFile(this.authPath, 'utf-8');
       data = JSON.parse(content) as Record<string, unknown>;
-    } catch {
-      // File doesn't exist, start fresh
-    }
+    } catch {}
 
     data['github-copilot'] = credentials;
 

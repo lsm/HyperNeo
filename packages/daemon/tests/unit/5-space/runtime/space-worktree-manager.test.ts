@@ -73,14 +73,10 @@ afterEach(() => {
   delete process.env.TEST_WORKTREE_BASE_DIR;
   try {
     rmSync(repoDir, { recursive: true, force: true });
-  } catch {
-    // Ignore cleanup failures in CI
-  }
+  } catch {}
   try {
     rmSync(testBaseDir, { recursive: true, force: true });
-  } catch {
-    // Ignore cleanup failures in CI
-  }
+  } catch {}
 }, 60_000);
 
 describe('createTaskWorktree', () => {

@@ -112,14 +112,10 @@ describe('Migration 104: drop completionActions schema (PR 5/5)', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   describe('fresh DB (all migrations applied)', () => {

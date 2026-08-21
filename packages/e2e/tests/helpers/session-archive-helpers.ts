@@ -15,9 +15,7 @@ export async function openSessionOptionsMenu(page: Page): Promise<void> {
   for (let i = 0; i < dismissCount; i++) {
     try {
       await dismissButtons.nth(i).click({ timeout: 1000 });
-    } catch {
-      // Ignore if button already dismissed
-    }
+    } catch {}
   }
   await page.waitForTimeout(300);
 

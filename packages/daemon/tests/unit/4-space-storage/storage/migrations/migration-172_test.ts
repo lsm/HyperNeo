@@ -96,9 +96,7 @@ describe('Migration 172: re-backfill orphaned preset agent template tracking', (
   afterAll(() => {
     try {
       rmSync(templateDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   beforeEach(() => {
@@ -119,14 +117,10 @@ describe('Migration 172: re-backfill orphaned preset agent template tracking', (
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('preset-named row that diverges → left as an orphan (not re-attached)', () => {

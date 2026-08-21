@@ -55,14 +55,10 @@ describe('Migration 195: space_tasks status CHECK includes stopped', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('fresh DB — full migration chain accepts stopped', () => {

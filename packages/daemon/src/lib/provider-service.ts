@@ -224,9 +224,7 @@ export class ProviderService {
     try {
       const sdkConfig = provider?.buildSdkConfig(providerModelId);
       sdkModelId = sdkConfig?.envVars.ANTHROPIC_MODEL ?? sdkModelId;
-    } catch {
-      // Provider not initialised yet; keep translated fallback.
-    }
+    } catch {}
     return {
       providerModelId,
       sdkModelId,

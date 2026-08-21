@@ -36,7 +36,6 @@ export function RateLimitCooldownBanner({ sessionId, retryCount, maxRetries, ret
     try {
       await cancelRateLimitRetry(sessionId);
     } catch {
-      // Session may have already transitioned
     } finally {
       setCancelling(false);
     }
@@ -47,7 +46,6 @@ export function RateLimitCooldownBanner({ sessionId, retryCount, maxRetries, ret
     try {
       await retryNowAfterRateLimit(sessionId);
     } catch {
-      // Session may have already transitioned
     } finally {
       setRetrying(false);
     }

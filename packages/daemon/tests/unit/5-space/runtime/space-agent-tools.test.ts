@@ -6293,10 +6293,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 
     const tam = makeFakeTaskAgentManager(ctx);
     const handlers = makeHandlersWith(tam, {
-      activateNode: async () => {
-        // Activation succeeded but did not attach a live session id — the tick
-        // loop will spawn one later. The handler surfaces `delivered: false`.
-      },
+      activateNode: async () => {},
     });
 
     const result = await handlers.send_message_to_task({
@@ -6332,9 +6329,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     const tam = makeFakeTaskAgentManager(ctx);
     const fakeQueue = makeFakePendingMessageQueue();
     const handlers = makeHandlersWith(tam, {
-      activateNode: async () => {
-        // Activation succeeded but the tick loop has not spawned the session yet.
-      },
+      activateNode: async () => {},
       pendingMessageQueue: fakeQueue,
     });
 
@@ -7717,9 +7712,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const tam = makeFakeTaskAgentManager(ctx);
       const handlers = makeHandlersWith(tam, {
         auditLogRepo,
-        activateNode: async () => {
-          // Activation accepted but no live session yet — message is queued.
-        },
+        activateNode: async () => {},
         pendingMessageQueue: makeFakePendingMessageQueue(),
       });
 

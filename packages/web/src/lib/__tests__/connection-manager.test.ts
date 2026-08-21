@@ -305,9 +305,7 @@ describe('ConnectionManager - Non-blocking behavior', () => {
     const start = Date.now();
     try {
       manager.getHubOrThrow();
-    } catch {
-      // Expected
-    }
+    } catch {}
     const elapsed = Date.now() - start;
 
     expect(elapsed).toBeLessThan(10);

@@ -45,9 +45,7 @@ async function cancelRun(
       if (!hub?.request) return;
       await hub.request('spaceWorkflowRun.cancel', { id: rid });
     }, runId);
-  } catch {
-    // best-effort cleanup
-  }
+  } catch {}
 }
 
 async function getRunTaskId(
@@ -112,9 +110,7 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
     try {
       await page.goto('/');
       await waitForWebSocketConnected(page, 5000);
-    } catch {
-      // If navigation/connection fails, cleanup below will be best-effort
-    }
+    } catch {}
 
     if (runId) {
       await cancelRun(page, runId);

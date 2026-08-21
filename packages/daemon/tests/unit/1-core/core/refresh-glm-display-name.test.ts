@@ -20,9 +20,7 @@ describe('refreshGlmDisplayName', () => {
     db?.close();
     try {
       unlinkSync(dbPath);
-    } catch {
-      // Ignore cleanup errors.
-    }
+    } catch {}
   });
 
   function seedGlm(displayName: string): void {

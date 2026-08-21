@@ -74,9 +74,7 @@ export async function detectStrandedProviders(
           probeTimeoutMs
         );
         if (available === true) stranded.push(provider.id);
-      } catch {
-        // isAvailable() probe rejected — treat as unavailable; don't refresh.
-      }
+      } catch {}
     })
   );
   return stranded;
@@ -447,9 +445,7 @@ export function setupSessionHandlers(
             space: updatedSpace,
           })
           .catch(() => {});
-      } catch {
-        // Space may already be deleted — ignore
-      }
+      } catch {}
     }
 
     return { success: true };
@@ -505,9 +501,7 @@ export function setupSessionHandlers(
             space: updatedSpace,
           })
           .catch(() => {});
-      } catch {
-        // Space may already be deleted — ignore
-      }
+      } catch {}
     }
 
     const archivedPayload = {

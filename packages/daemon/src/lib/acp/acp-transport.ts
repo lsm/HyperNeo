@@ -330,9 +330,7 @@ export class AcpTransport {
       try {
         processKill(-proc.pid, signal);
         return;
-      } catch {
-        // Fall back to single-process kill
-      }
+      } catch {}
     }
     proc.kill(signal);
   }

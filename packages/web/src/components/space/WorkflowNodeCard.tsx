@@ -218,9 +218,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
     );
   }
 
-  function updateAgentModel(_role: string, _model: string) {
-    // model is no longer a property of WorkflowNodeAgent; this function is a no-op
-  }
+  function updateAgentModel(_role: string, _model: string) {}
 
   const availableAgents = agents;
 

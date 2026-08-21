@@ -66,9 +66,7 @@ export class SettingsManager {
         const content = readFileSync(settingsLocalPath, 'utf-8');
         localSettings = JSON.parse(content) as Record<string, unknown>;
       }
-    } catch {
-      // Continue with empty object
-    }
+    } catch {}
 
     if (settings.askPermissions !== undefined) {
       localSettings.permissions = {

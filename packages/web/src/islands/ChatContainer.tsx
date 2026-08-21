@@ -659,9 +659,7 @@ export default function ChatContainer({
       setLocalError(null);
       store.clearError();
     }, []),
-    onSendComplete: useCallback(() => {
-      // Completion handled by sessionStore state updates
-    }, []),
+    onSendComplete: useCallback(() => {}, []),
     onError: useCallback((error: string) => {
       setLocalError(error);
     }, []),

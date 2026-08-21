@@ -56,9 +56,7 @@ export function emitMessageDeliveryLifecycleEvent(
       module: 'hyperneo:daemon:message-delivery.lifecycle',
       metadata,
     });
-  } catch {
-    // Observability must never alter delivery behavior.
-  }
+  } catch {}
 }
 
 export type ReclaimSkipOutcome =

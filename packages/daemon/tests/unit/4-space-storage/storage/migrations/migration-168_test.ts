@@ -53,14 +53,10 @@ describe('Migration 168: node_executions(agent_session_id) index', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('index is created on an existing node_executions table', () => {

@@ -31,14 +31,10 @@ describe('DatabaseCore', () => {
       if (dbCore) {
         try {
           dbCore.close();
-        } catch {
-          // Already closed
-        }
+        } catch {}
       }
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    } catch {}
   });
 
   describe('constructor', () => {

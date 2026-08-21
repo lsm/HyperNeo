@@ -483,9 +483,7 @@ export default function MessageInput({
               sessionId: targetSessionId,
               expected: payload.full,
             });
-          } catch {
-            /* ignore — the send already succeeded */
-          }
+          } catch {}
         }
       }
       return {
@@ -654,9 +652,7 @@ export default function MessageInput({
       setQueuedForNextTurn(deferredResponse.messages ?? []);
       setQueuedCurrentTurnTotal(enqueuedResponse.total);
       setQueuedNextTurnTotal(deferredResponse.total);
-    } catch {
-      // Best-effort queue refresh.
-    }
+    } catch {}
   }, [sessionId]);
 
   const handleRemoveQueuedMessage = useCallback(

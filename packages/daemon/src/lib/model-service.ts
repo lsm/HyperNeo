@@ -127,9 +127,7 @@ export async function getSupportedModelsFromQuery(
         return models;
       }
       /* v8 ignore next 2 */
-    } catch {
-      // Failed to load models from SDK
-    }
+    } catch {}
   }
 
   return [];
@@ -157,7 +155,6 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
       }
       /* v8 ignore next 2 */
     } catch {
-      // Background refresh failed
     } finally {
       refreshInProgress.delete(cacheKey);
       if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
@@ -214,9 +211,7 @@ export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
   }
 
   if (isCacheStale(cacheKey)) {
-    triggerBackgroundRefresh(cacheKey).catch(() => {
-      // Ignore errors - we already have cached data
-    });
+    triggerBackgroundRefresh(cacheKey).catch(() => {});
   }
 
   return cachedModels;

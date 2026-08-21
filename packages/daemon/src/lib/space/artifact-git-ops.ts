@@ -79,9 +79,7 @@ export async function getDiffBaseRef(
         base = result.trim();
         break;
       }
-    } catch {
-      // candidate not available — try the next one
-    }
+    } catch {}
   }
 
   mergeBaseCache.set(worktreePath, { base, expiresAt: now + ttl });

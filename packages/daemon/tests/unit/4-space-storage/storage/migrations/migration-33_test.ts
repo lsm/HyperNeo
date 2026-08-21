@@ -33,14 +33,10 @@ describe('Migration 33: Add inject_workflow_context to space_agents', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('fresh DB: inject_workflow_context column does NOT exist after M74 dropped it', () => {

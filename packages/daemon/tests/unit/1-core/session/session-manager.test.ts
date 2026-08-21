@@ -136,9 +136,7 @@ describe('SessionManager', () => {
     listProcessesSpy?.mockRestore();
     try {
       await sessionManager.cleanup();
-    } catch {
-      // Ignore cleanup errors in afterEach
-    }
+    } catch {}
   });
 
   describe('constructor', () => {

@@ -141,9 +141,7 @@ async function listNodeTasksForRun(
   let nodeInfoById = new Map<string, WorkflowNodeInfo>();
   try {
     nodeInfoById = await getWorkflowNodeInfoById(daemon, runId);
-  } catch {
-    // If workflow lookup fails, fall back to agent-name titles.
-  }
+  } catch {}
   return executions.map((execution) =>
     projectNodeExecutionAsTask(spaceId, execution, nodeInfoById.get(execution.workflowNodeId))
   );
@@ -438,10 +436,7 @@ export async function waitForNodeStatus(
   let resolvedNodeId: string | null = null;
   try {
     resolvedNodeId = await resolveNodeIdByNameOrId(daemon, runId, nodeNameOrId);
-  } catch {
-    // If workflow/run lookup fails (e.g. caller passed an agent slot name),
-    // fall back to raw name/id matching below.
-  }
+  } catch {}
 
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -525,9 +520,7 @@ export async function mockAgentDone(
         result: result ?? 'Mock agent done',
       })) as SpaceTask;
     }
-  } catch {
-    // Not a canonical task ID — fall through to node execution path.
-  }
+  } catch {}
 
   const execution = await findNodeExecutionById(daemon, spaceId, taskId);
   if (!execution) {
@@ -585,9 +578,7 @@ export async function getTasksForNode(
   let resolvedNodeId: string | null = null;
   try {
     resolvedNodeId = await resolveNodeIdByNameOrId(daemon, runId, nodeNameOrId);
-  } catch {
-    // Fallback to raw slot-name/id matching below.
-  }
+  } catch {}
 
   const tasks = await listNodeTasksForRun(daemon, spaceId, runId);
   return tasks.filter((task) => matchesNodeTarget(task, nodeNameOrId, resolvedNodeId));

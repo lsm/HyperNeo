@@ -65,9 +65,7 @@ export class EvolutionLogEvidenceService {
     for (const item of batch) {
       try {
         this.writeEvidence(item);
-      } catch {
-        // Evidence capture must never break daemon logging.
-      }
+      } catch {}
     }
   }
 

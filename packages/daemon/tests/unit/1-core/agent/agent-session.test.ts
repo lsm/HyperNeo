@@ -4611,9 +4611,7 @@ describe('AgentSession', () => {
           const tail = first.slice('mcp.attach '.length);
           try {
             entries.push(JSON.parse(tail));
-          } catch {
-            // ignore
-          }
+          } catch {}
         }
         original(...(args as [unknown]));
       };
@@ -5090,9 +5088,7 @@ describe('AgentSession', () => {
     afterEach(() => {
       try {
         db?.close();
-      } catch {
-        // ignore
-      }
+      } catch {}
     });
 
     it('a bare marker (no success result) is cleared and NOT silently completed', async () => {

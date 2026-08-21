@@ -416,12 +416,7 @@ export class SDKMessageHandler {
   markMessageAccepted(messageId: string): void {
     try {
       this.handleMessageYielded(messageId, Date.now());
-    } catch {
-      // The consumed-status transition commits BEFORE the fallible post-commit
-      // search-index work; a throw there must NOT prevent the delivery-waiter
-      // signal below — else LTA/task-agent callers time out despite a durably
-      // consumed prompt + a fresh caller retries the work twice. (Codex review.)
-    }
+    } catch {}
     const consumed = this.ctx.db.getMessageByStatusAndUuid(
       this.ctx.session.id,
       'consumed',

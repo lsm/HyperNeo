@@ -92,9 +92,7 @@ Or set PLAYWRIGHT_BASE_URL explicitly:
         shell: '/bin/bash',
         stdio: 'inherit',
       });
-    } catch {
-      // Ignore - branches may not exist
-    }
+    } catch {}
 
     rmSync(worktreesDir, { recursive: true, force: true });
 

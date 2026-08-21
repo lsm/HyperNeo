@@ -59,9 +59,7 @@ export function useGlobalShortcuts(): void {
           try {
             const { toast } = await import('../lib/toast.ts');
             toast.error(err instanceof Error ? err.message : `Command "${cmd.label}" failed`);
-          } catch {
-            // ignore
-          }
+          } catch {}
         }
       })();
     };

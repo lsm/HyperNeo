@@ -57,9 +57,7 @@ describe('SpaceWorkflowRepository', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   test('createWorkflow returns workflow with generated id and steps', () => {
@@ -513,9 +511,7 @@ describe('SpaceWorkflowManager', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   test('createWorkflow throws if name already exists in space', () => {

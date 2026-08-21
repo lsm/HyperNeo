@@ -23,9 +23,7 @@ function getSDKVersion(): string {
         return pkgJson.version;
       }
     }
-  } catch {
-    // fallback to next strategy
-  }
+  } catch {}
 
   try {
     let currentDir = dirname(fileURLToPath(import.meta.url));
@@ -36,16 +34,12 @@ function getSDKVersion(): string {
         if (typeof pkgJson.version === 'string') {
           return pkgJson.version;
         }
-      } catch {
-        // not found here, try parent
-      }
+      } catch {}
       const parentDir = dirname(currentDir);
       if (parentDir === currentDir) break;
       currentDir = parentDir;
     }
-  } catch {
-    // fileURLToPath may fail in bundled environments
-  }
+  } catch {}
 
   return 'unknown';
 }

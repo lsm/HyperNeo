@@ -103,9 +103,7 @@ beforeAll(() => {
 afterAll(() => {
   try {
     db.close();
-  } catch {
-    /* ignore */
-  }
+  } catch {}
 });
 
 beforeEach(() => {

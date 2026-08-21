@@ -35,9 +35,7 @@ function sweepLegacyKeys(): void {
       }
     }
     for (const key of staleKeys) localStorage.removeItem(key);
-  } catch {
-    /* storage unavailable — nothing to sweep */
-  }
+  } catch {}
 }
 
 const mirror = new Map<string, PendingTranscript>();
@@ -57,13 +55,9 @@ function collectFromStorage(): Map<string, PendingTranscript> {
         if (entry && typeof entry.id === 'string' && typeof entry.sessionId === 'string') {
           out.set(entry.id, entry);
         }
-      } catch {
-        /* corrupt entry — skip */
-      }
+      } catch {}
     }
-  } catch {
-    /* storage unavailable — mirror only */
-  }
+  } catch {}
   return out;
 }
 
@@ -89,9 +83,7 @@ function removeEntry(id: string): void {
   mirror.delete(id);
   try {
     localStorage.removeItem(entryKey(id));
-  } catch {
-    /* mirror already dropped it */
-  }
+  } catch {}
 }
 
 function prune(): void {
@@ -143,9 +135,7 @@ export function clearPendingTranscripts(): void {
       if (key && key.startsWith(STORAGE_PREFIX)) keys.push(key);
     }
     for (const key of keys) localStorage.removeItem(key);
-  } catch {
-    /* mirror cleared below */
-  }
+  } catch {}
   mirror.clear();
 }
 

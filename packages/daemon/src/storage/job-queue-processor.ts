@@ -140,11 +140,7 @@ export function applyStaleReclaimJitter(
     } catch (error) {
       try {
         onRescheduleError?.(jobIds[i], error);
-      } catch {
-        // The observer is diagnostics (a lifecycle emit / a shutdown log); a
-        // throwing callback must not skip the remaining reschedules nor the
-        // caller's reclaim work — same hardening class as the draw clamp.
-      }
+      } catch {}
     }
   }
   return applied;
@@ -383,9 +379,7 @@ export class JobQueueProcessor {
       if (updated && updated.status === 'dead' && reg?.onDead) {
         try {
           reg.onDead(updated);
-        } catch {
-          // A dead-letter side-effect must never break the processor loop.
-        }
+        } catch {}
       }
       this.notifyChange(scope);
     } finally {

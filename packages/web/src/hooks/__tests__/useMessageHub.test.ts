@@ -511,9 +511,7 @@ describe('useMessageHub', () => {
       const start = Date.now();
       try {
         await result.current.call('method');
-      } catch {
-        // Expected
-      }
+      } catch {}
       const elapsed = Date.now() - start;
 
       expect(elapsed).toBeLessThan(50);

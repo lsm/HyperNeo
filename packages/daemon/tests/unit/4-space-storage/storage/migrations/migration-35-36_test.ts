@@ -24,14 +24,10 @@ describe('Migration 35: Add iteration tracking to space_workflow_runs', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('fresh DB: iteration_count column is absent after M71 removed it', () => {
@@ -130,14 +126,10 @@ describe('Migration 36: Add max_iterations to space_workflows', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('fresh DB: max_iterations column does NOT exist on space_workflows after M74 dropped it', () => {

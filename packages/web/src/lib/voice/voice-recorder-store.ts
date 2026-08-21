@@ -75,19 +75,13 @@ class VoiceRecorderStore {
       }
       try {
         source?.disconnect();
-      } catch {
-        /* already disconnected */
-      }
+      } catch {}
       try {
         stream?.getTracks().forEach((track) => track.stop());
-      } catch {
-        /* already stopped */
-      }
+      } catch {}
       try {
         await context?.close();
-      } catch {
-        /* already closed */
-      }
+      } catch {}
     };
 
     try {
@@ -293,9 +287,7 @@ class VoiceRecorderStore {
           this.node?.disconnect();
           this.stream?.getTracks().forEach((track) => track.stop());
           await this.context?.close();
-        } catch {
-          /* A rejecting close()/disconnect must not poison the recorder. */
-        }
+        } catch {}
         this.source = null;
         this.node = null;
         this.analyser = null;
