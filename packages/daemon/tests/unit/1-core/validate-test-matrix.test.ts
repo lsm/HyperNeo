@@ -753,6 +753,19 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: 'rejects a sibling axis key containing a tab (P2)',
+    expectExit: 1,
+    expectInStderr: 'extra axis',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        "\\tos": [ubuntu-latest]'
+        )
+      );
+    },
+  },
+  {
     name: 'rejects a shard axis inflated by an env block scalar (P2)',
     expectExit: 1,
     expectInStderr: "does not pass exactly one '--shard=",

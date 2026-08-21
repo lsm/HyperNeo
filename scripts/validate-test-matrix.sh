@@ -1113,7 +1113,7 @@ _web_matrix_lines=$(WEB_YML="$REPO_ROOT/.github/workflows/main.yml" bun -e '
 	for (const row of m.include ?? []) {
 		if (row === null || typeof row !== "object" || Array.isArray(row)) continue;
 		if ("shard" in row) console.log("include\t" + tag(row.shard));
-		for (const k of Object.keys(row)) if (k !== "shard") console.log("include-key\t" + k);
+		for (const k of Object.keys(row)) if (k !== "shard") console.log("include-key\t" + esc(k));
 	}
 	const excl = m.exclude ?? [];
 	for (const row of Array.isArray(excl) ? excl : [excl]) {
@@ -1123,7 +1123,7 @@ _web_matrix_lines=$(WEB_YML="$REPO_ROOT/.github/workflows/main.yml" bun -e '
 			console.log("exclude\t" + tag(row));
 		}
 	}
-	for (const k of Object.keys(m)) if (k !== "shard" && k !== "include" && k !== "exclude") console.log("sibling\t" + k);
+	for (const k of Object.keys(m)) if (k !== "shard" && k !== "include" && k !== "exclude") console.log("sibling\t" + esc(k));
 ' 2>/dev/null) || _web_matrix_lines=""
 # Axis values are tagged with their YAML scalar type so the include check can
 # compare typed values (GitHub keeps number/string distinct; a string include
