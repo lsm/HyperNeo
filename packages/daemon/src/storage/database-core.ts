@@ -8,7 +8,7 @@ import {
   statSync,
   unlinkSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { Logger } from '../lib/logger';
 import { DatabaseLock } from './database-lock';
 import { configureMessageSearchFts, createTables, runMigrations } from './schema';
@@ -101,7 +101,7 @@ export class DatabaseCore {
     if (!existsSync(this.dbPath)) return;
 
     const dir = dirname(this.dbPath);
-    const backupDir = join(dir, 'backups');
+    const backupDir = join(dir, 'backups', basename(this.dbPath));
 
     if (!existsSync(backupDir)) {
       try {
@@ -265,8 +265,10 @@ export class DatabaseCore {
         if (!name.endsWith('.db-wal')) continue;
         const base = name.slice(0, -'-wal'.length);
         if (kept.has(base) || existsSync(join(backupDir, base))) continue;
+        const path = join(backupDir, name);
         try {
-          unlinkSync(join(backupDir, name));
+          if (statSync(path).mtime.getTime() > staleCutoff) continue;
+          unlinkSync(path);
         } catch {}
       }
     } catch {}

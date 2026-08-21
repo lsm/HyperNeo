@@ -145,11 +145,15 @@ followed by a full VACUUM anyway), only returns trailing pages, and adds write o
 ## Migration backups
 
 Before running schema migrations the daemon always writes a backup into
-`<db-dir>/backups/daemon-<timestamp>.db` — unconditionally, regardless of database size.
-A backup is only attempted when a migration is actually pending, so plain daemon restarts
-create no backups. The 3 most recent backups are kept; room for the next backup is freed
-before it is written (retaining the two newest known-good backups meanwhile), and WAL
-sidecar files are pruned with their backups.
+`<db-dir>/backups/<db-file-name>/daemon-<timestamp>.db` — unconditionally, regardless of
+database size. A backup is only attempted when a migration is actually pending, so plain
+daemon restarts create no backups. Backups are namespaced per database file, so several
+databases sharing one directory (for example the per-worktree development pattern) never
+prune each other's snapshots; within a namespace the 3 most recent backups are kept, room
+for the next backup is freed before it is written (retaining the two newest known-good
+backups meanwhile), and WAL sidecar files are pruned with their backups. Releases before
+this layout stored backups flat in `backups/` — those are not auto-pruned; remove them
+manually after upgrading.
 
 The copy strategy is picked per attempt, fastest first, and logged
 (`Migration backup created via <strategy> in <ms>ms`):
@@ -173,10 +177,11 @@ committed frames, and restoring only the `.db` would silently lose every post-ch
 transaction — then open the database once so SQLite folds the WAL in with a checkpoint.
 
 Each backup is written under a `.tmp` name and published by atomic rename once the pair
-completes, so a crash mid-copy never leaves a partial file at a retained name. Leftover
-`.tmp` artifacts are only swept once they have seen no write progress for an hour, which
-keeps the sweep safe when several daemons with different `DB_PATH` files share one
-`backups/` directory (their PID locks are per database file).
+completes, so a crash mid-copy never leaves a partial file at a retained name. Sweeping
+runs when the next backup is created, not on a timer: leftover `.tmp` artifacts and
+orphaned `.db-wal` sidecars are only removed once they have seen no write progress for an
+hour, so a sidecar that is mid-publish (renamed before its database) or a long-running
+copy is never mistaken for a crashed leftover.
 
 Disk cost: on APFS (and reflink-capable Linux filesystems) retained backups are
 copy-on-write clones, so keeping 3 costs almost nothing until the files diverge. On

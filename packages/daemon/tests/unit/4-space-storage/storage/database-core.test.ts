@@ -234,7 +234,7 @@ describe('DatabaseCore', () => {
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
 
-      const backupDir = join(testDir, 'backups');
+      const backupDir = join(testDir, 'backups', 'test.db');
       expect(existsSync(backupDir)).toBe(true);
     });
 
@@ -256,7 +256,7 @@ describe('DatabaseCore', () => {
         dbCore.close();
       }
 
-      const backupDir = join(testDir, 'backups');
+      const backupDir = join(testDir, 'backups', 'test.db');
       if (existsSync(backupDir)) {
         const backups = readdirSync(backupDir).filter(
           (f) => f.startsWith('daemon-') && f.endsWith('.db')
@@ -283,7 +283,7 @@ describe('DatabaseCore', () => {
     });
 
     const listBackups = (): string[] => {
-      const backupDir = join(testDir, 'backups');
+      const backupDir = join(testDir, 'backups', 'test.db');
       return existsSync(backupDir)
         ? readdirSync(backupDir).filter((f) => f.startsWith('daemon-') && f.endsWith('.db'))
         : [];
@@ -339,7 +339,7 @@ describe('DatabaseCore', () => {
       const backups = listBackups();
       expect(backups).toHaveLength(1);
       expect(strategies).toHaveLength(1);
-      const backupPath = join(testDir, 'backups', backups[0]);
+      const backupPath = join(testDir, 'backups', 'test.db', backups[0]);
       if (typeof Bun === 'undefined') {
         expect(strategies[0]).toBe('vacuum-into');
       } else {
@@ -389,9 +389,9 @@ describe('DatabaseCore', () => {
       const backups = listBackups();
       expect(backups).toHaveLength(1);
       expect(strategies).toEqual(['checkpoint-copy']);
-      expect(existsSync(join(testDir, 'backups', `${backups[0]}-wal`))).toBe(false);
+      expect(existsSync(join(testDir, 'backups', 'test.db', `${backups[0]}-wal`))).toBe(false);
 
-      const backup = new RawDatabase(join(testDir, 'backups', backups[0]));
+      const backup = new RawDatabase(join(testDir, 'backups', 'test.db', backups[0]));
       try {
         expect(backup.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
         expect(backup.prepare('SELECT value FROM backup_probe').all()).toEqual([
@@ -431,9 +431,11 @@ describe('DatabaseCore', () => {
       const backups = listBackups();
       expect(backups).toHaveLength(1);
       expect(strategies).toEqual(['checkpoint-copy']);
-      expect(statSync(join(testDir, 'backups', `${backups[0]}-wal`)).size).toBeGreaterThan(0);
+      expect(
+        statSync(join(testDir, 'backups', 'test.db', `${backups[0]}-wal`)).size
+      ).toBeGreaterThan(0);
 
-      const backup = new RawDatabase(join(testDir, 'backups', backups[0]));
+      const backup = new RawDatabase(join(testDir, 'backups', 'test.db', backups[0]));
       try {
         expect(backup.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
         expect(backup.prepare('SELECT value FROM backup_probe').all()).toEqual([
@@ -473,9 +475,9 @@ describe('DatabaseCore', () => {
       const backups = listBackups();
       expect(backups).toHaveLength(1);
       expect(strategies).toEqual(['vacuum-into']);
-      expect(existsSync(join(testDir, 'backups', `${backups[0]}-wal`))).toBe(false);
+      expect(existsSync(join(testDir, 'backups', 'test.db', `${backups[0]}-wal`))).toBe(false);
 
-      const backup = new RawDatabase(join(testDir, 'backups', backups[0]));
+      const backup = new RawDatabase(join(testDir, 'backups', 'test.db', backups[0]));
       try {
         expect(backup.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
         expect(backup.prepare('SELECT value FROM backup_probe').all()).toEqual([
@@ -525,7 +527,8 @@ describe('DatabaseCore', () => {
     });
 
     it('should complete initialization without a backup when the backup directory is unusable', async () => {
-      const backupDir = join(testDir, 'backups');
+      mkdirSync(join(testDir, 'backups'), { recursive: true });
+      const backupDir = join(testDir, 'backups', 'test.db');
       writeFileSync(backupDir, 'not a directory');
 
       configureLogger({ level: LogLevel.INFO });
@@ -551,7 +554,7 @@ describe('DatabaseCore', () => {
     });
 
     it('should free room for a new backup before writing it', async () => {
-      const backupDir = join(testDir, 'backups');
+      const backupDir = join(testDir, 'backups', 'test.db');
       mkdirSync(backupDir, { recursive: true });
       const now = Date.now() / 1000;
       for (let i = 0; i < 3; i++) {
@@ -583,7 +586,7 @@ describe('DatabaseCore', () => {
     });
 
     it('should publish backups via temporary names and sweep crashed leftovers', async () => {
-      const backupDir = join(testDir, 'backups');
+      const backupDir = join(testDir, 'backups', 'test.db');
       mkdirSync(backupDir, { recursive: true });
       const crashed = join(backupDir, 'daemon-2026-03-01T00-00-00-000Z.db.tmp');
       const crashedWal = join(backupDir, 'daemon-2026-03-01T00-00-00-000Z.db.tmp-wal');
@@ -602,7 +605,7 @@ describe('DatabaseCore', () => {
     });
 
     it('should not sweep temporary artifacts from concurrent in-progress backups', async () => {
-      const backupDir = join(testDir, 'backups');
+      const backupDir = join(testDir, 'backups', 'test.db');
       mkdirSync(backupDir, { recursive: true });
       const inProgress = join(backupDir, 'daemon-2026-04-01T00-00-00-000Z.db.tmp');
       const stale = join(backupDir, 'daemon-2026-04-02T00-00-00-000Z.db.tmp-wal');
@@ -619,8 +622,30 @@ describe('DatabaseCore', () => {
       expect(existsSync(stale)).toBe(false);
     });
 
+    it('should scope retention to the source database when databases share a directory', async () => {
+      const backupDir = join(testDir, 'backups', 'test.db');
+      mkdirSync(backupDir, { recursive: true });
+      const now = Date.now() / 1000;
+      for (let i = 0; i < 3; i++) {
+        const stale = join(backupDir, `daemon-2026-05-0${i + 1}T00-00-00-000Z.db`);
+        writeFileSync(stale, 'owned by the first database');
+        utimesSync(stale, now - (4 - i) * 60, now - (4 - i) * 60);
+      }
+
+      dbCore = new DatabaseCore(join(testDir, 'other.db'));
+      await dbCore.initialize();
+      dbCore.close();
+
+      const firstDbBackups = readdirSync(backupDir).filter((f) => f.endsWith('.db'));
+      expect(firstDbBackups).toHaveLength(3);
+      const otherDbBackups = readdirSync(join(testDir, 'backups', 'other.db')).filter((f) =>
+        f.endsWith('.db')
+      );
+      expect(otherDbBackups).toHaveLength(1);
+    });
+
     it('should prune expired backups together with their WAL sidecars', async () => {
-      const backupDir = join(testDir, 'backups');
+      const backupDir = join(testDir, 'backups', 'test.db');
       mkdirSync(backupDir, { recursive: true });
       const now = Date.now() / 1000;
       const staleWalOwner = 'daemon-2026-01-01T00-00-00-000Z.db';
@@ -631,10 +656,14 @@ describe('DatabaseCore', () => {
         writeFileSync(stale, 'stale');
         if (i === 0) {
           writeFileSync(`${stale}-wal`, 'stale-wal');
+          utimesSync(`${stale}-wal`, now - 7200, now - 7200);
         }
         utimesSync(stale, now - (5 - i) * 60, now - (5 - i) * 60);
       }
       writeFileSync(join(backupDir, orphanWal), 'orphan-wal');
+      utimesSync(join(backupDir, orphanWal), now - 7200, now - 7200);
+      const freshOrphanWal = 'daemon-2025-12-30T00-00-00-000Z.db-wal';
+      writeFileSync(join(backupDir, freshOrphanWal), 'sidecar mid-publish elsewhere');
       mkdirSync(join(backupDir, undeletable));
       writeFileSync(join(backupDir, undeletable, 'filler'), 'blocks unlink');
       writeFileSync(join(backupDir, `${undeletable}-wal`), 'must survive with its database');
@@ -651,6 +680,7 @@ describe('DatabaseCore', () => {
       expect(remainingDbs).not.toContain(staleWalOwner);
       expect(existsSync(join(backupDir, `${staleWalOwner}-wal`))).toBe(false);
       expect(existsSync(join(backupDir, orphanWal))).toBe(false);
+      expect(existsSync(join(backupDir, freshOrphanWal))).toBe(true);
       expect(existsSync(join(backupDir, `${undeletable}-wal`))).toBe(true);
     });
   });
