@@ -160,6 +160,30 @@ describe('CopyButton', () => {
 
       vi.useRealTimers();
     });
+
+    it('should ignore stale copy completions after text changes', async () => {
+      let resolveCopy: (value: boolean) => void = () => {};
+      (copyToClipboard as ReturnType<typeof vi.fn>).mockImplementation(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveCopy = resolve;
+          })
+      );
+
+      const { rerender } = render(<CopyButton text="first" />);
+      const button = document.body.querySelector('button');
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      rerender(<CopyButton text="second" />);
+
+      resolveCopy(true);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(button?.classList.contains('text-green-400')).toBe(false);
+      expect(button?.getAttribute('title')).toBe('Copy to clipboard');
+    });
   });
 
   describe('Styling', () => {
