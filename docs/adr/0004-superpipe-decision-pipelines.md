@@ -211,10 +211,13 @@ Terminal-set nuance: settlement terminal (`isSettlementTerminal` —
 done/cancelled/blocked/approved) and spawn terminal
 (`isCanonicalTaskTerminalForSpawn` — done/cancelled/archived/stopped)
 intentionally differ: 'blocked' settles a finished attempt, while 'stopped'
-(user-parked) skips the tick body — via `applyTaskStoppedGate` → skip for an
-active run (no crash recovery, handoff repair, settlement, or spawn runs for a
-task parked before the tick), and even earlier in the shell for non-active
-runs: a finished run returns after clearing stuck state, and a blocked run
+(user-parked) skips the post-admission tick body — via `applyTaskStoppedGate`
+→ skip for an active run (no crash recovery, handoff repair, settlement, or
+spawn runs for a task parked before the tick), though pre-admission
+reconciliation still runs first: duplicate run tasks are archived (cancelling
+their agents' sessions where applicable) and the canonical task's
+`workflowRunId` is rebound before admission, even for a parked task. Non-active
+runs exit even earlier in the shell: a finished run returns after clearing stuck state, and a blocked run
 diverts into `attemptBlockedRunRecovery`, which returns on its own stopped-task
 check — so the admission gates, validity included, are never reached there.
 Within admission, workflow validity is gated before the stopped gate, so a
