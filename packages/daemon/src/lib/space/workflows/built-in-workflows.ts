@@ -205,11 +205,13 @@ export const CODER_ONLY_PROMPT =
   '`save_artifact({ shape: "link", kind: "pr", data: { url: "<PR URL>" } })` — the post-approval ' +
   'merge procedure interpolates `{{pr_url}}` from that artifact, and without it the merge session ' +
   'receives an empty placeholder and cannot operate on the PR. Verify the recorded value right ' +
-  'after saving it: `gh pr view "<PR URL>" --json headRefName,url` must succeed and name THIS ' +
-  "task's branch, AND the owner/repository parsed from the PR URL must match this workspace's " +
-  "origin remote (`git remote get-url origin`) — a typo'd, stale, or other-repository URL would " +
-  'otherwise make you review and merge the wrong PR; if either check fails, fix the artifact ' +
-  'before proceeding. ' +
+  'after saving it: `gh pr view "<PR URL>" --json headRefName,isCrossRepository,headRepository,url` ' +
+  "must succeed and name THIS task's branch, AND the PR must belong to this workspace: the " +
+  'owner/repository parsed from the PR URL must match the origin remote (`git remote get-url ' +
+  'origin`), OR — for a cross-repository PR — the PR head repository must match the origin remote ' +
+  "(the fork case, where the PR URL names the upstream base repository). A typo'd, stale, or " +
+  'unrelated-repository URL would otherwise make you review and merge the wrong PR; if either ' +
+  'check fails, fix the artifact before proceeding. ' +
   'Review is delegated to two external GitHub reviewers: Codex and Devon. ' +
   'Before you may request approval, BOTH must pass on the CURRENT PR head. ' +
   'Do not hand off to any internal Review node — there is none. ' +
