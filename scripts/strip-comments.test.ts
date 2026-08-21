@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { stripComments } from './strip-comments.ts';
 
 const scriptPath = join(import.meta.dir, 'strip-comments.ts');
+const repoRoot = join(import.meta.dir, '..');
 
 describe('strip-comments', () => {
   it('does not treat flags after --files as paths', () => {
@@ -106,5 +107,36 @@ describe('strip-comments', () => {
   it('does not treat comment markers inside JSX text as comments', () => {
     const source = 'export const C = () => (<p>see https://example.com // not a comment</p>);\n';
     expect(stripComments(source, 'a.tsx', true)).toBe(source);
+  });
+});
+
+describe('zero-comments wiring', () => {
+  it('runs the no-comments gate before test-quality in the check chain', async () => {
+    const pkg = (await Bun.file(join(repoRoot, 'package.json')).json()) as {
+      scripts: Record<string, string>;
+    };
+    const check = pkg.scripts.check ?? '';
+    const noComments = check.indexOf('check:no-comments');
+    const testQuality = check.indexOf('check:test-quality');
+    expect(noComments).toBeGreaterThan(-1);
+    expect(testQuality).toBeGreaterThan(-1);
+    expect(noComments).toBeLessThan(testQuality);
+  });
+
+  it('strips comments before formatting in the make format target', async () => {
+    const makefile = await Bun.file(join(repoRoot, 'Makefile')).text();
+    const recipe = /^format:.*\n((?:\t[^\n]*\n)+)/m.exec(makefile)?.[1] ?? '';
+    const strip = recipe.indexOf('strip-comments');
+    const format = recipe.indexOf('bun run format');
+    expect(strip).toBeGreaterThan(-1);
+    expect(format).toBeGreaterThan(-1);
+    expect(strip).toBeLessThan(format);
+  });
+
+  it('exposes a strip-comments script that strips instead of checking', async () => {
+    const pkg = (await Bun.file(join(repoRoot, 'package.json')).json()) as {
+      scripts: Record<string, string>;
+    };
+    expect(pkg.scripts['strip-comments']).toBe('bun scripts/strip-comments.ts');
   });
 });
