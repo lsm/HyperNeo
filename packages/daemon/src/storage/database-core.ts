@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   unlinkSync,
@@ -126,21 +127,41 @@ export class DatabaseCore {
   }
 
   private writeBackup(backupPath: string): string | null {
-    if (this.tryFastCopy(backupPath)) {
-      if (this.copyWalSidecar(backupPath)) {
+    const tempDb = `${backupPath}.tmp`;
+    const strategy = this.writeBackupTo(tempDb);
+    if (strategy === null) {
+      this.removePartialBackup(tempDb);
+      return null;
+    }
+    try {
+      if (existsSync(`${tempDb}-wal`)) {
+        renameSync(`${tempDb}-wal`, `${backupPath}-wal`);
+      }
+      renameSync(tempDb, backupPath);
+      return strategy;
+    } catch (err) {
+      this.logger.error('Failed to publish migration backup:', err);
+      this.removePartialBackup(tempDb);
+      return null;
+    }
+  }
+
+  private writeBackupTo(tempDb: string): string | null {
+    if (this.tryFastCopy(tempDb)) {
+      if (this.copyWalSidecar(tempDb)) {
         return 'fs-copy';
       }
-      if (!this.removePartialBackup(backupPath)) {
+      if (!this.removePartialBackup(tempDb)) {
         this.logger.error('Failed to create migration backup: partial artifacts remain');
         return null;
       }
     }
-    if (this.tryVacuumInto(backupPath)) return 'vacuum-into';
-    if (!this.removePartialBackup(backupPath)) {
+    if (this.tryVacuumInto(tempDb)) return 'vacuum-into';
+    if (!this.removePartialBackup(tempDb)) {
       this.logger.error('Failed to create migration backup: partial artifacts remain');
       return null;
     }
-    return this.tryCheckpointCopy(backupPath) ? 'checkpoint-copy' : null;
+    return this.tryCheckpointCopy(tempDb) ? 'checkpoint-copy' : null;
   }
 
   private tryFastCopy(backupPath: string): boolean {
@@ -225,6 +246,12 @@ export class DatabaseCore {
 
       const kept = new Set(databases.slice(0, keepCount).map((f) => f.name));
 
+      for (const name of entries) {
+        if (!name.endsWith('.tmp') && !name.endsWith('.tmp-wal')) continue;
+        try {
+          unlinkSync(join(backupDir, name));
+        } catch {}
+      }
       for (const file of databases.slice(keepCount)) {
         try {
           unlinkSync(file.path);

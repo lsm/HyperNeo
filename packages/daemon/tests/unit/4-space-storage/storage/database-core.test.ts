@@ -582,6 +582,23 @@ describe('DatabaseCore', () => {
       expect(remaining).toContain('daemon-2026-02-03T00-00-00-000Z.db');
     });
 
+    it('should publish backups via temporary names and sweep crashed leftovers', async () => {
+      const backupDir = join(testDir, 'backups');
+      mkdirSync(backupDir, { recursive: true });
+      writeFileSync(join(backupDir, 'daemon-2026-03-01T00-00-00-000Z.db.tmp'), 'crashed partial');
+      writeFileSync(
+        join(backupDir, 'daemon-2026-03-01T00-00-00-000Z.db.tmp-wal'),
+        'crashed partial wal'
+      );
+
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      const remaining = readdirSync(backupDir);
+      expect(remaining.some((f) => f.endsWith('.tmp') || f.endsWith('.tmp-wal'))).toBe(false);
+      expect(remaining.filter((f) => f.endsWith('.db'))).toHaveLength(1);
+    });
+
     it('should prune expired backups together with their WAL sidecars', async () => {
       const backupDir = join(testDir, 'backups');
       mkdirSync(backupDir, { recursive: true });
