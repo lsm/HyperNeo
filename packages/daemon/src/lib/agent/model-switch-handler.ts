@@ -102,13 +102,16 @@ export class ModelSwitchHandler {
     );
   }
 
-  private async disposePreviousAcpSession(previousAcpSessionId: string): Promise<void> {
+  private async disposePreviousAcpSession(
+    previousAcpSessionId: string,
+    stashedCommand: string | undefined
+  ): Promise<void> {
     const acpProvider = getProviderRegistry().get('acp');
     const currentCommand =
       acpProvider instanceof AcpProvider
         ? acpProvider.getAcpCommand()
         : process.env.HYPERNEO_ACP_COMMAND;
-    const previousCommand = this.ctx.session.metadata?.acpSessionCommand ?? currentCommand;
+    const previousCommand = stashedCommand ?? currentCommand;
     if (!previousCommand) return;
     const dispose = this.ctx.disposeAcpSessions ?? disposeAcpSessions;
     const controller = new AbortController();
@@ -204,7 +207,10 @@ export class ModelSwitchHandler {
         session.config.model = resolvedModel;
         session.config.provider = nextProvider;
         if (clearAcpSessionId && previousAcpSessionId) {
-          await this.disposePreviousAcpSession(previousAcpSessionId);
+          await this.disposePreviousAcpSession(
+            previousAcpSessionId,
+            previousMetadata?.acpSessionCommand
+          );
         }
         if (clearAcpSessionId) {
           session.acpSessionId = undefined;
@@ -275,7 +281,10 @@ export class ModelSwitchHandler {
         } else {
           await lifecycleManager.restart();
           if (clearAcpSessionId && previousAcpSessionId) {
-            await this.disposePreviousAcpSession(previousAcpSessionId);
+            await this.disposePreviousAcpSession(
+              previousAcpSessionId,
+              previousMetadata?.acpSessionCommand
+            );
           }
         }
       }
