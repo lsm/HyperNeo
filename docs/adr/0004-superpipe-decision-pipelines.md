@@ -391,9 +391,13 @@ of keeping reads out of the core.
 **The closing sweep found no dead duplicates.** The conversion PRs removed
 every inline copy as they landed: the status cascades, the local transition
 predicates (`fromActivePaused`/`toStopped`/`toBlockedFromPaused`,
-`retryableStatuses`), and the old autonomy closures
-(`resolveEffectiveAutonomy`/`isAgentCeilingBinding`/`SESSION_WRITE_AUTONOMY_LEVEL`)
-no longer appear in `space-agent-tools.ts`; knip (files/dependencies/exports),
+`retryableStatuses`), and the old gate internals — the factory-local async
+closure `resolveEffectiveAutonomy` (succeeded by the pure
+`resolveEffectiveAutonomyLevel` export), the inline `isAgentCeilingBinding`
+predicate (succeeded by the exported type guard), and the
+`SESSION_WRITE_AUTONOMY_LEVEL` const (folded into
+`TOOL_AUTONOMY_REQUIREMENTS`) — no longer appear in
+`space-agent-tools.ts`; knip (files/dependencies/exports),
 oxlint, and `tsc --noEmit` are clean; every core export is production-consumed
 or pinned directly by the gate/routing suites per Decision item 6. Live
 near-duplicates remain only in never-converted surfaces — the hand-rolled
