@@ -12,16 +12,16 @@ query that had silently reintroduced the very cost the earlier fixes removed.
 
 ## Harness
 
-`scripts/bench-livequery-evaluation.ts` drives the real engine through the
-production `liveQuery.subscribe` handler (real `MESSAGES_BY_SESSION_SQL`,
-`rowFingerprint`, `scopeFilter`, debounce, and the `activeRegistry` `mapResult`
-that runs `BACKGROUND_TASK_METADATA_SQL` on every evaluation) against a
-disposable copy of a production database. It inserts/deletes its own benchmark
-rows and cleans up after itself.
+`packages/daemon/scripts/benchmark/live-query-evaluation.ts` drives the real
+engine through the production `liveQuery.subscribe` handler (real
+`MESSAGES_BY_SESSION_SQL`, `rowFingerprint`, `scopeFilter`, debounce, and the
+`activeRegistry` `mapResult` that runs `BACKGROUND_TASK_METADATA_SQL` on every
+evaluation) against a disposable copy of a production database. It
+inserts/deletes its own benchmark rows and cleans up after itself.
 
 ```
 cp -c /path/to/daemon.db /tmp/bench.db
-bun scripts/bench-livequery-evaluation.ts /tmp/bench.db
+bun packages/daemon/scripts/benchmark/live-query-evaluation.ts /tmp/bench.db
 ```
 
 ## Environment

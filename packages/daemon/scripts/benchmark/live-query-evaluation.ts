@@ -1,11 +1,9 @@
-#!/usr/bin/env bun
-
 import { Database } from 'bun:sqlite';
-import { LiveQueryEngine } from '../packages/daemon/src/storage/live-query';
-import { setupLiveQueryHandlers } from '../packages/daemon/src/lib/rpc-handlers/live-query-handlers';
-import { BACKGROUND_TASK_METADATA_SQL } from '../packages/daemon/src/lib/rpc-handlers/live-query-handlers';
-import { createSessionCounters } from '../packages/daemon/src/storage/schema/session-counters';
-import type { TableChangeScope } from '../packages/daemon/src/storage/reactive-database';
+import { LiveQueryEngine } from '../../src/storage/live-query';
+import { setupLiveQueryHandlers } from '../../src/lib/rpc-handlers/live-query-handlers';
+import { BACKGROUND_TASK_METADATA_SQL } from '../../src/lib/rpc-handlers/live-query-handlers';
+import { createSessionCounters } from '../../src/storage/schema/session-counters';
+import type { TableChangeScope } from '../../src/storage/reactive-database';
 
 const DEBOUNCE_WAIT_MS = 400;
 const WARM_EVAL_RUNS = 10;
@@ -96,9 +94,11 @@ function createStubMessageHub(): StubMessageHub {
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function main() {
-  const dbPath = process.argv[2];
+  const dbPath = process.env.BENCH_DB_PATH ?? process.argv[2];
   if (!dbPath) {
-    console.error('usage: bun scripts/bench-livequery-evaluation.ts <db-path>');
+    console.error(
+      'usage: bun packages/daemon/scripts/benchmark/live-query-evaluation.ts <db-path>'
+    );
     console.error('the script INSERTs/UPDATEs/DELETEs benchmark rows; run it on a disposable copy');
     process.exit(1);
   }
