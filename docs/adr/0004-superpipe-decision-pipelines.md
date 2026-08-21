@@ -490,12 +490,12 @@ interpreters over three extracted cores:
   visual editor's state init and serialization (`?? 3`), import handling
   (`space-export-import-handlers.ts`), the `completion_autonomy_level`
   column backfill (DEFAULT 3, with per-template overrides), and the workflow
-  repository itself, which defaults omitted values to 3 both when creating
-  workflows and when mapping nullable rows — so newly created, edited,
-  imported, or legacy-null workflows resolve to 3 through the repository, and
-  the `?? 5` runtime fallbacks apply only to values that bypass repository
-  mapping; the two defaults disagree, which is part of the same
-  centralization question. The
+  repository, which defaults omitted values to 3 when creating workflows and
+  when mapping *summary* rows — but the full-workflow mapper (`rowToWorkflow`)
+  assigns the nullable column through unchanged, so a legacy-null row resolves
+  to 3 through summary loads and to 5 through full-workflow loads: the
+  effective default depends on the load path. The defaults disagree, which is
+  part of the same centralization question. The
   router owns only the denial routing — reason, message, and
   precedence against the target check (see the second recorded asymmetry
   below).
