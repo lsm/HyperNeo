@@ -143,7 +143,6 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
       db: {
         saveSDKMessage: () => {},
         updateSession: () => {},
-        getMessagesByStatus: () => [],
         getSDKMessages: () => ({ messages: [], hasMore: false }),
         updateMessageStatus: () => {},
         getNodeExecutionRepo: () => ({ getByAgentSessionId: () => null }),

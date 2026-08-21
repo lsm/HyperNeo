@@ -171,7 +171,6 @@ describe('QueryRunner startup gate', () => {
       db: {
         saveSDKMessage: () => {},
         updateSession: () => {},
-        getMessagesByStatus: () => [],
         getSDKMessages: () => ({ messages: [], hasMore: false }),
         updateMessageStatus: () => {},
         getNodeExecutionRepo: () => ({ getByAgentSessionId: () => null }),
