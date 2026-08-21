@@ -782,7 +782,7 @@ describe('JobQueueRepository', () => {
 
   describe('hasActiveTurnDeliveryJob', () => {
     function enqueueDeliveryJob(args: { sessionId: string; role: string; status?: string }): void {
-      repository.enqueue({
+      const job = repository.enqueue({
         queue: 'message_delivery',
         payload: {
           sessionId: args.sessionId,
@@ -793,10 +793,7 @@ describe('JobQueueRepository', () => {
         },
       });
       if (args.status && args.status !== 'pending') {
-        db.prepare('UPDATE job_queue SET status = ? WHERE queue = ?').run(
-          args.status,
-          'message_delivery'
-        );
+        db.prepare('UPDATE job_queue SET status = ? WHERE id = ?').run(args.status, job.id);
       }
     }
 
