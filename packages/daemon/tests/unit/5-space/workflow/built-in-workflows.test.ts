@@ -292,31 +292,46 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).not.toContain('Do NOT merge PRs');
   });
 
-  test('gate evidence uses GraphQL enum names, timestamps, and paginated reviews', () => {
+  test('gate evidence uses GraphQL enum names, push freshness, and paginated reviews', () => {
     expect(CODER_ONLY_PROMPT).toContain('THUMBS_UP');
     expect(CODER_ONLY_PROMPT).toContain('EYES');
     expect(CODER_ONLY_PROMPT).toContain('createdAt');
-    expect(CODER_ONLY_PROMPT).toContain('committedDate');
+    expect(CODER_ONLY_PROMPT).toContain('pushedAt');
     expect(CODER_ONLY_PROMPT).toContain('reactions(first:100,after:$cursor)');
     expect(CODER_ONLY_PROMPT).toContain('reviews(first:100,after:$cursor)');
+    expect(CODER_ONLY_PROMPT).toContain('commit{oid} url body');
     expect(CODER_ONLY_PROMPT).toContain('pageInfo.hasNextPage');
     expect(CODER_ONLY_PROMPT).toContain('`devin`');
     expect(CODER_ONLY_PROMPT).toContain('`[bot]`');
     expect(CODER_ONLY_PROMPT).toContain('ONLY when its `commit.oid` equals');
+    expect(CODER_ONLY_PROMPT).toContain('is NOT a pass');
     expect(CODER_ONLY_PROMPT).not.toContain('content `+1` means');
     expect(CODER_ONLY_PROMPT).not.toContain('or its `submittedAt` is on or after');
+    expect(CODER_ONLY_PROMPT).not.toContain('committedDate');
   });
 
   test('coder prompt persists the PR link and gates CI on required checks, not a fixed name', () => {
     expect(CODER_ONLY_PROMPT).toContain('shape: "link", kind: "pr"');
     expect(CODER_ONLY_PROMPT).toContain('--required');
+    expect(CODER_ONLY_PROMPT).toContain('no required checks');
     expect(CODER_ONLY_PROMPT).not.toContain('All Tests Pass');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('--required');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('no required checks');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).not.toContain('All Tests Pass');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).not.toContain('`dev` branch ruleset');
   });
 
-  test('gate note artifact carries an explicit key', () => {
+  test('coder prompt reroutes no-change tasks instead of fabricating a PR', () => {
+    expect(CODER_ONLY_PROMPT).toContain('no code changes');
+    expect(CODER_ONLY_PROMPT).toContain('needs');
+    expect(CODER_ONLY_PROMPT).toContain('re-routing');
+  });
+
+  test('gate note artifact carries an explicit key and inline reaction evidence', () => {
     expect(CODER_ONLY_PROMPT).toContain('kind: "external-review-gate", key: "gate"');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'codex_reaction: { login, content: "THUMBS_UP", created_at }'
+    );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('key "gate"');
   });
 
