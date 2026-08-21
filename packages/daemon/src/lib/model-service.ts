@@ -209,7 +209,7 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
         changedProviderIds
       );
       modelsCache.set(cacheKey, mergedModels);
-      if (failedProviderIds.size === 0) {
+      if (failedProviderIds.size === 0 && rejectedProviderIds.size === 0) {
         cacheTimestamps.set(cacheKey, Date.now());
         backgroundRefreshFailures.delete(cacheKey);
       } else {
@@ -332,6 +332,7 @@ async function loadModelsFromProviders(): Promise<ProviderModelLoadResult> {
 
   let minCatalogExpiry: number | undefined;
   for (const provider of availableProviders) {
+    if (rejectedProviderIds.has(provider.id)) continue;
     const expiry = provider.getModelCacheExpiresAt?.();
     if (expiry !== undefined && (minCatalogExpiry === undefined || expiry < minCatalogExpiry)) {
       minCatalogExpiry = expiry;
@@ -402,11 +403,20 @@ export async function initializeModels(): Promise<void> {
     if (mergedModels.length > 0 || failedProviderIds.size === 0) {
       modelsCache.set(cacheKey, mergedModels);
     }
-    if (failedProviderIds.size === 0 && !(noProviderAvailable && models.length === 0)) {
+    if (
+      failedProviderIds.size === 0 &&
+      rejectedProviderIds.size === 0 &&
+      !(noProviderAvailable && models.length === 0)
+    ) {
       cacheTimestamps.set(cacheKey, Date.now());
       backgroundRefreshFailures.delete(cacheKey);
     } else {
       cacheTimestamps.delete(cacheKey);
+      if (rejectedProviderIds.size > 0) {
+        backgroundRefreshFailures.set(cacheKey, Date.now());
+      } else {
+        backgroundRefreshFailures.delete(cacheKey);
+      }
     }
   } catch {
     const registry = getProviderRegistry();
@@ -535,7 +545,7 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
         changedProviderIds
       );
       modelsCache.set(cacheKey, mergedModels);
-      if (failedProviderIds.size === 0) {
+      if (failedProviderIds.size === 0 && rejectedProviderIds.size === 0) {
         cacheTimestamps.set(cacheKey, Date.now());
         backgroundRefreshFailures.delete(cacheKey);
       } else {

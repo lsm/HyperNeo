@@ -1626,6 +1626,52 @@ describe('Model Service', () => {
       expect(refreshCalls).toBe(2);
     });
 
+    it('excludes rejected providers from catalog expiry and throttles retries', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const healthyModel = {
+        id: 'expiry-healthy-reject',
+        name: 'Expiry Healthy Reject',
+        family: 'test',
+        provider: 'expiry-healthy-reject-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const rejectedModel = {
+        id: 'expiry-rejected-model',
+        name: 'Expiry Rejected Model',
+        family: 'test',
+        provider: 'expiry-rejected-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      let rejectedRefreshCalls = 0;
+      registry.register({
+        id: 'expiry-healthy-reject-provider',
+        getModels: async () => [healthyModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register({
+        id: 'expiry-rejected-provider',
+        getModels: async () => [],
+        refreshModels: async () => {
+          rejectedRefreshCalls += 1;
+          throw Object.assign(new Error('credentials rejected'), { definitiveAuthFailure: true });
+        },
+        getCachedModels: () => [rejectedModel],
+        getModelCacheExpiresAt: () => Date.now() - 1000,
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      const { refreshModels, shouldThrottleModelsRefresh } = await import(
+        '../../../../src/lib/model-service'
+      );
+      await refreshModels();
+
+      expect(rejectedRefreshCalls).toBe(1);
+      expect(getAvailableModels('global')).not.toContainEqual(rejectedModel);
+      expect(shouldThrottleModelsRefresh('global')).toBe(true);
+    });
+
     it('should drop stale models when a provider credential scope changes', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];

@@ -2938,6 +2938,130 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('does not suppress unrelated ~/.codex/auth.json credentials', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      mkdirSync(codexDir, { recursive: true });
+      writeCodexAuth(codexDir, {
+        tokens: {
+          access_token: 'codex-valid-fallback-token',
+          refresh_token: 'codex-fallback-refresh',
+          account_id: 'acct-codex-fallback',
+        },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'rejected-hyperneo-token',
+        accountId: 'acct-rejected',
+      });
+      const fetchImpl = mock(
+        async () => new Response('unauthorized', { status: 401 })
+      ) as unknown as typeof fetch;
+      const refreshFetch = spyOn(globalThis, 'fetch').mockImplementation(
+        async () =>
+          new Response('{"error":"invalid_grant"}', {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      );
+      try {
+        provider = makeProvider({}, hyperneoDir, codexDir, fetchImpl);
+
+        await expect(provider.refreshModels()).rejects.toThrow(
+          'Codex credentials rejected (HTTP 401)'
+        );
+
+        const nextProvider = makeProvider({}, hyperneoDir, codexDir, fetchImpl);
+        const apiKey = await nextProvider.getApiKey();
+
+        expect(apiKey).toBe('codex-valid-fallback-token');
+        nextProvider.stopAllBridgeServers();
+      } finally {
+        refreshFetch.mockRestore();
+      }
+    });
+
+    it('persists rejected-import suppression across restarts', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      mkdirSync(codexDir, { recursive: true });
+      writeCodexAuth(codexDir, {
+        tokens: {
+          access_token: 'codex-rejected-token',
+          account_id: 'acct-codex-rejected',
+        },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'codex-rejected-token',
+        accountId: 'acct-codex-rejected',
+      });
+      const fetchImpl = mock(
+        async () => new Response('unauthorized', { status: 401 })
+      ) as unknown as typeof fetch;
+      try {
+        provider = makeProvider({}, hyperneoDir, codexDir, fetchImpl);
+
+        await expect(provider.refreshModels()).rejects.toThrow(
+          'Codex credentials rejected (HTTP 401)'
+        );
+
+        expect(await provider.isAvailable()).toBe(false);
+
+        const nextProvider = makeProvider({}, hyperneoDir, codexDir, fetchImpl);
+
+        expect(await nextProvider.isAvailable()).toBe(false);
+        expect(await nextProvider.getApiKey()).toBeUndefined();
+        nextProvider.stopAllBridgeServers();
+      } finally {
+        // no global fetch mock
+      }
+    });
+
+    it('lifts rejected-import suppression when the ~/.codex/auth.json token changes', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      mkdirSync(codexDir, { recursive: true });
+      writeCodexAuth(codexDir, {
+        tokens: {
+          access_token: 'codex-rejected-token',
+          account_id: 'acct-codex-rejected',
+        },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'codex-rejected-token',
+        accountId: 'acct-codex-rejected',
+      });
+      const fetchImpl = mock(
+        async () => new Response('unauthorized', { status: 401 })
+      ) as unknown as typeof fetch;
+      try {
+        provider = makeProvider({}, hyperneoDir, codexDir, fetchImpl);
+
+        await expect(provider.refreshModels()).rejects.toThrow(
+          'Codex credentials rejected (HTTP 401)'
+        );
+        expect(await provider.isAvailable()).toBe(false);
+
+        writeCodexAuth(codexDir, {
+          tokens: {
+            access_token: 'codex-new-token',
+            refresh_token: 'codex-new-refresh',
+            account_id: 'acct-codex-new',
+          },
+        });
+
+        const nextProvider = makeProvider({}, hyperneoDir, codexDir, fetchImpl);
+        const apiKey = await nextProvider.getApiKey();
+
+        expect(apiKey).toBe('codex-new-token');
+        nextProvider.stopAllBridgeServers();
+      } finally {
+        // no global fetch mock
+      }
+    });
+
     it('adopts replacement credentials after a superseded proactive refresh', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const staleToken = makeJwt({

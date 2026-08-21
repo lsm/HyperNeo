@@ -201,6 +201,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private readonly modelCachePath: string;
 
+  private readonly rejectedCodexImportPath: string;
+
   private catalogEntries: CodexCatalogEntry[] = this.bundledCatalogEntries();
 
   private modelCache: CodexModelCache | undefined;
@@ -250,7 +252,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.authPath = path.join(providerDir, 'auth.json');
     this.codexAuthPath = path.join(codexAuthDir ?? path.join(os.homedir(), '.codex'), 'auth.json');
     this.modelCachePath = path.join(providerDir, 'openai-models-cache.json');
+    this.rejectedCodexImportPath = path.join(providerDir, 'rejected-codex-import.json');
     this.loadModelCache();
+    this.loadRejectedCodexImport();
     const auth = this.env.OPENAI_API_KEY
       ? ({ source: 'api_key', apiKey: this.env.OPENAI_API_KEY } as const)
       : this.loadBridgeAuthSync();
@@ -403,6 +407,34 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       this.hydratedCacheEntries = entries;
     } catch {
       return;
+    }
+  }
+
+  private loadRejectedCodexImport(): void {
+    try {
+      const data = JSON.parse(readFileSync(this.rejectedCodexImportPath, 'utf-8')) as Record<
+        string,
+        unknown
+      >;
+      if (typeof data.rejectedImportHash === 'string') {
+        this.rejectedCodexImportKey = data.rejectedImportHash;
+      }
+    } catch {
+      this.rejectedCodexImportKey = undefined;
+    }
+  }
+
+  private async persistRejectedCodexImport(hash: string): Promise<void> {
+    const dir = path.dirname(this.rejectedCodexImportPath);
+    await fs.mkdir(dir, { recursive: true });
+    const json = JSON.stringify({ rejectedImportHash: hash }, null, 2);
+    const tmpPath = `${this.rejectedCodexImportPath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+    try {
+      await fs.writeFile(tmpPath, json, { mode: 0o600 });
+      await fs.rename(tmpPath, this.rejectedCodexImportPath);
+    } catch (err) {
+      await fs.unlink(tmpPath).catch(() => {});
+      throw err;
     }
   }
 
@@ -769,7 +801,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         logger.warn(
           'AnthropicToCodexBridgeProvider: OAuth token refresh failed — clearing stale credentials'
         );
-        await this.recordRejectedCodexImport();
+        await this.recordRejectedCodexImport(credentials);
         await this.logout();
       } else if (!result.definitive) {
         logger.warn(
@@ -1123,13 +1155,29 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       : currentAuth;
   }
 
-  private async recordRejectedCodexImport(): Promise<void> {
+  private async recordRejectedCodexImport(rejectedCredentials?: StoredCredentials): Promise<void> {
+    let codexData: CodexAuthFile;
     try {
       const raw = await fs.readFile(this.codexAuthPath, 'utf-8');
-      this.rejectedCodexImportKey = this.codexImportKey(JSON.parse(raw) as CodexAuthFile);
+      codexData = JSON.parse(raw) as CodexAuthFile;
     } catch {
       this.rejectedCodexImportKey = undefined;
+      return;
     }
+    const codexKey = this.codexImportHash(codexData);
+    if (codexKey === undefined) {
+      this.rejectedCodexImportKey = undefined;
+      return;
+    }
+    if (rejectedCredentials) {
+      const rejectedKey = this.storedCredentialsImportHash(rejectedCredentials);
+      if (rejectedKey === undefined || rejectedKey !== codexKey) {
+        this.rejectedCodexImportKey = undefined;
+        return;
+      }
+    }
+    this.rejectedCodexImportKey = codexKey;
+    await this.persistRejectedCodexImport(codexKey);
   }
 
   private async clearUnrefreshableOauthCredentials(auth: OpenAIResponsesBridgeAuth): Promise<void> {
@@ -1137,7 +1185,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const credentials = await this.loadCredentials();
     if (!credentials || credentials.type !== 'oauth' || credentials.refresh) return;
     if (credentials.access !== auth.apiKey) return;
-    await this.recordRejectedCodexImport();
+    await this.recordRejectedCodexImport(credentials);
     await this.logout();
   }
 
@@ -1890,7 +1938,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       return;
     }
 
-    const importKey = this.codexImportKey(codexData);
+    const importKey = this.codexImportHash(codexData);
     if (importKey !== undefined && importKey === this.rejectedCodexImportKey) return;
     this.rejectedCodexImportKey = undefined;
 
@@ -1947,17 +1995,37 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     logger.info('AnthropicToCodexBridgeProvider: imported OAuth token from ~/.codex/auth.json');
   }
 
-  private codexImportKey(codexData: CodexAuthFile): string | undefined {
+  private codexImportHash(codexData: CodexAuthFile): string | undefined {
     if (codexData.OPENAI_API_KEY && typeof codexData.OPENAI_API_KEY === 'string') {
-      return `api_key:${codexData.OPENAI_API_KEY}`;
+      return this.hashImportKey(`api_key:${codexData.OPENAI_API_KEY}`);
     }
     if (!codexData.tokens?.access_token) return undefined;
-    return [
-      'oauth',
-      codexData.tokens.access_token,
-      codexData.tokens.refresh_token ?? '',
-      codexData.tokens.account_id ?? '',
-    ].join(':');
+    return this.hashImportKey(
+      [
+        'oauth',
+        codexData.tokens.access_token,
+        codexData.tokens.refresh_token ?? '',
+        codexData.tokens.account_id ?? '',
+      ].join(':')
+    );
+  }
+
+  private storedCredentialsImportHash(credentials: StoredCredentials): string | undefined {
+    if (credentials.type === 'api_key') {
+      return credentials.access ? this.hashImportKey(`api_key:${credentials.access}`) : undefined;
+    }
+    return this.hashImportKey(
+      [
+        'oauth',
+        credentials.access ?? '',
+        credentials.refresh ?? '',
+        credentials.accountId ?? '',
+      ].join(':')
+    );
+  }
+
+  private hashImportKey(value: string): string {
+    return crypto.createHash('sha256').update(value).digest('hex');
   }
 
   private tryRefreshCodexToken(refreshToken: string): Promise<CodexRefreshResult> {
