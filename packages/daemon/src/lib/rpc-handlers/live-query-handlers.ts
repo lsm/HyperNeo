@@ -2871,11 +2871,8 @@ function toSqlStringList(subtypes: Iterable<string>): string {
   return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
 }
 
-const BACKGROUND_TASK_METADATA_SQL_LIST = toSqlStringList(BACKGROUND_TASK_METADATA_SUBTYPES);
-
-export const BACKGROUND_TASK_METADATA_SQL = `
-WITH recent_metadata AS (
-  SELECT
+const BACKGROUND_TASK_METADATA_ARMS_SQL = BACKGROUND_TASK_METADATA_SUBTYPES.map(
+  (subtype) => `SELECT
     id,
     sdk_message,
     timestamp,
@@ -2889,7 +2886,16 @@ WITH recent_metadata AS (
   FROM sdk_messages
   WHERE session_id = ?
     AND parent_tool_use_id IS NULL
-    AND message_subtype_norm IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
+    AND message_subtype_norm = '${subtype.replace(/'/g, "''")}'`
+).join(`
+  UNION ALL
+`);
+
+export const BACKGROUND_TASK_METADATA_SQL = `
+WITH recent_metadata AS (
+  SELECT * FROM (
+    ${BACKGROUND_TASK_METADATA_ARMS_SQL}
+  )
   ORDER BY timestamp DESC, rowid DESC
   LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
 ),
@@ -3567,6 +3573,8 @@ export function setupLiveQueryHandlers(
       const sessionId = params[0];
       if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined;
       const rows = stmtBackgroundTaskMetadata.all(
+        sessionId,
+        sessionId,
         sessionId,
         sessionId,
         sessionId,

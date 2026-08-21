@@ -881,7 +881,7 @@ describe('messages.bySession — SQL behavior', () => {
 
     const planRows = db
       .prepare(`EXPLAIN QUERY PLAN ${BACKGROUND_TASK_METADATA_SQL}`)
-      .all('s1', 's1', 's1', 's1', 's1') as Array<{ detail: string }>;
+      .all('s1', 's1', 's1', 's1', 's1', 's1', 's1') as Array<{ detail: string }>;
     const plan = planRows.map((row) => row.detail).join('\n');
     expect(plan).toContain('idx_sdk_messages_session_subtype_parent');
     expect(plan).toContain('message_subtype_norm');
