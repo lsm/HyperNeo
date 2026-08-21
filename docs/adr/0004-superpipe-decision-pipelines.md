@@ -180,9 +180,13 @@ Terminal-set nuance: settlement terminal (`isSettlementTerminal` —
 done/cancelled/blocked/approved) and spawn terminal
 (`isCanonicalTaskTerminalForSpawn` — done/cancelled/archived/stopped)
 intentionally differ: 'blocked' settles a finished attempt, while 'stopped'
-(user-parked) only suppresses spawn. The terminal-handoff-cleanup check in the
-interpreter is a third, narrower set (done/cancelled/archived). These are
-distinct decisions, not duplicate predicates to unify.
+(user-parked) short-circuits the entire tick at admission
+(`applyTaskStoppedGate` → skip, so no crash recovery, handoff repair,
+settlement, or spawn runs for a parked task) and, because the canonical task is
+re-read before spawn admission, still suppresses spawn when the task is parked
+mid-tick after admission — it is never settled. The terminal-handoff-cleanup
+check in the interpreter is a third, narrower set (done/cancelled/archived).
+These are distinct decisions, not duplicate predicates to unify.
 
 Costs: production net +374 lines across the pilot — 368 lines of new pure
 modules, `space-runtime.ts` net +6 (`processRunTick` 535 → 533 lines; the value
