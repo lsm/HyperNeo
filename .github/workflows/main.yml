@@ -690,15 +690,15 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           push_baseline() {
-            local parent_args=()
+            local parent=""
             if git fetch --no-tags origin refs/heads/coverage-baseline 2>/dev/null; then
-              parent_args=(-p "$(git rev-parse FETCH_HEAD)")
+              parent="-p $(git rev-parse FETCH_HEAD)"
             fi
             local blob tree commit
             blob=$(git hash-object -w coverage-baseline.json)
             tree=$(printf '100644 blob %s\tcoverage-baseline.json\n' "$blob" | git mktree)
-            commit=$(git commit-tree "$tree" "${parent_args[@]}" \
-              -m "chore(coverage): update baseline for $(git rev-parse --short "${{ github.sha }}")")
+            commit=$(git commit-tree "$tree" $parent \
+              -m "chore(coverage): update baseline for $(git rev-parse --short HEAD)")
             git push origin "$commit:refs/heads/coverage-baseline"
           }
 
