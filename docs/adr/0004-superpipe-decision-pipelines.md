@@ -9,6 +9,10 @@ delivery decision pipeline + interpreter (#2589), shared `decisionRun` combinato
 adopted pattern, its boundaries, and the migration roadmap. It does not mandate
 immediate adoption elsewhere; each phase gets its own go/no-go.
 
+Validated further by pilot 3 (2026-08-21): `processRunTick` rewritten as a staged
+interpreter over three extracted cores plus a `decisionRun` admission pipeline —
+see "Pilot 3" below for boundary caveats.
+
 Revised 2026-08-20 after owner review: scope widened from decision cores to pure
 pipelines generally — decisions, multi-step transforms (rendering/projection), and
 staged async flows (decide → effect → re-snapshot). The boundaries in
@@ -140,11 +144,167 @@ pipeline wiring, +7 helper extraction, +19 combinator module); one new daemon
 dependency (pinned exact 0.17.0); a convention to learn; the sync-core rule means
 async deciders carry a proof obligation (microtask-profile sensitivity).
 
+## Pilot 3 — run-tick staged interpreter (2026-08-21)
+
+Pilot 3 applied the pattern to `processRunTick`, the 5-second run supervisor in
+`space-runtime.ts` (~535 lines at `:5933–6468` before the pilot) — the staged-async
+form (Decision item 4) at its largest so far: snapshot → decide → effect →
+re-snapshot, repeated across the tick.
+
+Extracted:
+
+- `run-tick-admission-gates.ts` — the tick admission decision (missing/finished/
+  waiting run, executor meta, run tasks, canonical task, workflow validity,
+  rate-limit, task-stopped, executions-present, blocked-executions) plus pure
+  timed-out-execution selection.
+- `run-tick-decision-pipeline.ts` — the admission gates composed as a
+  `decisionRun` pipeline.
+- `run-completion-settlement.ts` — completion-summary resolution,
+  already-resolved and final-status mapping, spawned post-approval session
+  resolution, quiesce source selection, and sibling-quiesce selection.
+- `run-spawn-decisions.ts` — spawn admission, promotable-pending selection,
+  spawn-failure classification, and the driveable-execution check.
+
+The shell keeps every execution-mutating effect and re-snapshots
+`nodeExecutionRepo.listByWorkflowRun` after each such stage (crash reset, the
+execution-mutating recovery handlers, handoff repair, promotion) before the
+next decision that consumes executions. The qualifier is load-bearing:
+`handleAliveStuckExecutions` can inject a runtime nag and return `none`, after
+which the tick proceeds to the next handler without a re-list — the invariant
+is about execution-mutating stages that continue, not about every effect.
+
+Four boundary caveats, recorded so the section is not read as a cleaner
+validation of the sandwich than it is. First, slot availability is modeled by a
+pipeline gate but defused at the production call site
+(`availableTaskSlots: Number.MAX_SAFE_INTEGER`): `space` — and with it
+`getAvailableTaskSlots` — only loads after admission, and the authoritative
+check stays in the shell, after the timeout-notification stage; the gate list
+does not encode slot precedence. Second, six admission gates (missing/finished/
+waiting run, executor meta, run tasks, canonical task) are shadowed by shell
+short-circuits ahead of the admission call: the interpreter returns for each of
+those conditions first and then hardcodes the corresponding inputs (an active
+`runStatus`, `hasExecutorMeta: true`, a positive task count,
+`hasCanonicalTask: true`), so those gates are unreachable in production. The
+authoritative ordering of the tick is therefore shell short-circuits first,
+then the pipeline gates; the gate list alone is the precedence document of the
+core, not of the production tick. Third, four admission inputs
+(`executionCount`, `runIsComplete`, `hasBlockedExecution`, `firstBlockedResult`)
+are lazy thunks forced inside the gates, so their repository/detector reads
+happen within the core run rather than pre-gathered by the shell — a deliberate
+exception so cheap skip paths never pay for the executions snapshot. The reads
+are read-only and memoized (one shared `loadNodeExecutions` snapshot), and no
+effects run inside the core. Fourth, spawn-failure classification has shadowed
+outcomes: the interpreter handles permanent and transient errors inline
+(cancelling the execution, deferring with a log) before calling
+`classifySpawnFailure`, so the production call always supplies
+`isPermanent: false` and `isTransient: false` and the core's `cancel_permanent`
+and `defer_transient` arms are unreachable outside unit tests — in production
+the core only chooses between preserve-stale-terminal and reset-retry.
+
+Deliberate non-goals: the four `handle*Executions` recovery sub-flows
+(alive-stuck, waiting-rebind, non-terminal-idle, terminal-error-idle) and
+`repairQueuedWorkflowNodeHandoffs` remain opaque effects behind the interpreter —
+candidates for future mini-pilots, each to be pinned by a decision-table test
+before extraction.
+
+Terminal-set nuance: settlement terminal (`isSettlementTerminal` —
+done/cancelled/blocked/approved) and spawn terminal
+(`isCanonicalTaskTerminalForSpawn` — done/cancelled/archived/stopped)
+intentionally differ: 'blocked' settles a finished attempt, while 'stopped'
+(user-parked) skips the post-admission tick body — via `applyTaskStoppedGate`
+→ skip for an active run (no crash recovery, handoff repair, settlement, or
+spawn runs for a task parked before the tick), though pre-admission
+reconciliation still runs first: duplicate run tasks are archived (cancelling
+their agents' sessions where applicable) even for a parked task. The
+`workflowRunId` rebind guard beside it never fires in production —
+`listByWorkflowRun` selects rows whose `workflow_run_id` already equals the
+run, so the mismatch condition is always false; it stays as defensive
+self-heal. Non-active
+runs exit even earlier in the shell: a finished run returns after clearing stuck state, and a blocked run
+diverts into `attemptBlockedRunRecovery`, which returns on its own stopped-task
+check — so the admission gates, validity included, are never reached there.
+Within admission, workflow validity is gated before the stopped gate, so a
+parked task on an active run whose workflow lacks `endNodeId` is transitioned
+to `blocked` instead (pre-existing precedence, preserved by the pilot; parking
+is authoritative only for active runs with valid workflows). Mid-tick parking
+is only partially guarded, and the guards are snapshots, not locks: the
+canonical task is re-read before spawn admission, so the ordinary spawn path
+is suppressed only for parks visible at that re-read — a park landing after
+it, in particular while the spawn loop awaits
+`spawnWorkflowNodeAgentForExecution` for the first of several pending
+executions, still spawns the remainder with the stale task, and the loop's
+trailing status update — guarded only by the stale `open` snapshot — then
+writes the parked task back to `in_progress` through the same unvalidated
+update. Earlier stages run
+on the admission-era task entirely, and every blocking write in the tick,
+wherever it fires, can overwrite a concurrent park rather than merely act
+stale: the admission interpreter's `blockInvalidWorkflow` and
+`blockOnBlockedExecutions` branches, the four recovery handlers, the shared
+`blockRun*` helpers — including the spawn-failure calls to
+`blockRunForPermanentSpawnFailure` and `blockRunForAgentCrash` after awaited
+spawns fail — and `attemptBlockedRunRecovery` all test a task snapshot taken
+before one or more awaited effects and then write through `updateTaskAndEmit`,
+which does not enforce the task-transition table — so a park completing inside
+any of those windows is flipped `stopped` → `blocked` (or back to
+`in_progress` on the resume paths: `attemptBlockedRunRecovery` — the pre-admission path
+for blocked runs, where a park landing after its
+stopped-task check is undone, because the helper resets blocked executions to
+pending, flips the run back to `in_progress`, and writes the stale-snapshot
+task to `in_progress` through the same unvalidated update — and the successful
+`handleWaitingRebindExecutions` recovery, which resets the execution to
+pending, transitions the run, and then writes the stale `blocked`/`open`
+snapshot back to `in_progress`. Queued-handoff
+repair's terminal check
+(done/cancelled/archived) excludes 'stopped' and can still spawn, and the
+completion branch, gated on the admission-time-cached `runIsComplete`, runs
+before the re-read and can still transition the run to `done` and write task
+result/summary — though not status: `buildTaskOutcomeUpdates` never sets
+`status`, and `dispatchPostApproval` re-reads the task and returns `skipped`
+because `stopped → approved` is not a valid transition, so a mid-tick
+'stopped' survives settlement. One status-dependent settlement effect does
+fire: when the admission-era status was already settlement-terminal (e.g.
+`blocked`), `finalTaskStatus` stays stale-terminal and the sibling-quiesce
+loop still idles sibling executions and interrupts their sessions after the
+park. Per-effect validation of the freshly-read task status — including `stopped` —
+narrows these gaps to a check-then-act window but does not close them: a
+concurrent park can still land after the read and before the effect, and the
+re-read alone buys nothing because `spawnWorkflowNodeAgentForExecution`
+already re-reads the task while `validateTaskAllowsSpawn` rejects only
+archived/cancelled and rate/usage-limited statuses, so a parked task passes
+and the spawn proceeds. Truly closing the races requires atomic coordination
+— a lock, a CAS on the task row, or a spawn reservation — plus the equivalent
+guards around every task-status write in the tick — handoff repair,
+`attemptBlockedRunRecovery`, the admission interpreter's blocking branches,
+the recovery handlers, and the spawn-failure `blockRun*` calls; that work is
+deliberately not slipped into this
+closing sweep and belongs with the `repairQueuedWorkflowNodeHandoffs`
+mini-pilot. The terminal-handoff-cleanup check in the interpreter is a third,
+narrower set (done/cancelled/archived). These are distinct decisions, not
+duplicate predicates to unify.
+
+Costs: production net +374 lines across the pilot — 368 lines of new pure
+modules, `space-runtime.ts` net +6 (`processRunTick` 535 → 533 lines; the value
+is testability of the decisions, not method shrinkage); tests +1,918 lines
+(decision-table pins and core unit suites).
+
+Pilot PRs: #2601 (decision-table pin), #2604, #2620, #2624, #2629, #2641, plus
+the closing cleanup/dead-code sweep. The sweep confirmed no dead inline copies
+remained: every leftover near-duplicate (pre-admission finished/waiting
+fast-path, post-snapshot slot check, the post-approval session ternary that
+narrows the `PostApprovalRouteResult` union) is live adapter code, deliberately
+kept. The dual phenomenon — core decision arms that production never reaches —
+is recorded in the boundary caveats above (shadowed admission gates, the slot
+gate, spawn-failure outcomes). The review round also surfaced pre-existing
+production-unreachable defensive code outside the sweep's PR-6 scope — the
+`workflowRunId` rebind guard — recorded above rather than removed.
+
 ## Roadmap
 
 - **Done (pilot):** admission gates extracted as pure functions (no superpipe
   needed there); delivery + post-activation decision pipelines; `decisionRun`
   combinator; interpreter dedup.
+- **Done (pilot 3):** run-tick admission/settlement/spawn cores and the
+  `processRunTick` staged interpreter — see "Pilot 3" above.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
@@ -176,5 +336,9 @@ async deciders carry a proof obligation (microtask-profile sensitivity).
 - Benchmark: `packages/daemon/scripts/benchmark/decision-pipeline.ts` (`bun run
   packages/daemon/scripts/benchmark/decision-pipeline.ts` from the repository root).
 - Pilot PRs: #2578, #2582, #2589, #2591 (branch `superpipe-pilot-1`).
+- Pilot 3 files: `packages/daemon/src/lib/space/runtime/{run-tick-admission-gates,
+  run-tick-decision-pipeline, run-completion-settlement, run-spawn-decisions}.ts`;
+  interpreter in `space-runtime.ts` (`processRunTick`). Pilot 3 PRs: #2601,
+  #2604, #2620, #2624, #2629, #2641.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.
