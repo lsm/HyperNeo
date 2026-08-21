@@ -284,7 +284,7 @@ export class Database {
   getUserMessagesByStatus(
     sessionId: string,
     status: SendStatus,
-    limit: number
+    limit?: number
   ): {
     messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>;
     total: number;
@@ -298,6 +298,21 @@ export class Database {
     uuid: string
   ): (SDKMessage & { dbId: string; timestamp: number }) | null {
     return this.sdkMessageRepo.getMessageByStatusAndUuid(sessionId, status, uuid);
+  }
+
+  getMessageByStatusAndDbId(
+    sessionId: string,
+    status: SendStatus,
+    dbId: string
+  ): (SDKMessage & { dbId: string; timestamp: number }) | null {
+    return this.sdkMessageRepo.getMessageByStatusAndDbId(sessionId, status, dbId);
+  }
+
+  getUserMessageIdsByStatus(
+    sessionId: string,
+    status: SendStatus
+  ): Array<{ dbId: string; uuid: string | undefined; timestamp: number }> {
+    return this.sdkMessageRepo.getUserMessageIdsByStatus(sessionId, status);
   }
 
   updateMessageStatus(messageIds: string[], newStatus: SendStatus): void {

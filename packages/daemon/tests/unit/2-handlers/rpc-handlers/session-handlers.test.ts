@@ -539,18 +539,20 @@ describe('Session RPC Handlers — models.list', () => {
       );
 
       const dbFacade = {
-        getMessagesByStatus: (_sid: string, status: string) =>
-          (
-            db
-              .prepare(
-                `SELECT id AS dbId, sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND send_status = ?`
-              )
-              .all('sess-1', status) as Array<{
-              dbId: string;
-              sdk_message: string;
-              timestamp: string;
-            }>
-          ).map((row) => ({ ...JSON.parse(row.sdk_message), dbId: row.dbId, timestamp: 0 })),
+        getMessageByStatusAndDbId: (_sid: string, status: string, dbId: string) => {
+          const row = db
+            .prepare(
+              `SELECT id AS dbId, sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND send_status = ? AND id = ?`
+            )
+            .get('sess-1', status, dbId) as
+            | {
+                dbId: string;
+                sdk_message: string;
+                timestamp: string;
+              }
+            | undefined;
+          return row ? { ...JSON.parse(row.sdk_message), dbId: row.dbId, timestamp: 0 } : undefined;
+        },
         updateMessageStatus: (ids: string[], status: string) =>
           db
             .prepare(
@@ -659,18 +661,20 @@ describe('Session RPC Handlers — models.list', () => {
       );
 
       const dbFacade = {
-        getMessagesByStatus: (_sid: string, status: string) =>
-          (
-            db
-              .prepare(
-                `SELECT id AS dbId, sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND send_status = ?`
-              )
-              .all('sess-1', status) as Array<{
-              dbId: string;
-              sdk_message: string;
-              timestamp: string;
-            }>
-          ).map((row) => ({ ...JSON.parse(row.sdk_message), dbId: row.dbId, timestamp: 0 })),
+        getMessageByStatusAndDbId: (_sid: string, status: string, dbId: string) => {
+          const row = db
+            .prepare(
+              `SELECT id AS dbId, sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND send_status = ? AND id = ?`
+            )
+            .get('sess-1', status, dbId) as
+            | {
+                dbId: string;
+                sdk_message: string;
+                timestamp: string;
+              }
+            | undefined;
+          return row ? { ...JSON.parse(row.sdk_message), dbId: row.dbId, timestamp: 0 } : undefined;
+        },
         updateMessageStatus: (ids: string[], status: string) =>
           db
             .prepare(

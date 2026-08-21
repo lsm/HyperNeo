@@ -38,7 +38,10 @@ export class QueryModeHandler {
     const { session, db, internalEventBus, messageQueue, logger } = this.ctx;
 
     try {
-      const deferredMessages = db.getMessagesByStatus(session.id, 'deferred');
+      const { messages: deferredMessages, total } = db.getUserMessagesByStatus(
+        session.id,
+        'deferred'
+      );
 
       if (deferredMessages.length === 0) {
         return { success: true, messageCount: 0 };
@@ -71,7 +74,6 @@ export class QueryModeHandler {
           db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
         await this.ctx.ensureQueryStarted();
         for (const msg of deferredMessages) {
-          if (!isSDKUserMessage(msg)) continue;
           if (v2Owned.has((msg.uuid ?? '') as string)) continue;
           const replayContent = this.toReplayContent(msg.message.content);
           if (replayContent) {
@@ -80,7 +82,7 @@ export class QueryModeHandler {
         }
       }
 
-      return { success: true, messageCount: deferredMessages.length };
+      return { success: true, messageCount: total };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.error('Failed to trigger query:', error);
@@ -138,24 +140,22 @@ export class QueryModeHandler {
     const { session, db, messageQueue, logger } = this.ctx;
 
     try {
-      const queuedMessages = db
-        .getMessagesByStatus(session.id, 'enqueued')
-        .filter(
-          (msg) => typeof msg.uuid !== 'string' || !messageQueue.hasPendingOrInFlight(msg.uuid)
-        );
+      const { messages: queuedMessages } = db.getUserMessagesByStatus(session.id, 'enqueued');
+      const pendingMessages = queuedMessages.filter(
+        (msg) => typeof msg.uuid === 'string' && !messageQueue.hasPendingOrInFlight(msg.uuid)
+      );
 
-      if (queuedMessages.length === 0) {
+      if (pendingMessages.length === 0) {
         return;
       }
 
       if (isMessageDeliveryV2Enabled()) {
-        await this.deliverFlushUnderV2(queuedMessages, 'recovery');
+        await this.deliverFlushUnderV2(pendingMessages, 'recovery');
       } else {
         const v2Owned =
           db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
         await this.ctx.ensureQueryStarted();
-        for (const msg of queuedMessages) {
-          if (!isSDKUserMessage(msg)) continue;
+        for (const msg of pendingMessages) {
           if (v2Owned.has((msg.uuid ?? '') as string)) continue;
           const replayContent = this.toReplayContent(msg.message.content);
           if (replayContent) {

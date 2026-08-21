@@ -4303,15 +4303,16 @@ describe('AgentSession', () => {
     it('can defer constructor pending-message replay until runtime provisioning completes', async () => {
       const mockSession = makeMockSession();
       const replayStatusReads: string[] = [];
-      const getMessagesByStatus = mock((_sessionId: string, status: string) => {
+      const getUserMessagesByStatus = mock((_sessionId: string, status: string) => {
         if (status === 'enqueued' || status === 'deferred') {
           replayStatusReads.push(status);
         }
-        return [];
+        return { messages: [], total: 0 };
       });
       const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
-      (mockDb as unknown as { getMessagesByStatus: ReturnType<typeof mock> }).getMessagesByStatus =
-        getMessagesByStatus;
+      (
+        mockDb as unknown as { getUserMessagesByStatus: ReturnType<typeof mock> }
+      ).getUserMessagesByStatus = getUserMessagesByStatus;
 
       const agentSession = new AgentSession(
         mockSession,

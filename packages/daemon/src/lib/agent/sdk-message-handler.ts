@@ -330,18 +330,15 @@ export class SDKMessageHandler {
     const { session, db, internalEventBus, messageHub, messageQueue } = this.ctx;
     const durableOwned =
       db.getJobQueueRepo?.()?.activeDeliveryMessageUuids(session.id) ?? new Set();
-    const enqueuedUsers = db.getMessagesByStatus(session.id, 'enqueued').filter((enqueued) => {
+    const { messages: enqueuedUsers } = db.getUserMessagesByStatus(session.id, 'enqueued');
+    const consumedUsers = enqueuedUsers.filter((enqueued) => {
       const uuid = enqueued.uuid ?? '';
       const activeYielded = uuid === activeMessageId && messageQueue.hasYielded(uuid);
-      return (
-        isSDKUserMessage(enqueued) &&
-        (!durableOwned.has(uuid) || activeYielded) &&
-        !messageQueue.hasPendingOrClaimed(uuid)
-      );
+      return (!durableOwned.has(uuid) || activeYielded) && !messageQueue.hasPendingOrClaimed(uuid);
     });
 
     let lastConsumedAt = 0;
-    for (const enqueuedUser of enqueuedUsers) {
+    for (const enqueuedUser of consumedUsers) {
       let consumedAt = Date.now();
       if (consumedAt <= lastConsumedAt) consumedAt = lastConsumedAt + 1;
       lastConsumedAt = consumedAt;
