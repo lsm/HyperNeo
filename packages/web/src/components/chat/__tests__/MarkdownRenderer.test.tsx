@@ -63,11 +63,20 @@ describe('MarkdownRenderer', () => {
       (copyToClipboard as ReturnType<typeof vi.fn>).mockResolvedValue(true);
     });
 
-    it('should render a copy button for markdown content', () => {
+    it('should render a copy button for markdown content', async () => {
       const { container } = render(<MarkdownRenderer content="**bold** text" />);
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('bold');
+      });
       const button = container.querySelector('button');
       expect(button).toBeTruthy();
       expect(button?.getAttribute('title')).toBe('Copy markdown');
+    });
+
+    it('should not render a copy button before the first render commits', () => {
+      const { container } = render(<MarkdownRenderer content="**bold** text" />);
+      expect(container.querySelector('.prose')?.textContent).not.toContain('bold');
+      expect(container.querySelector('button')).toBeFalsy();
     });
 
     it('should not render a copy button for empty content', () => {
@@ -77,6 +86,9 @@ describe('MarkdownRenderer', () => {
 
     it('should copy the raw markdown source on click', async () => {
       const { container } = render(<MarkdownRenderer content="**bold** text" />);
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('bold');
+      });
       const button = container.querySelector('button');
       button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
@@ -121,10 +133,14 @@ describe('MarkdownRenderer', () => {
     });
 
     it('should show copied confirmation then revert', async () => {
+      const { container } = render(<MarkdownRenderer content="**bold** text" />);
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('bold');
+      });
+
       vi.useFakeTimers();
 
       try {
-        const { container } = render(<MarkdownRenderer content="**bold** text" />);
         const button = container.querySelector('button');
         button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 

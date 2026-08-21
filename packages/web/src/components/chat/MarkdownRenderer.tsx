@@ -1000,7 +1000,7 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
   return (
     <div class="group relative">
       <div ref={containerRef} class={`prose [@media(hover:none)]:pr-7 ${className || ''}`} />
-      {content.trim() ? (
+      {content.trim() && html != null ? (
         <div class="absolute top-0 right-0 transition-opacity focus-within:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-hover:pointer-events-auto">
           <CopyButton text={renderedSource} label="Copy markdown" />
         </div>
