@@ -20,7 +20,7 @@ FX="$2"
 mk() { mkdir -p "$(dirname "$1")"; printf 'it("x", () => {});\\n' > "$1"; }
 for rel in .github/workflows/main.yml .github/workflows/real-api-tests.yml \\
   scripts/validate-test-matrix.sh scripts/test-daemon.sh scripts/test-online.sh \\
-  scripts/lib/shard-split.sh packages/daemon/vitest.config.ts \\
+  scripts/lib/shard-split.sh scripts/shard-weights.tsv packages/daemon/vitest.config.ts \\
   packages/daemon/vitest.online.config.ts packages/shared/vitest.config.ts \\
   packages/web/vitest.config.ts; do
   mkdir -p "$FX/$(dirname "$rel")"
