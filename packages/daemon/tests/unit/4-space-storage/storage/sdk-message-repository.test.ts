@@ -1757,6 +1757,30 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('getMessageByStatusAndUuid', () => {
+    it('returns the oldest row when several rows share the uuid', () => {
+      const insert = db.prepare(
+        `INSERT INTO sdk_messages
+         (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+         VALUES (?, 'session-1', 'user', ?, ?, 'enqueued', 'dup-uuid')`
+      );
+      insert.run(
+        'dup-new',
+        JSON.stringify(createUserMessage('Newer', 'dup-uuid')),
+        '2026-01-02T00:00:00.000Z'
+      );
+      insert.run(
+        'dup-old',
+        JSON.stringify(createUserMessage('Older', 'dup-uuid')),
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const message = repository.getMessageByStatusAndUuid('session-1', 'enqueued', 'dup-uuid');
+
+      expect(message?.dbId).toBe('dup-old');
+    });
+  });
+
   describe('getUserMessageIdsByStatus', () => {
     function insertIndexedStatusMessage(
       id: string,
@@ -3090,7 +3114,8 @@ describe('SDKMessageRepository', () => {
     it('getMessageByStatusAndUuid seeks idx_sdk_messages_session_uuid', () => {
       const plan = queryPlan(
         `SELECT id, sdk_message, timestamp FROM sdk_messages
-         WHERE session_id = ? AND send_status = ? AND sdk_uuid = ? LIMIT 1`,
+         WHERE session_id = ? AND send_status = ? AND sdk_uuid = ?
+         ORDER BY timestamp ASC, rowid ASC LIMIT 1`,
         ['s1', 'consumed', 'uuid-5']
       );
       expect(plan).toContain('idx_sdk_messages_session_uuid');

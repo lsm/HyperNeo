@@ -1184,12 +1184,15 @@ export class SDKMessageRepository {
     messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>;
     total: number;
   } {
-    const countRow = this.db
-      .prepare(
-        `SELECT COUNT(*) AS count FROM sdk_messages
-         WHERE session_id = ? AND send_status = ? AND ${USER_STATUS_MESSAGE_SQL}`
-      )
-      .get(sessionId, status) as { count: number };
+    const countRow =
+      limit !== undefined
+        ? (this.db
+            .prepare(
+              `SELECT COUNT(*) AS count FROM sdk_messages
+               WHERE session_id = ? AND send_status = ? AND ${USER_STATUS_MESSAGE_SQL}`
+            )
+            .get(sessionId, status) as { count: number })
+        : null;
     let projectionSql = `SELECT rowid AS row_id FROM sdk_messages
          WHERE session_id = ? AND send_status = ? AND ${USER_STATUS_MESSAGE_SQL}
          ORDER BY timestamp ASC, rowid ASC`;
@@ -1227,13 +1230,11 @@ export class SDKMessageRepository {
       }
     }
 
-    return {
-      messages: projected.flatMap((row) => {
-        const message = messagesByRowId.get(row.row_id);
-        return message ? [message] : [];
-      }),
-      total: countRow.count,
-    };
+    const messages = projected.flatMap((row) => {
+      const message = messagesByRowId.get(row.row_id);
+      return message ? [message] : [];
+    });
+    return { messages, total: countRow ? countRow.count : messages.length };
   }
 
   getMessageByStatusAndUuid(
@@ -1246,6 +1247,7 @@ export class SDKMessageRepository {
 	       WHERE session_id = ?
 	         AND send_status = ?
 	         AND sdk_uuid = ?
+	       ORDER BY timestamp ASC, rowid ASC
 	       LIMIT 1`
     );
     const row = stmt.get(sessionId, status, uuid) as {
