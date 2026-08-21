@@ -459,6 +459,54 @@ WHERE run_id = ?
 ORDER BY created_at ASC, id ASC
 `.trim();
 
+const TASK_SHUTDOWN_BOUNDARY_CTE_SQL = `
+-- Newest settled top-level row per contributing session of the task. A
+-- worker_shutting_down banner stays visible only while nothing newer has
+-- settled in its session+task: a top-level banner while it IS this
+-- boundary, a nested (subagent-origin) banner while it postdates the
+-- boundary — matching the unbounded per-row EXISTS this replaces, minus
+-- its CORRELATED SCALAR SUBQUERY / MULTI-INDEX OR plan shape. Task-scoped
+-- sibling of messages.bySession's latest_shutdown_boundary.
+task_shutdown_boundaries AS MATERIALIZED (
+  SELECT session_id, id, timestamp
+  FROM (
+    SELECT
+      sm.session_id AS session_id,
+      sm.id AS id,
+      sm.timestamp AS timestamp,
+      ROW_NUMBER() OVER (
+        PARTITION BY sm.session_id
+        ORDER BY sm.timestamp DESC, sm.id DESC
+      ) AS rn
+    FROM target_task tt
+    JOIN sdk_messages sm ON sm.task_id = tt.id
+    WHERE sm.parent_tool_use_id IS NULL
+      AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+  )
+  WHERE rn = 1
+)`;
+
+const WORKER_SHUTDOWN_TAIL_FILTER_SQL = `AND (
+      sm.message_type != 'system'
+      OR sm.message_subtype_norm != 'worker_shutting_down'
+      OR (
+        sm.parent_tool_use_id IS NULL
+        AND sm.id IN (SELECT id FROM task_shutdown_boundaries)
+      )
+      OR (
+        sm.parent_tool_use_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM task_shutdown_boundaries boundary
+          WHERE boundary.session_id = sm.session_id
+            AND (
+              boundary.timestamp > sm.timestamp
+              OR (boundary.timestamp = sm.timestamp AND boundary.id > sm.id)
+            )
+        )
+      )
+    )`;
+
 const ACTOR_MESSAGES_BY_TASK_SQL = `
 WITH target_task AS (
   SELECT * FROM space_tasks WHERE id = ?
@@ -539,6 +587,7 @@ sdk_replacement_status AS (
    AND edge.target_uuid = sm.resolved_sdk_uuid
   GROUP BY sm.id
 ),
+${TASK_SHUTDOWN_BOUNDARY_CTE_SQL},
 sdk_rows AS (
   SELECT
     'msg:' || sm.id AS id,
@@ -695,22 +744,7 @@ sdk_rows AS (
         ''
       ) != 'info'
     )
-    AND (
-      sm.message_type != 'system'
-      OR sm.message_subtype_norm != 'worker_shutting_down'
-      OR NOT EXISTS (
-        SELECT 1
-        FROM sdk_messages newer
-        WHERE newer.session_id = sm.session_id
-          AND newer.task_id = sm.task_id
-          AND newer.parent_tool_use_id IS NULL
-          AND (
-            newer.timestamp > sm.timestamp
-            OR (newer.timestamp = sm.timestamp AND newer.id > sm.id)
-          )
-          AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
-      )
-    )
+    ${WORKER_SHUTDOWN_TAIL_FILTER_SQL}
 ),
 pending_rows AS (
   SELECT
@@ -1775,6 +1809,7 @@ session_node_exec AS (
     ON ne.workflow_run_id = tt.workflow_run_id
    AND ne.agent_session_id IS NOT NULL
 ),
+${TASK_SHUTDOWN_BOUNDARY_CTE_SQL},
 sdk_rows_raw AS (
   SELECT
     sm.id AS id,
@@ -1858,22 +1893,7 @@ sdk_rows_raw AS (
         ''
       ) != 'info'
     )
-    AND (
-      sm.message_type != 'system'
-      OR sm.message_subtype_norm != 'worker_shutting_down'
-      OR NOT EXISTS (
-        SELECT 1
-        FROM sdk_messages newer
-        WHERE newer.session_id = sm.session_id
-          AND newer.task_id = sm.task_id
-          AND newer.parent_tool_use_id IS NULL
-          AND (
-            newer.timestamp > sm.timestamp
-            OR (newer.timestamp = sm.timestamp AND newer.id > sm.id)
-          )
-          AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
-      )
-    )
+    ${WORKER_SHUTDOWN_TAIL_FILTER_SQL}
 ),
 sdk_rows_numbered AS (
   SELECT
@@ -2080,6 +2100,7 @@ recent_turns AS (
     LIMIT ${SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS}
   )
 ),
+${TASK_SHUTDOWN_BOUNDARY_CTE_SQL},
 sdk_rows AS (
   SELECT
     sm.id AS id,
@@ -2163,22 +2184,7 @@ sdk_rows AS (
         ''
       ) != 'info'
     )
-    AND (
-      sm.message_type != 'system'
-      OR sm.message_subtype_norm != 'worker_shutting_down'
-      OR NOT EXISTS (
-        SELECT 1
-        FROM sdk_messages newer
-        WHERE newer.session_id = sm.session_id
-          AND newer.task_id = sm.task_id
-          AND newer.parent_tool_use_id IS NULL
-          AND (
-            newer.timestamp > sm.timestamp
-            OR (newer.timestamp = sm.timestamp AND newer.id > sm.id)
-          )
-          AND (newer.message_type != 'user' OR COALESCE(newer.send_status, 'consumed') IN ('consumed', 'failed'))
-      )
-    )
+    ${WORKER_SHUTDOWN_TAIL_FILTER_SQL}
 ),
 joined AS (
   SELECT * FROM github_events
