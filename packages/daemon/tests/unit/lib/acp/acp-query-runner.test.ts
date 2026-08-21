@@ -1350,6 +1350,7 @@ describe('AcpQueryRunner', () => {
     expect(ctx.session.acpSessionId).toBe('acp-session-1');
     expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
       acpSessionId: 'acp-session-1',
+      metadata: expect.objectContaining({ acpSessionCommand: 'mock-acp --stdio' }),
     });
   });
 
@@ -1529,6 +1530,7 @@ describe('AcpQueryRunner', () => {
     expect(ctx.session.acpSessionId).toBe('resumed-acp-session');
     expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
       acpSessionId: 'resumed-acp-session',
+      metadata: expect.objectContaining({ acpSessionCommand: 'mock-acp --stdio' }),
     });
   });
 

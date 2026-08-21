@@ -590,6 +590,7 @@ export class AcpQueryRunner {
           acpCommandIdentity: commandIdentity,
           acpInstructionsSent: undefined,
           acpContextUsageEstimate: undefined,
+          acpSessionCommand: undefined,
         };
         this.ctx.db.updateSession(session.id, {
           acpSessionId: undefined,
@@ -760,12 +761,12 @@ export class AcpQueryRunner {
 
         try {
           const result = await client.loadSession(existingAcpSessionId, cwd, acpMcpServers);
-          this.persistAcpSessionId(result.sessionId);
+          this.persistAcpSessionId(result.sessionId, acpCommand);
           this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
         } catch (loadError) {
           try {
             const result = await client.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
-            this.persistAcpSessionId(result.sessionId);
+            this.persistAcpSessionId(result.sessionId, acpCommand);
             this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
           } catch (resumeError) {
             const loadMessage = loadError instanceof Error ? loadError.message : String(loadError);
@@ -781,7 +782,7 @@ export class AcpQueryRunner {
         }
       } else {
         const result = await client.createSession(cwd, acpMcpServers);
-        this.persistAcpSessionId(result.sessionId);
+        this.persistAcpSessionId(result.sessionId, acpCommand);
         this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
         createdAcpSessionDuringRun = true;
       }
@@ -1263,11 +1264,15 @@ export class AcpQueryRunner {
     }
   }
 
-  private persistAcpSessionId(acpSessionId: string | undefined): void {
+  private persistAcpSessionId(acpSessionId: string, acpCommand: string): void {
     const { session, db } = this.ctx;
     if (session.acpSessionId === acpSessionId) return;
     session.acpSessionId = acpSessionId;
-    db.updateSession(session.id, { acpSessionId });
+    session.metadata = {
+      ...session.metadata,
+      acpSessionCommand: acpCommand,
+    };
+    db.updateSession(session.id, { acpSessionId, metadata: session.metadata });
   }
 
   private clearAcpSessionState(): void {
@@ -1276,6 +1281,7 @@ export class AcpQueryRunner {
     session.metadata = {
       ...session.metadata,
       acpContextUsageEstimate: undefined,
+      acpSessionCommand: undefined,
     };
     db.updateSession(session.id, {
       acpSessionId: undefined,
