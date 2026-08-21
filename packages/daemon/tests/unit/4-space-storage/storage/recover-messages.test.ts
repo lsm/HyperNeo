@@ -100,9 +100,7 @@ describe('recover-messages script — interrupted-rerun recompute', () => {
   afterEach(() => {
     try {
       rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('rerun recomputes a session a prior interrupted run left stale (no new inserts)', () => {

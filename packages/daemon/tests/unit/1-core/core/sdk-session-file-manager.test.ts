@@ -46,9 +46,7 @@ describe('SDK Session File Manager', () => {
     if (process.env.TEST_SDK_SESSION_DIR && existsSync(process.env.TEST_SDK_SESSION_DIR)) {
       try {
         rmSync(process.env.TEST_SDK_SESSION_DIR, { recursive: true, force: true });
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
 
     if (originalTestSdkSessionDir !== undefined) {
@@ -724,9 +722,7 @@ describe('SDK Session File Manager', () => {
       if (existsSync(archiveDir)) {
         try {
           rmSync(archiveDir, { recursive: true, force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
+        } catch {}
       }
     });
 
@@ -1221,9 +1217,7 @@ describe('SDK Session File Manager', () => {
       if (existsSync(testTruncateSessionDir)) {
         try {
           rmSync(testTruncateSessionDir, { recursive: true, force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
+        } catch {}
       }
     });
 
@@ -1492,9 +1486,7 @@ describe('SDK Session File Manager', () => {
         try {
           const fs = require('node:fs');
           fs.chmodSync(testTruncateSessionFile, 0o644);
-        } catch {
-          // Ignore cleanup errors
-        }
+        } catch {}
       }
     });
   });

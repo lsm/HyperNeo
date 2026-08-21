@@ -177,9 +177,7 @@ export class ExternalEventExtensionManager {
     if (inFlightStart) {
       try {
         await inFlightStart;
-      } catch {
-        // Best-effort stop should not fail just because an overlapping start failed.
-      }
+      } catch {}
     }
 
     const extension = this.extensions.get(sourceId);

@@ -47,9 +47,7 @@ export class DeliveryTurnStallWatchdog {
     this.timer = null;
     try {
       await this.onFire?.();
-    } catch {
-      // best-effort — resolve either way so the bridge proceeds
-    }
+    } catch {}
     const resolve = this.resolveFire;
     this.resolveFire = null;
     resolve?.();

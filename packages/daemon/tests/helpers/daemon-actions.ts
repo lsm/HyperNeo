@@ -36,9 +36,7 @@ export async function sendMessage(
           break;
         }
       }
-    } catch {
-      // Ignore transient RPC failures while query bootstraps
-    }
+    } catch {}
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
@@ -100,17 +98,13 @@ async function waitForProcessingState(
           cleanup();
           resolve();
         }
-      } catch {
-        // Ignore polling errors
-      }
+      } catch {}
     }, 50);
 
     (async () => {
       try {
         await daemon.messageHub.joinChannel('session:' + sessionId);
-      } catch {
-        // Join failed, polling fallback will still work
-      }
+      } catch {}
       if (!resolved) {
         try {
           const state = await getProcessingState(daemon, sessionId);
@@ -118,9 +112,7 @@ async function waitForProcessingState(
             cleanup();
             resolve();
           }
-        } catch {
-          // Ignore errors, polling will retry
-        }
+        } catch {}
       }
     })();
   });

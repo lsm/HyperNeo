@@ -176,7 +176,6 @@ export function TaskAuxiliaryPanel({
       setSavingWorkflow(true);
       await spaceStore.updateTask(task.id, { preferredWorkflowId: nextWorkflowId });
     } catch {
-      // best-effort
     } finally {
       setSavingWorkflow(false);
     }

@@ -96,16 +96,12 @@ describe('ReactiveDatabase — scope extraction', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // already closed
-    }
+    } catch {}
     try {
       rmSync(dbPath, { force: true });
       rmSync(dbPath + '-wal', { force: true });
       rmSync(dbPath + '-shm', { force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('saveSDKMessage emits change event with sessionId scope', () => {

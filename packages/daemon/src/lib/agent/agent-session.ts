@@ -790,9 +790,7 @@ export class AgentSession
       if (this.queryPromise) {
         try {
           await this.queryPromise;
-        } catch {
-          // The failed query already rejected; its finally has still run.
-        }
+        } catch {}
       }
 
       if (this.rateLimitWatchdog.isSuperseded(episodeGeneration)) {
@@ -1180,8 +1178,11 @@ export class AgentSession
     return this.slashCommandManager.getSlashCommands();
   }
 
-  async handleQueryTrigger(): Promise<{ success: boolean; messageCount: number; error?: string }> {
-    return this.queryModeHandler.handleQueryTrigger();
+  async handleQueryTrigger(options?: {
+    deliverIndividually?: boolean;
+    excludeMessageUuid?: string;
+  }): Promise<{ success: boolean; messageCount: number; error?: string }> {
+    return this.queryModeHandler.handleQueryTrigger(options);
   }
 
   async restartQuery(): Promise<void> {
@@ -1645,9 +1646,7 @@ export class AgentSession
         this.deliveryTurnStalled = true;
         try {
           await this.resetQuery({ restartQuery: false });
-        } catch {
-          // best-effort — the flag is set; the bridge will throw + retry
-        }
+        } catch {}
       },
       () => this.stateManager.getState().status === 'rate_limit_cooldown'
     );
@@ -2103,9 +2102,7 @@ export class AgentSession
     }
     try {
       entry.proc.kill?.(signal);
-    } catch {
-      // Handle may have already exited.
-    }
+    } catch {}
   }
 
   private scheduleForceKill(pid: number, proc: TrackedAgentProcess, forceDelayMs: number): void {
@@ -2134,9 +2131,7 @@ export class AgentSession
       if (process.platform !== 'win32' && pid > 0) {
         try {
           process.kill(-pid, signal);
-        } catch {
-          // Process group may have already exited.
-        }
+        } catch {}
       }
 
       const signaled = this.signalTrackedAgentProcess(pid, proc, signal);
@@ -2208,9 +2203,7 @@ export class AgentSession
     for (const unsub of this.deliveryErrorSubs) {
       try {
         unsub();
-      } catch {
-        // best-effort — cleanup must not throw
-      }
+      } catch {}
     }
     this.deliveryErrorSubs.length = 0;
     this.rateLimitWatchdog.destroy();

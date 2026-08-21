@@ -605,9 +605,7 @@ export class SpaceGoalService {
         taskId: task.id,
         task,
       })
-      .catch(() => {
-        // Best-effort event; goal task creation must not fail because listeners fail.
-      });
+      .catch(() => {});
   }
 
   private validateCreate(params: CreateSpaceGoalParams): void {

@@ -192,9 +192,7 @@ describe('SpaceRuntime — in-flight execution parking', () => {
     busUnsubs = [];
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   describe('parkInFlightExecutionsForSpace()', () => {

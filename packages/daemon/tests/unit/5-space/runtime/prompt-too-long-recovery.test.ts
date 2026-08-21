@@ -412,9 +412,7 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   function buildConfig(tam: unknown): SpaceRuntimeConfig {

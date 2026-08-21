@@ -194,9 +194,7 @@ export default function SessionStatusBar({
         }
         setProviderAuthStatuses(statusMap);
       })
-      .catch(() => {
-        // Silently ignore — dots just stay gray
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };

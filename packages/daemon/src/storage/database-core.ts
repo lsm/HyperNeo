@@ -90,9 +90,7 @@ export class DatabaseCore {
     } catch {}
     try {
       this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      // Ignore checkpoint errors — the DB may already be closed or in an error state
-    }
+    } catch {}
     this.db.close();
     this.lock.release();
   }

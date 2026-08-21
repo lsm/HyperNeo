@@ -391,6 +391,67 @@ describe('NodeExecutionRepository', () => {
     });
   });
 
+  describe('casExecutionStatus', () => {
+    it("returns 'won' and flips the status on an exact match", () => {
+      const exec = createExecution();
+      expect(repo.casExecutionStatus(exec.id, 'pending', 'blocked')).toBe('won');
+      expect(repo.getById(exec.id)!.status).toBe('blocked');
+    });
+
+    it("returns 'won' when the current status is in the expected set", () => {
+      const exec = createExecution();
+      repo.updateStatus(exec.id, 'waiting_rebind');
+      expect(repo.casExecutionStatus(exec.id, ['pending', 'waiting_rebind'], 'blocked')).toBe(
+        'won'
+      );
+      expect(repo.getById(exec.id)!.status).toBe('blocked');
+    });
+
+    it("returns 'superseded' and leaves the row unchanged when the status moved first", () => {
+      const exec = createExecution();
+      repo.updateStatus(exec.id, 'in_progress');
+      expect(repo.casExecutionStatus(exec.id, 'pending', 'blocked')).toBe('superseded');
+      expect(repo.getById(exec.id)!.status).toBe('in_progress');
+    });
+
+    it("returns 'superseded' for an unknown execution id", () => {
+      expect(repo.casExecutionStatus('nonexistent', 'pending', 'blocked')).toBe('superseded');
+    });
+
+    it("returns 'superseded' for an empty expected set without writing", () => {
+      const exec = createExecution();
+      expect(repo.casExecutionStatus(exec.id, [], 'blocked')).toBe('superseded');
+      expect(repo.getById(exec.id)!.status).toBe('pending');
+    });
+
+    it('touches no other rows', () => {
+      const target = createExecution({ agentName: 'target' });
+      const other = createExecution({ agentName: 'other' });
+      const otherBefore = repo.getById(other.id);
+      expect(repo.casExecutionStatus(target.id, 'pending', 'blocked')).toBe('won');
+      expect(repo.getById(other.id)).toEqual(otherBefore);
+    });
+
+    it('stamps no timestamps and emits no reactive notification', () => {
+      const calls: Array<{ table: string; scope?: unknown }> = [];
+      const reactiveDb = {
+        notifyChange: (table: string, scope?: unknown) => calls.push({ table, scope }),
+      };
+      const reactiveRepo = new NodeExecutionRepository(
+        db as unknown as Parameters<typeof NodeExecutionRepository.prototype.constructor>[0],
+        reactiveDb as unknown as Parameters<typeof NodeExecutionRepository.prototype.constructor>[1]
+      );
+      const exec = createExecution();
+
+      expect(reactiveRepo.casExecutionStatus(exec.id, 'pending', 'blocked')).toBe('won');
+
+      const after = repo.getById(exec.id)!;
+      expect(after.startedAt).toBeNull();
+      expect(after.completedAt).toBeNull();
+      expect(calls).toEqual([]);
+    });
+  });
+
   describe('updateSessionId', () => {
     it('sets the session ID', () => {
       const exec = createExecution();

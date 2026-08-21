@@ -221,9 +221,7 @@ export function useTargetSessionContext({
         if (!cancelled && !liveContextReceived) {
           applySessionState(state);
         }
-      } catch {
-        // Ignore errors — keep the existing snapshot until the next successful state/event update.
-      }
+      } catch {}
     };
     void setupContextSubscriptions();
 
@@ -250,9 +248,7 @@ export function useTargetSessionContext({
         if (!cancelled) {
           setLocalThinkingLevel(result.thinkingLevel);
         }
-      } catch {
-        // Ignore errors — keep current thinking level
-      }
+      } catch {}
     };
     loadThinkingLevel();
     return () => {

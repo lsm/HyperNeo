@@ -86,9 +86,7 @@ export function App() {
             currentSessionIdSignal.value = initialSessionId;
           });
         }
-      } catch {
-        // State initialization failed - app will use default state
-      }
+      } catch {}
     };
 
     init();

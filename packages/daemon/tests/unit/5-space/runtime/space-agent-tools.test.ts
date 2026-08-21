@@ -64,7 +64,10 @@ function makeDb(): BunDatabase {
     archived_at TEXT,
     parent_id TEXT,
     type TEXT DEFAULT 'worker',
-    session_context TEXT
+    session_context TEXT,
+    room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+    space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+    task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL
   )`);
 
   db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
@@ -6498,10 +6501,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 
     const tam = makeFakeTaskAgentManager(ctx);
     const handlers = makeHandlersWith(tam, {
-      activateNode: async () => {
-        // Activation succeeded but did not attach a live session id — the tick
-        // loop will spawn one later. The handler surfaces `delivered: false`.
-      },
+      activateNode: async () => {},
     });
 
     const result = await handlers.send_message_to_task({
@@ -6537,9 +6537,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     const tam = makeFakeTaskAgentManager(ctx);
     const fakeQueue = makeFakePendingMessageQueue();
     const handlers = makeHandlersWith(tam, {
-      activateNode: async () => {
-        // Activation succeeded but the tick loop has not spawned the session yet.
-      },
+      activateNode: async () => {},
       pendingMessageQueue: fakeQueue,
     });
 
@@ -7922,9 +7920,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const tam = makeFakeTaskAgentManager(ctx);
       const handlers = makeHandlersWith(tam, {
         auditLogRepo,
-        activateNode: async () => {
-          // Activation accepted but no live session yet — message is queued.
-        },
+        activateNode: async () => {},
         pendingMessageQueue: makeFakePendingMessageQueue(),
       });
 
@@ -8522,6 +8518,22 @@ describe('createSpaceAgentToolHandlers — update_task status parameter (task #1
     expect(result.success).toBe(false);
     expect(result.error).toContain("cannot transition a task from 'review' to 'done' directly");
     expect(result.error).toContain('approve_task');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
+  });
+
+  test('a status flip during the autonomy await cannot bypass the review → done guard', async () => {
+    const task = createTaskWithStatus('open');
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => {
+        ctx.taskRepo.updateTask(task.id, { status: 'review' });
+        return 4;
+      },
+    });
+
+    const result = parseResult(await handlers.update_task({ task_id: task.id, status: 'done' }));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("cannot transition a task from 'review' to 'done' directly");
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
   });
 

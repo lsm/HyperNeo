@@ -27,14 +27,10 @@ describe('Migration 44: rename sdk_messages send_status values', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('fresh DB uses deferred/enqueued/consumed constraint', () => {

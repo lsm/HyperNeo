@@ -225,9 +225,7 @@ describe('QueryLifecycleManager', () => {
     });
 
     test('times out waiting for query promise', async () => {
-      mockContext.queryPromise = new Promise(() => {
-        // Never resolves
-      });
+      mockContext.queryPromise = new Promise(() => {});
       manager = new QueryLifecycleManager(mockContext);
 
       const start = Date.now();
@@ -998,9 +996,7 @@ describe('QueryLifecycleManager', () => {
     test(
       'handles interrupt wait timeout',
       async () => {
-        const neverResolves = new Promise<void>(() => {
-          // Never resolves - tests the 5s timeout
-        });
+        const neverResolves = new Promise<void>(() => {});
         mockContext = createMockContext({
           interruptHandler: {
             getInterruptPromise: mock(() => neverResolves),

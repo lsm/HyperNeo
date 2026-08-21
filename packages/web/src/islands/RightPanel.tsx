@@ -47,9 +47,7 @@ function readStoredPanelWidth(): number {
 function storePanelWidth(width: number) {
   try {
     window.localStorage.setItem(PANEL_WIDTH_STORAGE_KEY, String(clampPanelWidth(width)));
-  } catch {
-    // Ignore storage failures; resizing should still work for this session.
-  }
+  } catch {}
 }
 
 function useIsDesktopPanel(): boolean {

@@ -97,11 +97,6 @@ const config: KnipConfig = {
   },
 
   includeEntryExports: true,
-
-  /**
-   * Exports marked with @public JSDoc tag won't be reported as unused.
-   * This is used for Preact signals accessed via .value in JSX.
-   */
 };
 
 export default config;

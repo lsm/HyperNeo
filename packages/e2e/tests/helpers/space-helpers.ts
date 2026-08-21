@@ -30,9 +30,7 @@ export async function deleteSpaceViaRpc(page: Page, spaceId: string): Promise<vo
       if (!hub?.request) return;
       await hub.request('space.delete', { id });
     }, spaceId);
-  } catch {
-    // Best-effort cleanup
-  }
+  } catch {}
 }
 
 export async function createSpaceTaskViaRpc(
@@ -87,9 +85,7 @@ export async function deleteSpaceWorkflowsViaRpc(page: Page, spaceId: string): P
         await hub.request('spaceWorkflow.delete', { id: wf.id, spaceId: sid });
       }
     }, spaceId);
-  } catch {
-    // Best-effort cleanup
-  }
+  } catch {}
 }
 
 export function createUniqueSpaceDir(workspaceRoot: string, prefix = 'space'): string {

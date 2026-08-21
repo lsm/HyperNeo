@@ -2035,7 +2035,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       expect(snapshot.polling.lastPollAt).not.toBeNull();
       await extension2.stop();
     } finally {
-      // Best-effort cleanup.
     }
   });
 

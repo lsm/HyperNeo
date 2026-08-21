@@ -112,9 +112,7 @@ export async function cleanupSuspiciousProcesses(options?: {
       : (pgid, signal) => {
           try {
             process.kill(-pgid, signal);
-          } catch {
-            // Process group may have already exited.
-          }
+          } catch {}
         });
   const quickResult = options?.getRootPids
     ? options.getRootPids()
@@ -155,9 +153,7 @@ export async function cleanupSuspiciousProcesses(options?: {
       ) {
         try {
           groupKiller(snapshot.pgid, 'SIGTERM');
-        } catch {
-          // Group kill failed; fall through to direct PID signal.
-        }
+        } catch {}
       }
       try {
         killer(snapshot.pid, 'SIGTERM');

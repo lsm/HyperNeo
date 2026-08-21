@@ -18,9 +18,7 @@ export function useSkills(): UseSkillsResult {
     const unsubLoading = skillsStore.isLoading.subscribe(setIsLoading);
     const unsubError = skillsStore.error.subscribe(setError);
 
-    skillsStore.subscribe().catch(() => {
-      // Error is surfaced via skillsStore.error signal → setError callback above
-    });
+    skillsStore.subscribe().catch(() => {});
 
     return () => {
       unsubSkills();

@@ -27,9 +27,7 @@ async function waitForHttp(url: string, timeout: number): Promise<string> {
       if (res.ok) {
         return await res.text();
       }
-    } catch {
-      // Server not ready yet
-    }
+    } catch {}
     await new Promise((r) => setTimeout(r, STARTUP_POLL_INTERVAL));
   }
   throw new SmokeTestError(`Server did not become ready within ${timeout}ms`);

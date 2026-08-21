@@ -36,9 +36,7 @@ function buildSlotToNodeName(
     try {
       const config = row.config ? (JSON.parse(row.config) as { agents?: unknown }) : {};
       agents = Array.isArray(config.agents) ? config.agents : [];
-    } catch {
-      /* ignore — unparseable config, skip this node */
-    }
+    } catch {}
     for (const agent of agents) {
       if (agent && typeof agent.name === 'string') map.set(agent.name, nodeName);
     }

@@ -59,9 +59,7 @@ function dumpThinkingBlocks(workspacePath: string, sdkSessionId: string, label: 
           );
         }
       }
-    } catch {
-      // skip unparseable lines
-    }
+    } catch {}
   }
   if (found === 0) {
     // biome-ignore lint/suspicious/noConsole: test diagnostic

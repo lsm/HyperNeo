@@ -659,7 +659,6 @@ export function setupSpaceExportImportHandlers(
           let replacedOldId: string | undefined;
 
           if (!existing) {
-            // No conflict — create as-is
           } else {
             const strategy: ConflictResolutionStrategy =
               res.workflows?.[exportedWorkflow.name] ?? 'skip';

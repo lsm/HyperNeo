@@ -84,16 +84,12 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     engine.dispose();
     try {
       db.close();
-    } catch {
-      // already closed
-    }
+    } catch {}
     try {
       rmSync(dbPath, { force: true });
       rmSync(dbPath + '-wal', { force: true });
       rmSync(dbPath + '-shm', { force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   describe('initial snapshot', () => {

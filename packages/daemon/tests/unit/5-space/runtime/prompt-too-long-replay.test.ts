@@ -320,9 +320,7 @@ describe('prompt-too-long replay — recovery escalation: reason & final visible
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   function buildConfig(tam: unknown): SpaceRuntimeConfig {
@@ -548,9 +546,7 @@ describe('prompt-too-long replay — terminal-error row deferral', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   function buildConfig(tam: unknown): SpaceRuntimeConfig {

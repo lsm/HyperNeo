@@ -36,18 +36,12 @@ function isMusl(): boolean {
     try {
       const files = readdirSync(libDir);
       if (files.some((f) => f.startsWith('ld-musl'))) return true;
-    } catch {
-      // Directory doesn't exist or isn't readable
-    }
+    } catch {}
   }
   return false;
 }
 
-/**
- * Platform suffix for the SDK's native CLI binary package.
- * Follows the naming convention: `@anthropic-ai/claude-agent-sdk-{os}-{arch}[-musl]`
- * @public Exported for use by build scripts.
- */
+/** @public */
 export function getPlatformPackageName(): string | undefined {
   const { platform, arch } = process;
   if (platform === 'win32' && arch === 'x64') return `${SDK_PACKAGE}-win32-x64`;
@@ -61,10 +55,7 @@ export function getPlatformPackageName(): string | undefined {
   return undefined;
 }
 
-/**
- * Native CLI binary name (platform-dependent).
- * @public Exported for use by build scripts.
- */
+/** @public */
 export function getCliBinaryName(): string {
   return process.platform === 'win32' ? 'claude.exe' : 'claude';
 }
@@ -91,9 +82,7 @@ function getSdkVersion(): string {
     const pkg = JSON.parse(readFileSync(daemonPkgPath, 'utf-8'));
     const dep = pkg.dependencies?.[SDK_PACKAGE];
     if (dep) return dep.replace(/^(workspace:|npm:|\^|~)/, '');
-  } catch {
-    // Fallback for compiled binary where relative paths differ
-  }
+  } catch {}
 
   try {
     const resolved = import.meta.resolve?.(SDK_PACKAGE);
@@ -103,9 +92,7 @@ function getSdkVersion(): string {
       const sdkPkg = JSON.parse(readFileSync(sdkPkgPath, 'utf-8'));
       if (sdkPkg.version) return sdkPkg.version;
     }
-  } catch {
-    // SDK package.json not accessible
-  }
+  } catch {}
 
   return '0.3.233';
 }
@@ -131,9 +118,7 @@ function resolveFromNodeModules(): string | undefined {
         const binPath = join(dirname(pkgPath), binaryName);
         if (existsSync(binPath)) return binPath;
       }
-    } catch {
-      // import.meta.resolve might not be available or package not installed
-    }
+    } catch {}
   }
 
   if (platformPkg) {
@@ -147,9 +132,7 @@ function resolveFromNodeModules(): string | undefined {
         const hoistedPath = join(bunDir, 'node_modules', platformPkg, binaryName);
         if (existsSync(hoistedPath)) return hoistedPath;
       }
-    } catch {
-      // import.meta.resolve might not be available
-    }
+    } catch {}
   }
 
   if (platformPkg) {
@@ -162,9 +145,7 @@ function resolveFromNodeModules(): string | undefined {
         if (parentDir === currentDir) break;
         currentDir = parentDir;
       }
-    } catch {
-      // fileURLToPath might fail for virtual paths
-    }
+    } catch {}
   }
 
   try {
@@ -176,9 +157,7 @@ function resolveFromNodeModules(): string | undefined {
       const cliPath = join(dirname(sdkPath), 'cli.js');
       if (existsSync(cliPath)) return cliPath;
     }
-  } catch {
-    // import.meta.resolve might not be available
-  }
+  } catch {}
 
   try {
     let currentDir = dirname(fileURLToPath(import.meta.url));
@@ -189,9 +168,7 @@ function resolveFromNodeModules(): string | undefined {
       if (parentDir === currentDir) break;
       currentDir = parentDir;
     }
-  } catch {
-    // fileURLToPath might fail for virtual paths
-  }
+  } catch {}
 
   return undefined;
 }
@@ -321,9 +298,7 @@ function safeMoveFile(src: string, dest: string): void {
       copyFileSync(src, dest);
       try {
         unlinkSync(src);
-      } catch {
-        // Non-critical — source in tmpdir will be cleaned up
-      }
+      } catch {}
     } else {
       throw err;
     }
@@ -379,9 +354,7 @@ function downloadSdkBinary(): string | undefined {
     if (tmpDir) {
       try {
         rmSync(tmpDir, { recursive: true });
-      } catch {
-        // Non-critical — temp dir will be cleaned by OS
-      }
+      } catch {}
     }
   }
 }
@@ -557,10 +530,7 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
-/**
- * Reset module state for testing.
- * @public Exported for unit tests.
- */
+/** @public */
 export function _resetForTesting(): void {
   cachedCliPath = undefined;
   warmupInProgress = false;

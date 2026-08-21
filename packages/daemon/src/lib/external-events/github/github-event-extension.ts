@@ -2407,14 +2407,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             return updatedAt > 0 && updatedAt <= endpointWatermark;
           })
         ) {
-          // All rows on this partial page are at or before the watermark —
-          // GitHub's second-precision timestamps can produce pages of tied rows
-          // that never satisfy the strict < cutoff. Clear the backlog so
-          // processedPages resets to 1 without dropping the rows (they are
-          // re-processed but store-level dedupe suppresses duplicate events).
-          // Only fire on partial pages (< 100 rows): a full page may be
-          // followed by another tied page whose rows still need fetching for
-          // head/open-state refresh.
         }
       }
       if (endpoint.key === 'pulls') {
@@ -2751,8 +2743,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         if (checkRunRateLimited || checkRunPermissionDenied) break;
       }
       if (checkRunRateLimited || checkRunPermissionDenied || hasBacklog) {
-        // Rate-limit or repo-wide denial: leave all per-head watermarks pending
-        // so every head resumes from its last committed cursor on the next poll.
       } else {
         for (const [headRef, headPending] of Object.entries(checkRunHeadPendingLastSeenAt)) {
           checkRunHeadLastSeenAt[headRef] = headPending;
@@ -3125,9 +3115,7 @@ async function formatGitHubApiError(response: Response): Promise<string> {
   try {
     const body = (await response.json()) as { message?: string; documentation_url?: string };
     if (body.message) message = body.message;
-  } catch {
-    // Ignore non-JSON error bodies.
-  }
+  } catch {}
   if (response.status === 401) {
     return `GitHub token is invalid or expired: ${message}`;
   }

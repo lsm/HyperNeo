@@ -83,9 +83,7 @@ function decodeToolResultPayload(result: ToolResult): Record<string, unknown> | 
     if (typeof text === 'string') {
       return JSON.parse(text) as Record<string, unknown>;
     }
-  } catch {
-    // Ignore parse errors — caller falls back to no-audit.
-  }
+  } catch {}
   return null;
 }
 
@@ -154,9 +152,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           taskId: taskId ?? config.taskId,
           workflowRunId,
         });
-      } catch {
-        // Audit logging is best-effort; never block the tool operation.
-      }
+      } catch {}
     }
   }
 

@@ -97,7 +97,6 @@ describe('InterruptHandler', () => {
     mockDb = {
       getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
       getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
-      getMessagesByStatus: mock(() => []),
       getUserMessageIdsByStatus: mock(() => []),
       notifyChange: mock(() => {}),
     } as unknown as InterruptHandlerContext['db'];

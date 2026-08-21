@@ -115,7 +115,6 @@ function AvatarGroupFn({ max, size = 'md', as: Tag = 'div', children, ...rest }:
         vnode.type === AvatarGroupOverflow ||
         (typeof vnode.type === 'function' && vnode.type.displayName === 'AvatarGroupOverflow')
       ) {
-        // Don't count overflow
       } else if (vnode.props?.children) {
         traverse(vnode.props.children);
       }

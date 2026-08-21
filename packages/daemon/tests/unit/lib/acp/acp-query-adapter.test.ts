@@ -106,7 +106,6 @@ describe('AcpQueryAdapter', () => {
     );
 
     for await (const _message of adapter) {
-      // Drain the adapter so its lazy ACP prompt request executes.
     }
 
     expect(onSubmitted).toHaveBeenCalledTimes(1);

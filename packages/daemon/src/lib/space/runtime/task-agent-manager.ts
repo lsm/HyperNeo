@@ -1586,7 +1586,7 @@ export class TaskAgentManager {
              FROM sessions s
             WHERE s.id = ?
               AND s.type = 'worker'
-              AND json_extract(s.session_context, '$.taskId') = ?
+              AND s.task_id = ?
               AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)`
         )
         .get(sessionId, taskId) as { ok?: number } | undefined;
@@ -1667,7 +1667,7 @@ export class TaskAgentManager {
           `SELECT s.id AS id
              FROM sessions s
             WHERE s.type = 'worker'
-              AND json_extract(s.session_context, '$.taskId') = ?
+              AND s.task_id = ?
               AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)
             ORDER BY s.last_active_at DESC
             LIMIT 1`
@@ -3263,6 +3263,19 @@ export class TaskAgentManager {
         log.warn(
           `TaskAgentManager: resetContextPerTurn clear failed for session ${sessionId}: ` +
             `${err instanceof Error ? err.message : String(err)} — delivering without clear`
+        );
+      }
+    }
+
+    if (!isBusy) {
+      const replay = await session.handleQueryTrigger({
+        deliverIndividually: true,
+        excludeMessageUuid: messageId,
+      });
+      if (!replay.success) {
+        log.warn(
+          `TaskAgentManager: deferred backlog replay for session ${sessionId} failed: ` +
+            `${replay.error ?? 'unknown error'} — delivering current message only`
         );
       }
     }

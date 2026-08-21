@@ -1738,9 +1738,7 @@ export class SpaceRuntimeService {
     await session.updateConfig({ provider: undefined });
   }
 
-  stopRuntime(_spaceId: string): void {
-    // No-op: shared runtime handles all spaces; use stop() to stop entirely.
-  }
+  stopRuntime(_spaceId: string): void {}
 
   notifyRunResumed(runId: string): void {
     try {

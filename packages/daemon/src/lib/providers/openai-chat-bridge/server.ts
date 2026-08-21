@@ -531,9 +531,7 @@ async function streamChatToAnthropic(params: {
         try {
           const err = (JSON.parse(errorBody).error ?? {}) as { message?: string };
           if (typeof err.message === 'string' && err.message) errorMessage = err.message;
-        } catch {
-          // keep default
-        }
+        } catch {}
         const streamErr = new Error(errorMessage);
         (streamErr as { upstreamErrorBody?: string }).upstreamErrorBody = errorBody;
         throw streamErr;
@@ -640,25 +638,17 @@ async function streamChatToAnthropic(params: {
       ensureStarted();
       closeThinkingBlock();
       closeTextBlock();
-    } catch {
-      // Controller already closed (client disconnect or upstream tear-down).
-    }
+    } catch {}
     try {
       send(errorSSE(errorType, error instanceof Error ? error.message : 'OpenAI stream failed'));
-    } catch {
-      // Controller already closed (client disconnect or upstream tear-down).
-    }
+    } catch {}
     try {
       send(messageStopSSE());
-    } catch {
-      // Controller already closed.
-    }
+    } catch {}
   } finally {
     try {
       controller.close();
-    } catch {
-      // Already closed.
-    }
+    } catch {}
   }
 }
 

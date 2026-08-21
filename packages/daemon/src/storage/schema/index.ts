@@ -154,6 +154,14 @@ export function createTables(db: BunDatabase): void {
         parent_id TEXT,
         type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat')),
         session_context TEXT,
+        -- VIRTUAL generated columns exposing the frequently-filtered
+        -- session_context keys as plain columns so room/space/task predicates
+        -- avoid per-row json_extract and can use plain indexes. Guarded by
+        -- json_valid so malformed contexts read as NULL. Migration 200 adds
+        -- them to pre-existing databases.
+        room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+        space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+        task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL,
         -- Maintained counter of visible top-level SDK messages (the badge
         -- predicate: non-subagent, non-deferred user, non-hidden subtype). Read
         -- directly by spaceSessions.bySpace instead of a correlated COUNT(*)
@@ -817,7 +825,11 @@ function createSpaceAgentInboxTables(db: BunDatabase): void {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_sessions_space_agent_provenance ` +
-      `ON sessions(json_extract(session_context, '$.spaceId'), json_extract(metadata, '$.promptProvenance.agentId'))`
+      `ON sessions(space_id, json_extract(metadata, '$.promptProvenance.agentId'))`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_sessions_room_id ` +
+      `ON sessions(room_id) WHERE room_id IS NOT NULL`
   );
 }
 

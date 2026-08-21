@@ -65,7 +65,6 @@ describe('Session RPC Handlers — session.messages.byStatus', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let eventBus: ReturnType<typeof createMockInternalEventBus>;
   let getUserMessagesByStatus: ReturnType<typeof mock>;
-  let getMessagesByStatus: ReturnType<typeof mock>;
   let getSessionAsync: ReturnType<typeof mock>;
 
   beforeEach(async () => {
@@ -90,15 +89,12 @@ describe('Session RPC Handlers — session.messages.byStatus', () => {
       ],
       total: 42,
     }));
-    getMessagesByStatus = mock(() => {
-      throw new Error('unbounded path called');
-    });
     getSessionAsync = mock(async () => ({
       getSessionData: () => ({ id: 'session-1' }),
     }));
     const sessionManager = {
       getSessionAsync,
-      getDatabase: () => ({ getUserMessagesByStatus, getMessagesByStatus }),
+      getDatabase: () => ({ getUserMessagesByStatus }),
     } as unknown as SessionManager;
     const { setupSessionHandlers } = await import(
       '../../../../src/lib/rpc-handlers/session-handlers'
@@ -124,7 +120,6 @@ describe('Session RPC Handlers — session.messages.byStatus', () => {
     };
 
     expect(getUserMessagesByStatus).toHaveBeenCalledWith('session-1', 'consumed', 2);
-    expect(getMessagesByStatus).not.toHaveBeenCalled();
     expect(result).toEqual({
       messages: [
         {

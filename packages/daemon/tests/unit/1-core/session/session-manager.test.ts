@@ -45,7 +45,6 @@ describe('SessionManager', () => {
         mcpServers: {},
       })),
       saveGlobalToolsConfig: mock(() => {}),
-      getMessagesByStatus: mock(() => []),
       saveSDKMessage: mock(() => {}),
       getUserMessages: mock(() => []),
       getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
@@ -136,9 +135,7 @@ describe('SessionManager', () => {
     listProcessesSpy?.mockRestore();
     try {
       await sessionManager.cleanup();
-    } catch {
-      // Ignore cleanup errors in afterEach
-    }
+    } catch {}
   });
 
   describe('constructor', () => {

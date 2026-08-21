@@ -41,14 +41,10 @@ describe('Migration 45: rename step to node in workflow tables', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('fresh DB has node column names (not step)', () => {

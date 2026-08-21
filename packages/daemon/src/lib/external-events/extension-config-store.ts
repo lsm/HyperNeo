@@ -176,10 +176,7 @@ function parseJsonRecord(value: string): Record<string, unknown> {
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>;
     }
-  } catch {
-    // Treat corrupted JSON as empty configuration so callers can still recover
-    // by writing a valid replacement config.
-  }
+  } catch {}
   return {};
 }
 

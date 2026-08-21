@@ -218,9 +218,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
       const hub = await connectionManager.getHub();
       const response = await hub.request<{ config: GlobalToolsConfig }>('globalTools.getConfig');
       globalConfig.value = response.config;
-    } catch {
-      // Error loading global config
-    }
+    } catch {}
   };
 
   const loadRuntimeMcpServers = async () => {

@@ -80,9 +80,7 @@ function loadNewChatSelection(): NewChatSelection {
 function saveNewChatSelection(selection: NewChatSelection): void {
   try {
     localStorage.setItem(NEW_CHAT_SELECTION_KEY, JSON.stringify(selection));
-  } catch {
-    // Ignore storage failures; the composer still works without persistence.
-  }
+  } catch {}
 }
 
 function getKnownBranches(info: GitBranchesResponse): Set<string> {
@@ -174,9 +172,7 @@ export function SessionsPage() {
   useEffect(() => {
     getWorkspaceHistory()
       .then(setHistory)
-      .catch(() => {
-        // Non-critical — the picker still offers "No folder" and "Browse…".
-      });
+      .catch(() => {});
   }, []);
 
   useEffect(() => {

@@ -94,9 +94,7 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
   afterEach(() => {
     try {
       ctx.db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   test('forwards approvalReason from contextExtras to setTaskStatus (review → approved)', async () => {

@@ -123,7 +123,10 @@ export function createSpaceAgentSchema(db: Database): void {
 			processing_state TEXT,
 			archived_at TEXT,
 			type TEXT,
-			session_context TEXT
+			session_context TEXT,
+			room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+			space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+			task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL
 		)
 	`);
 

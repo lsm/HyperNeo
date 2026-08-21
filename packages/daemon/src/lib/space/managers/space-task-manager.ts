@@ -233,11 +233,7 @@ export class SpaceTaskManager {
         if (unblocked.length > 0 && options?.onCascadedTasks) {
           await options.onCascadedTasks(unblocked);
         }
-      } catch {
-        // Best-effort: unblock failures must not roll back the
-        // already-committed done transition. The tick loop will
-        // re-evaluate blocked dependents on the next cycle.
-      }
+      } catch {}
     }
 
     if (newStatus === 'archived' && updated.workflowRunId) {
@@ -541,11 +537,7 @@ export class SpaceTaskManager {
         try {
           const reopened = await this.setTaskStatus(t.id, 'open');
           unblocked.push(reopened);
-        } catch {
-          // Per-dependent: a concurrent status change (e.g. archive)
-          // can make blocked→open invalid. Skip this dependent and
-          // continue with the rest rather than aborting the cascade.
-        }
+        } catch {}
       }
     }
     return unblocked;

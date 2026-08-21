@@ -100,14 +100,21 @@ describe('Migration 197: ordered sdk_messages (session_id, send_status, timestam
       expect(cols.map((c) => c.name)).toEqual(['session_id', 'send_status', 'timestamp']);
     });
 
-    test('getMessagesByStatus uses the index without a temp sort', () => {
+    test('getUserMessagesByStatus uses the index without a temp sort', () => {
       runMigration197(db);
       const plan = explainQueryPlan(
         db,
-        `SELECT id, sdk_message, timestamp FROM sdk_messages
-         WHERE session_id = ? AND send_status = ?
-         ORDER BY timestamp ASC, rowid ASC`,
-        ['session-1', 'enqueued']
+        `SELECT rowid AS row_id FROM sdk_messages
+         WHERE session_id = ? AND send_status = ? AND message_type = 'user'
+           AND json_valid(sdk_message)
+           AND json_extract(sdk_message, '$.type') = 'user'
+           AND (
+             json_type(sdk_message, '$.isReplay') IS NULL
+             OR json_type(sdk_message, '$.isReplay') = 'false'
+           )
+         ORDER BY timestamp ASC, rowid ASC
+         LIMIT ?`,
+        ['session-1', 'enqueued', 100]
       );
       const joined = plan.join(' | ');
       expect(joined).toContain('idx_sdk_messages_send_status_timestamp');

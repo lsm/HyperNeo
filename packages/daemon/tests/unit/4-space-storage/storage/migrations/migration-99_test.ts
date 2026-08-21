@@ -76,14 +76,10 @@ describe('Migration 99: tool-contract refactor (Task #39)', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   describe('space_workflows.completion_autonomy_level', () => {
@@ -159,14 +155,10 @@ describe('Migration 99: tool-contract refactor (Task #39)', () => {
       } finally {
         try {
           freshDb.close();
-        } catch {
-          // ignore
-        }
+        } catch {}
         try {
           rmSync(freshDir, { recursive: true, force: true });
-        } catch {
-          // ignore
-        }
+        } catch {}
       }
     });
 

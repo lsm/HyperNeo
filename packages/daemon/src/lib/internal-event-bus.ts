@@ -165,9 +165,7 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
     data: TEventMap[K] & InternalEventPayload
   ): void {
     queueMicrotask(() => {
-      this.publish(event, data).catch(() => {
-        // Swallow — publishAsync is explicit fire-and-forget.
-      });
+      this.publish(event, data).catch(() => {});
     });
   }
 

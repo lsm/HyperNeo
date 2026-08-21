@@ -83,9 +83,7 @@ async function cancelRun(
       if (!hub?.request) return;
       await hub.request('spaceWorkflowRun.cancel', { id: rid });
     }, runId);
-  } catch {
-    // Best-effort cleanup
-  }
+  } catch {}
 }
 
 async function deleteSpace(
@@ -98,9 +96,7 @@ async function deleteSpace(
       if (!hub?.request) return;
       await hub.request('space.delete', { id });
     }, spaceId);
-  } catch {
-    // Best-effort cleanup
-  }
+  } catch {}
 }
 
 test.describe('Artifacts Side Panel', () => {
@@ -134,9 +130,7 @@ test.describe('Artifacts Side Panel', () => {
     if (wsPath && existsSync(wsPath)) {
       try {
         rmSync(wsPath, { recursive: true, force: true });
-      } catch {
-        // Best-effort cleanup
-      }
+      } catch {}
       wsPath = '';
     }
   });
