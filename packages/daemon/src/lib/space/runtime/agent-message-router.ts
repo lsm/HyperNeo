@@ -1,20 +1,21 @@
+import type { WorkflowChannel } from '@hyperneo/shared';
 import { parseAddress } from '../../../../../messaging/src/address';
-import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
 import type { ActorResolver } from '../../../../../messaging/src/contracts';
-import { SpaceDeliveryFacade } from '../messaging-adapter';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
-import type { WorkflowChannel } from '@hyperneo/shared';
-import { ChannelResolver } from './channel-resolver';
+import { formatAgentMessage } from '../agent-message-envelope';
+import { SpaceDeliveryFacade } from '../messaging-adapter';
 import {
+  type AgentMessageResult,
   buildNodeNameResolver,
   buildSlotToNodeMap,
   decideNodeTargetDelivery,
   foldAgentMessageResult,
   resolveNodeAgentTargets,
-  type AgentMessageResult,
 } from './agent-message-routing-gates';
-import { formatAgentMessage } from '../agent-message-envelope';
+import { decideAgentMessageRouting } from './agent-message-routing-pipeline';
+import { ChannelResolver } from './channel-resolver';
 import { ActivationError, type ChannelRouter } from './channel-router';
 
 export type { AgentMessageResult };
@@ -451,28 +452,6 @@ export class AgentMessageRouter {
     const fromNodeName = resolveNodeName(fromAgentName);
     const requestedTargets =
       target === '*' ? ['*'] : Array.isArray(target) ? [...target] : [target];
-    const wantsSpaceAgent = target !== '*' && requestedTargets.includes('space-agent');
-    if (requestedTargets.length > 0 && requestedTargets.every(isGenericAddress)) {
-      return this.deliverGenericMessage({
-        fromAgentName,
-        fromSessionId,
-        targets: requestedTargets,
-        message,
-        data,
-        slotToNode,
-      });
-    }
-
-    if (resolver.isEmpty() && !(wantsSpaceAgent && spaceAgentInjector && spaceId)) {
-      return {
-        success: false,
-        delivered: [],
-        failed: [],
-        reason:
-          'No channel topology declared for this node. ' +
-          'Direct messaging via send_message is not available.',
-      };
-    }
 
     const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
 
@@ -518,37 +497,65 @@ export class AgentMessageRouter {
       }
     }
 
+    const spaceAgentAvailable = Boolean(spaceAgentInjector && spaceId);
     const permittedTargets = resolver.getPermittedTargets(fromNodeName);
-    const resolution = resolveNodeAgentTargets({
+    const routing = decideAgentMessageRouting({
       target,
-      fromAgentName,
-      fromNodeName,
-      peerAgentNames: peers.map((m) => m.agentName),
-      nodeGroups,
-      declaredAgentNames: allDeclaredAgentNames,
-      permittedTargets,
-      spaceAgentAvailable: Boolean(spaceAgentInjector && spaceId),
-      canSend: (fromNode, toNode) => resolver.canSend(fromNode, toNode),
+      requestedTargets,
+      topologyEmpty: resolver.isEmpty(),
+      spaceAgentAvailable,
+      resolution: resolveNodeAgentTargets({
+        target,
+        fromAgentName,
+        fromNodeName,
+        peerAgentNames: peers.map((m) => m.agentName),
+        nodeGroups,
+        declaredAgentNames: allDeclaredAgentNames,
+        permittedTargets,
+        spaceAgentAvailable,
+        canSend: (fromNode, toNode) => resolver.canSend(fromNode, toNode),
+      }),
     });
-    if (resolution.status === 'unauthorized') {
+
+    if (routing.action === 'delegateGeneric') {
+      return this.deliverGenericMessage({
+        fromAgentName,
+        fromSessionId,
+        targets: requestedTargets,
+        message,
+        data,
+        slotToNode,
+      });
+    }
+    if (routing.action === 'failNoTopology') {
       return {
         success: false,
         delivered: [],
         failed: [],
-        reason: resolution.reason,
-        unauthorizedAgentNames: resolution.unauthorized,
-        permittedTargets: resolution.permittedTargets,
+        reason:
+          'No channel topology declared for this node. ' +
+          'Direct messaging via send_message is not available.',
       };
     }
-    if (resolution.status !== 'resolved') {
+    if (routing.action === 'failUnknownTarget') {
       return {
         success: false,
         delivered: [],
         failed: [],
-        reason: resolution.reason,
+        reason: routing.reason,
       };
     }
-    const targetAgentNames = resolution.targetAgentNames;
+    if (routing.action === 'failUnauthorized') {
+      return {
+        success: false,
+        delivered: [],
+        failed: [],
+        reason: routing.reason,
+        unauthorizedAgentNames: routing.unauthorizedAgentNames,
+        permittedTargets: routing.permittedTargets,
+      };
+    }
+    const targetAgentNames = routing.targetAgentNames;
 
     const activatedTargets = new Set<string>();
     if (channelRouter) {
@@ -731,14 +738,5 @@ export class AgentMessageRouter {
     }
 
     return foldAgentMessageResult({ delivered, queued, failed, notFound });
-  }
-}
-
-function isGenericAddress(target: string): boolean {
-  try {
-    parseAddress(target);
-    return true;
-  } catch {
-    return false;
   }
 }
