@@ -68,7 +68,11 @@ import type { SpaceActorRegistryAdapter } from '../actor-registry';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
-import { isValidSpaceTaskTransition, SpaceTaskManager } from '../managers/space-task-manager';
+import {
+  assertValidSpaceTaskTransition,
+  isValidSpaceTaskTransition,
+  SpaceTaskManager,
+} from '../managers/space-task-manager';
 import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
@@ -3549,6 +3553,9 @@ export class SpaceRuntime {
     opts?: { archiveSource?: 'user' | 'system_reconcile' }
   ): Promise<SpaceTask | null> {
     const previous = this.config.taskRepo.getTask(taskId);
+    if (previous && params.status !== undefined && params.status !== previous.status) {
+      assertValidSpaceTaskTransition(previous.status, params.status);
+    }
     let updated = this.config.taskRepo.updateTask(taskId, params);
     if (updated) {
       let emitUpdated = true;
