@@ -5913,7 +5913,7 @@ export class SpaceRuntime {
           `SpaceRuntime: skipped blocking task ${canonicalTask.id} for execution ${execution.id} ` +
             `in run ${runId}; task status changed concurrently — keeping the concurrent status`
         );
-        continue;
+        return 'blocked';
       }
       await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
         status: 'blocked',
