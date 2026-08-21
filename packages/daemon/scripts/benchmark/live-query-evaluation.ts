@@ -55,8 +55,17 @@ function createStubReactive() {
   };
 }
 
+interface DeliveredEvent {
+  method: string;
+  subscriptionId: string;
+  added: number;
+  removed: number;
+  updated: number;
+  snapshotRows: number;
+}
+
 interface StubRouter {
-  sendToClientDetailed: () => { ok: true };
+  sendToClientDetailed: (clientId: string, message: unknown) => { ok: true };
   sendToClient: () => void;
   releaseClientSubscription: () => void;
   addClientSubscription: () => void;
@@ -68,12 +77,34 @@ interface StubMessageHub {
   getRouter(): StubRouter | null;
   onClientDisconnect(handler: (clientId: string) => void): void;
   handlers: Map<string, (data: unknown, context: unknown) => unknown>;
+  delivered: DeliveredEvent[];
 }
 
 function createStubMessageHub(): StubMessageHub {
   const handlers = new Map<string, (data: unknown, context: unknown) => unknown>();
+  const delivered: DeliveredEvent[] = [];
   const router: StubRouter = {
-    sendToClientDetailed: () => ({ ok: true, current: 0, limit: 0 }),
+    sendToClientDetailed: (_clientId, message) => {
+      const event = message as {
+        method: string;
+        data: {
+          subscriptionId: string;
+          added?: unknown[];
+          removed?: unknown[];
+          updated?: unknown[];
+          rows?: unknown[];
+        };
+      };
+      delivered.push({
+        method: event.method,
+        subscriptionId: event.data.subscriptionId,
+        added: event.data.added?.length ?? 0,
+        removed: event.data.removed?.length ?? 0,
+        updated: event.data.updated?.length ?? 0,
+        snapshotRows: event.data.rows?.length ?? 0,
+      });
+      return { ok: true, current: 0, limit: 0 };
+    },
     sendToClient: () => {},
     releaseClientSubscription: () => {},
     addClientSubscription: () => {},
@@ -81,6 +112,7 @@ function createStubMessageHub(): StubMessageHub {
   };
   return {
     handlers,
+    delivered,
     onRequest(method, handler) {
       handlers.set(method, handler);
     },
@@ -155,13 +187,6 @@ async function main() {
   console.log(`largest session: ${biggest.session_id} (${biggest.c} messages)`);
   console.log(`small reference session: ${small.session_id} (${small.c} messages)`);
 
-  console.log('\n== messages.bySession via production liveQuery.subscribe (cold) ==');
-  const t0 = performance.now();
-  subscribe('messages.bySession', [biggest.session_id, 200]);
-  console.log(`cold subscribe wall: ${(performance.now() - t0).toFixed(1)}ms`);
-  console.log(fmt('  main sql', mainSqlStats));
-  console.log(fmt('  evaluate', evalStats));
-
   const reset = () => {
     mainSqlStats.count = 0;
     mainSqlStats.totalMs = 0;
@@ -169,6 +194,16 @@ async function main() {
     evalStats.count = 0;
     evalStats.totalMs = 0;
     evalStats.samples = [];
+    hub.delivered.length = 0;
+  };
+  const deliveredSummary = (): string => {
+    if (hub.delivered.length === 0) return 'delivered: none';
+    return hub.delivered
+      .map(
+        (event) =>
+          `${event.method.replace('liveQuery.', '')}(+${event.added}/-${event.removed}/~${event.updated}${event.snapshotRows > 0 ? ` rows=${event.snapshotRows}` : ''})`
+      )
+      .join(' ');
   };
   const settle = async (label: string, tables: string[], scope?: TableChangeScope) => {
     reset();
@@ -177,7 +212,16 @@ async function main() {
     console.log(`\n== ${label}`);
     console.log(fmt('  main sql', mainSqlStats));
     console.log(fmt('  evaluate', evalStats));
+    console.log(`  ${deliveredSummary()}`);
   };
+
+  console.log('\n== messages.bySession via production liveQuery.subscribe (cold) ==');
+  const t0 = performance.now();
+  subscribe('messages.bySession', [biggest.session_id, 200]);
+  console.log(`cold subscribe wall: ${(performance.now() - t0).toFixed(1)}ms`);
+  console.log(fmt('  main sql', mainSqlStats));
+  console.log(fmt('  evaluate', evalStats));
+  console.log(`  ${deliveredSummary()}`);
 
   console.log(`\n== warm no-op evaluations x${WARM_EVAL_RUNS} (scoped change, no mutation) ==`);
   reset();
@@ -187,6 +231,7 @@ async function main() {
   }
   console.log(fmt('  main sql', mainSqlStats));
   console.log(fmt('  evaluate', evalStats));
+  console.log(`  ${deliveredSummary()}`);
 
   const insertRow = db.prepare(
     `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id)
@@ -241,11 +286,18 @@ async function main() {
 
   const oldest = db
     .query(
-      `SELECT id FROM sdk_messages WHERE session_id = ? AND parent_tool_use_id IS NULL ORDER BY timestamp ASC LIMIT 1`
+      `SELECT id, send_status FROM sdk_messages WHERE session_id = ? AND parent_tool_use_id IS NULL ORDER BY timestamp ASC LIMIT 1`
     )
-    .get(biggest.session_id) as { id: string } | undefined;
-  if (oldest) {
+    .get(biggest.session_id) as { id: string; send_status: string | null } | undefined;
+  let restoreOldest: (() => void) | null = null;
+  if (oldest && oldest.send_status !== 'failed') {
     db.run(`UPDATE sdk_messages SET send_status = 'failed' WHERE id = ?`, [oldest.id]);
+    restoreOldest = () => {
+      db.run(`UPDATE sdk_messages SET send_status = ? WHERE id = ?`, [
+        oldest.send_status,
+        oldest.id,
+      ]);
+    };
   }
   await settle('send_status update on old row outside window', ['sdk_messages'], {
     sessionId: biggest.session_id,
@@ -270,6 +322,7 @@ async function main() {
   console.log('\n== burst of 20 same-session writes in one debounce window ==');
   console.log(fmt('  main sql', mainSqlStats));
   console.log(fmt('  evaluate', evalStats));
+  console.log(`  ${deliveredSummary()}`);
 
   console.log('\n== metadata query attribution (BACKGROUND_TASK_METADATA_SQL, warm) ==');
   const metaStmt = db.prepare(BACKGROUND_TASK_METADATA_SQL);
@@ -337,34 +390,51 @@ async function main() {
     .get(sessionId) as { tool_use_id: string } | undefined;
   if (windowToolUse) {
     console.log(`  in-window tool_use: ${windowToolUse.tool_use_id}`);
-    for (const fanout of [500, 5000]) {
+    const insertChild = db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id)
+       VALUES (?, ?, 'progress', 'task_progress', ?, ?, 'consumed', NULL, ?)`
+    );
+    const fanoutCases: Array<{ count: number; payloadKb: number }> = [
+      { count: 500, payloadKb: 0 },
+      { count: 5000, payloadKb: 0 },
+      { count: 200, payloadKb: 50 },
+      { count: 1000, payloadKb: 50 },
+    ];
+    for (const { count, payloadKb } of fanoutCases) {
       db.run(`DELETE FROM sdk_messages WHERE id LIKE 'bench-fanout-%'`);
-      const insertChild = db.prepare(
-        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id)
-         VALUES (?, ?, 'progress', 'task_progress', ?, ?, 'consumed', NULL, ?)`
-      );
-      for (let i = 0; i < fanout; i++) {
+      const payload = JSON.stringify({
+        type: 'progress',
+        subtype: 'task_progress',
+        content: payloadKb > 0 ? 'x'.repeat(payloadKb * 1024) : 'bench fanout',
+      });
+      for (let i = 0; i < count; i++) {
         insertChild.run(
-          `bench-fanout-${fanout}-${i}`,
+          `bench-fanout-${count}-${payloadKb}-${i}`,
           sessionId,
-          JSON.stringify({ type: 'progress', subtype: 'task_progress', content: 'bench fanout' }),
+          payload,
           nowIso(),
           windowToolUse.tool_use_id
         );
       }
-      await settle(`evaluation with ${fanout} subagent children in window`, ['sdk_messages'], {
-        sessionId: biggest.session_id,
-      });
+      await settle(
+        `evaluation with ${count} subagent children x ${payloadKb}KB payloads in window`,
+        ['sdk_messages'],
+        { sessionId: biggest.session_id }
+      );
     }
     db.run(`DELETE FROM sdk_messages WHERE id LIKE 'bench-fanout-%'`);
   } else {
     console.log('  (no tool_use found in recent window — skipped)');
   }
 
-  db.run(`DELETE FROM sdk_messages WHERE id LIKE 'bench-%'`);
-  db.run(`UPDATE job_queue SET run_at = run_at`);
-  engine.dispose();
-  db.close();
+  try {
+    db.run(`DELETE FROM sdk_messages WHERE id LIKE 'bench-%'`);
+    db.run(`UPDATE job_queue SET run_at = run_at`);
+    restoreOldest?.();
+  } finally {
+    engine.dispose();
+    db.close();
+  }
   console.log('\nbenchmark complete');
 }
 
