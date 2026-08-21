@@ -189,11 +189,15 @@ export async function updateProvider(
   }
 ): Promise<{ success: boolean; provider: ProviderRecord }> {
   const hub = getHubOrThrow();
-  return await hub.request<{ success: boolean; provider: ProviderRecord }>('providers.update', {
-    id,
-    params,
-    credentials,
-  });
+  return await hub.request<{ success: boolean; provider: ProviderRecord }>(
+    'providers.update',
+    {
+      id,
+      params,
+      credentials,
+    },
+    { timeout: 35000 }
+  );
 }
 
 export async function deleteProvider(id: string): Promise<{ success: boolean }> {
@@ -213,13 +217,20 @@ export async function fetchAcpModels(
   const hub = getHubOrThrow();
   return await hub.request<{ models: Array<{ id: string; name?: string }> }>(
     'providers.fetchAcpModels',
-    { id, command }
+    { id, command },
+    { timeout: 30000 }
   );
 }
 
 export async function testProvider(id: string): Promise<{ healthy: boolean; error?: string }> {
   const hub = getHubOrThrow();
-  return await hub.request<{ healthy: boolean; error?: string }>('providers.test', { id });
+  return await hub.request<{ healthy: boolean; error?: string }>(
+    'providers.test',
+    { id },
+    {
+      timeout: 25000,
+    }
+  );
 }
 
 export async function updateGlobalSettings(
