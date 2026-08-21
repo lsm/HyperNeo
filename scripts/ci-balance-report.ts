@@ -183,7 +183,10 @@ function discoverJunitFiles(inputs: string[]): string[] {
   return [...new Set(files)].sort();
 }
 
-export function buildReport(junitInputs: { path: string; xml: string }[]): BalanceReport {
+export function buildReport(
+  junitInputs: { path: string; xml: string }[],
+  options: { coverage?: boolean } = {}
+): BalanceReport {
   const buckets: BucketRow[] = [];
   const files: FileRow[] = [];
 
@@ -239,6 +242,9 @@ export function buildReport(junitInputs: { path: string; xml: string }[]): Balan
   const suitesSeen = new Set(files.map((row) => row.suite).filter((suite) => suite !== null));
   const coverage: CoverageRow[] = [];
   let coverageNote: string | null = null;
+  if (options.coverage === false) {
+    return { buckets, files, duplicates, unresolvedPaths, coverage, coverageNote };
+  }
   try {
     for (const suite of ['daemon-unit', 'daemon-online', 'web'] as SuiteName[]) {
       if (!suitesSeen.has(suite)) {
@@ -304,7 +310,19 @@ function runOracle(command: string): string[] {
     .filter((line) => line !== '');
 }
 
+const expectedFilesCache = new Map<SuiteName, Set<string>>();
+
 export function expectedFilesForSuite(suite: SuiteName): Set<string> {
+  const cached = expectedFilesCache.get(suite);
+  if (cached) {
+    return cached;
+  }
+  const resolved = resolveExpectedFilesForSuite(suite);
+  expectedFilesCache.set(suite, resolved);
+  return resolved;
+}
+
+function resolveExpectedFilesForSuite(suite: SuiteName): Set<string> {
   if (suite === 'daemon-unit') {
     const paths = runOracle(
       'source scripts/test-daemon.sh; for shard in "${SHARDS[@]}"; do shard_paths "$shard"; done'

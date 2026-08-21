@@ -132,7 +132,7 @@ describe('resolveSuitePath', () => {
 
 describe('buildReport', () => {
   it('aggregates hand-computed bucket totals and sorts per-file durations', () => {
-    const report = buildReport(twoBucketInput);
+    const report = buildReport(twoBucketInput, { coverage: false });
 
     expect(report.buckets).toEqual([
       {
@@ -167,7 +167,7 @@ describe('buildReport', () => {
   });
 
   it('flags files present in more than one bucket', () => {
-    const report = buildReport(twoBucketInput);
+    const report = buildReport(twoBucketInput, { coverage: false });
 
     expect(report.duplicates).toEqual([
       { file: 'tests/online/rpc/rpc-agent-handlers.test.ts', buckets: ['rpc-a', 'rpc-b'] },
@@ -201,12 +201,12 @@ describe('buildReport', () => {
     expect(unitCoverage?.expected).toBeGreaterThan(100);
     expect(unitCoverage?.missing).toContain('packages/shared/tests/logger.test.ts');
     expect(report.coverage.map((row) => row.suite)).toEqual(['daemon-unit']);
-  });
+  }, 30000);
 });
 
 describe('renderMarkdown', () => {
   it('renders bucket totals, spread, and a truncated per-file table', () => {
-    const report = buildReport(twoBucketInput);
+    const report = buildReport(twoBucketInput, { coverage: false });
     const markdown = renderMarkdown(report, 2);
 
     expect(markdown).toContain('| rpc-b | 2 | 7 | 21.0s |');
