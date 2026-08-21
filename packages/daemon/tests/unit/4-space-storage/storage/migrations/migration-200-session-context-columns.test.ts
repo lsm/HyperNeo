@@ -91,14 +91,10 @@ describe('Migration 200: sessions session_context generated columns', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   describe('pre-M200 schema — add generated columns', () => {
