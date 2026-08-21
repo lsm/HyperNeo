@@ -1791,6 +1791,7 @@ describe('AcpQueryRunner', () => {
       await ctx.queryPromise;
 
       expect(createClient).toHaveBeenCalledTimes(2);
+      expect(firstClient.cancel).toHaveBeenCalled();
       expect(firstClient.close).toHaveBeenCalled();
       expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
         { type: 'text', text: 'hello' },

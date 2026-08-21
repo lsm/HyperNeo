@@ -654,6 +654,9 @@ export class AcpQueryRunner {
                 `(Hint: set HYPERNEO_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${startupTimeoutMs}ms)`
             );
             abortController.abort();
+            try {
+              client?.cancel();
+            } catch {}
             this.ctx.queryObject?.close();
             client?.close();
           }
@@ -1399,6 +1402,7 @@ export class AcpQueryRunner {
     });
     const onAbort = () => resolveAbort(abortResult);
     let messageDelivered = false;
+    let pendingNext: Promise<IteratorResult<SDKMessage>> | null = null;
 
     try {
       if (signal.aborted) {
@@ -1408,11 +1412,14 @@ export class AcpQueryRunner {
       signal.addEventListener('abort', onAbort, { once: true });
 
       while (!signal.aborted) {
-        const result = await Promise.race([iterator.next(), abortPromise]);
+        pendingNext = iterator.next();
+        const result = await Promise.race([pendingNext, abortPromise]);
 
         if ('aborted' in result) {
           break;
         }
+
+        pendingNext = null;
 
         if (result.done) {
           break;
@@ -1426,6 +1433,15 @@ export class AcpQueryRunner {
       if (signal.aborted && messageDelivered) {
         for (const msg of queryObj.flushPendingMessages()) {
           yield msg;
+        }
+        if (pendingNext) {
+          try {
+            const result = await pendingNext;
+            if (!result.done) {
+              yield result.value;
+            }
+          } catch {}
+          pendingNext = null;
         }
         while (true) {
           try {
