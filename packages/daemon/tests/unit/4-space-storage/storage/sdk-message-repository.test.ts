@@ -158,7 +158,10 @@ describe('SDKMessageRepository', () => {
 				status TEXT NOT NULL,
 				type TEXT,
 				last_active_at TEXT NOT NULL,
-				session_context TEXT
+				session_context TEXT,
+          room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+          space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+          task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL
 			);
 			CREATE TABLE space_tasks (
 				id TEXT PRIMARY KEY,
@@ -1317,6 +1320,9 @@ describe('SDKMessageRepository', () => {
           config TEXT NOT NULL,
           metadata TEXT NOT NULL,
           session_context TEXT,
+          room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+          space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+          task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL,
           type TEXT DEFAULT 'worker',
           visible_message_count INTEGER NOT NULL DEFAULT 0
         );
@@ -1906,6 +1912,9 @@ describe('SDKMessageRepository', () => {
         CREATE TABLE sessions (
           id TEXT PRIMARY KEY,
           session_context TEXT,
+          room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+          space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+          task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL,
           type TEXT
         );
         INSERT INTO sessions (id, session_context, type)
@@ -2373,6 +2382,9 @@ describe('SDKMessageRepository', () => {
         CREATE TABLE sessions (
           id TEXT PRIMARY KEY,
           session_context TEXT,
+          room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+          space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+          task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL,
           type TEXT
         );
         INSERT INTO sessions (id, session_context, type)
@@ -3602,7 +3614,10 @@ describe('SDKMessageRepository', () => {
         CREATE TABLE IF NOT EXISTS sessions (
           id TEXT PRIMARY KEY,
           type TEXT,
-          session_context TEXT
+          session_context TEXT,
+          room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+          space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+          task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL
         )
       `);
       db.prepare(

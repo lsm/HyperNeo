@@ -41,6 +41,63 @@ export type TaskUpdateRouting =
   | { action: 'set_status'; auditParamsShape: 'transition'; emitTaskUpdated: 'always' }
   | { action: 'fields_only'; auditParamsShape: 'fields_only'; emitTaskUpdated: 'always' };
 
+export interface CreateTaskWorkflowRefInput {
+  workflowIdArg: string | null;
+  workflowIdUsable: boolean;
+  hasHandleArg: boolean;
+  trimmedHandle: string;
+  handleWorkflowId: string | null;
+  handleWorkflowDisabled: boolean;
+}
+
+export type CreateTaskWorkflowRef =
+  | { action: 'reject'; message: string }
+  | { action: 'use_ref'; preferredWorkflowId: string | null };
+
+export function routeCreateTaskWorkflowRef(
+  input: CreateTaskWorkflowRefInput
+): CreateTaskWorkflowRef {
+  const {
+    workflowIdArg,
+    workflowIdUsable,
+    hasHandleArg,
+    trimmedHandle,
+    handleWorkflowId,
+    handleWorkflowDisabled,
+  } = input;
+  if (workflowIdArg) {
+    if (workflowIdUsable) {
+      return { action: 'use_ref', preferredWorkflowId: workflowIdArg };
+    }
+    if (hasHandleArg) {
+      if (trimmedHandle === '') {
+        return { action: 'reject', message: 'workflow_handle must be a non-empty string.' };
+      }
+      if (handleWorkflowId !== null) {
+        if (handleWorkflowDisabled) {
+          return { action: 'reject', message: `Workflow is disabled: ${trimmedHandle}` };
+        }
+        return { action: 'use_ref', preferredWorkflowId: handleWorkflowId };
+      }
+      return { action: 'reject', message: `Workflow not found by id or handle: ${trimmedHandle}` };
+    }
+    return { action: 'use_ref', preferredWorkflowId: workflowIdArg };
+  }
+  if (hasHandleArg) {
+    if (trimmedHandle === '') {
+      return { action: 'reject', message: 'workflow_handle must be a non-empty string.' };
+    }
+    if (handleWorkflowId === null) {
+      return { action: 'reject', message: `Workflow not found by handle: ${trimmedHandle}` };
+    }
+    if (handleWorkflowDisabled) {
+      return { action: 'reject', message: `Workflow is disabled: ${trimmedHandle}` };
+    }
+    return { action: 'use_ref', preferredWorkflowId: handleWorkflowId };
+  }
+  return { action: 'use_ref', preferredWorkflowId: null };
+}
+
 export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRouting {
   const {
     hasChanges,

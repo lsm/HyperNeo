@@ -305,7 +305,7 @@ runner_continue_on_error() {
 
 # Print every value for `key:` (e.g. shard / module) that appears under a
 # `matrix.exclude:` block in job $1 of main.yml. Handles BOTH YAML forms:
-#   block:  exclude:        flow:  exclude: [{ shard: shared }, { shard: 1-core }]
+#   block:  exclude:        flow:  exclude: [{ shard: shared }, { shard: 1-core-a }]
 #             - shard: shared
 # Excludes drop GitHub combinations, so a shard/module present in the raw axis
 # but excluded never runs — the callers treat these as absent from CI rather than

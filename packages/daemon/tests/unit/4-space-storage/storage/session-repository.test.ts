@@ -60,7 +60,10 @@ describe('SessionRepository', () => {
 				processing_state TEXT,
 				archived_at TEXT,
 				type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room', 'lobby')),
-				session_context TEXT
+				session_context TEXT,
+				room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+				space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+				task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL
 			);
 
 			CREATE INDEX idx_sessions_last_active ON sessions(last_active_at);

@@ -22,7 +22,10 @@
 # installs them for its real-session shards too.
 #
 # Release is handled separately in release.yml (triggered by version tags).
-# Test coverage (unit, online, web) is uploaded to Coveralls.
+# Test coverage (unit, online, web) is uploaded to Coveralls. Each test job's
+# repo-root-normalized lcov.info is also uploaded as an lcov-* workflow
+# artifact (retention 7d) so downstream tooling can consume coverage without
+# going through the Coveralls API.
 
 name: CI
 
@@ -389,6 +392,14 @@ jobs:
           parallel: true
           fail-on-error: false
 
+      - name: Upload lcov artifact
+        if: hashFiles(format('packages/daemon/coverage-online-{0}/lcov.info', matrix.module)) != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: lcov-daemon-online-${{ matrix.module }}
+          path: packages/daemon/coverage-online-${{ matrix.module }}/lcov.info
+          retention-days: 7
+
   # ============================================
   # DAEMON + SHARED UNIT TESTS (For coverage measurement)
   # Run on: PR to dev, push to dev
@@ -402,7 +413,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [shared, 2-handlers-github, 2-handlers-other, 1-core, 4-space-storage, 4-space-migrations-a, 4-space-migrations-b, 5-space-agent-other, 5-space-runtime-a, 5-space-runtime-b]
+        shard: [shared, 2-handlers-github, 2-handlers-other, 1-core-a, 1-core-b, 4-space-storage, 4-space-migrations-a, 4-space-migrations-b, 5-space-agent-other, 5-space-runtime-a, 5-space-runtime-b]
 
     steps:
       - uses: actions/checkout@v6
@@ -467,6 +478,14 @@ jobs:
           flag-name: daemon-${{ matrix.shard }}
           parallel: true
           fail-on-error: false
+
+      - name: Upload lcov artifact
+        if: always() && hashFiles(format('packages/{0}/coverage/lcov.info', matrix.shard == 'shared' && 'shared' || 'daemon')) != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: lcov-daemon-${{ matrix.shard }}
+          path: packages/${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}/coverage/lcov.info
+          retention-days: 7
 
   # ============================================
   # WEB TESTS
@@ -534,6 +553,14 @@ jobs:
           flag-name: web
           parallel: true
           fail-on-error: false
+
+      - name: Upload lcov artifact
+        if: hashFiles('packages/web/coverage/lcov.info') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: lcov-web
+          path: packages/web/coverage/lcov.info
+          retention-days: 7
 
   # ============================================
   # COVERALLS FINALIZATION

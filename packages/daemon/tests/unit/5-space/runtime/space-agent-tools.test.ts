@@ -64,7 +64,10 @@ function makeDb(): BunDatabase {
     archived_at TEXT,
     parent_id TEXT,
     type TEXT DEFAULT 'worker',
-    session_context TEXT
+    session_context TEXT,
+    room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+    space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+    task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL
   )`);
 
   db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
@@ -8515,6 +8518,22 @@ describe('createSpaceAgentToolHandlers — update_task status parameter (task #1
     expect(result.success).toBe(false);
     expect(result.error).toContain("cannot transition a task from 'review' to 'done' directly");
     expect(result.error).toContain('approve_task');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
+  });
+
+  test('a status flip during the autonomy await cannot bypass the review → done guard', async () => {
+    const task = createTaskWithStatus('open');
+    const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => {
+        ctx.taskRepo.updateTask(task.id, { status: 'review' });
+        return 4;
+      },
+    });
+
+    const result = parseResult(await handlers.update_task({ task_id: task.id, status: 'done' }));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("cannot transition a task from 'review' to 'done' directly");
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
   });
 
