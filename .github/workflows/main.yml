@@ -119,6 +119,9 @@ jobs:
       - name: Test strip-comments argument handling
         run: bun run test:strip-comments
 
+      - name: Test CI balance report parser
+        run: bun run test:ci-balance-report
+
       # Actually enforce the zero-comments policy in CI. strip-comments.ts
       # enumerates files via `git ls-files` (index-only), so the shallow
       # checkout is fine. Until now CI only ran the script's unit test.
@@ -337,7 +340,7 @@ jobs:
           --coverage.reporter=lcov
           --coverage.reportsDirectory=coverage-online-${{ matrix.module }}
           --reporter=junit
-          --outputFile.junit=../../test-results/daemon-online-${{ matrix.module }}/junit.xml'
+          --outputFile.junit=../../test-results/daemon-online-${{ matrix.module }}/junit-${{ matrix.module }}.xml'
         env:
           # Use Dev Proxy for mock_sdk tests by setting ANTHROPIC_BASE_URL
           # This avoids proxy env var issues and TLS interception problems
@@ -375,8 +378,8 @@ jobs:
           # Strip test utility coverage (helpers, fixtures, mocks)
           awk '/^SF:(packages\/daemon\/)?tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' $LCOV > ${LCOV}.clean && mv ${LCOV}.clean $LCOV || true
 
-      - name: Upload junit on failure (diagnostics)
-        if: failure()
+      - name: Upload junit + diagnostics
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: daemon-online-junit-${{ matrix.module }}-${{ github.run_number }}
@@ -479,6 +482,14 @@ jobs:
           parallel: true
           fail-on-error: false
 
+      - name: Upload junit (balance report data)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: daemon-unit-junit-${{ matrix.shard }}
+          path: test-results/daemon/junit-${{ matrix.shard }}.xml
+          retention-days: 7
+
       - name: Upload lcov artifact
         if: always() && hashFiles(format('packages/{0}/coverage/lcov.info', matrix.shard == 'shared' && 'shared' || 'daemon')) != ''
         uses: actions/upload-artifact@v7
@@ -534,7 +545,7 @@ jobs:
           bash -lc 'cd packages/web && bunx vitest run
           --reporter dot
           --reporter junit
-          --outputFile.junit=../../test-results/web/junit.xml
+          --outputFile.junit=../../test-results/web/junit-web.xml
           --coverage'
 
       - name: Fix coverage paths for monorepo
@@ -554,6 +565,14 @@ jobs:
           parallel: true
           fail-on-error: false
 
+      - name: Upload junit (balance report data)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-junit
+          path: test-results/web/junit-web.xml
+          retention-days: 7
+
       - name: Upload lcov artifact
         if: hashFiles('packages/web/coverage/lcov.info') != ''
         uses: actions/upload-artifact@v7
@@ -561,6 +580,52 @@ jobs:
           name: lcov-web
           path: packages/web/coverage/lcov.info
           retention-days: 7
+
+  # ============================================
+  # TEST DURATION BALANCE REPORT
+  # Downloads the junit XML every test job uploads and renders per-file
+  # durations + per-shard totals into the run summary (see
+  # scripts/ci-balance-report.ts). This is the measurement behind shard
+  # rebalance decisions. Read-only reporting: intentionally NOT part of
+  # all-tests-pass gating.
+  # Run on: PR to dev, push to dev, workflow_dispatch (whenever tests ran)
+  # ============================================
+
+  test-balance-report:
+    name: Test Duration Balance Report
+    runs-on: ubuntu-latest
+    needs: [test-daemon-shared-unit, test-daemon-online, test-web]
+    if: ${{ !cancelled() && github.event.inputs.run_e2e_only != 'true' }}
+    timeout-minutes: 3
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.14
+
+      - name: Download daemon unit junit
+        uses: actions/download-artifact@v8
+        with:
+          path: balance/unit
+          pattern: daemon-unit-junit-*
+
+      - name: Download daemon online junit
+        uses: actions/download-artifact@v8
+        with:
+          path: balance/online
+          pattern: daemon-online-junit-*
+
+      - name: Download web junit
+        uses: actions/download-artifact@v8
+        with:
+          path: balance/web
+          pattern: web-junit
+
+      - name: Build balance report
+        run: bun run scripts/ci-balance-report.ts balance --top 25
 
   # ============================================
   # COVERALLS FINALIZATION
