@@ -818,6 +818,7 @@ describe('inferPersistableProviderForModel', () => {
 
   it('excludes snapshot-unavailable owners from synchronous GPT inference', async () => {
     const { markProviderAvailability } = await import('../../../../src/lib/providers/registry');
+    markProviderAvailability('anthropic-copilot', true);
     getProviderRegistry().register(claimant('anthropic-copilot', false));
     markProviderAvailability('anthropic-copilot', false);
     try {
