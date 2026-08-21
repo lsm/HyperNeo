@@ -10,8 +10,8 @@ adopted pattern, its boundaries, and the migration roadmap. It does not mandate
 immediate adoption elsewhere; each phase gets its own go/no-go.
 
 Validated further by pilot 3 (2026-08-21): `processRunTick` rewritten as a staged
-interpreter over three pure cores plus a `decisionRun` admission pipeline — see
-"Pilot 3" below.
+interpreter over three extracted cores plus a `decisionRun` admission pipeline —
+see "Pilot 3" below for boundary caveats.
 
 Revised 2026-08-20 after owner review: scope widened from decision cores to pure
 pipelines generally — decisions, multi-step transforms (rendering/projection), and
@@ -155,8 +155,8 @@ Extracted:
 
 - `run-tick-admission-gates.ts` — the tick admission decision (missing/finished/
   waiting run, executor meta, run tasks, canonical task, workflow validity,
-  rate-limit, task-stopped, executions-present, blocked-executions, slot
-  availability) plus pure timed-out-execution selection.
+  rate-limit, task-stopped, executions-present, blocked-executions) plus pure
+  timed-out-execution selection.
 - `run-tick-decision-pipeline.ts` — the admission gates composed as a
   `decisionRun` pipeline; the gate list is the precedence document.
 - `run-completion-settlement.ts` — completion-summary resolution,
@@ -167,8 +167,21 @@ Extracted:
 
 The shell keeps every effect and re-snapshots `nodeExecutionRepo.listByWorkflowRun`
 after each effectful stage (crash reset, recovery handlers, handoff repair,
-promotion) before the next decision; the admission-phase reads share one cached
-snapshot through a lazy `loadNodeExecutions` thunk.
+promotion) before the next decision.
+
+Two boundary caveats, recorded so the section is not read as a cleaner
+validation of the sandwich than it is. First, slot availability is modeled by a
+pipeline gate but defused at the production call site
+(`availableTaskSlots: Number.MAX_SAFE_INTEGER`): `space` — and with it
+`getAvailableTaskSlots` — only loads after admission, and the authoritative
+check stays in the shell, after the timeout-notification stage; the gate list
+does not encode slot precedence. Second, four admission inputs
+(`executionCount`, `runIsComplete`, `hasBlockedExecution`, `firstBlockedResult`)
+are lazy thunks forced inside the gates, so their repository/detector reads
+happen within the core run rather than pre-gathered by the shell — a deliberate
+exception so cheap skip paths never pay for the executions snapshot. The reads
+are read-only and memoized (one shared `loadNodeExecutions` snapshot), and no
+effects run inside the core.
 
 Deliberate non-goals: the four `handle*Executions` recovery sub-flows
 (alive-stuck, waiting-rebind, non-terminal-idle, terminal-error-idle) and
