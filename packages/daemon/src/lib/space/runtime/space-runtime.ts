@@ -5,6 +5,7 @@ import type {
   SpaceApprovalSource,
   SpaceTask,
   SpaceTaskPriority,
+  SpaceTaskStatus,
   SpaceWorkflow,
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
@@ -72,6 +73,7 @@ import {
   assertValidSpaceTaskTransition,
   isValidSpaceTaskTransition,
   SpaceTaskManager,
+  VALID_SPACE_TASK_TRANSITIONS,
 } from '../managers/space-task-manager';
 import {
   isReservedWorkflowAgentName,
@@ -163,6 +165,9 @@ const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {
   normal: 2,
   low: 3,
 };
+const TASK_BLOCKABLE_FROM_STATUSES: readonly SpaceTaskStatus[] = (
+  Object.keys(VALID_SPACE_TASK_TRANSITIONS) as SpaceTaskStatus[]
+).filter((status) => VALID_SPACE_TASK_TRANSITIONS[status].includes('blocked'));
 
 export interface SpaceRuntimeConfig {
   db: BunDatabase;
@@ -5897,6 +5902,19 @@ export class SpaceRuntime {
         result: reason,
       });
       await this.transitionRunStatusAndEmit(runId, 'blocked');
+      if (
+        this.config.taskRepo.casStatus(
+          canonicalTask.id,
+          TASK_BLOCKABLE_FROM_STATUSES,
+          'blocked'
+        ) === 'superseded'
+      ) {
+        log.warn(
+          `SpaceRuntime: skipped blocking task ${canonicalTask.id} for execution ${execution.id} ` +
+            `in run ${runId}; task status changed concurrently — keeping the concurrent status`
+        );
+        continue;
+      }
       await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
         status: 'blocked',
         result: reason,

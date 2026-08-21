@@ -2407,8 +2407,8 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
     });
   });
 
-  describe('park-during-recovery overwrite rejected (tasks #1190/#1194, stagedRun ADR 0004)', () => {
-    test('task parked stopped while handleAliveStuckExecutions blocks stays stopped; the stale blocked write is rejected', async () => {
+  describe('park-during-recovery CAS (tasks #1190/#1194/#1195, stagedRun ADR 0004)', () => {
+    test('task parked stopped while handleAliveStuckExecutions blocks stays stopped', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
@@ -2478,9 +2478,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         pendingRestartNotice: null,
       });
 
-      await expect(rt.executeTick()).rejects.toThrow(
-        "Invalid status transition from 'stopped' to 'blocked'."
-      );
+      await expect(rt.executeTick()).resolves.toBeUndefined();
 
       expect(parkedStatuses).toEqual(['stopped']);
       expect(taskStatusesAfterPark).toEqual(['stopped']);
