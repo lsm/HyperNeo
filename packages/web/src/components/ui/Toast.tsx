@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import { borderColors } from '../../lib/design-tokens.ts';
+import { useVisibleTick } from '../../hooks/useVisibleTick.ts';
 import type { Toast, ToastType } from '../../lib/toast.ts';
 import { dismissToast } from '../../lib/toast.ts';
 
@@ -9,29 +10,16 @@ interface ToastItemProps {
 }
 
 function ToastItem({ toast }: ToastItemProps) {
+  const [startedAt] = useState(() => Date.now());
   const [progress, setProgress] = useState(100);
   const [isExiting, setIsExiting] = useState(false);
+  const hasDuration = !!toast.duration && toast.duration > 0;
 
-  useEffect(() => {
-    if (!toast.duration || toast.duration <= 0) return;
-
-    const interval = 50;
-    const steps = toast.duration / interval;
-    const decrement = 100 / steps;
-
-    let currentProgress = 100;
-    const timer = setInterval(() => {
-      currentProgress -= decrement;
-      if (currentProgress <= 0) {
-        clearInterval(timer);
-        setProgress(0);
-      } else {
-        setProgress(currentProgress);
-      }
-    }, interval);
-
-    return () => clearInterval(timer);
-  }, [toast.duration]);
+  useVisibleTick(50, hasDuration, () => {
+    if (!toast.duration) return;
+    const elapsedFraction = Math.min(1, (Date.now() - startedAt) / toast.duration);
+    setProgress((1 - elapsedFraction) * 100);
+  });
 
   const handleDismiss = () => {
     setIsExiting(true);

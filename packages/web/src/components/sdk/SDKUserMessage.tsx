@@ -2,6 +2,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { MessageDeliveryRetryInfo, MessageDeliveryStatus } from '@hyperneo/shared';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { retryMessageDelivery } from '../../lib/api-helpers.ts';
+import { useVisibleTick } from '../../hooks/useVisibleTick.ts';
 import { toast } from '../../lib/toast.ts';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
@@ -118,13 +119,9 @@ function UserMessageRetryControl({
   );
   const [retrying, setRetrying] = useState(false);
 
-  useEffect(() => {
-    if (deliveryStatus !== 'retrying' || !deliveryRetry?.runAt) return;
-    const interval = setInterval(() => {
-      setRemaining(Math.max(0, deliveryRetry.runAt! - Date.now()));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [deliveryStatus, deliveryRetry?.runAt]);
+  useVisibleTick(1000, deliveryStatus === 'retrying' && !!deliveryRetry?.runAt, () =>
+    setRemaining(Math.max(0, (deliveryRetry?.runAt ?? 0) - Date.now()))
+  );
 
   const handleRetry = useCallback(async () => {
     if (!sessionId || !messageDbId) return;

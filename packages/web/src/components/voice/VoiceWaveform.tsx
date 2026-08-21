@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useVisibleTick } from '../../hooks/useVisibleTick.ts';
 
 const BAR_PITCH_WIDE = 5;
 const BAR_PITCH_NARROW = 4;
@@ -63,13 +64,11 @@ export function VoiceWaveform({
     if (!isRecording || isTranscribing) return;
     startTimestampRef.current = startedAt ?? Date.now();
     setElapsed(Math.min(MAX_SECONDS, Math.floor((Date.now() - startTimestampRef.current) / 1000)));
-    const id = setInterval(() => {
-      setElapsed(
-        Math.min(MAX_SECONDS, Math.floor((Date.now() - startTimestampRef.current) / 1000))
-      );
-    }, 1000);
-    return () => clearInterval(id);
   }, [isRecording, isTranscribing, startedAt]);
+
+  useVisibleTick(1000, isRecording && !isTranscribing, () =>
+    setElapsed(Math.min(MAX_SECONDS, Math.floor((Date.now() - startTimestampRef.current) / 1000)))
+  );
 
   useEffect(() => {
     let raf = 0;

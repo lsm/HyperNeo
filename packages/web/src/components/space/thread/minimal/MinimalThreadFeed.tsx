@@ -14,7 +14,6 @@ import {
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 type CompactBoundaryMessage = Extract<SDKMessage, { type: 'system'; subtype: 'compact_boundary' }>;
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
-import { useEffect, useState } from 'preact/hooks';
 import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
 import {
   type AgentTurnBlock,
@@ -28,6 +27,7 @@ import { SpaceTaskThreadMessageActions } from '../SpaceTaskThreadMessageActions'
 import { getAgentColor } from '../space-task-thread-agent-colors';
 import type { ParsedThreadRow } from '../space-task-thread-events';
 import { pushOverlayHistory } from '../../../../lib/router';
+import { useVisibleTick } from '../../../../hooks/useVisibleTick';
 import {
   buildMessageReplacementStatusMap,
   getMessageUuid,
@@ -1379,14 +1379,6 @@ function buildFeedTurns(
   });
 }
 
-function useSecondsTick(): void {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((n) => (n + 1) | 0), 1000);
-    return () => clearInterval(id);
-  }, []);
-}
-
 function PulseDot({ color }: { color: string }) {
   return (
     <span
@@ -1870,7 +1862,7 @@ function CompletedBody({
 }
 
 function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
-  useSecondsTick();
+  useVisibleTick(1000);
   const elapsedSec = Math.max(0, Math.round((Date.now() - turn.startedAt) / 1000));
   const lastEventSec = Math.max(0, Math.round((Date.now() - turn.lastEventAt) / 1000));
   const hasSummaryCounts =
