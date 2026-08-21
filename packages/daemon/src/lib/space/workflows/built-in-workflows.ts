@@ -275,8 +275,11 @@ export const CODER_ONLY_PROMPT =
   'data: { pr_url: "<url>", codex_reaction: { login, content: "THUMBS_UP", created_at }, ' +
   'devon_review_url: "<url>", head_oid: "<oid>" } })` — reactions have no permalink, so record ' +
   'the reaction fields inline from the gate query. ' +
-  'Then request human sign-off: call submit_for_approval({ reason: "Codex +1: <url>; Devon: <url>; ' +
-  'informal review: <result>" }). Human sign-off is required — never call approve_task for this ' +
+  'Then request human sign-off: call submit_for_approval({ reason: "Codex +1: <bot login> ' +
+  'THUMBS_UP at <reaction createdAt> on <pr_url>; Devon: <review url>; informal review: <result>" ' +
+  '}) — the Codex evidence is the recorded reaction login/timestamp plus the PR URL, since ' +
+  'reactions have no permalink. ' +
+  'Human sign-off is required — never call approve_task for this ' +
   'workflow, even when space autonomy level 5 makes the tool available to you: ' +
   'completionAutonomyLevel 5 is the strongest threshold the autonomy system offers and still ' +
   'auto-closes in a level-5 space, but this workflow always routes completion through ' +
