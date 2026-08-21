@@ -313,9 +313,13 @@ interpreters over three extracted cores:
 
 - `tool-admission-gates.ts` — the shared autonomy-admission core:
   `resolveEffectiveAutonomyLevel`, `decideAutonomyAdmission`, and
-  `TOOL_AUTONOMY_REQUIREMENTS`, now the single place tool-gating policy lives
-  (previously a hardcoded `SESSION_WRITE_AUTONOMY_LEVEL = 4` const inside the
-  handler factory plus prose deny strings assembled at each throw site).
+  `TOOL_AUTONOMY_REQUIREMENTS`, now the single place *fixed session-write*
+  gating policy lives (previously a hardcoded `SESSION_WRITE_AUTONOMY_LEVEL = 4`
+  const inside the handler factory plus prose deny strings assembled at each
+  throw site). Workflow-derived requirements are deliberately outside the table:
+  `approve_task` enforces the workflow's `completionAutonomyLevel` inside
+  `routeApproveTask`, so changing an approval requirement means changing that
+  router, not the map (see the second recorded asymmetry below).
 - `task-transition-routing.ts` — pure routing tables: `routeTaskUpdate` (the
   old seven-branch inline cascade as a typed precedence table), the shared
   `routeTaskTarget`, and one router per remaining tool.
@@ -325,18 +329,27 @@ interpreters over three extracted cores:
 
 **MCP TOOL HANDLER = STAGED PIPELINE.** The sanctioned handler shape,
 generalizing the pilot-1 sandwich to tool calls: admission (autonomy) →
-target/scope resolution → arg validation → action routing (pure table) →
+arg validation → target/scope resolution → action routing (pure table) →
 effects (manager/runtime calls) → result folding (audit + task-updated emit +
 JSON result). Everything up to and including action routing is pure and
 unit-pinned; the shell gathers snapshot inputs (task row, run-active flag,
 workflow completion level, effective autonomy) and interprets the routed
-action. `update_task` is the fullest instance: its `TaskUpdateRouting` union —
+action. The stage order is the precedence contract and is the *implemented*
+order in `update_task`'s `decisionRun` (autonomy → arg-changes → target →
+routing arbiter), which preserves the pre-pilot precedence: a no-fields call
+fails with the argument error even for a missing or cross-space task id. A new
+handler following this shape inherits that arg-before-target ordering. `update_task` is the fullest instance: its `TaskUpdateRouting` union —
 reject `no_updatable_fields` → target reject → `review_direct` →
 `approved_direct` → `park_stopped` → `review_to_done` → `archive_active_run` →
 `recover_transition` → `stop_for_status` → `set_status`, else `fields_only` —
-carries each arm's interpreter obligations as data: `auditParamsShape`
-(`'transition' | 'fields_only'`) and `emitTaskUpdated` (`'never' |
-'only_with_field_updates' | 'always'`).
+declares each arm's audit shape (`auditParamsShape`: `'transition' |
+'fields_only'`) and task-updated emission obligation (`emitTaskUpdated`:
+`'never' | 'only_with_field_updates' | 'always'`) as union fields. These are
+recorded contract, not consumed directives: the interpreter hardcodes auditing
+and emission per switch arm, and the parity suites pin the arm-by-arm
+correspondence. Whether the interpreter should instead branch on the fields —
+making the table the operative emission policy — is part of the
+emission-ownership review question below.
 
 **Recorded asymmetries — open review questions, not silently preserved
 behavior.** Both predate the pilot and were carried verbatim for parity; the
