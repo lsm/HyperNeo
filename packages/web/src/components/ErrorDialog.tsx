@@ -54,9 +54,7 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
       await navigator.clipboard.writeText(report);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard copy failed - user can still copy manually
-    }
+    } catch {}
   };
 
   const categoryColor =

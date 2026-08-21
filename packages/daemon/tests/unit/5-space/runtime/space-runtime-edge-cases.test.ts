@@ -224,13 +224,9 @@ describe('SpaceRuntime — edge cases and resilience', () => {
     collector.destroy();
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     try {
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   describe('InternalEventBus — tick loop resilience', () => {

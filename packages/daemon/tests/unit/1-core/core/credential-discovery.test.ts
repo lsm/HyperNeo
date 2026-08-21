@@ -50,9 +50,7 @@ describe('discoverCredentials', () => {
     }
     try {
       rmSync(tempDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   describe('return value contract', () => {

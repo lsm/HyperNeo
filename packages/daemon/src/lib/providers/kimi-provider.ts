@@ -234,9 +234,7 @@ export class KimiProvider implements Provider {
       if (host === 'api.moonshot.cn' || host === 'api.kimi.com') {
         return 'china';
       }
-    } catch {
-      // Ignore malformed URLs and fall through to exact matching.
-    }
+    } catch {}
     if (
       normalized === KIMI_REGION_ENDPOINTS.global.anthropicBaseUrl.toLowerCase() ||
       normalized === KIMI_REGION_ENDPOINTS.global.openAiBaseUrl.toLowerCase()
@@ -485,7 +483,5 @@ export class KimiProvider implements Provider {
     };
   }
 
-  async shutdown(): Promise<void> {
-    // Kimi uses Moonshot's native Anthropic-compatible endpoint directly.
-  }
+  async shutdown(): Promise<void> {}
 }

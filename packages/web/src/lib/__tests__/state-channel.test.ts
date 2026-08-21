@@ -160,9 +160,7 @@ describe('StateChannel', () => {
 
       try {
         await channel.start();
-      } catch {
-        // Expected
-      }
+      } catch {}
 
       expect(channel.hasError.value).toBeInstanceOf(Error);
       expect(channel.hasError.value?.message).toBe('Network error');

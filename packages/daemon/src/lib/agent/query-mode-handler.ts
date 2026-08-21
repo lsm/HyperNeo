@@ -74,10 +74,11 @@ export class QueryModeHandler {
           db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
         await this.ctx.ensureQueryStarted();
         for (const msg of deferredMessages) {
-          if (v2Owned.has((msg.uuid ?? '') as string)) continue;
+          if (typeof msg.uuid !== 'string' || msg.uuid.length === 0) continue;
+          if (v2Owned.has(msg.uuid)) continue;
           const replayContent = this.toReplayContent(msg.message.content);
           if (replayContent) {
-            await messageQueue.enqueueWithId(msg.uuid as string, replayContent);
+            await messageQueue.enqueueWithId(msg.uuid, replayContent);
           }
         }
       }

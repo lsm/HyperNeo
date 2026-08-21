@@ -54,14 +54,10 @@ describe('Migration 179: pending_agent_messages.workflow_node_id', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   describe('pre-M179 schema — add column', () => {

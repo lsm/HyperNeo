@@ -520,9 +520,7 @@ export class QueryOptionsBuilder {
           : undefined;
         if (perModelMode) thinkingModes = perModelMode;
       }
-    } catch {
-      // Registry not initialised (unit tests with reset registry) — keep static fallback.
-    }
+    } catch {}
     const globalSettings = this.ctx.settingsManager.getGlobalSettings();
     const thinkingLevel = normalizeThinkingLevel(
       this.ctx.session.config.thinkingLevel ?? globalSettings.thinkingLevel

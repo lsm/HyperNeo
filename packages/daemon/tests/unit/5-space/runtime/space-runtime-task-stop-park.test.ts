@@ -355,9 +355,7 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   describe('parkStoppedWorkflowTask()', () => {

@@ -63,10 +63,7 @@ test.describe('Reconnection - Basic Message Sync', () => {
         messagesBeforeDisconnect,
         { timeout: 10000, polling: 500 }
       )
-      .catch(() => {
-        // If no new messages appeared during disconnect, that's okay —
-        // the test still validates reconnection preserves existing messages.
-      });
+      .catch(() => {});
 
     await restoreWebSocket(page);
 
@@ -207,9 +204,7 @@ test.describe('Reconnection - Long Disconnection Period', () => {
         messagesBeforeOffline,
         { timeout: 5000, polling: 500 }
       )
-      .catch(() => {
-        // No new messages during disconnect — acceptable
-      });
+      .catch(() => {});
 
     await restoreWebSocket(page);
     await waitForOnlineStatus(page);

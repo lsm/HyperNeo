@@ -383,9 +383,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
       .then((result) => {
         if (!cancelled) setArtifacts(result);
       })
-      .catch(() => {
-        // Artifact fetch is best-effort — component works without them
-      });
+      .catch(() => {});
 
     const unsubscribe = hub.onEvent<{
       sessionId: string;

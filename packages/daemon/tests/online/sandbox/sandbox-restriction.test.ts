@@ -129,9 +129,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 
         try {
           await fs.rm(testFilePath, { force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
+        } catch {}
       }
     });
   });
@@ -176,9 +174,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
         try {
           const testFilePath = path.join(workspacePath, 'test-bash-sandbox.txt');
           await fs.rm(testFilePath, { force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
+        } catch {}
       }
     });
   });
@@ -216,9 +212,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 
         try {
           await fs.rm(testFilePath, { force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
+        } catch {}
       }
     });
   });
@@ -265,9 +259,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 
         try {
           await fs.rm(testFilePath, { force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
+        } catch {}
       }
     });
 
@@ -312,9 +304,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 
         try {
           await fs.rm(testFilePath, { force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
+        } catch {}
       }
     });
   });
@@ -368,9 +358,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 
         try {
           await fs.rm(testFilePath, { force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
+        } catch {}
       }
     });
 
@@ -433,9 +421,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 
         try {
           await fs.rm(testFilePath, { force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
+        } catch {}
       }
     });
 
@@ -486,9 +472,7 @@ describe('Sandbox Restrictions', { skip: skipTest }, () => {
 
         try {
           await fs.rm(testFilePath, { force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
+        } catch {}
       }
     });
   });

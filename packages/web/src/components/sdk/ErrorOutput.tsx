@@ -46,9 +46,7 @@ function formatApiError(errorContent: string): {
         statusCode: null,
         message: `**${errorType}**\n\n${errorMessage}`,
       };
-    } catch {
-      // Not valid JSON
-    }
+    } catch {}
   }
 
   return { statusCode: null, message: errorContent };

@@ -481,10 +481,7 @@ export class GitHubService {
         event,
         data as DaemonInternalEventMap[K] & { sessionId: string } & Record<string, unknown>
       );
-    } catch {
-      // Best-effort telemetry: never let a hub emission failure
-      // abort event routing or inbox fallback.
-    }
+    } catch {}
   }
 
   addRepository(owner: string, repo: string): void {

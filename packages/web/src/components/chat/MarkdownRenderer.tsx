@@ -171,7 +171,6 @@ function getFenceMarker(line: string, allowIndented = false) {
     const blockquotePrefix = listMatch[1];
     const afterBlockquote = line.slice(blockquotePrefix.length);
     if (!blockquotePrefix && /^( {4}|\t)/.test(afterBlockquote)) {
-      // fall through — indented code block, not a list fence
     } else {
       return {
         marker: listMatch[3],

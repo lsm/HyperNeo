@@ -556,9 +556,7 @@ describe('ConnectionManager - Comprehensive Coverage', () => {
 
       try {
         await manager.onConnected(50);
-      } catch {
-        // Expected timeout
-      }
+      } catch {}
 
       const privateManager = manager as unknown as { connectionHandlers: Set<() => void> };
       expect(privateManager.connectionHandlers.size).toBe(0);

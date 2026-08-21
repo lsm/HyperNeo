@@ -41,9 +41,7 @@ export class DatabaseLock {
     this.exitHandler = () => {
       try {
         unlinkSync(lockPath);
-      } catch {
-        // Ignore — file may already be gone
-      }
+      } catch {}
     };
     process.on('exit', this.exitHandler);
   }
@@ -58,9 +56,7 @@ export class DatabaseLock {
 
     try {
       unlinkSync(this.lockPath);
-    } catch {
-      // Ignore — may have already been removed
-    }
+    } catch {}
     this.acquired = false;
   }
 

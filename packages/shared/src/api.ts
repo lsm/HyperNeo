@@ -370,18 +370,14 @@ export interface GetModelSettingsRequest {
   sessionId: string;
 }
 
-export interface GetModelSettingsResponse extends ModelSettings {
-  // Inherits: model, fallbackModel, maxTurns, maxBudgetUsd, maxThinkingTokens
-}
+export interface GetModelSettingsResponse extends ModelSettings {}
 
 export interface UpdateModelSettingsRequest {
   sessionId: string;
   settings: Partial<ModelSettings>;
 }
 
-export interface UpdateModelSettingsResponse extends ConfigUpdateResult {
-  // Inherits: applied, pending, errors
-}
+export interface UpdateModelSettingsResponse extends ConfigUpdateResult {}
 
 export interface GetSystemPromptRequest {
   sessionId: string;
@@ -408,9 +404,7 @@ export interface GetToolsConfigRequest {
   sessionId: string;
 }
 
-export interface GetToolsConfigResponse extends ToolsSettings {
-  // Inherits: tools, allowedTools, disallowedTools
-}
+export interface GetToolsConfigResponse extends ToolsSettings {}
 
 export interface UpdateToolsConfigRequest {
   sessionId: string;
@@ -863,9 +857,7 @@ export interface GetEnvConfigRequest {
   sessionId: string;
 }
 
-export interface GetEnvConfigResponse extends EnvironmentSettings {
-  // Inherits: cwd, additionalDirectories, env, executable, executableArgs
-}
+export interface GetEnvConfigResponse extends EnvironmentSettings {}
 
 export interface UpdateEnvConfigRequest {
   sessionId: string;
@@ -914,9 +906,7 @@ export interface UpdateBulkConfigRequest {
   restartQuery?: boolean;
 }
 
-export interface UpdateBulkConfigResponse extends ConfigUpdateResult {
-  // Inherits: applied, pending, errors
-}
+export interface UpdateBulkConfigResponse extends ConfigUpdateResult {}
 
 export interface APIClient {
   createSession(req: CreateSessionRequest): Promise<CreateSessionResponse>;

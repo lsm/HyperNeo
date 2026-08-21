@@ -19,9 +19,7 @@ function loadLastSeenCounts(): Map<string, number> {
       const data = JSON.parse(stored) as Record<string, number>;
       return new Map(Object.entries(data));
     }
-  } catch {
-    // Ignore errors loading unread data
-  }
+  } catch {}
   return new Map();
 }
 
@@ -29,9 +27,7 @@ function saveLastSeenCounts(counts: Map<string, number>): void {
   try {
     const data = Object.fromEntries(counts);
     localStorage.setItem(UNREAD_STORAGE_KEY, JSON.stringify(data));
-  } catch {
-    // Ignore errors saving to localStorage
-  }
+  } catch {}
 }
 
 function parseProcessingState(

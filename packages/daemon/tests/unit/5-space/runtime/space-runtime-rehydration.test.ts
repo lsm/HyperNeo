@@ -108,13 +108,9 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     try {
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   describe('in_progress runs are rehydrated on startup', () => {

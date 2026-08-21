@@ -73,9 +73,7 @@ export class SpaceWorktreeManager {
         cwd: space.workspacePath,
         timeout: 30_000,
       });
-    } catch {
-      // Non-fatal
-    }
+    } catch {}
 
     try {
       const branches = execFileSync('git', ['branch', '--list', branchName], {
@@ -131,9 +129,7 @@ export class SpaceWorktreeManager {
       if (existsSync(worktreePath)) {
         try {
           rmSync(worktreePath, { recursive: true, force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
+        } catch {}
       }
       throw new Error(
         `Failed to create worktree for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
@@ -240,9 +236,7 @@ export class SpaceWorktreeManager {
               cwd: space.workspacePath,
               timeout: 30_000,
             });
-          } catch {
-            // Branch may already be gone; non-fatal
-          }
+          } catch {}
         }
         this.worktreeRepo.delete(spaceId, record.taskId);
         this.logger.info(

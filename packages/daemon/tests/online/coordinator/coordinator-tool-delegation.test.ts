@@ -161,8 +161,6 @@ describe.skip('Coordinator Tool Delegation - Behavioral', () => {
 
     try {
       unlinkSync(outputFile);
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, 180000);
 });

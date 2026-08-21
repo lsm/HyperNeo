@@ -319,9 +319,7 @@ async function runTextCommand(
   const killTimer = setTimeout(() => {
     try {
       proc.kill('SIGKILL');
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, timeoutMs);
 
   const [stdoutResult, exitCode] = await Promise.all([
@@ -500,9 +498,7 @@ async function runCommandRaw<T>(
   const killTimer = setTimeout(() => {
     try {
       proc.kill('SIGKILL');
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, timeoutMs);
 
   const [stdoutResult, stderrResult, exitCode] = await Promise.all([

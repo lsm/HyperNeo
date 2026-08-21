@@ -128,9 +128,7 @@ export class InProcessTransport implements IMessageTransport {
       for (const handler of this.peer.clientDisconnectHandlers) {
         try {
           handler(peerId);
-        } catch {
-          // Ignore handler errors during cleanup
-        }
+        } catch {}
       }
     }
 
@@ -180,9 +178,7 @@ export class InProcessTransport implements IMessageTransport {
     for (const handler of this.messageHandlers) {
       try {
         handler(message);
-      } catch {
-        // Message handler error - silently continue
-      }
+      } catch {}
     }
   }
 
@@ -196,9 +192,7 @@ export class InProcessTransport implements IMessageTransport {
     for (const handler of this.connectionHandlers) {
       try {
         handler(state, error);
-      } catch {
-        // Connection handler error - silently continue
-      }
+      } catch {}
     }
   }
 

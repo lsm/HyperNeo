@@ -126,9 +126,7 @@ export function CustomEndpointsSettings() {
       try {
         const parsed = parseHeaders(editor.headersText);
         if (parsed) Object.assign(headers, parsed);
-      } catch {
-        // Validated above
-      }
+      } catch {}
       const resp = await fetch(probe, { method: 'GET', headers });
       if (!resp.ok) {
         toast.error(`Probe ${probe} → HTTP ${resp.status}`);

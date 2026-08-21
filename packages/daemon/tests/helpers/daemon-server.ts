@@ -95,14 +95,10 @@ async function stopSharedDevProxyAsync(): Promise<void> {
   sharedDevProxyStopPromise = (async () => {
     try {
       await controller.stop();
-    } catch {
-      // Best-effort cleanup
-    }
+    } catch {}
     try {
       controller.restoreEnv();
-    } catch {
-      // Best-effort env restoration
-    }
+    } catch {}
     if (sharedDevProxyController === controller) {
       sharedDevProxyController = null;
       sharedDevProxyPort = null;
@@ -141,14 +137,10 @@ function installSharedDevProxyExitHook(): void {
     }
     try {
       spawnSync('devproxy', ['stop'], { stdio: 'ignore' });
-    } catch {
-      // Best-effort cleanup
-    }
+    } catch {}
     try {
       sharedDevProxyController.restoreEnv();
-    } catch {
-      // Best-effort env restoration
-    }
+    } catch {}
     sharedDevProxyController = null;
     sharedDevProxyPort = null;
     sharedDevProxyRefCount = 0;
@@ -339,9 +331,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
     for (const sessionId of trackedSessions) {
       try {
         await messageHub.request('session.delete', { sessionId });
-      } catch {
-        // Session may already be deleted, ignore errors
-      }
+      } catch {}
     }
     trackedSessions.length = 0;
   };
@@ -468,9 +458,7 @@ async function createInProcessDaemonServer(
             setTimeout(() => reject(new Error('session.delete timeout')), 5000)
           ),
         ]);
-      } catch {
-        // Session may already be deleted or timeout, ignore errors
-      }
+      } catch {}
     }
     trackedSessions.length = 0;
   };
@@ -491,9 +479,7 @@ async function createInProcessDaemonServer(
         await cleanup();
         try {
           await transport.close();
-        } catch {
-          // Transport may already be closed
-        }
+        } catch {}
         await daemonContext.cleanup();
         if (!isExternalWorkspace) {
           rmSync(workspace, { recursive: true, force: true });
@@ -696,14 +682,10 @@ export async function createDaemonServer(
   } catch (error) {
     try {
       context.kill('SIGTERM');
-    } catch {
-      // Best-effort kill.
-    }
+    } catch {}
     try {
       await context.waitForExit();
-    } catch {
-      // Best-effort cleanup; preserve the original readiness error.
-    }
+    } catch {}
     throw error;
   }
   return context;

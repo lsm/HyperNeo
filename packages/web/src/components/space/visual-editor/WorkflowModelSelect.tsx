@@ -53,9 +53,7 @@ function decodeModelValue(value: string, models: ModelInfo[]): WorkflowModelSele
     ) {
       return { provider: parsed[0], modelId: parsed[1] };
     }
-  } catch {
-    // Fall through to raw model ID parsing.
-  }
+  } catch {}
   return { provider: '', modelId: value };
 }
 

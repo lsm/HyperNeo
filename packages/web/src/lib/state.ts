@@ -139,9 +139,7 @@ class ApplicationState {
       }
 
       await channels.start();
-    })().catch(() => {
-      /* ignore errors during channel switch */
-    });
+    })().catch(() => {});
 
     return channels;
   }
@@ -175,9 +173,7 @@ class ApplicationState {
           }
 
           previousSessionId = sessionId;
-        })().catch(() => {
-          /* ignore errors during session switch */
-        });
+        })().catch(() => {});
 
         debounceTimer = null;
       }, DEBOUNCE_MS);
@@ -200,9 +196,7 @@ class ApplicationState {
     this.subscriptions = [];
 
     if (this.activeSessionChannels) {
-      this.activeSessionChannels.stop().catch(() => {
-        /* ignore errors during shutdown */
-      });
+      this.activeSessionChannels.stop().catch(() => {});
       this.activeSessionId = null;
       this.activeSessionChannels = null;
     }

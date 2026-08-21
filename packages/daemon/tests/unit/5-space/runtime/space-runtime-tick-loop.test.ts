@@ -313,13 +313,9 @@ describe('SpaceRuntime — tick loop correctness', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     try {
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   function buildConfig(

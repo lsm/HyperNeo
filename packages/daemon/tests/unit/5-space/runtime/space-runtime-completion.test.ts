@@ -367,13 +367,9 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
     collector.destroy();
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     try {
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   describe('artifact-backed task result capture', () => {

@@ -35,9 +35,7 @@ test.describe('Inline Workspace Selector', () => {
     if (sessionId) {
       try {
         await cleanupTestSession(page, sessionId);
-      } catch {
-        // Non-critical cleanup
-      }
+      } catch {}
       sessionId = null;
     }
   });

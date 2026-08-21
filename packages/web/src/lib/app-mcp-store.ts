@@ -129,9 +129,7 @@ class AppMcpStore {
     for (const fn of this.cleanups) {
       try {
         fn();
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     }
     this.cleanups = [];
     this.loading.value = false;

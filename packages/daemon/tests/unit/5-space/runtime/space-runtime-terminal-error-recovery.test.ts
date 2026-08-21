@@ -300,9 +300,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   test('error_during_execution on a live idle session injects one continue', async () => {

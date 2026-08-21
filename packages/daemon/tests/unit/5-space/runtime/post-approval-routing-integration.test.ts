@@ -198,9 +198,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
   afterEach(() => {
     try {
       h.db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   test('approved Coding task: dispatchPostApproval threads artifact.data.prUrl into kickoff; mark_complete closes it', async () => {

@@ -59,9 +59,7 @@ async function deleteSessionViaRpc(
       if (!hub?.request) return;
       await hub.request('session.delete', { sessionId: id });
     }, sessionId);
-  } catch {
-    // Best-effort cleanup
-  }
+  } catch {}
 }
 
 test.describe('Space Sub-Routes Deep Links', () => {

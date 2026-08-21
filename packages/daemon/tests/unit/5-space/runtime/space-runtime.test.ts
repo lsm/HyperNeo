@@ -185,13 +185,9 @@ describe('SpaceRuntime', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     try {
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   describe('recoverWorkflowBackedTask()', () => {

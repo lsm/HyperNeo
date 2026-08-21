@@ -92,9 +92,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   useEffect(() => {
     getWorkspaceHistory()
       .then(setHistory)
-      .catch(() => {
-        // Non-critical — projects with sessions still render without history.
-      });
+      .catch(() => {});
   }, []);
 
   const sessionsList = sessions.value.filter(isUserSession);

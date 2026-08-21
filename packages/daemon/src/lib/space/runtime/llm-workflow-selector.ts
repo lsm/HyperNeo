@@ -106,9 +106,7 @@ export async function selectWorkflowWithLlmDefault(
   } finally {
     try {
       providerService.restoreEnvVars(originalEnv);
-    } catch {
-      /* ignore env restore failures */
-    }
+    } catch {}
   }
 }
 

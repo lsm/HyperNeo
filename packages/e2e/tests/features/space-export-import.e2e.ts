@@ -47,9 +47,7 @@ async function deleteTestSpace(page: Page, spaceId: string): Promise<void> {
       if (!hub?.request) return;
       await hub.request('space.delete', { id });
     }, spaceId);
-  } catch {
-    // Best-effort cleanup
-  }
+  } catch {}
 }
 
 async function injectImportFile(page: Page, bundle: unknown): Promise<void> {

@@ -871,9 +871,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           spaceId,
           taskId,
         });
-      } catch {
-        // Audit logging is best-effort; never block the tool operation.
-      }
+      } catch {}
     }
   }
 
@@ -911,9 +909,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (!refresh.success) {
           try {
             repo.deleteSubscription(stored.id);
-          } catch {
-            // best-effort cleanup; the reason below is authoritative
-          }
+          } catch {}
           skipped.push({
             source: sub.source,
             topic: sub.topic,
@@ -926,9 +922,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (stored) {
           try {
             repo.deleteSubscription(stored.id);
-          } catch {
-            // Already in an error path; leave cleanup to the operator.
-          }
+          } catch {}
         }
         skipped.push({
           source: sub.source,
@@ -2725,10 +2719,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             sdk_message_id: sdkMessageId,
             activated: false,
           });
-        } catch {
-          // Fall through to activation path — the session may be dead; activateNode
-          // will either revive it (cyclic re-entry) or reset the execution to pending.
-        }
+        } catch {}
       }
 
       if (!activateNode) {
@@ -5114,10 +5105,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         async (args) => {
           try {
             await restoreCallback({ reason: args.reason });
-          } catch {
-            // Log but don't surface the error to the agent — the query restart
-            // may interrupt this response before we can return anyway.
-          }
+          } catch {}
           return {
             content: [
               {

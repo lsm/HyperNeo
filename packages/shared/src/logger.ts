@@ -206,9 +206,7 @@ export function emitStructuredLogEvent(params: EmitStructuredLogEventParams): St
   for (const subscriber of structuredLogSubscribers) {
     try {
       subscriber(event);
-    } catch {
-      // Logging must never fail because a subscriber failed.
-    }
+    } catch {}
   }
   return event;
 }

@@ -36,10 +36,7 @@ export async function waitForOnlineStatus(page: Page, timeout?: number): Promise
   if (wasVisible) {
     await expect(offlineIndicator)
       .toBeHidden({ timeout: 2000 })
-      .catch(() => {
-        // Offline indicator still visible — reconnection may have
-        // partially failed. The MessageHub check below will confirm.
-      });
+      .catch(() => {});
   }
 
   try {

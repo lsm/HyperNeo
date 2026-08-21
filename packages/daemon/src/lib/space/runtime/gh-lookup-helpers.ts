@@ -123,9 +123,7 @@ export async function fetchRateLimitResetEpoch(
   const killTimer = setTimeout(() => {
     try {
       proc.kill('SIGKILL');
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, timeoutMs);
 
   const [stdoutResult, exitCode] = await Promise.all([
@@ -173,9 +171,7 @@ export async function runGhJson(
     timedOut = true;
     try {
       proc.kill('SIGKILL');
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, timeoutMs);
 
   const [stdoutResult, stderrResult, exitCode] = await Promise.all([

@@ -62,14 +62,10 @@ describe('Migration 70: Backfill default_path for existing rooms', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('backfills default_path from allowed_paths[0].path for rooms with null default_path', () => {

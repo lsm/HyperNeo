@@ -202,9 +202,7 @@ describe('Kimi prompt-too-long recovery — online with Dev Proxy', () => {
             ]).catch(() => {})
           )
         );
-      } catch {
-        // Hub may already be disconnected.
-      }
+      } catch {}
       daemon.kill('SIGTERM');
       await daemon.waitForExit();
     }

@@ -387,7 +387,5 @@ export class MessageHubRouter {
     return this.channelManager;
   }
 
-  private log(_message: string, ..._args: unknown[]): void {
-    // Debug logging disabled - only errors are logged
-  }
+  private log(_message: string, ..._args: unknown[]): void {}
 }

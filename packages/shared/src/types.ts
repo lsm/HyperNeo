@@ -72,10 +72,7 @@ export const DEFAULT_WORKER_FEATURES: SessionFeatures = {
   sessionInfo: true,
 };
 
-/**
- * Default features for lobby sessions (all disabled).
- * @public
- */
+/** @public */
 export const DEFAULT_LOBBY_FEATURES: SessionFeatures = {
   rewind: false,
   worktree: false,
