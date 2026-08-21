@@ -9,6 +9,10 @@ delivery decision pipeline + interpreter (#2589), shared `decisionRun` combinato
 adopted pattern, its boundaries, and the migration roadmap. It does not mandate
 immediate adoption elsewhere; each phase gets its own go/no-go.
 
+Validated further by pilot 3 (2026-08-21): `processRunTick` rewritten as a staged
+interpreter over three pure cores plus a `decisionRun` admission pipeline — see
+"Pilot 3" below.
+
 Revised 2026-08-20 after owner review: scope widened from decision cores to pure
 pipelines generally — decisions, multi-step transforms (rendering/projection), and
 staged async flows (decide → effect → re-snapshot). The boundaries in
@@ -140,11 +144,65 @@ pipeline wiring, +7 helper extraction, +19 combinator module); one new daemon
 dependency (pinned exact 0.17.0); a convention to learn; the sync-core rule means
 async deciders carry a proof obligation (microtask-profile sensitivity).
 
+## Pilot 3 — run-tick staged interpreter (2026-08-21)
+
+Pilot 3 applied the pattern to `processRunTick`, the 5-second run supervisor in
+`space-runtime.ts` (~535 lines at `:5933–6468` before the pilot) — the staged-async
+form (Decision item 4) at its largest so far: snapshot → decide → effect →
+re-snapshot, repeated across the tick.
+
+Extracted:
+
+- `run-tick-admission-gates.ts` — the tick admission decision (missing/finished/
+  waiting run, executor meta, run tasks, canonical task, workflow validity,
+  rate-limit, task-stopped, executions-present, blocked-executions, slot
+  availability) plus pure timed-out-execution selection.
+- `run-tick-decision-pipeline.ts` — the admission gates composed as a
+  `decisionRun` pipeline; the gate list is the precedence document.
+- `run-completion-settlement.ts` — completion-summary resolution,
+  already-resolved and final-status mapping, spawned post-approval session
+  resolution, quiesce source selection, and sibling-quiesce selection.
+- `run-spawn-decisions.ts` — spawn admission, promotable-pending selection,
+  spawn-failure classification, and the driveable-execution check.
+
+The shell keeps every effect and re-snapshots `nodeExecutionRepo.listByWorkflowRun`
+after each effectful stage (crash reset, recovery handlers, handoff repair,
+promotion) before the next decision; the admission-phase reads share one cached
+snapshot through a lazy `loadNodeExecutions` thunk.
+
+Deliberate non-goals: the four `handle*Executions` recovery sub-flows
+(alive-stuck, waiting-rebind, non-terminal-idle, terminal-error-idle) and
+`repairQueuedWorkflowNodeHandoffs` remain opaque effects behind the interpreter —
+candidates for future mini-pilots, each to be pinned by a decision-table test
+before extraction.
+
+Terminal-set nuance: settlement terminal (`isSettlementTerminal` —
+done/cancelled/blocked/approved) and spawn terminal
+(`isCanonicalTaskTerminalForSpawn` — done/cancelled/archived/stopped)
+intentionally differ: 'blocked' settles a finished attempt, while 'stopped'
+(user-parked) only suppresses spawn. The terminal-handoff-cleanup check in the
+interpreter is a third, narrower set (done/cancelled/archived). These are
+distinct decisions, not duplicate predicates to unify.
+
+Costs: production net +374 lines across the pilot — 368 lines of new pure
+modules, `space-runtime.ts` net +6 (`processRunTick` 535 → 533 lines; the value
+is testability of the decisions, not method shrinkage); tests +1,918 lines
+(decision-table pins and core unit suites).
+
+Pilot PRs: #2601 (decision-table pin), #2604, #2620, #2624, #2629, #2641, plus
+the closing cleanup/dead-code sweep. The sweep confirmed no dead inline copies
+remained: every leftover near-duplicate (pre-admission finished/waiting
+fast-path, post-snapshot slot check, the post-approval session ternary that
+narrows the `PostApprovalRouteResult` union) is live adapter code, deliberately
+kept.
+
 ## Roadmap
 
 - **Done (pilot):** admission gates extracted as pure functions (no superpipe
   needed there); delivery + post-activation decision pipelines; `decisionRun`
   combinator; interpreter dedup.
+- **Done (pilot 3):** run-tick admission/settlement/spawn cores and the
+  `processRunTick` staged interpreter — see "Pilot 3" above.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
@@ -176,5 +234,9 @@ async deciders carry a proof obligation (microtask-profile sensitivity).
 - Benchmark: `packages/daemon/scripts/benchmark/decision-pipeline.ts` (`bun run
   packages/daemon/scripts/benchmark/decision-pipeline.ts` from the repository root).
 - Pilot PRs: #2578, #2582, #2589, #2591 (branch `superpipe-pilot-1`).
+- Pilot 3 files: `packages/daemon/src/lib/space/runtime/{run-tick-admission-gates,
+  run-tick-decision-pipeline, run-completion-settlement, run-spawn-decisions}.ts`;
+  interpreter in `space-runtime.ts` (`processRunTick`). Pilot 3 PRs: #2601,
+  #2604, #2620, #2624, #2629, #2641.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.
