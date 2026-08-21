@@ -173,19 +173,18 @@ describe('classifyTurnCompletion', () => {
       expect(result.reopenForRetry).toBe(true);
     });
 
-    it('retryable errorResultSubtype with no turnError and no claim guard is still recoverable', () => {
+    it('normalizes an absent claim guard to permitting reopen', () => {
       const result = classifyTurnCompletion({
         producedResult: false,
         turnError: null,
         errorResultSubtype: 'error_max_turns',
         deliveryTurnStalled: false,
-        claimGuardHeld: false,
       });
       if (result.outcome !== 'recoverable_error') {
         throw new Error(`expected recoverable_error, got ${result.outcome}`);
       }
       expect(result.detail).toBe('Turn ended with a terminal error (error_max_turns)');
-      expect(result.reopenForRetry).toBe(false);
+      expect(result.reopenForRetry).toBe(true);
     });
 
     it('ignores a non-retryable errorResultSubtype when a recoverable turnError is present', () => {

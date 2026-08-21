@@ -10,7 +10,7 @@ export type TurnCompletionInput = {
   } | null;
   errorResultSubtype: string | null;
   deliveryTurnStalled: boolean;
-  claimGuardHeld: boolean;
+  claimGuardHeld?: boolean;
 };
 
 export type TurnCompletionOutcome =
@@ -48,7 +48,7 @@ export function classifyTurnCompletion(args: TurnCompletionInput): TurnCompletio
     outcome: 'recoverable_error',
     detail,
     category: args.turnError?.category,
-    reopenForRetry: args.claimGuardHeld,
+    reopenForRetry: args.claimGuardHeld ?? true,
   };
 }
 
