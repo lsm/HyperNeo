@@ -496,9 +496,12 @@ core:
   repository, which defaults omitted values to 3 when creating workflows and
   when mapping *summary* rows — but the full-workflow mapper (`rowToWorkflow`)
   assigns the nullable column through unchanged, so a legacy-null row resolves
-  to 3 through summary loads and to 5 through full-workflow loads: the
-  effective default depends on the load path. The defaults disagree, which is
-  part of the same centralization question. The
+  to 3 through summary loads, while full-workflow loads pass the null through:
+  `?? 5` consumers coerce it back to 5, but the primary `approve_task` caller's
+  `!== undefined` guard admits the null, the threshold becomes null, and
+  `level < null` is false — so approval **bypasses the threshold entirely** for
+  legacy-null full-workflow loads. The defaults disagree and the null leaks;
+  both are part of the same centralization question. The
   router owns only the denial routing — reason, message, and
   precedence against the target check (see the second recorded asymmetry
   below).
