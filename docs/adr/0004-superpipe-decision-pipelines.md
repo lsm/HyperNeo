@@ -165,9 +165,13 @@ Extracted:
 - `run-spawn-decisions.ts` — spawn admission, promotable-pending selection,
   spawn-failure classification, and the driveable-execution check.
 
-The shell keeps every effect and re-snapshots `nodeExecutionRepo.listByWorkflowRun`
-after each effectful stage (crash reset, recovery handlers, handoff repair,
-promotion) before the next decision.
+The shell keeps every execution-mutating effect and re-snapshots
+`nodeExecutionRepo.listByWorkflowRun` after each such stage (crash reset, the
+execution-mutating recovery handlers, handoff repair, promotion) before the
+next decision that consumes executions. The qualifier is load-bearing:
+`handleAliveStuckExecutions` can inject a runtime nag and return `none`, after
+which the tick proceeds to the next handler without a re-list — the invariant
+is about execution-mutating stages that continue, not about every effect.
 
 Four boundary caveats, recorded so the section is not read as a cleaner
 validation of the sandwich than it is. First, slot availability is modeled by a
