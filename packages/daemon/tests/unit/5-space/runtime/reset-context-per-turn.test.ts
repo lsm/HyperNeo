@@ -448,7 +448,10 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     const flush = new QueryModeHandler({
       session: live.session,
       db: {
-        getMessagesByStatus: mock(() => [{ ...deferred, dbId: 'db-handoff', timestamp: 1 }]),
+        getUserMessagesByStatus: mock(() => ({
+          messages: [{ ...deferred, dbId: 'db-handoff', timestamp: 1 }],
+          total: 1,
+        })),
         updateMessageStatus: mock(() => {}),
         getJobQueueRepo: mock(() => ({ activeDeliveryMessageUuids: () => new Set<string>() })),
       },
