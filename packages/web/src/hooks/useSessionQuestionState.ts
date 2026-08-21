@@ -68,9 +68,7 @@ export function useSessionQuestionState(sessionId: string | undefined): SessionQ
         if (!cancelled && sessionState) {
           applySessionState(sessionState, setPendingQuestion, setResolvedQuestions);
         }
-      } catch {
-        // Fetch failure is non-fatal — question state will be empty until next event
-      }
+      } catch {}
     };
 
     void fetchInitial();

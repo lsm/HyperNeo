@@ -60,16 +60,7 @@ function resolveTaskIdForSession(db: Database, sessionId: string): string | null
   try {
     const row = db
       .getDatabase()
-      .prepare(
-        `SELECT
-					CASE
-						WHEN session_context IS NULL THEN NULL
-						WHEN NOT json_valid(session_context) THEN NULL
-						ELSE json_extract(session_context, '$.taskId')
-					END AS task_id,
-					type
-				 FROM sessions WHERE id = ?`
-      )
+      .prepare(`SELECT task_id, type FROM sessions WHERE id = ?`)
       .get(sessionId) as { task_id: string | null; type: string | null } | undefined;
     const taskId =
       row?.type && TASK_SESSION_TYPES.includes(row.type) ? (row.task_id ?? null) : null;
@@ -106,22 +97,16 @@ function sessionWriteInvalidatesTaskId(method: string, args: unknown[]): string 
 function sessionScopeFromRow(row: {
   id: string;
   type: string | null;
-  session_context: string | null;
+  room_id: string | null;
+  space_id: string | null;
+  task_id: string | null;
 }): TableChangeScope {
-  let context: Record<string, unknown> | undefined;
-  if (row.session_context) {
-    try {
-      context = JSON.parse(row.session_context) as Record<string, unknown>;
-    } catch {
-      context = undefined;
-    }
-  }
   return {
     sessionId: row.id,
     sessionType: row.type ?? undefined,
-    roomId: typeof context?.roomId === 'string' ? context.roomId : undefined,
-    spaceId: typeof context?.spaceId === 'string' ? context.spaceId : undefined,
-    taskId: typeof context?.taskId === 'string' ? context.taskId : undefined,
+    roomId: row.room_id ?? undefined,
+    spaceId: row.space_id ?? undefined,
+    taskId: row.task_id ?? undefined,
   };
 }
 
@@ -130,9 +115,15 @@ function sessionScope(db: Database, sessionId: unknown): TableChangeScope {
   try {
     const row = db
       .getDatabase()
-      .prepare('SELECT id, type, session_context FROM sessions WHERE id = ?')
+      .prepare('SELECT id, type, room_id, space_id, task_id FROM sessions WHERE id = ?')
       .get(sessionId) as
-      | { id: string; type: string | null; session_context: string | null }
+      | {
+          id: string;
+          type: string | null;
+          room_id: string | null;
+          space_id: string | null;
+          task_id: string | null;
+        }
       | undefined;
     return row ? sessionScopeFromRow(row) : { sessionId };
   } catch {

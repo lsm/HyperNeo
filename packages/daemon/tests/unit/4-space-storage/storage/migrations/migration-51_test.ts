@@ -35,14 +35,10 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('fresh DB does NOT have agent_name or completion_summary (removed by M71)', () => {

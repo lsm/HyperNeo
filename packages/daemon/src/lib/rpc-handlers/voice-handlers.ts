@@ -354,9 +354,7 @@ async function transcribeAudio(
           if (liveEndpoint.protocol === 'http:' || liveEndpoint.protocol === 'https:') {
             endpoint = liveEndpoint;
           }
-        } catch {
-          // Keep the previously-validated endpoint if the live value is invalid.
-        }
+        } catch {}
         allowPrivateNetwork = liveVoice.allowPrivateNetwork ?? false;
         allowInsecureTls = liveVoice.allowInsecureTls ?? false;
         liveModel = liveVoice.model?.trim() || liveModel;
@@ -426,9 +424,7 @@ async function transcribeAudio(
       if (response.status < 300 || response.status >= 400 || !location) break;
       try {
         await response.body?.cancel();
-      } catch {
-        // Ignore body cancellation failures.
-      }
+      } catch {}
       if (hop === MAX_TRANSCRIPTION_REDIRECTS) {
         throw new Error('Voice transcription redirected too many times');
       }

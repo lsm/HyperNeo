@@ -273,10 +273,7 @@ export class AcpClient {
       if (params.sessionId !== this.sessionId) return;
       try {
         accept();
-      } catch {
-        // Acceptance callback failed — retryable on the next session/update or
-        // the prompt-response fallback; the update itself is still delivered.
-      }
+      } catch {}
       queue.push(params);
       if (resolveNext) {
         resolveNext();
@@ -304,11 +301,7 @@ export class AcpClient {
             this.lastPromptStopReason = result.stopReason;
             try {
               accept();
-            } catch {
-              // Acceptance callback failed — the row stays retryable and the
-              // runner's end-of-run settle terminalizes it; never leave
-              // `done` unset or sendPrompt waits forever on a settled request.
-            }
+            } catch {}
           }
           done = true;
         },
@@ -466,9 +459,7 @@ export class AcpClient {
     for (const subscriber of this.notificationSubscribers) {
       try {
         subscriber(notification);
-      } catch {
-        // Isolated subscriber errors
-      }
+      } catch {}
     }
   }
 }

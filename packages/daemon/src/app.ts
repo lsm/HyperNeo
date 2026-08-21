@@ -802,9 +802,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid) ?? null,
         isSessionArchived: (sessionId: string) =>
           reactiveDb?.db.getSession(sessionId)?.status === 'archived',
-        markDeliveryFailed: (sessionId: string, messageUuid: string) => {
-          reactiveDb?.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageUuid);
-        },
+        markDeliveryFailed: (sessionId: string, messageUuid: string) =>
+          reactiveDb?.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageUuid) ??
+          null,
+        publishStatusChanged: (sessionId: string, messageIds: string[]) =>
+          internalEventBus.publish('messages.statusChanged', {
+            sessionId,
+            messageIds,
+            status: 'failed',
+          }),
       }),
       {
         exemptJobs: { path: '$.role', equals: 'steer' },
@@ -828,9 +834,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
               internalEventBus.publish('session.error', { sessionId: sid, error }),
             settleSkippedDelivery: (uuid) =>
               session?.settleSkippedDelivery(uuid) ?? Promise.resolve(),
-          }).catch(() => {
-            /* dead-letter state settlement is best-effort */
-          });
+          }).catch(() => {});
         },
       }
     );
@@ -1022,9 +1026,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         try {
           server.stop();
-        } catch {
-          // Server already stopped
-        }
+        } catch {}
 
         const pendingCallsCount = messageHub.getPendingCallCount();
         if (pendingCallsCount > 0) {
@@ -1076,9 +1078,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
               logError(`[Daemon] stale-reclaim jitter reschedule failed for job ${jobId}`, error);
             });
           }
-        } catch {
-          /* best-effort on shutdown */
-        }
+        } catch {}
         await jobProcessor.stop();
         logInfo('[Daemon] Job queue processor stopped');
         await taskAgentManager.cleanupAll();

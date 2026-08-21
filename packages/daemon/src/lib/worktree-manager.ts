@@ -288,9 +288,7 @@ export class WorktreeManager {
       try {
         const commitStatus = await this.getCommitsAhead(session.worktree);
         baseBranch = commitStatus.baseBranch;
-      } catch {
-        // Fall back to the detected default branch.
-      }
+      } catch {}
     }
 
     let branchResult: { patch: string | null; truncated: boolean } = {
@@ -314,9 +312,7 @@ export class WorktreeManager {
       const files = await this.getChangedFiles(repoInfo.gitRoot);
       const file = files.find((entry) => entry.path === path);
       if (file?.status === 'untracked') isUntracked = true;
-    } catch {
-      // Best-effort: assume tracked and attempt the diff below.
-    }
+    } catch {}
     if (!isUntracked) {
       worktreeResult = await this.getFilePatch(
         git,
@@ -344,9 +340,7 @@ export class WorktreeManager {
           additions += stat.additions;
           deletions += stat.deletions;
         }
-      } catch {
-        // Stats are best-effort.
-      }
+      } catch {}
     }
 
     return {
@@ -557,9 +551,7 @@ export class WorktreeManager {
             try {
               resolve({ ok: true, data: JSON.parse(output) });
               return;
-            } catch {
-              // Fall through to a readable error below.
-            }
+            } catch {}
           }
           const message =
             (typeof stderr === 'string' && stderr.trim()) ||
@@ -749,9 +741,7 @@ export class WorktreeManager {
         const worktreeGit = this.getGit(worktreePath);
         await worktreeGit.raw(['submodule', 'update', '--init', '--recursive']);
         /* v8 ignore next 2 */
-      } catch {
-        // Submodule initialization failed, but this is non-fatal
-      }
+      } catch {}
 
       return {
         isWorktree: true,
@@ -792,9 +782,7 @@ export class WorktreeManager {
       if (deleteBranch && branch) {
         try {
           await git.branch(['-D', branch]);
-        } catch {
-          // Branch might not exist or already deleted
-        }
+        } catch {}
       }
     } catch (error) {
       this.logger.error(' Failed to remove worktree:', error);
@@ -891,9 +879,7 @@ export class WorktreeManager {
             if (worktree.branch.startsWith('session/') || worktree.branch.startsWith('task/')) {
               try {
                 await git.branch(['-D', worktree.branch]);
-              } catch {
-                // Could not delete branch, but this is non-fatal
-              }
+              } catch {}
             }
           } catch (error) {
             this.logger.error(
@@ -974,9 +960,7 @@ export class WorktreeManager {
       if (branchName) {
         return branchName;
       }
-    } catch {
-      // origin/HEAD not set, continue to fallback
-    }
+    } catch {}
 
     try {
       await git.revparse(['--verify', 'main']);
@@ -999,9 +983,7 @@ export class WorktreeManager {
       if (currentBranch) {
         return currentBranch;
       }
-    } catch {
-      // Error getting current branch, fall through to default
-    }
+    } catch {}
 
     return await this.getDefaultBranch(repoPath);
   }
@@ -1016,9 +998,7 @@ export class WorktreeManager {
         try {
           await git.revparse(['--verify', branch]);
           return branch;
-        } catch {
-          // Branch doesn't exist, continue
-        }
+        } catch {}
       }
     }
 
@@ -1030,9 +1010,7 @@ export class WorktreeManager {
       try {
         await git.revparse(['--verify', preferredBranch]);
         return preferredBranch;
-      } catch {
-        // Branch doesn't exist, continue
-      }
+      } catch {}
     }
 
     return currentBranch;

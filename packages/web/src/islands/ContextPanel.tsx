@@ -184,9 +184,7 @@ export function ContextPanel() {
 
   useEffect(() => {
     if (navSection === 'spaces') {
-      spaceStore.initGlobalList().catch(() => {
-        // Error tracked inside initGlobalList
-      });
+      spaceStore.initGlobalList().catch(() => {});
     }
   }, [navSection]);
   const activeSettingsSection = settingsSectionSignal.value;

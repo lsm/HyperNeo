@@ -13,6 +13,10 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { Database as DatabaseImpl } from '../../../../src/storage/sqlite-compat';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
+function byStatusResult(messages: SDKMessage[]): { messages: SDKMessage[]; total: number } {
+  return { messages, total: messages.length };
+}
+
 describe('QueryModeHandler', () => {
   let handler: QueryModeHandler;
   let mockSession: Session;
@@ -22,7 +26,7 @@ describe('QueryModeHandler', () => {
   let mockMessageQueue: MessageQueue;
   let mockLogger: Logger;
 
-  let getMessagesByStatusSpy: ReturnType<typeof mock>;
+  let getUserMessagesByStatusSpy: ReturnType<typeof mock>;
   let updateMessageStatusSpy: ReturnType<typeof mock>;
   let emitSpy: ReturnType<typeof mock>;
   let enqueueWithIdSpy: ReturnType<typeof mock>;
@@ -55,10 +59,10 @@ describe('QueryModeHandler', () => {
       },
     };
 
-    getMessagesByStatusSpy = mock(() => []);
+    getUserMessagesByStatusSpy = mock(() => ({ messages: [], total: 0 }));
     updateMessageStatusSpy = mock(() => {});
     mockDb = {
-      getMessagesByStatus: getMessagesByStatusSpy,
+      getUserMessagesByStatus: getUserMessagesByStatusSpy,
       updateMessageStatus: updateMessageStatusSpy,
       getJobQueueRepo: () => ({ activeDeliveryMessageUuids: () => new Set<string>() }),
     } as unknown as Database;
@@ -121,7 +125,7 @@ describe('QueryModeHandler', () => {
 
   describe('handleQueryTrigger', () => {
     it('should return success with 0 messages if no deferred messages', async () => {
-      getMessagesByStatusSpy.mockReturnValue([]);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult([]));
       handler = createHandler();
 
       const result = await handler.handleQueryTrigger();
@@ -138,7 +142,7 @@ describe('QueryModeHandler', () => {
           message: { role: 'user', content: 'Hello' },
         } as unknown as SDKMessage,
       ];
-      getMessagesByStatusSpy.mockReturnValue(savedMessages);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(savedMessages));
       handler = createHandler();
 
       await handler.handleQueryTrigger();
@@ -155,7 +159,7 @@ describe('QueryModeHandler', () => {
           message: { role: 'user', content: 'Hello' },
         } as unknown as SDKMessage,
       ];
-      getMessagesByStatusSpy.mockReturnValue(savedMessages);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(savedMessages));
       handler = createHandler();
 
       await handler.handleQueryTrigger();
@@ -176,7 +180,7 @@ describe('QueryModeHandler', () => {
           message: { role: 'user', content: 'Hello' },
         } as unknown as SDKMessage,
       ];
-      getMessagesByStatusSpy.mockReturnValue(savedMessages);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(savedMessages));
       handler = createHandler();
 
       await handler.handleQueryTrigger();
@@ -193,7 +197,7 @@ describe('QueryModeHandler', () => {
           message: { role: 'user', content: 'Hello world' },
         } as unknown as SDKMessage,
       ];
-      getMessagesByStatusSpy.mockReturnValue(savedMessages);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(savedMessages));
       handler = createHandler();
 
       await handler.handleQueryTrigger();
@@ -216,7 +220,7 @@ describe('QueryModeHandler', () => {
           },
         } as unknown as SDKMessage,
       ];
-      getMessagesByStatusSpy.mockReturnValue(savedMessages);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(savedMessages));
       handler = createHandler();
 
       await handler.handleQueryTrigger();
@@ -240,7 +244,7 @@ describe('QueryModeHandler', () => {
           message: { role: 'user', content },
         } as unknown as SDKMessage,
       ];
-      getMessagesByStatusSpy.mockReturnValue(savedMessages);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(savedMessages));
       handler = createHandler();
 
       await handler.handleQueryTrigger();
@@ -257,7 +261,7 @@ describe('QueryModeHandler', () => {
           message: { role: 'assistant', content: [] },
         } as unknown as SDKMessage,
       ];
-      getMessagesByStatusSpy.mockReturnValue(savedMessages);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(savedMessages));
       handler = createHandler();
 
       await handler.handleQueryTrigger();
@@ -274,7 +278,7 @@ describe('QueryModeHandler', () => {
           message: { role: 'user' },
         } as unknown as SDKMessage,
       ];
-      getMessagesByStatusSpy.mockReturnValue(savedMessages);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(savedMessages));
       handler = createHandler();
 
       await handler.handleQueryTrigger();
@@ -282,8 +286,51 @@ describe('QueryModeHandler', () => {
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
     });
 
+    it('should skip deferred rows without a resolvable uuid but still mark them enqueued', async () => {
+      const savedMessages: SDKMessage[] = [
+        {
+          dbId: 'db-legacy',
+          type: 'user',
+          message: { role: 'user', content: 'Legacy row without uuid' },
+        } as unknown as SDKMessage,
+        {
+          dbId: 'db-1',
+          uuid: 'uuid-1',
+          type: 'user',
+          message: { role: 'user', content: 'Hello' },
+        } as unknown as SDKMessage,
+      ];
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(savedMessages));
+      handler = createHandler();
+
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 2 });
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-legacy', 'db-1'], 'enqueued');
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-1', 'Hello');
+    });
+
+    it('should skip deferred rows with an empty uuid', async () => {
+      const savedMessages: SDKMessage[] = [
+        {
+          dbId: 'db-empty',
+          uuid: '',
+          type: 'user',
+          message: { role: 'user', content: 'Empty uuid' },
+        } as unknown as SDKMessage,
+      ];
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(savedMessages));
+      handler = createHandler();
+
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 1 });
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+    });
+
     it('should return error on failure', async () => {
-      getMessagesByStatusSpy.mockImplementation(() => {
+      getUserMessagesByStatusSpy.mockImplementation(() => {
         throw new Error('Database error');
       });
       handler = createHandler();
@@ -303,7 +350,7 @@ describe('QueryModeHandler', () => {
         { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'Hello' } },
         { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'World' } },
       ] as unknown as SDKMessage[];
-      getMessagesByStatusSpy.mockReturnValue(savedMessages);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(savedMessages));
       handler = createHandler();
 
       const result = await handler.handleQueryTrigger();
@@ -314,7 +361,7 @@ describe('QueryModeHandler', () => {
 
   describe('sendEnqueuedMessagesOnTurnEnd', () => {
     it('should return early if no enqueued messages', async () => {
-      getMessagesByStatusSpy.mockReturnValue([]);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult([]));
       handler = createHandler();
 
       await handler.sendEnqueuedMessagesOnTurnEnd();
@@ -332,7 +379,7 @@ describe('QueryModeHandler', () => {
           message: { role: 'user', content: 'Queued message' },
         } as unknown as SDKMessage,
       ];
-      getMessagesByStatusSpy.mockReturnValue(queuedMessages);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(queuedMessages));
       handler = createHandler();
 
       await handler.sendEnqueuedMessagesOnTurnEnd();
@@ -350,7 +397,7 @@ describe('QueryModeHandler', () => {
           message: { role: 'user', content: 'Already queued' },
         } as unknown as SDKMessage,
       ];
-      getMessagesByStatusSpy.mockReturnValue(queuedMessages);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(queuedMessages));
       hasPendingOrInFlightSpy.mockImplementation((uuid: string) => uuid === 'uuid-1');
       handler = createHandler();
 
@@ -369,7 +416,7 @@ describe('QueryModeHandler', () => {
           subtype: 'init',
         } as unknown as SDKMessage,
       ];
-      getMessagesByStatusSpy.mockReturnValue(queuedMessages);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(queuedMessages));
       handler = createHandler();
 
       await handler.sendEnqueuedMessagesOnTurnEnd();
@@ -378,7 +425,7 @@ describe('QueryModeHandler', () => {
     });
 
     it('should handle errors gracefully', async () => {
-      getMessagesByStatusSpy.mockImplementation(() => {
+      getUserMessagesByStatusSpy.mockImplementation(() => {
         throw new Error('Database error');
       });
       handler = createHandler();
@@ -401,7 +448,7 @@ describe('QueryModeHandler', () => {
           message: { role: 'user', content: 'Second' },
         },
       ] as unknown as SDKMessage[];
-      getMessagesByStatusSpy.mockReturnValue(queuedMessages);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(queuedMessages));
       handler = createHandler();
 
       await handler.sendEnqueuedMessagesOnTurnEnd();
@@ -427,7 +474,7 @@ describe('QueryModeHandler', () => {
           message: { role: 'user', content },
         } as unknown as SDKMessage,
       ];
-      getMessagesByStatusSpy.mockReturnValue(queuedMessages);
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(queuedMessages));
       handler = createHandler();
 
       await handler.sendEnqueuedMessagesOnTurnEnd();
@@ -454,8 +501,8 @@ describe('QueryModeHandler', () => {
           message: { role: 'user', content: 'Next turn (deferred)' },
         } as unknown as SDKMessage,
       ];
-      getMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
-        status === 'enqueued' ? queuedMessages : savedMessages
+      getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
+        status === 'enqueued' ? byStatusResult(queuedMessages) : byStatusResult(savedMessages)
       );
       handler = createHandler();
 
@@ -500,7 +547,7 @@ describe('QueryModeHandler', () => {
       `);
       jobQueue = new JobQueueRepository(jobsDb as never);
       mockDb = {
-        getMessagesByStatus: getMessagesByStatusSpy,
+        getUserMessagesByStatus: getUserMessagesByStatusSpy,
         updateMessageStatus: updateMessageStatusSpy,
         getJobQueueRepo: () => jobQueue,
       } as unknown as Database;
@@ -522,11 +569,18 @@ describe('QueryModeHandler', () => {
     }
 
     it('handleQueryTrigger coalesces multiple deferred messages into ONE batched turn job', async () => {
-      getMessagesByStatusSpy.mockReturnValue([
-        { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-        { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
-        { dbId: 'db-3', uuid: 'uuid-3', type: 'user', message: { role: 'user', content: 'three' } },
-      ] as unknown as SDKMessage[]);
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+          { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
+          {
+            dbId: 'db-3',
+            uuid: 'uuid-3',
+            type: 'user',
+            message: { role: 'user', content: 'three' },
+          },
+        ] as unknown as SDKMessage[])
+      );
 
       handler = new QueryModeHandler(createContext());
       const result = await handler.handleQueryTrigger();
@@ -545,10 +599,61 @@ describe('QueryModeHandler', () => {
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
     });
 
+    it('handleQueryTrigger with deliverIndividually sends each deferred message as its own job', async () => {
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+          { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
+          {
+            dbId: 'db-3',
+            uuid: 'uuid-3',
+            type: 'user',
+            message: { role: 'user', content: 'three' },
+          },
+        ] as unknown as SDKMessage[])
+      );
+
+      handler = new QueryModeHandler(createContext());
+      const result = await handler.handleQueryTrigger({ deliverIndividually: true });
+
+      expect(result).toEqual({ success: true, messageCount: 3 });
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1', 'db-2', 'db-3'], 'enqueued');
+      const jobs = deliveryUuids();
+      expect(jobs.map((j) => j.uuid)).toEqual(['uuid-1', 'uuid-2', 'uuid-3']);
+      expect(jobs.find((j) => j.uuid === 'uuid-1')?.role).toBe('turn');
+      expect(jobs.filter((j) => j.role === 'steer')).toHaveLength(2);
+      const payloads = jobsDb
+        .prepare(`SELECT payload FROM job_queue WHERE queue = 'message_delivery'`)
+        .all() as Array<{ payload: string }>;
+      expect(payloads.every((p) => !('batchUuids' in JSON.parse(p.payload)))).toBe(true);
+    });
+
+    it('handleQueryTrigger with excludeMessageUuid leaves the excluded row deferred', async () => {
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+          { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
+        ] as unknown as SDKMessage[])
+      );
+
+      handler = new QueryModeHandler(createContext());
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        excludeMessageUuid: 'uuid-2',
+      });
+
+      expect(result).toEqual({ success: true, messageCount: 1 });
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'enqueued');
+      const jobs = deliveryUuids();
+      expect(jobs.map((j) => j.uuid)).toEqual(['uuid-1']);
+    });
+
     it('handleQueryTrigger creates durable ownership before publishing enqueued status', async () => {
-      getMessagesByStatusSpy.mockReturnValue([
-        { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-      ] as unknown as SDKMessage[]);
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+        ] as unknown as SDKMessage[])
+      );
       let ownedWhenPublished = false;
       emitSpy.mockImplementation(async (event: string) => {
         if (event === 'messages.statusChanged') {
@@ -563,9 +668,11 @@ describe('QueryModeHandler', () => {
     });
 
     it('handleQueryTrigger publishes enqueued status when durable enqueue fails', async () => {
-      getMessagesByStatusSpy.mockReturnValue([
-        { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-      ] as unknown as SDKMessage[]);
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+        ] as unknown as SDKMessage[])
+      );
       const enqueue = jobQueue.enqueue.bind(jobQueue);
       jobQueue.enqueue = mock(() => {
         throw new Error('queue unavailable');
@@ -594,10 +701,12 @@ describe('QueryModeHandler', () => {
           parentToolUseId: null,
         },
       });
-      getMessagesByStatusSpy.mockReturnValue([
-        { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-        { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
-      ] as unknown as SDKMessage[]);
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+          { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
+        ] as unknown as SDKMessage[])
+      );
 
       handler = new QueryModeHandler(createContext());
       const result = await handler.handleQueryTrigger();
@@ -613,19 +722,26 @@ describe('QueryModeHandler', () => {
     });
 
     it('handleQueryTrigger does NOT batch a mixed flush (image between texts preserves queue order)', async () => {
-      getMessagesByStatusSpy.mockReturnValue([
-        { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-        {
-          dbId: 'db-2',
-          uuid: 'uuid-2',
-          type: 'user',
-          message: {
-            role: 'user',
-            content: [{ type: 'image', source: { type: 'base64' } }],
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+          {
+            dbId: 'db-2',
+            uuid: 'uuid-2',
+            type: 'user',
+            message: {
+              role: 'user',
+              content: [{ type: 'image', source: { type: 'base64' } }],
+            },
           },
-        },
-        { dbId: 'db-3', uuid: 'uuid-3', type: 'user', message: { role: 'user', content: 'three' } },
-      ] as unknown as SDKMessage[]);
+          {
+            dbId: 'db-3',
+            uuid: 'uuid-3',
+            type: 'user',
+            message: { role: 'user', content: 'three' },
+          },
+        ] as unknown as SDKMessage[])
+      );
 
       handler = new QueryModeHandler(createContext());
       const result = await handler.handleQueryTrigger();
@@ -643,15 +759,22 @@ describe('QueryModeHandler', () => {
     });
 
     it('handleQueryTrigger does NOT batch a flush containing an SDK slash command', async () => {
-      getMessagesByStatusSpy.mockReturnValue([
-        {
-          dbId: 'db-1',
-          uuid: 'uuid-1',
-          type: 'user',
-          message: { role: 'user', content: '/compact' },
-        },
-        { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'note' } },
-      ] as unknown as SDKMessage[]);
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          {
+            dbId: 'db-1',
+            uuid: 'uuid-1',
+            type: 'user',
+            message: { role: 'user', content: '/compact' },
+          },
+          {
+            dbId: 'db-2',
+            uuid: 'uuid-2',
+            type: 'user',
+            message: { role: 'user', content: 'note' },
+          },
+        ] as unknown as SDKMessage[])
+      );
 
       handler = new QueryModeHandler(createContext());
       const result = await handler.handleQueryTrigger();
@@ -675,11 +798,18 @@ describe('QueryModeHandler', () => {
           batchUuids: ['uuid-1', 'uuid-2', 'uuid-3'],
         },
       });
-      getMessagesByStatusSpy.mockReturnValue([
-        { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-        { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
-        { dbId: 'db-3', uuid: 'uuid-3', type: 'user', message: { role: 'user', content: 'three' } },
-      ] as unknown as SDKMessage[]);
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+          { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
+          {
+            dbId: 'db-3',
+            uuid: 'uuid-3',
+            type: 'user',
+            message: { role: 'user', content: 'three' },
+          },
+        ] as unknown as SDKMessage[])
+      );
 
       handler = new QueryModeHandler(createContext());
       const result = await handler.handleQueryTrigger();
@@ -691,9 +821,11 @@ describe('QueryModeHandler', () => {
     });
 
     it('sendEnqueuedMessagesOnTurnEnd enqueues a durable job per enqueued message', async () => {
-      getMessagesByStatusSpy.mockReturnValue([
-        { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'q' } },
-      ] as unknown as SDKMessage[]);
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'q' } },
+        ] as unknown as SDKMessage[])
+      );
 
       handler = new QueryModeHandler(createContext());
       await handler.sendEnqueuedMessagesOnTurnEnd();
@@ -716,14 +848,16 @@ describe('QueryModeHandler', () => {
           parentToolUseId: null,
         },
       });
-      getMessagesByStatusSpy.mockReturnValue([
-        {
-          dbId: 'db-owned',
-          uuid: 'uuid-owned',
-          type: 'user',
-          message: { role: 'user', content: 'already durable' },
-        },
-      ] as unknown as SDKMessage[]);
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          {
+            dbId: 'db-owned',
+            uuid: 'uuid-owned',
+            type: 'user',
+            message: { role: 'user', content: 'already durable' },
+          },
+        ] as unknown as SDKMessage[])
+      );
 
       handler = new QueryModeHandler(createContext());
       await handler.sendEnqueuedMessagesOnTurnEnd();
@@ -734,14 +868,16 @@ describe('QueryModeHandler', () => {
     });
 
     it('sendEnqueuedMessagesOnTurnEnd skips v2 delivery owned by the in-memory queue', async () => {
-      getMessagesByStatusSpy.mockReturnValue([
-        {
-          dbId: 'db-owned',
-          uuid: 'uuid-owned',
-          type: 'user',
-          message: { role: 'user', content: 'already admitted' },
-        },
-      ] as unknown as SDKMessage[]);
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          {
+            dbId: 'db-owned',
+            uuid: 'uuid-owned',
+            type: 'user',
+            message: { role: 'user', content: 'already admitted' },
+          },
+        ] as unknown as SDKMessage[])
+      );
       hasPendingOrInFlightSpy.mockImplementation((uuid: string) => uuid === 'uuid-owned');
 
       handler = new QueryModeHandler(createContext());

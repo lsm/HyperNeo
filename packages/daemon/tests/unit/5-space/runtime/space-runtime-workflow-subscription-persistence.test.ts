@@ -147,9 +147,7 @@ describe('SpaceRuntime workflow subscription persistence', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   test('registerSubscription writes through to the table and the trie', () => {

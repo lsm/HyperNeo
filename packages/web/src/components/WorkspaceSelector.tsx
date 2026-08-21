@@ -40,9 +40,7 @@ export function WorkspaceSelector({
           setSelectedPath(entries[0].path);
         }
       })
-      .catch(() => {
-        // Non-critical — proceed without history
-      });
+      .catch(() => {});
   }, []);
 
   const activePath = showCustomInput ? customPath.trim() : selectedPath;
@@ -84,7 +82,6 @@ export function WorkspaceSelector({
       setShowCustomInput(true);
       setSelectedPath('');
     } else if (value === '__none__') {
-      // placeholder, do nothing
     } else {
       setSelectedPath(value);
       setShowCustomInput(false);

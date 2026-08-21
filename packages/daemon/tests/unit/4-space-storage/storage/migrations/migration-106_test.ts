@@ -107,9 +107,7 @@ describe('Migration 106: backfill preset agent template tracking', () => {
   afterAll(() => {
     try {
       rmSync(templateDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   beforeEach(() => {
@@ -130,14 +128,10 @@ describe('Migration 106: backfill preset agent template tracking', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('canonical preset name → template_name + template_hash backfilled', () => {

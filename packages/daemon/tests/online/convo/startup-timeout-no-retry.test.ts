@@ -67,9 +67,7 @@ async function waitForSessionError(
     try {
       const error = await getSessionError(daemon, sessionId, rpcTimeout);
       if (error) return error;
-    } catch {
-      // Transient RPC failure — keep polling until the deadline.
-    }
+    } catch {}
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(

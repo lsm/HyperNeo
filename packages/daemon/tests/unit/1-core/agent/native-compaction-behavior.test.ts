@@ -268,7 +268,7 @@ function driveCompactionRefresh(opts: {
   const db = {
     saveSDKMessage: mock(() => true),
     updateSession: mock(() => {}),
-    getMessagesByStatus: mock(() => []),
+    getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
     getMessageByStatusAndUuid: mock(() => null),
     updateMessageStatus: mock(() => {}),
     updateMessageTimestamp: mock(() => {}),

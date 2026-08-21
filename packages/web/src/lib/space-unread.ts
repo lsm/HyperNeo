@@ -13,18 +13,14 @@ function loadLastSeen(): Map<string, number> {
       const data = JSON.parse(stored) as Record<string, number>;
       return new Map(Object.entries(data));
     }
-  } catch {
-    // Ignore errors loading unread data
-  }
+  } catch {}
   return new Map();
 }
 
 function saveLastSeen(counts: Map<string, number>): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(counts)));
-  } catch {
-    // Ignore errors saving unread data
-  }
+  } catch {}
 }
 
 export function getSpaceSessionUnreadCount(id: string, messageCount: number | undefined): number {
@@ -69,18 +65,14 @@ function loadLastSeenTasks(): Map<string, number> {
       const data = JSON.parse(stored) as Record<string, number>;
       return new Map(Object.entries(data));
     }
-  } catch {
-    // Ignore errors loading unread data
-  }
+  } catch {}
   return new Map();
 }
 
 function saveLastSeenTasks(counts: Map<string, number>): void {
   try {
     localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(Object.fromEntries(counts)));
-  } catch {
-    // Ignore errors saving unread data
-  }
+  } catch {}
 }
 
 export function seedSpaceTasksSeen(tasks: ReadonlyArray<{ id: string; updatedAt: number }>): void {

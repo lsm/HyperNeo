@@ -128,13 +128,9 @@ describe('Migration 24: rename failed → needs_attention', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // Ignore errors
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // Ignore errors
-    }
+    } catch {}
   });
 });

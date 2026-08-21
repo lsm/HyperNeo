@@ -2958,9 +2958,7 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
     } finally {
       try {
         db.close();
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     }
   });
 });

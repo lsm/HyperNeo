@@ -160,9 +160,7 @@ export function buildActiveTurnSummariesFromRows(
           if (maybe && typeof maybe === 'object') {
             parsedInput = maybe as Record<string, unknown>;
           }
-        } catch {
-          // Leave parsedInput empty — preview falls through to `tool_name: …`.
-        }
+        } catch {}
       } else if (rawInput && typeof rawInput === 'object') {
         parsedInput = rawInput as Record<string, unknown>;
       }

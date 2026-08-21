@@ -437,6 +437,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(198), () => runMigration198(db));
 
   run(migrationMarkerKey(199), () => runMigration199(db));
+
+  run(migrationMarkerKey(200), () => runMigration200(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -548,10 +550,7 @@ export function runMigration96(db: BunDatabase): void {
   }
   try {
     db.exec(stmt);
-  } catch {
-    // Defensive: swallow errors on ancient schemas. The migration's only job
-    // is a cleanup nudge — failing here would block unrelated migrations.
-  }
+  } catch {}
 }
 
 export function runMigration97(db: BunDatabase): void {
@@ -606,9 +605,7 @@ function runMigration2(db: BunDatabase): void {
     db.exec(`DROP TABLE IF EXISTS messages`);
     db.exec(`DROP INDEX IF EXISTS idx_messages_session`);
     db.exec(`DROP INDEX IF EXISTS idx_tool_calls_message`);
-  } catch {
-    // Tables don't exist, migration already complete
-  }
+  } catch {}
 }
 
 function runMigration3(db: BunDatabase): void {
@@ -812,9 +809,7 @@ export function runMigration12(db: BunDatabase): void {
         WHERE id = 1
       `);
     }
-  } catch {
-    // Log but don't throw - migration errors shouldn't crash the app
-  }
+  } catch {}
 }
 
 function runMigration13(db: BunDatabase): void {
@@ -1035,9 +1030,7 @@ function runMigration16(db: BunDatabase): void {
       ).run(testId);
       db.prepare(`DELETE FROM session_groups WHERE id = ?`).run(testId);
       needsGroupMigration = true;
-    } catch {
-      // 'hibernated' already not allowed — migration done
-    }
+    } catch {}
 
     if (needsGroupMigration) {
       db.exec('PRAGMA foreign_keys = OFF');
@@ -1698,9 +1691,7 @@ function runMigrationRoomCleanup(db: BunDatabase): void {
       );
       db.exec(`DELETE FROM sessions WHERE id = '${testId}'`);
       return;
-    } catch {
-      // Constraint is outdated — rebuild sessions below
-    }
+    } catch {}
 
     db.exec(`PRAGMA ignore_check_constraints = 1`);
     db.exec(`UPDATE sessions SET type = 'coder' WHERE type IN ('craft', 'room_self')`);
@@ -2637,9 +2628,7 @@ function runMigration40(db: BunDatabase): void {
   }
 }
 
-function runMigration41(_db: BunDatabase): void {
-  // No-op.
-}
+function runMigration41(_db: BunDatabase): void {}
 
 function runMigration42(db: BunDatabase): void {
   if (!tableExists(db, 'session_groups') || !tableExists(db, 'tasks')) {
@@ -3375,9 +3364,7 @@ export function runMigration55(db: BunDatabase): void {
   try {
     db.prepare(`SELECT agent_name FROM space_tasks LIMIT 1`).all();
     return;
-  } catch {
-    // agent_name doesn't exist — proceed with migration (unless M71 already cleaned up)
-  }
+  } catch {}
 
   if (!tableHasColumn(db, 'space_tasks', 'task_type')) {
     return;
@@ -4211,9 +4198,7 @@ export function runMigration70(db: BunDatabase): void {
       if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.path) {
         newPath = parsed[0].path as string;
       }
-    } catch {
-      // JSON parse failed — fall through to sentinel
-    }
+    } catch {}
     update.run(newPath, row.id);
   }
 }
@@ -5050,9 +5035,7 @@ export function runMigration86(db: BunDatabase): void {
       | { t: string }
       | undefined;
     if (row && row.t === 'integer') spacesAlreadyNumeric = true;
-  } catch {
-    // Column might not exist yet — proceed with full spaces rebuild.
-  }
+  } catch {}
 
   if (!spacesAlreadyNumeric) {
     db.exec('PRAGMA foreign_keys = OFF');
@@ -5602,11 +5585,7 @@ export function runMigration101(db: BunDatabase): void {
           }
         }
       }
-    } catch {
-      // Defensive: a malformed global_settings row should not break all
-      // later migrations. Leaving the table empty is safe — sessions will
-      // keep using the legacy list until the caller migrates overrides.
-    }
+    } catch {}
   }
 
   if (tableExists(db, 'sessions') && tableExists(db, 'app_mcp_servers')) {
@@ -5678,9 +5657,7 @@ export function runMigration102(db: BunDatabase): void {
     db.prepare(
       `UPDATE global_settings SET settings = ?, updated_at = datetime('now') WHERE id = 1`
     ).run(JSON.stringify(settings));
-  } catch {
-    // Swallow — same policy as runMigration12.
-  }
+  } catch {}
 }
 
 export function runMigration103(db: BunDatabase): void {
@@ -6030,10 +6007,7 @@ export function runMigration108(db: BunDatabase): void {
           ).run(JSON.stringify(settings));
         }
       }
-    } catch {
-      // Malformed settings should not block startup; the registry rows above
-      // are the authoritative availability surface.
-    }
+    } catch {}
   }
 
   if (tableExists(db, 'sessions')) {
@@ -8337,9 +8311,7 @@ function runMigration147(db: BunDatabase): void {
   ]) {
     try {
       db.exec(stmt);
-    } catch {
-      // Column already exists — safe to ignore.
-    }
+    } catch {}
   }
 }
 
@@ -9507,4 +9479,35 @@ export function runMigration199(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
   db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_type`);
   db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_consumed_seq`);
+}
+
+export function runMigration200(db: BunDatabase): void {
+  if (!tableExists(db, 'sessions') || !tableHasColumn(db, 'sessions', 'session_context')) {
+    return;
+  }
+  const contextKeyColumns: Array<[string, string]> = [
+    ['room_id', '$.roomId'],
+    ['space_id', '$.spaceId'],
+    ['task_id', '$.taskId'],
+  ];
+  for (const [column, path] of contextKeyColumns) {
+    const columnAlreadyAdded = !!db
+      .prepare(`SELECT name FROM pragma_table_xinfo('sessions') WHERE name = ?`)
+      .get(column);
+    if (columnAlreadyAdded) continue;
+    db.exec(
+      `ALTER TABLE sessions ADD COLUMN ${column} TEXT GENERATED ALWAYS AS ` +
+        `(CASE WHEN json_valid(session_context) THEN json_extract(session_context, '${path}') END) VIRTUAL`
+    );
+  }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_sessions_room_id ON sessions(room_id) WHERE room_id IS NOT NULL`
+  );
+  if (tableHasColumn(db, 'sessions', 'metadata')) {
+    db.exec(`DROP INDEX IF EXISTS idx_sessions_space_agent_provenance`);
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_sessions_space_agent_provenance ` +
+        `ON sessions(space_id, json_extract(metadata, '$.promptProvenance.agentId'))`
+    );
+  }
 }

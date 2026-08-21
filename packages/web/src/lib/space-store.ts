@@ -390,9 +390,7 @@ class SpaceStore {
     for (const cleanup of this.globalListCleanupFns) {
       try {
         cleanup();
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
     this.globalListCleanupFns = [];
 
@@ -1256,9 +1254,7 @@ class SpaceStore {
     for (const cleanup of this.cleanupFunctions) {
       try {
         cleanup();
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
     this.cleanupFunctions = [];
     this.unsubscribeTaskActivity();
@@ -1439,9 +1435,7 @@ class SpaceStore {
     for (const cleanup of this.taskActivityCleanupFns) {
       try {
         cleanup();
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
     this.taskActivityCleanupFns = [];
     this.activeTaskActivityTaskId = null;
@@ -1538,9 +1532,7 @@ class SpaceStore {
     for (const cleanup of this.taskMessageActivityCleanupFns) {
       try {
         cleanup();
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
     this.taskMessageActivityCleanupFns = [];
     this.activeTaskMessageActivityTaskId = null;
@@ -1626,9 +1618,7 @@ class SpaceStore {
     for (const cleanup of this.nodeExecCleanupFns) {
       try {
         cleanup();
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
     this.nodeExecCleanupFns = [];
 
@@ -1701,9 +1691,7 @@ class SpaceStore {
     for (const cleanup of this.spaceSessionsCleanupFns) {
       try {
         cleanup();
-      } catch {
-        // Ignore
-      }
+      } catch {}
     }
     this.spaceSessionsCleanupFns = [];
 

@@ -530,7 +530,6 @@ export function ModelsSettings() {
       try {
         await fetchModels(false);
       } catch {
-        // Initial load failed — models will remain empty until user refreshes
       } finally {
         setLoading(false);
       }

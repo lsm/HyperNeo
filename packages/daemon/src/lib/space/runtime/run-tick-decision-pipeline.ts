@@ -14,6 +14,10 @@ function decided(ctx: RunTickDecisionCtx, decision: RunTickAdmissionDecision): R
   return { ...ctx, decision };
 }
 
+function readLazyInput<T>(value: T | (() => T)): T {
+  return typeof value === 'function' ? (value as () => T)() : value;
+}
+
 export function applyMissingRunGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
   return ctx.runStatus === null ? decided(ctx, { action: 'skip', reason: 'missing_run' }) : ctx;
 }
@@ -63,14 +67,18 @@ export function applyTaskStoppedGate(ctx: RunTickDecisionCtx): RunTickDecisionCt
 }
 
 export function applyExecutionsPresentGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
-  return ctx.executionCount > 0 ? ctx : decided(ctx, { action: 'skip', reason: 'no_executions' });
+  return readLazyInput(ctx.executionCount) > 0
+    ? ctx
+    : decided(ctx, { action: 'skip', reason: 'no_executions' });
 }
 
 export function applyBlockedExecutionsGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
-  if (ctx.runIsComplete || !ctx.hasBlockedExecution) return ctx;
+  if (readLazyInput(ctx.runIsComplete)) return ctx;
+  if (!readLazyInput(ctx.hasBlockedExecution)) return ctx;
   return decided(ctx, {
     action: 'blockOnBlockedExecutions',
-    blockedReason: ctx.firstBlockedResult ?? 'One or more workflow agents are blocked',
+    blockedReason:
+      readLazyInput(ctx.firstBlockedResult) ?? 'One or more workflow agents are blocked',
   });
 }
 

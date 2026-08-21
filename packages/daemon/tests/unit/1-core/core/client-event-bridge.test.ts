@@ -101,6 +101,7 @@ describe('ClientEventBridge', () => {
       expect(eventHandlers.has('session.created')).toBe(true);
       expect(eventHandlers.has('session.deleted')).toBe(true);
       expect(eventHandlers.has('context.updated')).toBe(true);
+      expect(eventHandlers.has('messages.statusChanged')).toBe(true);
     });
 
     it('should subscribe to connection/auth bridge events', () => {
@@ -143,7 +144,7 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.start();
 
-      expect(eventHandlers.size).toBe(33);
+      expect(eventHandlers.size).toBe(34);
     });
   });
 
@@ -154,7 +155,7 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.stop();
 
-      expect(unsubscribers.length).toBe(34);
+      expect(unsubscribers.length).toBe(35);
     });
   });
 
@@ -486,6 +487,18 @@ describe('ClientEventBridge', () => {
 
       expect(published[0].method).toBe('providers.changed');
       expect(published[0].data).toEqual(data);
+      expect(published[0].channel).toEqual({ kind: 'global' });
+    });
+
+    it('forwards messages.statusChanged to global channel with sessionId-only payload', () => {
+      const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+      createClientEventBridge(internalEventBus, gateway).start();
+
+      const data = { sessionId: 'sess-1', messageIds: ['msg-1', 'msg-2'], status: 'consumed' };
+      eventHandlers.get('messages.statusChanged')![0](data);
+
+      expect(published[0].method).toBe('messages.statusChanged');
+      expect(published[0].data).toEqual({ sessionId: 'sess-1' });
       expect(published[0].channel).toEqual({ kind: 'global' });
     });
   });

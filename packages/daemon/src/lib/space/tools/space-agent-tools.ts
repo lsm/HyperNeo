@@ -5,7 +5,6 @@ import {
   generateUUID,
   getWorkflowRunExecutionStatusLabel,
   isKnownToolEntry,
-  isRateOrUsageLimited,
   isWorkflowRecoveryTransition,
   KNOWN_TOOLS,
 } from '@hyperneo/shared';
@@ -69,6 +68,21 @@ import { mapPostApprovalDispatchWarning } from '../runtime/post-approval-router'
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
+import { decideUpdateTask } from './space-tool-pipeline';
+import {
+  routeApproveTask,
+  routeArchiveTask,
+  routeCancelTask,
+  routeCreateTaskWorkflowRef,
+  routePublishTask,
+  routeReassignTask,
+  routeRetryTask,
+} from './task-transition-routing';
+import {
+  decideAutonomyAdmission,
+  getToolAutonomyRequirement,
+  resolveEffectiveAutonomyLevel,
+} from './tool-admission-gates';
 import { SpaceTaskStatusSchema, UpdateTaskStatusParamDescription } from './task-agent-tool-schemas';
 import { validateGlobPattern, validateSource } from '../../external-events/topic-validator';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
@@ -179,7 +193,6 @@ const SPACE_SESSION_DEFAULT_LIMIT = 50;
 const SESSION_DETAIL_MESSAGE_LIMIT = 5;
 const SESSION_MESSAGE_DEFAULT_LIMIT = 20;
 const SESSION_MESSAGE_MAX_LIMIT = 100;
-const SESSION_WRITE_AUTONOMY_LEVEL = 4;
 
 function normalizeGoalUpdateArgs(args: GoalToolUpdateArgs) {
   return {
@@ -585,7 +598,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
                 is_worktree, git_branch, processing_state, type, session_context
            FROM sessions
           WHERE id = ?
-            AND json_extract(session_context, '$.spaceId') = ?
+            AND space_id = ?
           LIMIT 1`
       )
       .get(sessionId, spaceId) as SpaceSessionRow | undefined;
@@ -656,40 +669,30 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return 1;
   }
 
-  async function resolveEffectiveAutonomy(): Promise<{
-    level: number;
-    spaceLevel: number;
-    agentLevel: number | null;
-  }> {
+  async function requireSessionWriteAutonomy(toolName: string): Promise<void> {
     const spaceLevel = getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1;
     const agentLevel = getCallingAgentAutonomyLevel();
-    const level = agentLevel == null ? spaceLevel : Math.min(spaceLevel, agentLevel);
-    return { level, spaceLevel, agentLevel };
-  }
-
-  function isAgentCeilingBinding(spaceLevel: number, agentLevel: number | null): boolean {
-    return agentLevel != null && agentLevel < spaceLevel;
-  }
-
-  async function requireSessionWriteAutonomy(toolName: string): Promise<void> {
-    const { level, spaceLevel, agentLevel } = await resolveEffectiveAutonomy();
-    if (level < SESSION_WRITE_AUTONOMY_LEVEL) {
-      if (isAgentCeilingBinding(spaceLevel, agentLevel)) {
-        logAudit(toolName, {
-          blocked: true,
-          reason: 'agent_autonomy_ceiling',
-          agentLevel,
-          spaceLevel,
-          required: SESSION_WRITE_AUTONOMY_LEVEL,
-        });
-        throw new Error(
-          `${toolName} not permitted: agent autonomy ceiling ${agentLevel} (space ${spaceLevel}) < required level ${SESSION_WRITE_AUTONOMY_LEVEL}. Request human approval.`
-        );
-      }
-      throw new Error(
-        `${toolName} not permitted: space autonomy level ${spaceLevel} < required level ${SESSION_WRITE_AUTONOMY_LEVEL}. Request human approval.`
-      );
+    const { level } = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
+    const required = getToolAutonomyRequirement(toolName);
+    if (required === undefined) return;
+    const admission = decideAutonomyAdmission({
+      toolName,
+      level,
+      required,
+      agentLevel,
+      spaceLevel,
+    });
+    if (admission.action === 'allow') return;
+    if (admission.reason === 'agent_autonomy_ceiling') {
+      logAudit(toolName, {
+        blocked: true,
+        reason: admission.reason,
+        agentLevel: admission.agentLevel,
+        spaceLevel: admission.spaceLevel,
+        required: admission.required,
+      });
     }
+    throw new Error(admission.message);
   }
 
   function summarizeMessageContent(raw: string): string {
@@ -871,9 +874,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           spaceId,
           taskId,
         });
-      } catch {
-        // Audit logging is best-effort; never block the tool operation.
-      }
+      } catch {}
     }
   }
 
@@ -911,9 +912,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (!refresh.success) {
           try {
             repo.deleteSubscription(stored.id);
-          } catch {
-            // best-effort cleanup; the reason below is authoritative
-          }
+          } catch {}
           skipped.push({
             source: sub.source,
             topic: sub.topic,
@@ -926,9 +925,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (stored) {
           try {
             repo.deleteSubscription(stored.id);
-          } catch {
-            // Already in an error path; leave cleanup to the operator.
-          }
+          } catch {}
         }
         skipped.push({
           source: sub.source,
@@ -991,7 +988,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         const limit = Math.min(args.limit ?? SPACE_SESSION_DEFAULT_LIMIT, SPACE_SESSION_MAX_LIMIT);
         const offset = Math.max(args.offset ?? 0, 0);
-        const clauses = [`json_extract(session_context, '$.spaceId') = ?`];
+        const clauses = [`space_id = ?`];
         const params: Array<string | number> = [spaceId];
         const processingStatus = `COALESCE(json_extract(processing_state, '$.status'), 'idle')`;
         if (args.status === 'archived') {
@@ -1012,13 +1009,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           );
         }
         if (args.type === 'worker') {
-          clauses.push(
-            `(type = 'space_task_agent' OR json_type(session_context, '$.taskId') = 'text')`
-          );
+          clauses.push(`(type = 'space_task_agent' OR task_id IS NOT NULL)`);
         } else if (args.type === 'ad-hoc') {
-          clauses.push(
-            `(type != 'space_task_agent' AND json_type(session_context, '$.taskId') IS NULL)`
-          );
+          clauses.push(`(type != 'space_task_agent' AND task_id IS NULL)`);
         }
         params.push(limit, offset);
         const rows = requireDb()
@@ -1916,57 +1909,29 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       depends_on?: string[];
       draft?: boolean;
     }): Promise<ToolResult> {
-      let preferredWorkflowId = args.workflow_id ?? null;
-      if (preferredWorkflowId) {
-        const wf = workflowManager.getWorkflow(preferredWorkflowId);
-        const isUnusable = !wf || wf.spaceId !== spaceId || !!wf.disabled;
-        if (isUnusable && typeof args.workflow_handle === 'string') {
-          const trimmedHandle = args.workflow_handle.trim();
-          if (trimmedHandle === '') {
-            return jsonResult({
-              success: false,
-              error: 'workflow_handle must be a non-empty string.',
-            });
-          }
-          const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
-          if (byHandle) {
-            if (byHandle.disabled) {
-              return jsonResult({
-                success: false,
-                error: `Workflow is disabled: ${trimmedHandle}`,
-              });
-            }
-            preferredWorkflowId = byHandle.id;
-          } else {
-            return jsonResult({
-              success: false,
-              error: `Workflow not found by id or handle: ${trimmedHandle}`,
-            });
-          }
-        }
-      } else if (typeof args.workflow_handle === 'string') {
-        const trimmedHandle = args.workflow_handle.trim();
-        if (trimmedHandle === '') {
-          return jsonResult({
-            success: false,
-            error: 'workflow_handle must be a non-empty string.',
-          });
-        }
-        const byHandle = workflowManager.getWorkflowByHandle(spaceId, trimmedHandle);
-        if (!byHandle) {
-          return jsonResult({
-            success: false,
-            error: `Workflow not found by handle: ${trimmedHandle}`,
-          });
-        }
-        if (byHandle.disabled) {
-          return jsonResult({
-            success: false,
-            error: `Workflow is disabled: ${trimmedHandle}`,
-          });
-        }
-        preferredWorkflowId = byHandle.id;
+      const workflowIdArg = args.workflow_id ?? null;
+      const idWorkflow = workflowIdArg ? workflowManager.getWorkflow(workflowIdArg) : null;
+      const workflowIdUsable =
+        idWorkflow !== null && idWorkflow.spaceId === spaceId && !idWorkflow.disabled;
+      const hasHandleArg = typeof args.workflow_handle === 'string';
+      const trimmedHandle =
+        typeof args.workflow_handle === 'string' ? args.workflow_handle.trim() : '';
+      const handleWorkflow =
+        typeof args.workflow_handle === 'string' && trimmedHandle !== '' && !workflowIdUsable
+          ? workflowManager.getWorkflowByHandle(spaceId, trimmedHandle)
+          : null;
+      const ref = routeCreateTaskWorkflowRef({
+        workflowIdArg,
+        workflowIdUsable,
+        hasHandleArg,
+        trimmedHandle,
+        handleWorkflowId: handleWorkflow?.id ?? null,
+        handleWorkflowDisabled: handleWorkflow?.disabled ?? false,
+      });
+      if (ref.action === 'reject') {
+        return jsonResult({ success: false, error: ref.message });
       }
+      const preferredWorkflowId = ref.preferredWorkflowId;
       try {
         const task = await taskManager.createTask({
           title: args.title,
@@ -2005,74 +1970,66 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       depends_on?: string[];
       status?: SpaceTaskStatus;
     }): Promise<ToolResult> {
-      const hasChanges =
-        args.title !== undefined ||
-        args.description !== undefined ||
-        args.priority !== undefined ||
-        args.depends_on !== undefined ||
-        args.status !== undefined;
-      if (!hasChanges) {
-        return jsonResult({
-          success: false,
-          error:
-            'No fields to update. Provide at least one of: title, description, priority, depends_on, status.',
-        });
-      }
-
-      const task = taskRepo.getTask(args.task_id);
-      if (!task) {
-        return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
-      }
-      if (task.spaceId !== spaceId) {
-        return jsonResult({
-          success: false,
-          error: `Task ${args.task_id} does not belong to this space.`,
-        });
-      }
-
-      const fieldParams: UpdateSpaceTaskParams = {};
-      if (args.title !== undefined) fieldParams.title = args.title;
-      if (args.description !== undefined) fieldParams.description = args.description;
-      if (args.priority !== undefined) fieldParams.priority = args.priority;
-      if (args.depends_on !== undefined) fieldParams.dependsOn = args.depends_on;
-      const hasFieldUpdates = Object.keys(fieldParams).length > 0;
-      const applyFieldUpdates = async (): Promise<SpaceTask> =>
-        taskManager.updateTask(args.task_id, fieldParams, {
-          onCascadedTasks: async (cascadedTasks) => {
-            for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
-          },
-        });
-      const transitionAuditParams = {
-        title: args.title,
-        description: args.description,
-        priority: args.priority,
-        depends_on: args.depends_on,
-        status: args.status,
-        previousStatus: task.status,
-      };
-
       try {
-        if (args.status !== undefined && args.status !== task.status) {
-          if (args.status === 'review') {
-            return jsonResult({
-              success: false,
-              error:
-                `update_task cannot transition a task into 'review' directly. ` +
-                `Use submit_for_approval so the pending-completion fields get stamped ` +
-                `and the approval banner renders.`,
-            });
-          }
-          if (args.status === 'approved') {
-            return jsonResult({
-              success: false,
-              error:
-                `update_task cannot transition a task into 'approved' directly. ` +
-                `Use approve_pending_completion after submit_for_approval, or let the ` +
-                `runtime's post-approval router handle the transition — both stamp ` +
-                `the approval metadata and dispatch the configured post-approval step.`,
-            });
-          }
-          if (args.status === 'stopped' && task.workflowRunId) {
+        const spaceLevel = getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1;
+        const agentLevel = getCallingAgentAutonomyLevel();
+        const { level } = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
+        const hasChanges =
+          args.title !== undefined ||
+          args.description !== undefined ||
+          args.priority !== undefined ||
+          args.depends_on !== undefined ||
+          args.status !== undefined;
+        const task = taskRepo.getTask(args.task_id);
+        const fieldParams: UpdateSpaceTaskParams = {};
+        if (args.title !== undefined) fieldParams.title = args.title;
+        if (args.description !== undefined) fieldParams.description = args.description;
+        if (args.priority !== undefined) fieldParams.priority = args.priority;
+        if (args.depends_on !== undefined) fieldParams.dependsOn = args.depends_on;
+        const hasFieldUpdates = Object.keys(fieldParams).length > 0;
+        const applyFieldUpdates = async (): Promise<SpaceTask> =>
+          taskManager.updateTask(args.task_id, fieldParams, {
+            onCascadedTasks: async (cascadedTasks) => {
+              for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
+            },
+          });
+        const transitionAuditParams = {
+          title: args.title,
+          description: args.description,
+          priority: args.priority,
+          depends_on: args.depends_on,
+          status: args.status,
+          previousStatus: task?.status,
+        };
+        const plan = decideUpdateTask({
+          toolName: 'update_task',
+          level,
+          agentLevel,
+          spaceLevel,
+          hasChanges,
+          taskExists: task !== null,
+          taskInSpace: task?.spaceId === spaceId,
+          currentStatus: task?.status ?? '',
+          requestedStatus: args.status,
+          statusDiffers: args.status !== undefined && args.status !== task?.status,
+          hasWorkflowRun: task?.workflowRunId != null,
+          runActive:
+            task?.workflowRunId != null
+              ? (config.isWorkflowRunActive?.(task.workflowRunId) ?? false)
+              : false,
+          isRecoveryTransition:
+            args.status !== undefined && task !== null && args.status !== task.status
+              ? isWorkflowRecoveryTransition(task.status, args.status)
+              : false,
+          hasFieldUpdates,
+          taskId: args.task_id,
+          workflowRunId: task?.workflowRunId ?? undefined,
+        });
+        if (plan.action === 'reject' || plan.action === 'deny') {
+          return jsonResult({ success: false, error: plan.message });
+        }
+        switch (plan.action) {
+          case 'park_stopped': {
             const parked = await runtime.parkStoppedWorkflowTask(spaceId, args.task_id);
             if (!parked) {
               return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
@@ -2082,55 +2039,22 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             if (hasFieldUpdates) emitTaskUpdated(updated);
             return jsonResult({ success: true, task: updated });
           }
-          if (args.status === 'done' && task.status === 'review') {
-            return jsonResult({
-              success: false,
-              error:
-                `update_task cannot transition a task from 'review' to 'done' directly. ` +
-                `Use approve_task (subject to the workflow's completion autonomy level) ` +
-                `or submit_for_approval so a human can approve via the UI — both stamp ` +
-                `the approval metadata and dispatch the configured post-approval step.`,
-            });
-          }
-          if (
-            args.status === 'archived' &&
-            task.workflowRunId &&
-            config.isWorkflowRunActive?.(task.workflowRunId)
-          ) {
-            return jsonResult({
-              success: false,
-              error:
-                `Cannot archive task ${args.task_id}: it belongs to an active workflow run ` +
-                `(${task.workflowRunId}). Cancel the task instead (cancel_task) so its ` +
-                `agents and lifecycle are torn down — archiving would leave the run stranded.`,
-            });
-          }
-
-          if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, args.status)) {
+          case 'recover_transition': {
             const { task: recovered } = await runtime.recoverWorkflowBackedTask(
               spaceId,
               args.task_id,
-              args.status
+              args.status as 'open' | 'in_progress'
             );
             const updated = hasFieldUpdates ? await applyFieldUpdates() : recovered;
             logAudit('update_task', transitionAuditParams, args.task_id);
             if (hasFieldUpdates) emitTaskUpdated(updated);
             return jsonResult({ success: true, task: updated });
           }
-
-          const fromActivePaused =
-            task.status === 'in_progress' ||
-            task.status === 'blocked' ||
-            task.status === 'stopped' ||
-            isRateOrUsageLimited(task.status);
-          const toStopped = args.status === 'open' || args.status === 'cancelled';
-          const toBlockedFromPaused =
-            args.status === 'blocked' && isRateOrUsageLimited(task.status);
-          if (task.workflowRunId && fromActivePaused && (toStopped || toBlockedFromPaused)) {
+          case 'stop_for_status': {
             const stopped =
               (await runtime.stopWorkflowBackedTaskForStatus(spaceId, args.task_id, {
                 ...fieldParams,
-                status: args.status,
+                status: args.status!,
               })) ?? taskRepo.getTask(args.task_id);
             if (!stopped) {
               return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
@@ -2138,39 +2062,35 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             logAudit('update_task', transitionAuditParams, args.task_id);
             return jsonResult({ success: true, task: stopped });
           }
-
-          let updated = await taskManager.setTaskStatus(args.task_id, args.status, {
-            onCascadedTasks: async (cascadedTasks) => {
-              for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
-            },
-          });
-          if (hasFieldUpdates) {
-            updated = await applyFieldUpdates();
+          case 'set_status': {
+            let updated = await taskManager.setTaskStatus(args.task_id, args.status!, {
+              onCascadedTasks: async (cascadedTasks) => {
+                for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
+              },
+            });
+            if (hasFieldUpdates) {
+              updated = await applyFieldUpdates();
+            }
+            logAudit('update_task', transitionAuditParams, args.task_id);
+            emitTaskUpdated(updated);
+            return jsonResult({ success: true, task: updated });
           }
-
-          logAudit('update_task', transitionAuditParams, args.task_id);
-
-          emitTaskUpdated(updated);
-
-          return jsonResult({ success: true, task: updated });
+          case 'fields_only': {
+            const updated = await applyFieldUpdates();
+            logAudit(
+              'update_task',
+              {
+                title: args.title,
+                description: args.description,
+                priority: args.priority,
+                depends_on: args.depends_on,
+              },
+              args.task_id
+            );
+            emitTaskUpdated(updated);
+            return jsonResult({ success: true, task: updated });
+          }
         }
-
-        const updated = await applyFieldUpdates();
-
-        logAudit(
-          'update_task',
-          {
-            title: args.title,
-            description: args.description,
-            priority: args.priority,
-            depends_on: args.depends_on,
-          },
-          args.task_id
-        );
-
-        emitTaskUpdated(updated);
-
-        return jsonResult({ success: true, task: updated });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });
@@ -2199,27 +2119,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     async retry_task(args: { task_id: string; description?: string }): Promise<ToolResult> {
       try {
         const existing = taskRepo.getTask(args.task_id);
-        if (!existing) {
-          return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
-        }
-        if (existing.spaceId !== spaceId) {
-          return jsonResult({
-            success: false,
-            error: `Task ${args.task_id} does not belong to this space.`,
-          });
+        const plan = routeRetryTask({
+          taskExists: existing !== null,
+          taskInSpace: existing?.spaceId === spaceId,
+          currentStatus: existing?.status ?? '',
+          hasWorkflowRun: existing?.workflowRunId != null,
+          taskId: args.task_id,
+        });
+        if (plan.action === 'reject') {
+          return jsonResult({ success: false, error: plan.message });
         }
         let task: SpaceTask;
-        if (existing.workflowRunId) {
-          const retryableStatuses: SpaceTaskStatus[] = ['blocked', 'cancelled', 'done'];
-          if (!retryableStatuses.includes(existing.status)) {
-            return jsonResult({
-              success: false,
-              error: `Cannot retry task in '${existing.status}' status. Task must be in 'blocked', 'cancelled', or 'done' status.`,
-            });
-          }
-          const targetStatus = existing.status === 'blocked' ? 'open' : 'in_progress';
+        if (plan.action === 'recover_workflow_task') {
           task = (
-            await runtime.recoverWorkflowBackedTask(existing.spaceId, args.task_id, targetStatus, {
+            await runtime.recoverWorkflowBackedTask(spaceId, args.task_id, plan.targetStatus, {
               description: args.description,
             })
           ).task;
@@ -2243,11 +2156,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         for (const cancelledTask of cancelled) {
           emitTaskUpdated(cancelledTask);
         }
-
-        if (args.cancel_workflow_run && task.workflowRunId) {
-          const existingRun = workflowRunRepo.getRun(task.workflowRunId);
-          if (existingRun !== null) {
-            await runtime.cancelWorkflowRun(spaceId, task.workflowRunId);
+        const existingRun = task.workflowRunId ? workflowRunRepo.getRun(task.workflowRunId) : null;
+        const plan = routeCancelTask({
+          cancelWorkflowRunRequested: args.cancel_workflow_run === true,
+          hasWorkflowRun: task.workflowRunId != null,
+          runExists: existingRun !== null,
+        });
+        if (plan.action === 'cancel_run') {
+          if (plan.runExists) {
+            await runtime.cancelWorkflowRun(spaceId, task.workflowRunId!);
           }
           return jsonResult({
             success: true,
@@ -2256,7 +2173,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             workflowRunId: task.workflowRunId,
           });
         }
-
         return jsonResult({ success: true, task });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -2266,25 +2182,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
     async publish_task(args: { task_id: string }): Promise<ToolResult> {
       const task = taskRepo.getTask(args.task_id);
-      if (!task) {
-        return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
-      }
-      if (task.spaceId !== spaceId) {
-        return jsonResult({
-          success: false,
-          error: `Task ${args.task_id} does not belong to this space.`,
-        });
-      }
-      if (task.status !== 'draft') {
-        return jsonResult({
-          success: false,
-          error: `Task is in '${task.status}' status, not 'draft'. Only draft tasks can be published.`,
-        });
+      const plan = routePublishTask({
+        taskExists: task !== null,
+        taskInSpace: task?.spaceId === spaceId,
+        currentStatus: task?.status ?? '',
+        taskId: args.task_id,
+      });
+      if (plan.action === 'reject') {
+        return jsonResult({ success: false, error: plan.message });
       }
       try {
         const updated = await taskManager.publishTask(args.task_id);
 
-        logAudit('publish_task', { previousStatus: task.status }, args.task_id);
+        logAudit('publish_task', { previousStatus: task?.status }, args.task_id);
 
         emitTaskUpdated(updated);
 
@@ -2297,28 +2207,24 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
     async archive_task(args: { task_id: string }): Promise<ToolResult> {
       const task = taskRepo.getTask(args.task_id);
-      if (!task) {
-        return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
-      }
-      if (task.spaceId !== spaceId) {
-        return jsonResult({
-          success: false,
-          error: `Task ${args.task_id} does not belong to this space.`,
-        });
-      }
-      if (task.workflowRunId && config.isWorkflowRunActive?.(task.workflowRunId)) {
-        return jsonResult({
-          success: false,
-          error:
-            `Cannot archive task ${args.task_id}: it belongs to an active workflow run ` +
-            `(${task.workflowRunId}). Cancel the run instead so its agents and ` +
-            `lifecycle are torn down — archiving would leave the run stranded.`,
-        });
+      const plan = routeArchiveTask({
+        taskExists: task !== null,
+        taskInSpace: task?.spaceId === spaceId,
+        hasWorkflowRun: task?.workflowRunId != null,
+        runActive:
+          task?.workflowRunId != null
+            ? (config.isWorkflowRunActive?.(task.workflowRunId) ?? false)
+            : false,
+        taskId: args.task_id,
+        workflowRunId: task?.workflowRunId ?? undefined,
+      });
+      if (plan.action === 'reject') {
+        return jsonResult({ success: false, error: plan.message });
       }
       try {
         const updated = await taskManager.archiveTask(args.task_id);
 
-        logAudit('archive_task', { previousStatus: task.status }, args.task_id);
+        logAudit('archive_task', { previousStatus: task?.status }, args.task_id);
 
         emitTaskUpdated(updated);
 
@@ -2335,14 +2241,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       assigned_agent?: 'coder' | 'general';
     }): Promise<ToolResult> {
       try {
-        if (args.custom_agent_id != null) {
-          const agent = spaceAgentManager.getById(args.custom_agent_id);
-          if (!agent) {
-            return jsonResult({
-              success: false,
-              error: `Worker agent not found: ${args.custom_agent_id}`,
-            });
-          }
+        const plan = routeReassignTask({
+          customAgentId: args.custom_agent_id,
+          workerAgentExists:
+            args.custom_agent_id != null
+              ? spaceAgentManager.getById(args.custom_agent_id) !== null
+              : false,
+        });
+        if (plan.action === 'reject') {
+          return jsonResult({ success: false, error: plan.message });
         }
 
         const task = await taskManager.reassignTask(
@@ -2725,10 +2632,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             sdk_message_id: sdkMessageId,
             activated: false,
           });
-        } catch {
-          // Fall through to activation path — the session may be dead; activateNode
-          // will either revive it (cyclic re-entry) or reset the execution to pending.
-        }
+        } catch {}
       }
 
       if (!activateNode) {
@@ -2889,23 +2793,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
     async approve_task(args: { task_id: string; reason?: string }): Promise<ToolResult> {
       const task = taskRepo.getTask(args.task_id);
-      if (!task) {
-        return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
-      }
-      if (task.spaceId !== spaceId) {
-        return jsonResult({
-          success: false,
-          error: `Task ${args.task_id} does not belong to this space.`,
-        });
-      }
-
       const space = config.spaceManager ? await config.spaceManager.getSpace(spaceId) : null;
       const spaceLevel =
         space?.autonomyLevel ?? (getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1);
       const agentLevel = getCallingAgentAutonomyLevel();
-      const currentLevel = agentLevel == null ? spaceLevel : Math.min(spaceLevel, agentLevel);
+      const { level } = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
       let completionAutonomyLevel = 5;
-      if (task.workflowRunId) {
+      if (task?.workflowRunId) {
         const run = workflowRunRepo.getRun(task.workflowRunId);
         if (run?.workflowId) {
           const workflow = workflowManager.getWorkflowForRun(run);
@@ -2914,43 +2808,38 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           }
         }
       }
-
-      if (currentLevel < completionAutonomyLevel) {
-        if (isAgentCeilingBinding(spaceLevel, agentLevel)) {
+      const plan = routeApproveTask({
+        taskExists: task !== null,
+        taskInSpace: task?.spaceId === spaceId,
+        currentStatus: task?.status ?? '',
+        taskId: args.task_id,
+        level,
+        required: completionAutonomyLevel,
+        agentLevel,
+        spaceLevel,
+      });
+      if (plan.action === 'reject' || plan.action === 'deny') {
+        if (plan.action === 'deny' && plan.reason === 'agent_autonomy_ceiling') {
           logAudit(
             'approve_task',
             {
               blocked: true,
-              reason: 'agent_autonomy_ceiling',
-              agentLevel,
-              spaceLevel,
-              required: completionAutonomyLevel,
+              reason: plan.reason,
+              agentLevel: plan.agentLevel,
+              spaceLevel: plan.spaceLevel,
+              required: plan.required,
             },
             args.task_id
           );
-          return jsonResult({
-            success: false,
-            error: `approve_task not permitted: agent autonomy ceiling ${agentLevel} (space ${spaceLevel}) < workflow completionAutonomyLevel ${completionAutonomyLevel}. Use submit_for_approval to request human review.`,
-          });
         }
-        return jsonResult({
-          success: false,
-          error: `approve_task not permitted: space autonomy level ${spaceLevel} < workflow completionAutonomyLevel ${completionAutonomyLevel}. Use submit_for_approval to request human review.`,
-        });
-      }
-
-      if (task.status !== 'review') {
-        return jsonResult({
-          success: false,
-          error: `Task is in '${task.status}' status, not 'review'. Only tasks in review can be approved.`,
-        });
+        return jsonResult({ success: false, error: plan.message });
       }
 
       try {
         const updated = await taskManager.setTaskStatus(args.task_id, 'done', {
           result:
-            normalizeMeaningfulTaskResult(task.result) ??
-            normalizeMeaningfulTaskResult(task.reportedSummary) ??
+            normalizeMeaningfulTaskResult(task!.result) ??
+            normalizeMeaningfulTaskResult(task!.reportedSummary) ??
             undefined,
           approvalSource: 'agent',
           approvalReason: args.reason,
@@ -2971,7 +2860,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           'approve_task',
           {
             reason: args.reason,
-            previousStatus: task.status,
+            previousStatus: task!.status,
           },
           args.task_id
         );
@@ -5114,10 +5003,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         async (args) => {
           try {
             await restoreCallback({ reason: args.reason });
-          } catch {
-            // Log but don't surface the error to the agent — the query restart
-            // may interrupt this response before we can return anyway.
-          }
+          } catch {}
           return {
             content: [
               {

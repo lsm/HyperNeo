@@ -109,7 +109,7 @@ export interface AgentSessionRuntimeOptions {
   ) => Promise<{ success: boolean; error?: string }>;
 }
 
-import { isSDKResultSuccess, isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
+import { isSDKResultSuccess } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner';
 import { resolveModelAlias } from '../model-service';
 import { getProviderRegistry } from '../providers/factory.js';
@@ -790,9 +790,7 @@ export class AgentSession
       if (this.queryPromise) {
         try {
           await this.queryPromise;
-        } catch {
-          // The failed query already rejected; its finally has still run.
-        }
+        } catch {}
       }
 
       if (this.rateLimitWatchdog.isSuperseded(episodeGeneration)) {
@@ -1180,8 +1178,11 @@ export class AgentSession
     return this.slashCommandManager.getSlashCommands();
   }
 
-  async handleQueryTrigger(): Promise<{ success: boolean; messageCount: number; error?: string }> {
-    return this.queryModeHandler.handleQueryTrigger();
+  async handleQueryTrigger(options?: {
+    deliverIndividually?: boolean;
+    excludeMessageUuid?: string;
+  }): Promise<{ success: boolean; messageCount: number; error?: string }> {
+    return this.queryModeHandler.handleQueryTrigger(options);
   }
 
   async restartQuery(): Promise<void> {
@@ -1645,9 +1646,7 @@ export class AgentSession
         this.deliveryTurnStalled = true;
         try {
           await this.resetQuery({ restartQuery: false });
-        } catch {
-          // best-effort — the flag is set; the bridge will throw + retry
-        }
+        } catch {}
       },
       () => this.stateManager.getState().status === 'rate_limit_cooldown'
     );
@@ -1769,7 +1768,18 @@ export class AgentSession
   async deliverChatMessage(messageUuid: string): Promise<void> {
     await withSessionLock(this.session.id, async () => {
       if (this.db.getSession(this.session.id)?.status === 'archived') {
-        this.db.getSDKMessageRepo().markDeliveryFailedByUuid(this.session.id, messageUuid);
+        const failedDbId = this.db
+          .getSDKMessageRepo()
+          ?.markDeliveryFailedByUuid(this.session.id, messageUuid);
+        if (failedDbId) {
+          void this.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId: this.session.id,
+              messageIds: [failedDbId],
+              status: 'failed',
+            })
+            .catch(() => {});
+        }
         throw new Error(`Session ${this.session.id} is archived`);
       }
       let role: 'turn' | 'steer';
@@ -1778,7 +1788,18 @@ export class AgentSession
           origin: 'chat',
         });
       } catch (err) {
-        this.db.getSDKMessageRepo().markDeliveryFailedByUuid(this.session.id, messageUuid);
+        const failedDbId = this.db
+          .getSDKMessageRepo()
+          ?.markDeliveryFailedByUuid(this.session.id, messageUuid);
+        if (failedDbId) {
+          void this.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId: this.session.id,
+              messageIds: [failedDbId],
+              status: 'failed',
+            })
+            .catch(() => {});
+        }
         throw err;
       }
       if (role === 'turn' || this.stateManager.getState().status === 'rate_limit_cooldown') {
@@ -1943,10 +1964,11 @@ export class AgentSession
     const sdkRepo = this.db.getSDKMessageRepo();
     await withSessionLock(this.session.id, async () => {
       const activeNow = jobQueue.activeDeliveryMessageUuids(this.session.id);
-      for (const msg of this.db.getMessagesByStatus(this.session.id, 'submitted')) {
-        if (!isSDKUserMessage(msg) || !msg.uuid) continue;
-        if (activeNow.has(msg.uuid)) continue;
-        const dbId = sdkRepo.markDeliveryFailedByUuid(this.session.id, msg.uuid);
+      for (const msg of this.db.getUserMessageIdsByStatus(this.session.id, 'submitted')) {
+        const uuid = msg.uuid;
+        if (typeof uuid !== 'string' || uuid.length === 0) continue;
+        if (activeNow.has(uuid)) continue;
+        const dbId = sdkRepo.markDeliveryFailedByUuid(this.session.id, uuid);
         if (dbId) {
           settled++;
           void this.internalEventBus
@@ -2080,9 +2102,7 @@ export class AgentSession
     }
     try {
       entry.proc.kill?.(signal);
-    } catch {
-      // Handle may have already exited.
-    }
+    } catch {}
   }
 
   private scheduleForceKill(pid: number, proc: TrackedAgentProcess, forceDelayMs: number): void {
@@ -2111,9 +2131,7 @@ export class AgentSession
       if (process.platform !== 'win32' && pid > 0) {
         try {
           process.kill(-pid, signal);
-        } catch {
-          // Process group may have already exited.
-        }
+        } catch {}
       }
 
       const signaled = this.signalTrackedAgentProcess(pid, proc, signal);
@@ -2185,9 +2203,7 @@ export class AgentSession
     for (const unsub of this.deliveryErrorSubs) {
       try {
         unsub();
-      } catch {
-        // best-effort — cleanup must not throw
-      }
+      } catch {}
     }
     this.deliveryErrorSubs.length = 0;
     this.rateLimitWatchdog.destroy();

@@ -45,7 +45,6 @@ describe('SessionManager', () => {
         mcpServers: {},
       })),
       saveGlobalToolsConfig: mock(() => {}),
-      getMessagesByStatus: mock(() => []),
       saveSDKMessage: mock(() => {}),
       getUserMessages: mock(() => []),
       getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
@@ -136,9 +135,7 @@ describe('SessionManager', () => {
     listProcessesSpy?.mockRestore();
     try {
       await sessionManager.cleanup();
-    } catch {
-      // Ignore cleanup errors in afterEach
-    }
+    } catch {}
   });
 
   describe('constructor', () => {
@@ -1075,7 +1072,7 @@ describe('SessionManager', () => {
       const persistedSession = makePersistedSession();
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
       const cancel = mock(() => ['pending-turn', 'pending-steer']);
-      const markFailed = mock(() => null);
+      const markFailed = mock((_sessionId: string, uuid: string) => `db-${uuid}`);
       mockDb.getJobQueueRepo = mock(() => ({ cancelForSessionWithMessages: cancel }));
       mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid: markFailed }));
 
@@ -1087,6 +1084,11 @@ describe('SessionManager', () => {
       expect(cancel).toHaveBeenCalledWith('test-id');
       expect(markFailed).toHaveBeenCalledWith('test-id', 'pending-turn');
       expect(markFailed).toHaveBeenCalledWith('test-id', 'pending-steer');
+      expect(mockInternalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'test-id',
+        messageIds: ['db-pending-turn', 'db-pending-steer'],
+        status: 'failed',
+      });
       expect(freshSession.getProcessingState().status).toBe('idle');
     });
 

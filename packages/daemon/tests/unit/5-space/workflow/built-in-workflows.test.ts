@@ -703,9 +703,7 @@ describe('seedBuiltInWorkflows()', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   test('create rejects duplicate hook ids before migration', () => {
@@ -2306,9 +2304,7 @@ describe('seedBuiltInWorkflows()', () => {
 
     try {
       seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver);
-    } catch {
-      // expected
-    }
+    } catch {}
     expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
   });
 
@@ -2318,9 +2314,7 @@ describe('seedBuiltInWorkflows()', () => {
 
     try {
       seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver);
-    } catch {
-      // expected
-    }
+    } catch {}
     expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
   });
 
@@ -2688,9 +2682,7 @@ describe('Coding Workflow export/import round-trip', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   test('exported Coding Workflow passes Zod validation', () => {

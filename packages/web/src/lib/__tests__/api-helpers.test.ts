@@ -1044,9 +1044,7 @@ describe('api-helpers', () => {
 
       try {
         await apiHelpers.createSession({ workspacePath: '/test' });
-      } catch {
-        // Expected
-      }
+      } catch {}
 
       const elapsed = Date.now() - start;
 

@@ -172,14 +172,10 @@ describe('Migration 74: Remaining schema cleanup', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('node_executions table is created with correct columns', () => {

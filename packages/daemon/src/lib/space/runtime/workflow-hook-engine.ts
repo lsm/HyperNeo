@@ -276,9 +276,7 @@ export class WorkflowHookEngine {
           this.config.onHookStateUpdated?.(hookId, result);
           return true;
         }
-      } catch {
-        // retry on version conflict or transient repo error
-      }
+      } catch {}
     }
     return false;
   }
@@ -468,9 +466,7 @@ export class WorkflowHookEngine {
                       updateOk = true;
                       break;
                     }
-                  } catch {
-                    // retry on version conflict or error
-                  }
+                  } catch {}
                 }
                 if (!updateOk) {
                   log.warn(`Failed to persist retry state for hook "${hook.id}" after 3 attempts`);
@@ -570,9 +566,7 @@ export class WorkflowHookEngine {
               updateOk = true;
               break;
             }
-          } catch {
-            // retry on version conflict or error
-          }
+          } catch {}
         }
         if (!updateOk) {
           log.warn(`Failed to reset retry state for hook "${hook.id}" after 3 attempts`);
@@ -846,9 +840,7 @@ export class WorkflowHookEngine {
         .slice()
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .slice(0, 50);
-    } catch {
-      // best effort
-    }
+    } catch {}
 
     const permittedExternalLookups: string[] =
       hook.validator.kind === 'script'
@@ -969,9 +961,7 @@ export class WorkflowHookEngine {
     try {
       const bytes = new TextEncoder().encode(JSON.stringify(data)).length;
       if (bytes <= MAX_ARTIFACT_DATA_BYTES) return data;
-    } catch {
-      // Fall through to truncated placeholder on serialization failure.
-    }
+    } catch {}
     return `[truncated: artifact data exceeds ${MAX_ARTIFACT_DATA_BYTES} bytes]`;
   }
 
@@ -979,9 +969,7 @@ export class WorkflowHookEngine {
     try {
       const bytes = new TextEncoder().encode(JSON.stringify(state)).length;
       if (bytes <= MAX_HOOK_LOCAL_STATE_BYTES) return state;
-    } catch {
-      // Fall through to placeholder on serialization failure.
-    }
+    } catch {}
     return { _truncated: `hook local state exceeds ${MAX_HOOK_LOCAL_STATE_BYTES} bytes` };
   }
 
@@ -1091,9 +1079,7 @@ export class WorkflowHookEngine {
           }
           return [decoded];
         }
-      } catch {
-        // fall through to raw target
-      }
+      } catch {}
     }
     if (trimmed.startsWith('@role:')) {
       const role = trimmed.slice(6);

@@ -34,9 +34,7 @@ function parseSseEvents(text: string): SseEvent[] {
     if (!eventName || !dataStr) continue;
     try {
       events.push({ event: eventName, data: JSON.parse(dataStr) as Record<string, unknown> });
-    } catch {
-      // ignore unparseable lines
-    }
+    } catch {}
   }
   return events;
 }
@@ -93,9 +91,7 @@ function getToolUseBlock(events: SseEvent[]): ToolUseBlock | null {
   let input: Record<string, unknown> = {};
   try {
     input = JSON.parse(inputParts.join('')) as Record<string, unknown>;
-  } catch {
-    // leave input as empty object if JSON is missing/malformed
-  }
+  } catch {}
   return { id, name, input };
 }
 

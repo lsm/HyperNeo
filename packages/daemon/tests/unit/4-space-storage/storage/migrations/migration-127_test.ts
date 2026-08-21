@@ -79,14 +79,10 @@ describe('Migration 127: handle column on space_workflows', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   describe('fresh DB (all migrations applied)', () => {

@@ -80,13 +80,9 @@ describe('Migration 21: submittedForReview backfill', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // Ignore errors
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // Ignore errors
-    }
+    } catch {}
   });
 });

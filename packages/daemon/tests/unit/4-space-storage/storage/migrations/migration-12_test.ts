@@ -148,13 +148,9 @@ describe('Migration 12: autoScroll default in global_settings', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // Ignore errors
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // Ignore errors
-    }
+    } catch {}
   });
 });

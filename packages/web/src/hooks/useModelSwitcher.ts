@@ -254,9 +254,7 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
           };
           setCurrentModel(modelId);
           setCurrentModelInfo(modelInfo);
-        } catch {
-          // Session not found or not started yet — keep defaults
-        }
+        } catch {}
       }
 
       const { models } = (await hub.request('models.list', {
@@ -265,7 +263,6 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
 
       setAvailableModels(mapRawModelsToModelInfos(models));
     } catch {
-      // Error handled silently - loading state will be cleared
     } finally {
       setLoading(false);
     }

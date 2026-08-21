@@ -106,9 +106,7 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
   afterAll(() => {
     try {
       rmSync(templateDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   beforeEach(() => {
@@ -128,14 +126,10 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('Space with no agents → every preset inserted with canonical field values', () => {

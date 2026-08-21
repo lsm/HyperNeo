@@ -63,9 +63,7 @@ describe('SpaceRuntime — disabled workflow filtering', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   function buildRuntime(selector?: SelectWorkflowWithLlm): SpaceRuntime {

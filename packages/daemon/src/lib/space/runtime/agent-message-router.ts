@@ -3,13 +3,17 @@ import { parseAddress } from '../../../../../messaging/src/address';
 import type { ActorResolver } from '../../../../../messaging/src/contracts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
+import type {
+  EnqueueResult,
+  PendingAgentMessageRepository,
+} from '../../../storage/repositories/pending-agent-message-repository';
 import { formatAgentMessage } from '../agent-message-envelope';
 import { SpaceDeliveryFacade } from '../messaging-adapter';
 import {
   type AgentMessageResult,
   buildNodeNameResolver,
   buildSlotToNodeMap,
+  decideGenericAddressRouting,
   decideNodeTargetDelivery,
   foldAgentMessageResult,
   resolveNodeAgentTargets,
@@ -69,8 +73,135 @@ import { Logger } from '../../logger';
 
 const log = new Logger('agent-message-router');
 
+function buildDataAppendix(data?: Record<string, unknown>): string {
+  return data && Object.keys(data).length > 0
+    ? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
+    : '';
+}
+
 export class AgentMessageRouter {
   constructor(private readonly config: AgentMessageRouterConfig) {}
+
+  private gatherEnrichedPeers(
+    fromAgentName: string,
+    fromSessionId: string,
+    fromNodeName: string
+  ): {
+    singleNodeByAgentName: Map<string, string>;
+    peers: Array<{
+      sessionId: string;
+      agentName: string;
+      workflowNodeId?: string;
+      nodeName?: string;
+    }>;
+  } {
+    const { nodeExecutionRepo, workflowRunId, workflowNodeNameById, nodeGroups } = this.config;
+    const selfExecution = nodeExecutionRepo
+      .listByWorkflowRun(workflowRunId)
+      .find((e) => e.agentName === fromAgentName && e.agentSessionId === fromSessionId);
+    const singleNodeByAgentName = new Map<string, string>();
+    for (const [nodeName, slots] of nodeGroups ? Object.entries(nodeGroups) : []) {
+      for (const slot of slots) {
+        if (singleNodeByAgentName.has(slot)) {
+          singleNodeByAgentName.delete(slot);
+        } else {
+          singleNodeByAgentName.set(slot, nodeName);
+        }
+      }
+    }
+    const peers = nodeExecutionRepo
+      .listByWorkflowRun(workflowRunId)
+      .filter((e) => e.agentSessionId && e.agentSessionId !== fromSessionId)
+      .map((e) => ({
+        sessionId: e.agentSessionId!,
+        agentName: e.agentName,
+        workflowNodeId: e.workflowNodeId,
+        nodeName:
+          workflowNodeNameById?.[e.workflowNodeId] ??
+          (e.workflowNodeId === selfExecution?.workflowNodeId ? fromNodeName : undefined) ??
+          singleNodeByAgentName.get(e.agentName) ??
+          e.workflowNodeId,
+      }));
+    return { singleNodeByAgentName, peers };
+  }
+
+  private gatherPeerSnapshot(
+    fromAgentName: string,
+    fromSessionId: string
+  ): {
+    peers: Array<{ sessionId: string; agentName: string }>;
+    declaredAgentNames: Set<string>;
+  } {
+    const { nodeExecutionRepo, workflowRunId, nodeGroups } = this.config;
+    const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+    const execWithSession = allExecutions.filter(
+      (e) => e.agentSessionId && e.agentSessionId !== fromSessionId
+    );
+    if (execWithSession.length === 0 && allExecutions.length > 0) {
+      log.warn(
+        `[AgentMessageRouter] nodeExecutionRepo has ${allExecutions.length} execution(s) for run ${workflowRunId} ` +
+          `but none have an agentSessionId yet — will attempt activation/queuing.`
+      );
+    }
+    let peers: Array<{ sessionId: string; agentName: string }> = execWithSession.map((e) => ({
+      sessionId: e.agentSessionId!,
+      agentName: e.agentName,
+    }));
+
+    const postApprovalSessionId = this.config.findPostApprovalSessionId?.();
+    const postApprovalTargetAgent = this.config.findPostApprovalTargetAgentName?.();
+    if (
+      postApprovalSessionId &&
+      postApprovalTargetAgent &&
+      postApprovalSessionId !== fromSessionId &&
+      postApprovalTargetAgent !== fromAgentName
+    ) {
+      if (!peers.some((p) => p.sessionId === postApprovalSessionId)) {
+        peers = peers.filter(
+          (p) => !(p.agentName === postApprovalTargetAgent && p.sessionId !== postApprovalSessionId)
+        );
+        peers.push({ sessionId: postApprovalSessionId, agentName: postApprovalTargetAgent });
+      }
+    }
+
+    const declaredAgentNames = new Set(
+      allExecutions.filter((e) => e.agentSessionId !== fromSessionId).map((e) => e.agentName)
+    );
+    if (nodeGroups) {
+      for (const slots of Object.values(nodeGroups)) {
+        for (const slot of slots) {
+          if (slot === fromAgentName) continue;
+          declaredAgentNames.add(slot);
+        }
+      }
+    }
+    return { peers, declaredAgentNames };
+  }
+
+  private enqueueNodeAgentMessage(input: {
+    repo: PendingAgentMessageRepository;
+    spaceId: string;
+    fromAgentName: string;
+    fromSessionId: string;
+    targetAgentName: string;
+    idempotencyTarget: string;
+    workflowNodeId?: string;
+    message: string;
+  }): EnqueueResult {
+    return input.repo.enqueue({
+      workflowRunId: this.config.workflowRunId,
+      spaceId: input.spaceId,
+      taskId: this.config.taskId ?? null,
+      sourceAgentName: input.fromAgentName,
+      targetKind: 'node_agent',
+      targetAgentName: input.targetAgentName,
+      workflowNodeId: input.workflowNodeId,
+      message: input.message,
+      idempotencyKey: JSON.stringify([input.fromSessionId, input.idempotencyTarget, input.message]),
+      ttlMs: 60_000,
+      maxAttempts: 3,
+    });
+  }
 
   private async deliverGenericMessage(params: {
     fromAgentName: string;
@@ -102,21 +233,9 @@ export class AgentMessageRouter {
     } = this.config;
     const resolver = new ChannelResolver(workflowChannels);
     const fromNodeName = slotToNode.get(fromAgentName) ?? fromAgentName;
-    const selfExecution = nodeExecutionRepo
-      .listByWorkflowRun(workflowRunId)
-      .find((e) => e.agentName === fromAgentName && e.agentSessionId === fromSessionId);
-    const singleNodeByAgentName = new Map<string, string>();
-    for (const [nodeName, slots] of this.config.nodeGroups
-      ? Object.entries(this.config.nodeGroups)
-      : []) {
-      for (const slot of slots) {
-        if (singleNodeByAgentName.has(slot)) {
-          singleNodeByAgentName.delete(slot);
-        } else {
-          singleNodeByAgentName.set(slot, nodeName);
-        }
-      }
-    }
+    const enrichedPeers = this.gatherEnrichedPeers(fromAgentName, fromSessionId, fromNodeName);
+    const singleNodeByAgentName = enrichedPeers.singleNodeByAgentName;
+    let peers = enrichedPeers.peers;
     const hasNodeNameMap = workflowNodeNameById && Object.keys(workflowNodeNameById).length > 0;
     const scopedAgentName = (nodeName: string, agentName: string) => `${nodeName}/${agentName}`;
     const resolveWorkflowNodeId = (nodeRef: string, agentName: string): string | undefined => {
@@ -131,123 +250,103 @@ export class AgentMessageRouter {
       if (entries.some(([nodeId]) => nodeId === nodeRef)) return nodeRef;
       return entries.find(([, name]) => name === nodeRef)?.[0];
     };
-    const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
-    let peers: Array<{
-      sessionId: string;
-      agentName: string;
-      workflowNodeId?: string;
-      nodeName?: string;
-    }> = allExecutions
-      .filter((e) => e.agentSessionId && e.agentSessionId !== fromSessionId)
-      .map((e) => ({
-        sessionId: e.agentSessionId!,
-        agentName: e.agentName,
-        workflowNodeId: e.workflowNodeId,
-        nodeName:
-          workflowNodeNameById?.[e.workflowNodeId] ??
-          (e.workflowNodeId === selfExecution?.workflowNodeId ? fromNodeName : undefined) ??
-          singleNodeByAgentName.get(e.agentName) ??
-          e.workflowNodeId,
-      }));
     const delivered: Array<{ agentName: string; sessionId: string }> = [];
     const queued: Array<{ agentName: string; messageId: string }> = [];
     const notFound: string[] = [];
     const failed: Array<{ agentName: string; sessionId: string; error: string }> = [];
-    const dataAppendix =
-      data && Object.keys(data).length > 0
-        ? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
-        : '';
+    const body = `${message}${buildDataAppendix(data)}`;
+    const buildEnvelope = (toLevel: 'node-agent' | 'space-agent', replyToSessionId?: string) =>
+      formatAgentMessage({
+        fromLevel: 'node-agent',
+        fromAgentName,
+        toLevel,
+        body,
+        taskId,
+        taskNumber,
+        nodeId: fromAgentName,
+        replyToSessionId,
+      });
+
+    const spaceAgentAvailable = Boolean(spaceAgentInjector && spaceId);
+    const messagingFacadeAvailable = Boolean(messageResolver && longTermAgentDelivery && spaceId);
 
     for (const target of targets) {
-      const address = parseAddress(target);
-      if (address.kind === 'handle' && address.handle === 'coordinator') {
-        if (!spaceAgentInjector || !spaceId) {
-          notFound.push(target);
-          continue;
-        }
-        const envelopedMessage = formatAgentMessage({
-          fromLevel: 'node-agent',
-          fromAgentName,
-          toLevel: 'space-agent',
-          body: `${message}${dataAppendix}`,
-          taskId,
-          taskNumber,
-          nodeId: fromAgentName,
-        });
+      const decision = decideGenericAddressRouting(parseAddress(target), {
+        spaceAgentAvailable,
+        messagingFacadeAvailable,
+        replyToSessionId: replyRoutingLookup?.(fromAgentName) || null,
+        workflowRunId,
+      });
+
+      if (decision.action === 'notFound') {
+        notFound.push(decision.target);
+        continue;
+      }
+      if (decision.action === 'failSessionUnauthorized') {
+        return {
+          success: delivered.length > 0 || failed.length > 0 ? 'partial' : false,
+          delivered,
+          failed,
+          reason: `Session target ${decision.target} is not an authorized reply route for '${fromAgentName}'.`,
+          unauthorizedAgentNames: [decision.target],
+          queued: queued.length > 0 ? queued : undefined,
+          notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
+        };
+      }
+      if (decision.action === 'failUnsupported' || decision.action === 'failUnsupportedKind') {
+        return {
+          success: delivered.length > 0 || failed.length > 0 ? 'partial' : false,
+          delivered,
+          failed,
+          reason:
+            decision.action === 'failUnsupported'
+              ? `Generic target ${decision.target} is not supported by node-agent send_message in this context.`
+              : `Generic target ${decision.target} is not supported by node-agent send_message. Use @coordinator, @handle, @role:<role>, @session:<authorized-reply-session>, or @worker:<node>/<agent>.`,
+          queued: queued.length > 0 ? queued : undefined,
+          notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
+        };
+      }
+      if (decision.action === 'failInvalidWorker') {
+        return {
+          success: false,
+          delivered: [],
+          failed: [],
+          reason: `Invalid worker target ${decision.target}: ${decision.reason}`,
+        };
+      }
+      if (decision.action === 'deliverToCoordinator') {
+        const envelopedMessage = buildEnvelope('space-agent');
         try {
-          await spaceAgentInjector(spaceId, envelopedMessage, null);
-          delivered.push({ agentName: 'space-agent', sessionId: `space:chat:${spaceId}` });
+          await spaceAgentInjector!(spaceId!, envelopedMessage, null);
+          delivered.push({ agentName: 'space-agent', sessionId: `space:chat:${spaceId!}` });
         } catch (err) {
           failed.push({
             agentName: 'space-agent',
-            sessionId: `space:chat:${spaceId}`,
+            sessionId: `space:chat:${spaceId!}`,
             error: err instanceof Error ? err.message : String(err),
           });
         }
         continue;
       }
-      if (address.kind === 'session') {
-        if (!spaceAgentInjector || !spaceId) {
-          notFound.push(target);
-          continue;
-        }
-        const replyTo = replyRoutingLookup?.(fromAgentName);
-        if (!replyTo || address.sessionId !== replyTo) {
-          return {
-            success: delivered.length > 0 || failed.length > 0 ? 'partial' : false,
-            delivered,
-            failed,
-            reason: `Session target ${target} is not an authorized reply route for '${fromAgentName}'.`,
-            unauthorizedAgentNames: [target],
-            queued: queued.length > 0 ? queued : undefined,
-            notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
-          };
-        }
-        const envelopedMessage = formatAgentMessage({
-          fromLevel: 'node-agent',
-          fromAgentName,
-          toLevel: 'space-agent',
-          body: `${message}${dataAppendix}`,
-          taskId,
-          taskNumber,
-          nodeId: fromAgentName,
-        });
+      if (decision.action === 'deliverToSession') {
+        const envelopedMessage = buildEnvelope('space-agent');
         try {
-          await spaceAgentInjector(spaceId, envelopedMessage, address.sessionId);
-          delivered.push({ agentName: 'space-agent', sessionId: address.sessionId });
+          await spaceAgentInjector!(spaceId!, envelopedMessage, decision.sessionId);
+          delivered.push({ agentName: 'space-agent', sessionId: decision.sessionId });
         } catch (err) {
           failed.push({
             agentName: 'space-agent',
-            sessionId: address.sessionId,
+            sessionId: decision.sessionId,
             error: err instanceof Error ? err.message : String(err),
           });
         }
         continue;
       }
-      if (address.kind === 'handle' || address.kind === 'role') {
-        if (!messageResolver || !longTermAgentDelivery || !spaceId) {
-          return {
-            success: delivered.length > 0 || failed.length > 0 ? 'partial' : false,
-            delivered,
-            failed,
-            reason: `Generic target ${target} is not supported by node-agent send_message in this context.`,
-            queued: queued.length > 0 ? queued : undefined,
-            notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
-          };
-        }
-        const rawMessage = formatAgentMessage({
-          fromLevel: 'node-agent',
-          fromAgentName,
-          toLevel: 'space-agent',
-          body: `${message}${dataAppendix}`,
-          taskId,
-          taskNumber,
-          nodeId: fromAgentName,
-          replyToSessionId: fromSessionId,
-        });
+      if (decision.action === 'deliverViaMessagingFacade') {
+        const rawMessage = buildEnvelope('space-agent', fromSessionId);
         const messageRecord: MessageRecord = {
           messageId: `msg_node_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-          spaceId,
+          spaceId: spaceId!,
           senderActorId: `worker:${encodeURIComponent(workflowRunId)}:unresolved:${encodeURIComponent(fromAgentName)}`,
           targets: [target],
           body: rawMessage,
@@ -257,9 +356,9 @@ export class AgentMessageRouter {
           createdAt: Date.now(),
         };
         const routed = await new SpaceDeliveryFacade({
-          resolver: messageResolver,
-          deliverToSession: longTermAgentDelivery.deliverToSession,
-          queueForActivation: longTermAgentDelivery.queueForActivation,
+          resolver: messageResolver!,
+          deliverToSession: longTermAgentDelivery!.deliverToSession,
+          queueForActivation: longTermAgentDelivery!.queueForActivation,
         }).routeMessage(messageRecord);
         for (const delivery of routed.deliveries) {
           const targetName = delivery.targetActorId ?? target;
@@ -277,39 +376,8 @@ export class AgentMessageRouter {
         }
         continue;
       }
-      if (address.kind !== 'worker') {
-        return {
-          success: delivered.length > 0 || failed.length > 0 ? 'partial' : false,
-          delivered,
-          failed,
-          reason: `Generic target ${target} is not supported by node-agent send_message. Use @coordinator, @handle, @role:<role>, @session:<authorized-reply-session>, or @worker:<node>/<agent>.`,
-          queued: queued.length > 0 ? queued : undefined,
-          notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
-        };
-      }
 
-      const runId = address.workflowRunId ?? workflowRunId;
-      if (runId !== workflowRunId) {
-        notFound.push(target);
-        continue;
-      }
-      let nodeName: string;
-      let agentName: string | null;
-      try {
-        nodeName = decodeURIComponent(address.nodeId);
-        agentName = address.agentName ? decodeURIComponent(address.agentName) : null;
-      } catch (err) {
-        return {
-          success: false,
-          delivered: [],
-          failed: [],
-          reason: `Invalid worker target ${target}: ${err instanceof Error ? err.message : String(err)}`,
-        };
-      }
-      if (!agentName) {
-        notFound.push(target);
-        continue;
-      }
+      const { nodeName, agentName } = decision;
       const permittedChannelTarget = resolver.canSend(fromNodeName, nodeName)
         ? nodeName
         : resolver.canSend(fromNodeName, agentName)
@@ -369,59 +437,51 @@ export class AgentMessageRouter {
         }
       }
       const sessions = peers.filter(matchesTargetNode);
-      if (sessions.length === 0) {
-        if (pendingMessageRepo && spaceId) {
-          const rawMessage = formatAgentMessage({
-            fromLevel: 'node-agent',
-            fromAgentName,
-            toLevel: 'node-agent',
-            body: `${message}${dataAppendix}`,
-            taskId,
-            taskNumber,
-            nodeId: fromAgentName,
-          });
-          const queueWorkflowNodeId = hasNodeNameMap
-            ? resolveWorkflowNodeId(nodeName, agentName)
-            : undefined;
-          const queueTargetName = hasNodeNameMap ? scopedAgentName(nodeName, agentName) : agentName;
-          const storedTargetName = queueWorkflowNodeId != null ? agentName : queueTargetName;
-          const { record, deduped } = pendingMessageRepo.enqueue({
-            workflowRunId,
-            spaceId,
-            taskId: taskId ?? null,
-            sourceAgentName: fromAgentName,
-            targetKind: 'node_agent',
-            targetAgentName: storedTargetName,
-            workflowNodeId: queueWorkflowNodeId,
-            message: rawMessage,
-            idempotencyKey: JSON.stringify([fromSessionId, target, rawMessage]),
-            ttlMs: 60_000,
-            maxAttempts: 3,
-          });
-          queued.push({ agentName: queueTargetName, messageId: record.id });
-          const nodeResolved = !hasNodeNameMap || queueWorkflowNodeId != null;
-          if (!deduped && nodeResolved) onMessageQueued?.(agentName, queueWorkflowNodeId);
-        }
+      const workerDelivery = decideNodeTargetDelivery(agentName, {
+        isSpaceAgent: false,
+        hasLiveSessions: sessions.length > 0,
+        queueCapable: Boolean(pendingMessageRepo && spaceId),
+        activatedTargets: new Set<string>(),
+        declaredAgentNames: [agentName],
+        permittedTargets: [],
+        resolveNodeName: buildNodeNameResolver(slotToNode),
+      });
+      if (workerDelivery === 'queueForActivation' && pendingMessageRepo && spaceId) {
+        const rawMessage = buildEnvelope('node-agent');
+        const queueWorkflowNodeId = hasNodeNameMap
+          ? resolveWorkflowNodeId(nodeName, agentName)
+          : undefined;
+        const queueTargetName = hasNodeNameMap ? scopedAgentName(nodeName, agentName) : agentName;
+        const storedTargetName = queueWorkflowNodeId != null ? agentName : queueTargetName;
+        const { record, deduped } = this.enqueueNodeAgentMessage({
+          repo: pendingMessageRepo,
+          spaceId,
+          fromAgentName,
+          fromSessionId,
+          targetAgentName: storedTargetName,
+          idempotencyTarget: target,
+          workflowNodeId: queueWorkflowNodeId,
+          message: rawMessage,
+        });
+        queued.push({ agentName: queueTargetName, messageId: record.id });
+        const nodeResolved = !hasNodeNameMap || queueWorkflowNodeId != null;
+        if (!deduped && nodeResolved) onMessageQueued?.(agentName, queueWorkflowNodeId);
         notFound.push(agentName);
         continue;
       }
-      for (const session of sessions) {
-        const envelopedMessage = formatAgentMessage({
-          fromLevel: 'node-agent',
-          fromAgentName,
-          toLevel: 'node-agent',
-          body: `${message}${dataAppendix}`,
-          taskId,
-          taskNumber,
-          nodeId: fromAgentName,
-        });
-        try {
-          await messageInjector(session.sessionId, envelopedMessage);
-          delivered.push(session);
-        } catch (err) {
-          failed.push({ ...session, error: err instanceof Error ? err.message : String(err) });
+      if (workerDelivery === 'injectLiveSessions') {
+        for (const session of sessions) {
+          const envelopedMessage = buildEnvelope('node-agent');
+          try {
+            await messageInjector(session.sessionId, envelopedMessage);
+            delivered.push(session);
+          } catch (err) {
+            failed.push({ ...session, error: err instanceof Error ? err.message : String(err) });
+          }
         }
+        continue;
       }
+      notFound.push(agentName);
     }
 
     return foldAgentMessageResult({ delivered, queued, failed, notFound });
@@ -430,7 +490,6 @@ export class AgentMessageRouter {
   async deliverMessage(params: AgentMessageParams): Promise<AgentMessageResult> {
     const { fromAgentName, fromSessionId, target, message, data } = params;
     const {
-      nodeExecutionRepo,
       workflowRunId,
       workflowChannels,
       messageInjector,
@@ -453,49 +512,9 @@ export class AgentMessageRouter {
     const requestedTargets =
       target === '*' ? ['*'] : Array.isArray(target) ? [...target] : [target];
 
-    const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
-
-    const execWithSession = allExecutions.filter(
-      (e) => e.agentSessionId && e.agentSessionId !== fromSessionId
-    );
-    if (execWithSession.length === 0 && allExecutions.length > 0) {
-      log.warn(
-        `[AgentMessageRouter] nodeExecutionRepo has ${allExecutions.length} execution(s) for run ${workflowRunId} ` +
-          `but none have an agentSessionId yet — will attempt activation/queuing.`
-      );
-    }
-    let peers: Array<{ sessionId: string; agentName: string }> = execWithSession.map((e) => ({
-      sessionId: e.agentSessionId!,
-      agentName: e.agentName,
-    }));
-
-    const postApprovalSessionId = this.config.findPostApprovalSessionId?.();
-    const postApprovalTargetAgent = this.config.findPostApprovalTargetAgentName?.();
-    if (
-      postApprovalSessionId &&
-      postApprovalTargetAgent &&
-      postApprovalSessionId !== fromSessionId &&
-      postApprovalTargetAgent !== fromAgentName
-    ) {
-      if (!peers.some((p) => p.sessionId === postApprovalSessionId)) {
-        peers = peers.filter(
-          (p) => !(p.agentName === postApprovalTargetAgent && p.sessionId !== postApprovalSessionId)
-        );
-        peers.push({ sessionId: postApprovalSessionId, agentName: postApprovalTargetAgent });
-      }
-    }
-
-    const allDeclaredAgentNames = new Set(
-      allExecutions.filter((e) => e.agentSessionId !== fromSessionId).map((e) => e.agentName)
-    );
-    if (nodeGroups) {
-      for (const slots of Object.values(nodeGroups)) {
-        for (const slot of slots) {
-          if (slot === fromAgentName) continue;
-          allDeclaredAgentNames.add(slot);
-        }
-      }
-    }
+    const peerSnapshot = this.gatherPeerSnapshot(fromAgentName, fromSessionId);
+    const allDeclaredAgentNames = peerSnapshot.declaredAgentNames;
+    let peers = peerSnapshot.peers;
 
     const spaceAgentAvailable = Boolean(spaceAgentInjector && spaceId);
     const permittedTargets = resolver.getPermittedTargets(fromNodeName);
@@ -610,10 +629,18 @@ export class AgentMessageRouter {
       peers = [...refreshed.values()].filter((peer) => peer.sessionId !== fromSessionId);
     }
 
-    const dataAppendix =
-      data && Object.keys(data).length > 0
-        ? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
-        : '';
+    const body = `${message}${buildDataAppendix(data)}`;
+    const buildEnvelope = (toLevel: 'node-agent' | 'space-agent', replyToSessionId?: string) =>
+      formatAgentMessage({
+        fromLevel: 'node-agent',
+        fromAgentName,
+        toLevel,
+        body,
+        taskId,
+        taskNumber,
+        nodeId: fromAgentName,
+        replyToSessionId,
+      });
 
     const delivered: Array<{ agentName: string; sessionId: string }> = [];
     const queued: Array<{ agentName: string; messageId: string }> = [];
@@ -638,26 +665,16 @@ export class AgentMessageRouter {
           continue;
         }
         const replyTo = replyRoutingLookup ? replyRoutingLookup(fromAgentName) : null;
-        const envelopedMessage = formatAgentMessage({
-          fromLevel: 'node-agent',
-          fromAgentName,
-          toLevel: 'space-agent',
-          body: `${message}${dataAppendix}`,
-          taskId,
-          taskNumber,
-          nodeId: fromAgentName,
-        });
+        const sessionId = replyTo || `space:chat:${spaceId}`;
+        const envelopedMessage = buildEnvelope('space-agent');
         try {
           await spaceAgentInjector(spaceId, envelopedMessage, replyTo);
-          delivered.push({
-            agentName,
-            sessionId: replyTo || `space:chat:${spaceId}`,
-          });
+          delivered.push({ agentName, sessionId });
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           failed.push({
             agentName,
-            sessionId: replyTo || `space:chat:${spaceId}`,
+            sessionId,
             error: errMsg,
           });
         }
@@ -666,15 +683,7 @@ export class AgentMessageRouter {
 
       if (decision === 'injectLiveSessions') {
         for (const member of agentSessions) {
-          const envelopedMessage = formatAgentMessage({
-            fromLevel: 'node-agent',
-            fromAgentName,
-            toLevel: 'node-agent',
-            body: `${message}${dataAppendix}`,
-            taskId,
-            taskNumber,
-            nodeId: fromAgentName,
-          });
+          const envelopedMessage = buildEnvelope('node-agent');
           try {
             await messageInjector(member.sessionId, envelopedMessage);
             delivered.push({ agentName, sessionId: member.sessionId });
@@ -687,27 +696,16 @@ export class AgentMessageRouter {
       }
 
       if (decision === 'queueForActivation' && pendingMessageRepo && spaceId) {
-        const rawMessage = formatAgentMessage({
-          fromLevel: 'node-agent',
-          fromAgentName,
-          toLevel: 'node-agent',
-          body: `${message}${dataAppendix}`,
-          taskId,
-          taskNumber,
-          nodeId: fromAgentName,
-        });
+        const rawMessage = buildEnvelope('node-agent');
         try {
-          const { record, deduped } = pendingMessageRepo.enqueue({
-            workflowRunId,
+          const { record, deduped } = this.enqueueNodeAgentMessage({
+            repo: pendingMessageRepo,
             spaceId,
-            taskId: taskId ?? null,
-            sourceAgentName: fromAgentName,
-            targetKind: 'node_agent',
+            fromAgentName,
+            fromSessionId,
             targetAgentName: agentName,
+            idempotencyTarget: agentName,
             message: rawMessage,
-            idempotencyKey: JSON.stringify([fromSessionId, agentName, rawMessage]),
-            ttlMs: 60_000,
-            maxAttempts: 3,
           });
           queued.push({ agentName, messageId: record.id });
           notFound.push(agentName);

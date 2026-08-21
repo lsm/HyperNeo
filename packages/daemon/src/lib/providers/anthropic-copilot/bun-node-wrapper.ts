@@ -32,15 +32,11 @@ export function ensureBunNodeWrapper(): string | undefined {
     let needsSymlink = true;
     try {
       needsSymlink = readlinkSync(nodePath) !== bunPath;
-    } catch {
-      // Symlink does not exist yet — needs to be created.
-    }
+    } catch {}
     if (needsSymlink) {
       try {
         unlinkSync(nodePath);
-      } catch {
-        // Ignore — may not exist.
-      }
+      } catch {}
       symlinkSync(bunPath, nodePath);
     }
     return wrapperDir;

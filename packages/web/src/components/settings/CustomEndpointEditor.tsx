@@ -189,9 +189,7 @@ export async function testCustomEndpoint(
   try {
     const parsed = parseHeaders(state.headersText);
     if (parsed) Object.assign(headers, parsed);
-  } catch {
-    // Validated above
-  }
+  } catch {}
 
   const resp = await fetch(probe, { method: 'GET', headers });
   if (!resp.ok) {

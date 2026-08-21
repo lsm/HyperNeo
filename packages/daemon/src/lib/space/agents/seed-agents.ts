@@ -229,9 +229,7 @@ export function retireRemovedPresetAgents(
     try {
       deps.agentManager.delete(agent.id);
       retired.push(agent.name);
-    } catch {
-      // Best-effort — a failed delete must not break startup.
-    }
+    } catch {}
   }
   return retired;
 }

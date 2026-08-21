@@ -81,14 +81,10 @@ describe('Migration 28: mission metadata schema additions', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, HOOK_TIMEOUT_MS);
 
   test('migration runs cleanly on fresh DB (no goals table yet)', () => {

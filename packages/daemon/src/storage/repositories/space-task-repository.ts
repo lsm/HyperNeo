@@ -104,7 +104,7 @@ export class SpaceTaskRepository {
          WHERE s.status != 'archived'
            AND COALESCE(s.type, 'worker') NOT IN ('room_chat', 'space_chat', 'spaces_global')
            AND (
-             (json_valid(s.session_context) AND json_extract(s.session_context, '$.taskId') = ?)
+             s.task_id = ?
              OR s.id = t.task_agent_session_id
              OR s.id LIKE ('space:%:task:' || ? || ':%')
            )`

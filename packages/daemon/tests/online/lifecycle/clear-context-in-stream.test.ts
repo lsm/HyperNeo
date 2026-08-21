@@ -60,9 +60,7 @@ describe('SDK /clear in streaming-input mode', () => {
       yield userMsg('/clear');
       try {
         await waitForResults(2, 60_000);
-      } catch {
-        // Some SDK versions may not emit a result for /clear — proceed anyway.
-      }
+      } catch {}
 
       yield userMsg(
         'What codeword did I ask you to remember earlier? Reply with ONLY the codeword, ' +

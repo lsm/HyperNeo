@@ -227,9 +227,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
     busUnsubs = [];
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   function saveAssistantMessage(sessionId: string, content: unknown[], stopReason: string | null) {

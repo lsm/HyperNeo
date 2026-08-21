@@ -202,7 +202,7 @@ export class SDKMessageRepository {
     const cached = this.tableColumnsCache.get(tableName);
     if (cached !== undefined) return cached;
     try {
-      const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+      const rows = this.db.prepare(`PRAGMA table_xinfo(${tableName})`).all() as Array<{
         name?: string;
       }>;
       const columns = new Set(
@@ -241,7 +241,7 @@ export class SDKMessageRepository {
     const hasSessionStatus = hasSessions && this.tableHasColumn('sessions', 'status');
     const hasSessionType = hasSessions && this.tableHasColumn('sessions', 'type');
     const hasSessionLastActiveAt = hasSessions && this.tableHasColumn('sessions', 'last_active_at');
-    const hasSessionContext = hasSessions && this.tableHasColumn('sessions', 'session_context');
+    const hasSessionRoomId = hasSessions && this.tableHasColumn('sessions', 'room_id');
     const hasTaskStatus = hasSpaceTasks && this.tableHasColumn('space_tasks', 'status');
     const hasTaskCompletedAt = hasSpaceTasks && this.tableHasColumn('space_tasks', 'completed_at');
     const hasTaskUpdatedAt = hasSpaceTasks && this.tableHasColumn('space_tasks', 'updated_at');
@@ -251,7 +251,7 @@ export class SDKMessageRepository {
     const sessionPolicySelect = `${hasSessionStatus ? 's.status' : 'NULL'} AS session_status,
 			   ${hasSessionType ? 's.type' : 'NULL'} AS session_type,
 			   ${hasSessionLastActiveAt ? 's.last_active_at' : 'NULL'} AS session_last_active_at,
-			   ${hasSessionContext ? 's.session_context' : 'NULL'} AS session_context`;
+			   ${hasSessionRoomId ? 's.room_id' : 'NULL'} AS session_room_id`;
     const spaceTaskSelect = hasSpaceTasks
       ? `st.space_id, st.task_number,
 			   ${hasTaskStatus ? 'st.status' : 'NULL'} AS task_status,
@@ -284,7 +284,7 @@ export class SDKMessageRepository {
           session_status: string | null;
           session_type: string | null;
           session_last_active_at: string | null;
-          session_context: string | null;
+          session_room_id: string | null;
           space_id: string | null;
           task_number: number | null;
           task_status: string | null;
@@ -337,7 +337,7 @@ export class SDKMessageRepository {
     session_status: string | null;
     session_type: string | null;
     session_last_active_at: string | null;
-    session_context: string | null;
+    session_room_id: string | null;
     task_status: string | null;
     task_completed_at: number | null;
     task_updated_at: number | null;
@@ -352,14 +352,7 @@ export class SDKMessageRepository {
     }
 
     if (row.session_type && ROOM_SESSION_TYPES.has(row.session_type)) return false;
-    if (row.session_context) {
-      try {
-        const context = JSON.parse(row.session_context) as { roomId?: unknown };
-        if (typeof context.roomId === 'string') return false;
-      } catch {
-        // Malformed historical context should not make an otherwise-normal session unsearchable.
-      }
-    }
+    if (row.session_room_id) return false;
 
     const isSpaceSession =
       row.session_id.startsWith('space:') ||
@@ -492,22 +485,13 @@ export class SDKMessageRepository {
     try {
       if (
         !this.tableExists('sessions') ||
-        !this.tableHasColumn('sessions', 'session_context') ||
+        !this.tableHasColumn('sessions', 'task_id') ||
         !this.tableHasColumn('sessions', 'type')
       ) {
         return null;
       }
       const row = this.db
-        .prepare(
-          `SELECT
-						CASE
-							WHEN session_context IS NULL THEN NULL
-							WHEN NOT json_valid(session_context) THEN NULL
-							ELSE json_extract(session_context, '$.taskId')
-						END AS task_id,
-						type
-					 FROM sessions WHERE id = ?`
-        )
+        .prepare(`SELECT task_id, type FROM sessions WHERE id = ?`)
         .get(sessionId) as { task_id: string | null; type: string | null } | undefined;
       if (!row) return null;
       const allowedTypes = ['space_task_agent', 'worker'];
@@ -1158,46 +1142,33 @@ export class SDKMessageRepository {
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
   }
 
-  getMessagesByStatus(
-    sessionId: string,
-    status: SendStatus
-  ): Array<SDKMessage & { dbId: string; timestamp: number }> {
-    const stmt = this.db.prepare(
-      `SELECT id, sdk_message, timestamp FROM sdk_messages
-       WHERE session_id = ? AND send_status = ?
-       ORDER BY timestamp ASC, rowid ASC`
-    );
-    const rows = stmt.all(sessionId, status) as Array<{
-      id: string;
-      sdk_message: string;
-      timestamp: string;
-    }>;
-
-    return rows.map((row) => this.inflatePersistedMessage(row));
-  }
-
   getUserMessagesByStatus(
     sessionId: string,
     status: SendStatus,
-    limit: number
+    limit?: number
   ): {
     messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>;
     total: number;
   } {
-    const countRow = this.db
-      .prepare(
-        `SELECT COUNT(*) AS count FROM sdk_messages
-         WHERE session_id = ? AND send_status = ? AND ${USER_STATUS_MESSAGE_SQL}`
-      )
-      .get(sessionId, status) as { count: number };
-    const projected = this.db
-      .prepare(
-        `SELECT rowid AS row_id FROM sdk_messages
+    const countRow =
+      limit !== undefined
+        ? (this.db
+            .prepare(
+              `SELECT COUNT(*) AS count FROM sdk_messages
+               WHERE session_id = ? AND send_status = ? AND ${USER_STATUS_MESSAGE_SQL}`
+            )
+            .get(sessionId, status) as { count: number })
+        : null;
+    let projectionSql = `SELECT rowid AS row_id FROM sdk_messages
          WHERE session_id = ? AND send_status = ? AND ${USER_STATUS_MESSAGE_SQL}
-         ORDER BY timestamp ASC, rowid ASC
-         LIMIT ?`
-      )
-      .all(sessionId, status, limit) as Array<{ row_id: number }>;
+         ORDER BY timestamp ASC, rowid ASC`;
+    if (limit !== undefined) projectionSql += `\n         LIMIT ?`;
+    const projected =
+      limit !== undefined
+        ? (this.db.prepare(projectionSql).all(sessionId, status, limit) as Array<{
+            row_id: number;
+          }>)
+        : (this.db.prepare(projectionSql).all(sessionId, status) as Array<{ row_id: number }>);
     const messagesByRowId = new Map<number, SDKUserMessage & { dbId: string; timestamp: number }>();
 
     for (let offset = 0; offset < projected.length; offset += STATUS_MESSAGE_HYDRATION_BATCH_SIZE) {
@@ -1225,13 +1196,11 @@ export class SDKMessageRepository {
       }
     }
 
-    return {
-      messages: projected.flatMap((row) => {
-        const message = messagesByRowId.get(row.row_id);
-        return message ? [message] : [];
-      }),
-      total: countRow.count,
-    };
+    const messages = projected.flatMap((row) => {
+      const message = messagesByRowId.get(row.row_id);
+      return message ? [message] : [];
+    });
+    return { messages, total: countRow ? countRow.count : messages.length };
   }
 
   getMessageByStatusAndUuid(
@@ -1244,6 +1213,7 @@ export class SDKMessageRepository {
 	       WHERE session_id = ?
 	         AND send_status = ?
 	         AND sdk_uuid = ?
+	       ORDER BY timestamp ASC, rowid ASC
 	       LIMIT 1`
     );
     const row = stmt.get(sessionId, status, uuid) as {
@@ -1252,6 +1222,47 @@ export class SDKMessageRepository {
       timestamp: string;
     } | null;
     return row ? this.inflatePersistedMessage(row) : null;
+  }
+
+  getMessageByStatusAndDbId(
+    sessionId: string,
+    status: SendStatus,
+    dbId: string
+  ): (SDKMessage & { dbId: string; timestamp: number }) | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, sdk_message, timestamp FROM sdk_messages
+         WHERE session_id = ? AND send_status = ? AND id = ?
+         LIMIT 1`
+      )
+      .get(sessionId, status, dbId) as {
+      id: string;
+      sdk_message: string;
+      timestamp: string;
+    } | null;
+    return row ? this.inflatePersistedMessage(row) : null;
+  }
+
+  getUserMessageIdsByStatus(
+    sessionId: string,
+    status: SendStatus
+  ): Array<{ dbId: string; uuid: string | undefined; timestamp: number }> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, sdk_uuid, timestamp FROM sdk_messages
+         WHERE session_id = ? AND send_status = ? AND ${USER_STATUS_MESSAGE_SQL}
+         ORDER BY timestamp ASC, rowid ASC`
+      )
+      .all(sessionId, status) as Array<{
+      id: string;
+      sdk_uuid: string | null;
+      timestamp: string;
+    }>;
+    return rows.map((row) => ({
+      dbId: row.id,
+      uuid: row.sdk_uuid ?? undefined,
+      timestamp: new Date(row.timestamp).getTime(),
+    }));
   }
 
   private inflatePersistedMessage(row: {

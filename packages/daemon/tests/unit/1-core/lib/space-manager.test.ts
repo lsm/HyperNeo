@@ -23,9 +23,7 @@ describe('SpaceManager', () => {
     db.close();
     try {
       rmSync(tmpDir, { recursive: true });
-    } catch {
-      // ignore cleanup errors
-    }
+    } catch {}
   });
 
   describe('createSpace', () => {

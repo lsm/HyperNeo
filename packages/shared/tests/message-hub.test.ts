@@ -1028,9 +1028,7 @@ describe('Multi-Transport Support', () => {
       return { echoed: data };
     });
 
-    void neoClientHub.request('test.neo', { source: 'neo' }, { timeout: 100 }).catch(() => {
-      // Expected timeout - response goes to primary transport
-    });
+    void neoClientHub.request('test.neo', { source: 'neo' }, { timeout: 100 }).catch(() => {});
     await new Promise((resolve) => setTimeout(resolve, 150));
 
     expect(neoHandlerCalled).toBe(true);

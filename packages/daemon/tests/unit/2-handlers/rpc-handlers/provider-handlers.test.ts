@@ -116,9 +116,7 @@ function createMockCredentialManager(): ProviderCredentialManager {
         if (parsed.accessToken !== undefined) {
           return { type: 'oauth' as const, accessToken: parsed.accessToken };
         }
-      } catch {
-        // not JSON, treat as api key
-      }
+      } catch {}
       return { type: 'api_key' as const, apiKey: raw };
     }),
     removeCredentials: mock(async (providerId: string) => {

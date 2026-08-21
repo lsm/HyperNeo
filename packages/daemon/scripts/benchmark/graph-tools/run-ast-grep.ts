@@ -42,9 +42,7 @@ function resolveAstGrep(): { bin: string | null; serverPath: string } {
           astGrepBin = null;
         }
       }
-    } catch {
-      // Fall through
-    }
+    } catch {}
   }
 
   const resolveMs = Date.now() - resolveStart;

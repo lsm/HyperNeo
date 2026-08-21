@@ -46,9 +46,7 @@ describe('SettingsManager', () => {
 
     try {
       rmSync(tempDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    } catch {}
   });
 
   describe('getGlobalSettings', () => {

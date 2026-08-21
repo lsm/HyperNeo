@@ -65,7 +65,6 @@ describe('Session RPC Handlers — session.messages.byStatus', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let eventBus: ReturnType<typeof createMockInternalEventBus>;
   let getUserMessagesByStatus: ReturnType<typeof mock>;
-  let getMessagesByStatus: ReturnType<typeof mock>;
   let getSessionAsync: ReturnType<typeof mock>;
 
   beforeEach(async () => {
@@ -90,15 +89,12 @@ describe('Session RPC Handlers — session.messages.byStatus', () => {
       ],
       total: 42,
     }));
-    getMessagesByStatus = mock(() => {
-      throw new Error('unbounded path called');
-    });
     getSessionAsync = mock(async () => ({
       getSessionData: () => ({ id: 'session-1' }),
     }));
     const sessionManager = {
       getSessionAsync,
-      getDatabase: () => ({ getUserMessagesByStatus, getMessagesByStatus }),
+      getDatabase: () => ({ getUserMessagesByStatus }),
     } as unknown as SessionManager;
     const { setupSessionHandlers } = await import(
       '../../../../src/lib/rpc-handlers/session-handlers'
@@ -124,7 +120,6 @@ describe('Session RPC Handlers — session.messages.byStatus', () => {
     };
 
     expect(getUserMessagesByStatus).toHaveBeenCalledWith('session-1', 'consumed', 2);
-    expect(getMessagesByStatus).not.toHaveBeenCalled();
     expect(result).toEqual({
       messages: [
         {
@@ -539,18 +534,20 @@ describe('Session RPC Handlers — models.list', () => {
       );
 
       const dbFacade = {
-        getMessagesByStatus: (_sid: string, status: string) =>
-          (
-            db
-              .prepare(
-                `SELECT id AS dbId, sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND send_status = ?`
-              )
-              .all('sess-1', status) as Array<{
-              dbId: string;
-              sdk_message: string;
-              timestamp: string;
-            }>
-          ).map((row) => ({ ...JSON.parse(row.sdk_message), dbId: row.dbId, timestamp: 0 })),
+        getMessageByStatusAndDbId: (_sid: string, status: string, dbId: string) => {
+          const row = db
+            .prepare(
+              `SELECT id AS dbId, sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND send_status = ? AND id = ?`
+            )
+            .get('sess-1', status, dbId) as
+            | {
+                dbId: string;
+                sdk_message: string;
+                timestamp: string;
+              }
+            | undefined;
+          return row ? { ...JSON.parse(row.sdk_message), dbId: row.dbId, timestamp: 0 } : undefined;
+        },
         updateMessageStatus: (ids: string[], status: string) =>
           db
             .prepare(
@@ -659,18 +656,20 @@ describe('Session RPC Handlers — models.list', () => {
       );
 
       const dbFacade = {
-        getMessagesByStatus: (_sid: string, status: string) =>
-          (
-            db
-              .prepare(
-                `SELECT id AS dbId, sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND send_status = ?`
-              )
-              .all('sess-1', status) as Array<{
-              dbId: string;
-              sdk_message: string;
-              timestamp: string;
-            }>
-          ).map((row) => ({ ...JSON.parse(row.sdk_message), dbId: row.dbId, timestamp: 0 })),
+        getMessageByStatusAndDbId: (_sid: string, status: string, dbId: string) => {
+          const row = db
+            .prepare(
+              `SELECT id AS dbId, sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND send_status = ? AND id = ?`
+            )
+            .get('sess-1', status, dbId) as
+            | {
+                dbId: string;
+                sdk_message: string;
+                timestamp: string;
+              }
+            | undefined;
+          return row ? { ...JSON.parse(row.sdk_message), dbId: row.dbId, timestamp: 0 } : undefined;
+        },
         updateMessageStatus: (ids: string[], status: string) =>
           db
             .prepare(

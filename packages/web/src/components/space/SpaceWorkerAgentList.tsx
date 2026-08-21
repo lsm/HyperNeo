@@ -247,10 +247,7 @@ export function SpaceWorkerAgentList() {
         }
         setAgentDrift(next);
       })
-      .catch(() => {
-        // Drift detection is best-effort — silently swallow errors so
-        // list rendering never depends on the report succeeding.
-      });
+      .catch(() => {});
 
     return () => {
       cancelled = true;

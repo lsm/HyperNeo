@@ -18,9 +18,7 @@ test.describe('New Session modal', () => {
     for (const sessionId of createdSessionIds) {
       try {
         await cleanupTestSession(page, sessionId);
-      } catch {
-        // Cleanup failure is non-critical
-      }
+      } catch {}
     }
     createdSessionIds = [];
   });

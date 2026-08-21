@@ -29,14 +29,10 @@ describe('Migration 60: Drop session group tables and remove current_node_id', (
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('space_session_groups table does NOT exist after full migration', () => {

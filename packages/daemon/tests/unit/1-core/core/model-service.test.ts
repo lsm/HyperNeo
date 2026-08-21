@@ -1012,9 +1012,7 @@ describe('Model Service', () => {
 
   describe('getSupportedModelsFromQuery edge cases', () => {
     it('should return empty array when query has no supportedModels method', async () => {
-      const mockQuery = {
-        // No supportedModels method
-      };
+      const mockQuery = {};
 
       const models = await getSupportedModelsFromQuery(mockQuery as unknown, 'no-method-key');
       expect(models).toEqual([]);

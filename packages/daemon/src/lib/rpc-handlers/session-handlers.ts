@@ -74,9 +74,7 @@ export async function detectStrandedProviders(
           probeTimeoutMs
         );
         if (available === true) stranded.push(provider.id);
-      } catch {
-        // isAvailable() probe rejected — treat as unavailable; don't refresh.
-      }
+      } catch {}
     })
   );
   return stranded;
@@ -447,9 +445,7 @@ export function setupSessionHandlers(
             space: updatedSpace,
           })
           .catch(() => {});
-      } catch {
-        // Space may already be deleted — ignore
-      }
+      } catch {}
     }
 
     return { success: true };
@@ -505,9 +501,7 @@ export function setupSessionHandlers(
             space: updatedSpace,
           })
           .catch(() => {});
-      } catch {
-        // Space may already be deleted — ignore
-      }
+      } catch {}
     }
 
     const archivedPayload = {
@@ -1141,9 +1135,7 @@ export function setupSessionHandlers(
     }
 
     const db = sessionManager.getDatabase();
-    const message = db
-      .getMessagesByStatus(targetSessionId, 'deferred')
-      .find((queuedMessage) => queuedMessage.dbId === messageDbId);
+    const message = db.getMessageByStatusAndDbId(targetSessionId, 'deferred', messageDbId);
 
     if (!message || !isSDKUserMessage(message) || !message.uuid) {
       return { promoted: false };
@@ -1201,9 +1193,7 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    const message = db
-      .getMessagesByStatus(targetSessionId, 'failed')
-      .find((queuedMessage) => queuedMessage.dbId === messageDbId);
+    const message = db.getMessageByStatusAndDbId(targetSessionId, 'failed', messageDbId);
 
     if (!message || !isSDKUserMessage(message) || !message.uuid) {
       return { retried: false };

@@ -292,14 +292,7 @@ export function getProviderContextManager(): ProviderContextManager {
   return new ProviderContextManager(registry);
 }
 
-/**
- * Reset the provider factory initialization state
- *
- * MUST be called alongside resetProviderRegistry() to fully reset
- * the provider system. This is typically only needed in tests.
- *
- * @public Exported for testing purposes
- */
+/** @public */
 export function resetProviderFactory(): void {
   initialized = false;
   copilotProviderModule = null;

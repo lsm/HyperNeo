@@ -70,16 +70,12 @@ describe('Scoped invalidation — sdk_messages integration', () => {
     engine.dispose();
     try {
       db.close();
-    } catch {
-      // already closed
-    }
+    } catch {}
     try {
       rmSync(dbPath, { force: true });
       rmSync(dbPath + '-wal', { force: true });
       rmSync(dbPath + '-shm', { force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('writing message for sess-B does NOT trigger delta for sess-A subscription', async () => {

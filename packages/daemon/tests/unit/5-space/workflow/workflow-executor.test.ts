@@ -70,9 +70,7 @@ describe('WorkflowExecutor', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   function makeExecutor(

@@ -194,17 +194,14 @@ export async function deliverBatchAndMarkQueued(args: {
     if (args.stateManager) {
       try {
         await args.stateManager.setQueuedIfIdle(usable[0]);
-      } catch {
-        // Non-fatal — the durable job is already enqueued; the handler will
-        // drive the turn. Mirrors deliverAndMarkQueued.
-      }
+      } catch {}
     }
     return true;
   });
 }
 
 export interface StrandedDeliveryDb {
-  getMessagesByStatus(sessionId: string, status: 'enqueued'): Array<{ uuid?: string }>;
+  getUserMessageIdsByStatus(sessionId: string, status: 'enqueued'): Array<{ uuid?: string }>;
 }
 
 export async function reconcileStrandedDeliveries(args: {
@@ -219,7 +216,7 @@ export async function reconcileStrandedDeliveries(args: {
   if (!isMessageDeliveryV2Enabled()) return 0;
   return withSessionLock(args.sessionId, async () => {
     const active = args.jobQueue.activeDeliveryMessageUuids(args.sessionId);
-    const enqueued = args.db.getMessagesByStatus(args.sessionId, 'enqueued');
+    const enqueued = args.db.getUserMessageIdsByStatus(args.sessionId, 'enqueued');
     const stranded: string[] = [];
     for (const msg of enqueued) {
       const uuid = msg.uuid;
@@ -237,9 +234,7 @@ export async function reconcileStrandedDeliveries(args: {
       if (role === 'turn' && args.stateManager) {
         try {
           await args.stateManager.setQueuedIfIdle(uuid);
-        } catch {
-          // Non-fatal — the durable job is enqueued; the handler will drive it.
-        }
+        } catch {}
       }
     }
     return stranded.length;
@@ -495,10 +490,7 @@ export async function deliverAndMarkQueued(args: {
     if (role === 'turn' && args.stateManager) {
       try {
         await args.stateManager.setQueuedIfIdle(args.messageUuid);
-      } catch {
-        // Non-fatal — the durable job is already enqueued; the handler will
-        // drive the turn. Mirrors deliverChatMessage's warn-and-continue.
-      }
+      } catch {}
     }
   });
 }

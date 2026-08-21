@@ -194,9 +194,7 @@ export function FloatingProvider({ children, enabled = true }: FloatingProviderP
 
       setPosition({ x: result.x, y: result.y });
       setActualPlacement(result.placement);
-    } catch {
-      // Ignore errors
-    }
+    } catch {}
   });
 
   useIsoMorphicEffect(() => {

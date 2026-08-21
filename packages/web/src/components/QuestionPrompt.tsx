@@ -115,9 +115,7 @@ export function QuestionPrompt({
         sessionId,
         draftResponses: responses,
       });
-    } catch {
-      // Ignore draft save errors
-    }
+    } catch {}
   }, [sessionId, questions.length, selections, customInputs, callIfConnected]);
 
   useEffect(() => {
@@ -198,7 +196,6 @@ export function QuestionPrompt({
 
       onResolved?.('submitted', responses);
     } catch {
-      // Error handled by toast
     } finally {
       setIsSubmitting(false);
     }
@@ -215,7 +212,6 @@ export function QuestionPrompt({
 
       onResolved?.('cancelled', []);
     } catch {
-      // Error handled by toast
     } finally {
       setIsCancelling(false);
     }

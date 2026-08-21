@@ -131,9 +131,7 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
     this.hub.event(event, data, { channel: data.sessionId });
 
     queueMicrotask(() => {
-      this.dispatchLocally(event, data).catch(() => {
-        // Swallow — publishAsync is explicit fire-and-forget.
-      });
+      this.dispatchLocally(event, data).catch(() => {});
     });
   }
 
@@ -352,7 +350,5 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
     this.log('Closed');
   }
 
-  private log(_message: string, ..._args: unknown[]): void {
-    // Debug logging removed - use proper debugging tools instead
-  }
+  private log(_message: string, ..._args: unknown[]): void {}
 }

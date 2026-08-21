@@ -299,9 +299,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
       mockHubObj.request.mockResolvedValue({ data: 'original' });
       await testChannel.start();
 
-      const neverResolves = new Promise<void>(() => {
-        // This promise never resolves
-      });
+      const neverResolves = new Promise<void>(() => {});
 
       testChannel.updateOptimistic(
         'update-timeout',

@@ -34,14 +34,10 @@ describe('Migration 176: space_tasks.post_approval_source_node_id', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('column is added on an existing space_tasks table', () => {

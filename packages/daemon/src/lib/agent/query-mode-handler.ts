@@ -30,7 +30,10 @@ export interface QueryModeHandlerContext {
 export class QueryModeHandler {
   constructor(private ctx: QueryModeHandlerContext) {}
 
-  async handleQueryTrigger(): Promise<{
+  async handleQueryTrigger(options?: {
+    deliverIndividually?: boolean;
+    excludeMessageUuid?: string;
+  }): Promise<{
     success: boolean;
     messageCount: number;
     error?: string;
@@ -38,7 +41,10 @@ export class QueryModeHandler {
     const { session, db, internalEventBus, messageQueue, logger } = this.ctx;
 
     try {
-      const deferredMessages = db.getMessagesByStatus(session.id, 'deferred');
+      const { messages: allDeferred } = db.getUserMessagesByStatus(session.id, 'deferred');
+      const deferredMessages = options?.excludeMessageUuid
+        ? allDeferred.filter((m) => m.uuid !== options.excludeMessageUuid)
+        : allDeferred;
 
       if (deferredMessages.length === 0) {
         return { success: true, messageCount: 0 };
@@ -49,7 +55,7 @@ export class QueryModeHandler {
 
       if (isMessageDeliveryV2Enabled()) {
         try {
-          await this.deliverFlushUnderV2(deferredMessages, 'recovery');
+          await this.deliverFlushUnderV2(deferredMessages, 'recovery', options);
         } catch (error) {
           await internalEventBus.publish('messages.statusChanged', {
             sessionId: session.id,
@@ -71,11 +77,11 @@ export class QueryModeHandler {
           db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
         await this.ctx.ensureQueryStarted();
         for (const msg of deferredMessages) {
-          if (!isSDKUserMessage(msg)) continue;
-          if (v2Owned.has((msg.uuid ?? '') as string)) continue;
+          if (typeof msg.uuid !== 'string' || msg.uuid.length === 0) continue;
+          if (v2Owned.has(msg.uuid)) continue;
           const replayContent = this.toReplayContent(msg.message.content);
           if (replayContent) {
-            await messageQueue.enqueueWithId(msg.uuid as string, replayContent);
+            await messageQueue.enqueueWithId(msg.uuid, replayContent);
           }
         }
       }
@@ -90,7 +96,8 @@ export class QueryModeHandler {
 
   private async deliverFlushUnderV2(
     messages: Array<SDKMessage & { dbId: string; timestamp: number }>,
-    origin: MessageDeliveryOrigin
+    origin: MessageDeliveryOrigin,
+    options?: { deliverIndividually?: boolean }
   ): Promise<void> {
     const jobQueue = this.ctx.db.getJobQueueRepo();
     const pending = messages.filter(
@@ -102,7 +109,7 @@ export class QueryModeHandler {
       return text !== null && !text.startsWith('/');
     });
 
-    if (allBatchable && pending.length >= 2) {
+    if (!options?.deliverIndividually && allBatchable && pending.length >= 2) {
       const batched = await deliverBatchAndMarkQueued({
         jobQueue,
         stateManager: this.ctx.stateManager,
@@ -138,24 +145,22 @@ export class QueryModeHandler {
     const { session, db, messageQueue, logger } = this.ctx;
 
     try {
-      const queuedMessages = db
-        .getMessagesByStatus(session.id, 'enqueued')
-        .filter(
-          (msg) => typeof msg.uuid !== 'string' || !messageQueue.hasPendingOrInFlight(msg.uuid)
-        );
+      const { messages: queuedMessages } = db.getUserMessagesByStatus(session.id, 'enqueued');
+      const pendingMessages = queuedMessages.filter(
+        (msg) => typeof msg.uuid === 'string' && !messageQueue.hasPendingOrInFlight(msg.uuid)
+      );
 
-      if (queuedMessages.length === 0) {
+      if (pendingMessages.length === 0) {
         return;
       }
 
       if (isMessageDeliveryV2Enabled()) {
-        await this.deliverFlushUnderV2(queuedMessages, 'recovery');
+        await this.deliverFlushUnderV2(pendingMessages, 'recovery');
       } else {
         const v2Owned =
           db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
         await this.ctx.ensureQueryStarted();
-        for (const msg of queuedMessages) {
-          if (!isSDKUserMessage(msg)) continue;
+        for (const msg of pendingMessages) {
           if (v2Owned.has((msg.uuid ?? '') as string)) continue;
           const replayContent = this.toReplayContent(msg.message.content);
           if (replayContent) {

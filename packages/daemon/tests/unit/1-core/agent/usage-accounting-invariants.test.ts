@@ -392,7 +392,7 @@ function createHandler(): {
   const db = {
     saveSDKMessage: saveSpy,
     updateSession: updateSpy,
-    getMessagesByStatus: mock(() => []),
+    getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
     getMessageByStatusAndUuid: mock(() => null),
     updateMessageStatus: mock(() => {}),
     updateMessageTimestamp: mock(() => {}),
