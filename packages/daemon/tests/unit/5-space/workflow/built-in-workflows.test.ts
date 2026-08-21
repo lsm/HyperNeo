@@ -292,6 +292,41 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).not.toContain('Do NOT merge PRs');
   });
 
+  test('gate evidence uses GraphQL enum names, timestamps, and paginated reviews', () => {
+    expect(CODER_ONLY_PROMPT).toContain('THUMBS_UP');
+    expect(CODER_ONLY_PROMPT).toContain('EYES');
+    expect(CODER_ONLY_PROMPT).toContain('createdAt');
+    expect(CODER_ONLY_PROMPT).toContain('committedDate');
+    expect(CODER_ONLY_PROMPT).toContain('reviews(first:100,after:$cursor)');
+    expect(CODER_ONLY_PROMPT).toContain('pageInfo.hasNextPage');
+    expect(CODER_ONLY_PROMPT).toContain('`devin`');
+    expect(CODER_ONLY_PROMPT).not.toContain('content `+1` means');
+  });
+
+  test('coder prompt persists the PR link and gates CI on required checks, not a fixed name', () => {
+    expect(CODER_ONLY_PROMPT).toContain('shape: "link", kind: "pr"');
+    expect(CODER_ONLY_PROMPT).toContain('--required');
+    expect(CODER_ONLY_PROMPT).not.toContain('All Tests Pass');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('--required');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).not.toContain('All Tests Pass');
+  });
+
+  test('merge instructions require fresh human sign-off after a post-approval push', () => {
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('merge_fix_pushed');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'The prior human approval never carries over to a head it was not given.'
+    );
+  });
+
+  test('merge instructions give executable guarded commands for the Space checkout sync', () => {
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'git -C "$SPACE_WS" pull --ff-only origin "$BASE"'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('space-checkout-base');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('space-checkout-pull');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('space-checkout-ahead');
+  });
+
   test('requires human sign-off structurally', () => {
     expect(CODER_ONLY_WORKFLOW.completionAutonomyLevel).toBeGreaterThanOrEqual(3);
   });
