@@ -2872,21 +2872,25 @@ function toSqlStringList(subtypes: Iterable<string>): string {
 }
 
 const BACKGROUND_TASK_METADATA_ARMS_SQL = BACKGROUND_TASK_METADATA_SUBTYPES.map(
-  (subtype) => `SELECT
-    id,
-    sdk_message,
-    timestamp,
-    send_status,
-    origin,
-    rowid,
-    COALESCE(
-      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-      task_id
-    ) AS task_id
-  FROM sdk_messages
-  WHERE session_id = ?
-    AND parent_tool_use_id IS NULL
-    AND message_subtype_norm = '${subtype.replace(/'/g, "''")}'`
+  (subtype) => `SELECT * FROM (
+    SELECT
+      id,
+      sdk_message,
+      timestamp,
+      send_status,
+      origin,
+      rowid,
+      COALESCE(
+        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+        task_id
+      ) AS task_id
+    FROM sdk_messages
+    WHERE session_id = ?
+      AND parent_tool_use_id IS NULL
+      AND message_subtype_norm = '${subtype.replace(/'/g, "''")}'
+    ORDER BY timestamp DESC, rowid DESC
+    LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
+  )`
 ).join(`
   UNION ALL
 `);
