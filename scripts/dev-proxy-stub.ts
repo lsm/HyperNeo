@@ -89,6 +89,16 @@ function loadMocks(configFilePath: string | undefined, mocksFilePath: string | u
     fail(`cannot read mocks file ${mocksPath}: ${String(error)}`);
   }
 
+  const nonStringFragments = mocks.filter(
+    (mock) =>
+      mock.request?.bodyFragment !== undefined && typeof mock.request.bodyFragment !== 'string'
+  ).length;
+  if (nonStringFragments > 0) {
+    console.error(
+      `[dev-proxy-stub] warning: ${nonStringFragments} mocks in ${mocksPath} use a non-string bodyFragment; dev-proxy requires a string and rejects the whole file, the stub skips just those mocks`
+    );
+  }
+
   return { configPath, mocksPath, mocks };
 }
 
@@ -104,27 +114,6 @@ function wildcardToRegex(pattern: string): RegExp {
   return regex;
 }
 
-function deepIncludes(body: unknown, fragment: unknown): boolean {
-  if (fragment === null || typeof fragment !== 'object') {
-    return body === fragment;
-  }
-  if (Array.isArray(fragment)) {
-    return (
-      Array.isArray(body) &&
-      body.length === fragment.length &&
-      fragment.every((item, index) => deepIncludes(body[index], item))
-    );
-  }
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
-    return false;
-  }
-  return Object.entries(fragment).every(
-    ([key, value]) =>
-      key in (body as Record<string, unknown>) &&
-      deepIncludes((body as Record<string, unknown>)[key], value)
-  );
-}
-
 function bodyMatches(fragment: unknown, method: string, bodyText: string): boolean {
   if (method === 'GET') {
     return true;
@@ -132,17 +121,13 @@ function bodyMatches(fragment: unknown, method: string, bodyText: string): boole
   if (fragment === undefined || fragment === null) {
     return true;
   }
+  if (typeof fragment !== 'string') {
+    return false;
+  }
   if (bodyText.length === 0) {
     return false;
   }
-  if (typeof fragment === 'string') {
-    return bodyText.toLowerCase().includes(fragment.toLowerCase());
-  }
-  try {
-    return deepIncludes(JSON.parse(bodyText), fragment);
-  } catch {
-    return false;
-  }
+  return bodyText.toLowerCase().includes(fragment.toLowerCase());
 }
 
 function findMock(

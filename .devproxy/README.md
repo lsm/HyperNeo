@@ -45,7 +45,7 @@ If you see `pass ... Passed through`, the request did not match a mock.
 
 ## CI: Bun Mock Server
 
-GitHub Actions does not install the .NET Dev Proxy. The `Setup Dev Proxy` action starts `scripts/dev-proxy-stub.ts`, a dependency-free Bun HTTP server that loads `devproxyrc.json` and the mock files from this directory and applies the same matching rules (method + exact or `*`-wildcard URL + case-insensitive `bodyFragment` substring, first match wins). Two deliberate differences: unmatched requests get an immediate 502 instead of a pass-through, and the admin endpoint `GET :8897/proxy` reports the config path so the test helper's external-proxy detection works unchanged. Run it locally the same way:
+GitHub Actions does not install the .NET Dev Proxy. The `Setup Dev Proxy` action starts `scripts/dev-proxy-stub.ts`, a dependency-free Bun HTTP server that loads `devproxyrc.json` and the mock files from this directory and applies the same matching rules (method + exact or `*`-wildcard URL + case-insensitive string `bodyFragment` substring, first match wins — see [Request Matching Priority](#request-matching-priority)). Differences from the .NET proxy: unmatched requests get an immediate 502 instead of a pass-through, the admin endpoint `GET :8897/proxy` reports the config path so the test helper's external-proxy detection works unchanged, and mocks with a non-string `bodyFragment` are skipped with a warning instead of failing the whole file. Run it locally the same way:
 
 ```bash
 bun scripts/dev-proxy-stub.ts --port 8000 --config-file .devproxy/devproxyrc.json
@@ -134,13 +134,13 @@ bun run test:proxy:restart
 
 ## Request Matching Priority
 
-Dev Proxy matches requests in this order:
+Mocks are evaluated in file order and the first one whose checks all pass wins — there is no specificity sorting. Within one mock, a request must match:
 
-1. **Exact match** - URL + method + body fragment
-2. **URL match** - URL + method only
-3. **Wildcard match** - URL pattern with wildcards
+1. **Method** - exact string equality
+2. **URL** - exact string equality, or wildcard match when the mock URL contains `*`
+3. **Body fragment** (optional) - case-insensitive substring of the request body; `bodyFragment` must be a string
 
-More specific matches take precedence over general ones.
+Because ordering is load-bearing, list specific mocks before catch-all entries that omit `bodyFragment`.
 
 ## Adding New Mocks
 
