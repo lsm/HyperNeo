@@ -8,10 +8,10 @@ export interface RunTickAdmissionInput {
   hasCanonicalTask: boolean;
   hasEndNodeId: boolean;
   canonicalTaskStatus: SpaceTaskStatus | null;
-  executionCount: number;
-  runIsComplete: boolean;
-  hasBlockedExecution: boolean;
-  firstBlockedResult: string | null;
+  executionCount: number | (() => number);
+  runIsComplete: boolean | (() => boolean);
+  hasBlockedExecution: boolean | (() => boolean);
+  firstBlockedResult: string | null | (() => string | null);
   availableTaskSlots: number;
 }
 
