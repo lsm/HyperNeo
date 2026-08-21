@@ -618,9 +618,11 @@ of `resolve_forge_scope`, and the RPC message handlers
 collapses into the not-found error rather than a distinct message; the bound
 task-agent surface's `onArchiveTask`
 (`runtime/task-agent-manager.ts`), which re-implements the archive-active-run
-gate with its own message variant; and the largest one: the UI-side RPC cascade
+gate with its own message variant; and the largest ones: the UI-side RPC surface
 in `rpc-handlers/space-task-handlers.ts`, which re-implements the update
-routing by hand with UI-flavored messages. These are follow-up mini-pilot
+routing by hand with UI-flavored messages and whose `spaceTask.publish`
+repeats the publish target resolution and draft-only gate with its own wording,
+publishing `space.task.updated` itself. These are follow-up mini-pilot
 material (below), deliberately not folded into a cleanup PR.
 
 **Costs:** production net +458 daemon lines across the pilot — +556 in the
