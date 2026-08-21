@@ -454,6 +454,11 @@ export function isModelsCacheStale(cacheKey: string): boolean {
   return isCacheStale(cacheKey);
 }
 
+export function shouldThrottleModelsRefresh(cacheKey: string): boolean {
+  const lastFailure = backgroundRefreshFailures.get(cacheKey);
+  return lastFailure !== undefined && Date.now() - lastFailure < FAILED_REFRESH_COOLDOWN_MS;
+}
+
 export function invalidateModelsCacheEntry(cacheKey: string): void {
   modelsCache.delete(cacheKey);
   cacheTimestamps.delete(cacheKey);

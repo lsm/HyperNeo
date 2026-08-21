@@ -1519,6 +1519,32 @@ describe('Model Service', () => {
       expect(getAvailableModels('global')).toContainEqual(recoveredModel);
     });
 
+    it('throttles stale refreshes within the failure cooldown', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { shouldThrottleModelsRefresh } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'cooldown-failing-provider',
+        getModels: async () => {
+          throw new Error('offline');
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(shouldThrottleModelsRefresh('global')).toBe(true);
+      let now = Date.now();
+      const dateSpy = spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        expect(shouldThrottleModelsRefresh('global')).toBe(true);
+        now += 30_000;
+        expect(shouldThrottleModelsRefresh('global')).toBe(false);
+      } finally {
+        dateSpy.mockRestore();
+      }
+    });
+
     it('ignores catalog expiry from providers that become unavailable', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
