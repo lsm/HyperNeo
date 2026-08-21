@@ -292,11 +292,10 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).not.toContain('Do NOT merge PRs');
   });
 
-  test('gate evidence uses GraphQL enum names, push freshness, and paginated reviews', () => {
+  test('gate evidence uses GraphQL enum names, cycle binding, and paginated reviews', () => {
     expect(CODER_ONLY_PROMPT).toContain('THUMBS_UP');
     expect(CODER_ONLY_PROMPT).toContain('EYES');
     expect(CODER_ONLY_PROMPT).toContain('createdAt');
-    expect(CODER_ONLY_PROMPT).toContain('pushedAt');
     expect(CODER_ONLY_PROMPT).toContain('reactions(first:100,after:$cursor)');
     expect(CODER_ONLY_PROMPT).toContain('reviews(first:100,after:$cursor)');
     expect(CODER_ONLY_PROMPT).toContain('commit{oid} url body');
@@ -305,6 +304,7 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('`[bot]`');
     expect(CODER_ONLY_PROMPT).toContain('ONLY when its `commit.oid` equals');
     expect(CODER_ONLY_PROMPT).toContain('is NOT a pass');
+    expect(CODER_ONLY_PROMPT).toContain('Reject `DISMISSED` and `PENDING`');
     expect(CODER_ONLY_PROMPT).toContain('review CYCLE');
     expect(CODER_ONLY_PROMPT).toContain('Serialize review cycles');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('cycle triggered after the last push');
@@ -312,6 +312,7 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).not.toContain('content `+1` means');
     expect(CODER_ONLY_PROMPT).not.toContain('or its `submittedAt` is on or after');
     expect(CODER_ONLY_PROMPT).not.toContain('committedDate');
+    expect(CODER_ONLY_PROMPT).not.toContain('pushedAt');
   });
 
   test('coder prompt persists the PR link and gates CI on required checks, not a fixed name', () => {
@@ -336,7 +337,19 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain(
       'codex_reaction: { login, content: "THUMBS_UP", created_at }'
     );
+    expect(CODER_ONLY_PROMPT).toContain('base_ref: "<baseRefName>"');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('key "gate"');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'its recorded base_ref equals the current baseRefName'
+    );
+  });
+
+  test('merge instructions sync fork PRs from the base repository remote', () => {
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('BASE_REMOTE');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('git fetch "$BASE_REMOTE" "$BASE"');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'git -C "$SPACE_WS" pull --ff-only "$BASE_REMOTE" "$BASE"'
+    );
   });
 
   test('merge instructions require fresh human sign-off after a post-approval push', () => {
