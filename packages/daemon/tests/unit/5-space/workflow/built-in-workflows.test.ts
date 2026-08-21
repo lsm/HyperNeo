@@ -297,10 +297,14 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('EYES');
     expect(CODER_ONLY_PROMPT).toContain('createdAt');
     expect(CODER_ONLY_PROMPT).toContain('committedDate');
+    expect(CODER_ONLY_PROMPT).toContain('reactions(first:100,after:$cursor)');
     expect(CODER_ONLY_PROMPT).toContain('reviews(first:100,after:$cursor)');
     expect(CODER_ONLY_PROMPT).toContain('pageInfo.hasNextPage');
     expect(CODER_ONLY_PROMPT).toContain('`devin`');
+    expect(CODER_ONLY_PROMPT).toContain('`[bot]`');
+    expect(CODER_ONLY_PROMPT).toContain('ONLY when its `commit.oid` equals');
     expect(CODER_ONLY_PROMPT).not.toContain('content `+1` means');
+    expect(CODER_ONLY_PROMPT).not.toContain('or its `submittedAt` is on or after');
   });
 
   test('coder prompt persists the PR link and gates CI on required checks, not a fixed name', () => {
@@ -311,11 +315,23 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).not.toContain('All Tests Pass');
   });
 
+  test('gate note artifact carries an explicit key', () => {
+    expect(CODER_ONLY_PROMPT).toContain('kind: "external-review-gate", key: "gate"');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('key "gate"');
+  });
+
   test('merge instructions require fresh human sign-off after a post-approval push', () => {
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('merge_fix_pushed');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'The prior human approval never carries over to a head it was not given.'
     );
+  });
+
+  test('merge instructions block on required approvals and give branch cleanup commands', () => {
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('REVIEW_REQUIRED');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('never bypass it with `--admin`');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('IS_FORK');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('git push origin --delete "$HEAD_REF"');
   });
 
   test('merge instructions give executable guarded commands for the Space checkout sync', () => {
