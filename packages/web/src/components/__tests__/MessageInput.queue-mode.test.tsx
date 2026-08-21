@@ -600,6 +600,60 @@ describe('MessageInput queue mode', () => {
     }
   });
 
+  it('keeps an earlier successful refresh when its replacement fails', async () => {
+    vi.useFakeTimers();
+    try {
+      const deferredResponses: Array<{
+        resolve: (value: { messages?: Array<Record<string, unknown>> } | Error) => void;
+      }> = [];
+      mockRequest.mockImplementation(async (_method: string, payload: { status?: string }) => {
+        if (payload?.status !== 'deferred') {
+          return { messages: [] };
+        }
+        return new Promise((resolve, reject) => {
+          deferredResponses.push({
+            resolve: (value) => (value instanceof Error ? reject(value) : resolve(value)),
+          });
+        });
+      });
+
+      const { container } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(deferredResponses.length).toBeGreaterThanOrEqual(2);
+
+      const earlierRefresh = deferredResponses[0];
+      const laterRefresh = deferredResponses[deferredResponses.length - 1];
+
+      await act(async () => {
+        laterRefresh.resolve(new Error('socket hiccup'));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      await act(async () => {
+        earlierRefresh.resolve({
+          messages: [
+            {
+              dbId: 'db-earlier',
+              uuid: 'uuid-earlier',
+              timestamp: 1,
+              status: 'deferred',
+              text: 'earlier message',
+            },
+          ],
+        });
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(
+        container.querySelector('[data-testid="queued-next-turn-bubble"]')?.textContent
+      ).toContain('earlier message');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('refreshes the queue from messages.statusChanged events with a debounce', async () => {
     vi.useFakeTimers();
     try {

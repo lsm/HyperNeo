@@ -627,6 +627,7 @@ export default function MessageInput({
   }, [content, getImagesForSend]);
 
   const queueRefreshSeqRef = useRef(0);
+  const queueRefreshAppliedSeqRef = useRef(0);
 
   const refreshQueuedMessages = useCallback(async () => {
     const hub = connectionManager.getHubIfConnected();
@@ -656,9 +657,10 @@ export default function MessageInput({
       if (sessionIdRef.current !== targetSessionId) {
         return;
       }
-      if (queueRefreshSeqRef.current !== refreshSeq) {
+      if (refreshSeq <= queueRefreshAppliedSeqRef.current) {
         return;
       }
+      queueRefreshAppliedSeqRef.current = refreshSeq;
       setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
       setQueuedForNextTurn(deferredResponse.messages ?? []);
       setQueuedCurrentTurnTotal(enqueuedResponse.total);
