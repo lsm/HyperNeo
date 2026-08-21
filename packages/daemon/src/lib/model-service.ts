@@ -485,6 +485,7 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
       return;
     }
     if (!isCacheStale(cacheKey)) return;
+    if (shouldThrottleModelsRefresh(cacheKey)) return;
   }
 
   if (refreshInProgress.has(cacheKey)) {

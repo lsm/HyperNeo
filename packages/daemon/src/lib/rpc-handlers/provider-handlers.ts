@@ -1,7 +1,11 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers';
 import type { CreateProviderParams, UpdateProviderParams } from '@hyperneo/shared';
-import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
+import type {
+  Provider,
+  ProviderCredentials,
+  ProviderModelRefreshError,
+} from '@hyperneo/shared/provider';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import {
@@ -404,6 +408,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         healthStatus: 'unhealthy',
         lastHealthCheckAt: Date.now(),
       });
+      if ((err as ProviderModelRefreshError).definitiveAuthFailure) {
+        await clearCacheAndNotifyProvidersChanged(internalEventBus);
+      }
       return { healthy: false, error };
     } finally {
       if ((await providerCatalogSignature(provider)) !== catalogBefore) {
@@ -451,6 +458,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             healthStatus: 'unhealthy',
             lastHealthCheckAt: Date.now(),
           });
+          if ((err as ProviderModelRefreshError).definitiveAuthFailure) {
+            await clearCacheAndNotifyProvidersChanged(internalEventBus);
+          }
           return { providerId: record.providerId, healthy: false, error };
         } finally {
           if ((await providerCatalogSignature(provider)) !== catalogBefore) {
