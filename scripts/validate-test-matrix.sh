@@ -313,13 +313,16 @@ runner_continue_on_error() {
 matrix_excludes() {
 	local job="$1" key="$2"
 	awk -v job="$1" -v key="$2" '
+		BEGIN { quotes = sprintf("[%c%c]", 39, 34) }
 		$0 ~ "^  " job ":" { injob=1; next }
 		injob && /^  [a-z]/ { injob=0 }
 		# Flow form: exclude: [ ... ] on one line — pull every "key: <token>" out.
 		# The token runs up to a delimiter (], ,, }, whitespace) so optional YAML
-		# quotes (single/double) are captured and then stripped (gsub non-token).
+		# quotes (single/double) are captured and then stripped (gsub non-token);
+		# the KEY may also be quoted ("shard"/shard quoted form), so strip quote
+		# characters from the line before matching the bare key.
 		injob && $0 ~ "^[[:space:]]*exclude:[[:space:]]*\\[" {
-			s=$0
+			s=$0; gsub(quotes, "", s)
 			while (match(s, key ":[[:space:]]*[^][,}[:space:]]+")) {
 				v=substr(s, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); gsub(/[^a-z0-9-]/, "", v); if (v != "") print v
 				s=substr(s, RSTART + RLENGTH)
@@ -327,6 +330,7 @@ matrix_excludes() {
 			next
 		}
 		# Block form: "exclude:" alone, then indented "- key: value" lines.
+		# Quoted keys (- shard: 2 with quotes) normalize the same way.
 		injob && $0 ~ "^[[:space:]]*exclude:[[:space:]]*$" { inblock=1; next }
 		injob && inblock && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
 			n=0; while (substr($0,n+1,1)==" ") n++
@@ -334,8 +338,9 @@ matrix_excludes() {
 			# where items sit at the SAME indent as the exclude key ("exclude:"
 			# then "- shard: 2", both at 8) — those dash lines are still items.
 			if (n <= 8 && !(n == 8 && $0 ~ /^[[:space:]]*- /)) { inblock=0; next }
-			if (match($0, key ":[[:space:]]*[^][,}[:space:]]+")) {
-				v=substr($0, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); gsub(/[^a-z0-9-]/, "", v); if (v != "") print v
+			line=$0; gsub(quotes, "", line)
+			if (match(line, key ":[[:space:]]*[^][,}[:space:]]+")) {
+				v=substr(line, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); gsub(/[^a-z0-9-]/, "", v); if (v != "") print v
 			}
 		}
 	' "$REPO_ROOT/.github/workflows/main.yml"
@@ -1100,8 +1105,8 @@ _web_sibling_axes=$(awk '
 	!injob { next }
 	/^[[:space:]]{6}matrix:[[:space:]]*$/ { inmatrix=1; next }
 	/^[[:space:]]{0,6}[a-z]/ { inmatrix=0 }
-	inmatrix && /^[[:space:]]{8}"?[A-Za-z][A-Za-z0-9_-]*"?:/ {
-		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); gsub(/"/, "", s); k=tolower(s)
+	inmatrix && /^[[:space:]]{8}[^[:space:]][^:]*:/ {
+		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); gsub(/[^A-Za-z0-9_-]/, "", s); k=tolower(s)
 		if (k != "shard" && k != "include" && k != "exclude") print s
 	}
 ' "$REPO_ROOT/.github/workflows/main.yml")
