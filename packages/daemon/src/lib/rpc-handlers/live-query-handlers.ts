@@ -1754,7 +1754,11 @@ active_delivery_candidates AS (
 )`;
 }
 
-const ACTIVE_DELIVERY_RETRYING_CTE = `${activeDeliveryJobsCtes()},
+const ACTIVE_DELIVERY_RETRYING_CTE = `${activeDeliveryJobsCtes(`AND json_extract(jq.payload, '$.sessionId') IN (
+    SELECT session_id
+    FROM sdk_messages
+    WHERE task_id = (SELECT id FROM target_task)
+  )`)},
 active_delivery_retrying AS MATERIALIZED (
   SELECT message_uuid, session_id, MAX(retry_count) > 0 AS retrying
   FROM active_delivery_candidates
