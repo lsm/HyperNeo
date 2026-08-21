@@ -59,7 +59,7 @@ jobs:
   check:
     name: Lint, Knip, Format & Type Check
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     if: github.event.inputs.run_e2e_only != 'true'
 
     steps:
@@ -101,17 +101,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Validate test matrix coverage (unit + web + online)
-        run: bash scripts/validate-test-matrix.sh
-
       - name: Validate daemon shard configuration
         run: |
           bash scripts/lib/shard-split.sh --self-test
           ./scripts/test-daemon.sh --verify
-          scripts/test-online.sh --verify
-
-      - name: Validate space task RPC handler tests
-        run: bun run check:space-task-handler-tests
 
       - name: Test space task RPC handler gate
         run: bun run test:space-task-handler-gate
@@ -122,12 +115,6 @@ jobs:
       - name: Test CI balance report parser
         run: bun run test:ci-balance-report
 
-      # Actually enforce the zero-comments policy in CI. strip-comments.ts
-      # enumerates files via `git ls-files` (index-only), so the shallow
-      # checkout is fine. Until now CI only ran the script's unit test.
-      - name: Check for comments in TS/TSX sources
-        run: bun run check:no-comments
-
       # Folded in from the former test-cli job: ~2s of tests that used to occupy
       # a whole runner. Gated to the same events test-cli ran on (push to dev,
       # workflow_dispatch) — skipped on PRs, exactly as before.
@@ -136,50 +123,24 @@ jobs:
         working-directory: packages/cli
         run: bunx vitest run
 
-      - name: Run linter
-        id: lint
-        run: bun run lint
-        continue-on-error: true
-
-      - name: Check formatting
-        id: format
-        run: bun run format:check
-        continue-on-error: true
-
-      - name: Run Knip
-        id: knip
-        run: bun run knip
-
-      - name: Run type check
-        id: typecheck
-        run: bun run typecheck
-        continue-on-error: true
-
-      - name: Check DB schema parity
-        id: db-schema-parity
-        run: bun run check:db-schema-parity
-        continue-on-error: true
+      # Single source of truth: run the same mega-target local devs run
+      # (`make check` → `bun run check`). Fail-fast && chain; the
+      # zero-comments gate runs first so nothing can mask it. This replaces
+      # the former per-step lint/format/knip/typecheck/db-schema-parity
+      # steps (which used continue-on-error + an aggregate step) and the
+      # standalone check:no-comments / check:space-task-handler-tests /
+      # check:test-matrix / check:online-shards steps, all now inside the
+      # chain. strip-comments.ts enumerates files via `git ls-files`
+      # (index-only), so the shallow checkout is fine.
+      - name: Run make check
+        run: make check
 
       - name: Verify exact version pins
-        id: exact-pins
         run: |
           if grep -rn '"[~^][0-9]' packages/*/package.json package.json; then
             echo "ERROR: Non-exact version pins found. Use exact versions only (no ^ or ~)."
             exit 1
           fi
-        continue-on-error: true
-
-      - name: Check for failures
-        if: steps.lint.outcome == 'failure' || steps.format.outcome == 'failure' || steps.knip.outcome == 'failure' || steps.typecheck.outcome == 'failure' || steps.db-schema-parity.outcome == 'failure' || steps.exact-pins.outcome == 'failure'
-        run: |
-          echo "One or more checks failed:"
-          echo "  Lint: ${{ steps.lint.outcome }}"
-          echo "  Format: ${{ steps.format.outcome }}"
-          echo "  Knip: ${{ steps.knip.outcome }}"
-          echo "  Typecheck: ${{ steps.typecheck.outcome }}"
-          echo "  DB schema parity: ${{ steps.db-schema-parity.outcome }}"
-          echo "  Exact pins: ${{ steps.exact-pins.outcome }}"
-          exit 1
 
   # ============================================
   # DAEMON ONLINE TESTS (Mocked credentials only)
