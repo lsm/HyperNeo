@@ -227,15 +227,18 @@ export const CODER_ONLY_PROMPT =
   'REST-style strings: content `THUMBS_UP` (the GraphQL form of +1) means Codex passed, content ' +
   '`EYES` means Codex is still reviewing, and no such reaction means it has not started or has ' +
   'not reported yet. If no codex bot login has reacted at all, comment `@codex review` on the PR ' +
-  'to trigger its review, then wait for an `EYES` or `THUMBS_UP` reaction. Bind every pass to the ' +
-  'review CYCLE, not just to timestamps: after each push that changes the head, post a fresh ' +
-  '`@codex review` trigger comment yourself (the trigger must postdate the push), find your own ' +
-  'latest such comment in `gh pr view <pr_url> --json comments`, and accept a `THUMBS_UP` ONLY ' +
-  'when its `createdAt` is on or after the PR `pushedAt` AND later than that trigger comment AND ' +
-  'the headRefOid has not changed since the trigger. A review cycle started on an older head can ' +
-  'finish after a push and drop a late `THUMBS_UP` that clears the pushedAt check — such a pass ' +
-  'belongs to the old head and must be ignored; post a new trigger and wait again. Never compare ' +
-  'against the commit authored date, which can predate the push. ' +
+  'to trigger its review, then wait for an `EYES` or `THUMBS_UP` reaction. Serialize review ' +
+  'cycles — this is what makes the freshness predicates sound: NEVER push while a Codex cycle is ' +
+  'in flight. An `EYES` reaction present means a cycle is live; wait until it disappears AND the ' +
+  "cycle's outcome (a review comment, or a `THUMBS_UP` that settles the gate) has appeared " +
+  'before you push a new head. With the previous cycle terminal before the push, no stale cycle ' +
+  'can land a late `THUMBS_UP` after your next trigger. Bind every pass to the review CYCLE, not ' +
+  'just to timestamps: after each push that changes the head, post a fresh `@codex review` ' +
+  'trigger comment yourself (the trigger must postdate the push), find your own latest such ' +
+  'comment in `gh pr view <pr_url> --json comments`, and accept a `THUMBS_UP` ONLY when its ' +
+  '`createdAt` is on or after the PR `pushedAt` AND later than that trigger comment AND the ' +
+  'headRefOid has not changed since the trigger. Never compare against the commit authored date, ' +
+  'which can predate the push. ' +
   'Devon gate: wait for a Devon-authored PR review on the current head that does NOT request changes ' +
   'and does NOT flag a major or blocking issue. Inspect the reviews with the paginated GraphQL ' +
   'lookup (`gh pr view --json reviews` can silently truncate past 100 reviews, hiding a newer ' +
@@ -849,7 +852,7 @@ export const CODER_ONLY_MERGE_INSTRUCTIONS: string = [
   '     gh pr view {{pr_url}} --json state,mergeStateStatus,headRefOid',
   '     gh pr checks {{pr_url}} --required',
   '     BASE=$(gh pr view {{pr_url}} --json baseRefName --jq .baseRefName)',
-  '   If state is not OPEN, or a required check is failing or pending, treat it as a blocker per step 4. A report that the base has no required checks counts as green. If state is MERGED, the merge already happened (possibly in a prior session); perform step 6 ONLY (fast-forward the root checkout — a restart after merge must still sync it), skip the step-7 new-merge audit artifact, and call mark_complete to close the task.',
+  '   If state is not OPEN, or a required check is failing or pending, treat it as a blocker per step 4. A report that the base has no required checks counts as green. If state is MERGED, the merge already happened (possibly in a prior session that died before cleanup); recover idempotently — run step 5 (branch deletion is a no-op if the branch is already gone), run step 6 (fast-forward the root checkout — a restart after merge must still sync it), record the step-7 audit artifact if it is absent, and call mark_complete to close the task.',
   '2. Verify all GitHub review conversations are resolved before merging:',
   '   Extract <host>, <owner>, <repo>, and <number> from {{pr_url}} (format: https://<host>/<owner>/<repo>/pull/<number>).',
   "     gh api graphql --hostname <host> -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:20){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}' -f owner=<owner> -f name=<repo> -F number=<number>",

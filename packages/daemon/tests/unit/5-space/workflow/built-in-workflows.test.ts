@@ -306,7 +306,9 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('ONLY when its `commit.oid` equals');
     expect(CODER_ONLY_PROMPT).toContain('is NOT a pass');
     expect(CODER_ONLY_PROMPT).toContain('review CYCLE');
+    expect(CODER_ONLY_PROMPT).toContain('Serialize review cycles');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('cycle triggered after the last push');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('recover idempotently');
     expect(CODER_ONLY_PROMPT).not.toContain('content `+1` means');
     expect(CODER_ONLY_PROMPT).not.toContain('or its `submittedAt` is on or after');
     expect(CODER_ONLY_PROMPT).not.toContain('committedDate');
