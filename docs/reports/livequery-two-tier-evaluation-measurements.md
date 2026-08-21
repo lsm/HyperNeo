@@ -31,7 +31,7 @@ subagent children of the windowed tool uses):
 | Cold subscribe (first run, page cache cold)                  | 730 ms     | once per subscription    |
 | Warm no-op evaluation, steady state (n=10)                   | p50 3.8 ms, p95 4.9 ms | 0 deltas delivered |
 | Same-session insert outside the window (irrelevant subagent) | 13 ms      | correctly no delta       |
-| `job_queue`-only touch (unscoped change event)               | 7.3 ms     | correctly no delta       |
+| `job_queue` change for the session (scoped event)            | 7.3 ms     | correctly no delta       |
 | Different-session write                                      | 0 runs     | scope filter skips       |
 | Relevant in-window insert                                    | 7.2 ms     | delta delivered          |
 | Burst: 20 same-session writes inside one debounce window     | 7.1 ms, 1 run | debounce coalesces all 20 |
@@ -81,26 +81,27 @@ previous evaluation is still running" can never fire. Burst coalescing is
 already provided by the debounce (#1132): measured above, 20 writes inside one
 window collapse to a single evaluation.
 
-## Residual hot spots found while measuring (follow-up material, not engine work)
+## Residual hot spot found while measuring (follow-up material, not engine work)
 
-1. **`sessions.list` evaluations cost ~45 ms and are 100% predicate.**
-   Predicate-only `SELECT COUNT(*) ... WHERE humanSessionPredicate` measures
-   44.2 ms vs 44.9 ms for the full SQL (`json_valid` + `json_extract` over
-   4,936 non-null `session_context` values, 356 KB total); bare `COUNT(*)` is
-   0.02 ms. Every visible message save bumps
-   `sessions.visible_message_count` → a `sessions` change with `{ sessionId }`
-   scope that passes the sessions.list filter, so streaming in a human session
-   drives up to ~6.6 × 45 ms ≈ 27% of a core of pure no-op re-evaluation.
-   A sentinel cannot fix this soundly (in-place updates); the fix is
-   query-shape work: narrow the predicate (type filter first) or a partial /
-   expression index matching the human-session predicate. Recommend a separate
-   task.
-2. **`job_queue` changes are unscoped.** Any job transition re-evaluates every
-   subscribed `messages.bySession` (and task-feed) entry at ~7.3 ms each,
-   because the queue's writes fire without a scope. Extracting `sessionId`
-   from the job payload at `notifyChange` time would reuse the existing
-   scoped-invalidation path. Modest win (~7 ms × subscribers per transition);
-   belongs to the scoped-invalidation track, not the engine.
+**`sessions.list` evaluations cost ~45 ms and are 100% predicate.**
+Predicate-only `SELECT COUNT(*) ... WHERE humanSessionPredicate` measures
+44.2 ms vs 44.9 ms for the full SQL (`json_valid` + `json_extract` over
+4,936 non-null `session_context` values, 356 KB total); bare `COUNT(*)` is
+0.02 ms. Every visible message save bumps `sessions.visible_message_count` →
+a `sessions` change with `{ sessionId }` scope that passes the sessions.list
+filter, so streaming in a human session drives up to ~6.6 × 45 ms ≈ 27% of a
+core of pure no-op re-evaluation. A sentinel cannot fix this soundly (in-place
+updates); the fix is query-shape work: narrow the predicate (type filter
+first) or a partial / expression index matching the human-session predicate.
+Recommend a separate task.
+
+For completeness on the queue side: delivery-job transitions are already
+session-scoped in production — `app.ts` installs a no-op change notifier on
+the generic processor and forwards the delivery processor's per-job scope
+(`scopeFromJob` in `job-queue-processor.ts` extracts `sessionId`/`taskId` from
+the payload, and every message-delivery payload carries `sessionId`). The
+scoped `job_queue` row in the table above therefore costs one ~7.3 ms
+evaluation for that session's own subscribers only; no follow-up needed.
 
 ## Verdict
 
@@ -110,5 +111,5 @@ coalesced by the debounce; overlapping evaluations are impossible in a
 synchronous engine; and every cheaper-than-the-query sentinel shape we could
 construct is unsound against in-place updates, which is the exact
 missed-change failure the task forbade. The remaining measured engine-adjacent
-costs above are query- and scope-extraction work and should be tracked as
-their own tasks.
+cost above (the sessions.list predicate) is query-shape work and should be
+tracked as its own task.
