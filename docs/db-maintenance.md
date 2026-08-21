@@ -158,12 +158,17 @@ The copy strategy is picked per attempt, fastest first, and logged
 | ----------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `fs-copy`         | Bun runtime (the pinned runtime)      | File copy that clonefiles on APFS (near-instant, ~zero extra disk until divergence) and uses `copy_file_range` on Linux, which reflinks on btrfs/XFS and falls back to a full copy elsewhere. A non-empty `-wal` sidecar is copied next to the backup so committed WAL frames survive. |
 | `vacuum-into`     | non-Bun runtimes                      | `VACUUM INTO` — SQLite's own consistent snapshot: includes committed WAL content without a checkpoint, and compacts free pages. |
-| `checkpoint-copy` | last resort if the above two fail     | `PRAGMA wal_checkpoint(TRUNCATE)` followed by a plain full-file copy.                                                  |
+| `checkpoint-copy` | last resort if the above two fail     | `PRAGMA wal_checkpoint(TRUNCATE)` followed by a plain full-file copy; a blocked checkpoint (`busy ≠ 0`, for example a long-lived reader) also copies the `-wal` sidecar, and the attempt fails closed if that copy fails. |
 
 If every strategy fails (for example the backups directory is not writable), the daemon
 logs an error and proceeds with the migration — the same behavior as before. A failed
 WAL-sidecar copy likewise discards the `fs-copy` attempt and falls through to a
 self-contained snapshot, so a reported backup never silently misses WAL-resident data.
+
+To restore from a backup, copy the `.db` file and its `-wal` sidecar (when one is
+present) back together — a sidecar exists exactly when the backup depends on WAL-resident
+committed frames, and restoring only the `.db` would silently lose every post-checkpoint
+transaction — then open the database once so SQLite folds the WAL in with a checkpoint.
 
 Disk cost: on APFS (and reflink-capable Linux filesystems) retained backups are
 copy-on-write clones, so keeping 3 costs almost nothing until the files diverge. On
