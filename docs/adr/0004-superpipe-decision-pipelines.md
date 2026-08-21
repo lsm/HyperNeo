@@ -162,7 +162,11 @@ repository primitives, which effect stages must call.
 1. **Atomicity delegation.** Every effect stage writes persistent state through
    CAS, reservation, or transition-table-guarded primitives (Phase 0 below) — a
    transition-table guard qualifies only when guard and write commit as one
-   conditional update or transaction, never check-then-write. Blind
+   conditional update or transaction, never check-then-write. The conditional
+   update carries the stage's declared read preconditions as well (the spawn
+   reservation validates the task's status while reserving the execution), so a
+   concurrent external change to a declared read key — a mid-tick park — fails
+   the same CAS into `superseded`, not just a change to the written row. Blind
    read-modify-write inside an effect stage is banned.
 2. **Declared read/write sets, enforced.** The interpreter refuses to run a flow
    in which a stage reads a key that an earlier effect stage wrote unless an
