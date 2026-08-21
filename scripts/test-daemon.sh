@@ -22,7 +22,8 @@ SHARDS=(
 	shared
 	2-handlers-github
 	2-handlers-other
-	1-core
+	1-core-a
+	1-core-b
 	4-space-storage
 	4-space-migrations-a
 	4-space-migrations-b
@@ -61,6 +62,7 @@ source "$REPO_ROOT/scripts/lib/shard-split.sh"
 # is never edited by hand. Validate any change with: ./scripts/test-daemon.sh --verify
 HASH_SPLIT_SPECS=(
 	"5-space-runtime|2|5-space/runtime/*.test.ts;5-space/runtime/connectors/*.test.ts"
+	"1-core|2|1-core/*.test.ts;1-core/agent/*.test.ts;1-core/core/*.test.ts;1-core/credentials/*.test.ts;1-core/lib/*.test.ts;1-core/providers/*.test.ts;1-core/providers/anthropic-copilot/*.test.ts;1-core/providers/anthropic-messages-bridge/*.test.ts;1-core/providers/openai-chat-bridge/*.test.ts;1-core/providers/openai-responses-bridge/*.test.ts;1-core/providers/shared/*.test.ts;1-core/session/*.test.ts;helpers/*.test.ts;lib/acp/*.test.ts;lib/job-handlers/*.test.ts"
 )
 
 # Map a hash-split shard's suffix letter to a 0-based bucket index (a→0 … z→25).
@@ -299,9 +301,6 @@ shard_paths() {
 		# ordering (to avoid bun mock.module leakage) no longer applies; shared runs
 		# here with its own vitest config.
 		printf '%s\n' "$REPO_ROOT/packages/shared/tests"
-		;;
-	1-core)
-		printf '%s\n' "$TEST_ROOT/1-core" "$TEST_ROOT/helpers" "$TEST_ROOT/lib"
 		;;
 	2-handlers-github)
 		# github/ is split out of 2-handlers by directory, NOT by the stable-hash
