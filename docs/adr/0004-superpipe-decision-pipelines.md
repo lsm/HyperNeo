@@ -227,15 +227,17 @@ is suppressed only for parks visible at that re-read — a park landing after
 it, in particular while the spawn loop awaits
 `spawnWorkflowNodeAgentForExecution` for the first of several pending
 executions, still spawns the remainder with the stale task. Earlier stages run
-on the admission-era task entirely, and every blocking write among them can
-overwrite a concurrent park rather than merely act stale: the admission
-interpreter's `blockInvalidWorkflow` and `blockOnBlockedExecutions` branches,
-the four recovery handlers and their `blockRun*` helpers, and
-`attemptBlockedRunRecovery` all test a task snapshot taken before one or more
-awaited effects and then write through `updateTaskAndEmit`, which does not
-enforce the task-transition table — so a park completing inside any of those
-windows is flipped `stopped` → `blocked` (or back to `in_progress` on the
-recovery path below). `attemptBlockedRunRecovery` — the pre-admission path
+on the admission-era task entirely, and every blocking write in the tick,
+wherever it fires, can overwrite a concurrent park rather than merely act
+stale: the admission interpreter's `blockInvalidWorkflow` and
+`blockOnBlockedExecutions` branches, the four recovery handlers, the shared
+`blockRun*` helpers — including the spawn-failure calls to
+`blockRunForPermanentSpawnFailure` and `blockRunForAgentCrash` after awaited
+spawns fail — and `attemptBlockedRunRecovery` all test a task snapshot taken
+before one or more awaited effects and then write through `updateTaskAndEmit`,
+which does not enforce the task-transition table — so a park completing inside
+any of those windows is flipped `stopped` → `blocked` (or back to
+`in_progress` on the recovery path below). `attemptBlockedRunRecovery` — the pre-admission path
 for blocked runs — carries the inverse race: a park landing after its
 stopped-task check is undone, because the helper resets blocked executions to
 pending, flips the run back to `in_progress`, and writes the stale-snapshot
@@ -257,8 +259,8 @@ and the spawn proceeds. Truly closing the races requires atomic coordination
 — a lock, a CAS on the task row, or a spawn reservation — plus the equivalent
 guards around every task-status write in the tick — handoff repair,
 `attemptBlockedRunRecovery`, the admission interpreter's blocking branches,
-and the recovery handlers' `blockRun*` paths; that work is deliberately not
-slipped into this
+the recovery handlers, and the spawn-failure `blockRun*` calls; that work is
+deliberately not slipped into this
 closing sweep and belongs with the `repairQueuedWorkflowNodeHandoffs`
 mini-pilot. The terminal-handoff-cleanup check in the interpreter is a third,
 narrower set (done/cancelled/archived). These are distinct decisions, not
