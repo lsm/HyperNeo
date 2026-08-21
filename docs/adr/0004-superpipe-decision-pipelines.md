@@ -135,11 +135,15 @@ body may be a plain function or a composed sub-pipeline, which are
 interchangeable (after composition, a pipeline is just a function — the
 interpreter never distinguishes them). The five contracts:
 
-- **`snapshot`** — read-only; gathers declared state keys into ctx (async allowed).
+- **`snapshot`** — read-only; gathers declared state keys into ctx (async
+  allowed); keys that must be mutually coherent are gathered in one repository
+  read, not stitched from separate queries.
 - **`decide`** — pure and synchronous; a `decisionRun` core; stamps a decision
   union member.
-- **`effect`** — mutating; declares `reads`/`writes` state keys and calls atomic
-  repository primitives only.
+- **`effect`** — mutating; declares `reads`/`writes` state keys; persistent
+  writes go through atomic repository primitives (condition 1), while external
+  side effects — network, publishes, session injects — carry condition 5's
+  idempotence/compensation obligation instead.
 - **`resnapshot`** — re-reads the specific keys a later stage depends on.
 - **`halt`** — terminal; returns the outcome.
 
@@ -152,23 +156,39 @@ boundaries, a pipeline never owns atomicity — was drawn because superpipe prov
 no atomicity. It is retained in substance and relocated: atomicity moves into
 repository primitives, which effect stages must call.
 
-1. **Atomicity delegation.** Every effect stage writes through CAS,
-   transition-table-guarded, or reservation primitives (Phase 0 below). Blind
+1. **Atomicity delegation.** Every effect stage writes persistent state through
+   CAS, reservation, or transition-table-guarded primitives (Phase 0 below) — a
+   transition-table guard qualifies only when guard and write commit as one
+   conditional update or transaction, never check-then-write. Blind
    read-modify-write inside an effect stage is banned.
 2. **Declared read/write sets, enforced.** The interpreter refuses to run a flow
    in which a stage reads a key that an earlier effect stage wrote unless an
    intervening `snapshot`/`resnapshot` re-gathers it — staleness prevention made
-   structural, the same way `!hasDecided` made precedence structural.
+   structural, the same way `!hasDecided` made precedence structural. The
+   declaration is load-bearing by construction: stages access state through the
+   declared keys' accessors, not the raw context, so an undeclared read is not
+   expressible.
 3. **CAS failure is a decision, not an error.** A failed CAS stamps a
    `superseded` outcome; the flow re-snapshots or halts for this tick. No
    in-tick retry loops. The recovery-handler-overwrites-`stopped`-with-`blocked`
-   race class becomes structurally impossible instead of tested away.
+   race class becomes structurally impossible instead of tested away. Effect
+   stages return their primitives' CAS outcomes and the interpreter — not the
+   effect body — stamps `superseded` and halts, keeping decision-stamping out of
+   the effect contract. Correlated transitions (an execution, its run, the
+   canonical task) compose into one transactional primitive per set or
+   compensate already-committed writes before halting — a `superseded` halt
+   never leaves a half-applied set.
 4. **Microtask pinning.** Decision item 5's proof obligation carries over: any
    `stagedRun` invoked from the run tick pins its microtask profile in tests.
    `decide` stages stay synchronous; `snapshot`/`effect` stages may use
    `.endAsync`.
 5. **Idempotence or compensation** at every effect stage (unchanged from
    Decision item 4).
+
+**Effect-stage errors.** A throwing effect stage fails the pass: the interpreter
+catches, logs, and returns an error outcome — no in-flow retry. Recovery is the
+caller's re-entry with a fresh snapshot plus condition 5's idempotence or
+compensation (for the run tick, the next tick).
 
 **The RFC's open questions, answered:**
 
@@ -180,9 +200,12 @@ repository primitives, which effect stages must call.
    or sub-pipeline, stages co-located with their types and tests, mirroring the
    pilot-3 extraction modules (`run-tick-admission-gates.ts` & co). Not one file
    per stage.
-3. **Spawn loop:** stays sequential — per-execution effect stages or recursive
-   re-entry, never `Promise.all`. The current loop is ordered and that ordering
-   is behavior; tests pin spawn order. Spawn steps are await-heavy, not
+3. **Spawn loop:** stays sequential — the shell owns the loop and invokes
+   per-execution effect stages, one bounded pass per execution; never
+   `Promise.all`, and never recursive re-entry that would make the pipeline
+   itself the loop (the "never the loop" boundary above). The current loop is
+   ordered and that ordering is behavior; tests pin spawn order. Spawn steps
+   are await-heavy, not
    compute-hot, so per-stage overhead is negligible against spawn latency (the
    hot-path rule targets tight loops, not awaited boundaries). Parallelism would
    be its own evidence-backed change.
@@ -191,7 +214,9 @@ repository primitives, which effect stages must call.
    transition) when a newer tick generation supersedes this one. The signal is
    owned by the runtime class (resource-ownership rule), introduced no earlier
    than Phase 2, and only where a test demonstrates the race. The spawn
-   reservation, not cancellation, is the correctness mechanism.
+   reservation, not cancellation, is the correctness mechanism. An effect that
+   commits synchronously before its first await cannot be aborted at all — the
+   condition 1 guard is its mechanism; the signal only narrows await windows.
 5. **`decisionRun` vs `stagedRun`:** both stay. `decisionRun` remains the proven
    sync point-decision combinator; no existing call sites migrate. `stagedRun`
    composes `decide` stages that wrap `decisionRun` cores internally. Two
