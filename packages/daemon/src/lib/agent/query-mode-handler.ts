@@ -114,11 +114,7 @@ export class QueryModeHandler {
     const plan = decideTurnEndFlush({
       messages: flushMessages,
       activeInJobQueue: jobQueue.activeDeliveryMessageUuids(this.ctx.session.id),
-      pendingInMemoryUuids: new Set(
-        flushMessages
-          .filter((msg) => this.ctx.messageQueue.hasPendingOrInFlight(msg.uuid))
-          .map((msg) => msg.uuid)
-      ),
+      pendingInMemoryUuids: new Set<string>(),
       activeTurnInJobQueue: jobQueue.hasActiveTurnDeliveryJob(this.ctx.session.id),
       slotResetsContext: false,
     });

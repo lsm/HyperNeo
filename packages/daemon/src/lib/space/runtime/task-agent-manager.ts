@@ -3260,7 +3260,10 @@ export class TaskAgentManager {
       await this.publishMessageStatusChanged(sessionId, dbId, 'deferred');
       return dbId;
     }
-    if (outcome.decision.action === 'clear_before_deliver') {
+    if (
+      outcome.decision.action === 'clear_before_deliver' &&
+      !this.hasActiveDeliveryJob(sessionId)
+    ) {
       try {
         await session.clearConversationContext();
       } catch (err) {
