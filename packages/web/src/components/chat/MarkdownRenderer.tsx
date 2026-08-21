@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { CopyButton } from '../ui/CopyButton.tsx';
 
 interface MarkdownRendererProps {
   content: string;
@@ -941,6 +942,7 @@ async function renderMarkdown(content: string) {
 export default function MarkdownRenderer({ content, class: className }: MarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [html, setHtml] = useState<string | null>(null);
+  const [renderedSource, setRenderedSource] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -949,11 +951,13 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
         .then((renderedHtml) => {
           if (!cancelled) {
             setHtml(renderedHtml);
+            setRenderedSource(content);
           }
         })
         .catch(() => {
           if (!cancelled) {
             setHtml(renderPlainText(content));
+            setRenderedSource(content);
           }
         });
     });
@@ -963,7 +967,7 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     };
   }, [content]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (html == null || !containerRef.current) return;
     containerRef.current.innerHTML = html;
 
@@ -993,5 +997,14 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     };
   }, [html]);
 
-  return <div ref={containerRef} class={`prose ${className || ''}`} />;
+  return (
+    <div class="group relative">
+      <div ref={containerRef} class={`prose [@media(hover:none)]:pr-7 ${className || ''}`} />
+      {renderedSource.trim() ? (
+        <div class="absolute top-0 right-0 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:focus-within:opacity-100 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-hover:pointer-events-auto">
+          <CopyButton text={renderedSource} label="Copy markdown" />
+        </div>
+      ) : null}
+    </div>
+  );
 }
