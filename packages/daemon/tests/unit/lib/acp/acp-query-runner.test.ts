@@ -32,6 +32,8 @@ function createMockClient() {
     loadSession: mock(async (sessionId: string) => ({ sessionId, configOptions: [] })),
     resumeSession: mock(async (sessionId: string) => ({ sessionId, configOptions: [] })),
     canLoadSession: mock(() => false),
+    canCloseSession: mock(() => false),
+    closeSession: mock(async () => {}),
     sendPrompt: mock(async function* (
       _prompt: unknown,
       callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
@@ -1767,6 +1769,7 @@ describe('AcpQueryRunner', () => {
   test('retries ACP startup timeout even after timeout aborts controller', async () => {
     const firstClient = createMockClient();
     let releasePrompt: (() => void) | undefined;
+    firstClient.canCloseSession.mockImplementation(() => true);
     firstClient.close.mockImplementation(() => releasePrompt?.());
     firstClient.sendPrompt.mockImplementation(async function* () {
       await new Promise<void>((resolve) => {
@@ -1792,6 +1795,7 @@ describe('AcpQueryRunner', () => {
 
       expect(createClient).toHaveBeenCalledTimes(2);
       expect(firstClient.cancel).toHaveBeenCalled();
+      expect(firstClient.closeSession).toHaveBeenCalled();
       expect(firstClient.close).toHaveBeenCalled();
       expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
         { type: 'text', text: 'hello' },

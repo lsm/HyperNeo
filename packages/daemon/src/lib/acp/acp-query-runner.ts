@@ -656,6 +656,9 @@ export class AcpQueryRunner {
             abortController.abort();
             try {
               client?.cancel();
+              if (client?.canCloseSession()) {
+                client.closeSession().catch(() => {});
+              }
             } catch {}
             this.ctx.queryObject?.close();
             client?.close();
