@@ -316,10 +316,10 @@ async function main() {
 
     const oldest = db
       .query(
-        `SELECT id, send_status FROM sdk_messages WHERE session_id = ? AND parent_tool_use_id IS NULL ORDER BY timestamp ASC LIMIT 1`
+        `SELECT id, send_status FROM sdk_messages WHERE session_id = ? AND parent_tool_use_id IS NULL AND COALESCE(send_status, 'consumed') != 'failed' ORDER BY timestamp ASC LIMIT 1`
       )
       .get(biggest.session_id) as { id: string; send_status: string | null } | undefined;
-    if (oldest && oldest.send_status !== 'failed') {
+    if (oldest) {
       db.run(`UPDATE sdk_messages SET send_status = 'failed' WHERE id = ?`, [oldest.id]);
       restoreOldest = () => {
         db.run(`UPDATE sdk_messages SET send_status = ? WHERE id = ?`, [
@@ -327,10 +327,13 @@ async function main() {
           oldest.id,
         ]);
       };
+      await settle('send_status update on old row outside window', ['sdk_messages'], {
+        sessionId: biggest.session_id,
+      });
+    } else {
+      console.log('\n== send_status update on old row outside window');
+      console.log('  SKIPPED: no top-level row with a non-failed send_status exists');
     }
-    await settle('send_status update on old row outside window', ['sdk_messages'], {
-      sessionId: biggest.session_id,
-    });
 
     reset();
     for (let i = 0; i < 20; i++) {
@@ -424,7 +427,7 @@ async function main() {
       digestStmt.get(sessionId);
       record(digestStats, performance.now() - start);
     }
-    console.log(fmt('  session mutation-column digest', digestStats));
+    console.log(fmt('  session digest (unsound lower bound: lengths + type weights)', digestStats));
 
     const queueDigestSql = `SELECT jq.rowid, jq.status, jq.retry_count, jq.run_at, jq.max_retries, jq.payload
       FROM job_queue jq
@@ -444,6 +447,55 @@ async function main() {
       record(queueDigestStats, performance.now() - start);
     }
     console.log(fmt('  job_queue active-row digest (sound shape)', queueDigestStats));
+
+    console.log('\n== dense task_updated subtype sweep (metadata query only) ==');
+    const OLD_RECENT_METADATA_SQL = `SELECT id, sdk_message, timestamp, send_status, origin, rowid,
+        COALESCE(CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END, task_id) AS task_id
+      FROM sdk_messages
+      WHERE session_id = ?1 AND parent_tool_use_id IS NULL
+        AND message_subtype_norm IN ('task_started', 'task_updated', 'task_notification')
+      ORDER BY timestamp DESC, rowid DESC LIMIT 300`;
+    const oldArmStmt = db.prepare(OLD_RECENT_METADATA_SQL);
+    const newMetaStmt = db.prepare(BACKGROUND_TASK_METADATA_SQL);
+    const denseInsert = db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id)
+       VALUES (?, ?, 'system', 'task_updated', ?, ?, 'consumed', NULL, NULL)`
+    );
+    const denseBase = new Date('2026-08-01T00:00:00Z').getTime();
+    const densePayload = JSON.stringify({
+      type: 'system',
+      subtype: 'task_updated',
+      task_id: 'bench-dense-task',
+    });
+    for (const dense of [2000, 20000]) {
+      db.run(`DELETE FROM sdk_messages WHERE id LIKE 'bench-dense-%'`);
+      for (let i = 0; i < dense; i++) {
+        denseInsert.run(
+          `bench-dense-${dense}-${i}`,
+          sessionId,
+          densePayload,
+          new Date(denseBase + i * 1000).toISOString()
+        );
+      }
+      oldArmStmt.all(sessionId);
+      const oldArmStats = newStats();
+      for (let i = 0; i < 5; i++) {
+        const start = performance.now();
+        oldArmStmt.all(sessionId);
+        record(oldArmStats, performance.now() - start);
+      }
+      newMetaStmt.all(...metaParams);
+      const newMetaStats = newStats();
+      for (let i = 0; i < 5; i++) {
+        const start = performance.now();
+        newMetaStmt.all(...metaParams);
+        record(newMetaStats, performance.now() - start);
+      }
+      console.log(`  with ${dense} dense task_updated rows:`);
+      console.log(fmt('    old IN-list arm', oldArmStats));
+      console.log(fmt('    new full metadata sql', newMetaStats));
+    }
+    db.run(`DELETE FROM sdk_messages WHERE id LIKE 'bench-dense-%'`);
 
     console.log('\n== high-fanout subagent children under one in-window tool use ==');
     const windowToolUse = db

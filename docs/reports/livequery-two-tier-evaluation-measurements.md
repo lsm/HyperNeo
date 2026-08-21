@@ -68,13 +68,14 @@ planner only diverges at production scale, which is why this was invisible to
 CI and worth a benchmark harness in-tree.
 
 Dense-subtype check (the arms' `LIMIT 300` cannot be served by the subtype
-index's ordering, so SQLite sorts each arm's matching rows): with 2,000 and
-20,000 synthetic `task_updated` rows inserted into the large session, the
-full metadata query costs 2.6 ms and 2.2 ms — the per-arm sort of small
-status rows is linear but cheap. The old IN-list shape is actually fast in
-the dense case (0.6 ms — it reaches its LIMIT quickly) and catastrophic only
-in the sparse case; the new shape is uniformly sub-3 ms across both
-densities, which is the profile we want.
+index's ordering, so SQLite sorts each arm's matching rows), reproducible via
+the harness's dense-subtype sweep: with 2,000 and 20,000 synthetic
+`task_updated` rows inserted into the large session, the full metadata query
+costs 3.4 ms and 2.7 ms — the per-arm sort of small status rows is linear but
+cheap. The old IN-list shape is actually fast in the dense case (0.6–1.1 ms —
+it reaches its LIMIT quickly) and catastrophic only in the sparse case; the
+new shape is uniformly sub-4 ms across both densities, which is the profile
+we want.
 
 ## messages.bySession — evaluation cost after the fix (production wiring)
 
@@ -106,12 +107,18 @@ evaluations/s ≈ 2% of one core per actively streaming subscribed session.
 | ------------------------------------------------------------------ | ------------- |
 | `SELECT COUNT(*) FROM sdk_messages WHERE session_id = ?`             | 18–125 ms *   |
 | `SELECT COUNT(*), MAX(rowid) FROM sdk_messages WHERE session_id = ?` | 24–80 ms *    |
-| Aggregate digest of mutation columns over the whole session          | ~395 ms †     |
+| Session digest aggregate (unsound lower bound — lengths + weights)   | ~395–470 ms † |
 | `job_queue` active-row digest (full rows hashed — the sound shape)   | 0.01 ms       |
 
 \* depending on page-cache state across runs; always a multiple of the ~4 ms
-full evaluation. † 395 ms warm on the final harness run; 80–945 ms across
-earlier runs and cache states — the harness reproduces both digest shapes.
+full evaluation. † 395–565 ms across harness runs; the cheapest
+digest-shaped aggregate we could construct. It is deliberately an _unsound
+lower bound_ (lengths and type weights only — it misses same-length content
+edits and same-length status flips like `queued`→`failed`). A _sound_
+session digest must read the value of every query-affecting column including
+each `sdk_message` body — strictly more work than the full evaluation it
+would guard, so there is no cheap sound shape to measure. The harness
+reproduces both listed digest benchmarks.
 
 The inversion is structural. The window query reads the ~200 newest rows plus
 their subagent children via indexes, while any session-wide aggregate scans
@@ -149,19 +156,23 @@ case-isolated (each case's removals are settled in their own evaluation
 before the next case is inserted, each case verifies the delivered delta
 actually contains the inserted children, and the delivery stub reproduces
 the production router's JSON serialization and 40 MiB outbound limit),
-end-to-end including delta delivery: 500 / 5,000 small rows cost 8.5 /
-50.2 ms of evaluation; 200 children × 50 KB (≈12 MiB delta) cost 117 ms and
-are delivered; 1,000 children × 50 KB cost 464 ms of evaluation — including
-a full outbound serialization that the router then refuses at 49 MiB > the
-40 MiB limit, disposing the subscription exactly as production does. So the
-fan-out tail is real (hundreds of ms of wasted evaluation) but ultimately
-bounded by the transport: a pathological tool use manifests as a refused
-delta and a lost live subscription rather than unbounded delivered cost.
-The sound remedies remain structural — cap children per windowed tool use,
-or paginate them — because a sentinel cannot help: a sound fan-out-shaped
-sentinel must itself read the same children. Recommended as a follow-up
-task; it does not rescue the aggregate sentinels either, which remain
-unsound against in-place updates and cost 4–6× a normal evaluation.
+end-to-end including delta delivery: 500 / 5,000 small rows cost 8–14 /
+24–50 ms of evaluation; 200 children × 50 KB (≈12 MiB delta) cost 85–117 ms
+and are delivered; 1,000 children × 50 KB cost 387–464 ms of evaluation —
+including a full outbound serialization that the router then refuses at
+49 MiB > the 40 MiB limit, disposing the subscription exactly as production
+does. Two
+things follow. First, the tail risk is real and is _not_ bounded by the
+transport: the query reads every child, `mapMessageRow` parses them, and the
+engine hashes and diffs the complete result all _before_ serialization, so a
+larger fan-out can exhaust daemon memory or CPU before the 40 MiB check is
+ever reached — the transport only bounds what is delivered (a refused delta
+and a lost live subscription). Second, the sound remedies are structural —
+cap children per windowed tool use, or paginate them — because a sentinel
+cannot help: a sound fan-out-shaped sentinel must itself read the same
+children. Recommended as a follow-up task; it does not rescue the aggregate
+sentinels either, which remain unsound against in-place updates and cost
+4–6× a normal evaluation.
 
 ## Coalescing
 
