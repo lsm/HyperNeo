@@ -146,18 +146,22 @@ two-tier shape that would become worthwhile if queue traffic grows.
 The 200-row window bounds only the top-level rows; the `subagent` CTE returns
 every child of every windowed tool use. The harness measures this directly,
 case-isolated (each case's removals are settled in their own evaluation
-before the next case is inserted), end-to-end including the delta delivery
-(which JSON-parses every added child): 500 / 5,000 small rows cost 7.6 /
-23.0 ms of evaluation; 200 / 1,000 children × 50 KB payloads (10 / 50 MB of
-selected content) cost 62 / 277 ms. Cost therefore scales with total child
-payload bytes, and a pathological recent tool use can push an evaluation back
-into the hundreds of ms — the tail risk is real, not hypothetical. The sound
-remedies are structural: cap children per windowed tool use, or paginate
-them; a sentinel cannot help because a sound fan-out-shaped sentinel must
-itself read the same children. Recommended as a follow-up task. It also does
-not rescue the aggregate sentinels: they are cheaper than a pathological
-fan-out evaluation, but they remain unsound against in-place updates, and in
-the common case they cost 4–6× a normal evaluation.
+before the next case is inserted, each case verifies the delivered delta
+actually contains the inserted children, and the delivery stub reproduces
+the production router's JSON serialization and 40 MiB outbound limit),
+end-to-end including delta delivery: 500 / 5,000 small rows cost 8.5 /
+50.2 ms of evaluation; 200 children × 50 KB (≈12 MiB delta) cost 117 ms and
+are delivered; 1,000 children × 50 KB cost 464 ms of evaluation — including
+a full outbound serialization that the router then refuses at 49 MiB > the
+40 MiB limit, disposing the subscription exactly as production does. So the
+fan-out tail is real (hundreds of ms of wasted evaluation) but ultimately
+bounded by the transport: a pathological tool use manifests as a refused
+delta and a lost live subscription rather than unbounded delivered cost.
+The sound remedies remain structural — cap children per windowed tool use,
+or paginate them — because a sentinel cannot help: a sound fan-out-shaped
+sentinel must itself read the same children. Recommended as a follow-up
+task; it does not rescue the aggregate sentinels either, which remain
+unsound against in-place updates and cost 4–6× a normal evaluation.
 
 ## Coalescing
 

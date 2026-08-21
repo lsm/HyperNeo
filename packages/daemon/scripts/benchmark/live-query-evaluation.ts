@@ -7,6 +7,7 @@ import type { TableChangeScope } from '../../src/storage/reactive-database';
 
 const DEBOUNCE_WAIT_MS = 400;
 const WARM_EVAL_RUNS = 10;
+const MAX_OUTBOUND_MESSAGE_BYTES = 40 * 1024 * 1024;
 
 interface Stats {
   count: number;
@@ -65,7 +66,10 @@ interface DeliveredEvent {
 }
 
 interface StubRouter {
-  sendToClientDetailed: (clientId: string, message: unknown) => { ok: true };
+  sendToClientDetailed: (
+    clientId: string,
+    message: unknown
+  ) => { ok: boolean; reason?: string; current: number; limit: number };
   sendToClient: () => void;
   releaseClientSubscription: () => void;
   addClientSubscription: () => void;
@@ -78,11 +82,13 @@ interface StubMessageHub {
   onClientDisconnect(handler: (clientId: string) => void): void;
   handlers: Map<string, (data: unknown, context: unknown) => unknown>;
   delivered: DeliveredEvent[];
+  wasRejectedAsOversized: () => boolean;
 }
 
 function createStubMessageHub(): StubMessageHub {
   const handlers = new Map<string, (data: unknown, context: unknown) => unknown>();
   const delivered: DeliveredEvent[] = [];
+  let rejectedAsOversized = false;
   const router: StubRouter = {
     sendToClientDetailed: (_clientId, message) => {
       const event = message as {
@@ -103,6 +109,14 @@ function createStubMessageHub(): StubMessageHub {
         updated: event.data.updated?.length ?? 0,
         snapshotRows: event.data.rows?.length ?? 0,
       });
+      const size = JSON.stringify(message).length;
+      if (size > MAX_OUTBOUND_MESSAGE_BYTES) {
+        rejectedAsOversized = true;
+        console.log(
+          `  [router] refusing ${event.method} (${(size / 1024 / 1024).toFixed(1)} MiB > ${MAX_OUTBOUND_MESSAGE_BYTES / 1024 / 1024} MiB limit) and disposing the subscription, as production does`
+        );
+        return { ok: false, reason: 'message_too_large', current: 0, limit: 0 };
+      }
       return { ok: true, current: 0, limit: 0 };
     },
     sendToClient: () => {},
@@ -113,6 +127,7 @@ function createStubMessageHub(): StubMessageHub {
   return {
     handlers,
     delivered,
+    wasRejectedAsOversized: () => rejectedAsOversized,
     onRequest(method, handler) {
       handlers.set(method, handler);
     },
@@ -175,25 +190,22 @@ async function main() {
 
   const envBiggest = process.env.BENCH_SESSION_ID;
   const envSmall = process.env.BENCH_SMALL_SESSION_ID;
-  const discoveredBiggest = db
-    .query(
-      'SELECT session_id, COUNT(*) AS c FROM sdk_messages GROUP BY session_id ORDER BY c DESC LIMIT 1'
-    )
-    .get() as { session_id: string; c: number };
-  const biggest = envBiggest
-    ? { session_id: envBiggest, c: 0 }
-    : {
-        session_id: discoveredBiggest.session_id,
-        c: discoveredBiggest.c,
-      };
-  const discoveredSmall = db
-    .query(
-      'SELECT session_id, COUNT(*) AS c FROM sdk_messages GROUP BY session_id HAVING c BETWEEN 1000 AND 3000 ORDER BY c DESC LIMIT 1'
-    )
-    .get() as { session_id: string; c: number };
-  const small = envSmall
-    ? { session_id: envSmall, c: 0 }
-    : { session_id: discoveredSmall.session_id, c: discoveredSmall.c };
+  const discoveredBiggest = envBiggest
+    ? null
+    : (db
+        .query(
+          'SELECT session_id, COUNT(*) AS c FROM sdk_messages GROUP BY session_id ORDER BY c DESC LIMIT 1'
+        )
+        .get() as { session_id: string; c: number });
+  const biggest = discoveredBiggest ?? { session_id: envBiggest as string, c: 0 };
+  const discoveredSmall = envSmall
+    ? null
+    : (db
+        .query(
+          'SELECT session_id, COUNT(*) AS c FROM sdk_messages GROUP BY session_id HAVING c BETWEEN 1000 AND 3000 ORDER BY c DESC LIMIT 1'
+        )
+        .get() as { session_id: string; c: number });
+  const small = discoveredSmall ?? { session_id: envSmall as string, c: 0 };
   console.log(`db: ${dbPath}`);
   console.log(
     `largest session: ${biggest.session_id}${envBiggest ? ' (via BENCH_SESSION_ID)' : ` (${biggest.c} messages, discovery queries warmed the page cache)`}`
@@ -251,75 +263,10 @@ async function main() {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const nowIso = () => new Date().toISOString();
-  insertRow.run(
-    `bench-irrelevant-1`,
-    biggest.session_id,
-    'system',
-    'task_progress',
-    JSON.stringify({ type: 'system', subtype: 'task_progress', content: 'bench' }),
-    nowIso(),
-    'consumed',
-    null,
-    'toolu_bench_not_in_window'
-  );
-  await settle('irrelevant same-session subagent insert outside window', ['sdk_messages'], {
-    sessionId: biggest.session_id,
-  });
-
-  db.run(`UPDATE job_queue SET run_at = run_at WHERE rowid = (SELECT MIN(rowid) FROM job_queue)`);
-  await settle('scoped job_queue change', ['job_queue'], { sessionId: biggest.session_id });
-
-  insertRow.run(
-    `bench-irrelevant-2`,
-    small.session_id,
-    'system',
-    'task_progress',
-    JSON.stringify({ type: 'system', subtype: 'task_progress', content: 'bench' }),
-    nowIso(),
-    'consumed',
-    null,
-    'toolu_bench_not_in_window'
-  );
-  await settle('different-session write (scope filter skip)', ['sdk_messages'], {
-    sessionId: small.session_id,
-  });
-
-  insertRow.run(
-    `bench-relevant-1`,
-    biggest.session_id,
-    'assistant',
-    null,
-    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'bench' }] } }),
-    nowIso(),
-    'consumed',
-    null,
-    null
-  );
-  await settle('relevant in-window insert', ['sdk_messages'], { sessionId: biggest.session_id });
-
-  const oldest = db
-    .query(
-      `SELECT id, send_status FROM sdk_messages WHERE session_id = ? AND parent_tool_use_id IS NULL ORDER BY timestamp ASC LIMIT 1`
-    )
-    .get(biggest.session_id) as { id: string; send_status: string | null } | undefined;
   let restoreOldest: (() => void) | null = null;
-  if (oldest && oldest.send_status !== 'failed') {
-    db.run(`UPDATE sdk_messages SET send_status = 'failed' WHERE id = ?`, [oldest.id]);
-    restoreOldest = () => {
-      db.run(`UPDATE sdk_messages SET send_status = ? WHERE id = ?`, [
-        oldest.send_status,
-        oldest.id,
-      ]);
-    };
-  }
-  await settle('send_status update on old row outside window', ['sdk_messages'], {
-    sessionId: biggest.session_id,
-  });
-
-  reset();
-  for (let i = 0; i < 20; i++) {
+  try {
     insertRow.run(
-      `bench-burst-${i}`,
+      `bench-irrelevant-1`,
       biggest.session_id,
       'system',
       'task_progress',
@@ -329,166 +276,253 @@ async function main() {
       null,
       'toolu_bench_not_in_window'
     );
-    stubReactive.fire(['sdk_messages'], { sessionId: biggest.session_id });
-  }
-  await wait(DEBOUNCE_WAIT_MS);
-  console.log('\n== burst of 20 same-session writes in one debounce window ==');
-  console.log(fmt('  main sql', mainSqlStats));
-  console.log(fmt('  evaluate', evalStats));
-  console.log(`  ${deliveredSummary()}`);
+    await settle('irrelevant same-session subagent insert outside window', ['sdk_messages'], {
+      sessionId: biggest.session_id,
+    });
 
-  console.log('\n== metadata query attribution (BACKGROUND_TASK_METADATA_SQL, warm) ==');
-  const metaStmt = db.prepare(BACKGROUND_TASK_METADATA_SQL);
-  const sessionId = biggest.session_id;
-  const metaParams = [sessionId, sessionId, sessionId, sessionId, sessionId, sessionId, sessionId];
-  metaStmt.all(...metaParams);
-  const metaStats = newStats();
-  for (let i = 0; i < 10; i++) {
-    const start = performance.now();
+    db.run(`UPDATE job_queue SET run_at = run_at WHERE rowid = (SELECT MIN(rowid) FROM job_queue)`);
+    await settle('scoped job_queue change', ['job_queue'], { sessionId: biggest.session_id });
+
+    insertRow.run(
+      `bench-irrelevant-2`,
+      small.session_id,
+      'system',
+      'task_progress',
+      JSON.stringify({ type: 'system', subtype: 'task_progress', content: 'bench' }),
+      nowIso(),
+      'consumed',
+      null,
+      'toolu_bench_not_in_window'
+    );
+    await settle('different-session write (scope filter skip)', ['sdk_messages'], {
+      sessionId: small.session_id,
+    });
+
+    insertRow.run(
+      `bench-relevant-1`,
+      biggest.session_id,
+      'assistant',
+      null,
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'bench' }] },
+      }),
+      nowIso(),
+      'consumed',
+      null,
+      null
+    );
+    await settle('relevant in-window insert', ['sdk_messages'], { sessionId: biggest.session_id });
+
+    const oldest = db
+      .query(
+        `SELECT id, send_status FROM sdk_messages WHERE session_id = ? AND parent_tool_use_id IS NULL ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(biggest.session_id) as { id: string; send_status: string | null } | undefined;
+    if (oldest && oldest.send_status !== 'failed') {
+      db.run(`UPDATE sdk_messages SET send_status = 'failed' WHERE id = ?`, [oldest.id]);
+      restoreOldest = () => {
+        db.run(`UPDATE sdk_messages SET send_status = ? WHERE id = ?`, [
+          oldest.send_status,
+          oldest.id,
+        ]);
+      };
+    }
+    await settle('send_status update on old row outside window', ['sdk_messages'], {
+      sessionId: biggest.session_id,
+    });
+
+    reset();
+    for (let i = 0; i < 20; i++) {
+      insertRow.run(
+        `bench-burst-${i}`,
+        biggest.session_id,
+        'system',
+        'task_progress',
+        JSON.stringify({ type: 'system', subtype: 'task_progress', content: 'bench' }),
+        nowIso(),
+        'consumed',
+        null,
+        'toolu_bench_not_in_window'
+      );
+      stubReactive.fire(['sdk_messages'], { sessionId: biggest.session_id });
+    }
+    await wait(DEBOUNCE_WAIT_MS);
+    console.log('\n== burst of 20 same-session writes in one debounce window ==');
+    console.log(fmt('  main sql', mainSqlStats));
+    console.log(fmt('  evaluate', evalStats));
+    console.log(`  ${deliveredSummary()}`);
+
+    console.log('\n== metadata query attribution (BACKGROUND_TASK_METADATA_SQL, warm) ==');
+    const metaStmt = db.prepare(BACKGROUND_TASK_METADATA_SQL);
+    const sessionId = biggest.session_id;
+    const metaParams = [
+      sessionId,
+      sessionId,
+      sessionId,
+      sessionId,
+      sessionId,
+      sessionId,
+      sessionId,
+    ];
     metaStmt.all(...metaParams);
-    record(metaStats, performance.now() - start);
-  }
-  console.log(fmt('  metadata sql', metaStats));
-  const taskSubtypes = db
-    .query(
-      `SELECT message_subtype_norm AS st, COUNT(*) AS c FROM sdk_messages WHERE session_id = ? GROUP BY 1 ORDER BY 2 DESC LIMIT 8`
-    )
-    .all(sessionId) as Array<{ st: string; c: number }>;
-  console.log(`  session subtype profile: ${JSON.stringify(taskSubtypes)}`);
+    const metaStats = newStats();
+    for (let i = 0; i < 10; i++) {
+      const start = performance.now();
+      metaStmt.all(...metaParams);
+      record(metaStats, performance.now() - start);
+    }
+    console.log(fmt('  metadata sql', metaStats));
+    const taskSubtypes = db
+      .query(
+        `SELECT message_subtype_norm AS st, COUNT(*) AS c FROM sdk_messages WHERE session_id = ? GROUP BY 1 ORDER BY 2 DESC LIMIT 8`
+      )
+      .all(sessionId) as Array<{ st: string; c: number }>;
+    console.log(`  session subtype profile: ${JSON.stringify(taskSubtypes)}`);
 
-  console.log('\n== sentinel candidates (same session, warm) ==');
-  const sentinelQueries: Array<[string, string, unknown[]]> = [
-    ['count-only', `SELECT COUNT(*) FROM sdk_messages WHERE session_id = ?`, [sessionId]],
-    [
-      'count+max(rowid)',
-      `SELECT COUNT(*), MAX(rowid) FROM sdk_messages WHERE session_id = ?`,
-      [sessionId],
-    ],
-    [
-      'task-metadata-scoped count',
-      `SELECT COUNT(*), MAX(rowid) FROM sdk_messages WHERE session_id = ? AND parent_tool_use_id IS NULL AND message_subtype_norm IN ('task_started', 'task_updated', 'task_notification', 'task_progress')`,
-      [sessionId],
-    ],
-    [
-      'job_queue active delivery',
-      `SELECT COUNT(*), MAX(rowid) FROM job_queue WHERE queue = 'message_delivery' AND status IN ('pending','processing') AND json_extract(payload, '$.sessionId') = ?`,
-      [sessionId],
-    ],
-  ];
-  for (const [label, sql, params] of sentinelQueries) {
-    const stmt = db.prepare(sql);
-    stmt.get(...params);
-    const stats = newStats();
+    console.log('\n== sentinel candidates (same session, warm) ==');
+    const sentinelQueries: Array<[string, string, unknown[]]> = [
+      ['count-only', `SELECT COUNT(*) FROM sdk_messages WHERE session_id = ?`, [sessionId]],
+      [
+        'count+max(rowid)',
+        `SELECT COUNT(*), MAX(rowid) FROM sdk_messages WHERE session_id = ?`,
+        [sessionId],
+      ],
+      [
+        'task-metadata-scoped count',
+        `SELECT COUNT(*), MAX(rowid) FROM sdk_messages WHERE session_id = ? AND parent_tool_use_id IS NULL AND message_subtype_norm IN ('task_started', 'task_updated', 'task_notification', 'task_progress')`,
+        [sessionId],
+      ],
+      [
+        'job_queue active delivery',
+        `SELECT COUNT(*), MAX(rowid) FROM job_queue WHERE queue = 'message_delivery' AND status IN ('pending','processing') AND json_extract(payload, '$.sessionId') = ?`,
+        [sessionId],
+      ],
+    ];
+    for (const [label, sql, params] of sentinelQueries) {
+      const stmt = db.prepare(sql);
+      stmt.get(...params);
+      const stats = newStats();
+      for (let i = 0; i < 50; i++) {
+        const start = performance.now();
+        stmt.get(...params);
+        record(stats, performance.now() - start);
+      }
+      console.log(`  ${label}: avg=${(stats.totalMs / stats.count).toFixed(2)}ms`);
+    }
+
+    console.log('\n== digest sentinel candidates (same session, warm) ==');
+    const digestSql = `SELECT COUNT(*),
+        COALESCE(SUM(length(id) + length(timestamp) + length(COALESCE(send_status, ''))), 0),
+        COALESCE(SUM(CASE message_type WHEN 'user' THEN 1 ELSE 2 END), 0)
+      FROM sdk_messages WHERE session_id = ?`;
+    const digestStmt = db.prepare(digestSql);
+    digestStmt.get(sessionId);
+    const digestStats = newStats();
+    for (let i = 0; i < 10; i++) {
+      const start = performance.now();
+      digestStmt.get(sessionId);
+      record(digestStats, performance.now() - start);
+    }
+    console.log(fmt('  session mutation-column digest', digestStats));
+
+    const queueDigestSql = `SELECT jq.rowid, jq.status, jq.retry_count, jq.run_at, jq.max_retries, jq.payload
+      FROM job_queue jq
+      WHERE jq.queue = 'message_delivery'
+        AND jq.status IN ('pending', 'processing')
+        AND json_extract(jq.payload, '$.sessionId') = ?`;
+    const queueDigestStmt = db.prepare(queueDigestSql);
+    const queueDigest = (): string => {
+      const rows = queueDigestStmt.all(sessionId) as Record<string, unknown>[];
+      return JSON.stringify(rows);
+    };
+    queueDigest();
+    const queueDigestStats = newStats();
     for (let i = 0; i < 50; i++) {
       const start = performance.now();
-      stmt.get(...params);
-      record(stats, performance.now() - start);
+      queueDigest();
+      record(queueDigestStats, performance.now() - start);
     }
-    console.log(`  ${label}: avg=${(stats.totalMs / stats.count).toFixed(2)}ms`);
-  }
+    console.log(fmt('  job_queue active-row digest (sound shape)', queueDigestStats));
 
-  console.log('\n== digest sentinel candidates (same session, warm) ==');
-  const digestSql = `SELECT COUNT(*),
-      COALESCE(SUM(length(id) + length(timestamp) + length(COALESCE(send_status, ''))), 0),
-      COALESCE(SUM(CASE message_type WHEN 'user' THEN 1 ELSE 2 END), 0)
-    FROM sdk_messages WHERE session_id = ?`;
-  const digestStmt = db.prepare(digestSql);
-  digestStmt.get(sessionId);
-  const digestStats = newStats();
-  for (let i = 0; i < 10; i++) {
-    const start = performance.now();
-    digestStmt.get(sessionId);
-    record(digestStats, performance.now() - start);
-  }
-  console.log(fmt('  session mutation-column digest', digestStats));
-
-  const queueDigestSql = `SELECT jq.rowid, jq.status, jq.retry_count, jq.run_at, jq.max_retries, jq.payload
-    FROM job_queue jq
-    WHERE jq.queue = 'message_delivery'
-      AND jq.status IN ('pending', 'processing')
-      AND json_extract(jq.payload, '$.sessionId') = ?`;
-  const queueDigestStmt = db.prepare(queueDigestSql);
-  const queueDigest = (): string => {
-    const rows = queueDigestStmt.all(sessionId) as Record<string, unknown>[];
-    return JSON.stringify(rows);
-  };
-  queueDigest();
-  const queueDigestStats = newStats();
-  for (let i = 0; i < 50; i++) {
-    const start = performance.now();
-    queueDigest();
-    record(queueDigestStats, performance.now() - start);
-  }
-  console.log(fmt('  job_queue active-row digest (sound shape)', queueDigestStats));
-
-  console.log('\n== high-fanout subagent children under one in-window tool use ==');
-  const windowToolUse = db
-    .query(
-      `SELECT je.value ->> '$.id' AS tool_use_id
-       FROM (
-         SELECT sdk_message FROM sdk_messages
-         WHERE session_id = ?1 AND parent_tool_use_id IS NULL AND message_type = 'assistant'
-         ORDER BY timestamp DESC, rowid DESC LIMIT 50
-       ), json_each(CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.message.content') ELSE '[]' END) AS je
-       WHERE json_extract(je.value, '$.type') = 'tool_use'
-         AND json_extract(je.value, '$.id') IS NOT NULL
-       LIMIT 1`
-    )
-    .get(sessionId) as { tool_use_id: string } | undefined;
-  if (windowToolUse) {
-    console.log(`  in-window tool_use: ${windowToolUse.tool_use_id}`);
-    const insertChild = db.prepare(
-      `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id)
-       VALUES (?, ?, 'progress', 'task_progress', ?, ?, 'consumed', NULL, ?)`
-    );
-    const fanoutCases: Array<{ count: number; payloadKb: number }> = [
-      { count: 500, payloadKb: 0 },
-      { count: 5000, payloadKb: 0 },
-      { count: 200, payloadKb: 50 },
-      { count: 1000, payloadKb: 50 },
-    ];
-    for (const { count, payloadKb } of fanoutCases) {
-      const deleted = db
-        .prepare(`SELECT COUNT(*) AS n FROM sdk_messages WHERE id LIKE 'bench-fanout-%'`)
-        .get() as { n: number };
-      if (deleted.n > 0) {
-        db.run(`DELETE FROM sdk_messages WHERE id LIKE 'bench-fanout-%'`);
+    console.log('\n== high-fanout subagent children under one in-window tool use ==');
+    const windowToolUse = db
+      .query(
+        `SELECT je.value ->> '$.id' AS tool_use_id
+         FROM (
+           SELECT sdk_message FROM sdk_messages
+           WHERE session_id = ?1 AND parent_tool_use_id IS NULL AND message_type = 'assistant'
+           ORDER BY timestamp DESC, rowid DESC LIMIT 50
+         ), json_each(CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.message.content') ELSE '[]' END) AS je
+         WHERE json_extract(je.value, '$.type') = 'tool_use'
+           AND json_extract(je.value, '$.id') IS NOT NULL
+         LIMIT 1`
+      )
+      .get(sessionId) as { tool_use_id: string } | undefined;
+    if (windowToolUse) {
+      console.log(`  in-window tool_use: ${windowToolUse.tool_use_id}`);
+      const insertChild = db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id)
+         VALUES (?, ?, 'progress', 'task_progress', ?, ?, 'consumed', NULL, ?)`
+      );
+      const fanoutCases: Array<{ count: number; payloadKb: number }> = [
+        { count: 500, payloadKb: 0 },
+        { count: 5000, payloadKb: 0 },
+        { count: 200, payloadKb: 50 },
+        { count: 1000, payloadKb: 50 },
+      ];
+      for (const { count, payloadKb } of fanoutCases) {
+        if (hub.wasRejectedAsOversized()) {
+          console.log('  subscription disposed by the router size limit; skipping later cases');
+          break;
+        }
+        const deleted = db
+          .prepare(`SELECT COUNT(*) AS n FROM sdk_messages WHERE id LIKE 'bench-fanout-%'`)
+          .get() as { n: number };
+        if (deleted.n > 0) {
+          db.run(`DELETE FROM sdk_messages WHERE id LIKE 'bench-fanout-%'`);
+          await settle(
+            `settling removal of previous fan-out case (${deleted.n} rows)`,
+            ['sdk_messages'],
+            { sessionId: biggest.session_id }
+          );
+        }
+        const payload = JSON.stringify({
+          type: 'progress',
+          subtype: 'task_progress',
+          content: payloadKb > 0 ? 'x'.repeat(payloadKb * 1024) : 'bench fanout',
+        });
+        for (let i = 0; i < count; i++) {
+          insertChild.run(
+            `bench-fanout-${count}-${payloadKb}-${i}`,
+            sessionId,
+            payload,
+            nowIso(),
+            windowToolUse.tool_use_id
+          );
+        }
         await settle(
-          `settling removal of previous fan-out case (${deleted.n} rows)`,
+          `evaluation with ${count} subagent children x ${payloadKb}KB payloads in window`,
           ['sdk_messages'],
           { sessionId: biggest.session_id }
         );
+        const addedChildren = hub.delivered.reduce((sum, event) => sum + event.added, 0);
+        if (addedChildren !== count && !hub.wasRejectedAsOversized()) {
+          console.log(
+            `  WARNING: expected ${count} added children, observed ${addedChildren} — the chosen tool_use is outside the subscribed window; stopping fan-out cases`
+          );
+          db.run(`DELETE FROM sdk_messages WHERE id LIKE 'bench-fanout-%'`);
+          break;
+        }
       }
-      const payload = JSON.stringify({
-        type: 'progress',
-        subtype: 'task_progress',
-        content: payloadKb > 0 ? 'x'.repeat(payloadKb * 1024) : 'bench fanout',
-      });
-      for (let i = 0; i < count; i++) {
-        insertChild.run(
-          `bench-fanout-${count}-${payloadKb}-${i}`,
-          sessionId,
-          payload,
-          nowIso(),
-          windowToolUse.tool_use_id
-        );
-      }
-      await settle(
-        `evaluation with ${count} subagent children x ${payloadKb}KB payloads in window`,
-        ['sdk_messages'],
-        { sessionId: biggest.session_id }
-      );
+      db.run(`DELETE FROM sdk_messages WHERE id LIKE 'bench-fanout-%'`);
+    } else {
+      console.log('  (no tool_use found in recent window — skipped)');
     }
-    db.run(`DELETE FROM sdk_messages WHERE id LIKE 'bench-fanout-%'`);
-  } else {
-    console.log('  (no tool_use found in recent window — skipped)');
-  }
-
-  try {
+  } finally {
     db.run(`DELETE FROM sdk_messages WHERE id LIKE 'bench-%'`);
     db.run(`UPDATE job_queue SET run_at = run_at`);
     restoreOldest?.();
-  } finally {
     engine.dispose();
     db.close();
   }
