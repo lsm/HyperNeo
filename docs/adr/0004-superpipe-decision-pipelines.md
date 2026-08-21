@@ -476,11 +476,16 @@ interpreters over three extracted cores:
   derives the workflow's `completionAutonomyLevel` (default 5) and passes it in
   as `required` — while `routeApproveTask` only compares its inputs. The
   threshold default has further owners: the bound node-agent approval path
-  (`end-node-handlers.ts`) independently derives `workflow?
-  .completionAutonomyLevel ?? 5` and enforces its own denial wording, and
+  (`end-node-handlers.ts`) independently derives
+  `workflow?.completionAutonomyLevel ?? 5` and enforces its own denial wording,
   `task-agent-manager.ts` repeats the same default when advertising
-  `approve_task` availability in end-node prompts — so a threshold or default
-  change must touch every owner until the derivation is centralized. The
+  `approve_task` availability in end-node prompts, and the `?? 5` fallback also
+  lives in the shared auto-close helper
+  (`packages/shared/src/space/workflow-autonomy.ts`) and the web autonomy
+  summary's displayed required
+  level — so a threshold or default change must touch every owner until the
+  derivation is centralized, or backend approval behavior diverges from the
+  UI's auto-close count and displayed level. The
   router owns only the denial routing — reason, message, and
   precedence against the target check (see the second recorded asymmetry
   below).
