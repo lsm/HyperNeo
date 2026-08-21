@@ -3764,7 +3764,11 @@ export class SpaceRuntime {
       return;
     }
 
-    if (run.status === 'cancelled' && canonicalTask.status !== 'cancelled') {
+    if (
+      run.status === 'cancelled' &&
+      canonicalTask.status !== 'cancelled' &&
+      isValidSpaceTaskTransition(canonicalTask.status, 'cancelled')
+    ) {
       await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, {
         status: 'cancelled',
         completedAt: canonicalTask.completedAt ?? run.completedAt ?? Date.now(),

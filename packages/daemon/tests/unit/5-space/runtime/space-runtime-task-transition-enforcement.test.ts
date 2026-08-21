@@ -1,5 +1,10 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { SpaceTask, SpaceTaskStatus, UpdateSpaceTaskParams } from '@hyperneo/shared';
+import type {
+  SpaceTask,
+  SpaceTaskStatus,
+  SpaceWorkflowRun,
+  UpdateSpaceTaskParams,
+} from '@hyperneo/shared';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -24,6 +29,8 @@ type UpdateTaskAndEmitFn = (
   params: UpdateSpaceTaskParams
 ) => Promise<SpaceTask | null>;
 
+type ReconcileTerminalRunTasksFn = (run: SpaceWorkflowRun) => Promise<void>;
+
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
@@ -33,25 +40,32 @@ function makeDb(): BunDatabase {
      allowed_models, session_ids, slug, status, max_concurrent_tasks, created_at, updated_at)
      VALUES (?, '/tmp/ws', ?, '', '', '', '[]', '[]', ?, 'active', 1, ?, ?)`
   ).run(SPACE_ID, `Space ${SPACE_ID}`, SPACE_ID, Date.now(), Date.now());
+  db.prepare(
+    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES ('agent-enf-1', ?, 'Enforcer', '', null, '[]', '', ?, ?)`
+  ).run(SPACE_ID, Date.now(), Date.now());
   return db;
 }
 
 describe('SpaceRuntime.updateTaskAndEmit — transition table enforcement (task #1194)', () => {
   let db: BunDatabase;
   let taskRepo: SpaceTaskRepository;
+  let workflowManager: SpaceWorkflowManager;
+  let workflowRunRepo: SpaceWorkflowRunRepository;
   let runtime: SpaceRuntime;
 
   beforeEach(() => {
     db = makeDb();
     taskRepo = new SpaceTaskRepository(db);
+    workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
+    workflowRunRepo = new SpaceWorkflowRunRepository(db);
     const agentManager = new SpaceAgentManager(new SpaceAgentRepository(db));
-    const workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
     const config: SpaceRuntimeConfig = {
       db,
       spaceManager: new SpaceManager(db),
       spaceAgentManager: agentManager,
       spaceWorkflowManager: workflowManager,
-      workflowRunRepo: new SpaceWorkflowRunRepository(db),
+      workflowRunRepo,
       taskRepo,
       nodeExecutionRepo: new NodeExecutionRepository(db),
     };
@@ -116,5 +130,39 @@ describe('SpaceRuntime.updateTaskAndEmit — transition table enforcement (task 
 
   test('unknown task still resolves to null instead of throwing', async () => {
     await expect(updateTaskAndEmit('task-does-not-exist', { status: 'done' })).resolves.toBeNull();
+  });
+
+  test('cancelled-run reconcile skips terminal canonical tasks instead of throwing', async () => {
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Cancelled Run Reconcile',
+      description: '',
+      nodes: [{ id: 'node-a', name: 'Step', agents: [{ agentId: 'agent-enf-1', name: 'Step' }] }],
+      transitions: [],
+      startNodeId: 'node-a',
+      rules: [],
+      tags: [],
+      completionAutonomyLevel: 3,
+    });
+    const created = workflowRunRepo.createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'Cancelled Run',
+    });
+    workflowRunRepo.transitionStatus(created.id, 'in_progress');
+    const run = workflowRunRepo.transitionStatus(created.id, 'cancelled');
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Terminal canonical',
+      description: '',
+      workflowRunId: run.id,
+      status: 'done',
+    });
+
+    const reconcile = (
+      runtime as unknown as { reconcileTerminalRunTasks: ReconcileTerminalRunTasksFn }
+    ).reconcileTerminalRunTasks;
+    await expect(reconcile.call(runtime, run)).resolves.toBeUndefined();
+    expect(taskRepo.getTask(task.id)?.status).toBe('done');
   });
 });
