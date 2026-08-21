@@ -364,13 +364,18 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('never bypass it with `--admin`');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('IS_FORK');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('git ls-remote origin "refs/heads/$HEAD_REF"');
-    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('git push origin --delete "$HEAD_REF"');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('git push origin --force-with-lease');
   });
 
   test('gate captures the base before reviewers run and verifies the recorded PR link', () => {
     expect(CODER_ONLY_PROMPT).toContain('Capture the baseRefName when you START the external gate');
     expect(CODER_ONLY_PROMPT).toContain('re-run BOTH gates under the new base');
     expect(CODER_ONLY_PROMPT).toContain('--json headRefName,url` must succeed');
+    expect(CODER_ONLY_PROMPT).toContain('must match this workspace');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('`base_ref` equals the final baseRefName');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      '--force-with-lease="refs/heads/$HEAD_REF:$REMOTE_OID"'
+    );
   });
 
   test('merge instructions give executable guarded commands for the Space checkout sync', () => {

@@ -206,8 +206,10 @@ export const CODER_ONLY_PROMPT =
   'merge procedure interpolates `{{pr_url}}` from that artifact, and without it the merge session ' +
   'receives an empty placeholder and cannot operate on the PR. Verify the recorded value right ' +
   'after saving it: `gh pr view "<PR URL>" --json headRefName,url` must succeed and name THIS ' +
-  "task's branch — a typo'd or stale URL would otherwise make you review and merge the wrong PR; " +
-  'if it does not match, fix the artifact before proceeding. ' +
+  "task's branch, AND the owner/repository parsed from the PR URL must match this workspace's " +
+  "origin remote (`git remote get-url origin`) — a typo'd, stale, or other-repository URL would " +
+  'otherwise make you review and merge the wrong PR; if either check fails, fix the artifact ' +
+  'before proceeding. ' +
   'Review is delegated to two external GitHub reviewers: Codex and Devon. ' +
   'Before you may request approval, BOTH must pass on the CURRENT PR head. ' +
   'Do not hand off to any internal Review node — there is none. ' +
@@ -864,7 +866,7 @@ export const CODER_ONLY_MERGE_INSTRUCTIONS: string = [
   '     gh pr view {{pr_url}} --json state,mergeStateStatus,headRefOid',
   '     gh pr checks {{pr_url}} --required',
   '     BASE=$(gh pr view {{pr_url}} --json baseRefName --jq .baseRefName)',
-  '   If state is not OPEN, or a required check is failing or pending, treat it as a blocker per step 4. A report that the base has no required checks counts as green. If state is MERGED, the merge already happened (possibly in a prior session that died before cleanup); first confirm your gate artifact `head_oid` still equals the PR headRefOid — if it does not, a different, unverified head was merged by another actor, so do NOT record a success audit: escalate to space-agent with the mismatch and stop. Otherwise recover idempotently — run step 5 (branch deletion is a no-op if the branch is already gone), run step 6 (fast-forward the root checkout — a restart after merge must still sync it), record the step-7 audit artifact if it is absent, and call mark_complete to close the task.',
+  '   If state is not OPEN, or a required check is failing or pending, treat it as a blocker per step 4. A report that the base has no required checks counts as green. If state is MERGED, the merge already happened (possibly in a prior session that died before cleanup); first confirm your gate artifact `head_oid` still equals the PR headRefOid AND its `base_ref` equals the final baseRefName — if either does not, a different, unverified head or base was merged by another actor, so do NOT record a success audit: escalate to space-agent with the mismatch and stop. Otherwise recover idempotently — run step 5 (branch deletion is a no-op if the branch is already gone), run step 6 (fast-forward the root checkout — a restart after merge must still sync it), record the step-7 audit artifact if it is absent, and call mark_complete to close the task.',
   '2. Verify all GitHub review conversations are resolved before merging:',
   '   Extract <host>, <owner>, <repo>, and <number> from {{pr_url}} (format: https://<host>/<owner>/<repo>/pull/<number>).',
   "     gh api graphql --hostname <host> -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:20){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}' -f owner=<owner> -f name=<repo> -F number=<number>",
@@ -900,8 +902,8 @@ export const CODER_ONLY_MERGE_INSTRUCTIONS: string = [
   '   If IS_FORK is true, SKIP deletion — forked PRs keep their branch in the fork. Otherwise lease-bind the deletion so a REUSED branch is never destroyed: compare the remote ref to the merged head first,',
   '     MERGED_OID=$(gh pr view {{pr_url}} --json headRefOid --jq .headRefOid)',
   '     REMOTE_OID=$(git ls-remote origin "refs/heads/$HEAD_REF" | cut -f1)',
-  '   If REMOTE_OID is empty the branch is already gone (no-op). If REMOTE_OID differs from MERGED_OID, the branch name was recreated or advanced after the merge — record a NON-result `note` cleanup_warning artifact (key "branch-delete") and do NOT delete it. Only when they match, delete the ref:',
-  '     git push origin --delete "$HEAD_REF"',
+  '   If REMOTE_OID is empty the branch is already gone (no-op). If REMOTE_OID differs from MERGED_OID, the branch name was recreated or advanced after the merge — record a NON-result `note` cleanup_warning artifact (key "branch-delete") and do NOT delete it. Only when they match, delete under the observed lease (so a branch advanced between the check and the push is still not destroyed):',
+  '     git push origin --force-with-lease="refs/heads/$HEAD_REF:$REMOTE_OID" --delete "$HEAD_REF"',
   '   Branch cleanup is BEST-EFFORT: on any failure (protected branch, missing delete permission, already gone), record a NON-result `note` cleanup_warning artifact (key "branch-delete") and continue — the PR is already merged.',
   '6. Sync so both this isolated worktree AND the Space checkout track the freshly-merged base branch:',
   '   Resolve the base remote first — the squash merge lands in the BASE repository, which is not necessarily this `origin`:',
