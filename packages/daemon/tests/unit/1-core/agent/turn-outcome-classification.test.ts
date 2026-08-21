@@ -187,6 +187,22 @@ describe('classifyTurnCompletion', () => {
       expect(result.detail).toBe('Turn ended with a terminal error (error_max_turns)');
       expect(result.reopenForRetry).toBe(false);
     });
+
+    it('ignores a non-retryable errorResultSubtype when a recoverable turnError is present', () => {
+      const result = classifyTurnCompletion({
+        producedResult: false,
+        turnError: { message: 'Transient', recoverable: true },
+        errorResultSubtype: 'invalid_api_key',
+        deliveryTurnStalled: false,
+        claimGuardHeld: true,
+      });
+      if (result.outcome !== 'recoverable_error') {
+        throw new Error(`expected recoverable_error, got ${result.outcome}`);
+      }
+      expect(result.detail).toBe('Transient');
+      expect(result.category).toBeUndefined();
+      expect(result.reopenForRetry).toBe(true);
+    });
   });
 
   describe('claimGuard toggling reopenForRetry', () => {
@@ -222,7 +238,7 @@ describe('classifyTurnCompletion', () => {
 
 describe('shouldRearmSpuriousTurnEnd', () => {
   const base = {
-    freshFeed: true,
+    feedAcknowledged: true,
     turnEndFired: true,
     queryEnded: false,
     withinGraceMs: true,
@@ -234,8 +250,8 @@ describe('shouldRearmSpuriousTurnEnd', () => {
     expect(shouldRearmSpuriousTurnEnd(base)).toBe(true);
   });
 
-  it('does not re-arm when freshFeed is false', () => {
-    expect(shouldRearmSpuriousTurnEnd({ ...base, freshFeed: false })).toBe(false);
+  it('does not re-arm when feedAcknowledged is false', () => {
+    expect(shouldRearmSpuriousTurnEnd({ ...base, feedAcknowledged: false })).toBe(false);
   });
 
   it('does not re-arm when turnEndFired is false', () => {
@@ -317,5 +333,18 @@ describe('selectStrandedDeliveries', () => {
 
   it('returns an empty array for empty input', () => {
     expect(selectStrandedDeliveries([], new Set())).toEqual([]);
+  });
+
+  it('excludes uuids matched by isInFlight', () => {
+    const enqueued = [{ uuid: 'a' }, { uuid: 'b' }, { uuid: 'c' }];
+    const active = new Set<string>();
+    const isInFlight = (uuid: string) => uuid === 'b';
+    expect(selectStrandedDeliveries(enqueued, active, isInFlight)).toEqual(['a', 'c']);
+  });
+
+  it('works without isInFlight (two-arg call)', () => {
+    const enqueued = [{ uuid: 'a' }, { uuid: 'b' }];
+    const active = new Set<string>();
+    expect(selectStrandedDeliveries(enqueued, active)).toEqual(['a', 'b']);
   });
 });

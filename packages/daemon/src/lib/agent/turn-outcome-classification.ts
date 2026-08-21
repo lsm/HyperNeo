@@ -53,7 +53,7 @@ export function classifyTurnCompletion(args: TurnCompletionInput): TurnCompletio
 }
 
 export function shouldRearmSpuriousTurnEnd(args: {
-  freshFeed: boolean;
+  feedAcknowledged: boolean;
   turnEndFired: boolean;
   queryEnded: boolean;
   withinGraceMs: boolean;
@@ -61,7 +61,7 @@ export function shouldRearmSpuriousTurnEnd(args: {
   hasTerminalResult: boolean;
 }): boolean {
   return (
-    args.freshFeed &&
+    args.feedAcknowledged &&
     args.turnEndFired &&
     !args.queryEnded &&
     args.withinGraceMs &&
@@ -85,12 +85,18 @@ export function decideReconcileAdmission(args: {
 
 export function selectStrandedDeliveries(
   enqueued: Array<{ uuid?: string }>,
-  activeInJobQueue: ReadonlySet<string>
+  activeInJobQueue: ReadonlySet<string>,
+  isInFlight?: (uuid: string) => boolean
 ): string[] {
   const stranded: string[] = [];
   for (const msg of enqueued) {
     const uuid = msg.uuid;
-    if (typeof uuid === 'string' && uuid.length > 0 && !activeInJobQueue.has(uuid)) {
+    if (
+      typeof uuid === 'string' &&
+      uuid.length > 0 &&
+      !activeInJobQueue.has(uuid) &&
+      !(isInFlight?.(uuid) ?? false)
+    ) {
       stranded.push(uuid);
     }
   }
