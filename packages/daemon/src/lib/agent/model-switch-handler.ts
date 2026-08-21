@@ -20,6 +20,8 @@ import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { AcpQueryAdapter } from '../acp/acp-query-adapter';
+import { disposeAcpSessions } from '../acp/acp-model-fetcher';
+import { AcpProvider } from '../providers/acp-provider';
 import type { QueryLike } from './query-like';
 
 const ONE_M_SUFFIX = /\[1m\]$/i;
@@ -49,6 +51,7 @@ export interface ModelSwitchHandlerContext {
   readonly queryObject: QueryLike | null;
   readonly queryPromise: Promise<void> | null;
   readonly messageQueue: MessageQueue;
+  readonly disposeAcpSessions?: typeof disposeAcpSessions;
 }
 
 export interface ModelSwitchResult {
@@ -178,6 +181,17 @@ export class ModelSwitchHandler {
       if (!this.isQueryActiveOrStarting()) {
         session.config.model = resolvedModel;
         session.config.provider = nextProvider;
+        if (clearAcpSessionId && previousAcpSessionId) {
+          const acpProvider = getProviderRegistry().get('acp');
+          const previousCommand =
+            acpProvider instanceof AcpProvider
+              ? acpProvider.getAcpCommand()
+              : process.env.HYPERNEO_ACP_COMMAND;
+          if (previousCommand) {
+            const dispose = this.ctx.disposeAcpSessions ?? disposeAcpSessions;
+            await dispose(previousCommand, [previousAcpSessionId]).catch(() => {});
+          }
+        }
         if (clearAcpSessionId) {
           session.acpSessionId = undefined;
           session.metadata = {

@@ -20,9 +20,12 @@ import {
   resetProviderFactory,
   initializeProviders,
   waitForOptionalProviderRegistration,
+  getProviderRegistry,
 } from '../../../../src/lib/providers/factory';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { setModelsCache, clearModelsCache } from '../../../../src/lib/model-service';
+import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
+import { disposeAcpSessions } from '../../../../src/lib/acp/acp-model-fetcher';
 
 const TEST_MODELS: ModelInfo[] = [
   {
@@ -255,6 +258,7 @@ describe('ModelSwitchHandler', () => {
       queryObject: { setModel: setModelSpy } as unknown as Query,
       queryPromise: null,
       messageQueue: { isRunning: mock(() => false) } as unknown as MessageQueue,
+      disposeAcpSessions: mock(async () => {}) as typeof disposeAcpSessions,
       firstMessageReceived: true,
       ...overrides,
     };
@@ -428,6 +432,27 @@ describe('ModelSwitchHandler', () => {
             metadata: expect.objectContaining({ acpContextUsageEstimate: undefined }),
           })
         );
+      });
+
+      it('disposes the remote ACP session when switching away from ACP', async () => {
+        const acpProvider = getProviderRegistry().get('acp') as AcpProvider;
+        acpProvider.setAcpCommand('devin acp');
+        const disposeAcpSessionsSpy = mock(async () => {});
+
+        mockSession.config.model = 'acp-default';
+        mockSession.config.provider = 'acp';
+        mockSession.acpSessionId = 'remote-acp-session';
+        mockSession.metadata = {
+          ...mockSession.metadata,
+          acpContextUsageEstimate: 12000,
+        };
+
+        handler = createHandler({ queryObject: null, disposeAcpSessions: disposeAcpSessionsSpy });
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+        expect(result.success).toBe(true);
+        expect(disposeAcpSessionsSpy).toHaveBeenCalledWith('devin acp', ['remote-acp-session']);
+        expect(mockSession.acpSessionId).toBeUndefined();
       });
     });
 
