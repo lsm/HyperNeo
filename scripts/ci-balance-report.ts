@@ -156,7 +156,7 @@ export function resolveSuitePath(rawPath: string): {
   return { repoPath: candidate, suite: null };
 }
 
-function discoverJunitFiles(inputs: string[]): string[] {
+export function discoverJunitFiles(inputs: string[]): string[] {
   const files: string[] = [];
   for (const input of inputs) {
     const stat = statSync(input, { throwIfNoEntry: false });

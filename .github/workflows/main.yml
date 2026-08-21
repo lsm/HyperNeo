@@ -122,6 +122,9 @@ jobs:
       - name: Test CI balance report parser
         run: bun run test:ci-balance-report
 
+      - name: Test shard-weights generator
+        run: bun run test:generate-shard-weights
+
       # Actually enforce the zero-comments policy in CI. strip-comments.ts
       # enumerates files via `git ls-files` (index-only), so the shallow
       # checkout is fine. Until now CI only ran the script's unit test.
