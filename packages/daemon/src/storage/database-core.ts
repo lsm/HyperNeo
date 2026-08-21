@@ -1,18 +1,21 @@
-import { Database as BunDatabase } from './sqlite-compat';
-import { dirname, join } from 'node:path';
-import { mkdirSync, existsSync, copyFileSync, readdirSync, unlinkSync, statSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+} from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { Logger } from '../lib/logger';
-import { configureMessageSearchFts, createTables, runMigrations } from './schema';
 import { DatabaseLock } from './database-lock';
+import { configureMessageSearchFts, createTables, runMigrations } from './schema';
+import { Database as BunDatabase } from './sqlite-compat';
 
-const DEFAULT_MIGRATION_BACKUP_MAX_BYTES = 1024 * 1024 * 1024;
-
-function getMigrationBackupMaxBytes(): number {
-  const raw = process.env.HYPERNEO_DB_MIGRATION_BACKUP_MAX_BYTES?.trim();
-  if (!raw) return DEFAULT_MIGRATION_BACKUP_MAX_BYTES;
-  const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : DEFAULT_MIGRATION_BACKUP_MAX_BYTES;
-}
+const MIGRATION_BACKUP_RETENTION = 3;
+const MIGRATION_BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
 
 export class DatabaseCore {
   private db: BunDatabase;
@@ -97,44 +100,144 @@ export class DatabaseCore {
   private createBackup(): void {
     if (!existsSync(this.dbPath)) return;
 
-    try {
-      this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {}
-
-    const maxBytes = getMigrationBackupMaxBytes();
-    if (maxBytes > 0 && statSync(this.dbPath).size > maxBytes) {
-      this.logger.warn(
-        `[Database] Skipping migration backup: ${this.dbPath} exceeds ` +
-          `HYPERNEO_DB_MIGRATION_BACKUP_MAX_BYTES=${maxBytes} bytes. ` +
-          `Take an offline backup before upgrading — see docs/db-maintenance.md`
-      );
-      return;
-    }
-
     const dir = dirname(this.dbPath);
-    const backupDir = join(dir, 'backups');
+    const backupDir = join(dir, 'backups', basename(this.dbPath));
 
     if (!existsSync(backupDir)) {
-      mkdirSync(backupDir, { recursive: true });
+      try {
+        mkdirSync(backupDir, { recursive: true });
+      } catch (err) {
+        this.logger.error('Failed to create migration backup directory:', err);
+        return;
+      }
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupPath = join(backupDir, `daemon-${timestamp}.db`);
 
+    this.cleanupOldBackups(backupDir, MIGRATION_BACKUP_RETENTION - 1);
+
+    const startedAt = Date.now();
+    const strategy = this.writeBackup(backupPath);
+    if (strategy === null) return;
+
+    this.logger.info(
+      `[Database] Migration backup created via ${strategy} in ${Date.now() - startedAt}ms: ${backupPath}`
+    );
+    this.cleanupOldBackups(backupDir, MIGRATION_BACKUP_RETENTION);
+  }
+
+  private writeBackup(backupPath: string): string | null {
+    const tempDb = `${backupPath}.tmp`;
+    const strategy = this.writeBackupTo(tempDb);
+    if (strategy === null) {
+      this.removePartialBackup(tempDb);
+      return null;
+    }
+    try {
+      if (existsSync(`${tempDb}-wal`)) {
+        renameSync(`${tempDb}-wal`, `${backupPath}-wal`);
+      }
+      renameSync(tempDb, backupPath);
+      return strategy;
+    } catch (err) {
+      this.logger.error('Failed to publish migration backup:', err);
+      this.removePartialBackup(tempDb);
+      return null;
+    }
+  }
+
+  private writeBackupTo(tempDb: string): string | null {
+    if (this.tryFastCopy(tempDb)) {
+      if (this.copyWalSidecar(tempDb)) {
+        return 'fs-copy';
+      }
+      if (!this.removePartialBackup(tempDb)) {
+        this.logger.error('Failed to create migration backup: partial artifacts remain');
+        return null;
+      }
+    }
+    if (this.tryVacuumInto(tempDb)) return 'vacuum-into';
+    if (!this.removePartialBackup(tempDb)) {
+      this.logger.error('Failed to create migration backup: partial artifacts remain');
+      return null;
+    }
+    return this.tryCheckpointCopy(tempDb) ? 'checkpoint-copy' : null;
+  }
+
+  private tryFastCopy(backupPath: string): boolean {
+    if (typeof Bun === 'undefined') return false;
+    try {
+      copyFileSync(this.dbPath, backupPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private removePartialBackup(backupPath: string): boolean {
+    try {
+      rmSync(backupPath, { force: true });
+      rmSync(`${backupPath}-wal`, { force: true });
+      return !existsSync(backupPath) && !existsSync(`${backupPath}-wal`);
+    } catch {
+      return false;
+    }
+  }
+
+  private tryVacuumInto(backupPath: string): boolean {
+    if (!this.removePartialBackup(backupPath)) return false;
+    try {
+      this.db.prepare('VACUUM INTO ?').run(backupPath);
+      return existsSync(backupPath) && !existsSync(`${backupPath}-wal`);
+    } catch {
+      return false;
+    }
+  }
+
+  private tryCheckpointCopy(backupPath: string): boolean {
+    let checkpointed = false;
+    try {
+      const result = this.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get() as
+        | { busy?: number }
+        | null
+        | undefined;
+      checkpointed = result?.busy === 0;
+    } catch {
+      checkpointed = false;
+    }
     try {
       copyFileSync(this.dbPath, backupPath);
     } catch (err) {
-      this.logger.error('Failed to create backup:', err);
-      return;
+      this.logger.error('Failed to create migration backup:', err);
+      this.removePartialBackup(backupPath);
+      return false;
     }
+    if (!checkpointed && !this.copyWalSidecar(backupPath)) {
+      this.logger.error('Failed to create migration backup: WAL sidecar copy failed');
+      this.removePartialBackup(backupPath);
+      return false;
+    }
+    return true;
+  }
 
-    this.cleanupOldBackups(backupDir, 3);
+  private copyWalSidecar(backupPath: string): boolean {
+    const walPath = `${this.dbPath}-wal`;
+    try {
+      if (!existsSync(walPath) || statSync(walPath).size === 0) return true;
+      copyFileSync(walPath, `${backupPath}-wal`);
+      return true;
+    } catch (err) {
+      this.logger.warn('Failed to copy WAL sidecar into migration backup:', err);
+      return false;
+    }
   }
 
   private cleanupOldBackups(backupDir: string, keepCount: number): void {
     try {
-      const files = readdirSync(backupDir)
-        .filter((f) => f.startsWith('daemon-') && f.endsWith('.db'))
+      const entries = readdirSync(backupDir).filter((f) => f.startsWith('daemon-'));
+      const databases = entries
+        .filter((f) => f.endsWith('.db'))
         .map((f) => ({
           name: f,
           path: join(backupDir, f),
@@ -142,15 +245,32 @@ export class DatabaseCore {
         }))
         .sort((a, b) => b.mtime - a.mtime);
 
-      for (const file of files.slice(keepCount)) {
+      const kept = new Set(databases.slice(0, keepCount).map((f) => f.name));
+      const staleCutoff = Date.now() - MIGRATION_BACKUP_TEMP_STALE_MS;
+
+      for (const name of entries) {
+        if (!name.endsWith('.tmp') && !name.endsWith('.tmp-wal')) continue;
+        const path = join(backupDir, name);
+        try {
+          if (statSync(path).mtime.getTime() > staleCutoff) continue;
+          unlinkSync(path);
+        } catch {}
+      }
+      for (const file of databases.slice(keepCount)) {
         try {
           unlinkSync(file.path);
-        } catch {
-          // Ignore deletion errors
-        }
+        } catch {}
       }
-    } catch {
-      // Ignore cleanup errors
-    }
+      for (const name of entries) {
+        if (!name.endsWith('.db-wal')) continue;
+        const base = name.slice(0, -'-wal'.length);
+        if (kept.has(base) || existsSync(join(backupDir, base))) continue;
+        const path = join(backupDir, name);
+        try {
+          if (statSync(path).mtime.getTime() > staleCutoff) continue;
+          unlinkSync(path);
+        } catch {}
+      }
+    } catch {}
   }
 }
