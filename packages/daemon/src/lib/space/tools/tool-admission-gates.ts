@@ -76,5 +76,7 @@ export const TOOL_AUTONOMY_REQUIREMENTS: Record<string, number> = {
 };
 
 export function getToolAutonomyRequirement(toolName: string): number | undefined {
-  return TOOL_AUTONOMY_REQUIREMENTS[toolName];
+  return Object.hasOwn(TOOL_AUTONOMY_REQUIREMENTS, toolName)
+    ? TOOL_AUTONOMY_REQUIREMENTS[toolName]
+    : undefined;
 }

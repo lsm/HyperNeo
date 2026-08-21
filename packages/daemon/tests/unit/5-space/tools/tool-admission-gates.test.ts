@@ -259,4 +259,10 @@ describe('getToolAutonomyRequirement', () => {
     expect(getToolAutonomyRequirement('approve_task')).toBeUndefined();
     expect(getToolAutonomyRequirement('unknown_tool')).toBeUndefined();
   });
+
+  test('returns undefined for Object.prototype-inherited keys instead of inherited values', () => {
+    for (const inheritedKey of ['toString', 'constructor', 'hasOwnProperty', '__proto__']) {
+      expect(getToolAutonomyRequirement(inheritedKey)).toBeUndefined();
+    }
+  });
 });
