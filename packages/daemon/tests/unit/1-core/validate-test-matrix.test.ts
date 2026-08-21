@@ -60,7 +60,7 @@ for entry in \${ONLINE_MODULES[@]}; do
   mk "$O/$dir/$name.test.ts"
 done
 for spec in \${ONLINE_HASH_SPLIT_SPECS[@]}; do
-  IFS='|' read -r prefix count globs <<<"$spec"
+  IFS='|' read -r prefix count globs _weights <<<"$spec"
   dir=$(dirname "$(printf '%s' "$globs" | cut -d';' -f1)")
   have=""
   i=0
