@@ -18,7 +18,6 @@ import {
   SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
 } from '../space/runtime/space-mcp-session-policy';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
-import { isNonRetryableBillingError } from './fallback-recovery';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery';
 import type { MessageQueue } from './message-queue';
@@ -1249,14 +1248,13 @@ export class QueryRunner {
 
           const processingState = stateManager.getState();
 
-          const isBillingError = isNonRetryableBillingError(errorMessage);
           const limitAssessment = assessLimitError({ rawText: errorMessage });
           recoveryState.rateLimitCooldownScheduled =
             limitAssessment.isLimit &&
-            !isBillingError &&
             !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage, {
               resetAtMs: limitAssessment.resetAtMs,
               kind: limitAssessment.kind,
+              billingTerminal: limitAssessment.billingTerminal,
             }));
           if (!recoveryState.rateLimitCooldownScheduled) {
             stateManager.beginTerminalIdle();

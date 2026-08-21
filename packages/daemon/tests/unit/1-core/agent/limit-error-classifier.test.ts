@@ -153,10 +153,36 @@ describe('assessLimitError', () => {
     expect(assessLimitError({ rawText: '' }, NOW).isLimit).toBe(false);
   });
 
-  it('does not classify pure billing quota text as a retryable limit', () => {
-    expect(assessLimitError({ rawText: 'insufficient_quota: add credits' }, NOW).isLimit).toBe(
-      false
+  it('classifies pure billing quota text as a limit with no reset (fallback-only routing)', () => {
+    const assessment = assessLimitError({ rawText: 'insufficient_quota: add credits' }, NOW);
+    expect(assessment.isLimit).toBe(true);
+    expect(assessment.billingTerminal).toBe(true);
+    expect(assessment.resetAtMs).toBeNull();
+  });
+
+  it('detects a billing-cycle cap and routes it as a fallback-only limit', () => {
+    const assessment = assessLimitError(
+      {
+        rawText:
+          "Failed to authenticate. API Error: 403 You've reached your usage limit for this billing cycle. " +
+          'Your quota will be refreshed in the next cycle. To continue now, purchase extra usage or upgrade your plan.',
+      },
+      NOW
     );
+    expect(assessment.isLimit).toBe(true);
+    expect(assessment.billingTerminal).toBe(true);
+    expect(assessment.kind).toBe('usage_limit');
+    expect(assessment.resetAtMs).toBeNull();
+    expect(assessment.source).toBe('billing');
+  });
+
+  it('flags 402 quota errors as billing-terminal limits', () => {
+    const assessment = assessLimitError(
+      { rawText: '402 {"error":{"message":"insufficient_quota"}}' },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(true);
+    expect(assessment.billingTerminal).toBe(true);
   });
 });
 
@@ -182,6 +208,12 @@ describe('isBillingTerminal', () => {
   it('flags 402 and non-resettable quota text', () => {
     expect(isBillingTerminal('402 Payment Required', NOW)).toBe(true);
     expect(isBillingTerminal('insufficient_quota', NOW)).toBe(true);
+  });
+
+  it('flags billing-cycle caps', () => {
+    expect(isBillingTerminal("You've reached your usage limit for this billing cycle", NOW)).toBe(
+      true
+    );
   });
 
   it('does not flag resettable limit errors', () => {

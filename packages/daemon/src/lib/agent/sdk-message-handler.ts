@@ -958,7 +958,14 @@ export class SDKMessageHandler {
       rateLimitInfo: this.lastRateLimitInfo ?? undefined,
     });
     if (!assessment.isLimit) return null;
-    return { errorText, hint: { resetAtMs: assessment.resetAtMs, kind: assessment.kind } };
+    return {
+      errorText,
+      hint: {
+        resetAtMs: assessment.resetAtMs,
+        kind: assessment.kind,
+        billingTerminal: assessment.billingTerminal,
+      },
+    };
   }
 
   private async finishTurn(allowQueueReplay = true): Promise<void> {

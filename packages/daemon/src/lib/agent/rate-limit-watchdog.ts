@@ -198,6 +198,14 @@ export class RateLimitWatchdog {
       );
     }
 
+    if (this.lastHint?.billingTerminal) {
+      this.logger.warn(
+        `Billing-cycle limit with no available fallback; surfacing instead of cooling down. ` +
+          `Error: ${errorMessage}`
+      );
+      return false;
+    }
+
     const now = Date.now();
     const hintedReset = this.lastHint?.resetAtMs ?? null;
     const usableHintedReset =
@@ -388,8 +396,12 @@ export class RateLimitWatchdog {
     this.triedKeys.add(`${entry.provider}/${canonical}`);
     if (this.lastUserMessage) {
       try {
-        const scheduled = await this.scheduleRetry(this.lastErrorMessage, this.lastUserMessage);
-        if (!scheduled) {
+        const scheduled = await this.scheduleRetry(
+          this.lastErrorMessage,
+          this.lastUserMessage,
+          this.lastHint ?? undefined
+        );
+        if (!scheduled && !this.lastHint?.billingTerminal) {
           this.logger.warn(
             'Fallback re-entry returned false (budget exhausted); scheduling a deferred cooldown.'
           );

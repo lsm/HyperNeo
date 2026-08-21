@@ -290,6 +290,52 @@ describe('RateLimitWatchdog', () => {
     });
   });
 
+  describe('billing-terminal limits (fallback only, never ladder)', () => {
+    it('returns false with no cooldown when the chain is empty', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const result = await watchdog.scheduleRetry(
+        "403 You've reached your usage limit for this billing cycle",
+        { uuid: 'm1', content: 'x' },
+        { billingTerminal: true, kind: 'usage_limit' }
+      );
+      expect(result).toBe(false);
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+      expect(notifyPause).not.toHaveBeenCalled();
+    });
+
+    it('still switches to a fallback when one is available', async () => {
+      const A: FallbackModelEntry = { provider: 'minimax', model: 'abab6.5' };
+      const { deps, switchAndRetry } = createMockDeps({ chain: [A] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const result = await watchdog.scheduleRetry(
+        "403 You've reached your usage limit for this billing cycle",
+        { uuid: 'm1', content: 'x' },
+        { billingTerminal: true, kind: 'usage_limit' }
+      );
+      expect(result).toBe(true);
+      await flush();
+      expect(switchAndRetry).toHaveBeenCalledTimes(1);
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+    });
+
+    it('does not schedule a deferred ladder cooldown when a billing fallback switch fails', async () => {
+      const A: FallbackModelEntry = { provider: 'minimax', model: 'abab6.5' };
+      const { deps } = createMockDeps({ chain: [A], switchSucceeds: false });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      await watchdog.scheduleRetry(
+        "403 You've reached your usage limit for this billing cycle",
+        { uuid: 'm1', content: 'x' },
+        { billingTerminal: true, kind: 'usage_limit' }
+      );
+      await flush();
+      await flush();
+      expect(
+        (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls
+      ).toHaveLength(0);
+    });
+  });
+
   describe('Phase A — immediate fallback switch', () => {
     const A: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
     const B: FallbackModelEntry = { provider: 'minimax', model: 'abab6.5' };

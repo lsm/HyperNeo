@@ -19,6 +19,7 @@ export interface LimitErrorAssessment {
   readonly resetAtMs: number | null;
   readonly confidence: LimitErrorConfidence | null;
   readonly source: string;
+  readonly billingTerminal: boolean;
 }
 
 export interface LimitErrorSignal {
@@ -32,11 +33,14 @@ export interface LimitErrorSignal {
 export interface LimitRetryHint {
   resetAtMs?: number | null;
   kind?: LimitErrorKind | null;
+  billingTerminal?: boolean | null;
 }
 
-const GLM_LIMIT_CODE_BRACKETS = ['[1305]', '[1308]'];
+const GLM_LIMIT_CODE_BRACKETS = ['[1305]', '[1308]', '[1313]'];
 
-const LIMIT_TEXT_MARKERS = [...GLM_LIMIT_CODE_BRACKETS, '使用上限', '限额将在'];
+const LIMIT_TEXT_MARKERS = [...GLM_LIMIT_CODE_BRACKETS, '使用上限', '限额将在', 'usage limit'];
+
+const BILLING_CYCLE_RE = /billing cycle|purchase extra usage|upgrade your plan/i;
 
 export function normalizeEpochMs(value: number): number {
   return value > 0 && value < 1e12 ? value * 1000 : value;
@@ -68,9 +72,11 @@ function limitKindForRateLimitType(rateLimitType: string): LimitErrorKind {
 function resolveLimitKind(
   rawText: string,
   resetAtMs: number | null,
-  rateLimitType: string | undefined
+  rateLimitType: string | undefined,
+  billingTerminal: boolean
 ): LimitErrorKind {
   if (rateLimitType) return limitKindForRateLimitType(rateLimitType);
+  if (billingTerminal) return 'usage_limit';
   if (resetAtMs !== null) return 'usage_limit';
   const lower = rawText.toLowerCase();
   return USAGE_CAP_KEYWORDS.some((kw) => lower.includes(kw.toLowerCase()))
@@ -87,15 +93,29 @@ export function assessLimitError(
   const structuredReset = signal.rateLimitInfo
     ? structuredResetAtMs(signal.rateLimitInfo, now)
     : null;
+  const billingTerminal =
+    rawText !== '' && (isNonRetryableBillingError(rawText, now) || BILLING_CYCLE_RE.test(rawText));
   const textLimit = rawText !== '' && looksLikeLimitText(rawText);
   const statusLimit = signal.httpStatus === 429;
   const tagLimit = signal.sdkErrorTag === 'rate_limit';
   const blockingTerminal = signal.terminalReason === 'blocking_limit';
 
   const isLimit =
-    structuredReset !== null || textLimit || statusLimit || tagLimit || blockingTerminal;
+    structuredReset !== null ||
+    textLimit ||
+    statusLimit ||
+    tagLimit ||
+    blockingTerminal ||
+    billingTerminal;
   if (!isLimit) {
-    return { isLimit: false, kind: null, resetAtMs: null, confidence: null, source: 'none' };
+    return {
+      isLimit: false,
+      kind: null,
+      resetAtMs: null,
+      confidence: null,
+      source: 'none',
+      billingTerminal: false,
+    };
   }
 
   const parsed = rawText !== '' ? extractResetTimestamp(rawText, now) : null;
@@ -106,13 +126,20 @@ export function assessLimitError(
   else if (tagLimit) source = 'sdk-error-tag';
   else if (statusLimit) source = 'http-status';
   else if (parsed) source = `parsed:${parsed.strategy}`;
+  else if (billingTerminal) source = 'billing';
 
   return {
     isLimit: true,
-    kind: resolveLimitKind(rawText, resetAtMs, signal.rateLimitInfo?.rateLimitType),
+    kind: resolveLimitKind(
+      rawText,
+      resetAtMs,
+      signal.rateLimitInfo?.rateLimitType,
+      billingTerminal
+    ),
     resetAtMs,
     confidence: structuredReset !== null ? 'structured' : 'deterministic',
     source,
+    billingTerminal,
   };
 }
 
@@ -128,5 +155,5 @@ export function cooldownFromReset(resetAtMs: number, now: number = Date.now()): 
 }
 
 export function isBillingTerminal(rawText: string, now: number = Date.now()): boolean {
-  return isNonRetryableBillingError(rawText, now);
+  return isNonRetryableBillingError(rawText, now) || BILLING_CYCLE_RE.test(rawText);
 }
