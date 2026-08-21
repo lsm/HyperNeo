@@ -50,12 +50,15 @@ export type OpenAIResponsesBridgeAuth = {
   } | null>;
 };
 
+export type OpenAIResponsesReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+
 export type OpenAIResponsesBridgeModel = {
   id: string;
   display_name: string;
   created_at: string;
   context_window: number;
   max_tokens?: number;
+  supported_reasoning_efforts?: OpenAIResponsesReasoningEffort[];
 };
 
 export type OpenAIResponsesBridgeServer = {
@@ -63,6 +66,8 @@ export type OpenAIResponsesBridgeServer = {
   baseUrlForSession?(sessionId: string): string;
   setSessionThinkingConfig?(sessionId: string, thinking: AnthropicRequest['thinking']): void;
   setSessionModelConfig?(sessionId: string, aliasModelId: string, realModelId: string): void;
+  updateAuth(auth: OpenAIResponsesBridgeAuth): void;
+  updateModels(models: OpenAIResponsesBridgeModel[], modelAliases?: Record<string, string>): void;
   stop(): void;
 };
 
@@ -131,7 +136,7 @@ type ResponsesRequest = {
   stream: true;
   parallel_tool_calls?: false;
   reasoning?: {
-    effort: 'low' | 'medium' | 'high' | 'xhigh';
+    effort: OpenAIResponsesReasoningEffort;
     summary?: 'auto' | 'concise' | 'detailed';
   };
   include?: string[];
@@ -531,17 +536,27 @@ const MODELS_SUPPORTING_XHIGH_REASONING = new Set([
   'gpt-5.5',
 ]);
 
+const REASONING_EFFORTS: OpenAIResponsesReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
+
 function mapThinkingToReasoningEffort(
   thinking: AnthropicRequest['thinking'],
-  model?: string
+  model?: string,
+  supportedEfforts?: OpenAIResponsesReasoningEffort[]
 ): ResponsesRequest['reasoning'] {
   if (!thinking || thinking.type !== 'enabled') return undefined;
   const tokens = thinking.budget_tokens;
-  if (tokens <= 8000) return { effort: 'low', summary: 'auto' };
-  if (tokens <= 16000) return { effort: 'medium', summary: 'auto' };
-  if (tokens <= 24000) return { effort: 'high', summary: 'auto' };
-  const supportsXHigh = model ? MODELS_SUPPORTING_XHIGH_REASONING.has(model) : true;
-  return { effort: supportsXHigh ? 'xhigh' : 'high', summary: 'auto' };
+  const requested =
+    tokens <= 8000 ? 'low' : tokens <= 16000 ? 'medium' : tokens <= 24000 ? 'high' : 'xhigh';
+  const fallbackEfforts = REASONING_EFFORTS.slice(
+    0,
+    REASONING_EFFORTS.indexOf(requested) + 1
+  ).reverse();
+  const effort = supportedEfforts
+    ? fallbackEfforts.find((candidate) => supportedEfforts.includes(candidate))
+    : requested === 'xhigh' && model && !MODELS_SUPPORTING_XHIGH_REASONING.has(model)
+      ? 'high'
+      : requested;
+  return effort ? { effort, summary: 'auto' } : undefined;
 }
 
 function buildResponsesRequest(
@@ -552,6 +567,7 @@ function buildResponsesRequest(
     includeMaxOutputTokens?: boolean;
     includeParallelToolCalls?: boolean;
     isChatgptOAuth?: boolean;
+    supportedReasoningEfforts?: OpenAIResponsesReasoningEffort[];
   } = {},
   reasoningItems?: ResponsesReasoningItem[]
 ): ResponsesRequest {
@@ -560,7 +576,11 @@ function buildResponsesRequest(
   const tool_choice = toolChoiceToResponsesToolChoice(body.tool_choice);
   const includeMaxOutputTokens = options.includeMaxOutputTokens ?? true;
   const includeParallelToolCalls = options.includeParallelToolCalls ?? true;
-  const reasoning = mapThinkingToReasoningEffort(body.thinking, model);
+  const reasoning = mapThinkingToReasoningEffort(
+    body.thinking,
+    model,
+    options.supportedReasoningEfforts
+  );
   return {
     model,
     ...(instructions ? { instructions } : {}),
@@ -1321,25 +1341,59 @@ export function createOpenAIResponsesBridgeServer(
 ): OpenAIResponsesBridgeServer {
   const fetchImpl = config.fetchImpl ?? fetch;
   const baseUrl = config.openAIBaseUrl ?? defaultBaseUrlForAuth(config.auth);
-  const modelsResponse = modelsListResponse(config.models);
+  let modelsResponse = modelsListResponse(config.models);
+  let modelAliases = config.modelAliases;
   const contextWindowByModelId = new Map<string, number>();
-  for (const model of config.models) {
-    contextWindowByModelId.set(model.id, model.context_window);
-  }
-  if (config.modelAliases) {
-    for (const [alias, modelId] of Object.entries(config.modelAliases)) {
-      const cw = contextWindowByModelId.get(modelId);
-      if (cw !== undefined) {
-        contextWindowByModelId.set(alias, cw);
+  const reasoningEffortsByModelId = new Map<string, OpenAIResponsesReasoningEffort[]>();
+  const sessionModelAliasOverrides = new Map<string, string>();
+  const updateModels = (
+    models: OpenAIResponsesBridgeModel[],
+    aliases?: Record<string, string>
+  ): void => {
+    modelsResponse = modelsListResponse(models);
+    modelAliases = aliases;
+    contextWindowByModelId.clear();
+    reasoningEffortsByModelId.clear();
+    for (const model of models) {
+      contextWindowByModelId.set(model.id, model.context_window);
+      if (model.supported_reasoning_efforts) {
+        reasoningEffortsByModelId.set(model.id, model.supported_reasoning_efforts);
       }
     }
-  }
+    const knownModelIds = new Set(models.map((model) => model.id));
+    for (const [key, modelId] of sessionModelAliasOverrides) {
+      if (!knownModelIds.has(modelId)) sessionModelAliasOverrides.delete(key);
+    }
+    if (aliases) {
+      for (const [alias, modelId] of Object.entries(aliases)) {
+        const contextWindow = contextWindowByModelId.get(modelId);
+        if (contextWindow !== undefined) contextWindowByModelId.set(alias, contextWindow);
+        const reasoningEfforts = reasoningEffortsByModelId.get(modelId);
+        if (reasoningEfforts) reasoningEffortsByModelId.set(alias, reasoningEfforts);
+      }
+    }
+  };
+  updateModels(config.models, config.modelAliases);
   const continuationTtlMs = config.continuationTtlMs ?? DEFAULT_RESPONSE_CONTINUATION_TTL_MS;
   const continuations = new Map<string, ResponseContinuation>();
   const sessionReasoningItems = new Map<string, SessionReasoningEntry>();
   const sessionThinkingConfigs = new Map<string, SessionThinkingConfigEntry>();
-  const sessionModelAliasOverrides = new Map<string, string>();
+  let activeAuth = config.auth;
   let resolvedAuth: ResolvedResponsesAuth | undefined;
+  let authGeneration = 0;
+  const updateAuth = (auth: OpenAIResponsesBridgeAuth): void => {
+    activeAuth = auth;
+    resolvedAuth = undefined;
+    authGeneration += 1;
+    for (const continuation of continuations.values()) {
+      clearTimeout(continuation.cleanupTimer);
+    }
+    continuations.clear();
+    for (const entry of sessionReasoningItems.values()) {
+      clearTimeout(entry.cleanupTimer);
+    }
+    sessionReasoningItems.clear();
+  };
   const isChatgptOAuth = config.auth.source === 'chatgpt_oauth' && !config.openAIBaseUrl;
   const buildOpts = {
     includeMaxOutputTokens: !isChatgptOAuth,
@@ -1355,7 +1409,13 @@ export function createOpenAIResponsesBridgeServer(
     continuations.delete(key);
   };
 
-  const storeContinuation = (sessionId: string, callId: string, responseId: string): void => {
+  const storeContinuation = (
+    sessionId: string,
+    callId: string,
+    responseId: string,
+    minGeneration = 0
+  ): void => {
+    if (minGeneration !== authGeneration) return;
     deleteContinuation(sessionId, callId);
     const key = continuationKey(sessionId, callId);
     const cleanupTimer = setTimeout(() => {
@@ -1374,7 +1434,12 @@ export function createOpenAIResponsesBridgeServer(
     sessionReasoningItems.delete(sessionId);
   };
 
-  const storeReasoningItems = (sessionId: string, items: ResponsesReasoningItem[]): void => {
+  const storeReasoningItems = (
+    sessionId: string,
+    items: ResponsesReasoningItem[],
+    minGeneration = 0
+  ): void => {
+    if (minGeneration !== authGeneration) return;
     deleteReasoningItems(sessionId);
     const cleanupTimer = setTimeout(() => {
       logger.warn(`openai-responses: reasoning items TTL expired sessionId=${sessionId}`);
@@ -1436,7 +1501,16 @@ export function createOpenAIResponsesBridgeServer(
       if (route.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
         try {
           const body = (await req.json()) as AnthropicRequest;
-          const storedReasoning = sessionReasoningItems.get(route.sessionId)?.items;
+          let model = resolveModelId(body.model, modelAliases);
+          const sessionModelOverride = sessionModelAliasOverrides.get(
+            sessionModelKey(route.sessionId, body.model)
+          );
+          if (sessionModelOverride) model = sessionModelOverride;
+          const supportedReasoningEfforts = reasoningEffortsByModelId.get(model);
+          const storedReasoning =
+            supportedReasoningEfforts?.length === 0
+              ? undefined
+              : sessionReasoningItems.get(route.sessionId)?.items;
           let continuation = resolveContinuation(route.sessionId, body.messages, continuations);
           if (storedReasoning && storedReasoning.length > 0) {
             continuation = undefined;
@@ -1486,7 +1560,7 @@ export function createOpenAIResponsesBridgeServer(
         );
       }
 
-      let model = resolveModelId(body.model, config.modelAliases);
+      let model = resolveModelId(body.model, modelAliases);
       const sessionId = route.sessionId;
       const sessionModelOverride = sessionModelAliasOverrides.get(
         sessionModelKey(sessionId, body.model)
@@ -1498,13 +1572,28 @@ export function createOpenAIResponsesBridgeServer(
         ? undefined
         : resolveContinuation(sessionId, body.messages, continuations);
       let continuation = resolvedContinuation;
-      const storedReasoning = sessionReasoningItems.get(sessionId)?.items;
+      const supportedReasoningEfforts = reasoningEffortsByModelId.get(model);
+      let storedReasoning = sessionReasoningItems.get(sessionId)?.items;
+      if (supportedReasoningEfforts?.length === 0) {
+        deleteReasoningItems(sessionId);
+        storedReasoning = undefined;
+      }
       if (storedReasoning && storedReasoning.length > 0) {
         continuation = undefined;
       }
+      const requestOpts = {
+        ...buildOpts,
+        supportedReasoningEfforts,
+      };
       let requestBody: ResponsesRequest;
       try {
-        requestBody = buildResponsesRequest(body, model, continuation, buildOpts, storedReasoning);
+        requestBody = buildResponsesRequest(
+          body,
+          model,
+          continuation,
+          requestOpts,
+          storedReasoning
+        );
       } catch (err) {
         return sendJsonError(
           400,
@@ -1513,22 +1602,61 @@ export function createOpenAIResponsesBridgeServer(
         );
       }
       const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
+      let requestAuthGeneration = authGeneration;
       let openAIResponse: Response;
       try {
+        let requestAuth = activeAuth;
+        let requestResolvedAuth = resolvedAuth;
         openAIResponse = await fetchImpl(upstreamUrl, {
           method: 'POST',
-          headers: buildOpenAIHeaders(config.auth, resolvedAuth),
+          headers: buildOpenAIHeaders(requestAuth, requestResolvedAuth),
           body: JSON.stringify(requestBody),
         });
-        if (openAIResponse.status === 401) {
-          const refreshed = await refreshOpenAIResponsesAuth(config.auth);
-          if (refreshed) {
-            resolvedAuth = refreshed;
+        let authRetries = 0;
+        while (openAIResponse.status === 401 && authRetries < 3) {
+          authRetries += 1;
+          if (activeAuth !== requestAuth || resolvedAuth !== requestResolvedAuth) {
+            if (authGeneration !== requestAuthGeneration) {
+              continuation = undefined;
+              storedReasoning = undefined;
+              requestBody = buildResponsesRequest(body, model, undefined, requestOpts, undefined);
+            }
             openAIResponse = await fetchImpl(upstreamUrl, {
               method: 'POST',
-              headers: buildOpenAIHeaders(config.auth, resolvedAuth),
+              headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
               body: JSON.stringify(requestBody),
             });
+            requestAuth = activeAuth;
+            requestResolvedAuth = resolvedAuth;
+            requestAuthGeneration = authGeneration;
+          } else {
+            const refreshed = await refreshOpenAIResponsesAuth(requestAuth);
+            if (activeAuth !== requestAuth || resolvedAuth !== requestResolvedAuth) {
+              if (authGeneration !== requestAuthGeneration) {
+                continuation = undefined;
+                storedReasoning = undefined;
+                requestBody = buildResponsesRequest(body, model, undefined, requestOpts, undefined);
+              }
+              openAIResponse = await fetchImpl(upstreamUrl, {
+                method: 'POST',
+                headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
+                body: JSON.stringify(requestBody),
+              });
+              requestAuth = activeAuth;
+              requestResolvedAuth = resolvedAuth;
+              requestAuthGeneration = authGeneration;
+            } else if (refreshed) {
+              resolvedAuth = refreshed;
+              openAIResponse = await fetchImpl(upstreamUrl, {
+                method: 'POST',
+                headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
+                body: JSON.stringify(requestBody),
+              });
+              requestResolvedAuth = resolvedAuth;
+              requestAuthGeneration = authGeneration;
+            } else {
+              break;
+            }
           }
         }
         if (continuation && !openAIResponse.ok && openAIResponse.status === 400) {
@@ -1542,7 +1670,7 @@ export function createOpenAIResponsesBridgeServer(
                 body,
                 model,
                 undefined,
-                buildOpts,
+                requestOpts,
                 storedReasoning
               );
             } catch (err) {
@@ -1554,9 +1682,10 @@ export function createOpenAIResponsesBridgeServer(
             }
             openAIResponse = await fetchImpl(upstreamUrl, {
               method: 'POST',
-              headers: buildOpenAIHeaders(config.auth, resolvedAuth),
+              headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
               body: JSON.stringify(requestBody),
             });
+            requestAuthGeneration = authGeneration;
             continuation = undefined;
           } else {
             logUpstream4xx(openAIResponse.status, requestBody, errorText);
@@ -1597,7 +1726,7 @@ export function createOpenAIResponsesBridgeServer(
             'openai-responses: 400 with replayed reasoning present — retrying once without reasoning items'
           );
           try {
-            requestBody = buildResponsesRequest(body, model, continuation, buildOpts, undefined);
+            requestBody = buildResponsesRequest(body, model, continuation, requestOpts, undefined);
           } catch (err) {
             return sendJsonError(
               400,
@@ -1607,9 +1736,10 @@ export function createOpenAIResponsesBridgeServer(
           }
           openAIResponse = await fetchImpl(upstreamUrl, {
             method: 'POST',
-            headers: buildOpenAIHeaders(config.auth, resolvedAuth),
+            headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
             body: JSON.stringify(requestBody),
           });
+          requestAuthGeneration = authGeneration;
         }
       } catch (err) {
         logger.warn('openai-responses: upstream request failed:', err);
@@ -1705,11 +1835,11 @@ export function createOpenAIResponsesBridgeServer(
               ? {}
               : {
                   onFunctionCallResponse(callId: string, responseId: string) {
-                    storeContinuation(sessionId, callId, responseId);
+                    storeContinuation(sessionId, callId, responseId, requestAuthGeneration);
                   },
                 }),
             onReasoningItems(items) {
-              storeReasoningItems(sessionId, items);
+              storeReasoningItems(sessionId, items, requestAuthGeneration);
             },
             onProductive() {
               consumeContinuation(sessionId, resolvedContinuation);
@@ -1743,6 +1873,8 @@ export function createOpenAIResponsesBridgeServer(
     setSessionModelConfig: (sessionId: string, aliasModelId: string, realModelId: string) => {
       sessionModelAliasOverrides.set(sessionModelKey(sessionId, aliasModelId), realModelId);
     },
+    updateAuth,
+    updateModels,
     stop: () => {
       for (const continuation of continuations.values()) {
         clearTimeout(continuation.cleanupTimer);

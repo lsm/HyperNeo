@@ -719,6 +719,256 @@ describe('Provider RPC handlers', () => {
       expect(result.healthy).toBe(true);
     });
 
+    it('uses the provider health check when available', async () => {
+      const created = repo.createProvider({
+        providerId: 'probe-provider',
+        displayName: 'Probe Provider',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const healthCheck = mock(async () => {
+        throw new Error('catalog endpoint unavailable');
+      });
+      getProviderRegistry().register({
+        id: 'probe-provider',
+        displayName: 'Probe Provider',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        healthCheck,
+        ownsModel: () => true,
+        getModelForTier: () => 'default',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.test')!({ id: created.id }, {})) as {
+        healthy: boolean;
+        error: string;
+      };
+
+      expect(result).toEqual({ healthy: false, error: 'catalog endpoint unavailable' });
+      expect(healthCheck).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears the global model cache when a health check replaces the catalog', async () => {
+      const created = repo.createProvider({
+        providerId: 'rescope-provider',
+        displayName: 'Rescope Provider',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      let catalogScope = 'scope-before';
+      getProviderRegistry().register({
+        id: 'rescope-provider',
+        displayName: 'Rescope Provider',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        getModelCatalogScope: () => catalogScope,
+        getCachedModels: () => [],
+        healthCheck: async () => {
+          catalogScope = 'scope-after';
+        },
+        ownsModel: () => true,
+        getModelForTier: () => 'default',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+      const { setModelsCache, getModelsCache } = await import('../../../../src/lib/model-service');
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'stale-global-model',
+                name: 'Stale Global Model',
+                family: 'test',
+                provider: 'rescope-provider',
+                contextWindow: 100000,
+              },
+            ],
+          ],
+        ])
+      );
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.test')!({ id: created.id }, {})) as {
+        healthy: boolean;
+      };
+
+      expect(result.healthy).toBe(true);
+      expect(getModelsCache().has('global')).toBe(false);
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
+    });
+
+    it('clears the global model cache when a health check changes model metadata', async () => {
+      const created = repo.createProvider({
+        providerId: 'metadata-drift-provider',
+        displayName: 'Metadata Drift Provider',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      let contextWindow = 100000;
+      getProviderRegistry().register({
+        id: 'metadata-drift-provider',
+        displayName: 'Metadata Drift Provider',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        getCachedModels: () => [
+          {
+            id: 'drift-model',
+            name: 'Drift Model',
+            family: 'test',
+            provider: 'metadata-drift-provider',
+            contextWindow,
+          },
+        ],
+        healthCheck: async () => {
+          contextWindow = 200000;
+        },
+        ownsModel: () => true,
+        getModelForTier: () => 'default',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+      const { setModelsCache, getModelsCache, clearModelsCache } = await import(
+        '../../../../src/lib/model-service'
+      );
+      clearModelsCache();
+      setModelsCache(new Map([['global', []]]));
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.test')!({ id: created.id }, {})) as {
+        healthy: boolean;
+      };
+
+      expect(result.healthy).toBe(true);
+      expect(getModelsCache().has('global')).toBe(false);
+      clearModelsCache();
+    });
+
+    it('clears the global model cache when a health check changes the catalog but fails its probe', async () => {
+      const created = repo.createProvider({
+        providerId: 'drift-failure-provider',
+        displayName: 'Drift Failure Provider',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      let contextWindow = 100000;
+      getProviderRegistry().register({
+        id: 'drift-failure-provider',
+        displayName: 'Drift Failure Provider',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        getCachedModels: () => [
+          {
+            id: 'drift-failure-model',
+            name: 'Drift Failure Model',
+            family: 'test',
+            provider: 'drift-failure-provider',
+            contextWindow,
+          },
+        ],
+        healthCheck: async () => {
+          contextWindow = 300000;
+          throw new Error('probe failed');
+        },
+        ownsModel: () => true,
+        getModelForTier: () => 'default',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+      const { setModelsCache, getModelsCache, clearModelsCache } = await import(
+        '../../../../src/lib/model-service'
+      );
+      clearModelsCache();
+      setModelsCache(new Map([['global', []]]));
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.test')!({ id: created.id }, {})) as {
+        healthy: boolean;
+        error: string;
+      };
+
+      expect(result.healthy).toBe(false);
+      expect(result.error).toBe('probe failed');
+      expect(getModelsCache().has('global')).toBe(false);
+      clearModelsCache();
+    });
+
+    it('keeps the global model cache when a health check leaves the catalog unchanged', async () => {
+      const created = repo.createProvider({
+        providerId: 'stable-provider',
+        displayName: 'Stable Provider',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      getProviderRegistry().register({
+        id: 'stable-provider',
+        displayName: 'Stable Provider',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        healthCheck: async () => {},
+        ownsModel: () => true,
+        getModelForTier: () => 'default',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+      const { setModelsCache, getModelsCache, clearModelsCache } = await import(
+        '../../../../src/lib/model-service'
+      );
+      clearModelsCache();
+      setModelsCache(new Map([['global', []]]));
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.test')!({ id: created.id }, {})) as {
+        healthy: boolean;
+      };
+
+      expect(result.healthy).toBe(true);
+      expect(getModelsCache().has('global')).toBe(true);
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+      clearModelsCache();
+    });
+
     it('returns unhealthy for missing provider', async () => {
       const created = repo.createProvider({
         providerId: 'missing',
@@ -780,6 +1030,48 @@ describe('Provider RPC handlers', () => {
       expect(anthropic?.healthy).toBe(true);
       expect(openrouter?.healthy).toBe(false);
       expect(openrouter?.error).toBe('Not registered');
+    });
+
+    it('uses provider health checks during batch checks', async () => {
+      repo.createProvider({
+        providerId: 'probe-provider',
+        displayName: 'Probe Provider',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const healthCheck = mock(async () => {
+        throw new Error('catalog endpoint unavailable');
+      });
+      getProviderRegistry().register({
+        id: 'probe-provider',
+        displayName: 'Probe Provider',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        healthCheck,
+        ownsModel: () => true,
+        getModelForTier: () => 'default',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.healthCheck')!({}, {})) as {
+        results: Array<{ providerId: string; healthy: boolean; error?: string }>;
+      };
+
+      expect(result.results[0]).toEqual({
+        providerId: 'probe-provider',
+        healthy: false,
+        error: 'catalog endpoint unavailable',
+      });
+      expect(healthCheck).toHaveBeenCalledTimes(1);
     });
 
     it('returns unhealthy when provider is not available', async () => {

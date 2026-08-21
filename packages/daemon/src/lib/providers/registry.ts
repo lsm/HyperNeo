@@ -150,8 +150,19 @@ export function getProviderRegistry(): ProviderRegistry {
  *
  * @public Exported for testing purposes
  */
+const availabilitySnapshots = new Map<string, boolean>();
+
 export function resetProviderRegistry(): void {
   registryInstance = null;
+  availabilitySnapshots.clear();
+}
+
+export function markProviderAvailability(providerId: string, available: boolean): void {
+  availabilitySnapshots.set(providerId, available);
+}
+
+export function clearProviderAvailability(providerId: string): void {
+  availabilitySnapshots.delete(providerId);
 }
 
 export function inferProviderForModel(modelId: string): ProviderIdStr {
@@ -182,6 +193,24 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
     return 'openrouter';
   }
 
+  if (/^gpt-oss:[1-9]\d{2,}b$/i.test(modelId)) return 'ollama-cloud';
+  if (modelId.startsWith('gpt-oss:')) return modelId.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
+
+  if (/^(?:gpt-|o\d|codex-|ft:(?:gpt-|o\d|codex-))/.test(normalizedModelId)) {
+    const owner = getProviderRegistry()
+      .getAll()
+      .find(
+        (provider) =>
+          provider.id !== 'anthropic' &&
+          availabilitySnapshots.get(provider.id) !== false &&
+          (!normalizedModelId.startsWith('ft:') ||
+            (provider.id !== 'ollama' && provider.id !== 'ollama-cloud')) &&
+          typeof provider.ownsModel === 'function' &&
+          provider.ownsModel(modelId)
+      );
+    return (owner?.id as ProviderIdStr | undefined) ?? 'anthropic-codex';
+  }
+
   const fromRegistry = getProviderRegistry().findProviderForModel(modelId)?.id;
   if (fromRegistry) return fromRegistry as ProviderIdStr;
   if (modelId.startsWith('glm-')) return 'glm';
@@ -190,9 +219,6 @@ export function inferProviderForModel(modelId: string): ProviderIdStr {
   if (modelId.endsWith(':cloud')) return 'ollama-cloud';
   if (/^qwen[\w.-]*:[1-9]\d{2,}b$/i.test(modelId)) return 'ollama-cloud';
   if (/^qwen[\w.-]*:/i.test(modelId)) return 'ollama';
-  if (/^gpt-oss:[1-9]\d{2,}b$/i.test(modelId)) return 'ollama-cloud';
-  if (modelId.startsWith('gpt-oss:')) return modelId.endsWith('-cloud') ? 'ollama-cloud' : 'ollama';
-  if (modelId.startsWith('gpt-')) return 'anthropic-codex';
   return 'anthropic';
 }
 
@@ -213,6 +239,10 @@ export async function inferPersistableProviderForModel(
     for (const owner of otherOwners) {
       if (await owner.isAvailable()) return undefined;
     }
+  }
+  const owner = getProviderRegistry().get(inferred);
+  if (owner && typeof owner.isAvailable === 'function' && !(await owner.isAvailable())) {
+    return undefined;
   }
   return inferred;
 }

@@ -182,6 +182,38 @@ describe('Session RPC Handlers — models.list', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let eventBus: ReturnType<typeof createMockInternalEventBus>;
 
+  function registerAvailableAnthropicProvider(): void {
+    getProviderRegistry().register({
+      id: 'anthropic',
+      displayName: 'Anthropic',
+      capabilities: {
+        streaming: true,
+        extendedThinking: true,
+        thinkingModes: 'granular',
+        maxContextWindow: 200000,
+        functionCalling: true,
+        vision: true,
+      },
+      isAvailable: () => true,
+      getModels: async () => [
+        {
+          id: 'sonnet',
+          name: 'Claude Sonnet',
+          alias: 'default',
+          family: 'sonnet',
+          provider: 'anthropic',
+          contextWindow: 200000,
+          description: 'Fast model',
+          releaseDate: '2025-01-01',
+          available: true,
+        },
+      ],
+      ownsModel: () => true,
+      getModelForTier: () => 'sonnet',
+      buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+    } as Provider);
+  }
+
   beforeEach(async () => {
     messageHubData = createMockMessageHub();
     eventBus = createMockInternalEventBus();
@@ -242,6 +274,7 @@ describe('Session RPC Handlers — models.list', () => {
   it('triggers fallback refresh when cache is empty and useCache is true', {
     timeout: 15_000,
   }, async () => {
+    registerAvailableAnthropicProvider();
     const handler = messageHubData.handlers.get('models.list');
 
     const result = (await handler!({ useCache: true }, {})) as {
@@ -257,6 +290,7 @@ describe('Session RPC Handlers — models.list', () => {
   it('returns models with cached=false when forceRefresh is true', {
     timeout: 15_000,
   }, async () => {
+    registerAvailableAnthropicProvider();
     const handler = messageHubData.handlers.get('models.list');
 
     const result = (await handler!({ forceRefresh: true }, {})) as {
@@ -269,6 +303,7 @@ describe('Session RPC Handlers — models.list', () => {
   });
 
   it('returns models with cached=false when useCache is false', { timeout: 15_000 }, async () => {
+    registerAvailableAnthropicProvider();
     const handler = messageHubData.handlers.get('models.list');
 
     const result = (await handler!({ useCache: false }, {})) as {

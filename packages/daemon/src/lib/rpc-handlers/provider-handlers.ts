@@ -1,7 +1,11 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers';
 import type { CreateProviderParams, UpdateProviderParams } from '@hyperneo/shared';
-import type { ProviderCredentials } from '@hyperneo/shared/provider';
+import type {
+  Provider,
+  ProviderCredentials,
+  ProviderModelRefreshError,
+} from '@hyperneo/shared/provider';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import {
@@ -151,11 +155,33 @@ export interface ProviderHandlerDeps {
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 }
 
+async function providerCatalogSignature(provider: Provider): Promise<string> {
+  const scope = provider.getModelCatalogScope?.() ?? '';
+  let available = 'unknown';
+  try {
+    available = String(await provider.isAvailable());
+  } catch {
+    available = 'error';
+  }
+  const serialized = (provider.getCachedModels?.() ?? []).map((model: { id: string }) =>
+    JSON.stringify(model)
+  );
+  return `${scope}|${available}|${serialized.join(',')}`;
+}
+
 async function clearCacheAndNotifyProvidersChanged(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>
 ): Promise<void> {
   const { clearModelsCache } = await import('../model-service.js');
   clearModelsCache();
+  internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+}
+
+async function invalidateCacheAndNotifyProvidersChanged(
+  internalEventBus: InternalEventBus<DaemonInternalEventMap>
+): Promise<void> {
+  const { clearModelsCache } = await import('../model-service.js');
+  clearModelsCache('global');
   internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
 }
 
@@ -364,6 +390,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       return { healthy: false, error: 'Provider not registered' };
     }
 
+    const catalogBefore = await providerCatalogSignature(provider);
     try {
       const available = await provider.isAvailable();
       if (!available) {
@@ -373,7 +400,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         });
         return { healthy: false, error: 'Provider not available' };
       }
-      await provider.getModels();
+      if (provider.healthCheck) {
+        await provider.healthCheck();
+      } else {
+        await provider.getModels();
+      }
       providerRepo.updateProvider(data.id, {
         healthStatus: 'healthy',
         lastHealthCheckAt: Date.now(),
@@ -385,7 +416,14 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         healthStatus: 'unhealthy',
         lastHealthCheckAt: Date.now(),
       });
+      if ((err as ProviderModelRefreshError).definitiveAuthFailure) {
+        await invalidateCacheAndNotifyProvidersChanged(internalEventBus);
+      }
       return { healthy: false, error };
+    } finally {
+      if ((await providerCatalogSignature(provider)) !== catalogBefore) {
+        await invalidateCacheAndNotifyProvidersChanged(internalEventBus);
+      }
     }
   });
 
@@ -402,6 +440,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           });
           return { providerId: record.providerId, healthy: false, error: 'Not registered' };
         }
+        const catalogBefore = await providerCatalogSignature(provider);
         try {
           const available = await provider.isAvailable();
           if (!available) {
@@ -411,7 +450,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             });
             return { providerId: record.providerId, healthy: false, error: 'Not available' };
           }
-          await provider.getModels();
+          if (provider.healthCheck) {
+            await provider.healthCheck();
+          } else {
+            await provider.getModels();
+          }
           providerRepo.updateProvider(record.id, {
             healthStatus: 'healthy',
             lastHealthCheckAt: Date.now(),
@@ -423,7 +466,14 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             healthStatus: 'unhealthy',
             lastHealthCheckAt: Date.now(),
           });
+          if ((err as ProviderModelRefreshError).definitiveAuthFailure) {
+            await invalidateCacheAndNotifyProvidersChanged(internalEventBus);
+          }
           return { providerId: record.providerId, healthy: false, error };
+        } finally {
+          if ((await providerCatalogSignature(provider)) !== catalogBefore) {
+            await invalidateCacheAndNotifyProvidersChanged(internalEventBus);
+          }
         }
       })
     );

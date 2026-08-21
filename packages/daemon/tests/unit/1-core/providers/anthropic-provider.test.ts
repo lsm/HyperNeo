@@ -202,7 +202,7 @@ describe('AnthropicProvider', () => {
       expect(models.map((model) => model.id)).toEqual(['sonnet']);
     });
 
-    it('should return empty array when SDK loading fails', async () => {
+    it('should propagate SDK loading failures', async () => {
       process.env.ANTHROPIC_API_KEY = 'test-key';
 
       class MockMcpServer {
@@ -212,8 +212,8 @@ describe('AnthropicProvider', () => {
       }
       let _toolBatch: Array<{ name: string; def: object }> = [];
       mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-        query: async () => ({
-          interrupt: () => {},
+        query: () => ({
+          interrupt: mock(async () => {}),
           supportedModels: async () => {
             throw new Error('SDK unavailable');
           },
@@ -246,9 +246,9 @@ describe('AnthropicProvider', () => {
       const providerWithCreds = new AnthropicProvider();
       providerWithCreds.clearModelCache();
 
-      const models = await providerWithCreds.getModels();
-
-      expect(models).toEqual([]);
+      await expect(providerWithCreds.getModels()).resolves.toEqual([]);
+      await expect(providerWithCreds.refreshModels()).rejects.toThrow('SDK unavailable');
+      expect(providerWithCreds.isAvailable()).toBe(true);
     });
   });
 

@@ -59,6 +59,10 @@ export interface ProviderOAuthFlowData {
   message: string;
 }
 
+export interface ProviderModelRefreshError extends Error {
+  definitiveAuthFailure?: boolean;
+}
+
 export interface Provider {
   readonly id: ProviderId;
 
@@ -69,6 +73,16 @@ export interface Provider {
   isAvailable(): Promise<boolean> | boolean;
 
   getModels(): Promise<ModelInfo[]>;
+
+  refreshModels?(): Promise<ModelInfo[]>;
+
+  getCachedModels?(): ModelInfo[] | null;
+
+  getModelCatalogScope?(): string | undefined;
+
+  getModelCacheExpiresAt?(): number | undefined;
+
+  healthCheck?(): Promise<void>;
 
   ownsModel(modelId: string): boolean;
 

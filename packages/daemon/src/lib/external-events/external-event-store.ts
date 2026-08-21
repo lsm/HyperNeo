@@ -532,16 +532,18 @@ export class ExternalEventStore {
     const rows = workflowRunId
       ? (this.db
           .prepare(
-            `SELECT * FROM space_external_event_deliveries
-						 WHERE state = 'pending' AND workflow_run_id = ?
-						 ORDER BY updated_at, delivery_key`
+            `SELECT d.* FROM space_external_event_deliveries d
+						 JOIN space_external_events e ON e.id = d.event_id
+						 WHERE d.state = 'pending' AND d.workflow_run_id = ?
+						 ORDER BY e.created_at, d.rowid`
           )
           .all(workflowRunId) as ExternalEventDeliveryRow[])
       : (this.db
           .prepare(
-            `SELECT * FROM space_external_event_deliveries
-						 WHERE state = 'pending'
-						 ORDER BY updated_at, delivery_key`
+            `SELECT d.* FROM space_external_event_deliveries d
+						 JOIN space_external_events e ON e.id = d.event_id
+						 WHERE d.state = 'pending'
+						 ORDER BY e.created_at, d.rowid`
           )
           .all() as ExternalEventDeliveryRow[]);
     return rows.map(deliveryRowToRecord);

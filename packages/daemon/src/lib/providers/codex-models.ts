@@ -79,6 +79,12 @@ export function resolveCodexBridgeModelId(modelId: string): CodexBridgeModelId |
   if (resolved in MODEL_CONTEXT_WINDOWS) {
     return resolved as CodexBridgeModelId;
   }
+  if (resolved.startsWith('ft:')) {
+    const base = resolved.split(':')[1];
+    if (base && base in MODEL_CONTEXT_WINDOWS) {
+      return base as CodexBridgeModelId;
+    }
+  }
   return undefined;
 }
 
@@ -116,7 +122,38 @@ export const CODEX_TO_SDK_MODEL: Record<CodexBridgeModelId, string> = {
   'gpt-5.4-mini': 'gpt-5.4-mini',
 };
 
-export function getCodexBridgeModelInfos(): ModelInfo[] {
+export interface CodexRemoteModelMetadata {
+  slug: string;
+  displayName: string;
+  description?: string;
+  contextWindow?: number;
+  maxContextWindow?: number;
+}
+
+const CODEX_MODEL_INFOS = buildCodexBridgeModelInfos();
+const CODEX_MODEL_INFO_BY_ID = new Map(CODEX_MODEL_INFOS.map((model) => [model.id, model]));
+
+export function codexRemoteModelInfo(model: CodexRemoteModelMetadata): ModelInfo {
+  const known = CODEX_MODEL_INFO_BY_ID.get(model.slug);
+  if (known) return known;
+  const contextWindow =
+    getModelContextWindow(model.slug) ?? model.contextWindow ?? model.maxContextWindow ?? 128000;
+  return {
+    id: model.slug,
+    name: model.displayName,
+    alias: model.slug,
+    sdkModelIds: [model.slug],
+    family: 'gpt',
+    provider: 'anthropic-codex',
+    contextWindow,
+    preferContextWindowMetadata: true,
+    description: model.description ?? model.displayName,
+    releaseDate: '',
+    available: true,
+  };
+}
+
+function buildCodexBridgeModelInfos(): ModelInfo[] {
   return (Object.keys(MODEL_CONTEXT_WINDOWS) as CodexBridgeModelId[]).map((id) => {
     const details = CODEX_MODEL_DETAILS[id];
     const providerAliases = getProviderAliases(id, details.alias);
@@ -135,4 +172,12 @@ export function getCodexBridgeModelInfos(): ModelInfo[] {
       available: true,
     };
   });
+}
+
+export function getCodexBridgeModelInfos(): ModelInfo[] {
+  return CODEX_MODEL_INFOS.map((model) => ({
+    ...model,
+    ...(model.sdkModelIds ? { sdkModelIds: [...model.sdkModelIds] } : {}),
+    ...(model.providerAliases ? { providerAliases: [...model.providerAliases] } : {}),
+  }));
 }

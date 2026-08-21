@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import {
   getAvailableModels,
   getModelInfo,
@@ -16,8 +16,27 @@ import {
   markRefreshAttemptedFor,
 } from '../../../../src/lib/model-service';
 import type { ModelInfo } from '@hyperneo/shared';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  while (!predicate()) {
+    if (performance.now() >= deadline) throw new Error('Timed out waiting for condition');
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
+function makeScopeRaceJwt(accountId: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+  const body = Buffer.from(
+    JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: accountId } })
+  ).toString('base64url');
+  return `${header}.${body}.`;
+}
 
 describe('Model Service', () => {
   const mockModels: ModelInfo[] = [
@@ -528,6 +547,75 @@ describe('Model Service', () => {
       const cache = getModelsCache();
       expect(cache.get('global')).toEqual(mockModels);
     });
+
+    it('does not publish cached models after definitive credential rejection', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const rejectedModel = {
+        id: 'rejected-cached-model',
+        name: 'Rejected Cached Model',
+        family: 'test',
+        provider: 'rejected-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      getProviderRegistry().register({
+        id: 'rejected-provider',
+        refreshModels: async () => {
+          throw Object.assign(new Error('credentials rejected'), { definitiveAuthFailure: true });
+        },
+        getCachedModels: () => [rejectedModel],
+        getModels: async () => [rejectedModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      await initializeModels();
+
+      expect(getModelsCache().get('global')).not.toContainEqual(rejectedModel);
+    });
+
+    it('keeps partially failed initialization stale for an automatic retry', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const healthyModel = {
+        id: 'startup-healthy',
+        name: 'Startup Healthy',
+        family: 'test',
+        provider: 'startup-healthy-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const recoveredModel = {
+        ...healthyModel,
+        id: 'startup-recovered',
+        name: 'Startup Recovered',
+        provider: 'startup-failed-provider',
+      };
+      registry.register({
+        id: 'startup-healthy-provider',
+        getModels: async () => [healthyModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register({
+        id: 'startup-failed-provider',
+        getModels: async () => {
+          throw new Error('offline');
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      await initializeModels();
+      expect(getAvailableModels('global')).toContainEqual(healthyModel);
+
+      registry.unregister('startup-failed-provider');
+      registry.register({
+        id: 'startup-failed-provider',
+        getModels: async () => [recoveredModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      getAvailableModels('global');
+      await expect.poll(() => getAvailableModels('global')).toContainEqual(recoveredModel);
+    });
   });
 
   describe('background refresh behavior', () => {
@@ -541,6 +629,72 @@ describe('Model Service', () => {
 
       expect(models1).toEqual(models2);
       expect(models1.length).toBe(3);
+    });
+
+    it('throttles automatic retries after a partial refresh failure', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const healthyModel = {
+        id: 'cooldown-healthy',
+        name: 'Cooldown Healthy',
+        family: 'test',
+        provider: 'cooldown-healthy-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      let failedCalls = 0;
+      registry.register({
+        id: 'cooldown-healthy-provider',
+        getModels: async () => [healthyModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register({
+        id: 'cooldown-failed-provider',
+        getModels: async () => {
+          failedCalls += 1;
+          throw new Error('offline');
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      let now = 100_000;
+      const dateSpy = spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        setModelsCache(new Map([['global', mockModels]]), now - 5 * 60 * 60 * 1000);
+
+        getAvailableModels('global');
+        await waitFor(() => failedCalls === 1);
+        getAvailableModels('global');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(failedCalls).toBe(1);
+
+        now += 30_000;
+        getAvailableModels('global');
+        await waitFor(() => failedCalls === 2);
+      } finally {
+        dateSpy.mockRestore();
+      }
+    });
+
+    it('installs and caches an empty catalog from a background refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      let calls = 0;
+      getProviderRegistry().register({
+        id: 'background-empty-provider',
+        getModels: async () => {
+          calls += 1;
+          return [];
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]), Date.now() - 5 * 60 * 60 * 1000);
+
+      getAvailableModels('global');
+      await waitFor(() => getModelsCache().get('global')?.length === 0);
+      getAvailableModels('global');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(calls).toBe(1);
     });
   });
 
@@ -1040,6 +1194,51 @@ describe('Model Service', () => {
   });
 
   describe('refreshModels', () => {
+    it('throttles automatic retries after a foreground refresh failure', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const healthyModel = {
+        id: 'foreground-cooldown-healthy',
+        name: 'Foreground Cooldown Healthy',
+        family: 'test',
+        provider: 'foreground-healthy-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      let failedCalls = 0;
+      registry.register({
+        id: 'foreground-healthy-provider',
+        getModels: async () => [healthyModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register({
+        id: 'foreground-failed-provider',
+        getModels: async () => {
+          failedCalls += 1;
+          throw new Error('offline');
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      let now = 100_000;
+      const dateSpy = spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        setModelsCache(new Map([['global', mockModels]]));
+
+        await refreshModels();
+        expect(failedCalls).toBe(1);
+        getAvailableModels('global');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(failedCalls).toBe(1);
+
+        now += 30_000;
+        getAvailableModels('global');
+        await waitFor(() => failedCalls === 2);
+      } finally {
+        dateSpy.mockRestore();
+      }
+    });
+
     it('should preserve both provider entries for shared model IDs after refresh', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const { refreshModels } = await import('../../../../src/lib/model-service');
@@ -1088,7 +1287,7 @@ describe('Model Service', () => {
       expect(entryB?.provider).toBe('test-provider-b');
     });
 
-    it('should restore FALLBACK_MODELS when cache is empty and no providers are available', async () => {
+    it('should accept empty catalogs when available providers return no models', async () => {
       clearModelsCache();
       expect(getAvailableModels('global')).toEqual([]);
 
@@ -1109,14 +1308,10 @@ describe('Model Service', () => {
       const { refreshModels } = await import('../../../../src/lib/model-service');
       await refreshModels();
 
-      const models = getAvailableModels('global');
-      expect(models.length).toBeGreaterThan(0);
-      expect(models.some((m) => m.id === 'sonnet')).toBe(true);
-      expect(models.some((m) => m.id === 'opus')).toBe(true);
-      expect(models.some((m) => m.id === 'haiku')).toBe(true);
+      expect(getModelsCache().get('global')).toEqual([]);
     });
 
-    it('should preserve existing cache when refresh returns no models', async () => {
+    it('should accept a successful refresh with no models', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
       const registry = getProviderRegistry();
@@ -1133,78 +1328,592 @@ describe('Model Service', () => {
       const { refreshModels } = await import('../../../../src/lib/model-service');
       await refreshModels();
 
-      const models = getAvailableModels('global');
-      expect(models).toEqual(mockModels);
+      expect(getModelsCache().get('global')).toEqual([]);
     });
 
-    it('should cancel in-flight background refresh when clearModelsCache is called', async () => {
-      const cacheKey = 'bg-cancel-test';
+    it('keeps the replacement catalog when a provider switches scope mid-refresh', async () => {
+      const { AnthropicToCodexBridgeProvider } = await import(
+        '../../../../src/lib/providers/anthropic-to-codex-bridge-provider'
+      );
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const tmpRoot = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-scope-race-'));
+      const hyperneoDir = path.join(tmpRoot, 'hyperneo');
+      mkdirSync(hyperneoDir, { recursive: true });
+      const tokenA = makeScopeRaceJwt('acct-race-a');
+      const tokenB = makeScopeRaceJwt('acct-race-b');
+      writeFileSync(
+        path.join(hyperneoDir, 'auth.json'),
+        JSON.stringify({
+          openai: {
+            type: 'oauth',
+            access: tokenA,
+            refresh: 'refresh-a',
+            accountId: 'acct-race-a',
+          },
+        }),
+        { mode: 0o600 }
+      );
+      let resolveOld: ((response: Response) => void) | undefined;
+      const oldResponse = new Promise<Response>((resolve) => {
+        resolveOld = resolve;
+      });
+      const catalogFetch = mock()
+        .mockImplementationOnce(
+          async () =>
+            new Response(JSON.stringify({ data: [{ id: 'gpt-race-a' }] }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+        )
+        .mockImplementationOnce(async () => oldResponse)
+        .mockImplementationOnce(
+          async () =>
+            new Response(JSON.stringify({ data: [{ id: 'gpt-race-replacement' }] }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            })
+        ) as unknown as typeof fetch;
+      const provider = new AnthropicToCodexBridgeProvider({}, hyperneoDir, tmpRoot, catalogFetch);
+      try {
+        getProviderRegistry().register(provider as unknown as ProviderLike);
+        const { refreshModels } = await import('../../../../src/lib/model-service');
+        await provider.getModels();
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'gpt-race-a',
+                  name: 'GPT Race A',
+                  family: 'gpt',
+                  provider: 'anthropic-codex',
+                  contextWindow: 100000,
+                },
+              ],
+            ],
+          ])
+        );
 
+        const msRefresh = refreshModels();
+        await new Promise<void>((resolve, reject) => {
+          const deadline = Date.now() + 2000;
+          const check = () => {
+            if (
+              (catalogFetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length >= 2
+            ) {
+              resolve();
+            } else if (Date.now() > deadline) {
+              reject(new Error('second catalog fetch never started'));
+            } else {
+              setTimeout(check, 1);
+            }
+          };
+          check();
+        });
+        provider.setCredentials({
+          type: 'oauth',
+          accessToken: tokenB,
+          refreshToken: 'refresh-b',
+          raw: { accountId: 'acct-race-b' },
+        });
+        resolveOld?.(new Response('unauthorized', { status: 401 }));
+        await msRefresh;
+
+        const models = getAvailableModels('global');
+        expect(models.map((model) => model.id)).toContain('gpt-race-replacement');
+        expect(models.map((model) => model.id)).not.toContain('gpt-race-a');
+      } finally {
+        provider.stopAllBridgeServers();
+        rmSync(tmpRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('should retain models when every provider becomes unavailable', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'logged-out-provider',
+        getModels: async () => mockModels,
+        isAvailable: async () => false,
+      } as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getModelsCache().get('global')).toEqual(mockModels);
+    });
+
+    it('should accept a successful provider catalog shrink', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
       const registry = getProviderRegistry();
+      const retained = {
+        id: 'retained-model',
+        name: 'Retained Model',
+        family: 'test',
+        provider: 'shrinking-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const removed = {
+        ...retained,
+        id: 'removed-model',
+        name: 'Removed Model',
+      };
       registry.register({
-        id: 'test-provider-bg',
-        getModels: async () => [
-          {
-            id: 'bg-model',
-            name: 'BG Model',
-            family: 'test',
-            provider: 'test-provider-bg',
-            contextWindow: 100000,
-          },
-        ],
+        id: 'shrinking-provider',
+        getModels: async () => [removed],
+        refreshModels: async () => [retained],
         isAvailable: async () => true,
       } as ProviderLike);
+      setModelsCache(new Map([['global', [retained, removed]]]));
 
-      const testCache = new Map<string, ModelInfo[]>();
-      testCache.set(cacheKey, mockModels);
-      setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000);
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
 
-      getAvailableModels(cacheKey);
-
-      clearModelsCache();
-      expect(getAvailableModels(cacheKey)).toEqual([]);
-
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      expect(getAvailableModels(cacheKey)).toEqual([]);
+      expect(getAvailableModels('global')).toEqual([retained]);
     });
 
-    it('should NOT cancel global background refresh on session-scoped clearModelsCache', async () => {
-      const cacheKey = 'bg-session-test';
-
+    it('should retain provider fallbacks on the first strict refresh failure', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
       const registry = getProviderRegistry();
+      const fallbackModel = {
+        id: 'provider-fallback-model',
+        name: 'Provider Fallback Model',
+        family: 'test',
+        provider: 'failed-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const recoveredModel = {
+        ...fallbackModel,
+        id: 'provider-recovered-model',
+        name: 'Provider Recovered Model',
+      };
+      let failRefresh = true;
+      let getModelsCalls = 0;
       registry.register({
-        id: 'test-provider-bg2',
-        getModels: async () => [
-          {
-            id: 'bg-model-2',
-            name: 'BG Model 2',
-            family: 'test',
-            provider: 'test-provider-bg2',
-            contextWindow: 100000,
-          },
-        ],
+        id: 'failed-provider',
+        getModels: async () => {
+          getModelsCalls += 1;
+          return failRefresh ? [fallbackModel] : [recoveredModel];
+        },
+        getCachedModels: () => [fallbackModel],
+        refreshModels: async () => {
+          if (failRefresh) throw new Error('offline');
+          return [recoveredModel];
+        },
         isAvailable: async () => true,
       } as ProviderLike);
 
-      const testCache = new Map<string, ModelInfo[]>();
-      testCache.set(cacheKey, mockModels);
-      setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000);
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
 
-      getAvailableModels(cacheKey);
+      expect(getModelsCache().get('global')).toContainEqual(fallbackModel);
+      expect(getModelsCalls).toBe(0);
 
-      clearModelsCache('session-123');
-      expect(getAvailableModels('session-123')).toEqual([]);
+      failRefresh = false;
+      await refreshModels();
+      expect(getAvailableModels('global')).toContainEqual(recoveredModel);
+    });
+
+    it('throttles stale refreshes within the failure cooldown', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { shouldThrottleModelsRefresh } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'cooldown-failing-provider',
+        getModels: async () => {
+          throw new Error('offline');
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(shouldThrottleModelsRefresh('global')).toBe(true);
+      let now = Date.now();
+      const dateSpy = spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        expect(shouldThrottleModelsRefresh('global')).toBe(true);
+        now += 30_000;
+        expect(shouldThrottleModelsRefresh('global')).toBe(false);
+      } finally {
+        dateSpy.mockRestore();
+      }
+    });
+
+    it('ignores catalog expiry from providers that become unavailable', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const healthyModel = {
+        id: 'expiry-healthy-model',
+        name: 'Expiry Healthy Model',
+        family: 'test',
+        provider: 'expiry-healthy-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      let loggedOut = false;
+      let healthyCalls = 0;
+      registry.register({
+        id: 'expiry-healthy-provider',
+        getModels: async () => {
+          healthyCalls += 1;
+          return [healthyModel];
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register({
+        id: 'expiry-logged-out-provider',
+        getModels: async () => [],
+        refreshModels: async () => [],
+        getModelCacheExpiresAt: () => Date.now() - 1000,
+        isAvailable: async () => !loggedOut,
+      } as ProviderLike);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+      loggedOut = true;
+      await refreshModels();
+
+      expect(healthyCalls).toBe(2);
+      getAvailableModels('global');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(healthyCalls).toBe(2);
+      expect(getAvailableModels('global')).toEqual([healthyModel]);
+    });
+
+    it('refreshes in the background once a provider catalog expires', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const ttlModel = {
+        id: 'ttl-model',
+        name: 'TTL Model',
+        family: 'test',
+        provider: 'ttl-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      let refreshCalls = 0;
+      let expiresAt = Date.now() + 400;
+      registry.register({
+        id: 'ttl-provider',
+        getModels: async () => [ttlModel],
+        refreshModels: async () => {
+          refreshCalls += 1;
+          expiresAt = Date.now() + 400;
+          return [ttlModel];
+        },
+        getModelCacheExpiresAt: () => expiresAt,
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+      expect(refreshCalls).toBe(1);
+      expect(getAvailableModels('global')).toEqual([ttlModel]);
 
       await new Promise((resolve) => setTimeout(resolve, 500));
+      getAvailableModels('global');
+      await waitFor(() => refreshCalls === 2, 5000);
+      expect(getAvailableModels('global')).toEqual([ttlModel]);
 
-      const models = getAvailableModels(cacheKey);
-      expect(models.length).toBeGreaterThan(0);
-      expect(models.some((m) => m.id === 'bg-model-2')).toBe(true);
+      getAvailableModels('global');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(refreshCalls).toBe(2);
+    });
+
+    it('excludes rejected providers from catalog expiry and throttles retries', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const healthyModel = {
+        id: 'expiry-healthy-reject',
+        name: 'Expiry Healthy Reject',
+        family: 'test',
+        provider: 'expiry-healthy-reject-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const rejectedModel = {
+        id: 'expiry-rejected-model',
+        name: 'Expiry Rejected Model',
+        family: 'test',
+        provider: 'expiry-rejected-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      let rejectedRefreshCalls = 0;
+      registry.register({
+        id: 'expiry-healthy-reject-provider',
+        getModels: async () => [healthyModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register({
+        id: 'expiry-rejected-provider',
+        getModels: async () => [],
+        refreshModels: async () => {
+          rejectedRefreshCalls += 1;
+          throw Object.assign(new Error('credentials rejected'), { definitiveAuthFailure: true });
+        },
+        getCachedModels: () => [rejectedModel],
+        getModelCacheExpiresAt: () => Date.now() - 1000,
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      const { refreshModels, shouldThrottleModelsRefresh } = await import(
+        '../../../../src/lib/model-service'
+      );
+      await refreshModels();
+
+      expect(rejectedRefreshCalls).toBe(1);
+      expect(getAvailableModels('global')).not.toContainEqual(rejectedModel);
+      expect(shouldThrottleModelsRefresh('global')).toBe(true);
+    });
+
+    it('should drop stale models when a provider credential scope changes', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const staleModel = {
+        id: 'old-scope-model',
+        name: 'Old Scope Model',
+        family: 'test',
+        provider: 'scope-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const newScopeModel = {
+        ...staleModel,
+        id: 'new-scope-model',
+        name: 'New Scope Model',
+      };
+      let catalogScope = 'scope-a';
+      getProviderRegistry().register({
+        id: 'scope-provider',
+        getModelCatalogScope: () => catalogScope,
+        refreshModels: async () => {
+          catalogScope = 'scope-b';
+          throw new Error('offline');
+        },
+        getCachedModels: () => [newScopeModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      setModelsCache(new Map([['global', [staleModel]]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual([newScopeModel]);
+    });
+
+    it('should retry after every provider fails with a populated cache', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const staleModel = {
+        id: 'all-failed-stale-model',
+        name: 'All Failed Stale Model',
+        family: 'test',
+        provider: 'failed-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const recoveredModel = {
+        ...staleModel,
+        id: 'all-failed-recovered-model',
+        name: 'All Failed Recovered Model',
+      };
+      let failRefresh = true;
+      registry.register({
+        id: 'failed-provider',
+        getModels: async () => {
+          if (failRefresh) throw new Error('offline');
+          return [recoveredModel];
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      setModelsCache(new Map([['global', [staleModel]]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getModelsCache().get('global')).toEqual([staleModel]);
+
+      failRefresh = false;
+      await refreshModels();
+      expect(getAvailableModels('global')).toEqual([recoveredModel]);
+    });
+
+    it('should preserve Anthropic models when SDK discovery fails', async () => {
+      const { AnthropicProvider } = await import(
+        '../../../../src/lib/providers/anthropic-provider'
+      );
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const staleAnthropic = {
+        id: 'claude-discovered-model',
+        name: 'Claude Discovered Model',
+        family: 'sonnet',
+        provider: 'anthropic',
+        contextWindow: 200000,
+      } satisfies ModelInfo;
+      const healthyModel = {
+        id: 'healthy-model',
+        name: 'Healthy Model',
+        family: 'test',
+        provider: 'healthy-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const anthropic = new AnthropicProvider({ ANTHROPIC_API_KEY: 'test-key' });
+      mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+        query: () => ({
+          interrupt: mock(async () => {}),
+          supportedModels: mock(async () => {
+            throw new Error('SDK unavailable');
+          }),
+        }),
+      }));
+      getProviderRegistry().register(anthropic);
+      getProviderRegistry().register({
+        id: 'healthy-provider',
+        getModels: async () => [healthyModel],
+        isAvailable: async () => true,
+      } as Parameters<ReturnType<typeof getProviderRegistry>['register']>[0]);
+      setModelsCache(new Map([['global', [staleAnthropic]]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toContainEqual(staleAnthropic);
+      expect(getAvailableModels('global')).toContainEqual(healthyModel);
+    });
+
+    it('should retain only models from providers that fail during refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const staleFailed = {
+        id: 'stale-failed-model',
+        name: 'Stale Failed Model',
+        family: 'test',
+        provider: 'failed-provider',
+        contextWindow: 100000,
+      } satisfies ModelInfo;
+      const staleHealthy = {
+        ...staleFailed,
+        id: 'stale-healthy-model',
+        name: 'Stale Healthy Model',
+        provider: 'healthy-provider',
+      };
+      const currentHealthy = {
+        ...staleHealthy,
+        id: 'current-healthy-model',
+        name: 'Current Healthy Model',
+      };
+      registry.register({
+        id: 'failed-provider',
+        getModels: async () => {
+          throw new Error('offline');
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register({
+        id: 'healthy-provider',
+        getModels: async () => [currentHealthy],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      setModelsCache(new Map([['global', [staleFailed, staleHealthy]]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      await waitFor(() => getModelsCache().get('global')?.[0]?.id === currentHealthy.id);
+      expect(getModelsCache().get('global')).toEqual([currentHealthy, staleFailed]);
+
+      const recoveredFailed = {
+        ...staleFailed,
+        id: 'recovered-failed-model',
+        name: 'Recovered Failed Model',
+      };
+      registry.unregister('failed-provider');
+      registry.register({
+        id: 'failed-provider',
+        getModels: async () => [recoveredFailed],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      await refreshModels();
+      expect(getAvailableModels('global')).toEqual([currentHealthy, recoveredFailed]);
+    });
+
+    describe('getAvailableModels', () => {
+      it('should cancel in-flight background refresh when clearModelsCache is called', async () => {
+        const cacheKey = 'bg-cancel-test';
+
+        const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+        type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+        const registry = getProviderRegistry();
+        registry.register({
+          id: 'test-provider-bg',
+          getModels: async () => [
+            {
+              id: 'bg-model',
+              name: 'BG Model',
+              family: 'test',
+              provider: 'test-provider-bg',
+              contextWindow: 100000,
+            },
+          ],
+          isAvailable: async () => true,
+        } as ProviderLike);
+
+        const testCache = new Map<string, ModelInfo[]>();
+        testCache.set(cacheKey, mockModels);
+        setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000);
+
+        getAvailableModels(cacheKey);
+
+        clearModelsCache();
+        expect(getAvailableModels(cacheKey)).toEqual([]);
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        expect(getAvailableModels(cacheKey)).toEqual([]);
+      });
+
+      it('should NOT cancel global background refresh on session-scoped clearModelsCache', async () => {
+        const cacheKey = 'bg-session-test';
+
+        const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+        type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+        const registry = getProviderRegistry();
+        registry.register({
+          id: 'test-provider-bg2',
+          getModels: async () => [
+            {
+              id: 'bg-model-2',
+              name: 'BG Model 2',
+              family: 'test',
+              provider: 'test-provider-bg2',
+              contextWindow: 100000,
+            },
+          ],
+          isAvailable: async () => true,
+        } as ProviderLike);
+
+        const testCache = new Map<string, ModelInfo[]>();
+        testCache.set(cacheKey, mockModels);
+        setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000);
+
+        getAvailableModels(cacheKey);
+
+        clearModelsCache('session-123');
+        expect(getAvailableModels('session-123')).toEqual([]);
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        const models = getAvailableModels(cacheKey);
+        expect(models.length).toBeGreaterThan(0);
+        expect(models.some((m) => m.id === 'bg-model-2')).toBe(true);
+      });
     });
 
     it('should drop stale result when clearModelsCache is called during foreground refresh', async () => {

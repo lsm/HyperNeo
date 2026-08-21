@@ -15,6 +15,8 @@ import * as path from 'node:path';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
 
+const CODEX_COMPAT_CLIENT_VERSION = '0.148.0';
+
 const fsPromiseMocks = vi.hoisted(() => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
@@ -33,8 +35,8 @@ vi.mock('fs/promises', async (importOriginal) => {
   };
 });
 
-const OAUTH_PROBE_URL = 'https://chatgpt.com/backend-api/codex/responses';
-const API_KEY_PROBE_URL = 'https://api.openai.com/v1/responses';
+const OAUTH_PROBE_URL = `https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_COMPAT_CLIENT_VERSION}`;
+const API_KEY_PROBE_URL = `https://api.openai.com/v1/models?client_version=${CODEX_COMPAT_CLIENT_VERSION}`;
 
 type Mode = 'oauth' | 'api_key';
 
@@ -349,8 +351,16 @@ describe('Provider auth lifecycle regression matrix', () => {
       fetcher.setDefault(new Response('unauthorized', { status: 401 }));
       const provider = track(makeProvider({}, hyperneo, codex, fetcher.impl));
       provider.setCredentials(loginCredsFor(mode));
+      const refreshSpy =
+        mode === 'oauth'
+          ? spyOn(globalThis, 'fetch').mockResolvedValue(invalidGrantResponse())
+          : undefined;
 
-      await expect(provider.getModels()).rejects.toThrow('Codex credentials rejected (HTTP 401)');
+      try {
+        await expect(provider.getModels()).rejects.toThrow('Codex credentials rejected (HTTP 401)');
+      } finally {
+        refreshSpy?.mockRestore();
+      }
     });
 
     it('re-add after removal: a fresh login restores auth after logout', async () => {
