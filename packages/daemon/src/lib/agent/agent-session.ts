@@ -123,6 +123,7 @@ import { isSDKResultSuccess } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner';
 import { resolveModelAlias } from '../model-service';
 import { getProviderRegistry } from '../providers/factory.js';
+import { getProviderService } from '../provider-service';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
@@ -136,6 +137,7 @@ import {
 import { resolveFallbackChain } from './fallback-recovery';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
 import type { LimitRetryHint } from './limit-error-classifier';
+import { LimitErrorLlmClassifier } from './limit-error-llm-classifier';
 import {
   BATCH_DELIVERY_MAX_CHARS,
   buildBatchedDeliveryContent,
@@ -216,6 +218,7 @@ export class AgentSession
   readonly optionsBuilder: QueryOptionsBuilder;
 
   private queryRunner: QueryRunner | AcpQueryRunner;
+  private limitErrorLlmClassifier: LimitErrorLlmClassifier | null = null;
   readonly interruptHandler: InterruptHandler;
   private sdkRuntimeConfig: SDKRuntimeConfig;
   private eventSubscriptionSetup: EventSubscriptionSetup;
@@ -414,6 +417,13 @@ export class AgentSession
         this.internalEventBus.publish('session.rate_limit_resume', {
           sessionId: this.session.id,
         });
+      },
+      classifyUnknownLimit: (rawText: string) => {
+        this.limitErrorLlmClassifier ??= new LimitErrorLlmClassifier(this.session.id, {
+          providerService: getProviderService(),
+          excludeProvider: (this.session.config.provider as string | undefined) ?? undefined,
+        });
+        return this.limitErrorLlmClassifier.classifyWithTimeout(rawText);
       },
     });
     this.rateLimitWatchdog.setRetryCallback(

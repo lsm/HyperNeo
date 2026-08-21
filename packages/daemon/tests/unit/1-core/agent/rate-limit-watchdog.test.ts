@@ -423,6 +423,105 @@ describe('RateLimitWatchdog', () => {
     });
   });
 
+  describe('LLM refinement of unparseable limits', () => {
+    it('re-arms the cooldown at the LLM-provided reset when the ladder was armed', async () => {
+      const resetAt = Date.now() + 2 * 60 * 60 * 1000;
+      const classify = mock(async () => ({
+        resetAtMs: resetAt,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry('firewall throttled, no timestamps in body', {
+        uuid: 'm1',
+        content: 'x',
+      });
+      await flush();
+      await flush();
+
+      expect(classify).toHaveBeenCalledTimes(1);
+      const calls = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[1][0].retryAt).toBe(resetAt + RESET_BUFFER_MS);
+      expect(notifyPause.mock.calls[1][0]).toMatchObject({
+        kind: 'usage_limit',
+        resetAt: resetAt + RESET_BUFFER_MS,
+      });
+      watchdog.cancel();
+    });
+
+    it('does not re-arm when the LLM says the error is not a limit', async () => {
+      const classify = mock(async () => ({
+        resetAtMs: null,
+        kind: null,
+        notALimit: true,
+      }));
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry('upstream hiccup', { uuid: 'm1', content: 'x' });
+      await flush();
+      await flush();
+
+      expect(classify).toHaveBeenCalledTimes(1);
+      expect(notifyPause).toHaveBeenCalledTimes(1);
+      watchdog.cancel();
+    });
+
+    it('skips refinement when a parsed reset already scheduled the cooldown', async () => {
+      const classify = mock(async () => ({
+        resetAtMs: Date.now() + 60 * 60 * 1000,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      const resetIso = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      await watchdog.scheduleRetry(`resets ${resetIso}`, { uuid: 'm1', content: 'x' });
+      await flush();
+
+      expect(classify).not.toHaveBeenCalled();
+      watchdog.cancel();
+    });
+
+    it('does not re-arm after the episode is cancelled mid-lookup', async () => {
+      let resolveClassify: (value: {
+        resetAtMs: number;
+        kind: 'usage_limit';
+        notALimit: false;
+      }) => void = () => {};
+      const classify = mock(
+        () =>
+          new Promise((resolve) => {
+            resolveClassify = resolve;
+          })
+      );
+      const { deps } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify as unknown as ReturnType<typeof mock>;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+      watchdog.cancel();
+      resolveClassify({
+        resetAtMs: Date.now() + 2 * 60 * 60 * 1000,
+        kind: 'usage_limit',
+        notALimit: false,
+      });
+      await flush();
+      await flush();
+
+      expect(
+        (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls
+      ).toHaveLength(1);
+    });
+  });
+
   describe('Phase A — immediate fallback switch', () => {
     const A: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
     const B: FallbackModelEntry = { provider: 'minimax', model: 'abab6.5' };

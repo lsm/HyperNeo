@@ -9,7 +9,12 @@ import {
   MAX_RESET_HORIZON_MS,
   selectNextFallback,
 } from './fallback-recovery';
-import { cooldownFromReset, type LimitRetryHint } from './limit-error-classifier';
+import {
+  cooldownFromReset,
+  normalizeEpochMs,
+  type LimitRetryHint,
+} from './limit-error-classifier';
+import type { LlmLimitAssessment } from './limit-error-llm-classifier';
 import type { ProcessingStateManager } from './processing-state-manager';
 
 export interface RateLimitWatchdogConfig {
@@ -57,6 +62,7 @@ export interface RateLimitWatchdogDeps {
   resolveModelId?(provider: string, model: string): Promise<string>;
   notifyPause?(payload: RateLimitPausePayload): void;
   notifyResume?(): void;
+  classifyUnknownLimit?(rawText: string): Promise<LlmLimitAssessment | null>;
 }
 
 export type RateLimitRetryCallback = (
@@ -89,6 +95,7 @@ export class RateLimitWatchdog {
   private lastHint: LimitRetryHint | null = null;
   private billingPauseSurfaced = false;
   private retryCallbackInFlight = false;
+  private llmRefinementInFlight = false;
 
   constructor(
     sessionId: string,
@@ -153,6 +160,7 @@ export class RateLimitWatchdog {
       this.bannerCancelled = false;
       this.billingPauseSurfaced = false;
       this.lastHint = hint ?? null;
+      this.llmRefinementInFlight = false;
     }
 
     const { provider, model } = this.deps.getCurrentModel();
@@ -239,7 +247,45 @@ export class RateLimitWatchdog {
     }
 
     await this.scheduleCooldown(errorMessage, decision, entryGeneration);
+
+    if (
+      decision.reason === 'backoff-ladder' &&
+      this.deps.classifyUnknownLimit &&
+      !this.llmRefinementInFlight &&
+      entryGeneration === this.generation
+    ) {
+      this.fireLlmRefinement(errorMessage, entryGeneration);
+    }
     return true;
+  }
+
+  private fireLlmRefinement(errorMessage: string, entryGeneration: number): void {
+    const classify = this.deps.classifyUnknownLimit;
+    if (!classify) return;
+    this.llmRefinementInFlight = true;
+    void classify(errorMessage)
+      .then(async (result) => {
+        if (entryGeneration !== this.generation || this.cooldownTimer === null) return;
+        if (!result || result.notALimit) return;
+        const resetMs =
+          typeof result.resetAtMs === 'number' && Number.isFinite(result.resetAtMs)
+            ? normalizeEpochMs(result.resetAtMs)
+            : null;
+        const now = Date.now();
+        if (resetMs === null || resetMs <= now || resetMs > now + MAX_RESET_HORIZON_MS) return;
+        this.logger.info(
+          `LLM limit refinement: retry at ${new Date(resetMs).toISOString()} ` +
+            `(was backoff ladder) for error: ${errorMessage}`
+        );
+        if (result.kind) {
+          this.lastHint = { ...this.lastHint, kind: result.kind };
+        }
+        await this.scheduleCooldown(errorMessage, cooldownFromReset(resetMs, now), entryGeneration);
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.llmRefinementInFlight = false;
+      });
   }
 
   private async scheduleCooldown(
@@ -540,6 +586,7 @@ export class RateLimitWatchdog {
     this.chain = null;
     this.limitKind = null;
     this.lastHint = null;
+    this.llmRefinementInFlight = false;
   }
 
   private getRemainingMs(): number {
