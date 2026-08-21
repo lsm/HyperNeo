@@ -179,7 +179,8 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
   const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
   const previousModels = modelsCache.get(cacheKey);
 
-  const refreshPromise = (async () => {
+  let refreshPromise: Promise<void> = Promise.resolve();
+  const doRefresh = async (): Promise<void> => {
     try {
       const {
         models,
@@ -220,12 +221,15 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
     } catch {
       // Background refresh failed
     } finally {
-      refreshInProgress.delete(cacheKey);
+      if (refreshInProgress.get(cacheKey) === refreshPromise) {
+        refreshInProgress.delete(cacheKey);
+      }
       if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
         cacheGeneration.delete(cacheKey);
       }
     }
-  })();
+  };
+  refreshPromise = doRefresh();
 
   refreshInProgress.set(cacheKey, refreshPromise);
 }
@@ -510,7 +514,8 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
   const previousModels = modelsCache.get(cacheKey);
   clearProviderModelCaches();
 
-  const refreshPromise = (async () => {
+  let refreshPromise: Promise<void> = Promise.resolve();
+  const doRefresh = async (): Promise<void> => {
     try {
       if (signal?.aborted) {
         return;
@@ -553,12 +558,15 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
         backgroundRefreshFailures.set(cacheKey, Date.now());
       }
     } finally {
-      refreshInProgress.delete(cacheKey);
+      if (refreshInProgress.get(cacheKey) === refreshPromise) {
+        refreshInProgress.delete(cacheKey);
+      }
       if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
         cacheGeneration.delete(cacheKey);
       }
     }
-  })();
+  };
+  refreshPromise = doRefresh();
 
   refreshInProgress.set(cacheKey, refreshPromise);
   await refreshPromise;
