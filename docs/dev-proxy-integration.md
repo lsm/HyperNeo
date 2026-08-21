@@ -6,6 +6,8 @@ This document describes how to configure Dev Proxy to mock the Anthropic API for
 
 Dev Proxy is a Microsoft tool that intercepts HTTP requests and can return mock responses. This allows us to run online tests without calling the real Anthropic API, improving test stability and reducing costs.
 
+CI does not install the .NET binary. The `Setup Dev Proxy` action starts `scripts/dev-proxy-stub.ts`, a Bun HTTP server that serves the same `.devproxy` mock files with the same matching semantics (see [.devproxy/README.md](../.devproxy/README.md) for details and local usage).
+
 **Sample Reference:** [pnp/proxy-samples - simulate-anthropic](https://github.com/pnp/proxy-samples/tree/main/samples/simulate-anthropic)
 
 ## Current Test Behavior (Strict Mode)

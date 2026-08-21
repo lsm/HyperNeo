@@ -1,146 +1,42 @@
 name: 'Setup Dev Proxy'
-description: 'Install Dev Proxy with GitHub Actions caching, then start it on port 8000'
+description: 'Start the Bun mock server (dev-proxy-stub) on port 8000'
 author: 'lsm'
-
-inputs:
-  version:
-    description: 'Dev Proxy version to install (e.g., "v0.27.0" or "latest")'
-    required: false
-    default: 'latest'
-
-outputs:
-  version:
-    description: 'Installed Dev Proxy version string'
-    value: ${{ steps.finalize.outputs.version }}
-  cache-hit:
-    description: 'Whether the binary was restored from cache (true/false)'
-    value: ${{ steps.cache-restore.outputs.cache-hit }}
 
 runs:
   using: 'composite'
   steps:
-    # ── Step 1: Resolve the concrete version tag ──────────────────────────────
-    # We need a stable, version-pinned cache key.  When inputs.version is
-    # "latest" we query the GitHub Releases API to get the actual tag name so
-    # that the cache key changes only when a new release is published.
-    - name: Resolve Dev Proxy version
-      id: resolve
-      shell: bash
-      # Expose github.token so the curl call uses authenticated rate limits
-      # (5000 req/hr) instead of unauthenticated limits (60 req/hr per IP).
-      # Composite actions don't receive secrets automatically — we inject it here.
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        set -euo pipefail
-
-        INPUT_VERSION="${{ inputs.version }}"
-
-        if [ "$INPUT_VERSION" = "latest" ]; then
-          echo "Querying GitHub API for latest Dev Proxy release..."
-          # jq is pre-installed on all GitHub-hosted Ubuntu runners.
-          for attempt in 1 2 3; do
-            VERSION=$(curl -fsSL --retry 2 --connect-timeout 10 \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/dotnet/dev-proxy/releases/latest" \
-              | jq -r '.tag_name // ""' 2>/dev/null || true)
-            if [ -n "$VERSION" ] && [ "$VERSION" != "null" ]; then
-              break
-            fi
-            echo "API attempt $attempt failed, retrying..."
-            sleep 2
-          done
-
-          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
-            echo "::error::Could not resolve latest Dev Proxy version from GitHub API"
-            exit 1
-          fi
-          echo "Latest version resolved: $VERSION"
-        else
-          VERSION="$INPUT_VERSION"
-          echo "Using pinned version: $VERSION"
-        fi
-
-        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-        # Canonical install directory — a stable path outside the workspace so
-        # actions/cache can persist it across workflow runs.
-        INSTALL_DIR="$HOME/.devproxy-cache"
-        echo "install_dir=$INSTALL_DIR" >> "$GITHUB_OUTPUT"
-
-    # ── Step 2: Try to restore the binary from the Actions cache ─────────────
-    - name: Restore Dev Proxy from cache
-      id: cache-restore
-      uses: actions/cache@v5
-      with:
-        path: ${{ steps.resolve.outputs.install_dir }}
-        key: devproxy-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.version }}
-
-    # ── Step 3: Download and install (only on cache miss) ────────────────────
-    # Run Microsoft's official setup script, which extracts the devproxy
-    # binary into a `devproxy/` subdirectory of the current working directory.
-    # We cd into the install dir first so the binary lands in the right place.
-    - name: Install Dev Proxy (cache miss)
-      if: steps.cache-restore.outputs.cache-hit != 'true'
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        INSTALL_DIR="${{ steps.resolve.outputs.install_dir }}"
-        mkdir -p "$INSTALL_DIR"
-        cd "$INSTALL_DIR"
-
-        echo "Downloading Dev Proxy..."
-        # Single attempt — if this fails the job fails clearly; the cache
-        # will be populated on success so subsequent jobs won't re-download.
-        curl -fL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 300 \
-          https://raw.githubusercontent.com/dotnet/dev-proxy/main/scripts/setup.sh | bash
-
-        echo "Dev Proxy installed to: $INSTALL_DIR/devproxy"
-
-    # ── Step 4: Validate binary and expose PATH ───────────────────────────────
-    - name: Add Dev Proxy to PATH and validate
-      id: finalize
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        INSTALL_DIR="${{ steps.resolve.outputs.install_dir }}"
-        DEVPROXY_BIN="$INSTALL_DIR/devproxy"
-
-        if [ ! -f "$DEVPROXY_BIN/devproxy" ]; then
-          echo "::error::devproxy binary not found at $DEVPROXY_BIN/devproxy"
-          ls -la "$INSTALL_DIR" 2>/dev/null || true
-          exit 1
-        fi
-
-        chmod +x "$DEVPROXY_BIN/devproxy"
-        echo "$DEVPROXY_BIN" >> "$GITHUB_PATH"
-
-        # Validate — run via full path since PATH update takes effect next step
-        VERSION_OUT=$("$DEVPROXY_BIN/devproxy" --version 2>&1 | head -1 || true)
-        echo "Dev Proxy ready: $VERSION_OUT"
-        echo "version=$VERSION_OUT" >> "$GITHUB_OUTPUT"
-        echo "cache-hit=${{ steps.cache-restore.outputs.cache-hit }}" >> "$GITHUB_OUTPUT"
-
-    # ── Step 5: Start Dev Proxy ────────────────────────────────────────────────
+    # ── Start the Bun mock server ─────────────────────────────────────────────
+    # scripts/dev-proxy-stub.ts serves the .devproxy mocks with the same
+    # matching semantics as dotnet/dev-proxy's MockResponsePlugin, so online
+    # tests keep using ANTHROPIC_BASE_URL=http://127.0.0.1:8000 unchanged.
+    # Requires Bun on PATH (the setup-bun step must run before this action).
+    # It has no dependencies, so it works before `bun install`.
     - name: Start Dev Proxy
       shell: bash
       run: |
         set -euo pipefail
-        devproxy --port 8000 --config-file .devproxy/devproxyrc.json --no-first-run --record &
-        echo "DEVPROXY_PID=$!" >> "$GITHUB_ENV"
+
+        bun scripts/dev-proxy-stub.ts \
+          --port 8000 \
+          --api-port 8897 \
+          --config-file .devproxy/devproxyrc.json &
+        STUB_PID=$!
+        echo "DEVPROXY_PID=$STUB_PID" >> "$GITHUB_ENV"
+
         READY=false
         for i in $(seq 1 30); do
+          if ! kill -0 "$STUB_PID" 2>/dev/null; then
+            echo "::error::Dev Proxy stub exited during startup"
+            exit 1
+          fi
           if nc -z 127.0.0.1 8000 2>/dev/null; then
-            echo "Dev Proxy is ready"
+            echo "Dev Proxy stub is ready"
             READY=true
             break
           fi
           sleep 0.5
         done
         if [ "$READY" != "true" ]; then
-          echo "::error::Dev Proxy did not become ready within 15 seconds"
+          echo "::error::Dev Proxy stub did not become ready within 15 seconds"
           exit 1
         fi
