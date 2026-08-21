@@ -10,8 +10,8 @@ import {
   statSync,
   unlinkSync,
 } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { dirname, join, resolve } from 'node:path';
 import { getDataDir } from '../packages/daemon/src/lib/data-dir.ts';
 
 const DEFAULT_DB_PATH = join(getDataDir(), 'data', 'daemon.db');
@@ -97,7 +97,7 @@ function isProcessAlive(pid: number): boolean {
 }
 
 function createBackup(dbPath: string): string {
-  const backupDir = join(dirname(dbPath), 'backups');
+  const backupDir = join(dirname(dbPath), 'backups', basename(dbPath));
   mkdirSync(backupDir, { recursive: true });
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
