@@ -21,6 +21,7 @@
     "check:space-task-handler-tests": "bun run scripts/check-space-task-handler-tests.ts",
     "test:space-task-handler-gate": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/check-space-task-handler-tests.test.ts",
     "test:strip-comments": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/strip-comments.test.ts",
+    "test:coverage-gate": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/coverage-gate.test.ts",
     "check:db-schema-parity": "tsx scripts/check-db-schema-parity.ts",
     "check:test-quality": "bun scripts/check-test-quality.ts",
     "check:test-matrix": "bash scripts/validate-test-matrix.sh",
