@@ -348,4 +348,65 @@ describe('AcpEditorModal', () => {
       expect(mockUpdateProvider).not.toHaveBeenCalled();
     });
   });
+
+  it('fetches models through the environment command for env-backed providers', async () => {
+    mockFetchAcpModels.mockResolvedValue({
+      models: [{ id: 'env-model-a', name: 'Env Model A' }],
+    });
+    mockUpdateProvider.mockResolvedValue({ success: true });
+    const onSaved = vi.fn();
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command=""
+        models={[]}
+        envBacked
+        onClose={() => {}}
+        onSaved={onSaved}
+      />
+    );
+
+    fireEvent.click(screen.getByText('Fetch models'));
+    await waitFor(() => {
+      expect(mockFetchAcpModels).toHaveBeenCalledWith('acp-1', undefined);
+      expect(screen.getByText('env-model-a')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('env-model-a'));
+    fireEvent.click(screen.getByText('Add selected'));
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledWith('acp-1', {
+        configJson: JSON.stringify({ models: [{ id: 'env-model-a', name: 'Env Model A' }] }),
+      });
+      expect(onSaved).toHaveBeenCalled();
+    });
+  });
+
+  it('saves env-backed providers without persisting an empty command', async () => {
+    mockUpdateProvider.mockResolvedValue({ success: true });
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command=""
+        models={[{ id: 'env-model-a' }]}
+        envBacked
+        onClose={() => {}}
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledWith('acp-1', {
+        configJson: JSON.stringify({ models: [{ id: 'env-model-a' }] }),
+      });
+    });
+  });
 });

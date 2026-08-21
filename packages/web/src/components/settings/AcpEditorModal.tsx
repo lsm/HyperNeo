@@ -14,6 +14,7 @@ interface AcpEditorModalProps {
   providerName: string;
   command: string;
   models?: AcpConfiguredModel[];
+  envBacked?: boolean;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -31,6 +32,7 @@ export function AcpEditorModal({
   providerName,
   command: initialCommand,
   models: initialModels,
+  envBacked = false,
   onClose,
   onSaved,
 }: AcpEditorModalProps) {
@@ -49,7 +51,8 @@ export function AcpEditorModal({
   const selectableFetched = fetchedModels?.filter((m) => !existingModelIds.has(m.id)) ?? [];
 
   const handleFetch = async () => {
-    if (!command.trim()) {
+    const trimmedCommand = command.trim();
+    if (!trimmedCommand && !envBacked) {
       setError('ACP command is required');
       return;
     }
@@ -59,8 +62,7 @@ export function AcpEditorModal({
     setFetchedCommand(null);
     setSelectedIds([]);
     try {
-      const trimmedCommand = command.trim();
-      const { models: fetched } = await fetchAcpModels(providerId, trimmedCommand);
+      const { models: fetched } = await fetchAcpModels(providerId, trimmedCommand || undefined);
       if (!acpCommandsEquivalent(trimmedCommand, modelsCommand)) {
         setModels([]);
         setModelsCommand(trimmedCommand);
@@ -92,7 +94,7 @@ export function AcpEditorModal({
 
   const handleSave = async () => {
     const trimmedCommand = command.trim();
-    if (!trimmedCommand) {
+    if (!trimmedCommand && !envBacked) {
       setError('ACP command is required');
       return;
     }
@@ -101,7 +103,7 @@ export function AcpEditorModal({
     try {
       await updateProvider(providerId, {
         configJson: JSON.stringify({
-          command: trimmedCommand,
+          ...(trimmedCommand ? { command: trimmedCommand } : {}),
           models: !commandChanged
             ? acpCommandsEquivalent(modelsCommand, initialCommand)
               ? models
@@ -161,6 +163,7 @@ export function AcpEditorModal({
             />
             <span class="text-[11px] text-gray-500 mt-1 block">
               Shell command that launches the ACP agent.
+              {envBacked && ' Leave empty to keep using HYPERNEO_ACP_COMMAND.'}
             </span>
           </label>
 

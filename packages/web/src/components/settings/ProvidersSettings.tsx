@@ -89,6 +89,7 @@ export function ProvidersSettings() {
     providerName: string;
     command: string;
     models?: AcpConfiguredModel[];
+    envBacked?: boolean;
   } | null>(null);
   const [kimiRegions, setKimiRegions] = useState<Record<string, 'china' | 'global'>>({});
   const [customEditor, setCustomEditor] = useState<EditorState | null>(null);
@@ -710,7 +711,10 @@ export function ProvidersSettings() {
                                   Configuration
                                 </h5>
                                 <div class="text-xs text-gray-500 font-mono truncate">
-                                  {readAcpCommand(provider) || 'No command set'}
+                                  {readAcpCommand(provider) ||
+                                    (provider.available
+                                      ? 'Using HYPERNEO_ACP_COMMAND'
+                                      : 'No command set')}
                                 </div>
                                 {(readAcpModels(provider)?.length ?? 0) > 0 && (
                                   <div class="mt-1 flex flex-wrap gap-1">
@@ -734,6 +738,7 @@ export function ProvidersSettings() {
                                     providerName: provider.displayName,
                                     command: readAcpCommand(provider),
                                     models: readAcpModels(provider),
+                                    envBacked: !readAcpCommand(provider) && provider.available,
                                   })
                                 }
                                 disabled={isPending}
@@ -855,6 +860,7 @@ export function ProvidersSettings() {
           providerName={acpEditor.providerName}
           command={acpEditor.command}
           models={acpEditor.models}
+          envBacked={acpEditor.envBacked}
           onClose={() => setAcpEditor(null)}
           onSaved={() => {
             setAcpEditor(null);
