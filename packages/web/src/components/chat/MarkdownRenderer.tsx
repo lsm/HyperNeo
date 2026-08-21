@@ -942,6 +942,7 @@ async function renderMarkdown(content: string) {
 export default function MarkdownRenderer({ content, class: className }: MarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [html, setHtml] = useState<string | null>(null);
+  const [renderedSource, setRenderedSource] = useState(content);
 
   useEffect(() => {
     let cancelled = false;
@@ -950,11 +951,13 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
         .then((renderedHtml) => {
           if (!cancelled) {
             setHtml(renderedHtml);
+            setRenderedSource(content);
           }
         })
         .catch(() => {
           if (!cancelled) {
             setHtml(renderPlainText(content));
+            setRenderedSource(content);
           }
         });
     });
@@ -999,7 +1002,7 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
       <div ref={containerRef} class={`prose [@media(hover:none)]:pr-7 ${className || ''}`} />
       {content.trim() ? (
         <div class="absolute top-0 right-0 transition-opacity focus-within:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-hover:pointer-events-auto">
-          <CopyButton text={content} label="Copy markdown" />
+          <CopyButton text={renderedSource} label="Copy markdown" />
         </div>
       ) : null}
     </div>

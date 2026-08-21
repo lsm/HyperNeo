@@ -85,6 +85,33 @@ describe('MarkdownRenderer', () => {
       });
     });
 
+    it('should copy the source matching the rendered html during streaming updates', async () => {
+      const { container, rerender } = render(<MarkdownRenderer content="first" />);
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('first');
+      });
+
+      rerender(<MarkdownRenderer content="second" />);
+      const button = container.querySelector('button');
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      await waitFor(() => {
+        expect(copyToClipboard).toHaveBeenCalledTimes(1);
+      });
+      expect(copyToClipboard).toHaveBeenCalledWith('first');
+
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('second');
+      });
+
+      (copyToClipboard as ReturnType<typeof vi.fn>).mockClear();
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      await waitFor(() => {
+        expect(copyToClipboard).toHaveBeenCalledWith('second');
+      });
+    });
+
     it('should not affect rendered markdown content placement', async () => {
       const { container } = render(<MarkdownRenderer content="Hello World" />);
       await waitFor(() => {
@@ -123,27 +150,24 @@ describe('MarkdownRenderer', () => {
     });
 
     it('should reset the copied confirmation when content changes', async () => {
-      vi.useFakeTimers();
+      const { container, rerender } = render(<MarkdownRenderer content="first" />);
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('first');
+      });
 
-      try {
-        const { container, rerender } = render(<MarkdownRenderer content="first" />);
-        const button = container.querySelector('button');
-        button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      const button = container.querySelector('button');
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-        await Promise.resolve();
-        await vi.advanceTimersByTimeAsync(0);
-
+      await waitFor(() => {
         expect(button?.getAttribute('title')).toBe('Copied!');
+      });
 
-        rerender(<MarkdownRenderer content="second **streamed**" />);
+      rerender(<MarkdownRenderer content="second **streamed**" />);
 
-        await Promise.resolve();
-        await vi.advanceTimersByTimeAsync(0);
-
-        expect(container.querySelector('button')?.getAttribute('title')).toBe('Copy markdown');
-      } finally {
-        vi.useRealTimers();
-      }
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('streamed');
+        expect(button?.getAttribute('title')).toBe('Copy markdown');
+      });
     });
   });
 
