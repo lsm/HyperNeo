@@ -234,13 +234,16 @@ before the re-read and can still transition the run to `done` and write task
 result/summary — though not status: `buildTaskOutcomeUpdates` never sets
 `status`, and `dispatchPostApproval` re-reads the task and returns `skipped`
 because `stopped → approved` is not a valid transition, so a mid-tick
-'stopped' survives settlement. All of these gaps close only by re-reading the task immediately before each
-spawn and settlement effect — a stage-entry re-read alone leaves the in-loop
-race open, since a park landing while the first spawn await is in flight still
-leaves the remaining iterations on the stale task, and handoff repair needs
-the equivalent per-effect checks; that change is deliberately not slipped
-into this closing sweep and belongs with the
-`repairQueuedWorkflowNodeHandoffs` mini-pilot. The terminal-handoff-cleanup check in the interpreter is a third,
+'stopped' survives settlement. All of these gaps close only by validating the freshly-read task status —
+including `stopped` — immediately before each spawn and settlement effect: the
+re-read alone is insufficient, because `spawnWorkflowNodeAgentForExecution`
+already re-reads the task, but `validateTaskAllowsSpawn` rejects only
+archived/cancelled and rate/usage-limited statuses, so a parked task passes
+validation and the spawn proceeds. A stage-entry re-read alone likewise
+leaves the in-loop race open, and handoff repair needs the equivalent
+per-effect checks; these changes are deliberately not slipped into this
+closing sweep and belong with the `repairQueuedWorkflowNodeHandoffs`
+mini-pilot. The terminal-handoff-cleanup check in the interpreter is a third,
 narrower set (done/cancelled/archived). These are distinct decisions, not
 duplicate predicates to unify.
 
