@@ -1187,12 +1187,24 @@ describe('NAMED_QUERY_REGISTRY', () => {
         uuid,
         message: { role: 'user', content: [{ type: 'text', text: 'handoff' }] },
       });
-      const cases: Array<{ id: string; uuid: string; expected: string }> = [
+      const cases: Array<{
+        id: string;
+        uuid: string;
+        expected: string;
+        sendStatus?: string;
+      }> = [
         { id: 'stm-batch-owned', uuid: 'u-stm-batch-owned', expected: 'retrying' },
         { id: 'stm-zero-retry', uuid: 'u-stm-zero-retry', expected: 'queued' },
         { id: 'stm-settled-job', uuid: 'u-stm-settled-job', expected: 'queued' },
         { id: 'stm-mixed-jobs', uuid: 'u-stm-mixed-jobs', expected: 'retrying' },
         { id: 'stm-no-job', uuid: 'u-stm-no-job', expected: 'queued' },
+        {
+          id: 'stm-failed-with-job',
+          uuid: 'u-stm-failed-with-job',
+          expected: 'failed',
+          sendStatus: 'failed',
+        },
+        { id: 'stm-uuid-collide', uuid: 'u-stm-other-task', expected: 'queued' },
       ];
       for (const c of cases) {
         insertSdkMessageAt(
@@ -1200,7 +1212,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           sessionIdValue,
           now + 1000,
           'user',
-          'enqueued',
+          c.sendStatus ?? 'enqueued',
           'human',
           null,
           userPayload(c.uuid)
@@ -1251,6 +1263,13 @@ describe('NAMED_QUERY_REGISTRY', () => {
           status: 'processing',
           role: 'steer',
         },
+        {
+          id: 'job-stm-failed-with-job',
+          messageUuid: 'u-stm-failed-with-job',
+          retryCount: 2,
+          status: 'pending',
+          role: 'steer',
+        },
       ];
       for (const j of jobs) {
         db.prepare(
@@ -1271,6 +1290,37 @@ describe('NAMED_QUERY_REGISTRY', () => {
           now
         );
       }
+
+      const secondSessionId = 'session-stm-retry-shapes-b';
+      sessionTaskIds.set(secondSessionId, taskId);
+      insertSdkMessageAt(
+        'stm-cross-session',
+        secondSessionId,
+        now + 1500,
+        'user',
+        'enqueued',
+        'human',
+        null,
+        userPayload('u-stm-cross-session')
+      );
+      db.prepare(`UPDATE sdk_messages SET sdk_uuid = ? WHERE id = ?`).run(
+        'u-stm-cross-session',
+        'stm-cross-session'
+      );
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+         VALUES (?, 'message_delivery', 'pending', ?, 3, 8, ?, ?)`
+      ).run(
+        'job-stm-cross-session',
+        JSON.stringify({
+          sessionId: sessionIdValue,
+          messageUuid: 'u-stm-cross-session',
+          role: 'steer',
+          origin: 'space_inject',
+        }),
+        now,
+        now
+      );
 
       const otherTaskId = insertSpaceTask({
         id: 'task-stm-retry-other',
@@ -1314,6 +1364,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
           c.expected
         );
       }
+      expect(
+        (byId.get('stm-cross-session') as Record<string, unknown> | undefined)?.deliveryState
+      ).toBe('queued');
+
+      const otherById = new Map(queryMessages(otherTaskId).map((r) => [r.id as string, r]));
+      expect(
+        (otherById.get('stm-other-task') as Record<string, unknown> | undefined)?.deliveryState
+      ).toBe('retrying');
     });
 
     test('a pending user row does not become the turnId for subsequent assistant rows (full feed)', () => {
@@ -2944,6 +3002,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           { id: 'c-batch-owned', uuid: 'u-c-batch-owned', expected: 'retrying' },
           { id: 'c-zero-retry', uuid: 'u-c-zero-retry', expected: 'queued' },
           { id: 'c-no-job', uuid: 'u-c-no-job', expected: 'queued' },
+          { id: 'c-uuid-collide', uuid: 'u-c-other-task', expected: 'queued' },
         ];
         for (const c of cases) {
           insertSdkMessageAt(c.id, sessionId, now + 1000, userPayload(c.uuid), 'user');
@@ -2988,6 +3047,35 @@ describe('NAMED_QUERY_REGISTRY', () => {
           );
         }
 
+        const secondSessionId = 'sess-compact-retry-b';
+        sessionTaskIds.set(secondSessionId, taskId);
+        insertSdkMessageAt(
+          'c-cross-session',
+          secondSessionId,
+          now + 1500,
+          userPayload('u-c-cross-session'),
+          'user'
+        );
+        db.prepare(`UPDATE sdk_messages SET send_status = ?, sdk_uuid = ? WHERE id = ?`).run(
+          'enqueued',
+          'u-c-cross-session',
+          'c-cross-session'
+        );
+        db.prepare(
+          `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+           VALUES (?, 'message_delivery', 'pending', ?, 3, 8, ?, ?)`
+        ).run(
+          'job-c-cross-session',
+          JSON.stringify({
+            sessionId,
+            messageUuid: 'u-c-cross-session',
+            role: 'steer',
+            origin: 'space_inject',
+          }),
+          now,
+          now
+        );
+
         const otherSessionId = 'sess-compact-retry-other';
         const otherTaskId = insertSpaceTask({ id: 'task-compact-retry-other' });
         sessionTaskIds.set(otherSessionId, otherTaskId);
@@ -3024,6 +3112,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
             c.expected
           );
         }
+        expect(
+          (byId.get('c-cross-session') as Record<string, unknown> | undefined)?.deliveryState
+        ).toBe('queued');
+
+        const otherById = new Map(queryCompact(otherTaskId).map((r) => [r.id as string, r]));
+        expect(
+          (otherById.get('c-other-task') as Record<string, unknown> | undefined)?.deliveryState
+        ).toBe('retrying');
       });
 
       test('keeps anchor + last-assistant summary + result per conversation turn', () => {
