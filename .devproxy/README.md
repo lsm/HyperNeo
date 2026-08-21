@@ -43,6 +43,14 @@ Expected signal of a properly mocked request:
 
 If you see `pass ... Passed through`, the request did not match a mock.
 
+## CI: Bun Mock Server
+
+GitHub Actions does not install the .NET Dev Proxy. The `Setup Dev Proxy` action starts `scripts/dev-proxy-stub.ts`, a dependency-free Bun HTTP server that loads `devproxyrc.json` and the mock files from this directory and applies the same matching rules (method + exact or `*`-wildcard URL + case-insensitive `bodyFragment` substring, first match wins). Two deliberate differences: unmatched requests get an immediate 502 instead of a pass-through, and the admin endpoint `GET :8897/proxy` reports the config path so the test helper's external-proxy detection works unchanged. Run it locally the same way:
+
+```bash
+bun scripts/dev-proxy-stub.ts --port 8000 --config-file .devproxy/devproxyrc.json
+```
+
 ## Mock Files
 
 | File | Description | Use Case |
