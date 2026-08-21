@@ -658,12 +658,55 @@ const SCENARIOS: Scenario[] = [
   {
     name: 'rejects a multiline flow-form matrix.exclude (P2)',
     expectExit: 1,
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        exclude: [\n          { shard: 2 }\n        ]'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects an exclude key with a space before the colon (P2)',
+    expectExit: 1,
     expectInStderr: 'removed by matrix.exclude',
     mutate: (root) => {
       edit(root, MAIN, (s) =>
         s.replace(
           '        shard: [1, 2]',
-          '        shard: [1, 2]\n        exclude: [\n          { shard: 2 },\n        ]'
+          '        shard: [1, 2]\n        exclude : [{ shard: 2 }]'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects a sibling axis inside a flow-form matrix mapping (P2)',
+    expectExit: 1,
+    expectInStderr: 'extra axis',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          `      matrix:
+        # vitest --shard distributes test FILES across legs; the union of
+        # shards 1..N runs the whole suite. scripts/validate-test-matrix.sh
+        # pins the axis against the runner's --shard denominator.
+        shard: [1, 2]
+`,
+          '      matrix: { shard: [1, 2], os: [ubuntu-latest, macos-latest] }\n'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects an include row adding a shard outside the axis (P2)',
+    expectExit: 1,
+    expectInStderr: 'include row adds shard value',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        include:\n          - shard: 3'
         )
       );
     },

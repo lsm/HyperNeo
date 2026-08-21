@@ -1089,39 +1089,41 @@ reject_effective_config_drift "$WEB_CFG" "packages/web" \
 # The web suite is split across the test-web matrix via vitest --shard=<i>/<N>:
 # vitest distributes test FILES deterministically, so the union of legs 1..N
 # runs the whole suite. Pin that wiring — the shard axis must hold exactly the
-# values 1..N (each once) with no matrix.exclude and no sibling axes, and the
-# runner (checked below) must forward --shard=${{ matrix.shard }}/N with N the
-# axis size. A dropped or duplicated axis value, or a fixed --shard that ignores
-# the matrix token, leaves part of the suite unrun (or run twice) while this
-# guard reports every file covered.
-web_matrix=$(awk '
-	BEGIN {
-		mtx = sprintf("[%c%c]?matrix[%c%c]?", 39, 34, 39, 34)
-		qspan = sprintf("%c[^%c]*%c", 39, 39, 39)
-		dqspan = sprintf("%c[^%c]*%c", 34, 34, 34)
+# values 1..N (each once) with no matrix.exclude, no sibling axes, and no
+# include rows adding shard legs, and the runner (checked below) must forward
+# --shard=${{ matrix.shard }}/N with N the axis size. A dropped or duplicated
+# axis value, or a fixed --shard that ignores the matrix token, leaves part of
+# the suite unrun (or run twice) while this guard reports every file covered.
+#
+# The matrix block is read with Bun.YAML — a real YAML parser — instead of
+# textual patterns: quoted keys, flow or block style, inline comments, spacing
+# before colons, and multiline collections are all simply YAML, so no
+# hand-rolled pattern can silently miss a leg-dropping (exclude) or
+# leg-adding (sibling axis / include row) form. Fail-closed: any parse failure
+# surfaces as the missing-axis error below. Emits "<kind><TAB><value>" lines.
+_web_matrix_lines=$(WEB_YML="$REPO_ROOT/.github/workflows/main.yml" bun -e '
+	const fs = await import("node:fs");
+	const doc = Bun.YAML.parse(fs.readFileSync(process.env.WEB_YML, "utf8"));
+	const m = doc?.jobs?.["test-web"]?.strategy?.matrix ?? {};
+	const axis = m.shard;
+	const vals = Array.isArray(axis) ? axis : axis === undefined || axis === null ? [] : Object.keys(axis);
+	for (const v of vals) console.log("axis\t" + v);
+	for (const row of m.include ?? []) {
+		if (row === null || typeof row !== "object" || Array.isArray(row)) continue;
+		if ("shard" in row) console.log("include\t" + row.shard);
+		for (const k of Object.keys(row)) if (k !== "shard") console.log("include-key\t" + k);
 	}
-	{ c=$0; sub(/[[:space:]]+#.*$/, "", c); $0=c }
-	$0 ~ "^  test-web:" { injob=1; next }
-	injob && /^  [a-z]/ { injob=0; inmatrix=0; next }
-	!injob { next }
-	# Scope the axis scan to the strategy.matrix block: a "shard: [...]" line
-	# elsewhere in the job (e.g. inside a step env block scalar) is not an axis
-	# and must not inflate the leg count. The matrix key may sit at 4 or 6 and
-	# carry the axis inline (flow mapping), so the enter line is not skipped.
-	$0 ~ "^[[:space:]]{4,6}" mtx ":" { inmatrix=1 }
-	/^[[:space:]]{0,6}[a-z"]/ && $0 !~ "^[[:space:]]{4,6}" mtx ":" { inmatrix=0 }
-	# The axis must be the shard KEY (block form at line start, or a flow-form
-	# mapping entry after "{" or ","), with quoted spans removed first — text
-	# like note: "shard: [2]" inside an include row is a scalar, not an axis.
-	inmatrix {
-		t=$0; sub(/^[[:space:]]+/, "", t)
-		gsub(qspan, "", t); gsub(dqspan, "", t)
-		if (t ~ /^shard:[[:space:]]*\[/ || t ~ /[{,][[:space:]]*shard:[[:space:]]*\[/) {
-			s=t; sub(/.*shard:[[:space:]]*\[/, "", s); sub(/\].*/, "", s)
-			n=split(s, a, ","); for (i=1; i<=n; i++) { gsub(/[[:space:]]/, "", a[i]); if (a[i] != "") print a[i] }
+	const excl = m.exclude ?? [];
+	for (const row of Array.isArray(excl) ? excl : [excl]) {
+		if (row !== null && typeof row === "object" && !Array.isArray(row)) {
+			if ("shard" in row) console.log("exclude\t" + row.shard);
+		} else if (row !== undefined && row !== null) {
+			console.log("exclude\t" + row);
 		}
 	}
-' "$REPO_ROOT/.github/workflows/main.yml")
+	for (const k of Object.keys(m)) if (k !== "shard" && k !== "include" && k !== "exclude") console.log("sibling\t" + k);
+' 2>/dev/null) || _web_matrix_lines=""
+web_matrix=$(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "axis" { print $2 }')
 web_shard_n=$(printf '%s\n' "$web_matrix" | grep -c .)
 if [ "$web_shard_n" -eq 0 ]; then
 	err "test-web has no 'shard: [ ... ]' matrix axis — the web suite is modeled here as a vitest --shard matrix, so a missing axis means the runner's --shard forwarding no longer matches a scheduled leg set"
@@ -1141,35 +1143,28 @@ if [ "$web_shard_n" -ge 1 ]; then
 		fi
 	done
 fi
-_web_excluded=$(matrix_excludes "test-web" "shard")
-if [ -n "$_web_excluded" ]; then
-	while IFS= read -r _we; do
-		[ -n "$_we" ] || continue
-		err "test-web shard '$_we' is removed by matrix.exclude — GitHub drops the combination, so vitest's shard-$_we files never run while this guard reports them covered"
-		echo "     → remove the exclude entry, or drop the shard from the axis AND shrink the runner's --shard denominator" >&2
-	done <<< "$_web_excluded"
-fi
-_web_sibling_axes=$(awk '
-	BEGIN { mtx = sprintf("[%c%c]?matrix[%c%c]?", 39, 34, 39, 34) }
-	# Strip inline YAML comments so "matrix: # note" still opens the block.
-	{ c=$0; sub(/[[:space:]]+#.*$/, "", c); $0=c }
-	$0 ~ "^  test-web:" { injob=1; next }
-	injob && /^  [a-z]/ { injob=0; inmatrix=0; next }
-	!injob { next }
-	$0 ~ "^[[:space:]]{6}" mtx ":[[:space:]]*$" { inmatrix=1; next }
-	/^[[:space:]]{0,6}[a-z"]/ { inmatrix=0 }
-	inmatrix && /^[[:space:]]{8}[^[:space:]][^:]*:/ {
-		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); gsub(/[^A-Za-z0-9_-]/, "", s); k=tolower(s)
-		if (k != "shard" && k != "include" && k != "exclude") print s
-	}
-' "$REPO_ROOT/.github/workflows/main.yml")
-if [ -n "$_web_sibling_axes" ]; then
-	while IFS= read -r _ax; do
-		[ -n "$_ax" ] || continue
-		err "test-web matrix has an extra axis '$_ax:' — GitHub takes the Cartesian product, so every web shard runs once per value (duplicate runs + duplicate Coveralls uploads) while this guard reports each file covered once"
-		echo "     → remove the '$_ax:' axis, or model its combinations in this validator" >&2
-	done <<< "$_web_sibling_axes"
-fi
+while IFS= read -r _wiv; do
+	[ -n "$_wiv" ] || continue
+	if ! printf '%s\n' "$web_matrix" | grep -qxF "$_wiv"; then
+		err "test-web matrix include row adds shard value '$_wiv' outside the 1..$web_shard_n axis — GitHub schedules an extra leg whose vitest --shard index exceeds the denominator and fails that job, while this guard reports the axis consistent"
+		echo "     → keep include rows to existing axis values, or extend the axis and the runner denominator together" >&2
+	fi
+done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "include" { print $2 }')
+while IFS= read -r _wik; do
+	[ -n "$_wik" ] || continue
+	err "test-web matrix include row carries a non-shard key '$_wik' — GitHub applies it as combination config this validator does not model"
+	echo "     → include rows may only override shard; anything else needs validator support here first" >&2
+done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "include-key" && !seen[$2]++ { print $2 }')
+while IFS= read -r _we; do
+	[ -n "$_we" ] || continue
+	err "test-web shard '$_we' is removed by matrix.exclude — GitHub drops the combination, so vitest's shard-$_we files never run while this guard reports them covered"
+	echo "     → remove the exclude entry, or drop the shard from the axis AND shrink the runner's --shard denominator" >&2
+done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "exclude" { print $2 }')
+while IFS= read -r _ax; do
+	[ -n "$_ax" ] || continue
+	err "test-web matrix has an extra axis '$_ax' — GitHub takes the Cartesian product, so every web shard runs once per value (duplicate runs + duplicate Coveralls uploads) while this guard reports each file covered once"
+	echo "     → remove the '$_ax' axis, or model its combinations in this validator" >&2
+done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "sibling" { print $2 }')
 
 # The web coverage assumes the test-web CI job runs `vitest run` (no positional
 # target) in an ENABLED step, so the config include/exclude — plus the matrix
