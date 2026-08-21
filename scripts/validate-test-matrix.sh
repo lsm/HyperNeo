@@ -1009,18 +1009,18 @@ done < <(find "$UNIT_ROOT" "$SHARED_ROOT" -type f \( -name '*.test.tsx' -o -name
 	-not -path '*/node_modules/*' -not -path '*/dist/*' | sort)
 
 # ===========================================================================
-# 2. WEB TESTS  (packages/web/src/** — single directory glob, one CI job)
+# 2. WEB TESTS  (packages/web/src/** — single directory glob, one CI matrix)
 # ===========================================================================
-# The web suite is a single `bunx vitest run` job whose `include` glob roots at
-# `src/`. Assert the config still does so — a future shard split or narrowed
-# include would orphan src test files with no other signal.
+# The web suite is a `bunx vitest run --shard=i/N` matrix whose `include` glob
+# roots at `src/`. Assert the config still does so — a narrowed include would
+# orphan src test files with no other signal.
 WEB_SRC="$REPO_ROOT/packages/web/src"
 WEB_CFG="$REPO_ROOT/packages/web/vitest.config.ts"
-# The web suite is a single `bunx vitest run` job. Require its `include` to be
-# the full src/**/*.{test,spec}.{ts,tsx} glob, so ANY narrowing (dropping .tsx,
-# inserting .unit., restricting the suffix, …) is caught rather than silently
-# dropping files while this guard reports full coverage. A substring/fragment
-# check is not enough — only the exact glob is.
+# The web suite is a `bunx vitest run --shard=i/N` matrix. Require its `include`
+# to be the full src/**/*.{test,spec}.{ts,tsx} glob, so ANY narrowing (dropping
+# .tsx, inserting .unit., restricting the suffix, …) is caught rather than
+# silently dropping files while this guard reports full coverage. A
+# substring/fragment check is not enough — only the exact glob is.
 # Scope the glob to `test.include` specifically (4-space indent, directly under
 # test:) — NOT a nested coverage.include. A whole-file search can mask a
 # so a glob placed in coverage.include would mask a narrowed test.include and
@@ -1047,12 +1047,76 @@ cfg_reject_root "$WEB_CFG" "packages/web"
 reject_config_spread "$WEB_CFG" "packages/web"
 reject_effective_config_drift "$WEB_CFG" "packages/web" \
 	'["src/**/*.{test,spec}.{ts,tsx}"]' '["node_modules","dist"]'
-# The web coverage assumes the test-web CI job runs a bare `vitest run` (no
-# positional target) in an ENABLED step, so the config include/exclude fully
-# determine execution. enabled_run_cmd folds the runner command (a `>-` scalar)
-# and skips disabled/commented steps; we then require `vitest run` to be followed
-# by a flag (or the closing quote), not a positional path — a target on a folded
-# continuation line would otherwise evade an end-of-physical-line check.
+# The web suite is split across the test-web matrix via vitest --shard=<i>/<N>:
+# vitest distributes test FILES deterministically, so the union of legs 1..N
+# runs the whole suite. Pin that wiring — the shard axis must hold exactly the
+# values 1..N (each once) with no matrix.exclude and no sibling axes, and the
+# runner (checked below) must forward --shard=${{ matrix.shard }}/N with N the
+# axis size. A dropped or duplicated axis value, or a fixed --shard that ignores
+# the matrix token, leaves part of the suite unrun (or run twice) while this
+# guard reports every file covered.
+web_matrix=$(awk '
+	$0 ~ "^  test-web:" { injob=1; next }
+	injob && /^  [a-z]/ { injob=0; next }
+	!injob { next }
+	/^[[:space:]]*shard:[[:space:]]*\[/ {
+		s=$0; sub(/.*\[/, "", s); sub(/\].*/, "", s)
+		n=split(s, a, ","); for (i=1; i<=n; i++) { gsub(/[[:space:]]/, "", a[i]); if (a[i] != "") print a[i] }
+	}
+' "$REPO_ROOT/.github/workflows/main.yml")
+web_shard_n=$(printf '%s\n' "$web_matrix" | grep -c .)
+if [ "$web_shard_n" -eq 0 ]; then
+	err "test-web has no 'shard: [ ... ]' matrix axis — the web suite is modeled here as a vitest --shard matrix, so a missing axis means the runner's --shard forwarding no longer matches a scheduled leg set"
+	echo "     → restore 'shard: [1, 2]' under test-web's strategy.matrix (and the runner's --shard forwarding), or revert this validator to the single-job model" >&2
+fi
+while IFS= read -r _bad; do
+	[ -n "$_bad" ] || continue
+	err "test-web shard axis value '$_bad' is not a positive integer — vitest --shard needs numeric <index>/<total> legs"
+	echo "     → use plain integers 1..N in the shard axis" >&2
+done < <(printf '%s\n' "$web_matrix" | grep -vE '^[0-9]+$' | sort -u)
+if [ "$web_shard_n" -ge 1 ]; then
+	for _i in $(seq 1 "$web_shard_n"); do
+		_count=$(printf '%s\n' "$web_matrix" | grep -xF "$_i" | wc -l | tr -d ' ')
+		if [ "$_count" -ne 1 ]; then
+			err "test-web shard axis must list every value 1..$web_shard_n exactly once — value '$_i' appears $_count time(s); a missing value leaves vitest's shard-$_i files unrun while this guard reports them covered, and a duplicate runs its slice twice"
+			echo "     → list each of 1..$web_shard_n exactly once in the shard axis" >&2
+		fi
+	done
+fi
+_web_excluded=$(matrix_excludes "test-web" "shard")
+if [ -n "$_web_excluded" ]; then
+	while IFS= read -r _we; do
+		[ -n "$_we" ] || continue
+		err "test-web shard '$_we' is removed by matrix.exclude — GitHub drops the combination, so vitest's shard-$_we files never run while this guard reports them covered"
+		echo "     → remove the exclude entry, or drop the shard from the axis AND shrink the runner's --shard denominator" >&2
+	done <<< "$_web_excluded"
+fi
+_web_sibling_axes=$(awk '
+	$0 ~ "^  test-web:" { injob=1; next }
+	injob && /^  [a-z]/ { injob=0; inmatrix=0; next }
+	!injob { next }
+	/^[[:space:]]{6}matrix:[[:space:]]*$/ { inmatrix=1; next }
+	/^[[:space:]]{0,6}[a-z]/ { inmatrix=0 }
+	inmatrix && /^[[:space:]]{8}[A-Za-z][A-Za-z0-9_-]*:/ {
+		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); k=tolower(s)
+		if (k != "shard" && k != "include" && k != "exclude") print s
+	}
+' "$REPO_ROOT/.github/workflows/main.yml")
+if [ -n "$_web_sibling_axes" ]; then
+	while IFS= read -r _ax; do
+		[ -n "$_ax" ] || continue
+		err "test-web matrix has an extra axis '$_ax:' — GitHub takes the Cartesian product, so every web shard runs once per value (duplicate runs + duplicate Coveralls uploads) while this guard reports each file covered once"
+		echo "     → remove the '$_ax:' axis, or model its combinations in this validator" >&2
+	done <<< "$_web_sibling_axes"
+fi
+
+# The web coverage assumes the test-web CI job runs `vitest run` (no positional
+# target) in an ENABLED step, so the config include/exclude — plus the matrix
+# --shard split — fully determine execution. enabled_run_cmd folds the runner
+# command (a `>-` scalar) and skips disabled/commented steps; we then require
+# `vitest run` to be followed by a flag (or the closing quote), not a positional
+# path — a target on a folded continuation line would otherwise evade an
+# end-of-physical-line check.
 _web_cmd=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web')
 if [ "$(count_enabled_run_cmds "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web')" -gt 1 ]; then
 	err "test-web has more than one enabled 'cd packages/web && bunx vitest run' step — each runs the web suite (duplicate runs + duplicate Coveralls uploads) while this guard reports each file covered once"
@@ -1085,26 +1149,34 @@ elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'cd packag
 elif runner_shell_override "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web'; then
 	err "test-web runner step (or its job) sets a non-default shell — a no-exec shell (e.g. bash -n {0}) would make the step succeed having run ZERO web tests while this guard reports them covered"
 	echo "     → remove the shell: override (use the default shell)" >&2
+elif [ "$(printf '%s' "$_web_cmd" | sed 's/.*bunx vitest run//' | grep -oF -- '--shard=' | wc -l | tr -d ' ')" -ne 1 ] ||
+     ! printf '%s' "$_web_cmd" | sed 's/.*bunx vitest run//' | grep -qF -- "--shard=\${{ matrix.shard }}/$web_shard_n"; then
+	err "test-web runner does not pass exactly one '--shard=\${{ matrix.shard }}/$web_shard_n' — a fixed --shard, a stale denominator, or a missing/duplicated flag makes every leg run the same slice (or a narrower/unsharded set) while this guard reports all files covered"
+	echo "     → keep '--shard=\${{ matrix.shard }}/$web_shard_n' as the only --shard flag after 'bunx vitest run'" >&2
 elif [ -n "$(printf '%s' "$_web_cmd" \
 		| sed 's/.*bunx vitest run//' \
-		| sed -E -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
+		| sed -E -e 's/[$][{][{][[:space:]]*matrix[.]shard[[:space:]]*[}][}]//g' \
+		         -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
 		         -e 's/--reporter=[^[:space:]]+//g' \
 		         -e 's/--outputFile\.[[:alnum:]_-]+(=[^[:space:]]+)?//g' \
-		         -e 's/--coverage(=[[:space:]]*true)?//g' \
+		         -e 's/--shard=[^[:space:]]+//g' \
 		         -e 's/--coverage\.[[:alnum:]_.-]+(=[^[:space:]]+)?//g' \
+		         -e 's/--coverage(=[[:space:]]*true)?//g' \
 		         -e 's/--color//g' -e 's/--no-color//g' \
 		| tr -d "[:space:]'\"")" ]; then
-	# Allowlist ONLY coverage-neutral flags (--reporter, --coverage*, --color);
-	# do NOT blanket-strip every --flag. Selection-changing flags like --changed,
-	# --testNamePattern, or --dir narrow which files run while this guard reports
-	# all covered, so anything left after the allowlist (a positional OR an
-	# unknown flag) fails.
+	# Allowlist ONLY coverage-neutral flags (--reporter, --coverage*, --color)
+	# plus the matrix-forwarded --shard (validated by the dedicated branch
+	# above, so blanket-stripping every --shard token here cannot hide a second,
+	# overriding one); do NOT blanket-strip every --flag. Selection-changing
+	# flags like --changed, --testNamePattern, or --dir narrow which files run
+	# while this guard reports all covered, so anything left after the allowlist
+	# (a positional OR an unknown flag) fails.
 	err "test-web runner passes a positional filter or non-allowlisted flag to 'vitest run' — web coverage assumption broken (e.g. --changed/--testNamePattern would narrow discovery while this guard reports all files covered)"
-	echo "     → keep 'vitest run' bare (only --reporter/--coverage*/--color flags, no positional or selection-changing flag)" >&2
+	echo "     → keep 'vitest run' bare (only --reporter/--coverage*/--color/--shard flags, no positional or selection-changing flag)" >&2
 elif [ "$(printf '%s' "$_web_cmd" | grep -oF 'bunx vitest run' | wc -l | tr -d ' ')" -gt 1 ]; then
 	err "test-web runner has multiple 'bunx vitest run' invocations — the first could exit 0 (e.g. --testNamePattern __never__), so the fallback via || never executes"
 	echo "     → use exactly one 'bunx vitest run' invocation" >&2
-	echo "     → keep 'vitest run' bare (only --reporter/--coverage*/--color flags, no positional or selection-changing flag)" >&2
+	echo "     → keep 'vitest run' bare (only --reporter/--coverage*/--color/--shard flags, no positional or selection-changing flag)" >&2
 fi
 
 # Web test files outside the src/** include are not run by web CI. Each must be

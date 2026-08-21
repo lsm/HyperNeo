@@ -537,6 +537,43 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: 'rejects a hardcoded --shard that bypasses the matrix token',
+    expectExit: 1,
+    expectInStderr: "does not pass exactly one '--shard=",
+    mutate: (root) => {
+      edit(root, MAIN, (s) => s.replace('--shard=${{ matrix.shard }}/2', '--shard=1/2'));
+    },
+  },
+  {
+    name: 'rejects a web shard axis value dropped from the matrix',
+    expectExit: 1,
+    expectInStderr: "does not pass exactly one '--shard=",
+    mutate: (root) => {
+      edit(root, MAIN, (s) => s.replace('shard: [1, 2]', 'shard: [1]'));
+    },
+  },
+  {
+    name: 'rejects a duplicated web shard axis value',
+    expectExit: 1,
+    expectInStderr: 'exactly once',
+    mutate: (root) => {
+      edit(root, MAIN, (s) => s.replace('shard: [1, 2]', 'shard: [1, 1]'));
+    },
+  },
+  {
+    name: 'rejects a matrix.exclude that drops a web shard leg',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        exclude:\n          - shard: 2'
+        )
+      );
+    },
+  },
+  {
     name: 'prunes dist/ from the shared disk scan (P2)',
     expectExit: 0,
     mutate: (root) => {

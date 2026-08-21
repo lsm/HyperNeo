@@ -449,10 +449,17 @@ jobs:
   # ============================================
 
   test-web:
-    name: Web Tests
+    name: Web Tests (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
     timeout-minutes: 9
     if: (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # vitest --shard distributes test FILES across legs; the union of
+        # shards 1..N runs the whole suite. scripts/validate-test-matrix.sh
+        # pins the axis against the runner's --shard denominator.
+        shard: [1, 2]
 
     steps:
       - uses: actions/checkout@v6
@@ -484,29 +491,31 @@ jobs:
         run: >-
           bun run scripts/flaky-test-runner.ts
           --suite web
-          --results-dir test-results/web
-          --report test-results/flaky-quarantine-web.json
+          --results-dir test-results/web-${{ matrix.shard }}
+          --report test-results/flaky-quarantine-web-${{ matrix.shard }}.json
           --
           bash -lc 'cd packages/web && bunx vitest run
           --reporter dot
           --reporter junit
-          --outputFile.junit=../../test-results/web/junit.xml
-          --coverage'
+          --outputFile.junit=../../test-results/web-${{ matrix.shard }}/junit.xml
+          --shard=${{ matrix.shard }}/2
+          --coverage
+          --coverage.reportsDirectory=coverage-web-${{ matrix.shard }}'
 
       - name: Fix coverage paths for monorepo
         run: |
           # Vitest generates paths relative to package dir (src/...)
           # Coveralls needs paths relative to repo root (packages/web/src/...)
-          sed -i 's|^SF:src/|SF:packages/web/src/|g' packages/web/coverage/lcov.info
+          sed -i 's|^SF:src/|SF:packages/web/src/|g' packages/web/coverage-web-${{ matrix.shard }}/lcov.info
           # Fix cross-package paths (../shared/src/... -> packages/shared/src/...)
-          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' packages/web/coverage/lcov.info
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' packages/web/coverage-web-${{ matrix.shard }}/lcov.info
 
       - name: Upload to Coveralls (parallel)
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: packages/web/coverage/lcov.info
-          flag-name: web
+          file: packages/web/coverage-web-${{ matrix.shard }}/lcov.info
+          flag-name: web-${{ matrix.shard }}
           parallel: true
           fail-on-error: false
 
