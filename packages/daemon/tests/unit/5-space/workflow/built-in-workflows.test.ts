@@ -370,9 +370,18 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'git -C "$SPACE_WS" fetch "$BASE_REMOTE" "$BASE"'
     );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('rev-parse FETCH_HEAD');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('space-checkout-base');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('space-checkout-pull');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('space-checkout-ahead');
+  });
+
+  test('merge instructions scan human reviews and verify merged-state recovery', () => {
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('HUMAN-authored `CHANGES_REQUESTED`');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('a later `APPROVED` from that same author');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'gate artifact `head_oid` still equals the PR headRefOid'
+    );
   });
 
   test('requires human sign-off structurally', () => {
