@@ -1,3 +1,5 @@
+import { formatAddress, type ParsedAddress } from '../../../../../messaging/src/address';
+
 export interface ResolveNodeAgentTargetsInput {
   target: string | string[];
   fromAgentName: string;
@@ -209,4 +211,67 @@ export function decideNodeTargetDelivery(
   }
   if (snapshot.activatedTargets.has(agentName)) return 'activatedWithoutQueue';
   return 'notFound';
+}
+
+export interface GenericAddressRoutingConfig {
+  spaceAgentAvailable: boolean;
+  messagingFacadeAvailable: boolean;
+  replyToSessionId: string | null;
+  workflowRunId: string;
+}
+
+export type GenericAddressRoutingDecision =
+  | { action: 'deliverToCoordinator' }
+  | { action: 'deliverToSession'; sessionId: string; replyAuthorized: true }
+  | { action: 'failSessionUnauthorized'; target: string }
+  | { action: 'deliverViaMessagingFacade' }
+  | { action: 'failUnsupported'; target: string }
+  | { action: 'deliverToWorker'; nodeName: string; agentName: string }
+  | { action: 'failInvalidWorker'; target: string; reason: string }
+  | { action: 'failUnsupportedKind'; target: string }
+  | { action: 'notFound'; target: string };
+
+export function decideGenericAddressRouting(
+  address: ParsedAddress,
+  config: GenericAddressRoutingConfig
+): GenericAddressRoutingDecision {
+  const target = formatAddress(address);
+  if (address.kind === 'handle' && address.handle === 'coordinator') {
+    return config.spaceAgentAvailable
+      ? { action: 'deliverToCoordinator' }
+      : { action: 'notFound', target };
+  }
+  if (address.kind === 'session') {
+    if (!config.spaceAgentAvailable) return { action: 'notFound', target };
+    if (config.replyToSessionId === null || address.sessionId !== config.replyToSessionId) {
+      return { action: 'failSessionUnauthorized', target };
+    }
+    return { action: 'deliverToSession', sessionId: address.sessionId, replyAuthorized: true };
+  }
+  if (address.kind === 'handle' || address.kind === 'role') {
+    return config.messagingFacadeAvailable
+      ? { action: 'deliverViaMessagingFacade' }
+      : { action: 'failUnsupported', target };
+  }
+  if (address.kind !== 'worker') {
+    return { action: 'failUnsupportedKind', target };
+  }
+  const runId = address.workflowRunId ?? config.workflowRunId;
+  if (runId !== config.workflowRunId) {
+    return { action: 'notFound', target };
+  }
+  try {
+    const nodeName = decodeURIComponent(address.nodeId);
+    const agentName = address.agentName ? decodeURIComponent(address.agentName) : null;
+    if (!agentName) {
+      return { action: 'notFound', target };
+    }
+    return { action: 'deliverToWorker', nodeName, agentName };
+  } catch (err) {
+    return {
+      action: 'failInvalidWorker',
+      target,
+      reason: err instanceof Error ? err.message : String(err),
+    };
+  }
 }

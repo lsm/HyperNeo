@@ -1,13 +1,16 @@
 import { describe, expect, test } from 'bun:test';
+import { parseAddress } from '../../../../../messaging/src/address';
 import {
   buildNodeNameResolver,
   buildSlotToNodeMap,
+  decideGenericAddressRouting,
   decideNodeTargetDelivery,
   foldAgentMessageResult,
+  type GenericAddressRoutingConfig,
   isDeclaredOrActivatedTarget,
-  resolveNodeAgentTargets,
   type NodeTargetDeliverySnapshot,
   type ResolveNodeAgentTargetsInput,
+  resolveNodeAgentTargets,
 } from '../../../../src/lib/space/runtime/agent-message-routing-gates';
 
 function makeInput(
@@ -626,5 +629,163 @@ describe('foldAgentMessageResult', () => {
         failed: [],
       }
     );
+  });
+});
+
+function makeGenericConfig(
+  overrides: Partial<GenericAddressRoutingConfig> = {}
+): GenericAddressRoutingConfig {
+  return {
+    spaceAgentAvailable: true,
+    messagingFacadeAvailable: true,
+    replyToSessionId: null,
+    workflowRunId: 'run-1',
+    ...overrides,
+  };
+}
+
+describe('decideGenericAddressRouting: @coordinator', () => {
+  test('delivers when the space agent is available', () => {
+    expect(decideGenericAddressRouting(parseAddress('@coordinator'), makeGenericConfig())).toEqual({
+      action: 'deliverToCoordinator',
+    });
+  });
+
+  test('marks the target not found when the space agent is unavailable', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@coordinator'),
+        makeGenericConfig({ spaceAgentAvailable: false })
+      )
+    ).toEqual({ action: 'notFound', target: '@coordinator' });
+  });
+});
+
+describe('decideGenericAddressRouting: @session', () => {
+  test('delivers to the authorized reply-route session', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@session:session-origin'),
+        makeGenericConfig({ replyToSessionId: 'session-origin' })
+      )
+    ).toEqual({
+      action: 'deliverToSession',
+      sessionId: 'session-origin',
+      replyAuthorized: true,
+    });
+  });
+
+  test('fails as unauthorized without a reply route', () => {
+    expect(
+      decideGenericAddressRouting(parseAddress('@session:other-session'), makeGenericConfig())
+    ).toEqual({ action: 'failSessionUnauthorized', target: '@session:other-session' });
+  });
+
+  test('fails as unauthorized when the reply route names another session', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@session:other-session'),
+        makeGenericConfig({ replyToSessionId: 'session-origin' })
+      )
+    ).toEqual({ action: 'failSessionUnauthorized', target: '@session:other-session' });
+  });
+
+  test('checks availability before authorization', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@session:session-origin'),
+        makeGenericConfig({ spaceAgentAvailable: false, replyToSessionId: 'session-origin' })
+      )
+    ).toEqual({ action: 'notFound', target: '@session:session-origin' });
+  });
+});
+
+describe('decideGenericAddressRouting: @handle and @role', () => {
+  test('delivers plain handles through the messaging facade', () => {
+    expect(decideGenericAddressRouting(parseAddress('@neo'), makeGenericConfig())).toEqual({
+      action: 'deliverViaMessagingFacade',
+    });
+  });
+
+  test('delivers roles through the messaging facade', () => {
+    expect(
+      decideGenericAddressRouting(parseAddress('@role:reviewer'), makeGenericConfig())
+    ).toEqual({ action: 'deliverViaMessagingFacade' });
+  });
+
+  test('fails handles as unsupported without facade wiring', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@neo'),
+        makeGenericConfig({ messagingFacadeAvailable: false })
+      )
+    ).toEqual({ action: 'failUnsupported', target: '@neo' });
+  });
+
+  test('fails roles as unsupported without facade wiring', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@role:reviewer'),
+        makeGenericConfig({ messagingFacadeAvailable: false })
+      )
+    ).toEqual({ action: 'failUnsupported', target: '@role:reviewer' });
+  });
+});
+
+describe('decideGenericAddressRouting: unsupported kinds', () => {
+  test('fails channel addresses with the unsupported-kind action', () => {
+    expect(decideGenericAddressRouting(parseAddress('#general'), makeGenericConfig())).toEqual({
+      action: 'failUnsupportedKind',
+      target: '#general',
+    });
+  });
+});
+
+describe('decideGenericAddressRouting: @worker', () => {
+  test('delivers to the decoded node and agent for the current run', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@worker:run-1/Review%20A/reviewer'),
+        makeGenericConfig()
+      )
+    ).toEqual({ action: 'deliverToWorker', nodeName: 'Review A', agentName: 'reviewer' });
+  });
+
+  test('delivers two-segment addresses without a run id against the current run', () => {
+    expect(
+      decideGenericAddressRouting(parseAddress('@worker:Review%20A/reviewer'), makeGenericConfig())
+    ).toEqual({ action: 'deliverToWorker', nodeName: 'Review A', agentName: 'reviewer' });
+  });
+
+  test('marks foreign-run workers not found with the raw encoded target', () => {
+    expect(
+      decideGenericAddressRouting(
+        parseAddress('@worker:other-run/Review%20A/reviewer'),
+        makeGenericConfig()
+      )
+    ).toEqual({ action: 'notFound', target: '@worker:other-run/Review%20A/reviewer' });
+  });
+
+  test('marks node-only worker addresses not found', () => {
+    expect(
+      decideGenericAddressRouting(parseAddress('@worker:Review'), makeGenericConfig())
+    ).toEqual({ action: 'notFound', target: '@worker:Review' });
+  });
+
+  test('fails malformed worker segments with the decode error', () => {
+    let decodeError = '';
+    try {
+      decodeURIComponent('%GG');
+    } catch (err) {
+      decodeError = err instanceof Error ? err.message : String(err);
+    }
+
+    expect(
+      decideGenericAddressRouting(parseAddress('@worker:Review/%GG'), makeGenericConfig())
+    ).toEqual({
+      action: 'failInvalidWorker',
+      target: '@worker:Review/%GG',
+      reason: decodeError,
+    });
   });
 });
