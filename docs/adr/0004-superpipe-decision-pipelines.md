@@ -108,8 +108,12 @@ shell (class): flat interpreter, one branch per decision action
 remaining body is a different shape: long flows interleaving snapshots, decisions,
 and guarded effects — admission, four recovery handlers, queued-handoff repair,
 completion settlement, spawn. Per issue #2670, a second combinator is sanctioned:
-`stagedRun(name, stages)`, where each stage is a superpipe sub-pipeline of one of
-five types:
+`stagedRun(name, stages)`. Only the top-level composition is necessarily
+superpipe — the interpreter makes stage ordering, halts, and error wiring
+structural. Each stage is a callable obeying one of five stage contracts; the
+body may be a plain function or a composed sub-pipeline, which are
+interchangeable (after composition, a pipeline is just a function — the
+interpreter never distinguishes them). The five contracts:
 
 - **`snapshot`** — read-only; gathers declared state keys into ctx (async allowed).
 - **`decide`** — pure and synchronous; a `decisionRun` core; stamps a decision
