@@ -504,10 +504,17 @@ jobs:
   # ============================================
 
   test-web:
-    name: Web Tests
+    name: Web Tests (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
     timeout-minutes: 9
     if: (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # vitest --shard distributes test FILES across legs; the union of
+        # shards 1..N runs the whole suite. scripts/validate-test-matrix.sh
+        # pins the axis against the runner's --shard denominator.
+        shard: [1, 2]
 
     steps:
       - uses: actions/checkout@v6
@@ -540,28 +547,30 @@ jobs:
           bun run scripts/flaky-test-runner.ts
           --suite web
           --results-dir test-results/web
-          --report test-results/flaky-quarantine-web.json
+          --report test-results/flaky-quarantine-web-${{ matrix.shard }}.json
           --
           bash -lc 'cd packages/web && bunx vitest run
           --reporter dot
           --reporter junit
-          --outputFile.junit=../../test-results/web/junit-web.xml
-          --coverage'
+          --outputFile.junit=../../test-results/web/junit-web-${{ matrix.shard }}.xml
+          --shard=${{ matrix.shard }}/2
+          --coverage
+          --coverage.reportsDirectory=coverage-web-${{ matrix.shard }}'
 
       - name: Fix coverage paths for monorepo
         run: |
           # Vitest generates paths relative to package dir (src/...)
           # Coveralls needs paths relative to repo root (packages/web/src/...)
-          sed -i 's|^SF:src/|SF:packages/web/src/|g' packages/web/coverage/lcov.info
+          sed -i 's|^SF:src/|SF:packages/web/src/|g' packages/web/coverage-web-${{ matrix.shard }}/lcov.info
           # Fix cross-package paths (../shared/src/... -> packages/shared/src/...)
-          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' packages/web/coverage/lcov.info
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' packages/web/coverage-web-${{ matrix.shard }}/lcov.info
 
       - name: Upload to Coveralls (parallel)
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: packages/web/coverage/lcov.info
-          flag-name: web
+          file: packages/web/coverage-web-${{ matrix.shard }}/lcov.info
+          flag-name: web-${{ matrix.shard }}
           parallel: true
           fail-on-error: false
 
@@ -569,16 +578,16 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: web-junit
-          path: test-results/web/junit-web.xml
+          name: web-junit-${{ matrix.shard }}
+          path: test-results/web/junit-web-${{ matrix.shard }}.xml
           retention-days: 7
 
       - name: Upload lcov artifact
-        if: hashFiles('packages/web/coverage/lcov.info') != ''
+        if: hashFiles(format('packages/web/coverage-web-{0}/lcov.info', matrix.shard)) != ''
         uses: actions/upload-artifact@v7
         with:
-          name: lcov-web
-          path: packages/web/coverage/lcov.info
+          name: lcov-web-${{ matrix.shard }}
+          path: packages/web/coverage-web-${{ matrix.shard }}/lcov.info
           retention-days: 7
 
   # ============================================
@@ -622,7 +631,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: balance/web
-          pattern: web-junit
+          pattern: web-junit-*
 
       - name: Build balance report
         run: bun run scripts/ci-balance-report.ts balance --top 25
