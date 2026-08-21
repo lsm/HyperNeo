@@ -368,7 +368,7 @@ describe('coder-only workflow template', () => {
 
   test('merge instructions give executable guarded commands for the Space checkout sync', () => {
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
-      'git -C "$SPACE_WS" pull --ff-only origin "$BASE"'
+      'git -C "$SPACE_WS" fetch "$BASE_REMOTE" "$BASE"'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('space-checkout-base');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('space-checkout-pull');
