@@ -7,9 +7,12 @@ import {
   buildBaseline,
   computeStats,
   evaluateGate,
+  expectedArtifactsForJobs,
   isCountedPath,
+  jobNameToArtifactName,
   main,
   mergeLcovText,
+  missingArtifacts,
   normalizeSfPath,
   parseBaseline,
   renderSummary,
@@ -283,8 +286,52 @@ describe('renderSummary', () => {
   });
 });
 
+describe('artifact completeness mapping', () => {
+  it('maps test-matrix job display names to lcov artifact names', () => {
+    expect(jobNameToArtifactName('Daemon Unit Tests (shared)')).toBe('lcov-daemon-shared');
+    expect(jobNameToArtifactName('Daemon Unit Tests (5-space-runtime-c)')).toBe(
+      'lcov-daemon-5-space-runtime-c'
+    );
+    expect(jobNameToArtifactName('Daemon Online (features-a)')).toBe(
+      'lcov-daemon-online-features-a'
+    );
+    expect(jobNameToArtifactName('Web Tests (1)')).toBe('lcov-web-1');
+    expect(jobNameToArtifactName('Web Tests (2)')).toBe('lcov-web-2');
+  });
+
+  it('ignores non-matrix and non-test jobs', () => {
+    expect(jobNameToArtifactName('Lint, Knip, Format & Type Check')).toBeNull();
+    expect(jobNameToArtifactName('Coverage Quality Gate')).toBeNull();
+    expect(jobNameToArtifactName('All Tests Pass')).toBeNull();
+    expect(jobNameToArtifactName('Daemon Unit Tests')).toBeNull();
+  });
+
+  it('derives a deduplicated sorted expected set from successful job names', () => {
+    expect(
+      expectedArtifactsForJobs([
+        'Web Tests (2)',
+        'Daemon Unit Tests (shared)',
+        'Daemon Unit Tests (shared)',
+        'Lint, Knip, Format & Type Check',
+        'Daemon Online (mcp)',
+        'Daemon Online (mcp)',
+      ])
+    ).toEqual(['lcov-daemon-online-mcp', 'lcov-daemon-shared', 'lcov-web-2']);
+  });
+
+  it('lists exactly the expected artifacts that are absent', () => {
+    expect(
+      missingArtifacts(
+        ['lcov-daemon-shared', 'lcov-web-1', 'lcov-daemon-online-mcp'],
+        ['lcov-daemon-shared', 'lcov-web-1']
+      )
+    ).toEqual(['lcov-daemon-online-mcp']);
+    expect(missingArtifacts(['lcov-web-1'], ['lcov-web-1'])).toEqual([]);
+  });
+});
+
 describe('main', () => {
-  it('gates against a baseline file and exits nonzero on violation', () => {
+  it('gates against a baseline file and exits nonzero on violation', async () => {
     const artifactsDir = `/tmp/coverage-gate-test-${process.pid}`;
     const baselinePath = `${artifactsDir}/baseline.json`;
     mkdirSync(`${artifactsDir}/a`, { recursive: true });
@@ -301,13 +348,13 @@ describe('main', () => {
       })
     );
 
-    expect(main(['--artifacts', artifactsDir, '--baseline', baselinePath])).toBe(1);
+    expect(await main(['--artifacts', artifactsDir, '--baseline', baselinePath])).toBe(1);
 
     writeFileSync(
       baselinePath,
       JSON.stringify({ schemaVersion: 1, overallPercent: 50, packages: {} })
     );
-    expect(main(['--artifacts', artifactsDir, '--baseline', baselinePath])).toBe(0);
+    expect(await main(['--artifacts', artifactsDir, '--baseline', baselinePath])).toBe(0);
   });
 
   it('writes a baseline document in --write-baseline mode without gating', async () => {
@@ -320,17 +367,17 @@ describe('main', () => {
     );
 
     expect(
-      main(['--artifacts', artifactsDir, '--baseline', baselinePath, '--write-baseline'])
+      await main(['--artifacts', artifactsDir, '--baseline', baselinePath, '--write-baseline'])
     ).toBe(0);
     const baseline = parseBaseline(await Bun.file(baselinePath).text());
     expect(baseline?.overallPercent).toBe(50);
     expect(baseline?.packages.daemon).toEqual({ covered: 1, total: 2, percent: 50 });
   });
 
-  it('fails when no lcov artifacts are present', () => {
+  it('fails when no lcov artifacts are present', async () => {
     const artifactsDir = `/tmp/coverage-gate-test-empty-${process.pid}`;
     mkdirSync(artifactsDir, { recursive: true });
     writeFileSync(`${artifactsDir}/keep.txt`, 'x');
-    expect(main(['--artifacts', artifactsDir])).toBe(1);
+    expect(await main(['--artifacts', artifactsDir])).toBe(1);
   });
 });

@@ -292,12 +292,101 @@ export function findLcovFiles(dir: string): string[] {
     .sort();
 }
 
+export function jobNameToArtifactName(jobName: string): string | null {
+  const match = /^(.*) \((.+)\)$/.exec(jobName);
+  if (!match) {
+    return null;
+  }
+  const [, family, leg] = match;
+  if (family === 'Daemon Unit Tests') {
+    return `lcov-daemon-${leg}`;
+  }
+  if (family === 'Daemon Online') {
+    return `lcov-daemon-online-${leg}`;
+  }
+  if (family === 'Web Tests') {
+    return `lcov-web-${leg}`;
+  }
+  return null;
+}
+
+export function expectedArtifactsForJobs(jobNames: string[]): string[] {
+  const names = jobNames
+    .map((jobName) => jobNameToArtifactName(jobName))
+    .filter((name): name is string => name !== null);
+  return [...new Set(names)].sort();
+}
+
+export function missingArtifacts(expected: string[], present: string[]): string[] {
+  const presentSet = new Set(present);
+  return expected.filter((name) => !presentSet.has(name));
+}
+
+interface GitHubJob {
+  name: string;
+  conclusion: string | null;
+}
+
+async function fetchSuccessfulJobNames(
+  repository: string,
+  runId: string,
+  token: string
+): Promise<string[]> {
+  const names: string[] = [];
+  for (let page = 1; page <= 20; page += 1) {
+    const response = await fetch(
+      `https://api.github.com/repos/${repository}/actions/runs/${runId}/jobs?per_page=100&page=${page}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`GitHub jobs API returned HTTP ${response.status}`);
+    }
+    const body = (await response.json()) as { jobs: GitHubJob[] };
+    if (body.jobs.length === 0) {
+      break;
+    }
+    for (const job of body.jobs) {
+      if (job.conclusion === 'success') {
+        names.push(job.name);
+      }
+    }
+  }
+  return names;
+}
+
+async function verifyArtifactCompleteness(artifactsDir: string): Promise<string[]> {
+  const token = process.env.GITHUB_TOKEN;
+  const repository = process.env.GITHUB_REPOSITORY;
+  const runId = process.env.GITHUB_RUN_ID;
+  if (!token || !repository || !runId) {
+    throw new Error(
+      '--verify-completeness requires GITHUB_TOKEN, GITHUB_REPOSITORY, and GITHUB_RUN_ID'
+    );
+  }
+  const jobNames = await fetchSuccessfulJobNames(repository, runId, token);
+  const expected = expectedArtifactsForJobs(jobNames);
+  if (expected.length === 0) {
+    throw new Error('no successful test-matrix jobs found in this workflow run');
+  }
+  const present = readdirSync(artifactsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  return missingArtifacts(expected, present);
+}
+
 interface CliOptions {
   artifactsDir: string;
   baselinePath: string;
   minCoverage: number;
   maxRegression: number;
   writeBaseline: boolean;
+  verifyCompleteness: boolean;
   sourceCommit?: string;
 }
 
@@ -308,6 +397,7 @@ function parseArgs(argv: string[]): CliOptions {
     minCoverage: 30,
     maxRegression: -2,
     writeBaseline: false,
+    verifyCompleteness: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -330,6 +420,8 @@ function parseArgs(argv: string[]): CliOptions {
       index += 1;
     } else if (arg === '--write-baseline') {
       options.writeBaseline = true;
+    } else if (arg === '--verify-completeness') {
+      options.verifyCompleteness = true;
     } else {
       throw new Error(`unknown coverage-gate arg: ${arg}`);
     }
@@ -344,7 +436,7 @@ function parseArgs(argv: string[]): CliOptions {
   return options;
 }
 
-export function main(argv = process.argv.slice(2)): number {
+export async function main(argv = process.argv.slice(2)): Promise<number> {
   const options = parseArgs(argv);
 
   const lcovFiles = findLcovFiles(options.artifactsDir);
@@ -352,6 +444,30 @@ export function main(argv = process.argv.slice(2)): number {
     console.error(`No lcov (.info) files found under ${options.artifactsDir}`);
     console.error('Expected downloaded lcov-* workflow artifacts — refusing to pass an empty gate');
     return 1;
+  }
+
+  if (options.verifyCompleteness) {
+    try {
+      const missing = await verifyArtifactCompleteness(options.artifactsDir);
+      if (missing.length > 0) {
+        console.error(
+          'Coverage gate FAILED: successful test-matrix jobs are missing their lcov artifacts'
+        );
+        console.error(
+          '(a shard whose coverage report silently failed to generate would otherwise be averaged out of the merge)'
+        );
+        for (const name of missing) {
+          console.error(`  missing: ${name}`);
+        }
+        return 1;
+      }
+      console.log('Artifact completeness verified against successful test-matrix jobs');
+    } catch (error) {
+      console.error(
+        `Artifact completeness check failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return 1;
+    }
   }
 
   const merged: MergedFiles = new Map();
@@ -403,5 +519,5 @@ export function main(argv = process.argv.slice(2)): number {
 }
 
 if (import.meta.main) {
-  process.exit(main());
+  process.exit(await main());
 }

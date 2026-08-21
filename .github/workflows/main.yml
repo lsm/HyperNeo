@@ -686,6 +686,9 @@ jobs:
     needs: [test-daemon-shared-unit, test-web, test-daemon-online]
     timeout-minutes: 3
     if: github.event.inputs.run_e2e_only != 'true'
+    permissions:
+      contents: read
+      actions: read
 
     steps:
       - uses: actions/checkout@v6
@@ -710,13 +713,22 @@ jobs:
           pattern: lcov-*
           path: lcov-artifacts
 
+      # --verify-completeness lists this run's successful test-matrix jobs via the
+      # actions API and fails when any of them produced no lcov artifact, so a
+      # shard whose coverage report silently failed to generate cannot be quietly
+      # averaged out of the merge. The job-name -> artifact-name mapping lives in
+      # jobNameToArtifactName (scripts/coverage-gate.ts) and must follow the
+      # display names and artifact names in this file.
       - name: Merge lcov and enforce coverage thresholds
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: >-
           bun run scripts/coverage-gate.ts
           --artifacts lcov-artifacts
           --baseline coverage-baseline.json
           --min-coverage 30
           --max-regression -2
+          --verify-completeness
 
   # ============================================
   # COVERAGE BASELINE UPDATE
