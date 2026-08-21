@@ -3664,6 +3664,21 @@ export class SpaceRuntime {
 
       this.clearTaskInterests(duplicate.id);
 
+      const live = this.config.taskRepo.getTask(duplicate.id);
+      if (
+        live &&
+        live.status !== 'archived' &&
+        !isValidSpaceTaskTransition(live.status, 'archived') &&
+        isValidSpaceTaskTransition(live.status, 'stopped')
+      ) {
+        await this.updateTaskAndEmit(
+          spaceId,
+          duplicate.id,
+          { status: 'stopped' },
+          { archiveSource: 'system_reconcile' }
+        );
+      }
+
       await this.updateTaskAndEmit(
         spaceId,
         duplicate.id,
