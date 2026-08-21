@@ -552,18 +552,24 @@ table now renders them as data, which is the point of recording them:
    Review questions for the team: should ownership be unified (runtime always
    emits, handlers never) instead of split by arm, and should the with-fields
    double event be collapsed to the final row?
-2. **Autonomy deny messages have two provenances.** Session-write denies are
-   composed by `decideAutonomyAdmission` ("…Request human approval."), while
-   `approve_task` denies are composed inside `routeApproveTask` with
-   submit-for-approval advisory text; the shared core parameterizes the tool
-   name but not the remediation wording.
+2. **Autonomy deny messages have three provenances.** Session-write denies are
+   composed by `decideAutonomyAdmission` ("…Request human approval."),
+   `approve_task` denies inside `routeApproveTask` with submit-for-approval
+   advisory text, and the bound node-agent path (`end-node-handlers.ts`) with
+   its own findings/QA-aware advisory; the shared core parameterizes the tool
+   name but not the remediation wording, so unifying any two producers still
+   leaves the third divergent.
 
 **Boundary caveats.** `cancel_task` routes *after* its primary effect —
 `taskManager.cancelTaskCascade` runs first and `routeCancelTask` then decides
 only whether to also cancel the workflow run: an action router over
 post-effect state, not an admission gate (target errors surface from the
-manager throwing, as before). `reassign_task` keeps no target gate (the manager
-throws for unknown ids), and `approve_task` gathers `spaceLevel` preferring
+manager throwing, as before). `reassign_task` keeps no target gate, and its worker validation precedes target
+resolution — `routeReassignTask` runs first, so an invalid `custom_agent_id`
+wins over an unknown `task_id`, with target errors surfacing only later from
+the manager throwing (pre-pilot parity; inserting `routeTaskTarget` in the
+documented position would change observable error precedence), and
+`approve_task` gathers `spaceLevel` preferring
 `space.autonomyLevel` over the `getSpaceAutonomyLevel` path that
 `requireSessionWriteAutonomy` uses — both pre-existing divergences, preserved.
 `approve_task` also inverts the shape's admission-first order: `routeApproveTask`
