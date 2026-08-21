@@ -413,7 +413,9 @@ or pinned directly by the gate/routing suites per Decision item 6. Live
 near-duplicates remain only in never-converted surfaces — the hand-rolled
 target checks in `get_task_detail`, `send_message_to_task`, `list_task_members`,
 `approve_pending_completion`, `attach_forge_task_evidence`, and the task branch
-of `resolve_forge_scope`, and the largest one: the UI-side RPC cascade
+of `resolve_forge_scope`; the bound task-agent surface's `onArchiveTask`
+(`runtime/task-agent-manager.ts`), which re-implements the archive-active-run
+gate with its own message variant; and the largest one: the UI-side RPC cascade
 in `rpc-handlers/space-task-handlers.ts`, which re-implements the update
 routing by hand with UI-flavored messages. These are follow-up mini-pilot
 material (below), deliberately not folded into a cleanup PR.
