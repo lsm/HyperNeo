@@ -135,6 +135,22 @@ import {
 } from './workflow-node-execution-validation';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
 import { selectWorkflow } from './workflow-selector';
+import { decideRunTickAdmission, selectTimedOutExecutions } from './run-tick-admission-gates';
+import {
+  resolveCompletionSummaries,
+  isTaskAlreadyResolved,
+  mapFinalTaskStatus,
+  resolveSpawnedPostApprovalSession,
+  isSettlementTerminal,
+  resolveQuiesceSourceNodeId,
+  selectSiblingsToQuiesce,
+} from './run-completion-settlement';
+import {
+  decideSpawnAdmission,
+  selectPromotablePendingExecutions,
+  classifySpawnFailure,
+  hasDriveableExecution,
+} from './run-spawn-decisions';
 
 const log = new Logger('space-runtime');
 const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {
@@ -4863,20 +4879,13 @@ export class SpaceRuntime {
     const space = await this.config.spaceManager.getSpace(run.spaceId);
     if (executions.length === 0) return 'skipped';
 
-    const hasDriveableExecution = executions.some(
-      (ex) =>
-        ex.status === 'pending' ||
-        ex.status === 'in_progress' ||
-        ex.status === 'waiting_rebind' ||
-        ex.status === 'blocked'
-    );
     const pendingMessageRepo = this.config.pendingMessageRepo;
     pendingMessageRepo?.enforceRetention({ runId: run.id });
     const hasQueuedNodeHandoff =
       pendingMessageRepo
         ?.listPendingForRun(run.id)
         .some((row) => row.targetKind === 'node_agent') ?? false;
-    if (hasDriveableExecution || hasQueuedNodeHandoff) return 'skipped';
+    if (hasDriveableExecution(executions) || hasQueuedNodeHandoff) return 'skipped';
 
     const tasks = this.config.taskRepo.listByWorkflowRun(run.id);
     const canonicalTask = this.pickCanonicalTaskForRun(run, tasks);
@@ -5967,7 +5976,28 @@ export class SpaceRuntime {
       canonicalTask = refreshed ?? canonicalTask;
     }
 
-    if (!meta.workflow.endNodeId) {
+    let nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+    const runIsComplete = this.completionDetector.isComplete({ workflowRunId: runId });
+
+    const admission = decideRunTickAdmission({
+      runStatus: run.status,
+      hasExecutorMeta: true,
+      runTaskCount: allRunTasks.length,
+      hasCanonicalTask: true,
+      hasEndNodeId: !!meta.workflow.endNodeId,
+      canonicalTaskStatus: canonicalTask.status,
+      executionCount: nodeExecutions.length,
+      runIsComplete,
+      hasBlockedExecution:
+        !runIsComplete && nodeExecutions.some((execution) => execution.status === 'blocked'),
+      firstBlockedResult:
+        nodeExecutions.find((execution) => execution.status === 'blocked')?.result ?? null,
+      availableTaskSlots: Number.MAX_SAFE_INTEGER,
+    });
+
+    if (admission.action === 'skip') return;
+
+    if (admission.action === 'blockInvalidWorkflow') {
       await this.transitionRunStatusAndEmit(runId, 'blocked');
       if (canonicalTask.status !== 'blocked') {
         await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
@@ -5987,17 +6017,6 @@ export class SpaceRuntime {
       return;
     }
 
-    if (isRateOrUsageLimited(canonicalTask.status)) {
-      return;
-    }
-
-    if (canonicalTask.status === 'stopped') {
-      return;
-    }
-
-    let nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-    if (nodeExecutions.length === 0) return;
-
     if (canonicalTask.status !== 'blocked') {
       this.notifiedTaskSet.delete(`${canonicalTask.id}:blocked`);
     }
@@ -6005,13 +6024,8 @@ export class SpaceRuntime {
       this.notifiedTaskSet.delete(`${canonicalTask.id}:timeout`);
     }
 
-    const endNodeId = meta.workflow.endNodeId;
-    const runIsComplete = this.completionDetector.isComplete({ workflowRunId: runId });
-
-    if (!runIsComplete && nodeExecutions.some((execution) => execution.status === 'blocked')) {
-      const blockedReason =
-        nodeExecutions.find((execution) => execution.status === 'blocked')?.result ??
-        'One or more workflow agents are blocked';
+    if (admission.action === 'blockOnBlockedExecutions') {
+      const blockedReason = admission.blockedReason;
       const dedupKey = `${canonicalTask.id}:blocked`;
       if (!this.notifiedTaskSet.has(dedupKey)) {
         this.notifiedTaskSet.add(dedupKey);
@@ -6023,7 +6037,6 @@ export class SpaceRuntime {
           timestamp: new Date().toISOString(),
         });
       }
-
       await this.transitionRunStatusAndEmit(runId, 'blocked');
       if (canonicalTask.status !== 'blocked') {
         await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
@@ -6040,32 +6053,30 @@ export class SpaceRuntime {
         reason: 'One or more tasks require attention',
         timestamp: new Date().toISOString(),
       });
-
       return;
     }
 
     const space = await this.config.spaceManager.getSpace(meta.spaceId);
+
     if (!runIsComplete) {
       const taskTimeoutMs = space?.config?.taskTimeoutMs;
       if (taskTimeoutMs !== undefined) {
         const now = Date.now();
-        const timedOutExecutions = nodeExecutions.filter((execution) => {
-          if (execution.status !== 'in_progress' || !execution.startedAt) return false;
-          return now - execution.startedAt > taskTimeoutMs;
-        });
+        const { timedOutExecutions, maxElapsedMs } = selectTimedOutExecutions(
+          nodeExecutions,
+          taskTimeoutMs,
+          now
+        );
         const dedupKey = `${canonicalTask.id}:timeout`;
         if (timedOutExecutions.length === 0) {
           this.notifiedTaskSet.delete(dedupKey);
         } else if (!this.notifiedTaskSet.has(dedupKey)) {
-          const elapsedMs = Math.max(
-            ...timedOutExecutions.map((execution) => now - (execution.startedAt ?? now))
-          );
           this.notifiedTaskSet.add(dedupKey);
           await this.safeNotify({
             kind: 'task_timeout',
             spaceId: meta.spaceId,
             taskId: canonicalTask.id,
-            elapsedMs,
+            elapsedMs: maxElapsedMs,
             timestamp: new Date().toISOString(),
           });
         }
@@ -6074,397 +6085,384 @@ export class SpaceRuntime {
 
     if (canonicalTask.status === 'open' && this.getAvailableTaskSlots(space) <= 0) return;
 
-    if (this.config.taskAgentManager) {
-      const tam = this.config.taskAgentManager;
-      let blockedByCrash = false;
+    const tam = this.config.taskAgentManager;
+    if (!tam) return;
+    let blockedByCrash = false;
 
-      const preTickPendingIds = new Set(
-        nodeExecutions.filter((e) => e.status === 'pending').map((e) => e.id)
-      );
+    const preTickPendingIds = new Set(
+      nodeExecutions
+        .filter((execution) => execution.status === 'pending')
+        .map((execution) => execution.id)
+    );
 
-      if (!space?.stopped) {
-        for (const execution of nodeExecutions) {
-          if (
-            !execution.agentSessionId ||
-            (execution.status !== 'in_progress' && execution.status !== 'pending')
-          ) {
-            continue;
-          }
-
-          if (tam.isSessionAlive(execution.agentSessionId)) {
-            continue;
-          }
-
-          try {
-            const liveSession = tam.getAgentSessionById(execution.agentSessionId);
-            if (liveSession) {
-              await liveSession.markPendingQuestionOrphaned('agent_session_terminated');
-            }
-          } catch (err) {
-            log.warn(
-              `SpaceRuntime: failed to clean up pending question for crashed session ${execution.agentSessionId}:`,
-              err
-            );
-          }
-
-          const exhausted = this.resetWorkflowNodeExecutionForSpawnRetry(
-            runId,
-            execution,
-            'agent session is no longer alive',
-            execution.agentSessionId
-          );
-          if (exhausted) {
-            blockedByCrash = true;
-            await this.safeNotify({
-              kind: 'agent_crash',
-              spaceId: meta.spaceId,
-              taskId: canonicalTask.id,
-              timestamp: new Date().toISOString(),
-            });
-          }
+    if (!space?.stopped) {
+      for (const execution of nodeExecutions) {
+        if (
+          !execution.agentSessionId ||
+          (execution.status !== 'in_progress' && execution.status !== 'pending')
+        ) {
+          continue;
         }
-      }
 
-      nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+        if (tam.isSessionAlive(execution.agentSessionId)) {
+          continue;
+        }
 
-      if (blockedByCrash) {
-        await this.blockRunForAgentCrash(runId, meta.spaceId, canonicalTask, nodeExecutions);
-        return;
-      }
+        try {
+          const liveSession = tam.getAgentSessionById(execution.agentSessionId);
+          if (liveSession) {
+            await liveSession.markPendingQuestionOrphaned('agent_session_terminated');
+          }
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: failed to clean up pending question for crashed session ${execution.agentSessionId}:`,
+            err
+          );
+        }
 
-      const aliveStuckOutcome = await this.handleAliveStuckExecutions(
-        runId,
-        meta.spaceId,
-        canonicalTask,
-        nodeExecutions,
-        tam,
-        meta.workflow,
-        space ?? null
-      );
-      if (aliveStuckOutcome === 'restarted' || aliveStuckOutcome === 'blocked') {
-        return;
-      }
-
-      const stoppedAfterWaitingRebind = await this.handleWaitingRebindExecutions(
-        runId,
-        run,
-        meta.spaceId,
-        canonicalTask
-      );
-      if (stoppedAfterWaitingRebind) {
-        return;
-      }
-      nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-
-      const nonTerminalIdleOutcome = await this.handleNonTerminalIdleExecutions(
-        runId,
-        meta.spaceId,
-        canonicalTask,
-        meta.workflow,
-        tam,
-        space ?? null
-      );
-      if (nonTerminalIdleOutcome === 'blocked') {
-        return;
-      }
-      nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-
-      const terminalErrorOutcome = await this.handleTerminalErrorIdleExecutions(
-        runId,
-        meta.spaceId,
-        canonicalTask,
-        tam,
-        space ?? null
-      );
-      if (terminalErrorOutcome === 'blocked') {
-        return;
-      }
-      nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-
-      if (
-        canonicalTask.status === 'done' ||
-        canonicalTask.status === 'cancelled' ||
-        canonicalTask.status === 'archived'
-      ) {
-        const stoppedAfterTerminalHandoffCleanup = await this.repairQueuedWorkflowNodeHandoffs(
+        const exhausted = this.resetWorkflowNodeExecutionForSpawnRetry(
           runId,
-          run,
-          meta,
-          canonicalTask,
-          space ?? null
+          execution,
+          'agent session is no longer alive',
+          execution.agentSessionId
         );
-        if (stoppedAfterTerminalHandoffCleanup) {
-          return;
+        if (exhausted) {
+          blockedByCrash = true;
+          await this.safeNotify({
+            kind: 'agent_crash',
+            spaceId: meta.spaceId,
+            taskId: canonicalTask.id,
+            timestamp: new Date().toISOString(),
+          });
         }
       }
+    }
 
-      if (space?.stopped) return;
+    nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
-      if (runIsComplete) {
-        await this.transitionRunStatusAndEmit(runId, 'done');
-        const summaryFromArtifact = this.resolvePrimaryResultArtifactSummary(runId);
-        const summary = this.resolveCompletionSummary(runId, meta.workflow);
-        const reportedSummary = normalizeMeaningfulTaskResult(canonicalTask.reportedSummary);
-        const existingResult = normalizeMeaningfulTaskResult(canonicalTask.result);
-        const freshSummary = summaryFromArtifact ?? summary ?? null;
-        const nextTaskResult = freshSummary ?? existingResult ?? reportedSummary ?? null;
-        const nextReportedSummary = freshSummary ?? reportedSummary ?? null;
+    if (blockedByCrash) {
+      await this.blockRunForAgentCrash(runId, meta.spaceId, canonicalTask, nodeExecutions);
+      return;
+    }
 
-        const taskAlreadyResolved =
-          canonicalTask.status === 'done' ||
-          canonicalTask.status === 'review' ||
-          canonicalTask.status === 'cancelled' ||
-          canonicalTask.status === 'approved' ||
-          canonicalTask.status === 'blocked';
+    const aliveStuckOutcome = await this.handleAliveStuckExecutions(
+      runId,
+      meta.spaceId,
+      canonicalTask,
+      nodeExecutions,
+      tam,
+      meta.workflow,
+      space
+    );
+    if (aliveStuckOutcome === 'restarted' || aliveStuckOutcome === 'blocked') {
+      return;
+    }
 
-        let finalTaskStatus: SpaceTask['status'] = canonicalTask.status;
-        let spawnedPostApprovalSessionId: string | undefined;
+    const stoppedAfterWaitingRebind = await this.handleWaitingRebindExecutions(
+      runId,
+      run,
+      meta.spaceId,
+      canonicalTask
+    );
+    if (stoppedAfterWaitingRebind) {
+      return;
+    }
+    nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
-        if (!taskAlreadyResolved) {
-          const updates = this.buildTaskOutcomeUpdates(
-            canonicalTask,
-            nextTaskResult,
-            nextReportedSummary
-          );
-          if (updates) {
-            await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
-          }
-          const result = await this.dispatchPostApproval(canonicalTask.id, 'agent');
-          spawnedPostApprovalSessionId =
-            result.mode === 'spawn' || result.mode === 'already-routed'
-              ? result.postApprovalSessionId
-              : undefined;
-          finalTaskStatus =
-            result.mode === 'no-route'
-              ? 'done'
-              : result.mode === 'skipped'
-                ? canonicalTask.status
-                : 'approved';
-        } else {
-          const updates = this.buildTaskOutcomeUpdates(
-            canonicalTask,
-            nextTaskResult,
-            nextReportedSummary
-          );
-          if (updates) {
-            await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
-          }
-        }
+    const nonTerminalIdleOutcome = await this.handleNonTerminalIdleExecutions(
+      runId,
+      meta.spaceId,
+      canonicalTask,
+      meta.workflow,
+      tam,
+      space
+    );
+    if (nonTerminalIdleOutcome === 'blocked') {
+      return;
+    }
+    nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
-        const taskTerminal =
-          finalTaskStatus === 'done' ||
-          finalTaskStatus === 'cancelled' ||
-          finalTaskStatus === 'blocked' ||
-          finalTaskStatus === 'approved';
-        if (taskTerminal) {
-          const sourceNodeId =
-            canonicalTask.postApprovalSourceNodeId ??
-            canonicalTask.pendingCompletionSubmittedByNodeId ??
-            endNodeId;
-          const siblingsToQuiesce = this.config.nodeExecutionRepo
-            .listByWorkflowRun(runId)
-            .filter(
-              (e) =>
-                e.status === 'in_progress' &&
-                e.agentSessionId &&
-                e.agentSessionId !== spawnedPostApprovalSessionId &&
-                (!sourceNodeId || e.workflowNodeId !== sourceNodeId)
-            );
-          for (const sibling of siblingsToQuiesce) {
-            this.config.nodeExecutionRepo.updateStatus(sibling.id, 'idle');
-            if (this.config.taskAgentManager) {
-              void this.config.taskAgentManager
-                .interruptBySessionId(sibling.agentSessionId!)
-                .catch((err) => {
-                  log.warn(
-                    `SpaceRuntime: failed to interrupt sibling session ${sibling.agentSessionId}:`,
-                    err
-                  );
-                });
-            }
-            log.info(
-              `SpaceRuntime: quiesced sibling node execution ${sibling.id} ` +
-                `(node ${sibling.workflowNodeId}, agent ${sibling.agentName}) ` +
-                `to idle for finished execution attempt ${runId}; session kept alive for post-completion messaging`
-            );
-          }
-        }
+    const terminalErrorOutcome = await this.handleTerminalErrorIdleExecutions(
+      runId,
+      meta.spaceId,
+      canonicalTask,
+      tam,
+      space
+    );
+    if (terminalErrorOutcome === 'blocked') {
+      return;
+    }
+    nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
-        return;
-      }
-
-      if (space?.paused || space?.stopped) return;
-
-      const hasQueuedNodeHandoff =
-        this.config.pendingMessageRepo
-          ?.listPendingForRun(runId)
-          .some((row) => row.targetKind === 'node_agent') ?? false;
-      if (!space && !hasQueuedNodeHandoff) return;
-
-      const stoppedAfterQueuedHandoffRepair = await this.repairQueuedWorkflowNodeHandoffs(
+    if (
+      canonicalTask.status === 'done' ||
+      canonicalTask.status === 'cancelled' ||
+      canonicalTask.status === 'archived'
+    ) {
+      const stoppedAfterTerminalHandoffCleanup = await this.repairQueuedWorkflowNodeHandoffs(
         runId,
         run,
         meta,
         canonicalTask,
-        space ?? null
+        space
       );
-      if (stoppedAfterQueuedHandoffRepair) {
+      if (stoppedAfterTerminalHandoffCleanup) {
         return;
       }
+    }
 
-      nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-      for (const execution of nodeExecutions) {
-        if (execution.status !== 'pending') continue;
-        if (!execution.agentSessionId) continue;
-        if (!preTickPendingIds.has(execution.id)) continue;
-        if (tam.isSessionAlive(execution.agentSessionId)) {
-          log.warn(
-            `SpaceRuntime: repaired pending execution ${execution.id} with live session ${execution.agentSessionId}`
-          );
-          this.config.nodeExecutionRepo.update(execution.id, {
-            status: 'in_progress',
-            agentSessionId: execution.agentSessionId,
-            startedAt: execution.startedAt ?? Date.now(),
-            completedAt: null,
-          });
+    if (space?.stopped) return;
+
+    if (runIsComplete) {
+      await this.transitionRunStatusAndEmit(runId, 'done');
+      const summaryFromArtifact = this.resolvePrimaryResultArtifactSummary(runId);
+      const computedSummary = this.resolveCompletionSummary(runId, meta.workflow);
+      const reportedSummary = normalizeMeaningfulTaskResult(canonicalTask.reportedSummary);
+      const existingResult = normalizeMeaningfulTaskResult(canonicalTask.result);
+      const { nextTaskResult, nextReportedSummary } = resolveCompletionSummaries({
+        summaryFromArtifact: summaryFromArtifact ?? null,
+        computedSummary: computedSummary ?? null,
+        existingResult,
+        reportedSummary,
+      });
+
+      const alreadyResolved = isTaskAlreadyResolved(canonicalTask.status);
+      let finalTaskStatus: SpaceTask['status'] = canonicalTask.status;
+      let spawnedPostApprovalSessionId: string | undefined;
+
+      if (!alreadyResolved) {
+        const updates = this.buildTaskOutcomeUpdates(
+          canonicalTask,
+          nextTaskResult,
+          nextReportedSummary
+        );
+        if (updates) {
+          await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
+        }
+        const result = await this.dispatchPostApproval(canonicalTask.id, 'agent');
+        const postApprovalSessionId =
+          result.mode === 'spawn' || result.mode === 'already-routed'
+            ? result.postApprovalSessionId
+            : undefined;
+        spawnedPostApprovalSessionId = resolveSpawnedPostApprovalSession(
+          result.mode,
+          postApprovalSessionId
+        );
+        finalTaskStatus = mapFinalTaskStatus(result.mode, canonicalTask.status);
+      } else {
+        const updates = this.buildTaskOutcomeUpdates(
+          canonicalTask,
+          nextTaskResult,
+          nextReportedSummary
+        );
+        if (updates) {
+          await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
         }
       }
-      nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-      const pendingExecutions = nodeExecutions.filter(
-        (execution) => execution.status === 'pending'
-      );
 
-      const freshCanonicalTask = this.config.taskRepo.getTask(canonicalTask.id);
-      if (freshCanonicalTask) canonicalTask = freshCanonicalTask;
-
-      const canonicalTaskIsTerminal =
-        canonicalTask.status === 'done' ||
-        canonicalTask.status === 'cancelled' ||
-        canonicalTask.status === 'archived' ||
-        canonicalTask.status === 'stopped';
-      const parkedAwaitingApproval =
-        (canonicalTask.status === 'review' || canonicalTask.status === 'approved') &&
-        pendingExecutions.some(
-          (execution) => execution.startedAt !== null && execution.agentSessionId === null
+      if (isSettlementTerminal(finalTaskStatus)) {
+        const sourceNodeId = resolveQuiesceSourceNodeId(canonicalTask, meta.workflow.endNodeId);
+        const siblingsToQuiesce = selectSiblingsToQuiesce(
+          this.config.nodeExecutionRepo.listByWorkflowRun(runId),
+          spawnedPostApprovalSessionId,
+          sourceNodeId
         );
-
-      if (pendingExecutions.length > 0 && (canonicalTaskIsTerminal || parkedAwaitingApproval)) {
-        log.info(
-          `SpaceRuntime: skipping agent spawn for run ${runId} — canonical task ${canonicalTask.id} status is ${canonicalTask.status}`
-        );
-      } else if (pendingExecutions.length > 0) {
-        if (!space) {
-          log.warn(
-            `SpaceRuntime: cannot spawn workflow node agents for run ${runId} — space ${meta.spaceId} not found`
-          );
-        } else {
-          let permanentSpawnFailureReason: string | null = null;
-          for (const execution of pendingExecutions) {
-            if (tam.isExecutionSpawning(execution.id)) continue;
-            try {
-              const sessionId = await tam.spawnWorkflowNodeAgentForExecution(
-                canonicalTask,
-                space,
-                meta.workflow,
-                run,
-                execution,
-                {
-                  kickoff: true,
-                }
-              );
-              this.flushPendingNodeQueue({
-                workflowRunId: runId,
-                taskId: canonicalTask.id,
-                nodeId: execution.workflowNodeId,
-                agentName: execution.agentName,
-                sessionId,
+        for (const sibling of siblingsToQuiesce) {
+          this.config.nodeExecutionRepo.updateStatus(sibling.id, 'idle');
+          if (this.config.taskAgentManager) {
+            void this.config.taskAgentManager
+              .interruptBySessionId(sibling.agentSessionId!)
+              .catch((err) => {
+                log.warn(
+                  `SpaceRuntime: failed to interrupt sibling session ${sibling.agentSessionId}:`,
+                  err
+                );
               });
-              const restartNotice = this.consumeAgentRestartNotice(runId, execution);
-              if (restartNotice) {
-                void tam.injectRuntimeRecoveryMessage(sessionId, restartNotice).catch((err) => {
-                  log.warn(
-                    `SpaceRuntime: failed to deliver restart recovery notice to session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
-                  );
-                });
-              }
-            } catch (err) {
-              if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
-                permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
-                continue;
-              }
-              if (isTransientSpawnError(err)) {
-                log.warn(
-                  `SpaceRuntime: deferring spawn for limited-task execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
-                );
-                continue;
-              }
-              const stale = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
-              if (
-                stale.status === 'cancelled' ||
-                stale.status === 'blocked' ||
-                stale.status === 'idle'
-              ) {
-                log.warn(
-                  `SpaceRuntime: preserving terminal execution ${execution.id} (${stale.status}) after spawn failure: ${err instanceof Error ? err.message : String(err)}`
-                );
-                continue;
-              }
-              if (stale.agentSessionId) {
-                tam.cancelBySessionId(stale.agentSessionId);
-              }
-              if (
-                this.resetWorkflowNodeExecutionForSpawnRetry(
-                  runId,
-                  stale,
-                  err instanceof Error ? err.message : String(err),
-                  stale.agentSessionId
-                )
-              ) {
-                blockedByCrash = true;
-              }
-              log.warn(
-                `SpaceRuntime: transient spawn failure for workflow node execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
-              );
-            }
           }
-          if (permanentSpawnFailureReason) {
-            const refreshedExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-            const hasDriveableExecution = refreshedExecutions.some(
-              (execution) =>
-                execution.status === 'pending' ||
-                execution.status === 'in_progress' ||
-                execution.status === 'waiting_rebind' ||
-                execution.status === 'blocked'
-            );
-            if (!hasDriveableExecution) {
-              await this.blockRunForPermanentSpawnFailure(
-                runId,
-                meta.spaceId,
-                canonicalTask,
-                permanentSpawnFailureReason
-              );
-              return;
-            }
-          }
-          if (blockedByCrash) {
-            nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-            await this.blockRunForAgentCrash(runId, meta.spaceId, canonicalTask, nodeExecutions);
-            return;
-          }
-          if (canonicalTask.status === 'open') {
-            const nowTs = Date.now();
-            await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-              status: 'in_progress',
-              startedAt: canonicalTask.startedAt ?? nowTs,
-              completedAt: null,
-              pendingCheckpointType: null,
-            });
-          }
+          log.info(
+            `SpaceRuntime: quiesced sibling node execution ${sibling.id} ` +
+              `(node ${sibling.workflowNodeId}, agent ${sibling.agentName}) ` +
+              `to idle for finished execution attempt ${runId}; session kept alive for post-completion messaging`
+          );
         }
       }
 
       return;
     }
+
+    if (space?.paused || space?.stopped) return;
+
+    const hasQueuedNodeHandoff =
+      this.config.pendingMessageRepo
+        ?.listPendingForRun(runId)
+        .some((row) => row.targetKind === 'node_agent') ?? false;
+    if (!space && !hasQueuedNodeHandoff) return;
+
+    const stoppedAfterQueuedHandoffRepair = await this.repairQueuedWorkflowNodeHandoffs(
+      runId,
+      run,
+      meta,
+      canonicalTask,
+      space
+    );
+    if (stoppedAfterQueuedHandoffRepair) {
+      return;
+    }
+
+    nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+
+    const aliveSessionIds = new Set<string>();
+    for (const execution of nodeExecutions) {
+      if (
+        execution.status === 'pending' &&
+        preTickPendingIds.has(execution.id) &&
+        execution.agentSessionId &&
+        tam.isSessionAlive(execution.agentSessionId)
+      ) {
+        aliveSessionIds.add(execution.agentSessionId);
+      }
+    }
+    const promotable = selectPromotablePendingExecutions(
+      nodeExecutions,
+      preTickPendingIds,
+      aliveSessionIds
+    );
+    for (const execution of promotable) {
+      log.warn(
+        `SpaceRuntime: repaired pending execution ${execution.id} with live session ${execution.agentSessionId}`
+      );
+      this.config.nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: execution.agentSessionId,
+        startedAt: execution.startedAt ?? Date.now(),
+        completedAt: null,
+      });
+    }
+    nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+
+    const pendingExecutions = nodeExecutions.filter((execution) => execution.status === 'pending');
+
+    const freshCanonicalTask = this.config.taskRepo.getTask(canonicalTask.id);
+    if (freshCanonicalTask) canonicalTask = freshCanonicalTask;
+
+    const spawnAdmission = decideSpawnAdmission({
+      pendingExecutionCount: pendingExecutions.length,
+      canonicalTaskStatus: canonicalTask.status,
+      pendingExecutions,
+      hasSpace: !!space,
+    });
+
+    if (spawnAdmission.action === 'skipSpawn') {
+      if (
+        spawnAdmission.reason === 'canonical_task_terminal' ||
+        spawnAdmission.reason === 'parked_awaiting_approval'
+      ) {
+        log.info(
+          `SpaceRuntime: skipping agent spawn for run ${runId} — canonical task ${canonicalTask.id} status is ${canonicalTask.status}`
+        );
+      } else if (spawnAdmission.reason === 'space_missing') {
+        log.warn(
+          `SpaceRuntime: cannot spawn workflow node agents for run ${runId} — space ${meta.spaceId} not found`
+        );
+      }
+    } else if (spawnAdmission.action === 'spawn' && space) {
+      let permanentSpawnFailureReason: string | null = null;
+      for (const execution of pendingExecutions) {
+        if (tam.isExecutionSpawning(execution.id)) continue;
+        try {
+          const sessionId = await tam.spawnWorkflowNodeAgentForExecution(
+            canonicalTask,
+            space,
+            meta.workflow,
+            run,
+            execution,
+            { kickoff: true }
+          );
+          this.flushPendingNodeQueue({
+            workflowRunId: runId,
+            taskId: canonicalTask.id,
+            nodeId: execution.workflowNodeId,
+            agentName: execution.agentName,
+            sessionId,
+          });
+          const restartNotice = this.consumeAgentRestartNotice(runId, execution);
+          if (restartNotice) {
+            void tam.injectRuntimeRecoveryMessage(sessionId, restartNotice).catch((err) => {
+              log.warn(
+                `SpaceRuntime: failed to deliver restart recovery notice to session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+              );
+            });
+          }
+        } catch (err) {
+          if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
+            permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
+            continue;
+          }
+          if (isTransientSpawnError(err)) {
+            log.warn(
+              `SpaceRuntime: deferring spawn for limited-task execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
+            );
+            continue;
+          }
+          const stale = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
+          const classification = classifySpawnFailure({
+            isPermanent: isPermanentSpawnError(err),
+            isTransient: isTransientSpawnError(err),
+            staleExecutionStatus: stale.status,
+          });
+          if (classification === 'preserve_stale_terminal') {
+            log.warn(
+              `SpaceRuntime: preserving terminal execution ${execution.id} (${stale.status}) after spawn failure: ${err instanceof Error ? err.message : String(err)}`
+            );
+            continue;
+          }
+          if (stale.agentSessionId) {
+            tam.cancelBySessionId(stale.agentSessionId);
+          }
+          if (
+            this.resetWorkflowNodeExecutionForSpawnRetry(
+              runId,
+              stale,
+              err instanceof Error ? err.message : String(err),
+              stale.agentSessionId
+            )
+          ) {
+            blockedByCrash = true;
+          }
+          log.warn(
+            `SpaceRuntime: transient spawn failure for workflow node execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+      if (permanentSpawnFailureReason) {
+        const refreshedExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+        if (!hasDriveableExecution(refreshedExecutions)) {
+          await this.blockRunForPermanentSpawnFailure(
+            runId,
+            meta.spaceId,
+            canonicalTask,
+            permanentSpawnFailureReason
+          );
+          return;
+        }
+      }
+      if (blockedByCrash) {
+        nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+        await this.blockRunForAgentCrash(runId, meta.spaceId, canonicalTask, nodeExecutions);
+        return;
+      }
+      if (canonicalTask.status === 'open') {
+        const nowTs = Date.now();
+        await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+          status: 'in_progress',
+          startedAt: canonicalTask.startedAt ?? nowTs,
+          completedAt: null,
+          pendingCheckpointType: null,
+        });
+      }
+    }
+
+    return;
   }
 
   private async blockRunForPermanentSpawnFailure(
