@@ -335,15 +335,24 @@ interpreters over three extracted cores:
 **MCP TOOL HANDLER = STAGED PIPELINE.** The sanctioned handler shape,
 generalizing the pilot-1 sandwich to tool calls: admission (autonomy) →
 arg validation → target/scope resolution → action routing (pure table) →
-effects (manager/runtime calls) → result folding (audit + task-updated emit +
-JSON result). Everything up to and including action routing is pure and
+effects (manager/runtime calls) → result folding (a JSON result always; audit
+logging and task-updated emission are optional stages). Everything up to and
+including action routing is pure and
 unit-pinned; the shell gathers snapshot inputs (task row, run-active flag,
 workflow completion level, effective autonomy) and interprets the routed
 action. The stage order is the precedence contract and is the *implemented*
 order in `update_task`'s `decisionRun` (autonomy → arg-changes → target →
 routing arbiter), which preserves the pre-pilot precedence: a no-fields call
 fails with the argument error even for a missing or cross-space task id. A new
-handler following this shape inherits that arg-before-target ordering. `update_task` is the fullest instance: its `TaskUpdateRouting` union —
+handler following this shape inherits that arg-before-target ordering. Audit
+and emission coverage is as-implemented, not uniform: every handler folds to
+a JSON result, `update_task`/`publish_task`/`archive_task`/`approve_task` both
+audit and emit, `create_standalone_task` audits without emitting, `cancel_task`
+emits without auditing, and `retry_task`'s standalone branch and
+`reassign_task` do neither — `taskManager.retryTask`/`reassignTask` publish
+nothing, so those mutations reach no `space.task.updated` subscriber (the
+workflow-backed retry branch does, via the runtime's recovery emit). That
+spread is another facet of the emission-ownership question below. `update_task` is the fullest instance: its `TaskUpdateRouting` union —
 reject `no_updatable_fields` → target reject → `review_direct` →
 `approved_direct` → `park_stopped` → `review_to_done` → `archive_active_run` →
 `recover_transition` → `stop_for_status` → `set_status`, else `fields_only` —
