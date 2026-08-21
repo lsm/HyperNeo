@@ -1,5 +1,7 @@
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
+import type { AutonomyAdmissionDenyReason } from './tool-admission-gates';
+import { isAgentCeilingBinding } from './tool-admission-gates';
 
 export interface TaskUpdateRoutingInput {
   hasChanges: boolean;
@@ -98,11 +100,39 @@ export function routeCreateTaskWorkflowRef(
   return { action: 'use_ref', preferredWorkflowId: null };
 }
 
+export type TaskTargetRejectReason = 'task_not_found' | 'task_not_in_space';
+
+export interface TaskTargetGateInput {
+  taskExists: boolean;
+  taskInSpace: boolean;
+  taskId: string;
+}
+
+export type TaskTargetGate =
+  | { action: 'reject'; reason: TaskTargetRejectReason; message: string }
+  | { action: 'proceed' };
+
+export function routeTaskTarget(input: TaskTargetGateInput): TaskTargetGate {
+  if (!input.taskExists) {
+    return {
+      action: 'reject',
+      reason: 'task_not_found',
+      message: `Task not found: ${input.taskId}`,
+    };
+  }
+  if (!input.taskInSpace) {
+    return {
+      action: 'reject',
+      reason: 'task_not_in_space',
+      message: `Task ${input.taskId} does not belong to this space.`,
+    };
+  }
+  return { action: 'proceed' };
+}
+
 export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRouting {
   const {
     hasChanges,
-    taskExists,
-    taskInSpace,
     currentStatus,
     requestedStatus,
     statusDiffers,
@@ -120,19 +150,9 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
         'No fields to update. Provide at least one of: title, description, priority, depends_on, status.',
     };
   }
-  if (!taskExists) {
-    return {
-      action: 'reject',
-      reason: 'task_not_found',
-      message: `Task not found: ${taskId}`,
-    };
-  }
-  if (!taskInSpace) {
-    return {
-      action: 'reject',
-      reason: 'task_not_in_space',
-      message: `Task ${taskId} does not belong to this space.`,
-    };
+  const target = routeTaskTarget(input);
+  if (target.action === 'reject') {
+    return target;
   }
   if (requestedStatus !== undefined && statusDiffers) {
     if (requestedStatus === 'review') {
@@ -217,4 +237,178 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
     auditParamsShape: 'fields_only',
     emitTaskUpdated: 'always',
   };
+}
+
+export interface RetryTaskRoutingInput extends TaskTargetGateInput {
+  currentStatus: string;
+  hasWorkflowRun: boolean;
+}
+
+export type RetryTaskRouting =
+  | { action: 'reject'; reason: TaskTargetRejectReason | 'status_not_retryable'; message: string }
+  | { action: 'recover_workflow_task'; targetStatus: 'open' | 'in_progress' }
+  | { action: 'retry_task' };
+
+export function routeRetryTask(input: RetryTaskRoutingInput): RetryTaskRouting {
+  const target = routeTaskTarget(input);
+  if (target.action === 'reject') {
+    return target;
+  }
+  if (input.hasWorkflowRun) {
+    const retryableStatuses = ['blocked', 'cancelled', 'done'];
+    if (!retryableStatuses.includes(input.currentStatus)) {
+      return {
+        action: 'reject',
+        reason: 'status_not_retryable',
+        message: `Cannot retry task in '${input.currentStatus}' status. Task must be in 'blocked', 'cancelled', or 'done' status.`,
+      };
+    }
+    return {
+      action: 'recover_workflow_task',
+      targetStatus: input.currentStatus === 'blocked' ? 'open' : 'in_progress',
+    };
+  }
+  return { action: 'retry_task' };
+}
+
+export interface CancelTaskRoutingInput {
+  cancelWorkflowRunRequested: boolean;
+  hasWorkflowRun: boolean;
+  runExists: boolean;
+}
+
+export type CancelTaskRouting =
+  | { action: 'cancel_only' }
+  | { action: 'cancel_run'; runExists: boolean };
+
+export function routeCancelTask(input: CancelTaskRoutingInput): CancelTaskRouting {
+  if (!input.cancelWorkflowRunRequested || !input.hasWorkflowRun) {
+    return { action: 'cancel_only' };
+  }
+  return { action: 'cancel_run', runExists: input.runExists };
+}
+
+export interface PublishTaskRoutingInput extends TaskTargetGateInput {
+  currentStatus: string;
+}
+
+export type PublishTaskRouting =
+  | { action: 'reject'; reason: TaskTargetRejectReason | 'not_draft'; message: string }
+  | { action: 'publish' };
+
+export function routePublishTask(input: PublishTaskRoutingInput): PublishTaskRouting {
+  const target = routeTaskTarget(input);
+  if (target.action === 'reject') {
+    return target;
+  }
+  if (input.currentStatus !== 'draft') {
+    return {
+      action: 'reject',
+      reason: 'not_draft',
+      message: `Task is in '${input.currentStatus}' status, not 'draft'. Only draft tasks can be published.`,
+    };
+  }
+  return { action: 'publish' };
+}
+
+export interface ArchiveTaskRoutingInput extends TaskTargetGateInput {
+  hasWorkflowRun: boolean;
+  runActive: boolean;
+  workflowRunId?: string;
+}
+
+export type ArchiveTaskRouting =
+  | { action: 'reject'; reason: TaskTargetRejectReason | 'archive_active_run'; message: string }
+  | { action: 'archive' };
+
+export function routeArchiveTask(input: ArchiveTaskRoutingInput): ArchiveTaskRouting {
+  const target = routeTaskTarget(input);
+  if (target.action === 'reject') {
+    return target;
+  }
+  if (input.hasWorkflowRun && input.runActive) {
+    return {
+      action: 'reject',
+      reason: 'archive_active_run',
+      message:
+        `Cannot archive task ${input.taskId}: it belongs to an active workflow run ` +
+        `(${input.workflowRunId}). Cancel the run instead so its agents and ` +
+        `lifecycle are torn down — archiving would leave the run stranded.`,
+    };
+  }
+  return { action: 'archive' };
+}
+
+export interface ReassignTaskRoutingInput {
+  customAgentId: string | null | undefined;
+  workerAgentExists: boolean;
+}
+
+export type ReassignTaskRouting =
+  | { action: 'reject'; reason: 'worker_agent_not_found'; message: string }
+  | { action: 'reassign' };
+
+export function routeReassignTask(input: ReassignTaskRoutingInput): ReassignTaskRouting {
+  if (input.customAgentId != null && !input.workerAgentExists) {
+    return {
+      action: 'reject',
+      reason: 'worker_agent_not_found',
+      message: `Worker agent not found: ${input.customAgentId}`,
+    };
+  }
+  return { action: 'reassign' };
+}
+
+export interface ApproveTaskRoutingInput extends TaskTargetGateInput {
+  currentStatus: string;
+  level: number;
+  required: number;
+  agentLevel: number | null;
+  spaceLevel: number;
+}
+
+export type ApproveTaskRouting =
+  | { action: 'reject'; reason: TaskTargetRejectReason | 'not_in_review'; message: string }
+  | {
+      action: 'deny';
+      reason: AutonomyAdmissionDenyReason;
+      agentLevel?: number;
+      spaceLevel: number;
+      required: number;
+      message: string;
+    }
+  | { action: 'approve' };
+
+export function routeApproveTask(input: ApproveTaskRoutingInput): ApproveTaskRouting {
+  const target = routeTaskTarget(input);
+  if (target.action === 'reject') {
+    return target;
+  }
+  if (input.level < input.required) {
+    if (isAgentCeilingBinding(input.spaceLevel, input.agentLevel)) {
+      return {
+        action: 'deny',
+        reason: 'agent_autonomy_ceiling',
+        agentLevel: input.agentLevel,
+        spaceLevel: input.spaceLevel,
+        required: input.required,
+        message: `approve_task not permitted: agent autonomy ceiling ${input.agentLevel} (space ${input.spaceLevel}) < workflow completionAutonomyLevel ${input.required}. Use submit_for_approval to request human review.`,
+      };
+    }
+    return {
+      action: 'deny',
+      reason: 'space_autonomy_level',
+      spaceLevel: input.spaceLevel,
+      required: input.required,
+      message: `approve_task not permitted: space autonomy level ${input.spaceLevel} < workflow completionAutonomyLevel ${input.required}. Use submit_for_approval to request human review.`,
+    };
+  }
+  if (input.currentStatus !== 'review') {
+    return {
+      action: 'reject',
+      reason: 'not_in_review',
+      message: `Task is in '${input.currentStatus}' status, not 'review'. Only tasks in review can be approved.`,
+    };
+  }
+  return { action: 'approve' };
 }
