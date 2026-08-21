@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   decodeStatMode,
+  locateStatModeOffset,
   readFileWithinWorkspace,
   writeFileWithinWorkspace,
 } from '../../../../src/lib/acp/acp-safe-fs';
@@ -45,6 +46,25 @@ test('returns the pinned mode for non-regular stat entries', () => {
   expect(decodeStatMode(buf, 8, 2)).toBe(0o600);
   buf.writeUInt16LE(0o120400, 8);
   expect(decodeStatMode(buf, 8, 2)).toBe(0o600);
+});
+
+test('locates the mode offset within a calibration buffer', () => {
+  const buf = Buffer.alloc(256);
+  buf.writeUInt16LE(0o40700, 8);
+  expect(locateStatModeOffset(buf, 0o40700, 4)).toBe(8);
+});
+
+test('falls back when the calibration mode is absent from the buffer', () => {
+  const buf = Buffer.alloc(256);
+  buf.writeUInt16LE(0o40755, 8);
+  expect(locateStatModeOffset(buf, 0o40700, 4)).toBe(4);
+});
+
+test('does not scan past the end of a truncated buffer', () => {
+  const buf = Buffer.alloc(4);
+  buf.writeUInt16LE(0o40700, 0);
+  expect(locateStatModeOffset(buf, 0o40700, 4)).toBe(0);
+  expect(locateStatModeOffset(Buffer.alloc(2), 0o40700, 8)).toBe(8);
 });
 
 unsupportedRuntimeTest('rejects filesystem operations only when invoked', async () => {

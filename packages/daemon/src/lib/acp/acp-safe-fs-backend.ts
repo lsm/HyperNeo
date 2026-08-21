@@ -208,19 +208,20 @@ function closeFile(symbols: LibcSymbols, fd: number): void {
   if (fd >= 0) symbols.close(fd);
 }
 
+export function locateStatModeOffset(statBuf: Buffer, knownMode: number, fallback: number): number {
+  for (let offset = 0; offset + 2 <= statBuf.length && offset < 32; offset += 2) {
+    if (statBuf.readUInt16LE(offset) === knownMode) return offset;
+  }
+  return fallback;
+}
+
 function getDarwinStatModeOffset(symbols: LibcSymbols, directoryFd: number): number {
   if (darwinStatModeOffset !== undefined) return darwinStatModeOffset;
   const knownMode = fstatSync(directoryFd).mode & 0xffff;
   const statBuf = Buffer.alloc(256);
   symbols.fstatat(directoryFd, cString('.'), statBuf, AT_SYMLINK_NOFOLLOW);
-  for (let offset = 0; offset < 32; offset += 2) {
-    if (statBuf.readUInt16LE(offset) === knownMode) {
-      darwinStatModeOffset = offset;
-      return offset;
-    }
-  }
-  darwinStatModeOffset = STAT_MODE_OFFSET;
-  return STAT_MODE_OFFSET;
+  darwinStatModeOffset = locateStatModeOffset(statBuf, knownMode, STAT_MODE_OFFSET);
+  return darwinStatModeOffset;
 }
 
 export function decodeStatMode(statBuf: Buffer, modeOffset: number, modeWidth: 2 | 4): number {
@@ -231,25 +232,30 @@ export function decodeStatMode(statBuf: Buffer, modeOffset: number, modeWidth: 2
 
 const POSIX_ACL_ACCESS_XATTR = 'system.posix_acl_access';
 const ACL_BUFFER_BYTES = 64 * 1024;
+const ACL_MAX_XATTR_BYTES = 1024 * 1024;
 
-function copyPosixAcl(symbols: LibcSymbols, sourceFd: number, temporaryFd: number): void {
+function copyPosixAcl(symbols: LibcSymbols, sourceFd: number, temporaryFd: number): boolean {
   const name = cString(POSIX_ACL_ACCESS_XATTR);
   let value = Buffer.alloc(ACL_BUFFER_BYTES);
   let size = Number(symbols.fgetxattr?.(sourceFd, name, value, value.length) ?? -1);
-  if (size < 0) return;
+  if (size < 0) {
+    size = Number(symbols.fgetxattr?.(sourceFd, name, value, 0) ?? -1);
+  }
+  if (size < 0) return true;
+  if (size > ACL_MAX_XATTR_BYTES) return false;
   if (size > value.length) {
     value = Buffer.alloc(size);
     size = Number(symbols.fgetxattr?.(sourceFd, name, value, value.length) ?? -1);
-    if (size < 0 || size > value.length) return;
+    if (size < 0 || size > value.length) return false;
   }
-  symbols.fsetxattr?.(temporaryFd, name, value, size, 0);
+  return Number(symbols.fsetxattr?.(temporaryFd, name, value, size, 0) ?? -1) >= 0;
 }
 
-function copyDarwinAcl(symbols: LibcSymbols, sourceFd: number, temporaryFd: number): void {
+function copyDarwinAcl(symbols: LibcSymbols, sourceFd: number, temporaryFd: number): boolean {
   const acl = symbols.acl_get_fd?.(sourceFd);
-  if (!acl) return;
+  if (!acl) return true;
   try {
-    symbols.acl_set_fd?.(temporaryFd, acl);
+    return symbols.acl_set_fd?.(temporaryFd, acl) === 0;
   } finally {
     symbols.acl_free?.(acl);
   }
@@ -260,7 +266,7 @@ function copyAccessControlMetadata(
   directoryFd: number,
   fileName: string,
   temporaryFd: number
-): void {
+): boolean {
   try {
     const sourceFd = symbols.openat(
       directoryFd,
@@ -268,17 +274,17 @@ function copyAccessControlMetadata(
       constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
       0
     );
-    if (sourceFd < 0) return;
+    if (sourceFd < 0) return true;
     try {
-      if (process.platform === 'darwin') {
-        copyDarwinAcl(symbols, sourceFd, temporaryFd);
-      } else {
-        copyPosixAcl(symbols, sourceFd, temporaryFd);
-      }
+      return process.platform === 'darwin'
+        ? copyDarwinAcl(symbols, sourceFd, temporaryFd)
+        : copyPosixAcl(symbols, sourceFd, temporaryFd);
     } finally {
       closeFile(symbols, sourceFd);
     }
-  } catch {}
+  } catch {
+    return false;
+  }
 }
 
 function replacementMode(symbols: LibcSymbols, directoryFd: number, fileName: string): number {
@@ -465,7 +471,9 @@ export async function writeFileWithinWorkspace(
         if (written <= 0) throwFsError('write', fileName);
         offset += written;
       }
-      copyAccessControlMetadata(symbols, directoryFd, fileName, fileFd);
+      if (!copyAccessControlMetadata(symbols, directoryFd, fileName, fileFd)) {
+        throw new Error(`Unable to preserve ACP filesystem ACL: ${fileName}`);
+      }
     } finally {
       closeFile(symbols, fileFd);
     }
