@@ -115,6 +115,9 @@ jobs:
       - name: Test CI balance report parser
         run: bun run test:ci-balance-report
 
+      - name: Test shard-weights generator
+        run: bun run test:generate-shard-weights
+
       # Folded in from the former test-cli job: ~2s of tests that used to occupy
       # a whole runner. Gated to the same events test-cli ran on (push to dev,
       # workflow_dispatch) — skipped on PRs, exactly as before.
