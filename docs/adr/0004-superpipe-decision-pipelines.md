@@ -44,6 +44,20 @@ flow-control halts, and a choice of sync (`.end`) or async (`.endAsync`) executo
 It was hardened for this pilot upstream (tsconfig build fix, raw-boolean-dep
 support, catchable `OutputKeyError`).
 
+### Library surface vs. blessed idioms
+
+Superpipe's full surface is larger than anything blessed in this ADR: async
+pipelines, dependency-injected named inputs/outputs, per-stage error handlers,
+`!dep`/`?dep` control-flow prefixes, output picking/merging, and `withSignal`
+cancellation. The combinators below (`decisionRun`, `stagedRun`) are **blessed
+idioms** — recurring shapes with the wiring ceremony deduplicated and one
+discipline made structural — not a statement about what the library can do. A
+flow that fits no blessed idiom may use superpipe directly; when a raw shape
+recurs (≈3 uses), promote it into a named combinator so the codebase converges
+on vocabulary instead of calcifying. A combinator must earn its layer by making
+a discipline structural — dedup alone is convenience, not a layer. Phases bound
+adoption; nothing here bounds the library.
+
 ## Decision
 
 Adopt the functional-core sandwich for runtime logic — decision flows and
@@ -67,9 +81,11 @@ shell (class): flat interpreter, one branch per decision action
    (`packages/daemon/src/lib/space/runtime/decision-pipeline.ts`): factory + cast,
    `.input(['ctx'])`, the per-gate halt guards, and `decision: null` injection.
    A new decision pipeline is a name plus a gate array (~6 lines). Do not
-   hand-write the superpipe ritual; do not import superpipe outside
-   `decision-pipeline.ts` and `staged-run.ts` (import sites amended 2026-08-21)
-   without an ADR-level reason.
+   hand-write the gate ritual when `decisionRun` fits. Superpipe imports outside
+   `decision-pipeline.ts` and `staged-run.ts` are permitted for flows that fit no
+   blessed idiom (revised 2026-08-21 — this was earlier a monopoly, and it bred
+   false ceilings about the library); when a raw shape recurs ≈3 times, promote
+   it into a named combinator.
 4. **Pipelines are the composition primitive for sequential logic, not just
    decisions.** Two additional sanctioned forms beyond decide-once cores:
    - **Transform pipelines.** A pipeline may compose an evolving value across
@@ -427,6 +443,15 @@ production-unreachable defensive code outside the sweep's PR-6 scope — the
   | 6 | Compose `processRunTick` as one top-level `stagedRun` | Sequenced strictly after the pilot-3 apply PR merges — same lines. |
   | 7 | Same pattern beyond the tick: runtime nags, checkpoint/restore, message dispatch, startup handoff repair | |
 
+- **Candidate idioms (rule of three — extract on the ≈3rd real use, not before):**
+  `transformRun` (P1 pure transforms with data-dependent early exit:
+  github-normalizer, store delta application, message-shape normalization);
+  `requestRun` (web: generation-guarded request/apply — a stale response
+  structurally cannot apply — SpaceForge/ScopeDetail fetches, GitHubHealthPanel
+  refresh, every version-guarded panel fetch); `transactionalRun` (P7/Phase 4 —
+  effects run only after commit); `reduceRun` (P6/Phase 3 — per-event reducer
+  bodies; the web subscription-lifecycle machines decompose into this shape plus
+  a facade). See "Library surface vs. blessed idioms" for the promotion rule.
 - **Carried research:** async/`withSignal` validation if Phase 1 wants an async core.
 
 ## References
