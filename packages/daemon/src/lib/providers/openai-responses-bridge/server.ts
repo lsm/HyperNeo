@@ -1602,7 +1602,7 @@ export function createOpenAIResponsesBridgeServer(
         );
       }
       const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
-      const requestAuthGeneration = authGeneration;
+      let requestAuthGeneration = authGeneration;
       let openAIResponse: Response;
       try {
         let requestAuth = activeAuth;
@@ -1616,6 +1616,11 @@ export function createOpenAIResponsesBridgeServer(
         while (openAIResponse.status === 401 && authRetries < 3) {
           authRetries += 1;
           if (activeAuth !== requestAuth || resolvedAuth !== requestResolvedAuth) {
+            if (authGeneration !== requestAuthGeneration) {
+              continuation = undefined;
+              storedReasoning = undefined;
+              requestBody = buildResponsesRequest(body, model, undefined, requestOpts, undefined);
+            }
             openAIResponse = await fetchImpl(upstreamUrl, {
               method: 'POST',
               headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
@@ -1623,9 +1628,15 @@ export function createOpenAIResponsesBridgeServer(
             });
             requestAuth = activeAuth;
             requestResolvedAuth = resolvedAuth;
+            requestAuthGeneration = authGeneration;
           } else {
             const refreshed = await refreshOpenAIResponsesAuth(requestAuth);
             if (activeAuth !== requestAuth || resolvedAuth !== requestResolvedAuth) {
+              if (authGeneration !== requestAuthGeneration) {
+                continuation = undefined;
+                storedReasoning = undefined;
+                requestBody = buildResponsesRequest(body, model, undefined, requestOpts, undefined);
+              }
               openAIResponse = await fetchImpl(upstreamUrl, {
                 method: 'POST',
                 headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
@@ -1633,6 +1644,7 @@ export function createOpenAIResponsesBridgeServer(
               });
               requestAuth = activeAuth;
               requestResolvedAuth = resolvedAuth;
+              requestAuthGeneration = authGeneration;
             } else if (refreshed) {
               resolvedAuth = refreshed;
               openAIResponse = await fetchImpl(upstreamUrl, {
@@ -1641,6 +1653,7 @@ export function createOpenAIResponsesBridgeServer(
                 body: JSON.stringify(requestBody),
               });
               requestResolvedAuth = resolvedAuth;
+              requestAuthGeneration = authGeneration;
             } else {
               break;
             }

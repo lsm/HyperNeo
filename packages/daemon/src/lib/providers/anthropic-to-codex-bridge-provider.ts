@@ -1314,7 +1314,16 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       await response.body?.cancel().catch(() => undefined);
       const message = `AnthropicToCodexBridgeProvider: model discovery HTTP ${response.status}`;
       if (response.status === 403) {
-        if (this.currentAuthMatches(auth, scope)) this.clearDiscoveryError(scope);
+        if (this.currentAuthMatches(auth, scope)) {
+          this.clearDiscoveryError(scope);
+          if (this.modelCache && this.cacheMatchesScope(this.modelCache, scope)) {
+            const cache = { ...this.modelCache, fetchedAt: new Date().toISOString() };
+            this.modelCache = cache;
+            await this.writeModelCache(cache).catch((error) =>
+              logger.warn('AnthropicToCodexBridgeProvider: model cache write failed:', error)
+            );
+          }
+        }
         logger.warn(message);
       } else {
         this.setDiscoveryError(message, auth, scope);

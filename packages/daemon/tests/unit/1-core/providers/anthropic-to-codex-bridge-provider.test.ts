@@ -3351,6 +3351,56 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('retires an expired catalog deadline after a tolerated 403', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const token = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-403' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: token,
+        refresh: 'refresh-token',
+        accountId: 'acct-403',
+      });
+      const seedFetch = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-403-cached' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      const seeder = makeProvider({}, hyperneoDir, tmpDir, seedFetch);
+      seeder.setCredentials({
+        type: 'oauth',
+        accessToken: token,
+        refreshToken: 'refresh-token',
+        raw: { accountId: 'acct-403' },
+      });
+      await seeder.getModels();
+      seeder.stopAllBridgeServers();
+
+      const cachePath = path.join(hyperneoDir, 'openai-models-cache.json');
+      const staleCache = JSON.parse(readFileSync(cachePath, 'utf-8')) as Record<string, unknown>;
+      staleCache.fetchedAt = '2020-01-01T00:00:00.000Z';
+      writeFileSync(cachePath, JSON.stringify(staleCache), { mode: 0o600 });
+
+      const forbiddenFetch = mock(
+        async () => new Response('forbidden', { status: 403 })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({}, hyperneoDir, tmpDir, forbiddenFetch);
+      provider.setCredentials({
+        type: 'oauth',
+        accessToken: token,
+        refreshToken: 'refresh-token',
+        raw: { accountId: 'acct-403' },
+      });
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(['gpt-403-cached']);
+      expect(provider.getModelCacheExpiresAt()).toBeGreaterThan(Date.now());
+    });
+
     it('carries the rekeyed refresh key into chained retries', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const tokenA = makeJwt({

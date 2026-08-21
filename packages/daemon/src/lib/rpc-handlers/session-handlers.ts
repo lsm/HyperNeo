@@ -777,7 +777,7 @@ export function setupSessionHandlers(
 
       let availableModels = getAvailableModels('global');
 
-      if (!forceRefresh && availableModels.length === 0) {
+      if (!forceRefresh && availableModels.length === 0 && !shouldThrottleModelsRefresh('global')) {
         await refreshModels();
         availableModels = getAvailableModels('global');
         didRefresh = true;
