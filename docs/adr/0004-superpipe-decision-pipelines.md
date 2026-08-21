@@ -590,8 +590,12 @@ or pinned directly by the gate/routing suites per Decision item 6. Live
 near-duplicates remain only in never-converted surfaces — the hand-rolled
 target checks in `get_task_detail`, the node-agent `get_task`,
 `send_message_to_task`, `list_task_members`,
-`approve_pending_completion`, `attach_forge_task_evidence`, and the task branch
-of `resolve_forge_scope`; the bound task-agent surface's `onArchiveTask`
+`approve_pending_completion`, `attach_forge_task_evidence`, the task branch
+of `resolve_forge_scope`, and the RPC message handlers
+`space.task.sendMessage`/`space.task.activateNodeAgent`
+(`rpc-handlers/space-task-message-handlers.ts`), whose space-mismatch case
+collapses into the not-found error rather than a distinct message; the bound
+task-agent surface's `onArchiveTask`
 (`runtime/task-agent-manager.ts`), which re-implements the archive-active-run
 gate with its own message variant; and the largest one: the UI-side RPC cascade
 in `rpc-handlers/space-task-handlers.ts`, which re-implements the update
