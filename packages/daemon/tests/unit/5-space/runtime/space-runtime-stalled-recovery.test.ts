@@ -2406,4 +2406,93 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(findExec(run.id, STEP_B).agentId).toBe(STALE_AGENT);
     });
   });
+
+  describe('KNOWN-BUG phase-0: park-during-recovery overwrite (task #1190, stagedRun ADR 0004)', () => {
+    test('KNOWN-BUG phase-0: task parked stopped while handleAliveStuckExecutions blocks is overwritten to blocked', async () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Step A', agentId: AGENT },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Park During Recovery Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Park During Recovery Run',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'in_progress',
+      });
+      const execution = seedExec(run.id, STEP_A, 'Step A', 'in_progress', {
+        agentSessionId: 'session-stuck',
+      });
+      db.prepare('UPDATE node_executions SET started_at = ? WHERE id = ?').run(
+        Date.now() - 20 * 60_000,
+        execution.id
+      );
+
+      const liveSessions = new Set(['session-stuck']);
+      const parkedStatuses: Array<string | null> = [];
+      const taskStatusesAfterPark: Array<string | null> = [];
+      const tam = {
+        rehydrate: async () => {},
+        isExecutionSpawning: () => false,
+        isSessionAlive: (sessionId: string) => liveSessions.has(sessionId),
+        getAgentSessionById: () => null,
+        injectRuntimeRecoveryMessage: async (sessionId: string) => `runtime-nag:${sessionId}`,
+        restartStuckSubSession: async () => {},
+        spawnWorkflowNodeAgentForExecution: async () => 'session:respawn',
+        cancelBySessionId: () => {},
+        interruptBySessionId: async () => {},
+        getSubSessionIdsForTasks: () => [],
+        stopSessionsVerified: async (sessionIds: string[]) => {
+          for (const sessionId of sessionIds) liveSessions.delete(sessionId);
+          return sessionIds.map((sessionId) => ({ sessionId, stopped: true }));
+        },
+        cleanup: async () => {},
+      };
+
+      const rt = makeRuntime({
+        taskAgentManager: tam as never,
+        onWorkflowRunUpdated: async (payload) => {
+          if (payload.run.status !== 'blocked') return;
+          const parked = await rt.parkStoppedWorkflowTask(SPACE_ID, task.id);
+          parkedStatuses.push(parked?.status ?? null);
+          taskStatusesAfterPark.push(taskRepo.getTask(task.id)?.status ?? null);
+        },
+      });
+      (rt as any).agentStuckRecovery.set(`${run.id}:${execution.id}`, {
+        nagCount: 1,
+        restartCount: 1,
+        lastAction: 'restart',
+        lastActionAt: Date.now() - 60_000,
+        lastObservedMessageId: null,
+        lastObservedMessageAt: null,
+        lastObservedProgressMessageId: null,
+        lastObservedProgressMessageAt: null,
+        lastRuntimeNagMessageId: null,
+        lastSessionId: 'session-stuck',
+        pendingRestartNotice: null,
+      });
+
+      await rt.executeTick();
+
+      expect(parkedStatuses).toEqual(['stopped']);
+      expect(taskStatusesAfterPark).toEqual(['stopped']);
+
+      const taskAfter = taskRepo.getTask(task.id)!;
+      expect(taskAfter.status).toBe('blocked');
+      expect(taskAfter.blockReason).toBe('execution_failed');
+      expect(taskAfter.result).toContain(
+        'Agent stuck without observable progress after runtime nag/restart recovery'
+      );
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+      expect(notifications.some((n) => n.kind === 'task_blocked')).toBe(true);
+      expect(notifications.some((n) => n.kind === 'workflow_run_blocked')).toBe(true);
+    });
+  });
 });

@@ -387,8 +387,8 @@ const SCENARIOS: Scenario[] = [
     mutate: (root) => {
       edit(root, MAIN, (s) =>
         s.replace(
-          '5-space-runtime-a, 5-space-runtime-b]\n',
-          '5-space-runtime-a, 5-space-runtime-b]\n        exclude:\n          - shard: shared\n'
+          '5-space-runtime-g]\n',
+          '5-space-runtime-g]\n        exclude:\n          - shard: shared\n'
         )
       );
     },
@@ -535,6 +535,306 @@ const SCENARIOS: Scenario[] = [
           `      - name: dup\n        run: cd packages/web && bunx vitest run --reporter dot\n${anchor}`
         );
       });
+    },
+  },
+  {
+    name: 'rejects a hardcoded --shard that bypasses the matrix token',
+    expectExit: 1,
+    expectInStderr: "does not pass exactly one '--shard=",
+    mutate: (root) => {
+      edit(root, MAIN, (s) => s.replace('--shard=${{ matrix.shard }}/2', '--shard=1/2'));
+    },
+  },
+  {
+    name: 'rejects a web shard axis value dropped from the matrix',
+    expectExit: 1,
+    expectInStderr: "does not pass exactly one '--shard=",
+    mutate: (root) => {
+      edit(root, MAIN, (s) => s.replace('shard: [1, 2]', 'shard: [1]'));
+    },
+  },
+  {
+    name: 'rejects a duplicated web shard axis value',
+    expectExit: 1,
+    expectInStderr: 'exactly once',
+    mutate: (root) => {
+      edit(root, MAIN, (s) => s.replace('shard: [1, 2]', 'shard: [1, 1]'));
+    },
+  },
+  {
+    name: 'rejects a matrix.exclude that drops a web shard leg',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        exclude:\n          - shard: 2'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects a stale longer --shard denominator (/20 vs 2-entry axis)',
+    expectExit: 1,
+    expectInStderr: "does not pass exactly one '--shard=",
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace('--shard=${{ matrix.shard }}/2', '--shard=${{ matrix.shard }}/20')
+      );
+    },
+  },
+  {
+    name: 'rejects an indentationless-sequence matrix.exclude (P2)',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        exclude:\n        - shard: 2'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects a quoted sibling axis under test-web (P2)',
+    expectExit: 1,
+    expectInStderr: 'extra axis',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace('        shard: [1, 2]', '        shard: [1, 2]\n        "os": [ubuntu-latest]')
+      );
+    },
+  },
+  {
+    name: 'rejects a single-quoted sibling axis under test-web (P2)',
+    expectExit: 1,
+    expectInStderr: 'extra axis',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace('        shard: [1, 2]', "        shard: [1, 2]\n        'os': [ubuntu-latest]")
+      );
+    },
+  },
+  {
+    name: 'rejects a quoted exclude key under test-web (P2)',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        exclude:\n          - "shard": 2'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects a quoted exclude parent property (P2)',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        "exclude":\n          - shard: 2'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects an exclude parent with a trailing inline comment (P2)',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        exclude: # skip a leg\n          - shard: 2'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects a multiline flow-form matrix.exclude (P2)',
+    expectExit: 1,
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        exclude: [\n          { shard: 2 }\n        ]'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects an exclude key with a space before the colon (P2)',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        exclude : [{ shard: 2 }]'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects a sibling axis inside a flow-form matrix mapping (P2)',
+    expectExit: 1,
+    expectInStderr: 'extra axis',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          `      matrix:
+        # vitest --shard distributes test FILES across legs; the union of
+        # shards 1..N runs the whole suite. scripts/validate-test-matrix.sh
+        # pins the axis against the runner's --shard denominator.
+        shard: [1, 2]
+`,
+          '      matrix: { shard: [1, 2], os: [ubuntu-latest, macos-latest] }\n'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects an include row adding a shard outside the axis (P2)',
+    expectExit: 1,
+    expectInStderr: 'include row adds shard value',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        include:\n          - shard: 3'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects an empty shard-axis value (P2)',
+    expectExit: 1,
+    expectInStderr: 'not a positive integer',
+    mutate: (root) => {
+      edit(root, MAIN, (s) => s.replace('        shard: [1, 2]', "        shard: [1, 2, '']"));
+    },
+  },
+  {
+    name: 'rejects an empty matrix.exclude record that drops every leg (P2)',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace('        shard: [1, 2]', '        shard: [1, 2]\n        exclude: [{}]')
+      );
+    },
+  },
+  {
+    name: 'rejects an include value whose YAML type differs from the axis (P2)',
+    expectExit: 1,
+    expectInStderr: 'matches no axis value',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          "        shard: [1, 2]\n        include:\n          - shard: '1'"
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects an axis value containing an escaped newline (P2)',
+    expectExit: 1,
+    expectInStderr: 'not a positive integer',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace('        shard: [1, 2]', '        shard: [1, "2\\nignored"]')
+      );
+    },
+  },
+  {
+    name: 'rejects a sibling axis key containing a tab (P2)',
+    expectExit: 1,
+    expectInStderr: 'extra axis',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        "\\tos": [ubuntu-latest]'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects a shard axis inflated by an env block scalar (P2)',
+    expectExit: 1,
+    expectInStderr: "does not pass exactly one '--shard=",
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s
+          .replace('        shard: [1, 2]', '        shard: [1]')
+          .replace(
+            '      - name: Run web tests\n        run: >-',
+            '      - name: Run web tests\n        env:\n          NOTE: |\n            shard: [1, 2]\n        run: >-'
+          )
+      );
+    },
+  },
+  {
+    name: 'rejects an exclude embedded in a flow-form matrix mapping (P2)',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          `      matrix:
+        # vitest --shard distributes test FILES across legs; the union of
+        # shards 1..N runs the whole suite. scripts/validate-test-matrix.sh
+        # pins the axis against the runner's --shard denominator.
+        shard: [1, 2]
+`,
+          '      matrix: { shard: [1, 2], exclude: [{ shard: 2 }] }\n'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects an axis inflated by shard text inside a quoted include value (P2)',
+    expectExit: 1,
+    expectInStderr: "does not pass exactly one '--shard=",
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]\n',
+          "        shard: [1]\n        include:\n          - shard: 1\n            note: 'shard: [2]'\n"
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects --shard text embedded inside another flag value (P2)',
+    expectExit: 1,
+    expectInStderr: "does not pass exactly one '--shard=",
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          "          --shard=${{ matrix.shard }}/2\n          --coverage\n          --coverage.reportsDirectory=coverage-web-${{ matrix.shard }}'",
+          "          --coverage\n          --coverage.reportsDirectory=coverage-web-${{ matrix.shard }}--shard=${{ matrix.shard }}/2'"
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects a sibling axis under a quoted matrix parent (P2)',
+    expectExit: 1,
+    expectInStderr: 'extra axis',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s
+          .replace('      matrix:\n        # vitest', '      "matrix":\n        # vitest')
+          .replace('        shard: [1, 2]', '        shard: [1, 2]\n        os: [ubuntu-latest]')
+      );
     },
   },
   {

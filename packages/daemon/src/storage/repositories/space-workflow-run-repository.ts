@@ -255,6 +255,22 @@ export class SpaceWorkflowRunRepository {
     return updated;
   }
 
+  casRunStatus(
+    id: string,
+    expected: WorkflowRunStatus | readonly WorkflowRunStatus[],
+    next: WorkflowRunStatus
+  ): 'won' | 'superseded' {
+    const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
+    if (expectedStatuses.length === 0) return 'superseded';
+    const placeholders = expectedStatuses.map(() => '?').join(', ');
+    const result = this.db
+      .prepare(
+        `UPDATE space_workflow_runs SET status = ? WHERE id = ? AND status IN (${placeholders})`
+      )
+      .run(next, id, ...expectedStatuses);
+    return result.changes > 0 ? 'won' : 'superseded';
+  }
+
   deleteRun(id: string): boolean {
     const stmt = this.db.prepare(`DELETE FROM space_workflow_runs WHERE id = ?`);
     const result = stmt.run(id);

@@ -125,6 +125,9 @@ jobs:
       - name: Test coverage gate script
         run: bun run test:coverage-gate
 
+      - name: Test CI balance report parser
+        run: bun run test:ci-balance-report
+
       # Actually enforce the zero-comments policy in CI. strip-comments.ts
       # enumerates files via `git ls-files` (index-only), so the shallow
       # checkout is fine. Until now CI only ran the script's unit test.
@@ -343,7 +346,7 @@ jobs:
           --coverage.reporter=lcov
           --coverage.reportsDirectory=coverage-online-${{ matrix.module }}
           --reporter=junit
-          --outputFile.junit=../../test-results/daemon-online-${{ matrix.module }}/junit.xml'
+          --outputFile.junit=../../test-results/daemon-online-${{ matrix.module }}/junit-${{ matrix.module }}.xml'
         env:
           # Use Dev Proxy for mock_sdk tests by setting ANTHROPIC_BASE_URL
           # This avoids proxy env var issues and TLS interception problems
@@ -381,8 +384,8 @@ jobs:
           # Strip test utility coverage (helpers, fixtures, mocks)
           awk '/^SF:(packages\/daemon\/)?tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' $LCOV > ${LCOV}.clean && mv ${LCOV}.clean $LCOV || true
 
-      - name: Upload junit on failure (diagnostics)
-        if: failure()
+      - name: Upload junit + diagnostics
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: daemon-online-junit-${{ matrix.module }}-${{ github.run_number }}
@@ -419,7 +422,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [shared, 2-handlers-github, 2-handlers-other, 1-core-a, 1-core-b, 4-space-storage, 4-space-migrations-a, 4-space-migrations-b, 5-space-agent-other, 5-space-runtime-a, 5-space-runtime-b]
+        shard: [shared, 2-handlers-github, 2-handlers-other, 1-core-a, 1-core-b, 4-space-storage, 4-space-migrations-a, 4-space-migrations-b, 5-space-agent-other, 5-space-runtime-a, 5-space-runtime-b, 5-space-runtime-c, 5-space-runtime-d, 5-space-runtime-e, 5-space-runtime-f, 5-space-runtime-g]
 
     steps:
       - uses: actions/checkout@v6
@@ -485,6 +488,14 @@ jobs:
           parallel: true
           fail-on-error: false
 
+      - name: Upload junit (balance report data)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: daemon-unit-junit-${{ matrix.shard }}
+          path: test-results/daemon/junit-${{ matrix.shard }}.xml
+          retention-days: 7
+
       - name: Upload lcov artifact
         if: always() && hashFiles(format('packages/{0}/coverage/lcov.info', matrix.shard == 'shared' && 'shared' || 'daemon')) != ''
         uses: actions/upload-artifact@v7
@@ -499,10 +510,17 @@ jobs:
   # ============================================
 
   test-web:
-    name: Web Tests
+    name: Web Tests (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
     timeout-minutes: 9
     if: (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # vitest --shard distributes test FILES across legs; the union of
+        # shards 1..N runs the whole suite. scripts/validate-test-matrix.sh
+        # pins the axis against the runner's --shard denominator.
+        shard: [1, 2]
 
     steps:
       - uses: actions/checkout@v6
@@ -535,38 +553,94 @@ jobs:
           bun run scripts/flaky-test-runner.ts
           --suite web
           --results-dir test-results/web
-          --report test-results/flaky-quarantine-web.json
+          --report test-results/flaky-quarantine-web-${{ matrix.shard }}.json
           --
           bash -lc 'cd packages/web && bunx vitest run
           --reporter dot
           --reporter junit
-          --outputFile.junit=../../test-results/web/junit.xml
-          --coverage'
+          --outputFile.junit=../../test-results/web/junit-web-${{ matrix.shard }}.xml
+          --shard=${{ matrix.shard }}/2
+          --coverage
+          --coverage.reportsDirectory=coverage-web-${{ matrix.shard }}'
 
       - name: Fix coverage paths for monorepo
         run: |
           # Vitest generates paths relative to package dir (src/...)
           # Coveralls needs paths relative to repo root (packages/web/src/...)
-          sed -i 's|^SF:src/|SF:packages/web/src/|g' packages/web/coverage/lcov.info
+          sed -i 's|^SF:src/|SF:packages/web/src/|g' packages/web/coverage-web-${{ matrix.shard }}/lcov.info
           # Fix cross-package paths (../shared/src/... -> packages/shared/src/...)
-          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' packages/web/coverage/lcov.info
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' packages/web/coverage-web-${{ matrix.shard }}/lcov.info
 
       - name: Upload to Coveralls (parallel)
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: packages/web/coverage/lcov.info
-          flag-name: web
+          file: packages/web/coverage-web-${{ matrix.shard }}/lcov.info
+          flag-name: web-${{ matrix.shard }}
           parallel: true
           fail-on-error: false
 
-      - name: Upload lcov artifact
-        if: hashFiles('packages/web/coverage/lcov.info') != ''
+      - name: Upload junit (balance report data)
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: lcov-web
-          path: packages/web/coverage/lcov.info
+          name: web-junit-${{ matrix.shard }}
+          path: test-results/web/junit-web-${{ matrix.shard }}.xml
           retention-days: 7
+
+      - name: Upload lcov artifact
+        if: hashFiles(format('packages/web/coverage-web-{0}/lcov.info', matrix.shard)) != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: lcov-web-${{ matrix.shard }}
+          path: packages/web/coverage-web-${{ matrix.shard }}/lcov.info
+          retention-days: 7
+
+  # ============================================
+  # TEST DURATION BALANCE REPORT
+  # Downloads the junit XML every test job uploads and renders per-file
+  # durations + per-shard totals into the run summary (see
+  # scripts/ci-balance-report.ts). This is the measurement behind shard
+  # rebalance decisions. Read-only reporting: intentionally NOT part of
+  # all-tests-pass gating.
+  # Run on: PR to dev, push to dev, workflow_dispatch (whenever tests ran)
+  # ============================================
+
+  test-balance-report:
+    name: Test Duration Balance Report
+    runs-on: ubuntu-latest
+    needs: [test-daemon-shared-unit, test-daemon-online, test-web]
+    if: ${{ !cancelled() && github.event.inputs.run_e2e_only != 'true' }}
+    timeout-minutes: 3
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.14
+
+      - name: Download daemon unit junit
+        uses: actions/download-artifact@v8
+        with:
+          path: balance/unit
+          pattern: daemon-unit-junit-*
+
+      - name: Download daemon online junit
+        uses: actions/download-artifact@v8
+        with:
+          path: balance/online
+          pattern: daemon-online-junit-*
+
+      - name: Download web junit
+        uses: actions/download-artifact@v8
+        with:
+          path: balance/web
+          pattern: web-junit-*
+
+      - name: Build balance report
+        run: bun run scripts/ci-balance-report.ts balance --top 25
 
   # ============================================
   # COVERALLS FINALIZATION

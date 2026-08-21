@@ -575,6 +575,44 @@ export class SpaceTaskRepository {
     return this.getTask(id);
   }
 
+  casStatus(
+    taskId: string,
+    expected: SpaceTaskStatus | readonly SpaceTaskStatus[],
+    next: SpaceTaskStatus
+  ): 'won' | 'superseded' {
+    const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
+    if (expectedStatuses.length === 0) return 'superseded';
+    const placeholders = expectedStatuses.map(() => '?').join(', ');
+    const result = this.db
+      .prepare(`UPDATE space_tasks SET status = ? WHERE id = ? AND status IN (${placeholders})`)
+      .run(next, taskId, ...expectedStatuses);
+    return result.changes > 0 ? 'won' : 'superseded';
+  }
+
+  reserveSpawnForTick(
+    taskId: string,
+    allowedStatuses: readonly SpaceTaskStatus[]
+  ): 'won' | 'superseded' {
+    if (allowedStatuses.length === 0) return 'superseded';
+    const placeholders = allowedStatuses.map(() => '?').join(', ');
+    const result = this.db
+      .prepare(
+        `UPDATE space_tasks
+         SET spawn_reservation_token = ?
+         WHERE id = ?
+           AND status IN (${placeholders})
+           AND spawn_reservation_token IS NULL`
+      )
+      .run(generateUUID(), taskId, ...allowedStatuses);
+    return result.changes > 0 ? 'won' : 'superseded';
+  }
+
+  releaseSpawnReservation(taskId: string): void {
+    this.db
+      .prepare(`UPDATE space_tasks SET spawn_reservation_token = NULL WHERE id = ?`)
+      .run(taskId);
+  }
+
   archiveTask(id: string): SpaceTask | null {
     const now = Date.now();
     const stmt = this.db.prepare(
