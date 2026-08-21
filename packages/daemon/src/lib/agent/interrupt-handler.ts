@@ -50,9 +50,9 @@ export class InterruptHandler {
           sdkRepo?.markDeliveryFailedByUuid(session.id, messageUuid);
         }
         const cancelled = new Set(messageUuids);
-        const enqueued = this.ctx.db.getMessagesByStatus?.(session.id, 'enqueued') ?? [];
+        const enqueued = this.ctx.db.getUserMessageIdsByStatus?.(session.id, 'enqueued') ?? [];
         for (const msg of enqueued) {
-          const uuid = (msg as { uuid?: string }).uuid;
+          const uuid = msg.uuid;
           if (uuid && !cancelled.has(uuid)) {
             sdkRepo?.markDeliveryFailedByUuid(session.id, uuid);
           }

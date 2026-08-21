@@ -109,7 +109,7 @@ export interface AgentSessionRuntimeOptions {
   ) => Promise<{ success: boolean; error?: string }>;
 }
 
-import { isSDKResultSuccess, isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
+import { isSDKResultSuccess } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner';
 import { resolveModelAlias } from '../model-service';
 import { getProviderRegistry } from '../providers/factory.js';
@@ -1943,10 +1943,11 @@ export class AgentSession
     const sdkRepo = this.db.getSDKMessageRepo();
     await withSessionLock(this.session.id, async () => {
       const activeNow = jobQueue.activeDeliveryMessageUuids(this.session.id);
-      for (const msg of this.db.getMessagesByStatus(this.session.id, 'submitted')) {
-        if (!isSDKUserMessage(msg) || !msg.uuid) continue;
-        if (activeNow.has(msg.uuid)) continue;
-        const dbId = sdkRepo.markDeliveryFailedByUuid(this.session.id, msg.uuid);
+      for (const msg of this.db.getUserMessageIdsByStatus(this.session.id, 'submitted')) {
+        const uuid = msg.uuid;
+        if (typeof uuid !== 'string' || uuid.length === 0) continue;
+        if (activeNow.has(uuid)) continue;
+        const dbId = sdkRepo.markDeliveryFailedByUuid(this.session.id, uuid);
         if (dbId) {
           settled++;
           void this.internalEventBus

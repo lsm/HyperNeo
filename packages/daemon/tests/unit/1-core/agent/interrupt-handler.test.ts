@@ -97,6 +97,7 @@ describe('InterruptHandler', () => {
       getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
       getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
       getMessagesByStatus: mock(() => []),
+      getUserMessageIdsByStatus: mock(() => []),
       notifyChange: mock(() => {}),
     } as unknown as InterruptHandlerContext['db'];
 
@@ -257,13 +258,13 @@ describe('InterruptHandler', () => {
     it('terminalizes enqueued orphan rows (no active job) so a Stop is not undone by the post-interrupt idle reconcile (#861)', async () => {
       cancelForSessionSpy = mock(() => ['active-uuid']);
       const orphan = { uuid: 'orphan-uuid' };
-      const getMessagesByStatusSpy = mock((_sid: string, status: string) =>
+      const getUserMessageIdsByStatusSpy = mock((_sid: string, status: string) =>
         status === 'enqueued' ? [orphan] : []
       );
       mockDb = {
         getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
         getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
-        getMessagesByStatus: getMessagesByStatusSpy,
+        getUserMessageIdsByStatus: getUserMessageIdsByStatusSpy,
       } as unknown as InterruptHandlerContext['db'];
       handler = createHandler({ db: mockDb });
 

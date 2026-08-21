@@ -1588,6 +1588,21 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  function insertStatusMessage(
+    id: string,
+    sessionId: string,
+    messageType: string,
+    sdkMessage: string,
+    timestamp: string,
+    status = 'consumed'
+  ): void {
+    db.prepare(
+      `INSERT INTO sdk_messages
+       (id, session_id, message_type, sdk_message, timestamp, send_status)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(id, sessionId, messageType, sdkMessage, timestamp, status);
+  }
+
   describe('getUserMessagesByStatus', () => {
     function messageTexts(messages: SDKMessage[]): string[] {
       return messages.map((message) => {
@@ -1595,21 +1610,6 @@ describe('SDKMessageRepository', () => {
           .content;
         return content[0]?.text ?? '';
       });
-    }
-
-    function insertStatusMessage(
-      id: string,
-      sessionId: string,
-      messageType: string,
-      sdkMessage: string,
-      timestamp: string,
-      status = 'consumed'
-    ): void {
-      db.prepare(
-        `INSERT INTO sdk_messages
-         (id, session_id, message_type, sdk_message, timestamp, send_status)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      ).run(id, sessionId, messageType, sdkMessage, timestamp, status);
     }
 
     it('returns the oldest bounded window and the full eligible total', () => {
@@ -1694,6 +1694,186 @@ describe('SDKMessageRepository', () => {
       expect(result.messages.map((message) => message.dbId)).toEqual(
         Array.from({ length: 901 }, (_, index) => `message-${index.toString().padStart(4, '0')}`)
       );
+    });
+
+    it('returns the full eligible window when no limit is given', () => {
+      const timestamp = '2026-01-01T00:00:00.000Z';
+      for (const [index, text] of ['First', 'Second', 'Third'].entries()) {
+        insertStatusMessage(
+          `user-${index}`,
+          'session-1',
+          'user',
+          JSON.stringify(createUserMessage(text, `uuid-${index}`)),
+          timestamp,
+          'deferred'
+        );
+      }
+
+      const result = repository.getUserMessagesByStatus('session-1', 'deferred');
+
+      expect(messageTexts(result.messages)).toEqual(['First', 'Second', 'Third']);
+      expect(result.total).toBe(3);
+    });
+  });
+
+  describe('getMessageByStatusAndDbId', () => {
+    it('returns the single message matching the status and db id', () => {
+      const id = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('promote me', 'uuid-promote'),
+        'deferred'
+      );
+
+      const message = repository.getMessageByStatusAndDbId('session-1', 'deferred', id);
+
+      expect(message?.dbId).toBe(id);
+      expect(message?.uuid).toBe('uuid-promote');
+    });
+
+    it('returns null when the db id exists under a different status', () => {
+      const id = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('already sent', 'uuid-sent'),
+        'consumed'
+      );
+
+      expect(repository.getMessageByStatusAndDbId('session-1', 'deferred', id)).toBeNull();
+    });
+
+    it('returns null when the db id does not exist', () => {
+      expect(
+        repository.getMessageByStatusAndDbId('session-1', 'deferred', 'no-such-id')
+      ).toBeNull();
+    });
+
+    it('returns null for another session db id', () => {
+      const id = repository.saveUserMessage(
+        'session-2',
+        createUserMessage('other session', 'uuid-other'),
+        'deferred'
+      );
+
+      expect(repository.getMessageByStatusAndDbId('session-1', 'deferred', id)).toBeNull();
+    });
+  });
+
+  describe('getMessageByStatusAndUuid', () => {
+    it('returns the oldest row when several rows share the uuid', () => {
+      const insert = db.prepare(
+        `INSERT INTO sdk_messages
+         (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+         VALUES (?, 'session-1', 'user', ?, ?, 'enqueued', 'dup-uuid')`
+      );
+      insert.run(
+        'dup-new',
+        JSON.stringify(createUserMessage('Newer', 'dup-uuid')),
+        '2026-01-02T00:00:00.000Z'
+      );
+      insert.run(
+        'dup-old',
+        JSON.stringify(createUserMessage('Older', 'dup-uuid')),
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const message = repository.getMessageByStatusAndUuid('session-1', 'enqueued', 'dup-uuid');
+
+      expect(message?.dbId).toBe('dup-old');
+    });
+  });
+
+  describe('getUserMessageIdsByStatus', () => {
+    function insertIndexedStatusMessage(
+      id: string,
+      sessionId: string,
+      sdkMessage: string,
+      uuid: string,
+      timestamp: string,
+      status: string
+    ): void {
+      db.prepare(
+        `INSERT INTO sdk_messages
+         (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+         VALUES (?, ?, 'user', ?, ?, ?, ?)`
+      ).run(id, sessionId, sdkMessage, timestamp, status, uuid);
+    }
+
+    it('returns id, uuid, and timestamp without inflating payloads, in order', () => {
+      const timestamp = '2026-01-01T00:00:00.000Z';
+      for (const [index, text] of ['First', 'Second'].entries()) {
+        insertIndexedStatusMessage(
+          `user-${index}`,
+          'session-1',
+          JSON.stringify(createUserMessage(text, `uuid-${index}`)),
+          `uuid-${index}`,
+          timestamp,
+          'deferred'
+        );
+      }
+
+      const rows = repository.getUserMessageIdsByStatus('session-1', 'deferred');
+
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toEqual({
+        dbId: 'user-0',
+        uuid: 'uuid-0',
+        timestamp: new Date(timestamp).getTime(),
+      });
+      expect(rows.map((row) => row.dbId)).toEqual(['user-0', 'user-1']);
+      expect(Object.keys(rows[0]).sort()).toEqual(['dbId', 'timestamp', 'uuid']);
+    });
+
+    it('filters to eligible user rows and skips replays and other statuses', () => {
+      const timestamp = '2026-01-01T00:00:00.000Z';
+      insertStatusMessage(
+        'user',
+        'session-1',
+        'user',
+        JSON.stringify(createUserMessage('User', 'uuid-user')),
+        timestamp,
+        'enqueued'
+      );
+      insertStatusMessage(
+        'replay',
+        'session-1',
+        'user',
+        JSON.stringify({ ...createUserMessage('Replay', 'uuid-replay'), isReplay: true }),
+        timestamp,
+        'enqueued'
+      );
+      insertStatusMessage(
+        'assistant',
+        'session-1',
+        'assistant',
+        JSON.stringify(createAssistantMessage('Assistant')),
+        timestamp,
+        'enqueued'
+      );
+      insertStatusMessage(
+        'other-status',
+        'session-1',
+        'user',
+        JSON.stringify(createUserMessage('Deferred', 'uuid-deferred')),
+        timestamp,
+        'deferred'
+      );
+      insertStatusMessage(
+        'other-session',
+        'session-2',
+        'user',
+        JSON.stringify(createUserMessage('Other', 'uuid-other')),
+        timestamp,
+        'enqueued'
+      );
+
+      const rows = repository.getUserMessageIdsByStatus('session-1', 'enqueued');
+
+      expect(rows.map((row) => row.dbId)).toEqual(['user']);
+    });
+
+    it('returns an empty array for a non-matching status', () => {
+      repository.saveUserMessage('session-1', createUserMessage('Test'), 'deferred');
+
+      expect(repository.getUserMessageIdsByStatus('session-1', 'enqueued')).toEqual([]);
     });
   });
 
@@ -2934,7 +3114,8 @@ describe('SDKMessageRepository', () => {
     it('getMessageByStatusAndUuid seeks idx_sdk_messages_session_uuid', () => {
       const plan = queryPlan(
         `SELECT id, sdk_message, timestamp FROM sdk_messages
-         WHERE session_id = ? AND send_status = ? AND sdk_uuid = ? LIMIT 1`,
+         WHERE session_id = ? AND send_status = ? AND sdk_uuid = ?
+         ORDER BY timestamp ASC, rowid ASC LIMIT 1`,
         ['s1', 'consumed', 'uuid-5']
       );
       expect(plan).toContain('idx_sdk_messages_session_uuid');

@@ -613,9 +613,7 @@ export class QueryLifecycleManager {
 
   private async markEnqueuedMessageFailed(messageId: string): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
-    const enqueuedMessage = db
-      .getMessagesByStatus(session.id, 'enqueued')
-      .find((message) => message.uuid === messageId);
+    const enqueuedMessage = db.getMessageByStatusAndUuid(session.id, 'enqueued', messageId);
     if (!enqueuedMessage) {
       return;
     }
