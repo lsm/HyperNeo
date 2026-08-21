@@ -2871,25 +2871,35 @@ function toSqlStringList(subtypes: Iterable<string>): string {
   return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
 }
 
-const BACKGROUND_TASK_METADATA_SQL_LIST = toSqlStringList(BACKGROUND_TASK_METADATA_SUBTYPES);
+const BACKGROUND_TASK_METADATA_ARMS_SQL = BACKGROUND_TASK_METADATA_SUBTYPES.map(
+  (subtype) => `SELECT * FROM (
+    SELECT
+      id,
+      sdk_message,
+      timestamp,
+      send_status,
+      origin,
+      rowid,
+      COALESCE(
+        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+        task_id
+      ) AS task_id
+    FROM sdk_messages
+    WHERE session_id = ?
+      AND parent_tool_use_id IS NULL
+      AND message_subtype_norm = '${subtype.replace(/'/g, "''")}'
+    ORDER BY timestamp DESC, rowid DESC
+    LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
+  )`
+).join(`
+  UNION ALL
+`);
 
 export const BACKGROUND_TASK_METADATA_SQL = `
 WITH recent_metadata AS (
-  SELECT
-    id,
-    sdk_message,
-    timestamp,
-    send_status,
-    origin,
-    rowid,
-    COALESCE(
-      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-      task_id
-    ) AS task_id
-  FROM sdk_messages
-  WHERE session_id = ?
-    AND parent_tool_use_id IS NULL
-    AND message_subtype_norm IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
+  SELECT * FROM (
+    ${BACKGROUND_TASK_METADATA_ARMS_SQL}
+  )
   ORDER BY timestamp DESC, rowid DESC
   LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
 ),
@@ -3567,6 +3577,8 @@ export function setupLiveQueryHandlers(
       const sessionId = params[0];
       if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined;
       const rows = stmtBackgroundTaskMetadata.all(
+        sessionId,
+        sessionId,
         sessionId,
         sessionId,
         sessionId,
