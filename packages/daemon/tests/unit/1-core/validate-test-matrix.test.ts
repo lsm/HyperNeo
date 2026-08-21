@@ -46,7 +46,8 @@ for f in 1-core/c.test.ts helpers/h.test.ts lib/l.test.ts \\
   5-space/workflow/w.test.ts 4-space-storage/s.test.ts 4-space-storage/app/a.test.ts \\
   4-space-storage/storage/st.test.ts 4-space-storage/storage/migrations/m1.test.ts \\
   4-space-storage/storage/migrations/m2.test.ts 5-space/s.test.ts 5-space/agent/a.test.ts \\
-  5-space/other/o.test.ts 5-space/runtime/r1.test.ts 5-space/runtime/connectors/c1.test.ts; do
+  5-space/other/o.test.ts 5-space/tools/t.test.ts \\
+  5-space/runtime/r1.test.ts 5-space/runtime/connectors/c1.test.ts; do
   mk "$U/$f"
 done
 mk "$FX/packages/shared/tests/s.test.ts"
