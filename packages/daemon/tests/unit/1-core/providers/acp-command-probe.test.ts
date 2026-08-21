@@ -1,46 +1,55 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { EventEmitter } from 'node:events';
+import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import type { AcpClientOptions } from '../../../../src/lib/acp/acp-client';
 
-type SpawnOptions = { env?: NodeJS.ProcessEnv; stdio?: string[] };
-type SpawnHandler = (
-  command: string,
-  args: string[],
-  options: SpawnOptions
-) => EventEmitter & { kill: (signal: NodeJS.Signals) => boolean };
+const calls: string[] = [];
+let clientOptions: AcpClientOptions | undefined;
+let initializeError: Error | undefined;
+let authenticateError: Error | undefined;
 
-const calls: Array<{ command: string; args: string[]; options: SpawnOptions }> = [];
-let spawnHandler: SpawnHandler = (command, args, options) => {
-  calls.push({ command, args, options });
-  const child = new EventEmitter() as EventEmitter & {
-    kill: (signal: NodeJS.Signals) => boolean;
-  };
-  child.kill = () => true;
-  queueMicrotask(() => child.emit('spawn'));
-  return child;
-};
+class MockAcpClient {
+  constructor(options: AcpClientOptions) {
+    clientOptions = options;
+  }
 
-mock.module('node:child_process', () => ({
-  spawn: (command: string, args: string[], options: SpawnOptions) =>
-    spawnHandler(command, args, options),
-}));
+  initialize = mock(async () => {
+    calls.push('initialize');
+    if (initializeError) throw initializeError;
+    return { protocolVersion: 1 };
+  });
+
+  authenticate = mock(async () => {
+    calls.push('authenticate');
+    if (authenticateError) throw authenticateError;
+  });
+
+  close = mock(() => {
+    calls.push('close');
+  });
+}
+
+let originalAcpClient: typeof import('../../../../src/lib/acp/acp-client') | undefined;
+if (typeof Bun !== 'undefined') {
+  originalAcpClient = require('../../../../src/lib/acp/acp-client');
+}
+mock.module('../../../../src/lib/acp/acp-client', () => ({ AcpClient: MockAcpClient }));
 
 const { defaultAcpCommandProbe } = await import('../../../../src/lib/providers/acp-provider');
 
 describe('defaultAcpCommandProbe', () => {
   const originalEnv = process.env;
 
-  afterEach(() => {
-    process.env = originalEnv;
+  beforeEach(() => {
     calls.length = 0;
-    spawnHandler = (command, args, options) => {
-      calls.push({ command, args, options });
-      const child = new EventEmitter() as EventEmitter & {
-        kill: (signal: NodeJS.Signals) => boolean;
-      };
-      child.kill = () => true;
-      queueMicrotask(() => child.emit('spawn'));
-      return child;
-    };
+    clientOptions = undefined;
+    initializeError = undefined;
+    authenticateError = undefined;
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
+    if (originalAcpClient) {
+      mock.module('../../../../src/lib/acp/acp-client', () => originalAcpClient);
+    }
   });
 
   test('parses quoted command paths and arguments with a sanitized environment', async () => {
@@ -50,130 +59,40 @@ describe('defaultAcpCommandProbe', () => {
       ANTHROPIC_AUTH_TOKEN: 'secret',
     };
 
-    await defaultAcpCommandProbe('"/Applications/Devin CLI/devin" acp', 1000);
+    await defaultAcpCommandProbe('"/Applications/Devin CLI/devin" acp');
 
-    expect(calls).toEqual([
-      {
-        command: '/Applications/Devin CLI/devin',
-        args: ['acp'],
-        options: {
-          env: { PATH: '/safe/bin', HOME: '/safe/home' },
-          stdio: ['ignore', 'ignore', 'ignore'],
-          detached: process.platform !== 'win32',
-        },
-      },
-    ]);
+    expect(clientOptions?.command).toBe('/Applications/Devin CLI/devin');
+    expect(clientOptions?.args).toEqual(['acp']);
+    expect(clientOptions?.env).toEqual({ PATH: '/safe/bin', HOME: '/safe/home' });
+    expect(clientOptions?.replaceEnv).toBe(true);
+    expect(typeof clientOptions?.processTreeOwner).toBe('function');
   });
 
-  test('accepts a process that exits nonzero after spawning', async () => {
-    spawnHandler = (command, args, options) => {
-      calls.push({ command, args, options });
-      const child = new EventEmitter() as EventEmitter & {
-        kill: (signal: NodeJS.Signals) => boolean;
-      };
-      child.kill = () => true;
-      queueMicrotask(() => {
-        child.emit('spawn');
-        child.emit('exit', 3, null);
-      });
-      return child;
-    };
+  test('completes the handshake before resolving', async () => {
+    await defaultAcpCommandProbe('devin acp');
 
-    await expect(defaultAcpCommandProbe('devin acp', 1000)).resolves.toBeUndefined();
+    expect(calls).toEqual(['initialize', 'authenticate', 'close']);
   });
 
-  test('reports a missing command', async () => {
-    spawnHandler = (command, args, options) => {
-      calls.push({ command, args, options });
-      const child = new EventEmitter() as EventEmitter & {
-        kill: (signal: NodeJS.Signals) => boolean;
-      };
-      child.kill = () => true;
-      queueMicrotask(() =>
-        child.emit('error', Object.assign(new Error('missing'), { code: 'ENOENT' }))
-      );
-      return child;
-    };
+  test('bounds each handshake request by the probe timeout', async () => {
+    await defaultAcpCommandProbe('devin acp', 2500);
 
-    await expect(defaultAcpCommandProbe('missing acp', 1000)).rejects.toThrow(
-      "ACP command 'missing' not found in PATH"
+    expect(clientOptions?.requestTimeoutMs).toBe(2500);
+  });
+
+  test('rejects when initialization fails and still closes the client', async () => {
+    initializeError = new Error('agent exited before initialize');
+
+    await expect(defaultAcpCommandProbe('false acp')).rejects.toThrow(
+      'agent exited before initialize'
     );
+    expect(calls).toEqual(['initialize', 'close']);
   });
 
-  test('escalates SIGKILL while the process group remains', async () => {
-    const killSignals: NodeJS.Signals[] = [];
-    spawnHandler = (command, args, options) => {
-      calls.push({ command, args, options });
-      const child = new EventEmitter() as EventEmitter & {
-        kill: (signal: NodeJS.Signals) => boolean;
-        pid?: number;
-      };
-      child.kill = (signal) => {
-        killSignals.push(signal);
-        return true;
-      };
-      child.pid = 0x40000000;
-      queueMicrotask(() => child.emit('spawn'));
-      return child;
-    };
+  test('rejects when authentication fails and still closes the client', async () => {
+    authenticateError = new Error('authentication required');
 
-    await defaultAcpCommandProbe('devin acp', 1000, () => true);
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-
-    expect(killSignals).toContain('SIGTERM');
-    expect(killSignals).toContain('SIGKILL');
-  }, 2000);
-
-  test('skips SIGKILL after the process group is gone', async () => {
-    const killSignals: NodeJS.Signals[] = [];
-    spawnHandler = (command, args, options) => {
-      calls.push({ command, args, options });
-      const child = new EventEmitter() as EventEmitter & {
-        kill: (signal: NodeJS.Signals) => boolean;
-        pid?: number;
-      };
-      child.kill = (signal) => {
-        killSignals.push(signal);
-        return true;
-      };
-      child.pid = 0x40000001;
-      queueMicrotask(() => {
-        child.emit('spawn');
-        child.emit('exit', 0, null);
-      });
-      return child;
-    };
-
-    await defaultAcpCommandProbe('devin acp', 1000, () => false);
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-
-    expect(killSignals).toContain('SIGTERM');
-    expect(killSignals).not.toContain('SIGKILL');
-  }, 2000);
-
-  test('skips SIGKILL when the probed group exits during the escalation delay', async () => {
-    const killSignals: NodeJS.Signals[] = [];
-    let groupExists = true;
-    spawnHandler = (command, args, options) => {
-      calls.push({ command, args, options });
-      const child = new EventEmitter() as EventEmitter & {
-        kill: (signal: NodeJS.Signals) => boolean;
-        pid?: number;
-      };
-      child.kill = (signal) => {
-        killSignals.push(signal);
-        return true;
-      };
-      child.pid = 0x40000002;
-      queueMicrotask(() => child.emit('spawn'));
-      return child;
-    };
-
-    await defaultAcpCommandProbe('devin acp', 1000, () => groupExists);
-    groupExists = false;
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-
-    expect(killSignals).toContain('SIGTERM');
-    expect(killSignals).not.toContain('SIGKILL');
-  }, 2000);
+    await expect(defaultAcpCommandProbe('devin acp')).rejects.toThrow('authentication required');
+    expect(calls).toEqual(['initialize', 'authenticate', 'close']);
+  });
 });

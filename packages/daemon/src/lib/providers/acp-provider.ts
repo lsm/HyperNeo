@@ -7,29 +7,15 @@ import type {
   ModelTier,
 } from '@hyperneo/shared/provider';
 import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
-import { spawn } from 'node:child_process';
 import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command';
-import { type AcpProcessTree, getAcpProcessTreeOwner } from '../acp/acp-process-tree';
+import { AcpClient } from '../acp/acp-client';
+import { getAcpProcessTreeOwner } from '../acp/acp-process-tree';
 
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
 const ACP_CONTEXT_WINDOW_ENV_VAR = 'HYPERNEO_ACP_CONTEXT_WINDOW';
-const ACP_PROBE_TIMEOUT_MS = 5000;
-const ACP_PROBE_KILL_TIMEOUT_MS = 1000;
+const ACP_PROBE_TIMEOUT_MS = 10_000;
 
-export type AcpCommandProbe = (
-  command: string,
-  timeoutMs?: number,
-  processGroupProbe?: (pid: number) => boolean
-) => Promise<void>;
-
-const defaultProcessGroupProbe = (pid: number): boolean => {
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
-  }
-};
+export type AcpCommandProbe = (command: string, timeoutMs?: number) => Promise<void>;
 
 export interface AcpConfiguredModel {
   id: string;
@@ -38,78 +24,25 @@ export interface AcpConfiguredModel {
 
 export const defaultAcpCommandProbe: AcpCommandProbe = async (
   commandLine: string,
-  timeoutMs: number = ACP_PROBE_TIMEOUT_MS,
-  processGroupProbe: (pid: number) => boolean = defaultProcessGroupProbe
+  timeoutMs: number = ACP_PROBE_TIMEOUT_MS
 ): Promise<void> => {
   const { command, args } = parseAcpCommand(commandLine);
-  return new Promise<void>((resolve, reject) => {
-    let settled = false;
-    let killTimer: ReturnType<typeof setTimeout> | null = null;
-    let processGroupGone = false;
-    let processTree: AcpProcessTree | undefined;
-    const child = spawn(command, args, {
-      env: buildAcpSafeEnv(),
-      stdio: ['ignore', 'ignore', 'ignore'],
-      detached: process.platform !== 'win32',
-    });
-    const recordGroupGone = () => {
-      if (processGroupGone) return;
-      const pid = child.pid;
-      if (pid == null || processGroupProbe(pid)) return;
-      processGroupGone = true;
-      if (killTimer) {
-        clearTimeout(killTimer);
-        killTimer = null;
-      }
-    };
-    const timer = setTimeout(() => {
-      processTree?.terminate('SIGTERM');
-      killTimer = setTimeout(() => {
-        recordGroupGone();
-        if (!processGroupGone) processTree?.terminate('SIGKILL');
-      }, ACP_PROBE_KILL_TIMEOUT_MS);
-      killTimer.unref();
-      settle(() =>
-        reject(new Error(`ACP command '${command}' probe timed out after ${timeoutMs}ms`))
-      );
-    }, timeoutMs);
-    const settle = (callback: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      callback();
-    };
-
-    child.on('spawn', async () => {
-      try {
-        const owner = await getAcpProcessTreeOwner();
-        const ownedTree = owner(child);
-        processTree = ownedTree;
-        ownedTree.terminate('SIGTERM');
-        killTimer = setTimeout(() => {
-          recordGroupGone();
-          if (!processGroupGone) ownedTree.terminate('SIGKILL');
-        }, ACP_PROBE_KILL_TIMEOUT_MS);
-        killTimer.unref();
-        recordGroupGone();
-        settle(resolve);
-      } catch (error) {
-        child.kill('SIGKILL');
-        settle(() => reject(error));
-      }
-    });
-    child.on('exit', recordGroupGone);
-    child.on('close', recordGroupGone);
-    child.on('error', (err: NodeJS.ErrnoException) => {
-      settle(() => {
-        if (err.code === 'ENOENT') {
-          reject(new Error(`ACP command '${command}' not found in PATH`));
-          return;
-        }
-        reject(new Error(`ACP command '${command}' probe failed: ${err.message}`));
-      });
-    });
+  const owner = await getAcpProcessTreeOwner();
+  const client = new AcpClient({
+    command,
+    args,
+    cwd: process.cwd(),
+    env: buildAcpSafeEnv(),
+    replaceEnv: true,
+    requestTimeoutMs: timeoutMs,
+    processTreeOwner: owner,
   });
+  try {
+    await client.initialize();
+    await client.authenticate();
+  } finally {
+    client.close();
+  }
 };
 
 function parseContextWindow(value: string | undefined): number {
