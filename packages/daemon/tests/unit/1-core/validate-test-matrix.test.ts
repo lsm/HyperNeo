@@ -656,6 +656,34 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: 'rejects a multiline flow-form matrix.exclude (P2)',
+    expectExit: 1,
+    expectInStderr: 'removed by matrix.exclude',
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s.replace(
+          '        shard: [1, 2]',
+          '        shard: [1, 2]\n        exclude: [\n          { shard: 2 },\n        ]'
+        )
+      );
+    },
+  },
+  {
+    name: 'rejects a shard axis inflated by an env block scalar (P2)',
+    expectExit: 1,
+    expectInStderr: "does not pass exactly one '--shard=",
+    mutate: (root) => {
+      edit(root, MAIN, (s) =>
+        s
+          .replace('        shard: [1, 2]', '        shard: [1]')
+          .replace(
+            '      - name: Run web tests\n        run: >-',
+            '      - name: Run web tests\n        env:\n          NOTE: |\n            shard: [1, 2]\n        run: >-'
+          )
+      );
+    },
+  },
+  {
     name: 'rejects a sibling axis under a quoted matrix parent (P2)',
     expectExit: 1,
     expectInStderr: 'extra axis',

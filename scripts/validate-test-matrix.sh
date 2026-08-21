@@ -330,7 +330,18 @@ matrix_excludes() {
 		# the KEY may also be quoted, and so may the parent exclude: property
 		# itself, so quote characters are stripped from the line before matching.
 		injob && $0 ~ "^[[:space:]]*" excl ":[[:space:]]*\\[" {
-			s=$0; gsub(quotes, "", s)
+			s=$0
+			# A flow collection may span lines: "exclude: [" then "{ shard: 2 },"
+			# rows until the closing bracket. Consume continuation lines so the
+			# token scan sees the whole collection, not just the opening line.
+			if (s !~ /\]/) {
+				while ((getline more) > 0) {
+					cm=more; sub(/[[:space:]]+#.*$/, "", cm)
+					s=s " " cm
+					if (cm ~ /\]/) break
+				}
+			}
+			gsub(quotes, "", s)
 			while (match(s, key ":[[:space:]]*[^][,}[:space:]]+")) {
 				v=substr(s, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); gsub(/[^a-z0-9-]/, "", v); if (v != "") print v
 				s=substr(s, RSTART + RLENGTH)
@@ -1072,11 +1083,19 @@ reject_effective_config_drift "$WEB_CFG" "packages/web" \
 # the matrix token, leaves part of the suite unrun (or run twice) while this
 # guard reports every file covered.
 web_matrix=$(awk '
+	BEGIN { mtx = sprintf("[%c%c]?matrix[%c%c]?", 39, 34, 39, 34) }
+	{ c=$0; sub(/[[:space:]]+#.*$/, "", c); $0=c }
 	$0 ~ "^  test-web:" { injob=1; next }
-	injob && /^  [a-z]/ { injob=0; next }
+	injob && /^  [a-z]/ { injob=0; inmatrix=0; next }
 	!injob { next }
-	/^[[:space:]]*shard:[[:space:]]*\[/ {
-		s=$0; sub(/.*\[/, "", s); sub(/\].*/, "", s)
+	# Scope the axis scan to the strategy.matrix block: a "shard: [...]" line
+	# elsewhere in the job (e.g. inside a step env block scalar) is not an axis
+	# and must not inflate the leg count. The matrix key may sit at 4 or 6 and
+	# carry the axis inline (flow mapping), so the enter line is not skipped.
+	$0 ~ "^[[:space:]]{4,6}" mtx ":" { inmatrix=1 }
+	/^[[:space:]]{0,6}[a-z"]/ && $0 !~ "^[[:space:]]{4,6}" mtx ":" { inmatrix=0 }
+	inmatrix && /shard:[[:space:]]*\[/ {
+		s=$0; sub(/.*shard:[[:space:]]*\[/, "", s); sub(/\].*/, "", s)
 		n=split(s, a, ","); for (i=1; i<=n; i++) { gsub(/[[:space:]]/, "", a[i]); if (a[i] != "") print a[i] }
 	}
 ' "$REPO_ROOT/.github/workflows/main.yml")
