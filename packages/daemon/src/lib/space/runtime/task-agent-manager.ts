@@ -3267,6 +3267,19 @@ export class TaskAgentManager {
       }
     }
 
+    if (!isBusy) {
+      const replay = await session.handleQueryTrigger({
+        deliverIndividually: true,
+        excludeMessageUuid: messageId,
+      });
+      if (!replay.success) {
+        log.warn(
+          `TaskAgentManager: deferred backlog replay for session ${sessionId} failed: ` +
+            `${replay.error ?? 'unknown error'} — delivering current message only`
+        );
+      }
+    }
+
     if (v2Enabled) {
       const dbId = existing
         ? messageId

@@ -30,7 +30,10 @@ export interface QueryModeHandlerContext {
 export class QueryModeHandler {
   constructor(private ctx: QueryModeHandlerContext) {}
 
-  async handleQueryTrigger(): Promise<{
+  async handleQueryTrigger(options?: {
+    deliverIndividually?: boolean;
+    excludeMessageUuid?: string;
+  }): Promise<{
     success: boolean;
     messageCount: number;
     error?: string;
@@ -38,10 +41,10 @@ export class QueryModeHandler {
     const { session, db, internalEventBus, messageQueue, logger } = this.ctx;
 
     try {
-      const { messages: deferredMessages, total } = db.getUserMessagesByStatus(
-        session.id,
-        'deferred'
-      );
+      const { messages: allDeferred } = db.getUserMessagesByStatus(session.id, 'deferred');
+      const deferredMessages = options?.excludeMessageUuid
+        ? allDeferred.filter((m) => m.uuid !== options.excludeMessageUuid)
+        : allDeferred;
 
       if (deferredMessages.length === 0) {
         return { success: true, messageCount: 0 };
@@ -52,7 +55,7 @@ export class QueryModeHandler {
 
       if (isMessageDeliveryV2Enabled()) {
         try {
-          await this.deliverFlushUnderV2(deferredMessages, 'recovery');
+          await this.deliverFlushUnderV2(deferredMessages, 'recovery', options);
         } catch (error) {
           await internalEventBus.publish('messages.statusChanged', {
             sessionId: session.id,
@@ -83,7 +86,7 @@ export class QueryModeHandler {
         }
       }
 
-      return { success: true, messageCount: total };
+      return { success: true, messageCount: deferredMessages.length };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.error('Failed to trigger query:', error);
@@ -93,7 +96,8 @@ export class QueryModeHandler {
 
   private async deliverFlushUnderV2(
     messages: Array<SDKMessage & { dbId: string; timestamp: number }>,
-    origin: MessageDeliveryOrigin
+    origin: MessageDeliveryOrigin,
+    options?: { deliverIndividually?: boolean }
   ): Promise<void> {
     const jobQueue = this.ctx.db.getJobQueueRepo();
     const pending = messages.filter(
@@ -105,7 +109,7 @@ export class QueryModeHandler {
       return text !== null && !text.startsWith('/');
     });
 
-    if (allBatchable && pending.length >= 2) {
+    if (!options?.deliverIndividually && allBatchable && pending.length >= 2) {
       const batched = await deliverBatchAndMarkQueued({
         jobQueue,
         stateManager: this.ctx.stateManager,
