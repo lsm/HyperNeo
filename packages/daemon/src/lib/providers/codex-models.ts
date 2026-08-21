@@ -79,6 +79,12 @@ export function resolveCodexBridgeModelId(modelId: string): CodexBridgeModelId |
   if (resolved in MODEL_CONTEXT_WINDOWS) {
     return resolved as CodexBridgeModelId;
   }
+  if (resolved.startsWith('ft:')) {
+    const base = resolved.split(':')[1];
+    if (base && base in MODEL_CONTEXT_WINDOWS) {
+      return base as CodexBridgeModelId;
+    }
+  }
   return undefined;
 }
 
@@ -130,7 +136,8 @@ const CODEX_MODEL_INFO_BY_ID = new Map(CODEX_MODEL_INFOS.map((model) => [model.i
 export function codexRemoteModelInfo(model: CodexRemoteModelMetadata): ModelInfo {
   const known = CODEX_MODEL_INFO_BY_ID.get(model.slug);
   if (known) return known;
-  const contextWindow = model.contextWindow ?? model.maxContextWindow ?? 128000;
+  const contextWindow =
+    getModelContextWindow(model.slug) ?? model.contextWindow ?? model.maxContextWindow ?? 128000;
   return {
     id: model.slug,
     name: model.displayName,

@@ -211,6 +211,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private activeCatalogScope: CodexModelCacheScope | undefined;
 
+  private activeCatalogFromBundle = true;
+
   private readonly modelRefreshes = new Map<string, Promise<void>>();
 
   private modelCacheWrite = Promise.resolve();
@@ -498,7 +500,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   private activateCachedCatalog(scope: CodexModelCacheScope): boolean {
     if (!this.modelCache || !this.hydratedCacheEntries) return false;
     if (!this.cacheMatchesScope(this.modelCache, scope)) return false;
-    this.replaceCatalog(this.hydratedCacheEntries, scope);
+    this.replaceCatalog(this.hydratedCacheEntries, scope, false);
     return true;
   }
 
@@ -509,7 +511,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   private ensureCatalogForScope(scope: CodexModelCacheScope): void {
     this.discardDiscoveryErrorForOtherScopes(scope);
     if (!this.hasActiveCatalog(scope) && !this.activateCachedCatalog(scope)) {
-      this.replaceCatalog(this.bundledCatalogEntries(), scope);
+      this.replaceCatalog(this.bundledCatalogEntries(), scope, true);
     }
   }
 
@@ -802,6 +804,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           'AnthropicToCodexBridgeProvider: OAuth token refresh failed — clearing stale credentials'
         );
         await this.recordRejectedCodexImport(credentials);
+        if (!this.credentialsStillMatch(credentialKey)) {
+          logger.warn(
+            'AnthropicToCodexBridgeProvider: credentials changed during rejection recording — preserving new credentials'
+          );
+          return { definitive: false };
+        }
         await this.logout();
       } else if (!result.definitive) {
         logger.warn(
@@ -1058,11 +1066,13 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private replaceCatalog(
     entries: CodexCatalogEntry[],
-    scope: CodexModelCacheScope | undefined
+    scope: CodexModelCacheScope | undefined,
+    fromBundle = false
   ): void {
     this.notifyCatalogScopeChanged(this.activeCatalogScope, scope);
     this.catalogEntries = entries;
     this.activeCatalogScope = scope;
+    this.activeCatalogFromBundle = fromBundle;
     const currentAuth = this.resolveBridgeAuth();
     const currentKey = currentAuth
       ? `responses:${this.bridgeAuthCacheKey(currentAuth)}`
@@ -1185,7 +1195,15 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const credentials = await this.loadCredentials();
     if (!credentials || credentials.type !== 'oauth' || credentials.refresh) return;
     if (credentials.access !== auth.apiKey) return;
+    const rejectedKey = this.oauthCredentialKey(credentials);
     await this.recordRejectedCodexImport(credentials);
+    const currentCredentials = await this.loadCredentials();
+    if (!currentCredentials || this.oauthCredentialKey(currentCredentials) !== rejectedKey) {
+      logger.warn(
+        'AnthropicToCodexBridgeProvider: credentials changed during rejection recording — preserving new credentials'
+      );
+      return;
+    }
     await this.logout();
   }
 
@@ -1410,7 +1428,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (!this.currentAuthMatches(auth, scope)) return;
 
     this.clearDiscoveryError(scope);
-    this.replaceCatalog(entries, scope);
+    this.replaceCatalog(entries, scope, false);
     const cache: CodexModelCache = {
       schemaVersion: CODEX_MODEL_CACHE_SCHEMA_VERSION,
       fetchedAt: new Date().toISOString(),
@@ -1593,6 +1611,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         info.alias === modelId || info.id === modelId || info.providerAliases?.includes(modelId)
     );
     if (!catalogEntry) {
+      if (!this.activeCatalogFromBundle) {
+        throw new Error(`Unknown Codex model: ${modelId}`);
+      }
       const fallbackId = this.getModelForTier('default');
       catalogEntry = this.catalogEntries.find(({ info }) => info.id === fallbackId);
       if (!catalogEntry) throw new Error(`Unknown Codex model: ${modelId}`);
@@ -2000,12 +2021,15 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       return this.hashImportKey(`api_key:${codexData.OPENAI_API_KEY}`);
     }
     if (!codexData.tokens?.access_token) return undefined;
+    const accountId =
+      this.extractAccountId(codexData.tokens.access_token) ??
+      (typeof codexData.tokens.account_id === 'string' ? codexData.tokens.account_id : '');
     return this.hashImportKey(
       [
         'oauth',
         codexData.tokens.access_token,
         codexData.tokens.refresh_token ?? '',
-        codexData.tokens.account_id ?? '',
+        accountId,
       ].join(':')
     );
   }

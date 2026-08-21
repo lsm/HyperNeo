@@ -706,6 +706,16 @@ export async function isValidModel(
     return true;
   }
 
+  const provider = getProviderRegistry().get(providerId);
+  if (
+    provider &&
+    providerId === 'anthropic-codex' &&
+    typeof provider.ownsModel === 'function' &&
+    !provider.ownsModel(idOrAlias)
+  ) {
+    return false;
+  }
+
   const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
   if (!findInModels(staticProviderModels, idOrAlias)) {
     return false;
@@ -715,7 +725,6 @@ export async function isValidModel(
     return true;
   }
 
-  const provider = getProviderRegistry().get(providerId);
   if (!provider) {
     return false;
   }

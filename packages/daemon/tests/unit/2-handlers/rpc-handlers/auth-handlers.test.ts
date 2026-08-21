@@ -3,7 +3,12 @@ import { MessageHub } from '@hyperneo/shared';
 import { setupAuthHandlers } from '../../../../src/lib/rpc-handlers/auth-handlers';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { Provider } from '@hyperneo/shared/provider';
-import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
+import {
+  resetProviderRegistry,
+  getProviderRegistry,
+  inferProviderForModel,
+  markProviderAvailability,
+} from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
 
@@ -353,6 +358,40 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(mockProvider.logout).toHaveBeenCalled();
+    });
+
+    it('keeps a logged-out provider marked unavailable for model inference', async () => {
+      const mockProvider = createMockProvider({
+        ownsModel: mock((modelId: string) => modelId === 'gpt-logout-owned'),
+      });
+      registry.register(mockProvider);
+
+      expect(inferProviderForModel('gpt-logout-owned')).toBe('test-provider');
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      expect(inferProviderForModel('gpt-logout-owned')).toBe('anthropic-codex');
+    });
+
+    it('clears the availability snapshot when login installs credentials', async () => {
+      const mockProvider = createMockProvider({
+        ownsModel: mock((modelId: string) => modelId === 'gpt-login-owned'),
+        getCredentials: mock(async () => ({ type: 'oauth' as const, accessToken: 'fresh' })),
+      });
+      registry.register(mockProvider);
+      markProviderAvailability('test-provider', false);
+
+      const handler = messageHubData.handlers.get('auth.login');
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      expect(inferProviderForModel('gpt-login-owned')).toBe('test-provider');
     });
 
     it('removes provider credential store row on logout', async () => {

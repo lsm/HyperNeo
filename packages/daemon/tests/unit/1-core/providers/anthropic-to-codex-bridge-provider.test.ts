@@ -965,6 +965,25 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(models.length).toBeGreaterThan(0);
     });
 
+    it('rejects models removed from an authoritative fetched catalog', async () => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'gpt-dynamic' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-dynamic' }, tmpDir, tmpDir, fetchImpl);
+
+      await provider.getModels();
+
+      expect(() =>
+        provider.buildSdkConfig('gpt-5.3-codex', { sessionId: 'removed-model' })
+      ).toThrow('Unknown Codex model: gpt-5.3-codex');
+      expect(provider.ownsModel('gpt-5.3-codex')).toBe(false);
+      expect(provider.ownsModel('gpt-dynamic')).toBe(true);
+    });
+
     it('reports correct context windows for Codex catalogue models', async () => {
       provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir);
       const models = await provider.getModels();
@@ -1105,6 +1124,25 @@ describe('AnthropicToCodexBridgeProvider', () => {
       for (const modelId of modelIds) {
         expect(provider.getModelThinkingMode(modelId)).toBe('granular');
       }
+    });
+
+    it('inherits known base-model context windows for fine-tuned models', async () => {
+      const fetchImpl = mock(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [{ id: 'ft:gpt-5.4:org:custom' }, { id: 'gpt-unknown-shape' }],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+      ) as unknown as typeof fetch;
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
+
+      const models = await provider.getModels();
+      const contextWindows = new Map(models.map((model) => [model.id, model.contextWindow]));
+
+      expect(contextWindows.get('ft:gpt-5.4:org:custom')).toBe(272000);
+      expect(contextWindows.get('gpt-unknown-shape')).toBe(128000);
     });
 
     it('filters non-Responses models from the general OpenAI catalog', async () => {
@@ -3018,6 +3056,38 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('normalizes JWT-derived account IDs when matching rejected imports', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      mkdirSync(codexDir, { recursive: true });
+      const rejectedToken = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-jwt-only' },
+      });
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: rejectedToken },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: rejectedToken,
+        accountId: 'acct-jwt-only',
+      });
+      const fetchImpl = mock(
+        async () => new Response('unauthorized', { status: 401 })
+      ) as unknown as typeof fetch;
+      provider = makeProvider({}, hyperneoDir, codexDir, fetchImpl);
+
+      await expect(provider.refreshModels()).rejects.toThrow(
+        'Codex credentials rejected (HTTP 401)'
+      );
+      expect(await provider.isAvailable()).toBe(false);
+
+      const nextProvider = makeProvider({}, hyperneoDir, codexDir, fetchImpl);
+
+      expect(await nextProvider.isAvailable()).toBe(false);
+      expect(await nextProvider.getApiKey()).toBeUndefined();
+      nextProvider.stopAllBridgeServers();
+    });
+
     it('lifts rejected-import suppression when the ~/.codex/auth.json token changes', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
@@ -4266,6 +4336,53 @@ describe('AnthropicToCodexBridgeProvider', () => {
       await expect(refresh).resolves.toBe(false);
       expect(await p.getApiKey()).toBeUndefined();
       expect(existsSync(path.join(hyperneoDir, 'auth.json'))).toBe(false);
+      p.stopAllBridgeServers();
+    });
+
+    it('preserves credentials installed while a rejection is being recorded', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      const replacementAccess = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct-replacement' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'stale-access-token',
+        refresh: 'invalid-refresh-token',
+        accountId: 'acct-stale',
+      });
+      writeCodexAuth(codexDir, {
+        tokens: {
+          access_token: 'stale-access-token',
+          refresh_token: 'invalid-refresh-token',
+          account_id: 'acct-stale',
+        },
+      });
+      fetchSpy.mockResolvedValueOnce(
+        new Response('{"error":"invalid_grant"}', {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      const originalRename = fsPromiseMocks.rename.getMockImplementation();
+      fsPromiseMocks.rename.mockImplementationOnce(
+        async (...args: Parameters<typeof fs.rename>) => {
+          p.setCredentials({
+            type: 'oauth',
+            accessToken: replacementAccess,
+            refreshToken: 'replacement-refresh-token',
+            raw: { accountId: 'acct-replacement' },
+          } as ProviderCredentials);
+          return originalRename(...args);
+        }
+      );
+
+      const refreshed = await p.refreshToken();
+
+      expect(refreshed).toBe(false);
+      expect(await p.getApiKey()).toBe(replacementAccess);
+      expect(existsSync(path.join(hyperneoDir, 'auth.json'))).toBe(true);
       p.stopAllBridgeServers();
     });
 

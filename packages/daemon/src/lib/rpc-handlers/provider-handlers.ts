@@ -172,8 +172,16 @@ async function providerCatalogSignature(provider: Provider): Promise<string> {
 async function clearCacheAndNotifyProvidersChanged(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>
 ): Promise<void> {
-  const { invalidateModelsCacheEntry } = await import('../model-service.js');
-  invalidateModelsCacheEntry('global');
+  const { clearModelsCache } = await import('../model-service.js');
+  clearModelsCache();
+  internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+}
+
+async function invalidateCacheAndNotifyProvidersChanged(
+  internalEventBus: InternalEventBus<DaemonInternalEventMap>
+): Promise<void> {
+  const { clearModelsCache } = await import('../model-service.js');
+  clearModelsCache('global');
   internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
 }
 
@@ -409,12 +417,12 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         lastHealthCheckAt: Date.now(),
       });
       if ((err as ProviderModelRefreshError).definitiveAuthFailure) {
-        await clearCacheAndNotifyProvidersChanged(internalEventBus);
+        await invalidateCacheAndNotifyProvidersChanged(internalEventBus);
       }
       return { healthy: false, error };
     } finally {
       if ((await providerCatalogSignature(provider)) !== catalogBefore) {
-        await clearCacheAndNotifyProvidersChanged(internalEventBus);
+        await invalidateCacheAndNotifyProvidersChanged(internalEventBus);
       }
     }
   });
@@ -459,12 +467,12 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             lastHealthCheckAt: Date.now(),
           });
           if ((err as ProviderModelRefreshError).definitiveAuthFailure) {
-            await clearCacheAndNotifyProvidersChanged(internalEventBus);
+            await invalidateCacheAndNotifyProvidersChanged(internalEventBus);
           }
           return { providerId: record.providerId, healthy: false, error };
         } finally {
           if ((await providerCatalogSignature(provider)) !== catalogBefore) {
-            await clearCacheAndNotifyProvidersChanged(internalEventBus);
+            await invalidateCacheAndNotifyProvidersChanged(internalEventBus);
           }
         }
       })

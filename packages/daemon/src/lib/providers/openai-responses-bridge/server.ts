@@ -1685,6 +1685,7 @@ export function createOpenAIResponsesBridgeServer(
               headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
               body: JSON.stringify(requestBody),
             });
+            requestAuthGeneration = authGeneration;
             continuation = undefined;
           } else {
             logUpstream4xx(openAIResponse.status, requestBody, errorText);
@@ -1738,6 +1739,7 @@ export function createOpenAIResponsesBridgeServer(
             headers: buildOpenAIHeaders(activeAuth, resolvedAuth),
             body: JSON.stringify(requestBody),
           });
+          requestAuthGeneration = authGeneration;
         }
       } catch (err) {
         logger.warn('openai-responses: upstream request failed:', err);
