@@ -226,7 +226,10 @@ canonical task is re-read before spawn admission, so the ordinary spawn path
 is suppressed only for parks visible at that re-read — a park landing after
 it, in particular while the spawn loop awaits
 `spawnWorkflowNodeAgentForExecution` for the first of several pending
-executions, still spawns the remainder with the stale task. Earlier stages run
+executions, still spawns the remainder with the stale task, and the loop's
+trailing status update — guarded only by the stale `open` snapshot — then
+writes the parked task back to `in_progress` through the same unvalidated
+update. Earlier stages run
 on the admission-era task entirely, and every blocking write in the tick,
 wherever it fires, can overwrite a concurrent park rather than merely act
 stale: the admission interpreter's `blockInvalidWorkflow` and
