@@ -435,6 +435,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(197), () => runMigration197(db));
 
   run(migrationMarkerKey(198), () => runMigration198(db));
+
+  run(migrationMarkerKey(199), () => runMigration199(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -9499,4 +9501,10 @@ export function runMigration197(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status_timestamp
     ON sdk_messages(session_id, send_status, timestamp)`);
   db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_send_status`);
+}
+
+export function runMigration199(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+  db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_type`);
+  db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_consumed_seq`);
 }
