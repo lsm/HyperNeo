@@ -69,7 +69,7 @@ export class AcpQueryAdapter implements QueryLike {
         }
       }
 
-      const flushMessages = [...this.translator.flush(), ...this.translator.flushToolResults()];
+      const flushMessages = this.flushPendingMessages();
       for (const msg of flushMessages) {
         yield msg;
       }
@@ -96,6 +96,10 @@ export class AcpQueryAdapter implements QueryLike {
     this.interrupted = true;
     this.client.cancel();
     return undefined;
+  }
+
+  flushPendingMessages(): SDKMessage[] {
+    return [...this.translator.flush(), ...this.translator.flushToolResults()];
   }
 
   close(): void {

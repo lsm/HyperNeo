@@ -1991,4 +1991,44 @@ describe('AcpQueryRunner', () => {
     expect(client.sendPrompt).toHaveBeenCalled();
     expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
   }, 1000);
+
+  test('delivers pending ACP tool results when abort drops the iterator output', async () => {
+    const client = createMockClient();
+    let releasePrompt: (() => void) | undefined;
+    let promptBlockedResolve: (() => void) | undefined;
+    const promptBlocked = new Promise<void>((resolve) => {
+      promptBlockedResolve = resolve;
+    });
+    client.sendPrompt.mockImplementation(async function* () {
+      yield {
+        sessionId: 'acp-session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-interrupted',
+          title: 'Long tool',
+          rawInput: {},
+        },
+      };
+      await new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+        promptBlockedResolve?.();
+      });
+    });
+    const { runner, ctx, onSDKMessage } = createRunnerFixture({ client });
+
+    await runner.start();
+    await promptBlocked;
+    ctx.queryAbortController?.abort();
+    releasePrompt?.();
+    await ctx.queryPromise;
+
+    expect(
+      onSDKMessage.mock.calls.some(
+        ([message]) =>
+          message.type === 'user' &&
+          (message as SDKUserMessage).parent_tool_use_id === 'tc-interrupted'
+      )
+    ).toBe(true);
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  }, 1000);
 });

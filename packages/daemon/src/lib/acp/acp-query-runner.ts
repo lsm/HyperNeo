@@ -1398,6 +1398,7 @@ export class AcpQueryRunner {
       resolveAbort = resolve;
     });
     const onAbort = () => resolveAbort(abortResult);
+    let messageDelivered = false;
 
     try {
       if (signal.aborted) {
@@ -1409,7 +1410,7 @@ export class AcpQueryRunner {
       while (!signal.aborted) {
         const result = await Promise.race([iterator.next(), abortPromise]);
 
-        if ('aborted' in result || signal.aborted) {
+        if ('aborted' in result) {
           break;
         }
 
@@ -1417,10 +1418,25 @@ export class AcpQueryRunner {
           break;
         }
 
+        messageDelivered = true;
         yield result.value;
       }
     } finally {
       signal.removeEventListener('abort', onAbort);
+      if (signal.aborted && messageDelivered) {
+        for (const msg of queryObj.flushPendingMessages()) {
+          yield msg;
+        }
+        while (true) {
+          try {
+            const result = await iterator.next();
+            if (result.done) break;
+            yield result.value;
+          } catch {
+            break;
+          }
+        }
+      }
       try {
         await iterator.return?.();
       } catch {
