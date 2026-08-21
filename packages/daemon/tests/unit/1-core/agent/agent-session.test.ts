@@ -2064,6 +2064,48 @@ describe('AgentSession', () => {
       expect(cancelSpy).not.toHaveBeenCalled();
     });
 
+    it('deliverChatMessage publishes failed status when the session is archived', async () => {
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        ...mockSession,
+        status: 'archived',
+      });
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markDeliveryFailedByUuid: mock(() => 'db-1'),
+      }));
+
+      await expect(agentSession.deliverChatMessage('archived-msg')).rejects.toThrow(
+        'Session test-session-id is archived'
+      );
+
+      expect(mockInternalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'test-session-id',
+        messageIds: ['db-1'],
+        status: 'failed',
+      });
+    });
+
+    it('deliverChatMessage publishes failed status when durable enqueue fails', async () => {
+      mockDb.getJobQueueRepo = mock(() => ({
+        getActiveDeliveryRole: mock(() => null),
+        enqueue: mock(() => {
+          throw new Error('delivery enqueue failure');
+        }),
+      }));
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markDeliveryFailedByUuid: mock(() => 'db-2'),
+      }));
+
+      await expect(agentSession.deliverChatMessage('enqueue-fail')).rejects.toThrow(
+        'delivery enqueue failure'
+      );
+
+      expect(mockInternalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'test-session-id',
+        messageIds: ['db-2'],
+        status: 'failed',
+      });
+    });
+
     it('resetQuery should delegate to lifecycleManager', async () => {
       const resetSpy = mock(async () => ({ success: true }));
       // biome-ignore lint: test mock access

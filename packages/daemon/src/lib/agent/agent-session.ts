@@ -1769,7 +1769,18 @@ export class AgentSession
   async deliverChatMessage(messageUuid: string): Promise<void> {
     await withSessionLock(this.session.id, async () => {
       if (this.db.getSession(this.session.id)?.status === 'archived') {
-        this.db.getSDKMessageRepo().markDeliveryFailedByUuid(this.session.id, messageUuid);
+        const failedDbId = this.db
+          .getSDKMessageRepo()
+          ?.markDeliveryFailedByUuid(this.session.id, messageUuid);
+        if (failedDbId) {
+          void this.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId: this.session.id,
+              messageIds: [failedDbId],
+              status: 'failed',
+            })
+            .catch(() => {});
+        }
         throw new Error(`Session ${this.session.id} is archived`);
       }
       let role: 'turn' | 'steer';
@@ -1778,7 +1789,18 @@ export class AgentSession
           origin: 'chat',
         });
       } catch (err) {
-        this.db.getSDKMessageRepo().markDeliveryFailedByUuid(this.session.id, messageUuid);
+        const failedDbId = this.db
+          .getSDKMessageRepo()
+          ?.markDeliveryFailedByUuid(this.session.id, messageUuid);
+        if (failedDbId) {
+          void this.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId: this.session.id,
+              messageIds: [failedDbId],
+              status: 'failed',
+            })
+            .catch(() => {});
+        }
         throw err;
       }
       if (role === 'turn' || this.stateManager.getState().status === 'rate_limit_cooldown') {
