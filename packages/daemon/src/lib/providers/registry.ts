@@ -144,12 +144,7 @@ export function getProviderRegistry(): ProviderRegistry {
   return registryInstance;
 }
 
-/**
- * Reset the global registry instance
- * Useful for testing
- *
- * @public Exported for testing purposes
- */
+/** @public */
 export function resetProviderRegistry(): void {
   registryInstance = null;
 }

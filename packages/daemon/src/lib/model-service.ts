@@ -342,22 +342,12 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
   await refreshPromise;
 }
 
-/**
- * Get current models cache (for testing)
- * @returns Map of cached models
- *
- * @public Exported for testing purposes
- */
+/** @public */
 export function getModelsCache(): Map<string, ModelInfo[]> {
   return new Map(modelsCache);
 }
 
-/**
- * Set models cache (for testing - allows reusing cached models)
- * @param cache Map of cached models to restore
- *
- * @public Exported for testing purposes
- */
+/** @public */
 export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: number): void {
   modelsCache.clear();
   cacheTimestamps.clear();

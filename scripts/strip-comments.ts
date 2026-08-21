@@ -5,13 +5,13 @@ import * as ts from 'typescript';
 const KEEP_PATTERNS: RegExp[] = [
   /^#!/,
   /^\/\/\/\s*</,
-  /@ts-(ignore|expect-error|nocheck|check)\b/,
-  /biome-ignore/,
-  /^(?:\/\/|\/\*)\s*eslint-/,
-  /oxlint-(disable|enable)/,
-  /@public\b/,
-  /(v8|istanbul|c8) ignore/,
-  /knip-ignore/,
+  /^(?:\/\/|\/\*+)\s*@ts-(ignore|expect-error|nocheck|check)\b/,
+  /^(?:\/\/|\/\*+)\s*biome-ignore\b/,
+  /^(?:\/\/|\/\*+)\s*eslint-/,
+  /^(?:\/\/|\/\*+)\s*oxlint-(disable|enable)\b/,
+  /^(?:\/\/|\/\*+)[\s*]*@public\b/,
+  /^(?:\/\/|\/\*+)\s*(?:v8|istanbul|c8) ignore\b/,
+  /^(?:\/\/|\/\*+)\s*knip-ignore\b/,
 ];
 
 interface Range {

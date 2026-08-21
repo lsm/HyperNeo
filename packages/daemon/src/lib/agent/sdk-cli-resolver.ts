@@ -41,11 +41,7 @@ function isMusl(): boolean {
   return false;
 }
 
-/**
- * Platform suffix for the SDK's native CLI binary package.
- * Follows the naming convention: `@anthropic-ai/claude-agent-sdk-{os}-{arch}[-musl]`
- * @public Exported for use by build scripts.
- */
+/** @public */
 export function getPlatformPackageName(): string | undefined {
   const { platform, arch } = process;
   if (platform === 'win32' && arch === 'x64') return `${SDK_PACKAGE}-win32-x64`;
@@ -59,10 +55,7 @@ export function getPlatformPackageName(): string | undefined {
   return undefined;
 }
 
-/**
- * Native CLI binary name (platform-dependent).
- * @public Exported for use by build scripts.
- */
+/** @public */
 export function getCliBinaryName(): string {
   return process.platform === 'win32' ? 'claude.exe' : 'claude';
 }
@@ -537,10 +530,7 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
-/**
- * Reset module state for testing.
- * @public Exported for unit tests.
- */
+/** @public */
 export function _resetForTesting(): void {
   cachedCliPath = undefined;
   warmupInProgress = false;

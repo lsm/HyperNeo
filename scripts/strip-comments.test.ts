@@ -68,6 +68,36 @@ describe('strip-comments', () => {
     expect(stripComments(source, 'a.ts', false)).toBe('call();\n');
   });
 
+  it('keeps every functional directive form at the start of the comment', () => {
+    const source = [
+      '// @ts-expect-error - checking for Optional symbol',
+      'const a = x;',
+      '// @ts-nocheck',
+      '// biome-ignore lint/suspicious/noEmptyBlock: placeholder',
+      '// oxlint-disable-next-line no-explicit-any',
+      '/** @public - Preact signal accessed via .value in components */',
+      '/**\n * @public Exported for testing purposes\n */',
+      'const b = 1; /* v8 ignore next 3 */',
+      '// knip-ignore-next-line',
+      '',
+    ].join('\n');
+    expect(stripComments(source, 'a.tsx', false)).toBe(source);
+  });
+
+  it('strips prose that merely mentions a directive keyword', () => {
+    const source = [
+      'call(); // explain biome-ignore behavior',
+      'call(); // mention @ts-ignore here',
+      'call(); // discuss oxlint-disable choices',
+      'call(); // note the @public marker',
+      'call(); // why v8 ignore exists',
+      'call(); // what knip-ignore does',
+      '/**\n * Exports marked with @public JSDoc tag are reported.\n */',
+      '',
+    ].join('\n');
+    expect(stripComments(source, 'a.ts', false)).toBe('call();\n'.repeat(6));
+  });
+
   it('does not treat comment markers inside string and template literals as comments', () => {
     const source = 'const a = "/* not a comment */";\nconst b = `// not a comment`;\n';
     expect(stripComments(source, 'a.ts', false)).toBe(source);

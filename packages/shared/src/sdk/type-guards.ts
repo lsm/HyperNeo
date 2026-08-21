@@ -274,10 +274,7 @@ export function extractAskUserQuestion(msg: SDKMessage): {
   return null;
 }
 
-/**
- * Check if an assistant message contains an AskUserQuestion tool call.
- * @public
- */
+/** @public */
 export function hasAskUserQuestion(msg: SDKMessage): boolean {
   return extractAskUserQuestion(msg) !== null;
 }
@@ -319,10 +316,7 @@ export function hasRenderableThinking(
   return typeof block.thinking === "string" && block.thinking.trim().length > 0;
 }
 
-/**
- * Get a human-readable description of a message type.
- * @public
- */
+/** @public */
 export function getMessageTypeDescription(msg: SDKMessage): string {
   if (isSDKAssistantMessage(msg)) {
     return "Assistant Response";
