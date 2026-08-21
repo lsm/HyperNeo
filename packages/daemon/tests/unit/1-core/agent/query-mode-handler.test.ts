@@ -599,6 +599,55 @@ describe('QueryModeHandler', () => {
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
     });
 
+    it('handleQueryTrigger with deliverIndividually sends each deferred message as its own job', async () => {
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+          { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
+          {
+            dbId: 'db-3',
+            uuid: 'uuid-3',
+            type: 'user',
+            message: { role: 'user', content: 'three' },
+          },
+        ] as unknown as SDKMessage[])
+      );
+
+      handler = new QueryModeHandler(createContext());
+      const result = await handler.handleQueryTrigger({ deliverIndividually: true });
+
+      expect(result).toEqual({ success: true, messageCount: 3 });
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1', 'db-2', 'db-3'], 'enqueued');
+      const jobs = deliveryUuids();
+      expect(jobs.map((j) => j.uuid)).toEqual(['uuid-1', 'uuid-2', 'uuid-3']);
+      expect(jobs.find((j) => j.uuid === 'uuid-1')?.role).toBe('turn');
+      expect(jobs.filter((j) => j.role === 'steer')).toHaveLength(2);
+      const payloads = jobsDb
+        .prepare(`SELECT payload FROM job_queue WHERE queue = 'message_delivery'`)
+        .all() as Array<{ payload: string }>;
+      expect(payloads.every((p) => !('batchUuids' in JSON.parse(p.payload)))).toBe(true);
+    });
+
+    it('handleQueryTrigger with excludeMessageUuid leaves the excluded row deferred', async () => {
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+          { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
+        ] as unknown as SDKMessage[])
+      );
+
+      handler = new QueryModeHandler(createContext());
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        excludeMessageUuid: 'uuid-2',
+      });
+
+      expect(result).toEqual({ success: true, messageCount: 1 });
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'enqueued');
+      const jobs = deliveryUuids();
+      expect(jobs.map((j) => j.uuid)).toEqual(['uuid-1']);
+    });
+
     it('handleQueryTrigger creates durable ownership before publishing enqueued status', async () => {
       getUserMessagesByStatusSpy.mockReturnValue(
         byStatusResult([
