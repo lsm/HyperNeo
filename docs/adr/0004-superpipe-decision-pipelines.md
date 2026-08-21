@@ -624,9 +624,13 @@ of `resolve_forge_scope`, and the RPC message handlers
 `space.task.sendMessage`/`space.task.activateNodeAgent`
 (`rpc-handlers/space-task-message-handlers.ts`), whose space-mismatch case
 collapses into the not-found error rather than a distinct message; the bound
-task-agent surface's `onArchiveTask`
-(`runtime/task-agent-manager.ts`), which re-implements the archive-active-run
-gate with its own message variant; and the largest ones: the UI-side RPC surface
+task-agent surface (`runtime/task-agent-manager.ts`), whose `onArchiveTask`
+re-implements the archive-active-run gate with its own message variant and
+whose `onPublishTask` enforces no draft-only gate at all — `publishTask` is a
+bare `setTaskStatus(taskId, 'open')`, so the node-agent publish path can
+publish a non-draft task that both the MCP tool (`routePublishTask`) and the
+RPC handler (inline check) would reject;
+and the largest ones: the UI-side RPC surface
 in `rpc-handlers/space-task-handlers.ts`, which re-implements the update
 routing by hand with UI-flavored messages, whose `spaceTask.publish` repeats
 the publish target resolution and draft-only gate, and whose
