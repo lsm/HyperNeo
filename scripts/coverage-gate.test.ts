@@ -228,6 +228,9 @@ describe('parseBaseline and buildBaseline', () => {
     expect(parseBaseline('not json')).toBeNull();
     expect(parseBaseline('{"overallPercent": 50}')).toBeNull();
     expect(
+      parseBaseline('{"schemaVersion": 1, "overallPercent": 50, "packages": null}')
+    ).toBeNull();
+    expect(
       parseBaseline(JSON.stringify({ schemaVersion: 2, overallPercent: 50, packages: {} }))
     ).toBeNull();
   });

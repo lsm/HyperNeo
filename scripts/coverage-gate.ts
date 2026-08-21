@@ -163,7 +163,8 @@ export function parseBaseline(text: string): CoverageBaseline | null {
     typeof parsed === 'object' &&
     (parsed as CoverageBaseline).schemaVersion === BASELINE_SCHEMA_VERSION &&
     typeof (parsed as CoverageBaseline).overallPercent === 'number' &&
-    typeof (parsed as CoverageBaseline).packages === 'object'
+    typeof (parsed as CoverageBaseline).packages === 'object' &&
+    (parsed as CoverageBaseline).packages !== null
   ) {
     return parsed as CoverageBaseline;
   }
