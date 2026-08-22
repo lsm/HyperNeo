@@ -99,7 +99,12 @@ the copy is made later global mutations cannot change that subprocess — the
 lease covers ambient reads, apply, copy, and restore, then releases **before
 startup-gate waiting** rather than for the query's lifetime (holding through
 "use" would serialize every session and coordinated auth/model request
-indefinitely); direct SDK paths that do not snapshot an env (GitHub spawns,
+indefinitely) — and the early restore **atomically clears or transfers the
+snapshot**, neutralizing the finalizer's later backstop: both runners'
+finalizers otherwise restore `ctx.originalEnvVars` again
+(query-runner `:1321–1328`, acp `:760–764`), and with another session owning
+the environment by then that second restore overwrites its credentials
+outside the lease; direct SDK paths that do not snapshot an env (GitHub spawns,
 model loading) take a bounded lease around their call or an isolated
 environment. The window
 moreover **begins before the apply**: the auth gate reads ambient credentials
@@ -707,7 +712,15 @@ note.
      the replacement as in cooldown even though PR 5 later detects
      staleness; query/turn ownership is revalidated immediately before that
      state write (or the cooldown transition is owner-scoped), with a
-     replacement-during-fallback-resolution pin — and
+     replacement-during-fallback-resolution pin — **extended to every
+     post-await watchdog write**: episode A resuming after fallback/chain
+     resolution writes `triedKeys` and assigns `chain` before the generation
+     checks (rate-limit-watchdog.ts:149–176), and its detached
+     `fireImmediateFallback` unconditionally clears the shared
+     `fallbackPending` flag in `finally` (`:346–355`) — either can alter
+     episode B's candidate selection or make `retryNow()` admit another
+     retry during B's switch; every post-await watchdog write, the detached
+     finalizer included, is generation-fenced — and
      `ProcessingStateManager.setIdle`
      gains the generation/owner-scoped state transition and waiter drain with
      the replacement-during-publish interleaving pinned — **and the
@@ -1174,7 +1187,14 @@ note.
   replacement teardown resolved the yielded durable entry via
   `MessageQueue.clear()` — cleared, not consumed; the full
   **lifecycle/abort state is rechecked alongside delivery ownership** after
-  the acknowledgement and before the durable
+  the acknowledgement — in **both** acknowledgment consumers:
+  `driveDeliveryTurn` and `feedDeliverySteer`, which independently awaits
+  `action.acknowledgment` (`:1734–1746`) and then unconditionally marks a
+  non-ACP delivery consumed (`:1747–1752`); `MessageQueue.clear()` resolves
+  rather than rejects yielded acknowledgments, so a cleared steer resumes
+  through that path and consumes/signals the durable row unchecked — the
+  same full lifecycle and delivery-owner resnapshot precedes the steer's
+  metrics and consumption effects, and in the turn path precedes the durable
   status/signaling effects — cleanup can clear a yielded entry's
   acknowledgment (message-queue.ts:156–162 resolves it) without superseding
   the claim or losing the abort race, and the continuation at
