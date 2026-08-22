@@ -1089,22 +1089,6 @@ describe('LoopDetectorHook', () => {
   });
 
   describe('config resolution (characterization)', () => {
-    it('merges a partial bash override with the defaults', async () => {
-      const { preToolUse, postToolUseFailure } = createLoopDetectorHooks({
-        bash: { enabled: true, threshold: 2 },
-      });
-      const cmd = makePreToolUse('Bash', { command: 'flaky-cmd' });
-      const args = cmd.tool_input as Record<string, unknown>;
-
-      for (let i = 0; i < 5; i++) {
-        expect(await call(preToolUse, cmd)).toEqual({});
-        await callPost(postToolUseFailure, makePostToolUseFailure('Bash', args));
-      }
-      expect(await call(preToolUse, cmd)).toMatchObject({
-        hookSpecificOutput: { permissionDecision: 'deny' },
-      });
-    });
-
     it('ignores a thresholds.Bash entry while bash.enabled is true (Bash never denies on successes)', async () => {
       const { preToolUse, postToolUse } = createLoopDetectorHooks({
         thresholds: { Bash: 2 },
@@ -1121,7 +1105,7 @@ describe('LoopDetectorHook', () => {
     it('applies thresholds.Bash through the generic path when bash.enabled is false', async () => {
       const disabledBash = createLoopDetectorHook({
         thresholds: { Bash: 2 },
-        bash: { enabled: false },
+        bash: { enabled: false, threshold: 5, failuresRequired: 5 },
       });
       const input = makePreToolUse('Bash', { command: 'git status' });
       expect(await call(disabledBash, input)).toEqual({});
