@@ -409,6 +409,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   const spaceGoalRepo = new SpaceGoalRepository(deps.db.getDatabase(), deps.reactiveDb);
   const spaceGoalEventRepo = new SpaceGoalEventRepository(deps.db.getDatabase(), deps.reactiveDb);
+  const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(deps.db.getDatabase());
   const spaceGoalService = new SpaceGoalService({
     goalRepo: spaceGoalRepo,
     goalEventRepo: spaceGoalEventRepo,
@@ -416,6 +417,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceRepo,
     scheduleService,
     db: deps.db.getDatabase(),
+    longHorizonAgentRepo,
     eventHub: {
       publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
     },
@@ -482,7 +484,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   spaceWorkflowRepo.backfillExistingDefinitionVersions();
   spaceWorkflowRunRepo.backfillDefinitionPins((id) => spaceWorkflowRepo.getWorkflow(id));
   const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
-  const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(deps.db.getDatabase());
   const agentLookup: SpaceAgentLookup = {
     getAgentById(spaceId: string, id: string) {
       const agent = spaceAgentRepo.getById(id);

@@ -228,6 +228,7 @@ function makeCtx(): TestCtx {
     spaceRepo,
     scheduleService,
     db,
+    longHorizonAgentRepo,
   });
   const evolutionRepo = new EvolutionRepository(db);
   const evolutionScopeService = new EvolutionScopeService({
@@ -1640,6 +1641,70 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
           .content[0].text
       ).success
     ).toBe(true);
+  });
+
+  test('rejects owner mutations from a workflow worker session', async () => {
+    const handlers = makeHandlers(ctx, {
+      callerRole: 'workflow_worker',
+      mySessionId: 'worker-session',
+      myAgentName: 'worker',
+    });
+    const agent = ctx.longHorizonAgentRepo.ensureCoordinator(ctx.spaceId);
+    const goal = ctx.goalService.createGoal({ spaceId: ctx.spaceId, title: 'Gated goal' });
+
+    const assign = JSON.parse(
+      (await handlers.assign_agent_to_goal({ agent_id: agent.id, goal_id: goal.id })).content[0]
+        .text
+    );
+    expect(assign.success).toBe(false);
+    expect(assign.error).toContain('coordinator or explicit human');
+
+    const unassign = JSON.parse(
+      (await handlers.unassign_agent_from_goal({ agent_id: agent.id, goal_id: goal.id })).content[0]
+        .text
+    );
+    expect(unassign.success).toBe(false);
+    expect(unassign.error).toContain('coordinator or explicit human');
+  });
+
+  test('create_goal atomically assigns the coordinator as owner by default', async () => {
+    const handlers = makeHandlers(ctx);
+    const coordinator = ctx.longHorizonAgentRepo.ensureCoordinator(ctx.spaceId);
+
+    const created = JSON.parse(
+      (await handlers.create_goal({ title: 'Owned goal', type: 'one_shot' })).content[0].text
+    );
+    expect(created.success).toBe(true);
+
+    const owner = ctx.longHorizonAgentRepo.getPrimaryGoalOwner(created.goal.id, ctx.spaceId);
+    expect(owner).toEqual({
+      action: 'resolved',
+      owner: expect.objectContaining({ agentId: coordinator.id }),
+      conflicts: [],
+    });
+  });
+
+  test('create_goal honors an explicit owner_agent_id', async () => {
+    const handlers = makeHandlers(ctx);
+    const agent = ctx.longHorizonAgentRepo.ensureCoordinator(ctx.spaceId);
+
+    const created = JSON.parse(
+      (
+        await handlers.create_goal({
+          title: 'Explicit owner goal',
+          type: 'one_shot',
+          owner_agent_id: agent.id,
+        })
+      ).content[0].text
+    );
+    expect(created.success).toBe(true);
+
+    const owner = ctx.longHorizonAgentRepo.getPrimaryGoalOwner(created.goal.id, ctx.spaceId);
+    expect(owner).toEqual({
+      action: 'resolved',
+      owner: expect.objectContaining({ agentId: agent.id }),
+      conflicts: [],
+    });
   });
 
   test('returns errors for missing and cross-space agents', async () => {

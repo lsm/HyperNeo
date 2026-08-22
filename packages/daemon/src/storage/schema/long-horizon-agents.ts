@@ -49,6 +49,10 @@ export function createLongHorizonAgentTables(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_space_lh_agent_goals_goal ` +
       `ON space_long_horizon_agent_goals(goal_id)`
   );
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_space_lh_agent_goals_one_owner ` +
+      `ON space_long_horizon_agent_goals(goal_id) WHERE relationship = 'owner'`
+  );
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_long_horizon_agent_forge_scopes (
 			agent_id TEXT NOT NULL,

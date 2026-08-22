@@ -69,6 +69,7 @@ import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import { mapPostApprovalDispatchWarning } from '../runtime/post-approval-router';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy';
+import { decideGoalOwnershipMutationAdmission } from '../goals/goal-ownership-gates';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
 import { decideUpdateTask } from './space-tool-pipeline';
@@ -797,6 +798,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return config.longHorizonAgentRepo;
   }
 
+  function resolveCreateGoalOwnerId(explicitOwnerAgentId?: string | null): string | null {
+    if (typeof explicitOwnerAgentId === 'string' && explicitOwnerAgentId.length > 0) {
+      requireLongHorizonAgentInSpace(explicitOwnerAgentId);
+      return explicitOwnerAgentId;
+    }
+    if (!config.longHorizonAgentRepo) return null;
+    if (typeof myAgentId === 'string' && myAgentId.length > 0) {
+      const self = config.longHorizonAgentRepo.getById(myAgentId);
+      if (self?.spaceId === spaceId) return self.id;
+    }
+    const coordinator = config.longHorizonAgentRepo.getCoordinator(spaceId);
+    return coordinator?.id ?? null;
+  }
+
   function getLongHorizonAgentInSpace(agentId: string) {
     const existing = requireLongHorizonAgentRepo().getById(agentId);
     return existing?.spaceId === spaceId ? existing : null;
@@ -1488,6 +1503,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
     async assign_agent_to_goal(args: { agent_id: string; goal_id: string }): Promise<ToolResult> {
       try {
+        const admission = decideGoalOwnershipMutationAdmission({
+          callerRole,
+          isCoordinatorAgent,
+        });
+        if (admission.action === 'deny') {
+          return jsonResult({ success: false, error: admission.message });
+        }
         requireLongHorizonAgentInSpace(args.agent_id);
         requireGoalInSpace(args.goal_id);
         requireLongHorizonAgentRepo().assignGoal(args.agent_id, args.goal_id);
@@ -1504,9 +1526,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       goal_id: string;
     }): Promise<ToolResult> {
       try {
+        const admission = decideGoalOwnershipMutationAdmission({
+          callerRole,
+          isCoordinatorAgent,
+        });
+        if (admission.action === 'deny') {
+          return jsonResult({ success: false, error: admission.message });
+        }
         requireLongHorizonAgentInSpace(args.agent_id);
         requireGoalInSpace(args.goal_id);
-        requireLongHorizonAgentRepo().deleteGoalAssignment(args.agent_id, args.goal_id);
+        requireLongHorizonAgentRepo().deleteGoalAssignmentByRelationship(
+          args.agent_id,
+          args.goal_id,
+          'owner'
+        );
         logAudit('unassign_agent_from_goal', args);
         return jsonResult({ success: true });
       } catch (err) {
@@ -2993,8 +3026,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       check_in_cron_expression?: string;
       check_in_timezone?: string;
       trigger_immediately?: boolean;
+      owner_agent_id?: string | null;
     }): Promise<ToolResult> {
       try {
+        const primaryOwnerAgentId = resolveCreateGoalOwnerId(args.owner_agent_id);
         const goal = requireGoalService().createGoal(
           {
             spaceId,
@@ -3012,6 +3047,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             checkInCronExpression: args.check_in_cron_expression,
             checkInTimezone: args.check_in_timezone,
             triggerImmediately: args.trigger_immediately,
+            primaryOwnerAgentId,
           },
           goalToolContext
         );
@@ -4551,6 +4587,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
             .boolean()
             .optional()
             .describe('Create first goal task immediately'),
+          owner_agent_id: z
+            .string()
+            .nullable()
+            .optional()
+            .describe(
+              'Long-horizon agent id to assign as the goal primary owner atomically at creation. Defaults to the calling agent (self-claim) or the coordinator when absent.'
+            ),
         },
         (args) => handlers.create_goal(args)
       ),
