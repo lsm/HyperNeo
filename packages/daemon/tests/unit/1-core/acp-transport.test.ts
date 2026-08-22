@@ -341,6 +341,56 @@ describe('AcpTransport', () => {
     expect(terminate).not.toHaveBeenCalled();
   }, 1000);
 
+  test('signals and escalates against the leader when the group is gone but it lives', async () => {
+    const terminate = vi.fn();
+    const processTreeOwner = vi.fn(() => ({ terminate }));
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      processTreeOwner,
+      processGroupProbe: () => false,
+      closeSIGKILLTimeoutMs: 50,
+    });
+
+    await transport.close();
+
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
+
+    await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + 5000;
+      const check = () => {
+        if (terminate.mock.calls.some(([signal]) => signal === 'SIGKILL')) {
+          resolve();
+          return;
+        }
+        if (Date.now() > deadline) {
+          reject(new Error('SIGKILL escalation did not run'));
+          return;
+        }
+        setTimeout(check, 10);
+      };
+      check();
+    });
+  }, 10000);
+
+  test('cancels leader escalation when the leader exits after the group is gone', async () => {
+    const terminate = vi.fn();
+    const processTreeOwner = vi.fn(() => ({ terminate }));
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      processTreeOwner,
+      processGroupProbe: () => false,
+      closeSIGKILLTimeoutMs: 50,
+    });
+    const proc = lastMockProcess!;
+
+    await transport.close();
+    proc.emit('exit', 0, null);
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
+    expect(terminate).not.toHaveBeenCalledWith('SIGKILL');
+  }, 1000);
+
   test('escalates SIGKILL while the process group remains', async () => {
     const terminate = vi.fn();
     const processTreeOwner = vi.fn(() => ({ terminate }));
@@ -353,10 +403,23 @@ describe('AcpTransport', () => {
 
     transport.close();
 
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + 5000;
+      const check = () => {
+        if (terminate.mock.calls.some(([signal]) => signal === 'SIGKILL')) {
+          resolve();
+          return;
+        }
+        if (Date.now() > deadline) {
+          reject(new Error('SIGKILL escalation did not run'));
+          return;
+        }
+        setTimeout(check, 10);
+      };
+      check();
+    });
     expect(terminate).toHaveBeenCalledWith('SIGTERM');
-    expect(terminate).toHaveBeenCalledWith('SIGKILL');
-  }, 1000);
+  }, 10000);
 
   test('skips SIGKILL when the group exits during the escalation delay', async () => {
     const terminate = vi.fn();

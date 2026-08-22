@@ -188,9 +188,10 @@ export class QueryLifecycleManager {
     const processExitedPromise = this.ctx.processExitedPromise;
     const trackedProcessSnapshot = this.ctx.snapshotTrackedAgentProcesses();
     const noPidProcessSnapshot = this.ctx.snapshotNoPidTrackedProcesses?.() ?? [];
+    const queryAbortController = this.ctx.queryAbortController;
 
     messageQueue.stop();
-    this.ctx.queryAbortController?.abort();
+    queryAbortController?.abort();
 
     const queryObject = this.ctx.queryObject;
     if (queryObject && typeof queryObject.interrupt === 'function') {

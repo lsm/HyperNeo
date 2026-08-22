@@ -56,6 +56,8 @@ import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
 const MAX_FS_READ_BYTES = 4 * 1024 * 1024;
+const MAX_POST_ABORT_DRAIN_MESSAGES = 256;
+const POST_ABORT_DRAIN_TIMEOUT_MS = 1000;
 
 function getStartupTimeoutMs(): number {
   const raw = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
@@ -384,6 +386,9 @@ async function handleAcpPermissionRequest(
   }
 
   const permissionSignal = signal ?? new AbortController().signal;
+  if (permissionSignal.aborted) {
+    return { outcome: { outcome: 'cancelled' } };
+  }
   const question = acpPermissionQuestion(params);
   const permission = canUseTool('AskUserQuestion', acpPermissionQuestionInput(params), {
     signal: permissionSignal,
@@ -1435,15 +1440,32 @@ export class AcpQueryRunner {
           } catch {}
           pendingNext = null;
         }
-        while (true) {
+        const drainDeadline = { expired: true } as const;
+        let clearDrainTimer: (() => void) | undefined;
+        const drainTimeout = new Promise<typeof drainDeadline>((resolve) => {
+          const timer = setTimeout(() => resolve(drainDeadline), POST_ABORT_DRAIN_TIMEOUT_MS);
+          timer.unref?.();
+          clearDrainTimer = () => {
+            clearTimeout(timer);
+            resolve(drainDeadline);
+          };
+        });
+        let drained = 0;
+        while (drained < MAX_POST_ABORT_DRAIN_MESSAGES) {
+          const next = iterator.next();
+          next.catch(() => {});
+          let result: IteratorResult<SDKMessage> | typeof drainDeadline;
           try {
-            const result = await iterator.next();
-            if (result.done) break;
-            yield result.value;
+            result = await Promise.race([next, drainTimeout]);
           } catch {
             break;
           }
+          if ('expired' in result) break;
+          if (result.done) break;
+          drained++;
+          yield result.value;
         }
+        clearDrainTimer?.();
       }
       try {
         await iterator.return?.();

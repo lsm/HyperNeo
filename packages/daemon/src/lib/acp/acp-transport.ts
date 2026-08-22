@@ -378,6 +378,16 @@ export class AcpTransport {
 
       this.recordProcessGroupGone();
       if (this.processGroupGone) {
+        if (!this.processExited) {
+          this.killProcess('SIGTERM');
+          this.killTimer = setTimeout(() => {
+            this.killTimer = null;
+            if (this.processExited) return;
+            logger.warn('ACP agent cleanup escalation after SIGTERM');
+            this.killProcess('SIGKILL');
+          }, this.options.closeSIGKILLTimeoutMs ?? CLOSE_SIGTERM_TIMEOUT_MS);
+          this.killTimer.unref();
+        }
         resolve();
         return;
       }

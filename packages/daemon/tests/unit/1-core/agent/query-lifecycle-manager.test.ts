@@ -185,6 +185,24 @@ describe('QueryLifecycleManager', () => {
       expect(abortController.signal.aborted).toBe(true);
     });
 
+    test('aborts only the query controller captured when stop begins', async () => {
+      const entryController = new AbortController();
+      const newerController = new AbortController();
+      mockContext.queryAbortController = entryController;
+      const originalStop = messageQueue.stop.bind(messageQueue);
+      const stopSpy = spyOn(messageQueue, 'stop');
+      stopSpy.mockImplementation(() => {
+        mockContext.queryAbortController = newerController;
+        originalStop();
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.stop();
+
+      expect(entryController.signal.aborted).toBe(true);
+      expect(newerController.signal.aborted).toBe(false);
+    });
+
     test('interrupts query when transport is ready', async () => {
       let interruptCalled = false;
       mockContext.queryObject = {

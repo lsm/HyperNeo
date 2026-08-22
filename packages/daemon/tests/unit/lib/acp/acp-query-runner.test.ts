@@ -614,15 +614,68 @@ describe('AcpQueryRunner', () => {
 
   const bunRuntimeTest = process.versions.bun ? test : test.skip;
 
+  test('rejects filesystem callbacks that escape the workspace', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-escape-'));
+    const workspace = join(root, 'workspace');
+    const outside = join(root, 'outside.txt');
+    await mkdir(workspace);
+    await writeFile(outside, 'secret');
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      client,
+      session: { workspacePath: workspace },
+      queryOptions: { cwd: workspace, mcpServers: {} },
+      canUseTool: async (_toolName, input) => {
+        const question = (input.questions as Array<{ question: string }>)[0].question;
+        return { behavior: 'allow', updatedInput: { answers: { [question]: 'Allow once' } } };
+      },
+    });
+
+    try {
+      await runner.start();
+      await promptStarted;
+
+      await expect(
+        constructorOptions[0].onFsRead?.({
+          sessionId: 'acp-session-1',
+          path: outside,
+        })
+      ).rejects.toThrow('escapes workspace');
+      await expect(
+        constructorOptions[0].onFsRead?.({
+          sessionId: 'acp-session-1',
+          path: '../outside.txt',
+        })
+      ).rejects.toThrow('escapes workspace');
+      await expect(
+        constructorOptions[0].onFsRead?.({
+          sessionId: 'acp-session-1',
+          path: workspace,
+        })
+      ).rejects.toThrow('must identify a file');
+      await expect(
+        constructorOptions[0].onFsWrite?.({
+          sessionId: 'acp-session-1',
+          path: '../escaped.txt',
+          content: 'blocked',
+        })
+      ).rejects.toThrow('escapes workspace');
+      expect(await readFile(outside, 'utf-8')).toBe('secret');
+      releasePrompt();
+      await ctx.queryPromise;
+    } finally {
+      releasePrompt();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   bunRuntimeTest(
     'confines filesystem callbacks to the workspace and honors read ranges',
     async () => {
       const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-fs-'));
       const workspace = join(root, 'workspace');
-      const outside = join(root, 'outside.txt');
       await mkdir(workspace);
       await writeFile(join(workspace, 'inside.txt'), 'one\ntwo\nthree\nfour');
-      await writeFile(outside, 'secret');
       const { client, promptStarted, releasePrompt } = createHeldPromptClient();
       const { runner, ctx, constructorOptions } = createRunnerFixture({
         client,
@@ -652,19 +705,6 @@ describe('AcpQueryRunner', () => {
             path: join(await realpath(workspace), 'inside.txt'),
           })
         ).resolves.toEqual({ content: 'one\ntwo\nthree\nfour' });
-        await expect(
-          constructorOptions[0].onFsRead?.({
-            sessionId: 'acp-session-1',
-            path: outside,
-          })
-        ).rejects.toThrow('escapes workspace');
-        await expect(
-          constructorOptions[0].onFsWrite?.({
-            sessionId: 'acp-session-1',
-            path: '../escaped.txt',
-            content: 'blocked',
-          })
-        ).rejects.toThrow('escapes workspace');
         await constructorOptions[0].onFsWrite?.({
           sessionId: 'acp-session-1',
           path: join(workspace, 'nested', 'written.txt'),
@@ -1129,12 +1169,21 @@ describe('AcpQueryRunner', () => {
         sessionId: 'acp-session-1',
         terminalId: created.terminalId,
       });
-      const output = await constructorOptions[0].onTerminalOutput?.({
-        sessionId: 'acp-session-1',
-        terminalId: created.terminalId,
-      });
-      if (!output) throw new Error('ACP terminal output was not returned');
-      const terminalEnv = JSON.parse(output.output.trim()) as Record<string, string>;
+      let terminalEnv: Record<string, string> | undefined;
+      const outputDeadline = Date.now() + 5000;
+      while (terminalEnv === undefined) {
+        const output = await constructorOptions[0].onTerminalOutput?.({
+          sessionId: 'acp-session-1',
+          terminalId: created.terminalId,
+        });
+        const text = output?.output.trim() ?? '';
+        if (text) {
+          terminalEnv = JSON.parse(text) as Record<string, string>;
+        } else {
+          if (Date.now() > outputDeadline) throw new Error('ACP terminal produced no output');
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
 
       expect(terminalEnv.PATH).toBe(process.env.PATH);
       expect(terminalEnv.GITHUB_TOKEN).toBeUndefined();
@@ -1145,7 +1194,7 @@ describe('AcpQueryRunner', () => {
       if (previousGithubToken === undefined) delete process.env.GITHUB_TOKEN;
       else process.env.GITHUB_TOKEN = previousGithubToken;
     }
-  });
+  }, 10000);
 
   test('prompts before terminal creation', async () => {
     const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture({
@@ -1223,6 +1272,32 @@ describe('AcpQueryRunner', () => {
         args: ['-e', 'process.exit(0)'],
       })
     ).rejects.toThrow('ACP terminal command denied');
+    releasePrompt();
+    await ctx.queryPromise;
+  });
+
+  test('does not prompt for terminal commands after the query has aborted', async () => {
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture({
+      client,
+      canUseTool: async (_toolName, input) => {
+        const question = (input.questions as Array<{ question: string }>)[0].question;
+        return { behavior: 'allow', updatedInput: { answers: { [question]: 'Allow once' } } };
+      },
+    });
+
+    await runner.start();
+    await promptStarted;
+    ctx.queryAbortController?.abort();
+
+    await expect(
+      constructorOptions[0].onTerminalCreate?.({
+        sessionId: 'acp-session-1',
+        command: process.execPath,
+        args: ['-e', 'process.exit(0)'],
+      })
+    ).rejects.toThrow('ACP terminal command cancelled');
+    expect(canUseTool).not.toHaveBeenCalled();
     releasePrompt();
     await ctx.queryPromise;
   });
@@ -1353,6 +1428,7 @@ describe('AcpQueryRunner', () => {
 
     const identity = ctx.session.metadata.acpCommandIdentity as string;
     expect(identity).toBe(getAcpCommandIdentityDigest('devin acp --token topsecret'));
+    expect(identity).toBe(getAcpCommandIdentityDigest('devin acp --token anothertoken'));
     expect(identity).not.toContain('topsecret');
   });
 
@@ -1893,6 +1969,53 @@ describe('AcpQueryRunner', () => {
           (message as SDKUserMessage).parent_tool_use_id === 'tc-interrupted'
       )
     ).toBe(true);
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  }, 1000);
+
+  test('stops draining a continuing producer after abort', async () => {
+    const client = createMockClient();
+    let releasePrompt: (() => void) | undefined;
+    let promptBlockedResolve: (() => void) | undefined;
+    const promptBlocked = new Promise<void>((resolve) => {
+      promptBlockedResolve = resolve;
+    });
+    client.sendPrompt.mockImplementation(async function* () {
+      yield {
+        sessionId: 'acp-session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-interrupted',
+          title: 'Long tool',
+          rawInput: {},
+        },
+      };
+      await new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+        promptBlockedResolve?.();
+      });
+      while (true) {
+        yield {
+          sessionId: 'acp-session-1',
+          update: { sessionUpdate: 'plan', entries: [] },
+        };
+      }
+    });
+    const { runner, ctx, onSDKMessage } = createRunnerFixture({ client });
+
+    await runner.start();
+    await promptBlocked;
+    ctx.queryAbortController?.abort();
+    releasePrompt?.();
+    await ctx.queryPromise;
+
+    expect(
+      onSDKMessage.mock.calls.some(
+        ([message]) =>
+          message.type === 'user' &&
+          (message as SDKUserMessage).parent_tool_use_id === 'tc-interrupted'
+      )
+    ).toBe(true);
+    expect(onSDKMessage.mock.calls.length).toBeLessThanOrEqual(600);
     expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
   }, 1000);
 });

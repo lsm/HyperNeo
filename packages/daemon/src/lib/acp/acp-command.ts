@@ -1,10 +1,39 @@
 import { createHash } from 'node:crypto';
-import { getAcpCommandIdentity } from '@hyperneo/shared/acp';
+import { parseAcpCommand } from '@hyperneo/shared/acp';
 
 export { getAcpCommandIdentity, parseAcpCommand } from '@hyperneo/shared/acp';
 
+const SECRET_ARG_NAME_PATTERN = /(token|secret|password|passphrase|credential|api[-_]?key)/i;
+
+function redactSecretArgs(args: string[]): string[] {
+  const redacted: string[] = [];
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (!arg.startsWith('-')) {
+      redacted.push(arg);
+      continue;
+    }
+    const equalsIndex = arg.indexOf('=');
+    if (equalsIndex >= 0) {
+      const name = arg.slice(0, equalsIndex);
+      redacted.push(SECRET_ARG_NAME_PATTERN.test(name) ? `${name}=[redacted]` : arg);
+      continue;
+    }
+    const next = args[index + 1];
+    if (SECRET_ARG_NAME_PATTERN.test(arg) && next !== undefined && !next.startsWith('-')) {
+      redacted.push(arg, '[redacted]');
+      index++;
+      continue;
+    }
+    redacted.push(arg);
+  }
+  return redacted;
+}
+
 export function getAcpCommandIdentityDigest(commandLine: string): string {
-  return createHash('sha256').update(getAcpCommandIdentity(commandLine)).digest('hex');
+  const { command, args } = parseAcpCommand(commandLine);
+  const identity = JSON.stringify([command, ...redactSecretArgs(args)]);
+  return createHash('sha256').update(identity).digest('hex');
 }
 
 const ACP_SAFE_ENV_KEYS = [

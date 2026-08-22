@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildAcpSafeEnv,
   getAcpCommandIdentity,
+  getAcpCommandIdentityDigest,
   parseAcpCommand,
 } from '../../../../src/lib/acp/acp-command';
 
@@ -79,6 +80,32 @@ describe('getAcpCommandIdentity', () => {
   test('normalizes equivalent command identities', () => {
     expect(getAcpCommandIdentity('devin   acp "model one"')).toBe(
       getAcpCommandIdentity("devin acp 'model one'")
+    );
+  });
+});
+
+describe('getAcpCommandIdentityDigest', () => {
+  test('excludes secret-shaped argument values from the digest', () => {
+    expect(getAcpCommandIdentityDigest('devin acp --token topsecret')).toBe(
+      getAcpCommandIdentityDigest('devin acp --token othersecret')
+    );
+    expect(getAcpCommandIdentityDigest('agent --api-key=k1 --stdio')).toBe(
+      getAcpCommandIdentityDigest('agent --api-key=k2 --stdio')
+    );
+    expect(getAcpCommandIdentityDigest('agent --password p1 run')).toBe(
+      getAcpCommandIdentityDigest('agent --password p2 run')
+    );
+  });
+
+  test('still distinguishes commands that differ outside secret arguments', () => {
+    expect(getAcpCommandIdentityDigest('devin acp --stdio')).not.toBe(
+      getAcpCommandIdentityDigest('other-acp --stdio')
+    );
+    expect(getAcpCommandIdentityDigest('devin acp --model one')).not.toBe(
+      getAcpCommandIdentityDigest('devin acp --model two')
+    );
+    expect(getAcpCommandIdentityDigest('devin acp --token a --stdio')).not.toBe(
+      getAcpCommandIdentityDigest('devin acp --token a --verbose')
     );
   });
 });
