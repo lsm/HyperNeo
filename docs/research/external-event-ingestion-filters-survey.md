@@ -276,9 +276,16 @@ polling sources.
   event.payload)` directly against the persisted payload
   (`goal-automation-service.ts:308-316`), so removing a referenced key (e.g.
   `actorType`) silently stops the automation from enqueueing while topic routing
-  still succeeds; validate projection configs at write time against the keys active
-  filters reference (or evaluate filters pre-projection) — silent match-stop is
-  unacceptable. Scope note (review finding, PR #2723): `rawPayload` is a single
+  still succeeds. Write-time validation of the projection config alone is
+  **insufficient** (review finding, PR #2723): subscriptions are also written by
+  independent paths — `evolution.scope.update` merges subscription-bearing policy
+  patches with no knowledge of projection config (`mergeEvolutionPolicy`,
+  `evolution-scope-service.ts:44`, `:263`) — so a later filter on an
+  already-projected key would silently stop matching. B3 therefore mandates a
+  dynamic mechanism: either the union of keys referenced by active subscription
+  filters is gathered as a **gate input** and reserved at projection time (data
+  into the pure core, per the ADR boundary), or goal-automation filters are
+  evaluated pre-projection; silent match-stop is unacceptable. Scope note (review finding, PR #2723): `rawPayload` is a single
   opaque key holding the entire native object (`:1119`), so top-level projection
   over it is all-or-nothing — B3 ships the binary `rawPayload` toggle plus
   top-level projection of non-reserved extras, and nested-path extraction mappings
