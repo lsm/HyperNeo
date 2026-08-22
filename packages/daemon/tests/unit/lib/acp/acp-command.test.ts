@@ -143,21 +143,13 @@ describe('getAcpCommandIdentityDigest', () => {
   });
 
   test('preserves token boundaries when redisplaying shell command arguments', () => {
-    expect(redactCommandSecrets('sh', ['-c', 'rm -- "important file"'])).toEqual([
+    expect(redactCommandSecrets('sh', ['-c', `rm -- "important file" --token topsecret`])).toEqual([
       '-c',
-      `rm -- 'important file'`,
+      `rm -- 'important file' --token [redacted]`,
     ]);
     expect(
       redactCommandSecrets('sh', ['-c', `curl -H 'Authorization: Bearer topsecret' https://a`])
     ).toEqual(['-c', `curl -H [redacted] https://a`]);
-    expect(redactCommandSecrets('sh', ['-c', 'echo safe && rm -- "important file"'])).toEqual([
-      '-c',
-      `echo safe && rm -- 'important file'`,
-    ]);
-    expect(redactCommandSecrets('sh', ['-c', 'echo $HOME | wc -l'])).toEqual([
-      '-c',
-      'echo $HOME | wc -l',
-    ]);
   });
 
   test('gates tool-specific short options on their executables', () => {
@@ -173,6 +165,29 @@ describe('getAcpCommandIdentityDigest', () => {
     expect(getAcpCommandIdentityDigest('env MODE=fast agent')).not.toBe(
       getAcpCommandIdentityDigest('env MODE=slow agent')
     );
+  });
+
+  test('redacts userinfo credentials embedded in positional URLs', () => {
+    expect(getAcpCommandIdentityDigest('psql postgresql://alice:topsecret@db/app')).toBe(
+      getAcpCommandIdentityDigest('psql postgresql://alice:othersafe@db/app')
+    );
+    expect(getAcpCommandIdentityDigest('curl https://alice:topsecret@example.test/a')).toBe(
+      getAcpCommandIdentityDigest('curl https://alice:othersafe@example.test/a')
+    );
+    expect(getAcpCommandIdentityDigest('psql postgresql://alice:pw@db-a/app')).not.toBe(
+      getAcpCommandIdentityDigest('psql postgresql://alice:pw@db-b/app')
+    );
+  });
+
+  test('redisplays shell scripts verbatim when nothing was redacted', () => {
+    expect(redactCommandSecrets('sh', ['-c', 'echo "safe; rm -rf /"'])).toEqual([
+      '-c',
+      'echo "safe; rm -rf /"',
+    ]);
+    expect(redactCommandSecrets('sh', ['-c', "echo 'a b' && echo c"])).toEqual([
+      '-c',
+      "echo 'a b' && echo c",
+    ]);
   });
 
   test('does not swallow the next flag after a valueless secret flag', () => {

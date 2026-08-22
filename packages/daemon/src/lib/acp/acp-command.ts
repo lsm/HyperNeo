@@ -57,11 +57,21 @@ function displayQuote(token: string): string {
   return shellQuote(token);
 }
 
+const URL_USERINFO_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^:/@\s]+:)([^@/\s]+)(@.+)$/;
+
+function redactUrlUserinfo(value: string): string {
+  const match = URL_USERINFO_PATTERN.exec(value);
+  return match ? `${match[1]}[redacted]${match[3]}` : value;
+}
+
 function redactShellCommand(script: string, depth: number): string {
   if (depth <= 0) return script;
   try {
     const { command, args } = parseAcpCommand(script);
     const redactedArgs = redactCommandSecrets(command, args, depth - 1);
+    if (redactedArgs.length === args.length && redactedArgs.every((arg, i) => arg === args[i])) {
+      return script;
+    }
     return [command, ...redactedArgs].map(displayQuote).join(' ');
   } catch {
     return script;
@@ -80,7 +90,7 @@ export function redactCommandSecrets(command: string, args: string[], depth = 3)
       if (isEnv && isSecretEnvAssignment(arg)) {
         redacted.push(`${arg.slice(0, arg.indexOf('='))}=[redacted]`);
       } else {
-        redacted.push(arg);
+        redacted.push(redactUrlUserinfo(arg));
       }
       continue;
     }
