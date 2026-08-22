@@ -368,7 +368,14 @@ note.
   not enter the provider-backoff arm: `isRetryableProviderError` excludes all
   `\b4\d{2}\b` matches, and text-only "rate limit" errors fail it too because
   `RETRYABLE_PROVIDER_ERROR_TEXT` is built from taxonomy entries that supply
-  `looseTextSubstrings`, which the generic rate-limit entry does not. Both route
+  `looseTextSubstrings`, which the generic rate-limit entry does not. They reach
+  the watchdog handoff only when the **terminal cascade's own precedence**
+  selects RATE_LIMIT: provider-auth and provider-unavailable checks run *before*
+  the rate-limit branch (:1175–1218), so a mixed message like
+  `429 service unavailable` on a non-Anthropic provider classifies
+  PROVIDER_UNAVAILABLE, not a handoff — the classifier must derive its route
+  from that complete category cascade (or be handed the precomputed category)
+  rather than from an isolated rate-limit test. Both route
   to the terminal cascade's RATE_LIMIT category check, whose
   `category === RATE_LIMIT && !isNonRetryableBillingError` predicate hands off
   to the watchdog (:1234–1242) — note both that `looksLikeRateLimit429` (:92) is
@@ -713,7 +720,12 @@ note.
   the `waitForIdleTransition` waiter (:1350–1393) — likewise need registered
   cleanup compensations (a stale observer can attribute the replacement turn's
   first response to the failed delivery; the waiter can fire against a later
-  idle transition), or their ownership stays in the shell.
+  idle transition), or their ownership stays in the shell. The reclaim path adds
+  a persistent write of its own: `reclaimTurnAlreadySucceeded` can invoke
+  `clearDeliveryTurnEnd` for an already-consumed delivery with a bare turn-end
+  marker (`:1347`, `:1386` → `:1836–1843`), erasing a crash-recovery marker with
+  no guard — that clear is a conditional compensable effect (or shell-retained
+  with equivalent failure handling) so a later-stage failure restores the marker.
 - **Impact/risk:** highest ceiling — this is the repo's recurring fix area
   (delivery duplication, deferred-backlog gaps, park-vs-cancel), and ~500 lines
   of cascade become tables. Highest risk: session lock + job queue + four
