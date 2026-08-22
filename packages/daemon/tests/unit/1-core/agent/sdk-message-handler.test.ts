@@ -810,6 +810,38 @@ describe('SDKMessageHandler', () => {
       expect(await wait).toBe(false);
     });
 
+    it('settles the correlated clear wait only after the turn-end acknowledgement', async () => {
+      const order: string[] = [];
+      getUserMessagesByStatusSpy.mockImplementation(() => {
+        order.push('turn-end-ack');
+        return { messages: [], total: 0 };
+      });
+
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id').then((confirmed) => {
+        order.push(`settled:${confirmed}`);
+        return confirmed;
+      });
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'clear-result',
+        user_message_uuid: 'clear-msg-id',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(order).toEqual(['turn-end-ack', 'settled:true']);
+      expect(await wait).toBe(true);
+    });
+
     it('a result that fails to persist resolves the wait unconfirmed and releases suppression', async () => {
       const result: SDKMessage = {
         type: 'result',

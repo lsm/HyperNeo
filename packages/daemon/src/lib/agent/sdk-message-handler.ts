@@ -751,12 +751,8 @@ export class SDKMessageHandler {
       return;
     }
 
-    if (this.matchesArmedClearResult(message)) {
-      if (isSDKResultSuccess(message)) {
-        this.settleSuppressedResultWaiter(true);
-      } else {
-        this.clearIdleSuppression();
-      }
+    if (this.matchesArmedClearResult(message) && !isSDKResultSuccess(message)) {
+      this.clearIdleSuppression();
     }
 
     const processingState = stateManager.getState();
@@ -953,7 +949,8 @@ export class SDKMessageHandler {
       sessionId: session.id,
     });
 
-    if (this.matchesArmedClearResult(message)) {
+    const confirmsArmedClear = this.matchesArmedClearResult(message);
+    if (confirmsArmedClear) {
       this.suppressIdleOnNextResult = false;
     } else if (
       !this.suppressIdleOnNextResult &&
@@ -961,6 +958,9 @@ export class SDKMessageHandler {
       !this.expectsSessionStateIdleAfterResult
     ) {
       await this.finishTurn();
+    }
+    if (confirmsArmedClear) {
+      this.settleSuppressedResultWaiter(true);
     }
   }
 
