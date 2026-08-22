@@ -359,7 +359,13 @@ polling sources.
   `evolution.scope.update`'s `mergeEvolutionPolicy` — validates against the active
   projection config, **rejecting** any filter that references a key the projection
   would strip. Silent match-stop is unacceptable; an invalid filter is refused at
-  creation instead. Scope note (review finding, PR #2723): `rawPayload` is a single
+  creation instead. Both validation sides run **inside the same per-space mutation
+  queue** (review finding, PR #2723): a projection write removing key K and a
+  subscription write starting to filter on K can otherwise each validate against
+  the old compatible state and then commit, leaving exactly the incompatible
+  configuration the scheme promises to reject — the validation reads and the write
+  must commit as one queued (or transactional) operation per space, riding the A2
+  serialization rather than adding unsynchronized checks. Scope note (review finding, PR #2723): `rawPayload` is a single
   opaque key holding the entire native object (`:1119`), so top-level projection
   over it is all-or-nothing — B3 ships the binary `rawPayload` toggle plus
   top-level projection of non-reserved extras, and nested-path extraction mappings
