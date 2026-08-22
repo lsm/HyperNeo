@@ -1,6 +1,7 @@
 import type { UUID } from 'crypto';
 import type {
   SDKAssistantMessage,
+  SDKCommandsChangedMessage,
   SDKToolProgressMessage,
   SDKResultMessage,
   SDKMessage,
@@ -18,6 +19,20 @@ import type {
 } from '@hyperneo/shared/acp';
 
 const TOKEN_CHARS = 4;
+
+function toToolCallUpdate(notification: AcpToolCallUpdateNotification): AcpToolCallUpdateUpdate {
+  return {
+    sessionUpdate: 'tool_call_update',
+    toolCallId: notification.toolCallId,
+    status: notification.status ?? null,
+    title: notification.title,
+    kind: notification.kind ?? null,
+    rawInput: notification.rawInput,
+    rawOutput: notification.rawOutput,
+    content: notification.content,
+    locations: notification.locations ?? null,
+  };
+}
 
 function zeroUsage(): {
   cache_creation: {
@@ -66,6 +81,9 @@ export class AcpMessageTranslator {
   private costUsdEstimate = 0;
   private contextUsageEstimate = 0;
   private reportedContextUsage: number | null = null;
+  private inProgressToolUseIds = new Set<string>();
+  private toolCallUpdates = new Map<string, AcpToolCallUpdateUpdate>();
+  private toolCallTitles = new Map<string, string>();
 
   constructor(
     sessionId: string,
@@ -86,14 +104,38 @@ export class AcpMessageTranslator {
       case 'agent_thought_chunk':
         this.accumulateThoughtChunk(update);
         return [];
-      case 'tool_call':
-        return [...this.flush(), this.translateToolCall(update)];
-      case 'tool_call_update': {
-        const messages: SDKMessage[] = [this.translateToolCallUpdate(update)];
-        if (update.content || update.rawOutput !== undefined) {
-          messages.push(this.translateToolResult(update));
+      case 'tool_call': {
+        const seeded = toToolCallUpdate(update);
+        if (seeded.status === 'completed' || seeded.status === 'failed') {
+          return [
+            ...this.flush(),
+            this.translateToolCall(update),
+            this.translateToolResult(seeded),
+          ];
         }
-        return messages;
+        this.toolCallUpdates.set(update.toolCallId, seeded);
+        return [...this.flush(), this.translateToolCall(update)];
+      }
+      case 'tool_call_update': {
+        const previous = this.toolCallUpdates.get(update.toolCallId);
+        const accumulated = {
+          ...previous,
+          ...update,
+          content: update.content ?? previous?.content,
+          rawOutput: update.rawOutput !== undefined ? update.rawOutput : previous?.rawOutput,
+        };
+        const terminal = update.status === 'completed' || update.status === 'failed';
+        if (terminal) {
+          this.inProgressToolUseIds.delete(update.toolCallId);
+          this.toolCallUpdates.delete(update.toolCallId);
+          return [this.translateToolResult(accumulated)];
+        }
+        this.toolCallUpdates.set(update.toolCallId, accumulated);
+        if (!this.inProgressToolUseIds.has(update.toolCallId)) {
+          this.inProgressToolUseIds.add(update.toolCallId);
+          return [this.translateToolCallUpdate(update)];
+        }
+        return [];
       }
       case 'plan':
         return [...this.flush(), this.translateSyntheticAssistant('Plan', update.entries)];
@@ -102,13 +144,10 @@ export class AcpMessageTranslator {
           ...this.flush(),
           this.translateSyntheticAssistant('Current mode', update.currentModeId),
         ];
-      case 'config_option_update':
-        return [
-          ...this.flush(),
-          this.translateSyntheticAssistant('Config options', update.configOptions),
-        ];
       case 'session_info_update':
         return [...this.flush(), this.translateSyntheticAssistant('Session info', update)];
+      case 'available_commands_update':
+        return [...this.flush(), this.translateAvailableCommands(update.availableCommands)];
       case 'usage_update':
         this.reportedContextUsage = update.used;
         this.contextWindow = update.size;
@@ -135,17 +174,23 @@ export class AcpMessageTranslator {
     this.thinkingBuffer = '';
     this.textBuffer = '';
 
-    if (blocks.length === 0) {
-      return [];
-    }
+    return blocks.length === 0 ? [] : [this.buildAssistantMessage(blocks)];
+  }
 
-    return [this.buildAssistantMessage(blocks)];
+  flushToolResults(): SDKUserMessage[] {
+    const results = [...this.toolCallUpdates.values()].map((update) =>
+      this.translateToolResult(update)
+    );
+    this.toolCallUpdates.clear();
+    this.inProgressToolUseIds.clear();
+    return results;
   }
 
   translateToolCall(call: AcpToolCallUpdateNotification): SDKAssistantMessage {
     this.contextUsageEstimate += estimateTokens(
       JSON.stringify({ name: call.title, input: call.rawInput ?? {} })
     );
+    this.toolCallTitles.set(call.toolCallId, call.title);
 
     return {
       type: 'assistant',
@@ -172,14 +217,14 @@ export class AcpMessageTranslator {
       uuid: generateUUID() as UUID,
       session_id: this.sessionId,
       tool_use_id: update.toolCallId,
-      tool_name: update.title ?? 'unknown',
+      tool_name: update.title ?? this.toolCallTitles.get(update.toolCallId) ?? 'unknown',
       parent_tool_use_id: null,
       elapsed_time_seconds: 0,
     };
   }
 
   translateToolResult(update: AcpToolCallUpdateUpdate): SDKUserMessage {
-    const output = update.rawOutput ?? update.content;
+    const output = update.rawOutput ?? update.content ?? '';
     const text = typeof output === 'string' ? output : JSON.stringify(output);
     this.contextUsageEstimate += estimateTokens(text);
 
@@ -254,6 +299,22 @@ export class AcpMessageTranslator {
       this.thinkingBuffer += update.content.text;
       this.outputTokenEstimate += estimateTokens(update.content.text);
     }
+  }
+
+  private translateAvailableCommands(
+    commands: Array<{ name: string; description: string; input?: { hint: string } | null }>
+  ): SDKCommandsChangedMessage {
+    return {
+      type: 'system',
+      subtype: 'commands_changed',
+      commands: commands.map((command) => ({
+        name: command.name,
+        description: command.description,
+        argumentHint: command.input?.hint ?? '',
+      })),
+      uuid: generateUUID() as UUID,
+      session_id: this.sessionId,
+    };
   }
 
   private translateSyntheticAssistant(label: string, payload: unknown): SDKAssistantMessage {

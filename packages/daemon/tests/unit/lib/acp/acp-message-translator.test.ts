@@ -125,6 +125,151 @@ describe('AcpMessageTranslator', () => {
     expect(msg.tool_name).toBe('unknown');
   });
 
+  test('emits one tool_progress and one tool_result for a complete tool update', () => {
+    const call = toolCall('tc-6', 'Read file', { path: '/tmp' });
+    const start = translator.processUpdate(call);
+    expect(start.length).toBe(1);
+    expect(start[0].type).toBe('assistant');
+
+    const progress = translator.processUpdate({
+      ...toolCallUpdate('tc-6', undefined),
+      status: 'in_progress',
+      content: [{ type: 'content', content: { type: 'text', text: 'partial' } }],
+    });
+    expect(progress.length).toBe(1);
+    expect(progress[0].type).toBe('tool_progress');
+    expect((progress[0] as { tool_name: string }).tool_name).toBe('Read file');
+
+    const emptyUpdate = translator.processUpdate({
+      ...toolCallUpdate('tc-6', undefined),
+      status: 'in_progress',
+      content: [
+        { type: 'content', content: { type: 'text', text: 'partial' } },
+        { type: 'content', content: { type: 'text', text: ' output' } },
+      ],
+    });
+    expect(emptyUpdate.length).toBe(0);
+
+    const result = translator.processUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-6',
+      title: undefined,
+      status: 'completed',
+    });
+    expect(result.length).toBe(1);
+    expect(result[0].type).toBe('user');
+    expect((result[0] as { parent_tool_use_id: string }).parent_tool_use_id).toBe('tc-6');
+    const toolResult = result[0] as { tool_use_result: unknown };
+    expect(toolResult.tool_use_result).toEqual([
+      { type: 'content', content: { type: 'text', text: 'partial' } },
+      { type: 'content', content: { type: 'text', text: ' output' } },
+    ]);
+  });
+
+  test('flushes buffered non-terminal tool output once', () => {
+    translator.processUpdate(toolCall('tc-partial', 'Partial tool', {}));
+    translator.processUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-partial',
+      status: 'in_progress',
+      rawOutput: 'partial output',
+    });
+
+    const results = translator.flushToolResults();
+
+    expect(results).toHaveLength(1);
+    expect(results[0].parent_tool_use_id).toBe('tc-partial');
+    expect(results[0].tool_use_result).toBe('partial output');
+    expect(translator.flushToolResults()).toEqual([]);
+  });
+
+  test('flushes empty results for interrupted output-less tool calls', () => {
+    translator.processUpdate(toolCall('tc-interrupted', 'Long tool', {}));
+
+    const results = translator.flushToolResults();
+
+    expect(results).toHaveLength(1);
+    expect(results[0].parent_tool_use_id).toBe('tc-interrupted');
+    expect(results[0].tool_use_result).toBe('');
+    expect(translator.flushToolResults()).toEqual([]);
+  });
+
+  test('does not duplicate terminal tool results when flushing', () => {
+    translator.processUpdate(toolCall('tc-complete', 'Complete tool', {}));
+    translator.processUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-complete',
+      status: 'in_progress',
+      rawOutput: 'complete output',
+    });
+    const result = translator.processUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-complete',
+      status: 'completed',
+    });
+
+    expect(result).toHaveLength(1);
+    expect(translator.flushToolResults()).toEqual([]);
+  });
+
+  test('emits a tool result for completed status without output', () => {
+    translator.processUpdate(toolCall('tc-empty', 'No output', {}));
+
+    const result = translator.processUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-empty',
+      status: 'completed',
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe('user');
+    expect((result[0] as { tool_use_result: unknown }).tool_use_result).toBe('');
+  });
+
+  test('emits a tool result for failed status', () => {
+    translator.processUpdate(toolCall('tc-failed', 'Failing tool', {}));
+
+    const result = translator.processUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-failed',
+      status: 'failed',
+      rawOutput: 'failed output',
+    });
+
+    expect(result).toHaveLength(1);
+    expect((result[0] as { tool_use_result: unknown }).tool_use_result).toBe('failed output');
+  });
+
+  test('carries tool output from the initial tool_call into a status-only completion', () => {
+    const output = [{ type: 'content', content: { type: 'text', text: 'initial output' } }];
+    const messages = translator.processUpdate({
+      ...toolCall('tc-initial', 'Read file', {}),
+      content: output,
+    });
+    expect(messages).toHaveLength(1);
+    expect(messages[0].type).toBe('assistant');
+
+    const result = translator.processUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-initial',
+      status: 'completed',
+    });
+    expect(result).toHaveLength(1);
+    expect((result[0] as { tool_use_result: unknown }).tool_use_result).toEqual(output);
+  });
+
+  test('emits a tool result immediately for a terminal tool_call notification', () => {
+    const messages = translator.processUpdate({
+      ...toolCall('tc-terminal', 'Fast tool', {}),
+      status: 'completed',
+      rawOutput: 'done quickly',
+    });
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0].type).toBe('assistant');
+    expect((messages[1] as { tool_use_result: unknown }).tool_use_result).toBe('done quickly');
+  });
+
   test('translateResult produces success result', () => {
     const msg = translator.translateResult('end_turn');
 
@@ -156,8 +301,8 @@ describe('AcpMessageTranslator', () => {
       translator.processUpdate({
         sessionUpdate: 'config_option_update',
         configOptions: [],
-      } as never)[0].type
-    ).toBe('assistant');
+      } as never)
+    ).toEqual([]);
     expect(
       translator.processUpdate({
         sessionUpdate: 'session_info_update',
@@ -212,13 +357,33 @@ describe('AcpMessageTranslator', () => {
     expect(translator.getContextUsage()).toEqual({ used: 0, size: 200000 });
   });
 
-  test('ignores available commands updates', () => {
-    expect(
-      translator.processUpdate({
-        sessionUpdate: 'available_commands_update',
-        availableCommands: [],
-      } as never)
-    ).toEqual([]);
+  test('translates available commands updates', () => {
+    translator.processUpdate(agentChunk('Before'));
+
+    const messages = translator.processUpdate({
+      sessionUpdate: 'available_commands_update',
+      availableCommands: [
+        {
+          name: 'review',
+          description: 'Review the current changes',
+          input: { hint: '[path]' },
+        },
+      ],
+    } as never);
+
+    expect(messages[0].type).toBe('assistant');
+    expect(messages[1]).toMatchObject({
+      type: 'system',
+      subtype: 'commands_changed',
+      session_id: 'test-session',
+      commands: [
+        {
+          name: 'review',
+          description: 'Review the current changes',
+          argumentHint: '[path]',
+        },
+      ],
+    });
   });
 });
 

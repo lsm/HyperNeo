@@ -4,6 +4,7 @@ import type {
   AcpAuthenticateParams,
   AcpSessionNewParams,
   AcpSessionNewResult,
+  AcpSessionCloseParams,
   AcpSessionPromptParams,
   AcpSessionPromptResult,
   AcpSessionCancelParams,
@@ -247,6 +248,22 @@ export class AcpClient {
     return !!sessionCapabilities && 'resume' in sessionCapabilities;
   }
 
+  canCloseSession(): boolean {
+    const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
+    return !!sessionCapabilities && 'close' in sessionCapabilities;
+  }
+
+  async closeSession(sessionId?: string): Promise<void> {
+    const target = sessionId ?? this.sessionId;
+    if (!target) return;
+    const response = await this.transport.sendRequest('session/close', {
+      sessionId: target,
+    } as AcpSessionCloseParams);
+    if ('error' in response) {
+      throw new Error(`session/close failed: ${response.error.message}`);
+    }
+  }
+
   async *sendPrompt(
     prompt: AcpContentBlock[],
     callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
@@ -434,6 +451,7 @@ export class AcpClient {
           ? async (params) => this.callbacks.onTerminalOutput!(params as AcpTerminalOutputParams)
           : undefined;
       case 'terminal/waitForExit':
+      case 'terminal/wait_for_exit':
         return this.callbacks.onTerminalWaitForExit
           ? async (params) =>
               this.callbacks.onTerminalWaitForExit!(params as AcpTerminalWaitForExitParams)
