@@ -360,6 +360,13 @@ describe('saveUserMessageCore / runPostSaveSideEffects composition contract', ()
     reactiveDb.db.createSession(makeSession('s-comp', 'worker', { taskId: 'task-comp' }));
     events.length = 0;
 
+    let inTransactionAtNotify: boolean | null = null;
+    reactiveDb.on('change', (event) => {
+      if (inTransactionAtNotify === null && event.tables.includes('sdk_messages')) {
+        inTransactionAtNotify = bunDb.inTransaction;
+      }
+    });
+
     const id = repo.saveUserMessage('s-comp', userMessage('hello', 'u-wrap'), 'consumed');
 
     expect(
@@ -367,6 +374,7 @@ describe('saveUserMessageCore / runPostSaveSideEffects composition contract', ()
     ).toBe(id);
     expect(badgeOf('s-comp')).toBe(1);
     expect(events.map((event) => event.tables)).toEqual([['sdk_messages'], ['sessions']]);
+    expect(inTransactionAtNotify).toBe(false);
   });
 
   test('a composed transaction that throws rolls back the row and the badge bump', () => {
