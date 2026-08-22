@@ -332,6 +332,24 @@ describe('AgentSession.clearConversationContext', () => {
     await messages.return(undefined);
   });
 
+  it('any query reset cancels the pending clear wait instead of hanging it', async () => {
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
+    session.messageQueue.start();
+    const messages = session.messageQueue.messageGenerator(session.session.id);
+
+    const clear = session.clearConversationContext();
+    const yielded = await messages.next();
+    yielded.value?.onSent();
+
+    await session.resetQuery({ restartQuery: false });
+
+    await expect(clear).rejects.toThrow('cancelled by query teardown');
+
+    session.messageQueue.stop();
+    await messages.return(undefined);
+  });
+
   it('does not stop or restart the query (the SDK rotates the session in-stream)', async () => {
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
     const stopSpy = spyOn(session['lifecycleManager'], 'stop').mockResolvedValue(undefined);
