@@ -173,6 +173,8 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       errors?: string[];
       terminalReason?: string;
       minutesAgo?: number;
+      resultText?: string;
+      apiErrorStatus?: number;
     }
   ): void {
     const id = `${sessionId}-result-${Math.random().toString(36).slice(2)}`;
@@ -192,6 +194,10 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       uuid: id,
     };
     if (opts.terminalReason) message.terminal_reason = opts.terminalReason;
+    if (opts.subtype === 'success') {
+      message.result = opts.resultText ?? '';
+      if (typeof opts.apiErrorStatus === 'number') message.api_error_status = opts.apiErrorStatus;
+    }
     const ts = new Date(Date.now() - (opts.minutesAgo ?? 0) * 60_000).toISOString();
     db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal)
@@ -206,6 +212,8 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     taskStatus?: string;
     sessionAlive?: boolean;
     sessionId?: string;
+    resultText?: string;
+    apiErrorStatus?: number;
   }): { runId: string; taskId: string; executionId: string } {
     const workflow = workflowManager.createWorkflow({
       spaceId: SPACE_ID,
@@ -250,13 +258,21 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       subtype: opts.subtype,
       errors: opts.errors,
       terminalReason: opts.terminalReason,
+      resultText: opts.resultText,
+      apiErrorStatus: opts.apiErrorStatus,
     });
     return { runId: run.id, taskId: task.id, executionId: execution.id };
   }
 
   function resumeToIdle(
     executionId: string,
-    opts: { subtype: string; errors?: string[]; terminalReason?: string }
+    opts: {
+      subtype: string;
+      errors?: string[];
+      terminalReason?: string;
+      resultText?: string;
+      apiErrorStatus?: number;
+    }
   ): void {
     const execution = nodeExecutionRepo.getById(executionId);
     const sessionId = execution?.agentSessionId ?? SESSION;
@@ -332,6 +348,63 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     await rt.executeTick();
 
     expect(tam._injected).toHaveLength(1);
+  });
+
+  test('api-error success result (is_error + terminal_reason api_error) injects one continue', async () => {
+    const { runId, taskId, executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: Connection refused (ConnectionRefused)',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1);
+    expect(tam._injected[0].sessionId).toBe(SESSION);
+    expect(tam._injected[0].message).toContain('[Runtime recovery — terminal error]');
+    expect(tam._injected[0].message).toContain('Connection refused');
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+    expect(workflowRunRepo.getRun(runId)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
+  });
+
+  test('api-error success result with HTTP 429 is carved out (limit machinery owns it)', async () => {
+    const { runId, taskId, executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: Too many requests',
+      apiErrorStatus: 429,
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(0);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+    expect(workflowRunRepo.getRun(runId)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
+    expect(notifications).not.toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
+  });
+
+  test('api-error success result with usage-limit text is carved out (limit machinery owns it)', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: usage limit reached, upgrades available',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(0);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
   });
 
   test('error_max_budget_usd (cost guard) is never continued or blocked', async () => {
@@ -644,6 +717,37 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBeNull();
     expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
     expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
+  });
+
+  test('identical api-error signature recurrence escalates to blocked', async () => {
+    const { runId, taskId, executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: Connection refused (ConnectionRefused)',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(1);
+
+    resumeToIdle(executionId, {
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: Connection refused (ConnectionRefused)',
+    });
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
+    expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBeNull();
+    expect(tam._cancelled).toContain(SESSION);
+    expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
+    expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
+    expect(notifications).toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
+    expect(notifications).toContainEqual(expect.objectContaining({ kind: 'workflow_run_blocked' }));
   });
 
   test('grace cooldown suppresses a re-evaluation before the prior continue is consumed', async () => {

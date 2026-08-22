@@ -22,7 +22,7 @@ import {
   resolveNodeAgents,
 } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { isSDKResultError } from '@hyperneo/shared/sdk';
+import { isSDKResultError, isSDKResultSuccess } from '@hyperneo/shared/sdk';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import {
   ChannelCycleRepository,
@@ -40,6 +40,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
+import { assessLimitError } from '../../agent/limit-error-classifier';
 import { formatExternalEventEssence } from '../../external-events/event-essence';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
@@ -7217,7 +7218,7 @@ export class SpaceRuntime {
       const sessionId = execution.agentSessionId!;
       const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
       const key = `${runId}:${execution.id}`;
-      if (!lastMessage || !isSDKResultError(lastMessage)) continue;
+      if (!lastMessage || !this.isRecoverableTerminalErrorResult(lastMessage)) continue;
       const sessionExecutions = executionsBySession.get(sessionId) ?? [execution];
 
       if (sessionExecutions.some((e) => this.promptTooLongRecovery.has(`${runId}:${e.id}`))) {
@@ -7225,10 +7226,7 @@ export class SpaceRuntime {
       }
       if (this.isPromptTooLongResultError(lastMessage)) continue;
 
-      if (
-        lastMessage.subtype !== 'error_during_execution' &&
-        lastMessage.subtype !== 'error_max_turns'
-      ) {
+      if (this.isApiErrorTerminalResult(lastMessage) && this.isLimitErrorApiResult(lastMessage)) {
         continue;
       }
 
@@ -7305,7 +7303,8 @@ export class SpaceRuntime {
 
       if (
         state.lastRetriedErrorSignature === signature &&
-        lastMessage.subtype === 'error_during_execution'
+        (lastMessage.subtype === 'error_during_execution' ||
+          this.isApiErrorTerminalResult(lastMessage))
       ) {
         await this.escalateTerminalErrorToBlocked(
           runId,
@@ -7427,15 +7426,50 @@ export class SpaceRuntime {
     });
   }
 
+  private isRecoverableTerminalErrorResult(
+    message: SDKMessage
+  ): message is Extract<SDKMessage, { type: 'result' }> {
+    if (isSDKResultError(message)) {
+      return message.subtype === 'error_during_execution' || message.subtype === 'error_max_turns';
+    }
+    return this.isApiErrorTerminalResult(message);
+  }
+
+  private isApiErrorTerminalResult(
+    message: SDKMessage
+  ): message is Extract<SDKMessage, { type: 'result'; subtype: 'success' }> {
+    return (
+      isSDKResultSuccess(message) &&
+      message.is_error === true &&
+      message.terminal_reason === 'api_error'
+    );
+  }
+
+  private isLimitErrorApiResult(message: {
+    result?: string;
+    api_error_status?: number | null;
+    terminal_reason?: string;
+  }): boolean {
+    return assessLimitError({
+      rawText: typeof message.result === 'string' ? message.result : '',
+      httpStatus:
+        typeof message.api_error_status === 'number' ? message.api_error_status : undefined,
+      terminalReason: message.terminal_reason,
+    }).isLimit;
+  }
+
   private computeTerminalErrorSignature(message: {
     subtype: string;
     terminal_reason?: string;
     errors?: string[];
+    result?: string;
   }): string {
     const terminalReason =
       typeof message.terminal_reason === 'string' ? message.terminal_reason : '';
     const errors = (message.errors ?? []).map((entry) => entry.trim().slice(0, 200));
-    return `${message.subtype}|${terminalReason}|${errors.join('\n')}`;
+    const resultText =
+      typeof message.result === 'string' ? message.result.trim().slice(0, 200) : '';
+    return `${message.subtype}|${terminalReason}|${errors.join('\n')}${resultText}`;
   }
 
   private isPromptTooLongResultError(message: {
@@ -7448,9 +7482,11 @@ export class SpaceRuntime {
 
   private buildTerminalErrorContinueMessage(
     execution: NodeExecution,
-    errorResult: { subtype: string; errors?: string[] }
+    errorResult: { subtype: string; errors?: string[]; result?: string }
   ): string {
-    const errorSummary = (errorResult.errors ?? []).join('; ').slice(0, 280);
+    const errorDetails = (errorResult.errors ?? []).join('; ');
+    const fallbackText = typeof errorResult.result === 'string' ? errorResult.result : '';
+    const errorSummary = (errorDetails !== '' ? errorDetails : fallbackText).slice(0, 280);
     return [
       '[Runtime recovery — terminal error]',
       '',
