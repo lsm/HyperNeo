@@ -47,7 +47,7 @@ export function applyAdministrativeGate(ctx: ReportableTerminalCtx): ReportableT
 }
 
 export function applyArchiveGate(ctx: ReportableTerminalCtx): ReportableTerminalCtx {
-  return ctx.toStatus === 'archived'
+  return ctx.toStatus === 'archived' && isTerminalStatus(ctx.fromStatus)
     ? decided(ctx, { action: 'none', reason: 'administrative' })
     : ctx;
 }

@@ -81,6 +81,22 @@ describe('decideReportableTerminal', () => {
         )
       ).toEqual({ action: 'none', reason: 'administrative' });
     });
+
+    test('reports archiving active work from review', () => {
+      expect(
+        decideReportableTerminal(
+          input({ fromStatus: 'review', toStatus: 'archived', hasStartGeneration: true })
+        )
+      ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
+    });
+
+    test('reports archiving active work from approved', () => {
+      expect(
+        decideReportableTerminal(
+          input({ fromStatus: 'approved', toStatus: 'archived', hasStartGeneration: true })
+        )
+      ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
+    });
   });
 
   describe('active-work completions notify', () => {
