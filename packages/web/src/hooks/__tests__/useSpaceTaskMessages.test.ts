@@ -415,7 +415,7 @@ describe('useSpaceTaskMessages', () => {
         });
       }
 
-      expect(subscribeCalls()).toHaveLength(12);
+      expect(subscribeCalls()).toHaveLength(14);
       expect(result.current.isLoading).toBe(false);
 
       await act(async () => {
@@ -423,7 +423,7 @@ describe('useSpaceTaskMessages', () => {
         await Promise.resolve();
       });
 
-      expect(subscribeCalls()).toHaveLength(12);
+      expect(subscribeCalls()).toHaveLength(14);
     });
   });
 });
