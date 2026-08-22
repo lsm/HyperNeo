@@ -86,7 +86,9 @@ ingestion **already reads** `getGlobalConfig` (`:666`) and `getSpaceConfig` (`:7
 `:778`, `:903`) per publish decision. Per-source user config therefore needs **no new
 table** — filters/mappings are new keys in the existing `settings` JSON, flowing as
 data into pure cores (the ADR-0004 boundary: config is DATA flowing into pure cores,
-never logic).
+never logic). Caveat (review finding on PR #2723): the per-space writer is
+destructive — `persistSpaceConfig` rebuilds `settings` from scratch and would wipe
+foreign keys; see bug 7 in §5 and the preservation fix required in chain A PR A2.
 
 ### Legacy parallel path (context)
 
@@ -155,6 +157,17 @@ polling sources.
   Case-insensitive login compare; document that polling-sourced self-activity is
   suppressed too, and that Bot actors (e.g. `github-actions[bot]`) never match a user
   token identity.
+- **PR A2 also carries the settings-preservation fix (review finding on PR #2723):**
+  `persistSpaceConfig` (`:1739-1772`) rebuilds the per-space `settings` object from
+  only `pollingIntent` + `watchedRepos`, and `setSpaceConfig`
+  (`extension-config-store.ts:114-122`) upserts `settings_json` wholesale — so any
+  foreign key (the per-space `suppressSelfEvents` override included) would be
+  silently wiped by any of the 8 RPC call sites that persist space config
+  (`:354`, `:368`, `:443`, `:455`, `:486`, `:506`, `:535`, `:653`). Fix:
+  read-merge-write — fetch the current space config and spread its `settings` under
+  the two owned keys, so unknown keys survive. (Global config is already safe: all
+  four global writers spread — `app.ts:153`, `rpc-handlers/index.ts:252`,
+  `github-event-extension.ts:1636`/`:1649`.)
 - **PR A3 (surface):** expose the toggle through the `space.github.*` config RPCs and
   `SpaceExternalEventsSettings` UI, plus a suppressed-count in the existing health
   snapshot (`GitHubHealthSnapshot.eventTypes` machinery at `:163-270`).
@@ -167,7 +180,9 @@ polling sources.
   `eventTypeAllowed(config, event)` — per-space allow/deny lists over `eventType`
   (and optionally `action`), config resolved from the `settings_json` the webhook
   path already loads (`:728`); polling resolves once per space via
-  `listEnabledSpaces`. Default config = allow-all (current behavior).
+  `listEnabledSpaces`. Default config = allow-all (current behavior). Sequenced
+  after chain A PR A2's settings-preservation fix, and its filter writes use the
+  same merge-preserved `settings` mechanism — never a from-scratch settings object.
 - **PR B3 (transform/mapping):** pure projection
   `projectExternalEventPayload(config, event)` applied between gate and publish in
   `publishEvent` — field allow/deny projection of the payload, with
@@ -235,3 +250,11 @@ polling sources.
    `approve_task` pattern of gathering identity/config before cheaper errors — keep
    identity resolution lazy so its async window only opens when suppression is
    enabled.
+7. **`persistSpaceConfig` clobbers foreign per-space settings keys** (review finding
+   on PR #2723): it rebuilds `settings` with only `pollingIntent` + `watchedRepos`
+   (`github-event-extension.ts:1739-1772`) and `setSpaceConfig` replaces
+   `settings_json` wholesale (`extension-config-store.ts:114-122`), so any other key
+   is silently destroyed by the next watch/unwatch/toggle RPC (8 call sites: `:354`,
+   `:368`, `:443`, `:455`, `:486`, `:506`, `:535`, `:653`). Load-bearing for chains
+   A and B — the read-merge-write fix is scoped into PR A2. Global config writers
+   all spread and are not affected.
