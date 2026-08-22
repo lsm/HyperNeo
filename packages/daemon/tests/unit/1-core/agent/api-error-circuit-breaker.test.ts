@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:tes
 import { ApiErrorCircuitBreaker } from '../../../../src/lib/agent/api-error-circuit-breaker';
 
 const T0 = new Date('2026-01-01T00:00:00Z').getTime();
-const REAL_NOW = Date.now();
 
 describe('ApiErrorCircuitBreaker', () => {
   let circuitBreaker: ApiErrorCircuitBreaker;
@@ -13,7 +12,7 @@ describe('ApiErrorCircuitBreaker', () => {
   });
 
   afterEach(() => {
-    jest.setSystemTime(REAL_NOW);
+    jest.useRealTimers();
   });
 
   describe('error pattern detection', () => {
