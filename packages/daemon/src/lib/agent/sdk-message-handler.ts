@@ -889,6 +889,7 @@ export class SDKMessageHandler {
     const totalCost = newCostBaseline + sdkCost;
 
     session.lastActiveAt = new Date().toISOString();
+    const hadRefusalRewindTarget = session.metadata?.refusalRewindTargetUuid != null;
     const { refusalRewindTargetUuid: _clearedRefusalRewindTargetUuid, ...restMetadata } =
       session.metadata ?? {};
     session.metadata = {
@@ -905,7 +906,9 @@ export class SDKMessageHandler {
 
     db.updateSession(session.id, {
       lastActiveAt: session.lastActiveAt,
-      metadata: session.metadata,
+      metadata: hadRefusalRewindTarget
+        ? { ...session.metadata, refusalRewindTargetUuid: null }
+        : session.metadata,
     });
 
     await internalEventBus.publish('session.updated', {

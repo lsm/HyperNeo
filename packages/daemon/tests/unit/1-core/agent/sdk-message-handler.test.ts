@@ -1853,7 +1853,7 @@ describe('SDKMessageHandler', () => {
         expect(emitSpy).not.toHaveBeenCalledWith('session.updated', expect.anything());
       });
 
-      it('clears the target on the next successful result', async () => {
+      it('clears the target on the next successful result, including the persisted row', async () => {
         mockSession.metadata = {
           ...mockSession.metadata,
           refusalRewindTargetUuid: 'refused-user-uuid',
@@ -1872,7 +1872,15 @@ describe('SDKMessageHandler', () => {
         expect(updateSessionSpy).toHaveBeenCalledWith(
           'test-session-id',
           expect.objectContaining({
-            metadata: expect.not.objectContaining({ refusalRewindTargetUuid: expect.anything() }),
+            metadata: expect.objectContaining({ refusalRewindTargetUuid: null }),
+          })
+        );
+        expect(emitSpy).toHaveBeenCalledWith(
+          'session.updated',
+          expect.objectContaining({
+            session: expect.objectContaining({
+              metadata: expect.not.objectContaining({ refusalRewindTargetUuid: expect.anything() }),
+            }),
           })
         );
       });
