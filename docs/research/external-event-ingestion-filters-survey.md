@@ -172,15 +172,24 @@ polling sources.
   writer today (`listConfig` is read-only), so a default-on flip without a supported
   opt-out is not shippable. Case-insensitive login compare; Bot actors (e.g.
   `github-actions[bot]`) never match a user token identity.
-- **Identity-resolution failure policy (review finding, PR #2723):** do NOT reuse
+- **Identity-resolution policy (review findings, PR #2723):** do NOT reuse
   `resolveTokenStatus` semantics on the publish path — it caches only
   success/auth-rejected/403 and clears on timeouts and network/5xx failures
   (`github-event-extension.ts:1331-1359`), with `/user` allowed to wait 5 s; inline
   reuse would serialize webhook fan-out and polling during a transient GitHub
-  outage. Instead the gate consults only an already-cached last-known-good `login`
-  (keyed by credential fingerprint, refreshed out-of-band by the existing health
-  validation), failures are negatively cached with a short TTL, and while identity
-  is unknown the gate admits (fail-open) — never a fresh `/user` await per event.
+  outage. Instead the gate consults only an already-cached last-known-good `login`,
+  failures are negatively cached with a short TTL, and while identity is unknown
+  the gate admits (fail-open) — never a fresh `/user` await per event. The cache
+  must also be warmed **independently of the UI** (review finding, PR #2723):
+  `resolveTokenStatus` is reachable only from `buildHealthSnapshot`, which only the
+  demand-driven `space.github.health` RPC invokes (`:594-605`, `:1363-1369`), and
+  the `space.github.getTokenStatus` RPC calls `getTokenStatus` directly without
+  writing the `lastTokenStatus` cache — so in a headless space that never opens the
+  health panel the login stays unknown and default-on suppression would silently
+  never activate. PR A2 therefore adds a fire-and-forget identity refresh at
+  `start()` plus a bounded periodic re-resolve piggybacked on poll cycles (cold
+  cache or credential-generation change), never blocking the publish path and
+  keeping the negative-cache/fail-open behavior during outages.
 - **PR A2 also carries the settings-preservation fix (review finding on PR #2723):**
   `persistSpaceConfig` (`:1739-1772`) rebuilds the per-space `settings` object from
   only `pollingIntent` + `watchedRepos`, and `setSpaceConfig`
