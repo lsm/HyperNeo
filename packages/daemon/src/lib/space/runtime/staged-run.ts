@@ -180,10 +180,14 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function emitLog(log: StagedRunLog | undefined, event: StagedRunLogEvent): void {
   if (!log) return;
+  let observed: unknown;
   try {
-    log(event);
+    observed = log(event);
   } catch {
     return;
+  }
+  if (isPromise(observed)) {
+    observed.then(undefined, () => {});
   }
 }
 

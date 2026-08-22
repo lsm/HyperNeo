@@ -1658,6 +1658,42 @@ describe('stagedRun stage failure and compensation', () => {
     expect((outcome.error as Error).message).toBe('boom');
   });
 
+  test('a rejecting async log observer stays isolated from the run', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const flow = stagedRun<Box>(
+        'rejecting-log',
+        (s) => [
+          s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+          s.effect({
+            name: 'doomed',
+            writes: ['value'],
+            run: async () => {
+              throw new Error('boom');
+            },
+          }),
+          s.halt({ name: 'end', run: () => 'done' }),
+        ],
+        {
+          log: async () => {
+            throw new Error('observer rejected');
+          },
+        }
+      );
+      const outcome = await flow({});
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(outcome.status).toBe('error');
+      expect(outcome.stage).toBe('doomed');
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   test('a throwing log observer does not stop reverse unwinding', async () => {
     const order: string[] = [];
     const undoBoom = new Error('undo-boom');
