@@ -128,9 +128,17 @@ directly (anthropic-provider.ts:99–110) and is called outside any ownership
 boundary (auth-handlers.ts:73–86, provider-handlers.ts:187–208,
 model-service.ts:183–188), so while a non-Anthropic session holds the window
 those calls can report Anthropic authenticated on another provider's temporary
-token — or unavailable while its baseline is cleared; ambient provider-auth
+token — or unavailable while its baseline is cleared; **`AuthManager` is a
+separate reader path of the same kind**: `EnvManager.getApiKey()`/
+`getOAuthToken()` read the same temporary `process.env` values
+(env-manager.ts:4–14), and `auth.status`, `system.config`, and global state
+projection call `getAuthStatus()` through them (auth-handlers.ts:55–57,
+system-handlers.ts:71–81, state-projection-service.ts:302–314), so a
+non-Anthropic window can report authentication via that session's injected
+`ANTHROPIC_AUTH_TOKEN`; ambient provider-auth
 readers acquire the same lease or read an immutable daemon baseline — all
-scheduled as the dedicated **Prerequisite PR 0** in the Recommendation, since
+owner and reader enrollments, `AuthManager`/`EnvManager` included, are
+scheduled in the dedicated **Prerequisite PR 0** in the Recommendation, since
 no chain PR delivers it. — and
 **the coordinator must live at the shared `ProviderService` boundary, not in
 QueryRunner**: the same global environment has other concurrent owners —
