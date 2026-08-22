@@ -441,9 +441,14 @@ note.
   the leak**: `acp-query-runner.ts:906` calls `beginTerminalIdle()`, awaits
   `errorManager.handleError()` through `:920`, and its finalizer calls
   `setIdle()` only under the non-stale guard (`:736–767`), so a replacement
-  during that await (or an error-manager rejection) leaves the ACP-owned fence
-  live identically; the ACP terminal path uses the same owned-fence
-  cancellation primitive, covering its thrown/replacement interleavings;
+  during that await does **not** leak — `handleRunError` awaits
+  `handleError` (:907–920) and then calls `setIdle()` unconditionally
+  (:921), so a non-throwing error manager consumes the fence even under
+  replacement; the leak is the **rejection interleaving**: a `handleError`
+  throw propagates past `:921` to the stale-gated finalizer backstop
+  (:736, :766–767), which skips — only that path leaves the ACP-owned fence
+  live; the ACP terminal path uses the same owned-fence
+  cancellation primitive for its rejection interleaving;
   folding it into `terminal(category)` would replace the actionable validation
   text with generic category handling |
   terminal(category, message_hint) — the category alone does not determine the
@@ -638,8 +643,14 @@ note.
   fence**: `InternalEventBus.publish` rejects on subscriber failure
   (internal-event-bus.ts:145–157) after `beginTerminalIdle()` incremented both
   counters but before the direct `setIdle()` (:746–749), and if a replacement
-  lands while the subscriber is awaited, the QueryRunner stale paths skip
-  their idles and this handler-owned fence stays live, misleading
+  lands while the subscriber is awaited, **cleaning-up suppresses the fence
+  consumer**: the per-message error path's drain
+  (`drainDeliveryWaitersOnTerminalSDKMessage`, query-runner.ts:810–812) is
+  gated only on `!isCleaningUp()` and its bare `setIdle()`
+  (message-delivery.ts:13–14) consumes the fence for a top-level result
+  regardless of staleness — so a replacement alone does not leak the fence,
+  but when cleanup has begun the drain is skipped and this handler-owned
+  fence stays live, misleading
   `reclaimTurnAlreadySucceeded`; the failure path cancels its owned fence
   while retaining the pre/post-publication ordering; the
   core also returns the updated flag state, since the scoped machine mutates it:
