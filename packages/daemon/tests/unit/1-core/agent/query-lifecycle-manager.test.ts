@@ -121,6 +121,7 @@ describe('QueryLifecycleManager', () => {
       } as unknown as ProcessingStateManager,
       messageHandler: {
         resetCircuitBreaker: resetCircuitBreakerSpy,
+        cancelSuppressedResultWait: mock(() => {}),
       } as unknown as SDKMessageHandler,
       interruptHandler: {
         getInterruptPromise: getInterruptPromiseSpy,

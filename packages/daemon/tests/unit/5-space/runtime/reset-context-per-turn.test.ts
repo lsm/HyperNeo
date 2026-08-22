@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { ClearConversationCancelledError } from '../../../../src/lib/agent/agent-session.ts';
 import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import {
   QueryModeHandler,
@@ -406,6 +407,161 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(session.saveUserMessage).toHaveBeenCalledTimes(2);
   });
 
+  it('aborts the injection when the clear is cancelled by teardown', async () => {
+    const { manager, session } = makeManager({ slotResets: true });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: mock(async () => {
+        throw new ClearConversationCancelledError();
+      }),
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow('cancelled by query teardown');
+    expect(session.saveUserMessage).not.toHaveBeenCalled();
+    expect(session.enqueueMock).not.toHaveBeenCalled();
+  });
+
+  it('serializes the spawnPostApprovalSubSession reuse inject with ordinary injects', async () => {
+    const { manager, session } = makeManager({ slotResets: true });
+    const cfg = manager as unknown as { config: Record<string, unknown> };
+    cfg.config.spaceManager = { getSpace: mock(async () => ({ workspacePath: '/w' })) };
+    const nodeExecutionRepo = cfg.config.nodeExecutionRepo as Record<
+      string,
+      ReturnType<typeof mock>
+    >;
+    nodeExecutionRepo.listByWorkflowRun = mock(() => [
+      { agentName: AGENT_NAME, agentSessionId: SESSION_ID },
+    ]);
+
+    let releaseClear!: () => void;
+    const clearGate = new Promise<void>((resolve) => {
+      releaseClear = resolve;
+    });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: mock(async () => {
+        await clearGate;
+      }),
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+    attachSessionToTask(manager, live);
+
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+
+    const spawnArgs = {
+      task: { id: 'task-1', spaceId: 'space-1', workflowRunId: RUN_ID },
+      workflow: {
+        nodes: [
+          {
+            id: NODE_ID,
+            name: 'Review',
+            agents: [{ agentId: 'Reviewer', name: AGENT_NAME, resetContextPerTurn: true }],
+          },
+        ],
+      },
+      targetAgent: AGENT_NAME,
+      kickoffMessage: 'post-approval kickoff',
+    } as unknown as Parameters<TaskAgentManager['spawnPostApprovalSubSession']>[0];
+
+    const p1 = manager.spawnPostApprovalSubSession(spawnArgs);
+    await settle();
+    await settle();
+    const p2 = manager.injectSubSessionMessage(
+      SESSION_ID,
+      'external event digest',
+      true,
+      undefined,
+      'immediate',
+      'system'
+    );
+    await settle();
+    await settle();
+
+    expect(session.saveUserMessage).toHaveBeenCalledTimes(0);
+
+    releaseClear();
+    await Promise.all([p1, p2]);
+    expect(session.saveUserMessage.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('revalidates task state inside the injection lock before the reuse inject', async () => {
+    const { manager, session } = makeManager({ slotResets: true });
+    const cfg = manager as unknown as { config: Record<string, unknown> };
+    cfg.config.spaceManager = { getSpace: mock(async () => ({ workspacePath: '/w' })) };
+    const nodeExecutionRepo = cfg.config.nodeExecutionRepo as Record<
+      string,
+      ReturnType<typeof mock>
+    >;
+    nodeExecutionRepo.listByWorkflowRun = mock(() => [
+      { agentName: AGENT_NAME, agentSessionId: SESSION_ID },
+    ]);
+    const taskRepo = cfg.config.taskRepo as Record<string, ReturnType<typeof mock>>;
+    let cancelled = false;
+    taskRepo.listByWorkflowRunIncludingArchived = mock(() =>
+      cancelled ? [{ id: 'task-1', status: 'cancelled', workflowRunId: RUN_ID }] : []
+    );
+
+    let releaseClear!: () => void;
+    const clearGate = new Promise<void>((resolve) => {
+      releaseClear = resolve;
+    });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: mock(async () => {
+        await clearGate;
+      }),
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+    attachSessionToTask(manager, live);
+
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+
+    const spawnArgs = {
+      task: { id: 'task-1', spaceId: 'space-1', workflowRunId: RUN_ID },
+      workflow: {
+        nodes: [
+          {
+            id: NODE_ID,
+            name: 'Review',
+            agents: [{ agentId: 'Reviewer', name: AGENT_NAME, resetContextPerTurn: true }],
+          },
+        ],
+      },
+      targetAgent: AGENT_NAME,
+      kickoffMessage: 'post-approval kickoff',
+    } as unknown as Parameters<TaskAgentManager['spawnPostApprovalSubSession']>[0];
+
+    const p0 = manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+    await settle();
+    await settle();
+    const p1 = manager.spawnPostApprovalSubSession(spawnArgs);
+    await settle();
+    await settle();
+
+    cancelled = true;
+    releaseClear();
+    const [, spawned] = await Promise.all([p0, p1]);
+
+    expect(spawned.sessionId).toBe(SESSION_ID);
+    expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
+    expect(session.enqueueMock).toHaveBeenCalledTimes(1);
+  });
+
   it('does NOT drop the handoff when the node has a corrupt/empty agents array (P2-7)', async () => {
     const { manager, session } = makeManager({ slotResets: true, nodeEmptyAgents: true });
     const live = {
@@ -621,6 +777,24 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(session.reopenDeliveryByUuid).toHaveBeenCalledTimes(1);
     expect(session.saveUserMessage).not.toHaveBeenCalled();
     expect(session.jobQueueEnqueue).toHaveBeenCalled();
+  });
+
+  it('a cancelled clear during a FAILED-row retry aborts before reopening the row', async () => {
+    const { manager, session } = makeManager({
+      slotResets: true,
+      deliveryContent: { sendStatus: 'failed' },
+    });
+    session.clearMock.mockRejectedValue(new ClearConversationCancelledError());
+    indexSession(manager, liveSession(session));
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow('cancelled by query teardown');
+
+    expect(session.reopenDeliveryByUuid).not.toHaveBeenCalled();
+    expect(session.publishStatusChanged).not.toHaveBeenCalled();
+    expect(session.saveUserMessage).not.toHaveBeenCalled();
+    expect(session.enqueueMock).not.toHaveBeenCalled();
   });
 
   it('a retry finding an existing CONSUMED row skips resetContextPerTurn (no /clear of the just-delivered handoff)', async () => {

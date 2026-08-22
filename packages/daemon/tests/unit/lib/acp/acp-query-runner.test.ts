@@ -584,6 +584,19 @@ describe('AcpQueryRunner', () => {
     expect(stopSpy).toHaveBeenCalled();
   });
 
+  test('stamps ACP results with the submitted prompt uuid so clear correlation works', async () => {
+    const { runner, ctx, onSDKMessage } = createRunnerFixture();
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    const result = onSDKMessage.mock.calls.find(([message]) => message.type === 'result')?.[0] as
+      | (SDKMessage & { user_message_uuid?: string })
+      | undefined;
+    expect(result).toBeDefined();
+    expect(result?.user_message_uuid).toBe('user-message-1');
+  });
+
   test('publishes query.trigger on normal turn completion to replay deferred rows', async () => {
     const { runner, ctx } = createRunnerFixture();
     const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;

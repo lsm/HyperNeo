@@ -181,6 +181,8 @@ export class QueryLifecycleManager {
     const { timeoutMs = DEFAULT_TERMINATION_TIMEOUT_MS, catchQueryErrors = false } = options ?? {};
     const { messageQueue } = this.ctx;
 
+    this.ctx.messageHandler.cancelSuppressedResultWait();
+
     const processExitedPromise = this.ctx.processExitedPromise;
     const trackedProcessSnapshot = this.ctx.snapshotTrackedAgentProcesses();
     const noPidProcessSnapshot = this.ctx.snapshotNoPidTrackedProcesses?.() ?? [];
@@ -289,6 +291,8 @@ export class QueryLifecycleManager {
       stateManager,
       messageHandler,
     } = this.ctx;
+
+    this.ctx.messageHandler.cancelSuppressedResultWait();
 
     if (!this.ctx.queryObject && !this.ctx.queryPromise) {
       messageQueue.clear();
