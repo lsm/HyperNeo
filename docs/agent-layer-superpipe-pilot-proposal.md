@@ -456,7 +456,13 @@ note.
   outbox or an ordered inverse update event in its compensation (unwinding
   only the row leaves connected clients displaying a notice the DB no longer
   has); keeping the non-fatal notice entirely outside the staged pass avoids
-  both obligations and is the preferred shape.
+  both obligations and is the preferred shape — but **publication must also be
+  gated on the save result**: `saveSDKMessage` catches database errors and
+  returns `false` (sdk-message-repository.ts:594–597) while
+  `displayErrorAsAssistantMessage` ignores that result and still emits the
+  delta (:1637–1643), so clients can receive a notice that never existed in
+  the DB — the save result is checked and publication suppressed (or
+  atomically outboxed), and the returned-false path is pinned.
   and the **prompt re-enqueue** at
   `messageQueue.enqueueWithId` (:1145) is likewise an external session
   injection with unconditional insertion: it needs a conditional durable
@@ -685,7 +691,12 @@ note.
   expected query identity while the claim is still current, and the pass would
   install the waiter/observer and return `driving` as cleanup stops its queue;
   cleaning-up, queue-running, abort, and route-appropriate processing state
-  are all rechecked before either branch proceeds. The
+  are all rechecked before either branch proceeds — pinned by a
+  **deterministic interleaving test** (deferred `ensureQueryStarted` promise;
+  start cleanup before resolving it; assert the resnapshot disarms the
+  preinstalled observer, creates no idle waiter, and returns without
+  `driving`), since routing tables and ordinary transcripts never exercise an
+  await-boundary interleaving by accident. The
   query — and the **existing-entry path needs the same revalidation**:
   the `existing` branch (:1479–1483) never calls `admitWithId`, so a guard
   placed only there is bypassed; revalidate and rebuild the waiter/observer
