@@ -12,6 +12,9 @@ export interface FormatAgentMessageOptions {
   replyToSessionId?: string | null;
 }
 
+export const REPLY_PROTOCOL =
+  'Messaging protocol: if this message requests work or information from you, reply to the sender with the outcome when done — or promptly if you cannot do it. Do not leave the sender waiting.';
+
 function taskLabel(taskNumber?: number | null): string {
   return typeof taskNumber === 'number' ? ` (task #${taskNumber})` : '';
 }
@@ -36,6 +39,7 @@ function replyRoutingFooter(options: FormatAgentMessageOptions): string {
 export function formatAgentMessage(options: FormatAgentMessageOptions): string {
   const body = options.body;
   const footer = replyRoutingFooter(options);
+  const protocolLine = `${REPLY_PROTOCOL}\n`;
 
   if (options.toLevel === 'space-agent') {
     const task = taskLabel(options.taskNumber);
@@ -44,6 +48,7 @@ export function formatAgentMessage(options: FormatAgentMessageOptions): string {
       `─── Message from ${options.fromAgentName}${task} ───\n\n` +
       `${body}\n\n` +
       `─── Reply ───\n` +
+      protocolLine +
       `To reply, use: send_message_to_task${taskId}${replyTargetSuffix(options)}${footer}`
     );
   }
@@ -53,12 +58,19 @@ export function formatAgentMessage(options: FormatAgentMessageOptions): string {
       `─── Message from ${options.fromAgentName} ───\n\n` +
       `${body}${footer}\n\n` +
       `─── Reply ───\n` +
+      protocolLine +
       `To reply, use: send_message with target "${replyTargetHandle(options)}"`
     );
   }
 
   if (options.fromLevel === 'node-agent' && options.toLevel === 'node-agent') {
-    return `─── Message from ${options.fromAgentName} ───\n\n${body}${footer}`;
+    return (
+      `─── Message from ${options.fromAgentName} ───\n\n` +
+      `${body}\n\n` +
+      `─── Reply ───\n` +
+      protocolLine +
+      `To reply, use: send_message with target "${options.fromAgentName}"${footer}`
+    );
   }
 
   if (options.fromLevel === 'node-agent' && options.toLevel === 'task-agent') {
@@ -66,6 +78,7 @@ export function formatAgentMessage(options: FormatAgentMessageOptions): string {
       `─── Message from ${options.fromAgentName}${taskLabel(options.taskNumber)} ───\n\n` +
       `${body}${footer}\n\n` +
       `─── Reply ───\n` +
+      protocolLine +
       `To reply, use: send_message with target "${options.fromAgentName}"`
     );
   }
@@ -75,6 +88,7 @@ export function formatAgentMessage(options: FormatAgentMessageOptions): string {
       `─── Message from task-agent${taskLabel(options.taskNumber)} ───\n\n` +
       `${body}${footer}\n\n` +
       `─── Reply ───\n` +
+      protocolLine +
       `To reply, use: send_message with target "task-agent"`
     );
   }
