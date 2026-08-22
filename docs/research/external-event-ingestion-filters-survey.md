@@ -335,8 +335,15 @@ polling sources.
   stranding its republish — the same behavior A2's dedupe bypass forbids, one
   return point earlier. The pre-gate first queries the store for any retryable
   `published` row of the matched space whose topic matches the event type's
-  suffix family for that repo (one indexed lookup — cheap against the REST call
-  it guards); if any exists, fall through to the normal resolution+dedupe path.
+  suffix family for that repo — and B2 includes a supporting index, because the
+  current schema's indexes (`(space_id, source, dedupe_key)`, `(state,
+  updated_at)`, `(space_id, source, ingested_at)` — `migrations.ts:6597-6604`,
+  `:9101-9102`) do not cover that predicate and the lookup would otherwise scan
+  retained rows on every denied enrichment webhook (review finding, PR #2723);
+  a composite `(space_id, source, state)` index plus topic-prefix correlation
+  (or a stored topic-family column) keeps the precheck cheap against the REST
+  call it guards. If any retryable row exists, fall through to the normal
+  resolution+dedupe path.
   Short-circuits also **`markWebhookReceived` on all matched targets first** (review
   finding, PR #2723): the enrichment handlers otherwise mark only after PR
   resolution and publication (`:845`, `:935`), so without the mark, installations
@@ -376,12 +383,17 @@ polling sources.
   transient side channel would not survive retries. B3 therefore uses
   **bidirectional write-time validation** (persistence stays deterministic —
   never subscriber-driven, per §4): projection writes validate against the keys
-  referenced by **all stored subscription filters, regardless of goal status**
-  (review finding, PR #2723 — `onExternalEventPublished` reads only active goals'
+  referenced by **all stored subscription filters regardless of goal status, but
+  only those that can match a projected GitHub event** (review findings, PR
+  #2723): `onExternalEventPublished` reads only active goals'
   scopes, so a projection stripping key K while a goal is paused would activate
-  that goal's unchanged filter on resume without ever passing a write validation;
-  goal activation is itself a validation point inside the same per-space queue),
-  and every subscription/policy write — including
+  that goal's unchanged filter on resume without ever passing a write validation
+  (goal activation is itself a validation point inside the same per-space queue);
+  and `findMatchingSubscription` excludes non-matching sources and topics
+  *before* evaluating `event.payload` (`goal-automation-service.ts:312-315`), so
+  subscriptions like `source: 'slack'` with Slack-only keys are unaffected by
+  GitHub projection and must not veto it.
+  Every subscription/policy write — including
   `evolution.scope.update`'s `mergeEvolutionPolicy` — validates against the active
   projection config, **rejecting** any filter that references a key the projection
   would strip. Silent match-stop is unacceptable; an invalid filter is refused at
