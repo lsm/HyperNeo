@@ -541,9 +541,12 @@ export class QueryLifecycleManager {
     if (queryStartResult === 'blocked') {
       if (options?.prepend) {
         messageQueue.remove(messageId);
-      } else {
-        await stateManager.setQueued(messageId);
+        throw new Error(
+          `Rate limit retry of ${messageId} is blocked on sdk_resume_choice; ` +
+            `not reporting the recovery query as started.`
+        );
       }
+      await stateManager.setQueued(messageId);
       this.logger.debug(
         `startQueryAndEnqueue: session ${session.id} is blocked on sdk_resume_choice; ` +
           `leaving message ${messageId} persisted as enqueued for replay after the choice.`

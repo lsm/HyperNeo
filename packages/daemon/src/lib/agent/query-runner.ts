@@ -351,6 +351,7 @@ export class QueryRunner {
         const found = messages.find((entry) => entry.uuid === userMessageUuid);
         if (found) return found;
       }
+      return null;
     }
     return this._lastConsumedUserMessage;
   }
