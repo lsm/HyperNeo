@@ -72,8 +72,18 @@ import { jsonResult } from '../tools/tool-result';
 import {
   assertExecutionValidAgainstWorkflow,
   PermanentSpawnError,
+  validateExecutionAgainstWorkflow,
   validateTaskAllowsSpawn,
 } from './workflow-node-execution-validation';
+import { decideSpawnExecutionAdmission } from './spawn-admission-gates';
+import {
+  assembleNodeAgentSessionInit,
+  buildExecutionBaseSessionId,
+  buildSlotOverrides,
+  findAvailableSessionId,
+  resolveSpawnWorkspace,
+  resolveWorkflowNodeSlot,
+} from './spawn-slot-resolution';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
@@ -93,11 +103,7 @@ import {
   WorkflowHookEngine,
 } from './workflow-hook-engine';
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
-import {
-  buildCustomAgentTaskMessage,
-  resolveAgentInit,
-  type SlotOverrides,
-} from '../agents/custom-agent';
+import { buildCustomAgentTaskMessage, resolveAgentInit } from '../agents/custom-agent';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { Logger } from '../../logger';
 import {
@@ -268,55 +274,6 @@ const VERIFIED_STOP_ESCALATION_FORCE_KILL_MS = 2000;
 
 interface SpawnTaskAgentOptions {
   kickoff?: boolean;
-}
-
-export interface BuildSlotOverridesContext {
-  task?: Pick<SpaceTask, 'workflowModelOverrides'>;
-  node?: { id: string; name: string };
-  workflow?: { id: string };
-  workflowRun?: { id: string };
-}
-
-export function buildSlotOverrides(
-  slot: WorkflowNodeAgent,
-  context?: BuildSlotOverridesContext
-): SlotOverrides {
-  let slotCustomPrompt: string | undefined = slot.customPrompt?.value;
-  if (!slotCustomPrompt && slot.replaceAgentPrompt !== true) {
-    const legacySlot = slot as {
-      systemPrompt?: { value: string };
-      instructions?: { value: string };
-    };
-    const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
-    const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
-    if (legacySp && legacyInstr) {
-      slotCustomPrompt = `${legacySp}\n\n${legacyInstr}`;
-    } else {
-      slotCustomPrompt = legacySp || legacyInstr || undefined;
-    }
-  }
-  const modelOverrideKey = context?.node ? `${context.node.id}:${slot.name}` : null;
-  const taskModelOverride = modelOverrideKey
-    ? context?.task?.workflowModelOverrides?.[modelOverrideKey]
-    : undefined;
-  const effectiveGuards = slot.toolGuards;
-  return {
-    model: taskModelOverride ?? slot.model,
-    thinkingLevel: slot.thinkingLevel,
-    customPrompt: slotCustomPrompt,
-    replaceAgentPrompt: slot.replaceAgentPrompt,
-    disabledSkillIds: slot.disabledSkillIds,
-    extraMcpServers: slot.extraMcpServers,
-    toolGuards: effectiveGuards,
-    resolutionContext: {
-      agentId: slot.agentId,
-      agentName: slot.name,
-      workflowRunId: context?.workflowRun?.id,
-      workflowId: context?.workflow?.id,
-      nodeId: context?.node?.id,
-      nodeName: context?.node?.name,
-    },
-  };
 }
 
 export function resolvePostApprovalTargetAgentName(
@@ -660,21 +617,43 @@ export class TaskAgentManager {
     execution: NodeExecution,
     options: SpawnTaskAgentOptions = {}
   ): Promise<string> {
-    if (execution.agentSessionId && this.agentSessionIndex.has(execution.agentSessionId)) {
-      if (this.isSessionAlive(execution.agentSessionId)) {
-        const startedAt = execution.startedAt ?? Date.now();
-        this.config.nodeExecutionRepo.update(execution.id, {
-          status: 'in_progress',
-          agentSessionId: execution.agentSessionId,
-          startedAt,
-          completedAt: null,
-        });
-        return execution.agentSessionId;
+    const indexedSessionId = execution.agentSessionId;
+    let hasLiveIndexedSession = false;
+    if (indexedSessionId && this.agentSessionIndex.has(indexedSessionId)) {
+      if (this.isSessionAlive(indexedSessionId)) {
+        hasLiveIndexedSession = true;
+      } else {
+        this.agentSessionIndex.delete(indexedSessionId);
       }
-      this.agentSessionIndex.delete(execution.agentSessionId);
     }
 
-    if (this.spawningExecutionIds.has(execution.id)) {
+    const freshTask = this.config.taskRepo.getTask(task.id) ?? task;
+    const slotResolution = resolveWorkflowNodeSlot(
+      workflow,
+      execution.workflowNodeId,
+      execution.agentName
+    );
+    const admission = decideSpawnExecutionAdmission({
+      hasLiveIndexedSession,
+      isSpawningExecution: this.spawningExecutionIds.has(execution.id),
+      taskStatus: freshTask.status,
+      executionWorkflowValid: validateExecutionAgainstWorkflow(execution, workflow).valid,
+      slotResolvable: slotResolution !== null,
+    });
+
+    if (admission.action === 'reuse_live') {
+      const sessionId = indexedSessionId!;
+      const startedAt = execution.startedAt ?? Date.now();
+      this.config.nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        startedAt,
+        completedAt: null,
+      });
+      return sessionId;
+    }
+
+    if (admission.action === 'wait_concurrent') {
       const CONCURRENT_SPAWN_TIMEOUT_MS = 30_000;
       const deadline = Date.now() + CONCURRENT_SPAWN_TIMEOUT_MS;
       return new Promise((resolve, reject) => {
@@ -706,32 +685,32 @@ export class TaskAgentManager {
       });
     }
 
+    if (admission.action === 'reject_permanent' || admission.action === 'reject_transient') {
+      validateTaskAllowsSpawn(freshTask);
+      assertExecutionValidAgainstWorkflow(execution, workflow);
+      throw new Error(
+        `No agent slot found for agent name "${execution.agentName}" in node "${execution.workflowNodeId}"`
+      );
+    }
+
+    const { node, slot } = slotResolution!;
+
     this.spawningExecutionIds.add(execution.id);
     let spawnedSessionId: string | null = null;
 
     try {
-      const freshTask = this.config.taskRepo.getTask(task.id) ?? task;
-      validateTaskAllowsSpawn(freshTask);
-      assertExecutionValidAgainstWorkflow(execution, workflow);
-
-      const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId)!;
-      const nodeAgents = resolveNodeAgents(node);
-      const slot =
-        nodeAgents.length === 1
-          ? nodeAgents[0]
-          : nodeAgents.find((agentSlot) => agentSlot.name === execution.agentName);
-      if (!slot?.agentId) {
-        throw new Error(
-          `No agent slot found for agent name "${execution.agentName}" in node "${execution.workflowNodeId}"`
-        );
-      }
-
       const taskId = task.id;
-      const baseSessionId = `space:${space.id}:task:${taskId}:exec:${execution.id}`;
-      const sessionId = this.resolveSessionId(baseSessionId);
+      const sessionId = this.resolveSessionId(
+        buildExecutionBaseSessionId(space.id, taskId, execution.id)
+      );
 
-      let workspacePath = this.taskWorktreePaths.get(taskId) ?? space.workspacePath;
-      if (!this.taskWorktreePaths.has(taskId) && this.config.worktreeManager) {
+      const workspace = resolveSpawnWorkspace({
+        cachedTaskWorktreePath: this.taskWorktreePaths.get(taskId),
+        hasWorktreeManager: Boolean(this.config.worktreeManager),
+        spaceWorkspacePath: space.workspacePath,
+      });
+      let workspacePath = workspace.workspacePath;
+      if (workspace.createWorktree && this.config.worktreeManager) {
         try {
           const result = await this.config.worktreeManager.createTaskWorktree(
             space.id,
@@ -785,15 +764,12 @@ export class TaskAgentManager {
         execution.workflowNodeId
       );
 
-      init = {
-        ...init,
+      init = assembleNodeAgentSessionInit({
+        baseInit: init,
         title: formatWorkflowNodeSessionTitle(task, execution.agentName),
-        mcpServers: {
-          ...init.mcpServers,
-          'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
-          ...this.buildAgentMemoryMcpServers(space.id, sessionId),
-        },
-      };
+        nodeAgentMcpServer: nodeAgentMcpServer as unknown as McpServerConfig,
+        agentMemoryMcpServers: this.buildAgentMemoryMcpServers(space.id, sessionId),
+      });
 
       const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
         agentId: slot.agentId,
@@ -2785,19 +2761,8 @@ export class TaskAgentManager {
   }
 
   private resolveSessionId(baseId: string): string {
-    if (!this.config.db.getSession(baseId)) {
-      return baseId;
-    }
-
-    const MAX_ATTEMPTS = 100;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const candidateId = `${baseId}:${attempt}`;
-      if (!this.config.db.getSession(candidateId)) {
-        return candidateId;
-      }
-    }
-    throw new Error(
-      `Could not find available session ID for base "${baseId}" after ${MAX_ATTEMPTS} attempts`
+    return findAvailableSessionId(baseId, (candidateId) =>
+      Boolean(this.config.db.getSession(candidateId))
     );
   }
 
