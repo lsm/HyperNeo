@@ -253,12 +253,14 @@ note.
   generation flags) → startup_timeout_retry | message_not_found_retry |
   transient_retry | provider_backoff(5xx) | rate_limit_handoff |
   terminal(category)` — interpreted by thin shell arms. Routing note the table
-  must preserve: explicit HTTP-429 errors do not enter the provider-backoff arm
-  (`isRetryableProviderError` excludes all `\b4\d{2}\b` matches); they fall
-  through to the terminal cascade where `looksLikeRateLimit429` (:92) routes them
-  to the watchdog handoff (:1234–1245) — only text-form rate-limit errors without
-  a 4xx status code can reach the backoff arm via
-  `RETRYABLE_PROVIDER_ERROR_TEXT`. The backoff arm's
+  must preserve: rate-limit errors — explicit HTTP-429 **and** text-form — do
+  not enter the provider-backoff arm: `isRetryableProviderError` excludes all
+  `\b4\d{2}\b` matches, and text-only "rate limit" errors fail it too because
+  `RETRYABLE_PROVIDER_ERROR_TEXT` is built from taxonomy entries that supply
+  `looseTextSubstrings`, which the generic rate-limit entry does not (only the
+  GLM `[1305]` case does). Both route to the terminal cascade where
+  `looksLikeRateLimit429` (:92) hands off to the watchdog (:1234–1245); the
+  backoff arm is effectively 5xx-plus-GLM-`[1305]`. The backoff arm's
   sleep→revalidate→re-enqueue→recurse (:1066–1151) is a `stagedRun` candidate
   (async stages: sleep, re-check, re-enqueue) but sync-core-first per Decision
   item 5; the existing generation guards inform the resnapshot stage but must not
@@ -322,7 +324,9 @@ note.
      sequence, S3 below; stale
      `lastResultWasSuccess` window — pinned, not fixed); ack-selection table
      over (sendStatus × durable ownership × yielded/claimed); cost-reset table;
-     the explicit-429-vs-text-rate-limit routing split from Chain B's note.
+     the explicit-429-vs-text-rate-limit routing split from Chain B's note
+     (both route to the watchdog handoff; only GLM `[1305]` reaches the backoff
+     arm).
      The 2,915-line suite + `usage-accounting-invariants.test.ts` (seeded-RNG
      invariants) are the parity base.
   2. **PR 2 (additive):** `turn-end-routing.ts` + `usage-accounting.ts` pure
@@ -366,9 +370,13 @@ note.
   1. **PR 1 (pins):** pilot-1-style transcript parity harness for
      `driveDeliveryTurn` + `feedDeliverySteer` + the job handler (instrument
      queue admits, DB marks, job mutations per scenario); decision tables for
-     the steer ladder (status × queryPromise × provider × validity →
-     feed/park/promote/awaiting_acceptance) and handler outcomes
-     (skip/park/requeue/requeueAs/settle × park budgets). Existing base:
+     the steer ladder (status × queryPromise × provider × validity × queue
+     ownership — `hasPendingOrInFlight(messageUuid)` distinguishes
+     `awaiting_acceptance` from admitting a fresh feed, agent-session.ts:1701–1715)
+     and handler outcomes (skip/park/requeue/requeueAs/settle × park budgets ×
+     waiting-for-input: a waiting session requeues plain and bypasses
+     park-budget dead-lettering, message-delivery.handler.ts:150–163).
+     Existing base:
      `message-delivery-v2.test.ts` (1,400 ln conformance),
      `query-mode-handler.test.ts` (891), `agent-session.test.ts` delivery cases
      (:4985–5069).
@@ -459,7 +467,11 @@ of using the extracted core (message-delivery.ts:207–242). (D2)
 `resolveDeliveryRole` core dead — `deliverMessage` (:97–139) keeps the imperative
 try/catch; its `getActiveDeliveryRole` pre-check is redundant with the UNIQUE
 constraint rather than racy (check and enqueue are both synchronous), and callers
-today only branch on turn-vs-steer for `setQueuedIfIdle`.
+branch on turn-vs-steer for `setQueuedIfIdle` **and** for a lifecycle-critical
+consumer any extraction must preserve: `deliverChatMessage` cancels the
+rate-limit watchdog when a new turn is enqueued outside cooldown
+(agent-session.ts:1811–1812), preventing a stale scheduled retry from competing
+with the new turn owner.
 (Retractions: three earlier reports in this space were false positives and are
 withdrawn — `withSessionLock`'s abort path cannot leave an unhandled rejection
 (lock-tail promises are resolver-only and never reject);
