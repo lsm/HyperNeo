@@ -1349,6 +1349,23 @@ export class TaskAgentManager {
       }
     }
 
+    const resolveSessionTarget = async (): Promise<AgentSession | null> => {
+      const indexed = this.agentSessionIndex.get(subSessionId);
+      if (indexed) return indexed;
+
+      for (const [, nodeMap] of this.subSessions) {
+        const session = nodeMap.get(subSessionId);
+        if (session) return session;
+      }
+
+      return await this.rehydrateSubSession(subSessionId);
+    };
+
+    const target = await resolveSessionTarget();
+    if (!target) {
+      throw new Error(`Sub-session not found: ${subSessionId}`);
+    }
+
     return this.withSessionInjectLock(subSessionId, async () => {
       const lockedExecution = this.resolveNodeExecutionForSubSession(subSessionId);
       if (lockedExecution) {
@@ -1363,50 +1380,23 @@ export class TaskAgentManager {
         }
       }
 
-      const indexed = this.agentSessionIndex.get(subSessionId);
-      if (indexed) {
-        return await this.injectMessageIntoSession(
-          indexed,
-          message,
-          deliveryMode,
-          origin,
-          isSyntheticMessage,
-          images,
-          inputKind,
-          messageId
-        );
-      }
+      const currentTarget =
+        this.agentSessionIndex.get(subSessionId) ??
+        Array.from(this.subSessions.values())
+          .map((nodeMap) => nodeMap.get(subSessionId))
+          .find((session) => session !== undefined) ??
+        target;
 
-      for (const [, nodeMap] of this.subSessions) {
-        const session = nodeMap.get(subSessionId);
-        if (session) {
-          return await this.injectMessageIntoSession(
-            session,
-            message,
-            deliveryMode,
-            origin,
-            isSyntheticMessage,
-            images,
-            inputKind,
-            messageId
-          );
-        }
-      }
-
-      const rehydrated = await this.rehydrateSubSession(subSessionId);
-      if (rehydrated) {
-        return await this.injectMessageIntoSession(
-          rehydrated,
-          message,
-          deliveryMode,
-          origin,
-          isSyntheticMessage,
-          images,
-          inputKind,
-          messageId
-        );
-      }
-      throw new Error(`Sub-session not found: ${subSessionId}`);
+      return await this.injectMessageIntoSession(
+        currentTarget,
+        message,
+        deliveryMode,
+        origin,
+        isSyntheticMessage,
+        images,
+        inputKind,
+        messageId
+      );
     });
   }
 

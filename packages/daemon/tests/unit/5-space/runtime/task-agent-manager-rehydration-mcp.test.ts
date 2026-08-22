@@ -1,5 +1,9 @@
 import { describe, test, expect, afterEach, spyOn } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
+import {
+  signalDeliveryConsumed,
+  withSessionResetCoordination,
+} from '../../../../src/lib/agent/message-delivery';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
@@ -294,5 +298,55 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     await callback!(fake.agentSession, ['node-agent']);
 
     expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+  });
+
+  test('injecting into an uncached sub-session never deadlocks against the reset-coordination lock', async () => {
+    const { tam } = makeManager();
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    const config = (
+      tam as unknown as {
+        config: {
+          db: Record<string, unknown>;
+          nodeExecutionRepo: Record<string, unknown>;
+        };
+      }
+    ).config;
+    config.nodeExecutionRepo.getByAgentSessionId = () => makeExecution();
+    config.db.getSDKMessageRepo = () => ({
+      getDeliveryContent: () => null,
+      reopenDeliveryByUuid: () => null,
+      markDeliveryFailedByUuid: () => null,
+      markDeliveryDeferredByUuid: () => null,
+    });
+    config.db.getJobQueueRepo = () => ({
+      activeDeliveryMessageUuids: () => new Set<string>(),
+      hasActiveTurnDeliveryJob: () => false,
+      getActiveDeliveryRole: () => null,
+      enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
+        const uuid = args?.payload?.messageUuid;
+        if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
+        return { id: 'job-1' };
+      },
+    });
+    config.db.saveUserMessage = () => 'db-id';
+    config.db.getUserMessageIdsByStatus = () => [];
+    const session = fake.agentSession as unknown as Record<string, unknown>;
+    session.replayPendingMessagesForImmediateMode = async () => {
+      await withSessionResetCoordination(SUB_SESSION_ID, async () => {});
+    };
+    session.handleQueryTrigger = async () => ({ success: true, messageCount: 0 });
+    session.ensureQueryStarted = async () => {};
+    session.messageQueue = { enqueueWithId: async () => {}, isRunning: () => false };
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => fake.agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    const dbId = await tam.injectSubSessionMessage(
+      SUB_SESSION_ID,
+      '─── Message from coder ───',
+      true
+    );
+
+    expect(dbId).toBe('db-id');
   });
 });
