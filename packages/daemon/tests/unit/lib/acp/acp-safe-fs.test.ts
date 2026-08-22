@@ -16,12 +16,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   decodeStatMode,
+  isSafeFsSupported,
   locateStatModeOffset,
   readFileWithinWorkspace,
   writeFileWithinWorkspace,
 } from '../../../../src/lib/acp/acp-safe-fs';
 
-const bunRuntimeTest = process.versions.bun ? test : test.skip;
+const bunRuntimeTest = process.versions.bun && isSafeFsSupported() ? test : test.skip;
 const unsupportedRuntimeTest = process.versions.bun ? test.skip : test;
 
 test('decodes regular-file mode bits from a stat buffer', () => {
@@ -424,6 +425,29 @@ bunRuntimeTest('reads whole files exactly at the byte cap and rejects beyond it'
       })
     ).rejects.toThrow('ACP filesystem scan exceeds 3 bytes');
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+bunRuntimeTest('applies the preserved mode regardless of the process umask', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-umask-'));
+  const workspace = join(root, 'workspace');
+  const target = join(workspace, 'guarded.txt');
+  await mkdir(workspace);
+  await writeFile(target, 'original');
+  await chmod(target, 0o600);
+
+  const previousUmask = process.umask(0o777);
+  try {
+    await writeFileWithinWorkspace(
+      workspace,
+      ['guarded.txt'],
+      'replacement',
+      new AbortController().signal
+    );
+    expect((await stat(target)).mode & 0o777).toBe(0o600);
+  } finally {
+    process.umask(previousUmask);
     await rm(root, { recursive: true, force: true });
   }
 });

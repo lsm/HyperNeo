@@ -383,7 +383,7 @@ export async function writeFileWithinWorkspace(
 
     try {
       if (!fstatSync(fileFd).isFile()) throwFsError('write', fileName);
-      if (mode !== FILE_MODE) fchmodSync(fileFd, mode);
+      fchmodSync(fileFd, mode);
       let offset = 0;
       while (offset < data.length) {
         if (signal.aborted) throw new Error('ACP filesystem write cancelled');
