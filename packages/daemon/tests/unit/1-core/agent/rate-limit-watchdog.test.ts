@@ -341,6 +341,7 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.getState().status).toBe('idle');
       expect(watchdog.getState().retryAt).toBeNull();
       expect(watchdog.isRecoveryPending()).toBe(true);
+      expect(watchdog.isManualRecoveryPause()).toBe(true);
       expect(watchdog.retryNow()).toBe(true);
       await flush();
       expect(watchdog.isRecoveryPending()).toBe(false);

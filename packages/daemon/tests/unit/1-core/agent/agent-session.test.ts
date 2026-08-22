@@ -1064,6 +1064,51 @@ describe('AgentSession', () => {
       expect(retrySpy).not.toHaveBeenCalled();
     });
 
+    it('driveDeliveryTurn parks a manual-only pause on a long horizon without short polling', async () => {
+      const retrySpy = mock(() => 'db-1');
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
+        hasTerminalResultAfter: mock(() => false),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryRetryableByUuid: retrySpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const before = Date.now();
+      const watchdog = (agentSession as unknown as { rateLimitWatchdog: unknown })
+        .rateLimitWatchdog as {
+        isRecoveryPending: () => boolean;
+        isManualRecoveryPause: () => boolean;
+        getState: () => { retryAt: number | null };
+      };
+      watchdog.isRecoveryPending = () => true;
+      watchdog.isManualRecoveryPause = () => true;
+      watchdog.getState = mock(() => ({ retryAt: null })) as never;
+
+      await agentSession.stateManager.setProcessing('uuid-manual-park');
+      const drive = agentSession.driveDeliveryTurn(
+        'uuid-manual-park',
+        'hello',
+        null,
+        true,
+        () => true
+      );
+      await agentSession.stateManager.setIdle();
+      const result = (await drive) as { outcome: string; retryAt: number };
+
+      expect(result.outcome).toBe('recovery_pending');
+      expect(result.retryAt).toBeGreaterThanOrEqual(before + 4 * 60_000);
+      expect(retrySpy).not.toHaveBeenCalled();
+    });
+
     it('driveDeliveryTurn reopens a consumed reclaim immediately when no query or recovery owns it', async () => {
       const retrySpy = mock(() => 'db-1');
       mockDb.getSDKMessageRepo = mock(() => ({

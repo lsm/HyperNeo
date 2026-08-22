@@ -564,6 +564,15 @@ export class RateLimitWatchdog {
     );
   }
 
+  isManualRecoveryPause(): boolean {
+    return (
+      this.cooldownTimer === null &&
+      !this.fallbackPending &&
+      !this.retryCallbackInFlight &&
+      (this.startupExhausted || this.billingPauseSurfaced)
+    );
+  }
+
   isRateLimitBannerCancelled(): boolean {
     return this.bannerCancelled;
   }

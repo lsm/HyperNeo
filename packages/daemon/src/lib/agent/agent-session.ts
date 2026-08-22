@@ -145,6 +145,7 @@ import {
   type FeedSteerOutcome,
   flattenDeliveryText,
   isMessageDeliveryV2Enabled,
+  MANUAL_RECOVERY_PARK_MS,
   MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliveryAttemptObserver,
   MessageDeliveryRecoverableTurnError,
@@ -1739,7 +1740,9 @@ export class AgentSession
     if (!producedResult) {
       if (this.rateLimitWatchdog.isRecoveryPending()) {
         const cooldownRetryAt = this.rateLimitWatchdog.getState().retryAt;
-        const retryAt = Math.max(Date.now() + MESSAGE_DELIVERY_PARK_MS, cooldownRetryAt ?? 0);
+        const retryAt = this.rateLimitWatchdog.isManualRecoveryPause()
+          ? Date.now() + MANUAL_RECOVERY_PARK_MS
+          : Math.max(Date.now() + MESSAGE_DELIVERY_PARK_MS, cooldownRetryAt ?? 0);
         this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
         this.logger.info(
           `delivery-turn: parking job while limit recovery is pending ` +
