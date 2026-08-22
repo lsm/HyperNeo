@@ -243,9 +243,10 @@ export class RateLimitWatchdog {
       return true;
     }
 
-    await this.scheduleCooldown(errorMessage, decision, entryGeneration);
+    const armed = await this.scheduleCooldown(errorMessage, decision, entryGeneration);
 
     if (
+      armed &&
       decision.reason === 'backoff-ladder' &&
       this.deps.classifyUnknownLimit &&
       !this.llmRefinementInFlight &&
@@ -329,7 +330,7 @@ export class RateLimitWatchdog {
         'Cooldown state write completed but a newer action owns the cooldown; ' +
           'not publishing pause or arming.'
       );
-      await this.restoreCooldownStateForCurrentOwner(decision.retryAtMs);
+      await this.restoreCooldownStateForCurrentOwner(decision.retryAtMs, episodeGeneration);
       return false;
     }
 
@@ -573,19 +574,26 @@ export class RateLimitWatchdog {
     }
   }
 
-  private async restoreCooldownStateForCurrentOwner(staleRetryAtMs: number): Promise<void> {
-    if (
-      this.cooldownTimer === null ||
-      this.currentRetryAt === null ||
-      this.currentRetryAt === staleRetryAtMs
-    ) {
+  private async restoreCooldownStateForCurrentOwner(
+    staleRetryAtMs: number,
+    episodeGeneration: number
+  ): Promise<void> {
+    if (this.cooldownTimer !== null && this.currentRetryAt !== null) {
+      if (this.currentRetryAt === staleRetryAtMs) return;
+      await this.stateManager.setRateLimitCooldown({
+        retryCount: this.retryCount,
+        maxRetries: this.config.maxAutoRetries,
+        retryAt: this.currentRetryAt,
+      });
       return;
     }
-    await this.stateManager.setRateLimitCooldown({
-      retryCount: this.retryCount,
-      maxRetries: this.config.maxAutoRetries,
-      retryAt: this.currentRetryAt,
-    });
+    if (episodeGeneration === this.generation) {
+      await this.stateManager.setRateLimitCooldown({
+        retryCount: this.retryCount,
+        maxRetries: this.config.maxAutoRetries,
+        retryAt: Date.now(),
+      });
+    }
   }
 
   retryNow(): boolean {

@@ -736,6 +736,80 @@ describe('RateLimitWatchdog', () => {
       expect((watchdog as unknown as { cooldownTimer: unknown }).cooldownTimer).not.toBeNull();
       watchdog.cancel();
     });
+
+    it('persists an expired cooldown when ownership was lost to a retry with no live timer', async () => {
+      const classify = mock(async () => ({
+        resetAtMs: Date.now() + 2 * 60 * 60 * 1000,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const originalSet = stateManager.setRateLimitCooldown as ReturnType<typeof mock>;
+      let releaseStateWrite: () => void = () => {};
+      const writeGate = new Promise<void>((resolve) => {
+        releaseStateWrite = resolve;
+      });
+      let stateWrites = 0;
+      (stateManager as unknown as { setRateLimitCooldown: unknown }).setRateLimitCooldown = mock(
+        async (payload: unknown) => {
+          stateWrites += 1;
+          if (stateWrites === 2) await writeGate;
+          return originalSet(payload);
+        }
+      );
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+      await flush();
+      await flush();
+      watchdog.retryNow();
+      releaseStateWrite();
+      await flush();
+      await flush();
+
+      const lastPayload = originalSet.mock.calls[originalSet.mock.calls.length - 1][0] as {
+        retryAt: number;
+      };
+      expect(lastPayload.retryAt).toBeLessThanOrEqual(Date.now());
+      watchdog.cancel();
+    });
+
+    it('does not start refinement when the scheduling call lost ownership', async () => {
+      const classify = mock(async () => ({
+        resetAtMs: Date.now() + 2 * 60 * 60 * 1000,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const originalSet = stateManager.setRateLimitCooldown as ReturnType<typeof mock>;
+      let releaseFirstWrite: () => void = () => {};
+      const writeGate = new Promise<void>((resolve) => {
+        releaseFirstWrite = resolve;
+      });
+      let stateWrites = 0;
+      (stateManager as unknown as { setRateLimitCooldown: unknown }).setRateLimitCooldown = mock(
+        async (payload: unknown) => {
+          stateWrites += 1;
+          if (stateWrites === 1) await writeGate;
+          return originalSet(payload);
+        }
+      );
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      const first = watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+      await flush();
+      await watchdog.scheduleRetry('throttled by proxy again', { uuid: 'm1', content: 'x' });
+      await flush();
+      releaseFirstWrite();
+      await first;
+      await flush();
+      await flush();
+
+      expect(classify.mock.calls.map((c) => c[0])).toEqual(['throttled by proxy again']);
+      watchdog.cancel();
+    });
   });
 
   describe('Phase A — immediate fallback switch', () => {
