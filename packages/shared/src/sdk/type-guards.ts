@@ -141,6 +141,14 @@ export function isSDKModelRefusalFallbackMessage(
   return msg.type === "system" && (msg as { subtype?: string }).subtype === "model_refusal_fallback";
 }
 
+export function isSDKModelRefusalNoFallbackMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "system"; subtype: "model_refusal_no_fallback" }> {
+  return (
+    msg.type === "system" && (msg as { subtype?: string }).subtype === "model_refusal_no_fallback"
+  );
+}
+
 export function isSDKSessionStateChangedMessage(
   msg: SDKMessage,
 ): msg is Extract<SDKMessage, { type: "system"; subtype: "session_state_changed" }> {

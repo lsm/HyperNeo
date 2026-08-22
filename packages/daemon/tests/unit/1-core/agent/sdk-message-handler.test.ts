@@ -1797,6 +1797,25 @@ describe('SDKMessageHandler', () => {
         expect(mockSession.metadata?.refusalRewindTargetUuid).toBe('refused-user-uuid');
       });
 
+      it('records the target for model_refusal_no_fallback messages', async () => {
+        await handler.handleMessage({
+          type: 'system',
+          subtype: 'model_refusal_no_fallback',
+          original_model: 'claude-opus-4-7',
+          request_id: null,
+          refused_user_message_uuid: 'refused-user-uuid',
+          content: 'No fallback model available',
+        } as unknown as SDKMessage);
+
+        expect(mockSession.metadata?.refusalRewindTargetUuid).toBe('refused-user-uuid');
+        expect(updateSessionSpy).toHaveBeenCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            metadata: expect.objectContaining({ refusalRewindTargetUuid: 'refused-user-uuid' }),
+          })
+        );
+      });
+
       it('does not republish when the target is unchanged', async () => {
         mockSession.metadata = {
           ...mockSession.metadata,

@@ -17,6 +17,7 @@ import {
   isSDKConversationResetMessage,
   isSDKActiveGoalMessage,
   isSDKModelRefusalFallbackMessage,
+  isSDKModelRefusalNoFallbackMessage,
   isSDKResultMessage,
   isSDKResultSuccess,
   isSDKSessionStateChangedMessage,
@@ -775,6 +776,10 @@ export class SDKMessageHandler {
 
     if (isSDKModelRefusalFallbackMessage(message)) {
       await this.handleModelRefusalFallbackMessage(message);
+    }
+
+    if (isSDKModelRefusalNoFallbackMessage(message)) {
+      await this.recordRefusalRewindTarget(message.refused_user_message_uuid);
     }
 
     if (isSDKSessionStateChangedMessage(message)) {
