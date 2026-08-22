@@ -731,7 +731,15 @@ note.
      fires `executeDeferredRestartIfPending()` (agent-session.ts:413–418)
      and restarts the replacement instead of waiting for its own idle
      boundary; ownership is rechecked before the callback and across its
-     awaits, or the callback is owner-scoped as well
+     awaits, or the callback is owner-scoped as well — and the **detached
+     reconciliation it spawns is fenced too**: the callback detaches
+     `reconcileStrandedDeliveries()` (agent-session.ts:413–417), whose
+     continuation snapshots processing state before awaiting session locks
+     and then re-enqueues or fails durable deliveries (`:1957–1997`), so a
+     replacement starting during either lock await receives reconciliation
+     effects from the stale idle transition; the query/turn owner propagates
+     into the detached reconciliation and is revalidated inside each locked
+     mutation section
      (processing-state-manager.ts:156, :168–175) — using a **separate
      query-owner token, not the existing `idleWaiters.gen`**: that field
      stores the *rate-limit episode* generation
