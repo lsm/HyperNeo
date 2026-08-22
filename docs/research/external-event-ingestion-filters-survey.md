@@ -324,8 +324,20 @@ polling sources.
   broadcast a payload without K — the newly valid automation silently fails to
   match and the stored event stays incompatible on replay. Each such mutation
   bumps the epoch inside its queue operation; every publisher re-verifies it
-  immediately before the synchronous insert, reprojecting from fresh config when
-  it changed.
+  immediately before the synchronous insert, and on change **re-runs the full
+  admission decision — gates plus projection — from fresh global, space, and
+  repository policy**, not merely the projection (review finding, PR #2723): an
+  event admitted under the old allowlist must not insert after a new deny policy
+  commits. The documented dropped-event cursor behavior applies to these
+  post-change drops exactly as to first-gate drops. Additionally,
+  compatibility-changing projection mutations **drain publications from earlier
+  epochs before completing** (review finding, PR #2723) — same mechanism as
+  disablement's publisher await: a publisher can synchronously insert an
+  old-projection payload and only then yield in `_publishBusEvent`, so without
+  the drain it broadcasts after the update returns and a newly valid
+  subscription silently misses. Disablement and projection/filter/suppression
+  mutations share this drain obligation; no publisher lock is held while
+  draining.
 - **PR A3 (surface):** UI and counters only — the `SpaceExternalEventsSettings`
   toggle UI reusing the write RPC A2 already delivered (review finding, PR #2723;
   A3 adds no RPC surface), plus a suppression counter with its own gate-side
