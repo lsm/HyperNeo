@@ -188,10 +188,15 @@ polling sources.
   contradicting the invariant that config must not retroactively alter queued
   events. Genuinely new events are gated before persistence, dedupe-insert, and
   both bus subscribers (SpaceRuntime *and* goal-automation both save). The
-  ingestion step returns `admitted | dropped{reason}` so callers report honestly
-  (review finding, PR #2723): the three webhook paths increment `published` after
-  every resolved call (`:732`, `:843`, `:933`) and would otherwise count suppressed
-  deliveries as published (`spaces: 1` with nothing persisted); polling advances its
+  ingestion step returns `admitted | dropped{reason} | duplicate_terminal` so
+  callers report honestly (review findings, PR #2723): the three webhook paths
+  increment `published` after every resolved call (`:732`, `:843`, `:933`) and
+  would otherwise count suppressed deliveries as published (`spaces: 1` with
+  nothing persisted) — and a GitHub redelivery whose canonical row is already
+  terminal bypasses the gate and returns `duplicate_terminal` from the publisher
+  without a bus publish, which a two-valued result cannot express; caller-visible
+  counts exclude both intentional drops and terminal redeliveries. Polling
+  advances its
   watermarks for intentional drops so suppressed rows cannot wedge the cursor
   (bug 1). Default **ON**, override via `suppressSelfEvents: false` in global then
   per-space `settings_json` — and the minimal write RPC for that flag ships **in
@@ -355,7 +360,12 @@ polling sources.
   transient side channel would not survive retries. B3 therefore uses
   **bidirectional write-time validation** (persistence stays deterministic —
   never subscriber-driven, per §4): projection writes validate against the keys
-  active filters reference, and every subscription/policy write — including
+  referenced by **all stored subscription filters, regardless of goal status**
+  (review finding, PR #2723 — `onExternalEventPublished` reads only active goals'
+  scopes, so a projection stripping key K while a goal is paused would activate
+  that goal's unchanged filter on resume without ever passing a write validation;
+  goal activation is itself a validation point inside the same per-space queue),
+  and every subscription/policy write — including
   `evolution.scope.update`'s `mergeEvolutionPolicy` — validates against the active
   projection config, **rejecting** any filter that references a key the projection
   would strip. Silent match-stop is unacceptable; an invalid filter is refused at
@@ -371,7 +381,12 @@ polling sources.
   top-level projection of non-reserved extras, and nested-path extraction mappings
   (dotted paths into `rawPayload`, e.g. labels or sender fields — the literal
   "this one field" ask) are an explicit follow-up PR with a safe path-expression
-  vocabulary, not a B3 claim. This is the **P1 transform pipeline**
+  vocabulary, not a B3 claim. B3 also updates the `get_external_event` tool
+  descriptions (`space-agent-tools.ts`, `node-agent-tools.ts`), which promise a
+  complete raw record including `rawPayload` — with `includeRawPayload: false`
+  agents would deep-dive expecting source-native data projection intentionally
+  discarded (review finding, PR #2723); the descriptions must state the payload is
+  the stored, potentially projected one. This is the **P1 transform pipeline**
   pattern; it is also the moment the ADR's on-the-shelf `transformRun` idiom can earn
   extraction — but only if it is the ≈3rd real transform (github-normalizer
   composition, this projection, store delta application); otherwise a plain function,
