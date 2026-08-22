@@ -101,6 +101,30 @@ describe('routeTaskUpdate reject reasons', () => {
     });
   });
 
+  test.each([
+    'rate_limited',
+    'usage_limited',
+  ] as const)('limited_direct rejects %s as a runtime-owned target (task #1223)', (requestedStatus) => {
+    expect(
+      routeTaskUpdate(
+        baseInput({
+          currentStatus: 'in_progress',
+          requestedStatus,
+          hasWorkflowRun: true,
+          isRecoveryTransition: false,
+        })
+      )
+    ).toEqual({
+      action: 'reject',
+      reason: 'limited_direct',
+      message:
+        `update_task cannot transition a task into '${requestedStatus}' directly. ` +
+        `rate_limited and usage_limited are runtime-owned: the rate-limit pause ` +
+        `path sets them with a restrictions payload and the resume path clears ` +
+        `them automatically.`,
+    });
+  });
+
   test('review_to_done rejects even for workflow-backed tasks', () => {
     expect(
       routeTaskUpdate(

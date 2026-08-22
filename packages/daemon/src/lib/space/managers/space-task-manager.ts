@@ -151,6 +151,13 @@ export class SpaceTaskManager {
 
     assertValidSpaceTaskTransition(task.status, newStatus);
 
+    if (isRateOrUsageLimited(newStatus)) {
+      throw new Error(
+        `Status '${newStatus}' is runtime-owned: it is set only by the rate-limit pause path ` +
+          `and cannot be written through generic status updates.`
+      );
+    }
+
     const updates: Parameters<SpaceTaskRepository['updateTask']>[1] = { status: newStatus };
 
     if (newStatus === 'done' || newStatus === 'blocked') {
