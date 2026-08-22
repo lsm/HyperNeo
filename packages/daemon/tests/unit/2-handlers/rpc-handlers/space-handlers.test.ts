@@ -591,9 +591,9 @@ describe('space-handlers', () => {
       ).rejects.toThrow('Invalid concurrent task limit');
     });
 
-    it('throws when limit is above 10', async () => {
+    it('throws when limit is above 20', async () => {
       await expect(
-        call('space.setConcurrentLimit', { spaceId: 'space-1', limit: 11 })
+        call('space.setConcurrentLimit', { spaceId: 'space-1', limit: 21 })
       ).rejects.toThrow('Invalid concurrent task limit');
     });
 
