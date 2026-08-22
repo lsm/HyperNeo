@@ -73,8 +73,27 @@ describe('AcpEditorModal', () => {
       />
     );
 
+    expect(screen.getByRole('dialog')).toBeTruthy();
     expect(screen.getByDisplayValue('devin acp')).toBeTruthy();
     expect(screen.getByText('devin-model-a')).toBeTruthy();
+  });
+
+  it('closes the dialog on Escape', () => {
+    const onClose = vi.fn();
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command="devin acp"
+        models={[]}
+        onClose={onClose}
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    expect(onClose).toHaveBeenCalled();
   });
 
   it('fetches models and adds the selected ones on save', async () => {
@@ -371,7 +390,7 @@ describe('AcpEditorModal', () => {
     fireEvent.click(screen.getByText('Fetch models'));
 
     await waitFor(() => {
-      expect(mockFetchAcpModels).toHaveBeenCalledWith('acp-1', undefined);
+      expect(mockFetchAcpModels).toHaveBeenCalledWith('acp-1', '');
       expect(screen.getByText('env-model')).toBeTruthy();
     });
   });
@@ -397,7 +416,7 @@ describe('AcpEditorModal', () => {
 
     fireEvent.click(screen.getByText('Fetch models'));
     await waitFor(() => {
-      expect(mockFetchAcpModels).toHaveBeenCalledWith('acp-1', undefined);
+      expect(mockFetchAcpModels).toHaveBeenCalledWith('acp-1', '');
       expect(screen.getByText('env-model-a')).toBeTruthy();
     });
 
