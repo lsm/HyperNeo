@@ -310,7 +310,9 @@ export async function readFileWithinWorkspace(
       const remainingBytes = options.maxBytes - scannedBytes;
       if (remainingBytes <= 0) {
         const probe = Buffer.allocUnsafe(1);
-        if (Number(symbols.read(fileFd, probe, 1)) > 0) {
+        const probed = Number(symbols.read(fileFd, probe, 1));
+        if (probed < 0) throwFsError('read', fileName);
+        if (probed > 0) {
           throw new Error(`ACP filesystem scan exceeds ${options.maxBytes} bytes`);
         }
         break;
@@ -388,6 +390,7 @@ export async function writeFileWithinWorkspace(
     if (fileFd < 0) throwFsError('open', fileName);
     temporaryExists = true;
 
+    let closed = -1;
     try {
       if (!fstatSync(fileFd).isFile()) throwFsError('write', fileName);
       fchmodSync(fileFd, mode);
@@ -399,8 +402,9 @@ export async function writeFileWithinWorkspace(
         offset += written;
       }
     } finally {
-      closeFile(symbols, fileFd);
+      closed = symbols.close(fileFd);
     }
+    if (closed !== 0) throwFsError('write', fileName);
 
     if (signal.aborted) throw new Error('ACP filesystem write cancelled');
     if (
