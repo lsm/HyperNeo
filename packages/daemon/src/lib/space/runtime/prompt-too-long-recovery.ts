@@ -1,3 +1,4 @@
+import { PROMPT_TOO_LONG_CONTINUE_NAG } from '@hyperneo/prompts';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { PROMPT_TOO_LONG_RE } from '@hyperneo/shared/provider/error-taxonomy';
 
@@ -111,12 +112,5 @@ export function isPromptTooLongErrorMessage(message: SDKMessage | null | undefin
 }
 
 export function buildPromptTooLongContinueNag(): string {
-  return [
-    '[Runtime recovery notice]',
-    '',
-    'Your conversation context exceeded the model window and was automatically compacted.',
-    'The context has been reduced. Continue your assigned work from the current state.',
-    'If work is complete, report completion through the workflow tools.',
-    'If you are blocked, report the blocker clearly through the available tools. Do not wait silently.',
-  ].join('\n');
+  return PROMPT_TOO_LONG_CONTINUE_NAG;
 }

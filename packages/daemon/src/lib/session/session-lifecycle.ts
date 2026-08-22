@@ -1,4 +1,5 @@
 import type { Provider, Session, WorktreeMetadata, MessageHub } from '@hyperneo/shared';
+import { TITLE_GENERATION_PROMPT } from '@hyperneo/prompts';
 import { generateUUID } from '@hyperneo/shared';
 import type { Database } from '../../storage/database';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -12,6 +13,10 @@ import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { findInModels } from '../model-service';
+
+export function buildTitleGenerationPrompt(messageText: string): string {
+  return `${TITLE_GENERATION_PROMPT}\n${messageText.slice(0, 2000)}`;
+}
 
 export type ArchiveResourcesTrigger = 'ui_session_archive' | 'ui_task_archive';
 export type DeleteResourcesTrigger = 'ui_session_delete';
@@ -937,17 +942,7 @@ export class SessionLifecycle {
     );
 
     try {
-      const prompt = `Based on the user's request below, generate a concise 3-7 word title that captures the main intent or topic.
-
-IMPORTANT: Return ONLY the title text itself, with NO formatting whatsoever:
-- NO quotes around the title
-- NO asterisks or markdown
-- NO backticks
-- NO punctuation at the end
-- Just plain text words
-
-User's request:
-${messageText.slice(0, 2000)}`;
+      const prompt = buildTitleGenerationPrompt(messageText);
 
       const providerEnvVars = await providerService.getEnvVarsForModel(
         titleModels.providerModelId,

@@ -1,3 +1,4 @@
+import { WORKFLOW_SELECTOR_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { getProviderService } from '../../provider-service';
 import { resolveSDKCliPath, isRunningUnderBun } from '../../agent/sdk-cli-resolver';
@@ -136,11 +137,7 @@ ${taskBlock}
 Candidate workflows:
 ${list}
 
-Instructions:
-- Reply with EXACTLY one of the workflow ids above, with no other text.
-- If none of the workflows fit the task, reply with the single word: none
-- Do NOT wrap the id in quotes, backticks, or markdown.
-- Do NOT explain your choice.`;
+Instructions:\n${WORKFLOW_SELECTOR_INSTRUCTIONS}`;
 }
 
 function cleanIdResponse(raw: string): string | null {
