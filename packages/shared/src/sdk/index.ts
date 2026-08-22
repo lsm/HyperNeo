@@ -9,6 +9,7 @@ export {
   isSDKResultMessage,
   isSDKResultSuccess,
   isSDKResultError,
+  getSdkResultOriginKind,
   isSDKSystemMessage,
   isSDKSystemInit,
   isSDKCompactBoundary,
