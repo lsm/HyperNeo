@@ -51,8 +51,9 @@ repeat one teardown liturgy four times (:912–934, :972–1002, :1018–1058,
 arm before it recurses, but they do **not** fence every async window: state
 mutations precede the arm's guard in several places — the transient arm awaits
 `setIdle` (:1024) and re-enqueues the consumed message (:1027–1034) before its
-first check (:1060); and every arm's awaited `setIdle`
-(:906, :1024) precedes its first guard (:908, :1060) — so a replacement landing
+first check (:1060); the message-not-found arm likewise awaits `setIdle` at
+:978 before its first check at :980; and every arm's awaited `setIdle`
+(:906, :978, :1024) precedes its first guard (:908, :1060) — so a replacement landing
 inside those windows can have its state mutated by the stale arm. The 5xx arm is
 the fenced one: its revalidation gate (:1127–1138) sits immediately before the
 re-enqueue (:1140).
@@ -254,7 +255,10 @@ note.
   and `parseApiValidationError` :1568 stay as-is.
 - **ADR pattern:** `decisionRun` core —
   `classifyRetryRoute(error class, subtype, retryAttempt, recoveryState,
-  generation flags) → startup_timeout_retry | message_not_found_retry |
+  generation flags, prompt redeliverable — at attempt 0 a startup timeout with
+  an empty consumed set and empty queue is futile and falls through to the
+  terminal cascade via `canRedeliverPromptOnStartupRetry`, :887–905) →
+  startup_timeout_retry | message_not_found_retry |
   transient_retry | provider_backoff(5xx) | rate_limit_handoff |
   terminal(category)` — interpreted by thin shell arms. Routing note the table
   must preserve: rate-limit errors — explicit HTTP-429 **and** text-form — do
@@ -336,10 +340,9 @@ note.
      `activeMessageId`, sdk-message-handler.ts:338–345: the active yielded
      kickoff is consumed while a yielded steer of another turn stays enqueued;
      both outcomes are pinned by sdk-message-handler.test.ts:1327–1398 and
-     :1549–1585, so the extracted selector must carry that bit); cost-reset table;
-     the explicit-429-vs-text-rate-limit routing split from Chain B's note
-     (both route to the watchdog handoff; only GLM `[1305]` reaches the backoff
-     arm).
+     :1549–1585, so the extracted selector must carry that bit); cost-reset table.
+     The explicit-429/text-rate-limit routing pins stay in Chain B's PR 1 (they
+     exercise query-runner classification, not this file).
      The 2,915-line suite + `usage-accounting-invariants.test.ts` (seeded-RNG
      invariants) are the parity base.
   2. **PR 2 (additive):** `turn-end-routing.ts` + `usage-accounting.ts` pure
