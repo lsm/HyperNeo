@@ -4068,9 +4068,24 @@ export class TaskAgentManager {
           `spawnPostApprovalSubSession: live session ${existingSessionId} for agent "${matchedSlot.name}" vanished before injection (task ${taskId})`
         );
       }
-      await this.withSessionInjectLock(existing.session.id, () =>
-        this.injectMessageIntoSession(existing, kickoffMessage)
-      );
+      await this.withSessionInjectLock(existing.session.id, async () => {
+        const currentTask = this.config.taskRepo.getTask(taskId);
+        const currentRun = task.workflowRunId
+          ? this.config.workflowRunRepo.getRun(task.workflowRunId)
+          : null;
+        if (
+          currentTask?.status === 'cancelled' ||
+          currentTask?.status === 'archived' ||
+          currentRun?.status === 'cancelled'
+        ) {
+          log.warn(
+            `TaskAgentManager.spawnPostApprovalSubSession: skipping inject to live session ` +
+              `${existingSessionId} — task/run is terminal (${currentTask?.status ?? currentRun?.status})`
+          );
+          return;
+        }
+        await this.injectMessageIntoSession(existing, kickoffMessage);
+      });
       log.info(
         `TaskAgentManager.spawnPostApprovalSubSession: reused live session ${existingSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
       );

@@ -1068,7 +1068,7 @@ export class SDKMessageHandler {
       this.circuitBreaker.markSuccess();
     }
 
-    if (!this.acknowledgedPersistedUserThisTurn && !confirmsArmedClear) {
+    if (!this.acknowledgedPersistedUserThisTurn && !this.suppressIdleOnNextResult) {
       await this.acknowledgeOldestQueuedUserOnTurnEnd(activeMessageId, message.uuid ?? '');
     }
     this.acknowledgedPersistedUserThisTurn = false;
@@ -1137,6 +1137,10 @@ export class SDKMessageHandler {
         this.expectsSessionStateIdleAfterResult = false;
         this.lastResultWasSuccess = null;
         this.settleSuppressedResultWaiter('confirmed');
+      } else if (clearTurnPending) {
+        this.usesSessionStateChangedTurnEnd = false;
+        this.expectsSessionStateIdleAfterResult = false;
+        this.lastResultWasSuccess = null;
       }
     }
   }

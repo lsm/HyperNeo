@@ -876,6 +876,7 @@ describe('SDKMessageHandler', () => {
 
       handler.suppressIdleForNextResult();
       const wait = handler.waitForSuppressedResult(5_000);
+      handler.markClearMessageSent();
       setIdleSpy.mockClear();
 
       await handler.handleMessage(errorResult);
@@ -1189,6 +1190,55 @@ describe('SDKMessageHandler', () => {
       expect(await wait).toBe('confirmed');
     });
 
+    it('a pre-clear control idle resets turn flags so a state-less clear confirms directly', async () => {
+      const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
+        ({
+          type: 'system',
+          subtype: 'session_state_changed',
+          state,
+          uuid: `state-${state}`,
+          session_id: 'sdk-session-123',
+        }) as unknown as SDKMessage;
+
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      handler.markClearMessageSent();
+
+      await handler.handleMessage(sessionState('busy'));
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'compact-result',
+        user_message_uuid: 'compact-msg-id',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+      await handler.handleMessage(sessionState('idle'));
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'clear-result',
+        user_message_uuid: 'clear-msg-id',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(await wait).toBe('confirmed');
+    });
+
     it('the result deadline stays disarmed until startSuppressedResultTimer runs', async () => {
       handler.suppressIdleForNextResult();
       const wait = handler.armSuppressedResultWait('clear-msg-id');
@@ -1204,7 +1254,7 @@ describe('SDKMessageHandler', () => {
       expect(await wait).toBe('reset');
     });
 
-    it('a correlated clear result skips the turn-end fallback acknowledgement', async () => {
+    it('results during a clear-arming window skip the turn-end fallback acknowledgement', async () => {
       const reopenedRow = {
         type: 'user',
         uuid: 'handoff-uuid',
@@ -1252,11 +1302,18 @@ describe('SDKMessageHandler', () => {
       handler.clearIdleSuppression();
       await plainWait;
 
+      expect(getUserMessagesByStatusSpy).not.toHaveBeenCalled();
+      expect(markConsumedSpy).not.toHaveBeenCalled();
+
+      getUserMessagesByStatusSpy.mockClear();
+      markConsumedSpy.mockClear();
+      await handler.handleMessage({ ...plainResult, uuid: 'post-window-result' } as SDKMessage);
+
       expect(getUserMessagesByStatusSpy).toHaveBeenCalled();
       expect(markConsumedSpy).toHaveBeenCalledWith(
         'test-session-id',
         ['handoff-uuid'],
-        'clear-result'
+        'post-window-result'
       );
     });
 

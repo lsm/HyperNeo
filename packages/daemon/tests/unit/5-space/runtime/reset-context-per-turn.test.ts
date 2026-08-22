@@ -495,6 +495,77 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(session.saveUserMessage.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('revalidates task state inside the injection lock before the reuse inject', async () => {
+    const { manager, session } = makeManager({ slotResets: true });
+    const cfg = manager as unknown as { config: Record<string, unknown> };
+    cfg.config.spaceManager = { getSpace: mock(async () => ({ workspacePath: '/w' })) };
+    const nodeExecutionRepo = cfg.config.nodeExecutionRepo as Record<
+      string,
+      ReturnType<typeof mock>
+    >;
+    nodeExecutionRepo.listByWorkflowRun = mock(() => [
+      { agentName: AGENT_NAME, agentSessionId: SESSION_ID },
+    ]);
+    const taskRepo = cfg.config.taskRepo as Record<string, ReturnType<typeof mock>>;
+    let cancelled = false;
+    const originalGetTask = taskRepo.getTask;
+    taskRepo.getTask = mock((...args: unknown[]) => {
+      if (cancelled) {
+        return { id: 'task-1', status: 'cancelled', workflowRunId: RUN_ID };
+      }
+      return (originalGetTask as (...a: unknown[]) => unknown)(...args);
+    });
+
+    let releaseClear!: () => void;
+    const clearGate = new Promise<void>((resolve) => {
+      releaseClear = resolve;
+    });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: mock(async () => {
+        await clearGate;
+      }),
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+    attachSessionToTask(manager, live);
+
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+
+    const spawnArgs = {
+      task: { id: 'task-1', spaceId: 'space-1', workflowRunId: RUN_ID },
+      workflow: {
+        nodes: [
+          {
+            id: NODE_ID,
+            name: 'Review',
+            agents: [{ agentId: 'Reviewer', name: AGENT_NAME, resetContextPerTurn: true }],
+          },
+        ],
+      },
+      targetAgent: AGENT_NAME,
+      kickoffMessage: 'post-approval kickoff',
+    } as unknown as Parameters<TaskAgentManager['spawnPostApprovalSubSession']>[0];
+
+    const p0 = manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+    await settle();
+    await settle();
+    const p1 = manager.spawnPostApprovalSubSession(spawnArgs);
+    await settle();
+    await settle();
+
+    cancelled = true;
+    releaseClear();
+    const [, spawned] = await Promise.all([p0, p1]);
+
+    expect(spawned.sessionId).toBe(SESSION_ID);
+    expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
+    expect(session.enqueueMock).toHaveBeenCalledTimes(1);
+  });
+
   it('does NOT drop the handoff when the node has a corrupt/empty agents array (P2-7)', async () => {
     const { manager, session } = makeManager({ slotResets: true, nodeEmptyAgents: true });
     const live = {
