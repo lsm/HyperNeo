@@ -105,7 +105,14 @@ pre-apply snapshot**: `preCleanupAuth` captures `ANTHROPIC_AUTH_TOKEN` and
 `:456`, then injects them into the subprocess environment at `:532–536`, so
 the ACP process can launch with another session's credentials despite a
 serialized apply/restore; the ACP lease begins before `:451` or stops reading
-ambient auth there. — and
+ambient auth there. The coordinator must also be **reentrancy-safe**: the
+startup-timeout, message-not-found, and transient arms recurse at `:967`,
+`:1007`, and `:1063` *without* restoring the environment — the outer attempt's
+`finally` cannot release the daemon-wide lease while the nested attempt must
+acquire it before its credential reads, a self-deadlock; the provider-5xx arm
+already restores at `:1116–1123` before recursing, and the other recursive
+arms release/transfer ownership before recursion (pinned ordering) or the
+lease is explicitly reentrant. — and
 **the coordinator must live at the shared `ProviderService` boundary, not in
 QueryRunner**: the same global environment has other concurrent owners —
 `acp-query-runner.ts:456` (`applyEnvVarsToProcessForSession`) and
