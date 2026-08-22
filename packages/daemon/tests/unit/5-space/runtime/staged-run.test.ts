@@ -114,6 +114,47 @@ describe('stagedRun composition contract', () => {
     ).toThrow(/reads "decision" before any decide stage/);
   });
 
+  test('refuses a guarded decide with no earlier decide to declare its guard', () => {
+    expect(() =>
+      stagedRun<Box>('first-decide-guarded', (s) => [
+        s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+        s.decide({
+          name: 'conditional',
+          when: 'unreachable',
+          reads: ['value'],
+          branches: ['unreachable'],
+          run: ({ value }) => ({ decision: value }),
+        }),
+        s.halt({ name: 'end', reads: ['decision'], run: (view) => view.decision }),
+      ])
+    ).toThrow(/no earlier decide stage branches on/);
+  });
+
+  test('a guarded decide decision is readable under the same guard', async () => {
+    const flow = stagedRun<Box>('guarded-decision-same-guard', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+      s.decide({
+        name: 'route',
+        reads: ['value'],
+        branches: ['maybe'],
+        run: ({ value }) => ({ decision: value, maybe: 1 }),
+      }),
+      s.decide({
+        name: 'conditional',
+        when: 'maybe',
+        reads: ['value'],
+        run: ({ value }) => ({ decision: value + 1 }),
+      }),
+      s.halt({
+        name: 'end',
+        when: 'maybe',
+        reads: ['decision'],
+        run: (view) => view.decision,
+      }),
+    ]);
+    await expect(flow({})).resolves.toEqual({ status: 'completed', result: 2 });
+  });
+
   test('refuses reserved or ill-formed state keys', () => {
     expect(() =>
       stagedRun<Record<string, unknown>>('reserved-key', (s) => [
