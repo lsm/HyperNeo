@@ -133,6 +133,53 @@ describe('stagedRun composition contract', () => {
         }),
       ])
     ).toThrow(StagedRunContractError);
+    expect(() => {
+      const gathered: Record<string, unknown> = {};
+      // biome-ignore lint/suspicious/noThenProperty: reserved-key pin builds a thenable record on purpose
+      gathered.then = () => {};
+      return stagedRun<Record<string, unknown>>('then-key', (s) => [
+        s.snapshot({
+          name: 'load',
+          provides: ['then' as string],
+          run: () => gathered,
+        }),
+      ]);
+    }).toThrow(StagedRunContractError);
+  });
+
+  test('refuses a branch key redeclared by a later decide', () => {
+    expect(() =>
+      stagedRun<Box>('branch-redeclare', (s) => [
+        s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+        s.decide({
+          name: 'first',
+          reads: ['value'],
+          branches: ['act', 'skip'],
+          run: ({ value }) => ({ decision: value, act: 1 }),
+        }),
+        s.decide({
+          name: 'second',
+          reads: ['decision'],
+          branches: ['act', 'other'],
+          run: (view) => ({ decision: view.decision, other: 2 }),
+        }),
+        s.halt({ name: 'end', run: () => 'done' }),
+      ])
+    ).toThrow(/redeclares branch "act"/);
+  });
+
+  test('refuses duplicate keys in a snapshot provides list', () => {
+    type Loose = Record<string, unknown>;
+    expect(() =>
+      stagedRun<Loose>('dupe-provides', (s) => [
+        s.snapshot({
+          name: 'load',
+          provides: ['a' as string, 'a' as string],
+          run: () => ({ a: 1 }),
+        }),
+        s.halt({ name: 'end', run: () => 'done' }),
+      ])
+    ).toThrow(/provides a duplicate key/);
   });
 
   test('refuses a branch key that collides with a state key', () => {

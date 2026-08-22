@@ -167,7 +167,7 @@ interface RegisteredCompensation {
   result: unknown;
 }
 
-const RESERVED_KEYS = new Set(['decision', 'next', '$outcome', '$unwind']);
+const RESERVED_KEYS = new Set(['decision', 'next', 'then', '$outcome', '$unwind']);
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function isThenable(value: unknown): value is Promise<unknown> {
@@ -483,6 +483,9 @@ function validateStageContract(
       if (stage.provides.length === 0) {
         throw new StagedRunContractError(flow, `stage ${stage.name} provides no keys`);
       }
+      if (new Set(stage.provides).size !== stage.provides.length) {
+        throw new StagedRunContractError(flow, `stage ${stage.name} provides a duplicate key`);
+      }
       for (const key of stage.provides) validateKeyShape(flow, key, 'provides');
     }
     if (stage.kind === 'decide') {
@@ -497,6 +500,7 @@ function validateStageContract(
       for (const key of stage.provides) stateKeys.add(key);
     }
   }
+  const branchOwner = new Map<string, string>();
   for (const stage of stages) {
     if (stage.kind !== 'decide') continue;
     for (const key of stage.branches ?? []) {
@@ -506,6 +510,14 @@ function validateStageContract(
           `stage ${stage.name} branches on "${key}" which collides with a state key`
         );
       }
+      const owner = branchOwner.get(key);
+      if (owner !== undefined) {
+        throw new StagedRunContractError(
+          flow,
+          `stage ${stage.name} redeclares branch "${key}" already declared by "${owner}" — a later decide cannot redirect an earlier decide's branch`
+        );
+      }
+      branchOwner.set(key, stage.name);
     }
   }
   for (const key of inputKeys) validateKeyShape(flow, key, 'input');
