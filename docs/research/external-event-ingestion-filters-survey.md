@@ -42,10 +42,15 @@ GitHub ──poll (timer → pollOnce :988 → pollWatchedRepo :2219)──▶ p
 
 ### Normalization (the transform point)
 
-`external-events/github/github-normalizer.ts` (1,124 lines, pure, zero owned state):
-`normalizeGitHubWebhook :142`, `normalizeGitHubPollingRow :363`, per-type normalizers
+`external-events/github/github-normalizer.ts` (1,124 lines; pure up to event
+construction — review finding, PR #2723): `normalizeGitHubWebhook :142`,
+`normalizeGitHubPollingRow :363`, per-type normalizers
 (`:479-1030`), topic mapping `mapEventType :1038`, and `toExternalEvent :1084` which
-builds the persisted `ExternalEvent`. Every normalized event carries
+builds the persisted `ExternalEvent`. The normalizer functions proper are pure,
+but `toExternalEvent` calls `crypto.randomUUID()` and `Date.now()`
+(`:1094-1098`) and `parseGitHubTimestamp :67-71` falls back to `Date.now()` —
+so C2's pipeline must inject clock/id generators or keep external-event
+construction in the impure shell for deterministic parity tests. Every normalized event carries
 `actor`/`actorType` (`:32-33`) — populated from `sender`/`comment.user`/`review.user`/
 `obj.user` depending on type and source. Hardcoded admission filtering already exists
 *inside* the normalizers (e.g. `check_run` only `completed`+failed conclusions
@@ -71,7 +76,10 @@ Delivery rows track per-target state; TTL sweep
 #2671 is the SDK query-mode replay loop (`agent/query-mode-handler.ts`), not this
 path — the external-events analog replays from the store through
 `handleExternalEvent`, **bypassing any ingestion gate**. That is the correct property:
-config changes must not retroactively alter already-queued events.
+config changes must not retroactively alter already-queued events — with the
+retained-row qualification of chain B (§3): rows persisted under an older
+projection config carry their ingestion-time version, and newly accepted
+filters skip incompatible versions rather than re-projecting history.
 
 ### Where pilot 1's gates sit
 
@@ -304,20 +312,26 @@ polling sources.
   enable write `true`, wait out an in-flight stop, resume starting, and lose to
   the disable's later `false` — leaving the extension running (possibly with
   polling active) under disabled persisted config. Lifecycle effects and
-  rollback ride inside the queued operation — **but never inside the admission
-  section** (review finding, PR #2723): `stop()` awaits `activePollCycle`
-  (`:337`), and a poll cycle can be blocked in `publishEvent` waiting to enter
-  that section, so holding the **admission section** across `stopExtension`
-  self-deadlocks. The **source-config queue is a different lock and stays held
+  rollback ride inside the queued operation — **but never inside any
+  publisher critical section** (review finding, PR #2723): `stop()` awaits
+  `activePollCycle`
+  (`:337`), and a poll cycle can be blocked in `publishEvent` between its epoch
+  re-verify and insert, so holding that per-key section across `stopExtension`
+  would deadlock. There is no cross-key "admission section" lock at all (review
+  finding, PR #2723) — publishers synchronize with disablement through the epoch
+  bump, never through a shared lock. The **source-config queue is a different
+  lock and stays held
   through the entire operation including the `stop()` await** (review finding,
   PR #2723) — exiting it before the await would let an overlapping enable's
   `startExtension` observe the extension as still running
   (`extension-manager.ts:49` returns early) and then let the stop finish,
-  leaving enabled persisted config with a stopped extension. Only the admission
-  section is released before the lifecycle await; publishers coordinate via the
+  leaving enabled persisted config with a stopped extension. No lock is held
+  across the lifecycle await except the source-config queue itself; publishers
+  coordinate via the
   epoch bump, not the config queue, so no deadlock — and **every
   admission/projection config mutation bumps and rechecks the epoch, not just
-  disablement** (review finding, PR #2723): the B3 mutation queue serializes
+  disablement** (review finding, PR #2723): the A2 per-space/source-scoped
+  config queues — which B3's projection and filter writers join — serialize
   config writes with each other but not with publisher ingestion, so a stale
   publisher could project away key K, then a projection update restore K for a
   just-validated subscription on K, and the stale publisher then insert and
@@ -342,12 +356,14 @@ polling sources.
   and its later retryable-duplicate republish would broadcast the stored
   K-less payload without re-projection — silently missing a newly valid
   subscription on K. Since stripped keys are unrecoverable from the projected
-  payload, retryable-duplicate republication **re-derives the payload from the
-  retained `rawPayload` under the current config** whenever it is present
-  (`rawPayload` keeps the full native object unless the user opted out);
-  when it is not, each row records its projection-config version at ingestion
-  and newly accepted filters do not apply to incompatible-version rows —
-  defined behavior instead of silent mismatch.
+  payload, **every retained row records its projection-config version at
+  ingestion, and newly accepted filters do not apply to incompatible-version
+  rows** — uniformly across recovery routes (review finding, PR #2723):
+  re-projecting rawPayload-carrying rows only on redelivery would make one
+  event ID's payload depend on whether it arrived via GitHub redelivery or via
+  `redispatchRetainedExternalEvents`, so the version rule governs both paths
+  and no route rewrites the canonical row. Defined behavior replaces silent
+  mismatch.
 - **PR A3 (surface):** UI and counters only — the `SpaceExternalEventsSettings`
   toggle UI reusing the write RPC A2 already delivered (review finding, PR #2723;
   A3 adds no RPC surface), plus a suppression counter with its own gate-side
@@ -367,7 +383,14 @@ polling sources.
   `check_run` emits only `checkName`/`conclusion`/`runUrl`
   (`github-normalizer.ts:541`) while polling `check_run` additionally emits
   `checkRunId`/`name`/`status`/`headSha` (`:565-573`), so a per-type table would
-  let projection drop source-only fields while parity passes.
+  let projection drop source-only fields while parity passes. Within a
+  type × source cell, keys split into **required vs optional variants**
+  (review finding, PR #2723): `JSON.stringify` drops the normalizer's many
+  `undefined` values, so conditional keys — review-comment location fields like
+  `line`/`startLine`, polling `mergedAt`/`draft` when unavailable — appear and
+  disappear with the payload; a single key-set pin would either reject valid
+  variation or miss optional-field loss, so each cell pins a required set plus
+  an optional set (or per-action variants).
 - **PR B2 (admission):** extend the ingestion gates with
   `eventTypeAllowed(config, event)` — per-space allow/deny lists over `eventType`
   (and optionally `action`), config resolved from the `settings_json` the webhook
@@ -379,16 +402,21 @@ polling sources.
   allowlist on a polling-only space would drop every comment and `polled` cannot
   distinguish creation from edit — action filters do not apply to those polling
   kinds (`issue_comment`, `pull_request_review_comment`, `pull_request`). But
-  other polling kinds carry real actions — polling check runs emit
-  `action: 'failed'` (`normalizeGitHubCheckRun :549`) and reactions `added`
-  (`normalizeGitHubReaction :1004`) — so action filters apply to them as
-  webhook-sourced events; a `reaction.added` denial must take effect on polling
-  too. A canonical cross-source action vocabulary remains a future item, not
-  B2. Also a coarse
+  other polling kinds carry real actions that align across sources — reactions
+  `added` on both paths (`normalizeGitHubReaction :1004`) — so action filters
+  apply there (a `reaction.added` denial must take effect on polling too).
+  Check runs do **not** align: webhook emits `action: 'completed'`
+  (`github-normalizer.ts:525`) while polling emits `'failed'`
+  (`:549`), so a webhook-derived `check_run.completed` filter would silently
+  drop all polling check runs; `check_run` action filtering is deferred to the
+  canonical cross-source action vocabulary future item along with the generic
+  list-endpoint kinds, not B2. Also a coarse
   header-level pre-gate for enrichment-heavy types (review finding, PR #2723):
   `status`/`deployment`/`deployment_status` webhook handlers resolve associated PRs
-  via REST (up to five pages — `resolveDeploymentPrNumbers :851-862`,
-  `resolvePullRequestNumbersForCommit :951-985`) *before* normalization, so when
+  via REST — up to five pages for the status path's
+  `resolvePullRequestNumbersForCommit :951-985`; a single call for the
+  deployment paths' `resolveDeploymentPrNumbers :857-859` — *before*
+  normalization, so when
   every matched space denies the header event type, short-circuit before those
   calls — **but only when no retryable duplicate could exist** (review finding,
   PR #2723): these events' dedupe keys embed the *resolved* PR number
