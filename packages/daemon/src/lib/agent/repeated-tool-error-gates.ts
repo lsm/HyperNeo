@@ -25,6 +25,10 @@ export type ConsecutiveErrorDecision =
   | { action: 'count'; lastError: RepeatedToolErrorKey; consecutiveCount: number }
   | { action: 'intervene'; consecutiveCount: number };
 
+export function repeatedToolErrorKey(toolName: string, fingerprint: string): string {
+  return `${toolName}:${fingerprint}`;
+}
+
 export function normalizeErrorText(errorText: string, maxLength: number): string {
   const normalized = errorText.trim().toLowerCase().replace(/\s+/g, ' ');
   return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized;
@@ -76,7 +80,7 @@ export function classifyToolResultContent(
     const error = extractToolResultError(block, toolUseIdToName);
     if (error) {
       const fingerprint = normalizeErrorText(error.errorText, errorFingerprintLength);
-      const key = `${error.toolName}:${fingerprint}`;
+      const key = repeatedToolErrorKey(error.toolName, fingerprint);
       if (!seenKeys.has(key)) {
         seenKeys.add(key);
         errors.push({ ...error, fingerprint });

@@ -155,6 +155,29 @@ describe('classifyToolResultContent', () => {
     ).toEqual({ kind: 'reset' });
   });
 
+  it('keeps same-fingerprint errors from different tools separate', () => {
+    const names = new Map([
+      ['tool-1', 'Read'],
+      ['tool-2', 'Glob'],
+    ]);
+    expect(
+      classifyToolResultContent(
+        [
+          { type: 'tool_result', tool_use_id: 'tool-1', is_error: true, content: 'boom' },
+          { type: 'tool_result', tool_use_id: 'tool-2', is_error: true, content: 'boom' },
+        ],
+        names,
+        160
+      )
+    ).toEqual({
+      kind: 'errors',
+      errors: [
+        { toolUseId: 'tool-1', toolName: 'Read', errorText: 'boom', fingerprint: 'boom' },
+        { toolUseId: 'tool-2', toolName: 'Glob', errorText: 'boom', fingerprint: 'boom' },
+      ],
+    });
+  });
+
   it('returns deduped errors with normalized fingerprints', () => {
     const dedupeNames = new Map([
       ['tool-1', 'Read'],
@@ -210,7 +233,7 @@ describe('decideConsecutiveError', () => {
     });
   });
 
-  it('restarts the streak at 1 for a different tool or fingerprint', () => {
+  it('restarts the streak at 1 for a different tool name', () => {
     const state = makeState({
       lastError: { toolName: 'Glob', fingerprint: 'boom' },
       consecutiveCount: 5,
@@ -288,5 +311,11 @@ describe('buildRecoveryMessage', () => {
     const message = buildRecoveryMessage('Read', 'x'.repeat(250), 3);
     expect(message).toContain(`Error: ${'x'.repeat(200)}…`);
     expect(message).not.toContain('x'.repeat(201));
+  });
+
+  it('keeps error text of exactly 200 characters untruncated', () => {
+    const message = buildRecoveryMessage('Read', 'x'.repeat(200), 2);
+    expect(message).toContain(`Error: ${'x'.repeat(200)}\n`);
+    expect(message).not.toContain('…');
   });
 });

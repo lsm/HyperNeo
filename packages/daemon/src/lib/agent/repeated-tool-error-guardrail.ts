@@ -5,6 +5,7 @@ import {
   buildRepeatedToolErrorEvidence,
   classifyToolResultContent,
   decideConsecutiveError,
+  repeatedToolErrorKey,
   type RepeatedToolErrorKey,
   type ToolResultError,
 } from './repeated-tool-error-gates';
@@ -94,7 +95,7 @@ export class RepeatedToolErrorGuardrail {
         fingerprint: error.fingerprint,
         state: this.state,
         lastInterventionAt: this.state.lastInterventionByKey.get(
-          `${error.toolName}:${error.fingerprint}`
+          repeatedToolErrorKey(error.toolName, error.fingerprint)
         ),
         threshold: this.threshold,
         interventionCooldownMs: this.interventionCooldownMs,
@@ -124,7 +125,10 @@ export class RepeatedToolErrorGuardrail {
   }
 
   private async intervene(error: ToolResultError, count: number, task: SpaceTask): Promise<void> {
-    this.state.lastInterventionByKey.set(`${error.toolName}:${error.fingerprint}`, Date.now());
+    this.state.lastInterventionByKey.set(
+      repeatedToolErrorKey(error.toolName, error.fingerprint),
+      Date.now()
+    );
     this.reset();
 
     try {

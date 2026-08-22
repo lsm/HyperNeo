@@ -522,6 +522,20 @@ describe('RepeatedToolErrorGuardrail', () => {
       expect(deps.emitEvidence).toHaveBeenCalledTimes(2);
     });
 
+    it('intervenes per tool when different tools fail with the same error in one message', async () => {
+      const { guardrail, deps } = makeGuardrail({ threshold: 1 });
+
+      guardrail.recordToolUse('tool-1', 'Read');
+      guardrail.recordToolUse('tool-2', 'Glob');
+      const triggered = await guardrail.observeToolResultErrors(
+        makeRawMessage([makeErrorBlock('tool-1', 'boom'), makeErrorBlock('tool-2', 'boom')])
+      );
+
+      expect(triggered).toBe(true);
+      expect(deps.routeRecoveryMessage).toHaveBeenCalledTimes(2);
+      expect(deps.emitEvidence).toHaveBeenCalledTimes(2);
+    });
+
     it('reports the full streak length at higher thresholds', async () => {
       const { guardrail, deps } = makeGuardrail({ threshold: 3 });
 
