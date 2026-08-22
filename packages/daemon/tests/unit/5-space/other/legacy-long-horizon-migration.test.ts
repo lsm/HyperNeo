@@ -9,6 +9,7 @@ function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+  db.exec(`DROP INDEX IF EXISTS idx_space_lh_agent_goals_one_owner`);
   return db;
 }
 
