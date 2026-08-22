@@ -1347,25 +1347,31 @@ export class TaskAgentManager {
   ): Promise<string> {
     const guardExecution = this.resolveNodeExecutionForSubSession(subSessionId);
     if (guardExecution) {
-      const guardTask = this.config.taskRepo.listByWorkflowRunIncludingArchived(
-        guardExecution.workflowRunId
-      )[0];
-      const guardRun = this.config.workflowRunRepo.getRun(guardExecution.workflowRunId);
-      if (
-        guardTask?.status === 'cancelled' ||
-        guardTask?.status === 'archived' ||
-        guardRun?.status === 'cancelled'
-      ) {
+      const guardStatus = this.resolveTerminalInjectionStatus(guardExecution.workflowRunId);
+      if (guardStatus) {
         log.warn(
-          `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ${subSessionId} — task/run is terminal (${guardTask?.status ?? guardRun?.status})`
+          `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ${subSessionId} — task/run is terminal (${guardStatus})`
         );
         throw new Error(
-          `Cannot inject message to session ${subSessionId} — task/run is terminal (${guardTask?.status ?? guardRun?.status})`
+          `Cannot inject message to session ${subSessionId} — task/run is terminal (${guardStatus})`
         );
       }
     }
 
     return this.withSessionInjectLock(subSessionId, async () => {
+      const lockedExecution = this.resolveNodeExecutionForSubSession(subSessionId);
+      if (lockedExecution) {
+        const lockedStatus = this.resolveTerminalInjectionStatus(lockedExecution.workflowRunId);
+        if (lockedStatus) {
+          log.warn(
+            `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ${subSessionId} after lock acquisition — task/run is terminal (${lockedStatus})`
+          );
+          throw new Error(
+            `Cannot inject message to session ${subSessionId} — task/run is terminal (${lockedStatus})`
+          );
+        }
+      }
+
       const indexed = this.agentSessionIndex.get(subSessionId);
       if (indexed) {
         return await this.injectMessageIntoSession(
@@ -1411,6 +1417,20 @@ export class TaskAgentManager {
       }
       throw new Error(`Sub-session not found: ${subSessionId}`);
     });
+  }
+
+  private resolveTerminalInjectionStatus(workflowRunId: string): string | null {
+    const guardTask =
+      this.config.taskRepo?.listByWorkflowRunIncludingArchived?.(workflowRunId)?.[0] ?? null;
+    const guardRun = this.config.workflowRunRepo?.getRun?.(workflowRunId) ?? null;
+    if (
+      guardTask?.status === 'cancelled' ||
+      guardTask?.status === 'archived' ||
+      guardRun?.status === 'cancelled'
+    ) {
+      return guardTask?.status ?? guardRun?.status ?? 'terminal';
+    }
+    return null;
   }
 
   private async withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
@@ -4069,18 +4089,13 @@ export class TaskAgentManager {
         );
       }
       await this.withSessionInjectLock(existing.session.id, async () => {
-        const currentTask = this.config.taskRepo?.getTask?.(taskId) ?? null;
-        const currentRun = task.workflowRunId
-          ? (this.config.workflowRunRepo?.getRun?.(task.workflowRunId) ?? null)
+        const terminalStatus = task.workflowRunId
+          ? this.resolveTerminalInjectionStatus(task.workflowRunId)
           : null;
-        if (
-          currentTask?.status === 'cancelled' ||
-          currentTask?.status === 'archived' ||
-          currentRun?.status === 'cancelled'
-        ) {
+        if (terminalStatus) {
           log.warn(
             `TaskAgentManager.spawnPostApprovalSubSession: skipping inject to live session ` +
-              `${existingSessionId} — task/run is terminal (${currentTask?.status ?? currentRun?.status})`
+              `${existingSessionId} — task/run is terminal (${terminalStatus})`
           );
           return;
         }

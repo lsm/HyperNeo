@@ -508,13 +508,9 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     ]);
     const taskRepo = cfg.config.taskRepo as Record<string, ReturnType<typeof mock>>;
     let cancelled = false;
-    const originalGetTask = taskRepo.getTask;
-    taskRepo.getTask = mock((...args: unknown[]) => {
-      if (cancelled) {
-        return { id: 'task-1', status: 'cancelled', workflowRunId: RUN_ID };
-      }
-      return (originalGetTask as (...a: unknown[]) => unknown)(...args);
-    });
+    taskRepo.listByWorkflowRunIncludingArchived = mock(() =>
+      cancelled ? [{ id: 'task-1', status: 'cancelled', workflowRunId: RUN_ID }] : []
+    );
 
     let releaseClear!: () => void;
     const clearGate = new Promise<void>((resolve) => {
