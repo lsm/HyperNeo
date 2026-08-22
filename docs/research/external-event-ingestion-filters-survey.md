@@ -177,8 +177,17 @@ polling sources.
   initiator is always admitted. Per the pilot precedent, a single gate is a **pure
   function** — adopt `decisionRun` composition only when chain B adds more gates and
   order becomes contract. Shell: `publishEvent` (`:1731`) reads the cached identity
-  and calls the gate **before** `publisher.publish` — before persistence, dedupe,
-  and both bus subscribers (SpaceRuntime *and* goal-automation both save). The
+  and gates **first observations only** (review finding, PR #2723): a `getByDedupe`
+  lookup precedes the gate, and an existing canonical row — retryable (`published`)
+  or terminal — bypasses the gate entirely and flows through the normal duplicate
+  path. Without this, an event admitted and persisted while identity was unknown
+  (fail-open) could be re-observed after the cache warms, classified as a
+  self-event, returned as an intentional drop, and the polling cursor would advance
+  without the retryable-duplicate republish (`_handleRetryableDuplicate`) —
+  stranding the queued row; a filter change between attempts has the same effect,
+  contradicting the invariant that config must not retroactively alter queued
+  events. Genuinely new events are gated before persistence, dedupe-insert, and
+  both bus subscribers (SpaceRuntime *and* goal-automation both save). The
   ingestion step returns `admitted | dropped{reason}` so callers report honestly
   (review finding, PR #2723): the three webhook paths increment `published` after
   every resolved call (`:732`, `:843`, `:933`) and would otherwise count suppressed
@@ -315,11 +324,15 @@ polling sources.
   independent paths — `evolution.scope.update` merges subscription-bearing policy
   patches with no knowledge of projection config (`mergeEvolutionPolicy`,
   `evolution-scope-service.ts:44`, `:263`) — so a later filter on an
-  already-projected key would silently stop matching. B3 therefore mandates a
-  dynamic mechanism: either the union of keys referenced by active subscription
-  filters is gathered as a **gate input** and reserved at projection time (data
-  into the pure core, per the ADR boundary), or goal-automation filters are
-  evaluated pre-projection; silent match-stop is unacceptable. Scope note (review finding, PR #2723): `rawPayload` is a single
+  already-projected key would silently stop matching. B3 therefore mandates
+  **pre-projection evaluation**: goal-automation filters run against the full
+  pre-projection payload (review finding, PR #2723) — persisted payloads must not
+  depend on transient subscriber state, since gathering live filter keys as a
+  projection-time input would make persistence nondeterministic under identical
+  config (adding/removing a subscription changes what is stored) and unrecoverable
+  for subscriptions created later, contradicting §4's config-driven-only rule; a
+  stable configuration-defined reserved field set is the fallback if pre-projection
+  evaluation proves impractical. Silent match-stop is unacceptable. Scope note (review finding, PR #2723): `rawPayload` is a single
   opaque key holding the entire native object (`:1119`), so top-level projection
   over it is all-or-nothing — B3 ships the binary `rawPayload` toggle plus
   top-level projection of non-reserved extras, and nested-path extraction mappings
