@@ -167,7 +167,7 @@ interface RegisteredCompensation {
   result: unknown;
 }
 
-const RESERVED_KEYS = new Set(['decision', 'next', 'then', '$outcome', '$unwind']);
+const RESERVED_KEYS = new Set(['decision', 'next', 'then', '__proto__', '$outcome', '$unwind']);
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function isPromise(value: unknown): value is Promise<unknown> {

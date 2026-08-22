@@ -32,24 +32,24 @@ describe('stagedRun composition contract', () => {
     ).toThrow(/reads "value" after an effect wrote it/);
   });
 
-  test('accepts the read once a resnapshot re-gathers the written key', () => {
+  test('accepts the read once a resnapshot re-gathers the written key', async () => {
     const flow = stagedRun<Box>('regather', (s) => [
       s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
       s.effect({ name: 'mutate', writes: ['value'], run: () => {} }),
       s.resnapshot({ name: 'reload', provides: ['value'], run: () => ({ value: 2 }) }),
       s.halt({ name: 'end', reads: ['value'], run: ({ value }) => value }),
     ]);
-    expect(flow({})).resolves.toEqual({ status: 'completed', result: 2 });
+    await expect(flow({})).resolves.toEqual({ status: 'completed', result: 2 });
   });
 
-  test('a plain snapshot after the effect also clears the stale key', () => {
+  test('a plain snapshot after the effect also clears the stale key', async () => {
     const flow = stagedRun<Box>('regather-snapshot', (s) => [
       s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
       s.effect({ name: 'mutate', writes: ['value'], run: () => {} }),
       s.snapshot({ name: 'reload', provides: ['value'], run: () => ({ value: 3 }) }),
       s.halt({ name: 'end', reads: ['value'], run: ({ value }) => value }),
     ]);
-    expect(flow({})).resolves.toEqual({ status: 'completed', result: 3 });
+    await expect(flow({})).resolves.toEqual({ status: 'completed', result: 3 });
   });
 
   test('refuses a read of a key nothing provides', () => {
@@ -145,6 +145,15 @@ describe('stagedRun composition contract', () => {
         }),
       ]);
     }).toThrow(StagedRunContractError);
+    expect(() =>
+      stagedRun<Record<string, unknown>>('proto-key', (s) => [
+        s.snapshot({
+          name: 'load',
+          provides: ['__proto__' as string],
+          run: () => ({}) as Record<string, unknown>,
+        }),
+      ])
+    ).toThrow(StagedRunContractError);
   });
 
   test('refuses a branch key redeclared by a later decide', () => {
@@ -247,14 +256,14 @@ describe('stagedRun composition contract', () => {
     ).toThrow(/provides no keys/);
   });
 
-  test('two sequential writes to the same key stay expressible', () => {
+  test('two sequential writes to the same key stay expressible', async () => {
     const flow = stagedRun<Box>('double-write', (s) => [
       s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
       s.effect({ name: 'w1', writes: ['value'], run: () => {} }),
       s.effect({ name: 'w2', writes: ['value'], run: () => {} }),
       s.halt({ name: 'end', run: () => 'done' }),
     ]);
-    expect(flow({})).resolves.toEqual({ status: 'completed', result: 'done' });
+    await expect(flow({})).resolves.toEqual({ status: 'completed', result: 'done' });
   });
 
   test('a when-guarded re-gather does not clear a dirty key', () => {
@@ -279,7 +288,7 @@ describe('stagedRun composition contract', () => {
     ).toThrow(/reads "value" after an effect wrote it/);
   });
 
-  test('an unconditional re-gather after a guarded one clears the dirty key', () => {
+  test('an unconditional re-gather after a guarded one clears the dirty key', async () => {
     const flow = stagedRun<Box>('guarded-then-unconditional', (s) => [
       s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
       s.decide({
@@ -298,7 +307,7 @@ describe('stagedRun composition contract', () => {
       s.resnapshot({ name: 'reload-final', provides: ['value'], run: () => ({ value: 3 }) }),
       s.halt({ name: 'end', reads: ['value'], run: ({ value }) => value }),
     ]);
-    expect(flow({})).resolves.toEqual({ status: 'completed', result: 3 });
+    await expect(flow({})).resolves.toEqual({ status: 'completed', result: 3 });
   });
 
   test('a guarded re-gather re-enables reads for stages sharing its guard', async () => {
@@ -1091,6 +1100,43 @@ describe('stagedRun stage failure and compensation', () => {
     const outcome = await flow({});
     expect(outcome.status).toBe('error');
     expect(order).toEqual(['partial-start', 'undo-partial']);
+  });
+
+  test('compensations receive the registration view and the stage CAS result', async () => {
+    let observedView: Record<string, unknown> | undefined;
+    let observedResult: unknown = 'never-invoked';
+    let partialResult: unknown = 'never-invoked';
+    const flow = stagedRun<Box>('compensate-args', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 7 }) }),
+      s.effect({
+        name: 'won-stage',
+        reads: ['value'],
+        writes: ['value'],
+        run: () => 'won',
+        compensate: (view, result) => {
+          observedView = { ...view };
+          observedResult = result;
+        },
+      }),
+      s.effect({
+        name: 'throwing-stage',
+        writes: ['value'],
+        run: () => {
+          throw new Error('boom');
+        },
+        compensate: (view, result) => {
+          partialResult = result;
+          expect(Object.keys(view).sort()).toEqual([]);
+        },
+      }),
+      s.halt({ name: 'end', run: () => 'done' }),
+    ]);
+    const outcome = await flow({});
+    expect(outcome.status).toBe('error');
+    expect(outcome.stage).toBe('throwing-stage');
+    expect(observedView).toEqual({ value: 7 });
+    expect(observedResult).toBe('won');
+    expect(partialResult).toBeUndefined();
   });
 
   test('a failing compensation is recorded while unwinding continues', async () => {
