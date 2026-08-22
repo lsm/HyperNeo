@@ -2318,7 +2318,7 @@ describe('SDKMessageRepository', () => {
       expect(sendStatusOf(submittedId)).toBe('submitted');
     });
 
-    it('the previously-uncovered wrappers stay session-scoped, user-only, and uuid-matched', () => {
+    it('the previously-uncovered wrappers stay session-scoped and user-only — assistant probe rows carry in-window send_status so only the type filter excludes them', () => {
       const sessionId = 'matrix-scope';
       const scopedId = repository.saveUserMessage(
         sessionId,
@@ -2331,22 +2331,38 @@ describe('SDKMessageRepository', () => {
         'enqueued'
       );
       repository.markDeliveryFailedByUuid(sessionId, 'uuid-matrix-scope-failed');
-      repository.saveSDKMessage('session-scope-other', {
-        type: 'assistant',
-        uuid: 'uuid-matrix-scope-assistant',
-        message: { role: 'assistant', content: [{ type: 'text', text: 'assistant row' }] },
-      } as unknown as SDKMessage);
+      const insertAssistantRow = (id: string, uuid: string, sendStatus: string): void => {
+        db.prepare(
+          `INSERT INTO sdk_messages (
+             id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+             replacement_metadata_normalized
+           ) VALUES (?, ?, 'assistant', ?, ?, ?, ?, 1)`
+        ).run(
+          id,
+          sessionId,
+          JSON.stringify({
+            type: 'assistant',
+            uuid,
+            message: { role: 'assistant', content: [{ type: 'text', text: 'assistant row' }] },
+          }),
+          new Date().toISOString(),
+          sendStatus,
+          uuid
+        );
+      };
+      insertAssistantRow('matrix-assistant-enq', 'uuid-matrix-assistant-enq', 'enqueued');
+      insertAssistantRow('matrix-assistant-failed', 'uuid-matrix-assistant-failed', 'failed');
 
       expect(repository.markDeliverySubmittedByUuids(sessionId, ['no-such-uuid'])).toEqual([]);
       expect(
-        repository.markDeliverySubmittedByUuids(sessionId, ['uuid-matrix-scope-assistant'])
+        repository.markDeliverySubmittedByUuids(sessionId, ['uuid-matrix-assistant-enq'])
       ).toEqual([]);
       expect(
         repository.markDeliverySubmittedByUuids('matrix-other-session', ['uuid-matrix-scope'])
       ).toEqual([]);
 
       expect(repository.reopenDeliveryByUuid(sessionId, 'no-such-uuid')).toBeNull();
-      expect(repository.reopenDeliveryByUuid(sessionId, 'uuid-matrix-scope-assistant')).toBeNull();
+      expect(repository.reopenDeliveryByUuid(sessionId, 'uuid-matrix-assistant-failed')).toBeNull();
       expect(
         repository.reopenDeliveryByUuid('matrix-other-session', 'uuid-matrix-scope-failed')
       ).toBeNull();
@@ -2354,7 +2370,7 @@ describe('SDKMessageRepository', () => {
 
       expect(repository.markDeliveryDeferredByUuid(sessionId, 'no-such-uuid')).toBeNull();
       expect(
-        repository.markDeliveryDeferredByUuid(sessionId, 'uuid-matrix-scope-assistant')
+        repository.markDeliveryDeferredByUuid(sessionId, 'uuid-matrix-assistant-enq')
       ).toBeNull();
       expect(
         repository.markDeliveryDeferredByUuid('matrix-other-session', 'uuid-matrix-scope')
