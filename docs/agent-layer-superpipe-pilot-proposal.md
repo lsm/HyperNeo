@@ -54,9 +54,12 @@ mutations precede the arm's guard in several places — the transient arm awaits
 first check (:1060); the message-not-found arm likewise awaits `setIdle` at
 :978 before its first check at :980; and every arm's awaited `setIdle`
 (:906, :978, :1024) precedes its first guard (:908, :1060) — so a replacement landing
-inside those windows can have its state mutated by the stale arm. The 5xx arm is
-the fenced one: its revalidation gate (:1127–1138) sits immediately before the
-re-enqueue (:1140).
+inside those windows can have its state mutated by the stale arm. The 5xx arm's
+revalidation gate (:1127–1138) sits immediately before the re-enqueue (:1140),
+but the arm is not fully fenced either: it awaits `displayErrorAsAssistantMessage`
+(:1091–1096), then closes the live query object and restores shared provider env
+before reaching :1127, so a replacement installed during those awaits can be
+closed or mutated by the stale attempt — this window joins PR 1's pins.
 
 ### (b) Delivery/ordering machinery (the loops around the pilot-4 cores)
 
@@ -270,10 +273,15 @@ note.
   `RETRYABLE_PROVIDER_ERROR_TEXT` is built from taxonomy entries that supply
   `looseTextSubstrings`, which the generic rate-limit entry does not. Both route
   to the terminal cascade's RATE_LIMIT category check, whose
-  `category === RATE_LIMIT`/`is429Error` predicate hands off to the watchdog
-  (:1234–1245) — note `looksLikeRateLimit429` (:92) is *not* that predicate: it
-  rejects text-only forms and is called only from `parseApiValidationError`
-  (:1571). The backoff arm is 5xx **plus** retryable loose text (`overloaded`,
+  `category === RATE_LIMIT && !isNonRetryableBillingError` predicate hands off
+  to the watchdog (:1234–1242) — note both that `looksLikeRateLimit429` (:92) is
+  *not* that predicate (it rejects text-only forms and is called only from
+  `parseApiValidationError`, :1571) and that non-resettable billing/quota
+  failures ("429 quota exceeded") are excluded from cooldown recovery by
+  `isNonRetryableBillingError` and fall through to terminal handling — the
+  classifier therefore carries a billing-non-resettable input so a terminal
+  billing failure cannot become repeated cooldown recovery. The backoff arm is
+  5xx **plus** retryable loose text (`overloaded`,
   "internal server error", "service unavailable", "bad gateway", "gateway
   timeout" — taxonomy overloaded entry, error-taxonomy.ts:79–92) plus GLM
   `[1305]`. The backoff arm's
@@ -340,7 +348,12 @@ note.
 - **PR sketch:**
   1. **PR 1 (pins):** flag-machine truth table (suppress ×
      sessionStateChanged-mode × expectsIdle × lastResultWasSuccess × success/
-     error result × queryMode → idle/finish/replay — `finishTurn` publishes
+     error result × queryMode × current session-state event kind/state (a
+     non-idle event only records that an idle event is expected, while an idle
+     event calls `finishTurn`, gates replay on `lastResultWasSuccess`, and
+     resets all three flags — sdk-message-handler.ts:957–969; alternatively
+     leave session-state handling in the shell with the core contract narrowed)
+     → idle/finish/replay — `finishTurn` publishes
      `query.trigger` only outside `manual` mode, sdk-message-handler.ts:943–950,
      so manual sessions with identical flags must not replay deferred messages;
      the queryMode gate may alternatively stay in the shell with the core
@@ -405,7 +418,12 @@ note.
      the steer ladder (status × queryPromise × provider × validity × queue
      ownership — `hasPendingOrInFlight(messageUuid)` distinguishes
      `awaiting_acceptance` from admitting a fresh feed, agent-session.ts:1701–1715)
-     and handler outcomes (role × sendStatus × park budgets × waiting-for-input:
+     and handler outcomes (delivery-call result — `FeedSteerOutcome`/
+     `DriveTurnOutcome`: identical tuples choose different mutations by outcome,
+     park→requeue, awaiting_acceptance→requeueParked, promote→requeueAs('turn')
+     with UNIQUE fallback, consumed→complete; turn results distinguish
+     blocked/aborted/terminated, message-delivery.handler.ts:104–188 — × role ×
+     sendStatus × park budgets × waiting-for-input:
      a submitted steer parks under the ACP acceptance budget while an otherwise
      identical submitted turn settles as skipped — message-delivery.handler.ts:71–84,
      pinned by message-delivery-v2.test.ts:842–871; a waiting session requeues
