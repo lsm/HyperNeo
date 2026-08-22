@@ -452,6 +452,28 @@ bunRuntimeTest('applies the preserved mode regardless of the process umask', asy
   }
 });
 
+bunRuntimeTest('creates parent directories with the pinned mode despite the umask', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-umask-dir-'));
+  const workspace = join(root, 'workspace');
+  await mkdir(workspace);
+
+  const previousUmask = process.umask(0o777);
+  try {
+    await writeFileWithinWorkspace(
+      workspace,
+      ['nested', 'created.txt'],
+      'content',
+      new AbortController().signal
+    );
+    expect(await readFile(join(workspace, 'nested', 'created.txt'), 'utf-8')).toBe('content');
+    expect((await stat(join(workspace, 'nested'))).mode & 0o777).toBe(0o700);
+    expect((await stat(join(workspace, 'nested', 'created.txt'))).mode & 0o777).toBe(0o600);
+  } finally {
+    process.umask(previousUmask);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 bunRuntimeTest('bounds bytes scanned before the requested line', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-scan-'));
   const workspace = join(root, 'workspace');
