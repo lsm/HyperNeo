@@ -200,4 +200,13 @@ describe('fetchAcpModels', () => {
 
     expect(lastClient?.close).toHaveBeenCalled();
   });
+
+  test('skips disposal entirely when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await disposeAcpSessions('devin acp', ['session-a'], undefined, controller.signal);
+
+    expect(calls).toEqual([]);
+  });
 });

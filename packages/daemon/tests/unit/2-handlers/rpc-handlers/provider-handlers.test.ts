@@ -217,6 +217,28 @@ describe('Provider RPC handlers', () => {
         handlers.get('providers.fetchAcpModels')!({ id: acp.id, command: 42 }, {})
       ).rejects.toThrow('ACP command must be a string');
     });
+
+    it('hydrates the fallback provider from the requested record command', async () => {
+      const originalCommand = process.env.HYPERNEO_ACP_COMMAND;
+      delete process.env.HYPERNEO_ACP_COMMAND;
+      const acp = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'hyperneo-missing-acp-binary' }),
+      });
+      const handlers = setup();
+
+      try {
+        await expect(handlers.get('providers.fetchAcpModels')!({ id: acp.id }, {})).rejects.toThrow(
+          'hyperneo-missing-acp-binary'
+        );
+      } finally {
+        if (originalCommand === undefined) delete process.env.HYPERNEO_ACP_COMMAND;
+        else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
+      }
+    });
   });
 
   describe('providers.create', () => {

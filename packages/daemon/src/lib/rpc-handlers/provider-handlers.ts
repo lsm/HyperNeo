@@ -8,7 +8,11 @@ import {
   KEYCHAIN_UNAVAILABLE_MESSAGE,
   KeychainUnavailableError,
 } from '../credentials/credential-store.js';
-import { syncProviderToRegistry, removeProviderFromRegistry } from '../providers/provider-sync.js';
+import {
+  parseAcpConfig,
+  syncProviderToRegistry,
+  removeProviderFromRegistry,
+} from '../providers/provider-sync.js';
 import { getProviderRegistry } from '../providers/registry.js';
 import { markBuiltInProviderDisabled } from '../providers/factory.js';
 import { AcpProvider } from '../providers/acp-provider.js';
@@ -219,6 +223,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       }
       const registered = getProviderRegistry().get('acp');
       const provider = registered instanceof AcpProvider ? registered : new AcpProvider();
+      if (!(registered instanceof AcpProvider)) {
+        provider.setAcpCommand(parseAcpConfig(record.configJson).command);
+      }
       const models = await fetchAcpModels(provider, { command: data.command });
       return { models };
     }

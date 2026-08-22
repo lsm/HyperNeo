@@ -18,6 +18,7 @@ export async function disposeAcpSessions(
   signal?: AbortSignal
 ): Promise<void> {
   if (sessionIds.length === 0) return;
+  if (signal?.aborted) return;
   const { command, args } = parseAcpCommand(commandLine);
   const workspace = process.cwd();
   const owner = processTreeOwner ?? (await getAcpProcessTreeOwner());
