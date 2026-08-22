@@ -1892,17 +1892,10 @@ export class TaskAgentManager {
               : false,
           }
         : null,
-      workflowNodeId: options?.workflowNodeId,
-      agentDeclaredOnNode: this.resolveAgentDeclaredOnNode(
-        taskId,
-        agentName,
-        options?.workflowNodeId
-      ),
     });
     if (route.action === 'reuse_existing') {
       return [{ agentName, sessionId: route.sessionId }];
     }
-    if (route.action === 'reject_undeclared') return [];
     if (route.action === 'reset_pending_and_continue' && existing) {
       if (existing.agentSessionId) {
         this.agentSessionIndex.delete(existing.agentSessionId);
@@ -1911,6 +1904,16 @@ export class TaskAgentManager {
         status: 'pending',
       });
     }
+
+    const gateRoute = decideActivationRouting({
+      workflowNodeId: options?.workflowNodeId,
+      agentDeclaredOnNode: this.resolveAgentDeclaredOnNode(
+        taskId,
+        agentName,
+        options?.workflowNodeId
+      ),
+    });
+    if (gateRoute.action === 'reject_undeclared') return [];
 
     await this.ensureWorkflowNodeActivationForAgent(taskId, agentName, options);
 

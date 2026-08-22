@@ -172,7 +172,19 @@ describe('decideActivationRouting — precedence', () => {
     ).toEqual({ action: 'reuse_existing', sessionId: 'session-1' });
   });
 
-  test('reset_pending_and_continue beats reject_undeclared (reset precedes the declaration check)', () => {
+  test('the reuse evaluation needs no declaration fact, so it cannot reject or throw on one', () => {
+    expect(
+      decideActivationRouting({
+        existingExecution: {
+          status: 'in_progress',
+          agentSessionId: 'session-1',
+          sessionAlive: true,
+        },
+      })
+    ).toEqual({ action: 'reuse_existing', sessionId: 'session-1' });
+  });
+
+  test('a stale execution yields reset_pending_and_continue even when the agent is undeclared', () => {
     expect(
       decide({
         existingExecution: {
@@ -184,6 +196,18 @@ describe('decideActivationRouting — precedence', () => {
         agentDeclaredOnNode: false,
       })
     ).toEqual({ action: 'reset_pending_and_continue' });
+  });
+
+  test('the post-reset continuation with the existing execution cleared still rejects an undeclared agent', () => {
+    expect(
+      decideActivationRouting({
+        existingExecution: null,
+        workflowNodeId: 'node-review',
+        agentDeclaredOnNode: false,
+        taskRunWorkflowResolvable: true,
+        executionResolvable: true,
+      })
+    ).toEqual({ action: 'reject_undeclared' });
   });
 
   test('reset_pending_and_continue beats return_empty and spawn', () => {
