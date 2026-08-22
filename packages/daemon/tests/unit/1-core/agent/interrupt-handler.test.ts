@@ -428,6 +428,45 @@ describe('InterruptHandler', () => {
         expect(abortController.signal.aborted).toBe(true);
       });
 
+      it('falls back to closing when a survivor cancellation never settles', async () => {
+        process.env.HYPERNEO_INTERRUPT_CONTROL_TIMEOUT_MS = '20';
+        try {
+          sdkInterruptSpy.mockImplementation(async () => ({ still_queued: ['uuid-a'] }));
+          sdkCancelAsyncMessageSpy.mockImplementation(() => new Promise<boolean>(() => {}));
+          getSdkCapabilitiesSpy.mockImplementation(() => new Set(['interrupt_cancel_queued_v1']));
+          handler = createHandler();
+
+          await handler.handleInterrupt();
+
+          expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.stringContaining('cancel_async_message did not settle within 20ms')
+          );
+          expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.stringContaining('closing immediately')
+          );
+          expect(sdkCloseSpy).toHaveBeenCalled();
+        } finally {
+          delete process.env.HYPERNEO_INTERRUPT_CONTROL_TIMEOUT_MS;
+        }
+      });
+
+      it('falls back to closing when interrupt() never answers', async () => {
+        process.env.HYPERNEO_INTERRUPT_CONTROL_TIMEOUT_MS = '20';
+        try {
+          sdkInterruptSpy.mockImplementation(() => new Promise(() => {}));
+          handler = createHandler();
+
+          await handler.handleInterrupt();
+
+          expect(mockLogger.warn).toHaveBeenCalledWith(
+            expect.stringContaining('interrupt() did not answer within 20ms')
+          );
+          expect(sdkCloseSpy).toHaveBeenCalled();
+        } finally {
+          delete process.env.HYPERNEO_INTERRUPT_CONTROL_TIMEOUT_MS;
+        }
+      });
+
       it('falls back to closing immediately when no capability provider is wired', async () => {
         sdkInterruptSpy.mockImplementation(async () => ({ still_queued: ['uuid-a'] }));
         handler = createHandler({ getSdkCapabilities: undefined });
