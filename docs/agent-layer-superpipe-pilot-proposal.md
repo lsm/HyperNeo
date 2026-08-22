@@ -69,7 +69,14 @@ closed or mutated by the stale attempt — this window joins PR 1's pins, and th
 env restore-and-clear specifically (which can arrive even later, after the
 process-exit await or dynamic import at :1105–1122) needs a further generation
 check or an identity-guarded snapshot so a stale attempt cannot clear a
-replacement-installed environment. The
+replacement-installed environment. The common finalizer shares the flaw at the
+largest scale: it snapshots staleness once at :1295, then can await the
+provider-service import and `setIdle` before clearing shared environment state,
+consumed-message state, and `ctx.queryPromise` at :1321–1338 — a replacement
+starting after that snapshot can have its environment restored/erased and its
+live query promise nulled by the stale finalizer, so the window joins the pins
+and shared mutations require generation/identity revalidation after the
+finalizer's awaits. The
 startup-timeout arm has the same shape after its last guard: it awaits
 `displayErrorAsAssistantMessage` (:959–965) and recurses at :967 with no
 entry-generation guard on `runQuery`, so a replacement landing during that await
