@@ -51,13 +51,20 @@ export interface LiveQueryLifecycleTransition {
 export function createLiveQueryLifecycleState(
   config: Partial<LiveQueryLifecycleConfig> = {}
 ): LiveQueryLifecycleTransition {
+  const merged: LiveQueryLifecycleConfig = { ...DEFAULT_LIVE_QUERY_LIFECYCLE_CONFIG };
+  if (config.snapshotRetryDelayMs !== undefined) {
+    merged.snapshotRetryDelayMs = config.snapshotRetryDelayMs;
+  }
+  if (config.maxSnapshotRetries !== undefined) {
+    merged.maxSnapshotRetries = config.maxSnapshotRetries;
+  }
   return {
     state: {
       status: 'subscribing',
       generation: 1,
       snapshotRetries: 0,
       error: null,
-      config: { ...DEFAULT_LIVE_QUERY_LIFECYCLE_CONFIG, ...config },
+      config: merged,
     },
     effects: [{ kind: 're-snapshot', generation: 1 }],
   };

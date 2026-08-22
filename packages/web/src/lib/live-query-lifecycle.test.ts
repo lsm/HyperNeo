@@ -134,6 +134,17 @@ describe('live-query-lifecycle', () => {
       const { state } = createLiveQueryLifecycleState({ maxSnapshotRetries: 2 });
       expect(state.config).toEqual({ snapshotRetryDelayMs: 2000, maxSnapshotRetries: 2 });
     });
+
+    it('keeps defaults when partial config values are explicitly undefined', () => {
+      const { state } = createLiveQueryLifecycleState({
+        snapshotRetryDelayMs: undefined,
+        maxSnapshotRetries: undefined,
+      });
+      expect(state.config).toEqual({
+        snapshotRetryDelayMs: 2000,
+        maxSnapshotRetries: 5,
+      });
+    });
   });
 
   describe('transition table', () => {
