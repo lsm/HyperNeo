@@ -69,7 +69,14 @@ closed or mutated by the stale attempt — this window joins PR 1's pins, and th
 env restore-and-clear specifically (which can arrive even later, after the
 process-exit await or dynamic import at :1105–1122) needs a further generation
 check or an identity-guarded snapshot so a stale attempt cannot clear a
-replacement-installed environment. The common finalizer shares the flaw at the
+replacement-installed environment — and **a stale-write guard alone is
+insufficient**: the old attempt snapshots its restore map before the import,
+while a replacement running `applyEnvVarsToProcessForSession` during that await
+saves the old attempt's provider values as its own baseline; a guard that then
+skips the stale restore leaves the replacement later restoring those stale
+values instead of the daemon's originals. Provider-environment ownership must
+be serialized across replacements (no apply until the prior restoration
+completes) or made generation-scoped/stacked. The common finalizer shares the flaw at the
 largest scale: it snapshots staleness once at :1295, then can await the
 provider-service import and `setIdle` before clearing shared environment state,
 consumed-message state, and `ctx.queryPromise` at :1321–1338 — a replacement
@@ -375,7 +382,13 @@ note.
   idle; the stale branch cancels its fence (or the fence is generation-scoped)
   rather than just skipping the idle —
   before idling the replacement; the same fence-unwind applies to the terminal
-  route's post-`errorManager` stale branch;
+  route's post-`errorManager` stale branch — and the unwind also covers the
+  **thrown-effect path**: if `displayErrorAsAssistantMessage` or
+  `errorManager.handleError` rejects after `beginTerminalIdle()`, execution
+  never reaches either stale branch, and if the guarded finalizer then skips
+  its `setIdle()` both fence counters stay leaked with reclaim still reporting
+  the turn live; fence cleanup is required in the thrown-effect/`finally`
+  route, not only on successful stale results;
   folding it into `terminal(category)` would replace the actionable validation
   text with generic category handling |
   terminal(category, message_hint) — the category alone does not determine the
@@ -429,13 +442,26 @@ note.
   non-fatal**: production wraps the call in try/catch (:1090–1096), so a DB or
   publish failure still lets teardown, backoff, re-enqueue, and recursion
   proceed; the staged effect must normalize that failure internally (or stay in
-  the shell) rather than fail the pass under the stage-failure contract —
+  the shell) rather than fail the pass under the stage-failure contract — and
+  since the notice's publication (`state.sdkMessages.delta`) is already
+  emitted when the row saves, staging it additionally demands a commit-time
+  outbox or an ordered inverse update event in its compensation (unwinding
+  only the row leaves connected clients displaying a notice the DB no longer
+  has); keeping the non-fatal notice entirely outside the staged pass avoids
+  both obligations and is the preferred shape.
   and the **prompt re-enqueue** at
   `messageQueue.enqueueWithId` (:1145) is likewise an external session
   injection with unconditional insertion: it needs a conditional durable
   reservation plus idempotence or exact compensation, or it too stays in the
   shell, since replay after a later-stage failure can re-append the consumed
-  prompt and a crash leaves no reconciliation record; the existing generation guards inform the resnapshot stage but must not
+  prompt and a crash leaves no reconciliation record — and the effect must
+  **not await the enqueue promise**: that promise is the *consumption*
+  acknowledgement, not insertion completion, and production detaches it before
+  recursing into `runQuery` whose new generator does the consuming; an awaited
+  stage would block on a consumer that has not started and time out every
+  retry. The admission effect is synchronous insertion with a detached/stored
+  acknowledgement (or shell-retained), and pins record that recursion begins
+  without awaiting consumption; the existing generation guards inform the resnapshot stage but must not
   be presented as complete fencing — PR 1 pins the unfenced windows (transient
   arm :1024–1034 ahead of :1060; every arm's awaited `setIdle` ahead of its
   first guard; the message-not-found pointer consumption at :970 is *not* one —
@@ -533,7 +559,14 @@ note.
   `{idle_fence, early_set_idle, finish_turn, allow_queue_replay, next_flags}`
   plan out — the legacy direct `setIdle` (:746–750) is a distinct action from
   `finishTurn`'s own `setIdle` (:946), and the doubled transition it creates is
-  pinned behavior; the
+  pinned behavior — and `idle_fence` vs `early_set_idle` are **separate
+  publication phases, not one aggregate plan**: `beginTerminalIdle()` runs
+  *before* the awaited `sdk.message` publish while the direct `setIdle()` runs
+  *after* it, so applying both from a single pre- or post-publication point
+  either idles too early or delays the fence and changes the partial state
+  left when publication rejects; the core models pre-publication and
+  post-publication phases separately (or both actions stay at their shell
+  positions); the
   core also returns the updated flag state, since the scoped machine mutates it:
   results set `lastResultWasSuccess`; suppressed **successful** results clear
   `suppressIdleOnNextResult` (:936–937 is success-gated at :765–766), so a
@@ -638,6 +671,13 @@ note.
   bypasses the whole `!alreadyConsumed` block and never reaches a
   pre-`admitWithId` check, so without a post-startup resnapshot a stale pass
   can bind the observer/waiter and return `driving` against the replacement
+  query — and the post-startup resnapshot is **full lifecycle, not identity
+  alone**: `cleanup()` sets its flag without advancing generation and awaits
+  work inside `stop()`, so `ensureQueryStarted` can resume with the newly
+  expected query identity while the claim is still current, and the pass would
+  install the waiter/observer and return `driving` as cleanup stops its queue;
+  cleaning-up, queue-running, abort, and route-appropriate processing state
+  are all rechecked before either branch proceeds. The
   query — and the **existing-entry path needs the same revalidation**:
   the `existing` branch (:1479–1483) never calls `admitWithId`, so a guard
   placed only there is bypassed; revalidate and rebuild the waiter/observer
