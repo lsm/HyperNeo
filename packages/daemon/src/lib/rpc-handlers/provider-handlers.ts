@@ -154,6 +154,7 @@ function validateAcpConfigCommand(configJson: string | undefined): void {
   } catch {
     throw new Error('Invalid ACP config JSON');
   }
+  if (!parsed || typeof parsed !== 'object') throw new Error('Invalid ACP config JSON');
   if (parsed.command === undefined) return;
   if (typeof parsed.command !== 'string') throw new Error('ACP command must be a string');
   if (!parsed.command.trim()) throw new Error('ACP command is required');

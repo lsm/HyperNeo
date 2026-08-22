@@ -448,6 +448,11 @@ describe('Provider RPC handlers', () => {
         )
       ).rejects.toThrow('Invalid ACP config JSON');
       expect(repo.getProvider(created.id)?.configJson).toBe(originalConfig);
+
+      await expect(
+        handlers.get('providers.update')!({ id: created.id, params: { configJson: 'null' } }, {})
+      ).rejects.toThrow('Invalid ACP config JSON');
+      expect(repo.getProvider(created.id)?.configJson).toBe(originalConfig);
     });
 
     it('emits providers.changed after update', async () => {
