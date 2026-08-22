@@ -133,6 +133,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     overrides.canUseTool ??
       (async (_toolName, input) => ({ behavior: 'allow' as const, updatedInput: input }))
   );
+  const markQuestionOrphaned = mock(async () => true);
   const mockClient = overrides.client ?? createMockClient();
   const constructorOptions: AcpClientOptions[] = [];
   const queryOptions = overrides.queryOptions ?? { cwd: '/tmp/acp-session', mcpServers: {} };
@@ -216,6 +217,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     } as unknown as QueryOptionsBuilder,
     askUserQuestionHandler: {
       createCanUseToolCallback: mock(() => canUseTool),
+      markQuestionOrphaned: markQuestionOrphaned,
     } as unknown as AskUserQuestionHandler,
     messageHandler: {
       markMessageSubmitted: mock(() => true),
@@ -258,6 +260,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     onSDKMessage,
     onMarkApiSuccess,
     canUseTool,
+    markQuestionOrphaned,
     messageQueue,
   };
 }
@@ -820,7 +823,7 @@ describe('AcpQueryRunner', () => {
       updatedInput: { answers: Record<string, string> };
     }>();
     const { client, promptStarted, releasePrompt } = createHeldPromptClient();
-    const { runner, ctx, constructorOptions } = createRunnerFixture({
+    const { runner, ctx, constructorOptions, markQuestionOrphaned } = createRunnerFixture({
       client,
       canUseTool: async () => {
         permissionStarted.resolve();
@@ -843,6 +846,11 @@ describe('AcpQueryRunner', () => {
     ctx.queryAbortController?.abort();
 
     await expect(pending).resolves.toEqual({ outcome: { outcome: 'cancelled' } });
+    expect(markQuestionOrphaned).toHaveBeenCalledTimes(1);
+    permission.resolve({
+      behavior: 'allow',
+      updatedInput: { answers: {} },
+    });
     releasePrompt();
     await ctx.queryPromise;
   });
@@ -1136,24 +1144,33 @@ describe('AcpQueryRunner', () => {
   });
 
   test('cancels ACP permission requests denied by the approval callback', async () => {
-    const { runner, ctx, constructorOptions } = createRunnerFixture({
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture({
+      client,
       canUseTool: async () => ({ behavior: 'deny', message: 'Denied' }),
     });
 
-    await runner.start();
-    await ctx.queryPromise;
+    try {
+      await runner.start();
+      await promptStarted;
 
-    const result = await constructorOptions[0].onPermissionRequest?.({
-      sessionId: 'acp-session-1',
-      toolCall: {
-        toolCallId: 'tool-1',
-        title: 'Edit file',
-        kind: 'edit',
-      },
-      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
-    });
+      const result = await constructorOptions[0].onPermissionRequest?.({
+        sessionId: 'acp-session-1',
+        toolCall: {
+          toolCallId: 'tool-1',
+          title: 'Edit file',
+          kind: 'edit',
+        },
+        options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
+      });
 
-    expect(result).toEqual({ outcome: { outcome: 'cancelled' } });
+      expect(canUseTool).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ outcome: { outcome: 'cancelled' } });
+      releasePrompt();
+      await ctx.queryPromise;
+    } finally {
+      releasePrompt();
+    }
   });
 
   test('uses an allowlisted environment for ACP terminal commands', async () => {
@@ -1210,37 +1227,45 @@ describe('AcpQueryRunner', () => {
   }, 10000);
 
   test('prompts before terminal creation', async () => {
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
     const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture({
+      client,
       canUseTool: async (_toolName, input) => {
         const question = (input.questions as Array<{ question: string }>)[0].question;
         return { behavior: 'allow', updatedInput: { answers: { [question]: 'Allow once' } } };
       },
     });
 
-    await runner.start();
-    await ctx.queryPromise;
+    try {
+      await runner.start();
+      await promptStarted;
 
-    await expect(
-      constructorOptions[0].onTerminalCreate?.({
+      const created = await constructorOptions[0].onTerminalCreate?.({
         sessionId: 'acp-session-1',
         command: process.execPath,
         args: ['-e', 'process.exit(0)'],
-      })
-    ).rejects.toThrow('ACP terminal command cancelled');
-    expect(canUseTool).toHaveBeenCalledWith(
-      'AskUserQuestion',
-      expect.objectContaining({
-        questions: [
-          expect.objectContaining({
-            question: `Allow terminal command ${process.execPath} -e 'process.exit(0)'?`,
-            header: 'ACP approval',
-          }),
-        ],
-      }),
-      expect.objectContaining({
-        displayName: `terminal command ${process.execPath} -e 'process.exit(0)'`,
-      })
-    );
+      });
+
+      expect(created?.terminalId).toEqual(expect.any(String));
+      expect(canUseTool).toHaveBeenCalledWith(
+        'AskUserQuestion',
+        expect.objectContaining({
+          questions: [
+            expect.objectContaining({
+              question: `Allow terminal command ${process.execPath} -e 'process.exit(0)'?`,
+              header: 'ACP approval',
+            }),
+          ],
+        }),
+        expect.objectContaining({
+          displayName: `terminal command ${process.execPath} -e 'process.exit(0)'`,
+        })
+      );
+      releasePrompt();
+      await ctx.queryPromise;
+    } finally {
+      releasePrompt();
+    }
   });
 
   test('rejects terminal cwd and environment overrides before permission checks', async () => {
@@ -2028,7 +2053,10 @@ describe('AcpQueryRunner', () => {
           (message as SDKUserMessage).parent_tool_use_id === 'tc-interrupted'
       )
     ).toBe(true);
-    expect(onSDKMessage.mock.calls.length).toBeLessThanOrEqual(600);
+    expect(
+      onSDKMessage.mock.calls.filter(([message]) => message.type === 'assistant').length
+    ).toBeLessThanOrEqual(2);
+    expect(onSDKMessage.mock.calls.length).toBeLessThanOrEqual(10);
     expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
   }, 1000);
 });

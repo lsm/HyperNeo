@@ -304,7 +304,8 @@ function shellQuote(value: string): string {
 async function authorizeAcpFsWrite(
   params: AcpFsWriteParams,
   canUseTool: CanUseTool,
-  signal: AbortSignal
+  signal: AbortSignal,
+  onAbandoned?: () => Promise<void>
 ): Promise<AcpFsWriteParams> {
   const permission = await handleAcpPermissionRequest(
     {
@@ -321,7 +322,8 @@ async function authorizeAcpFsWrite(
       ],
     },
     canUseTool,
-    signal
+    signal,
+    onAbandoned
   );
   if (signal.aborted) {
     throw new Error('ACP filesystem write cancelled');
@@ -335,7 +337,8 @@ async function authorizeAcpFsWrite(
 async function authorizeAcpTerminalCreate(
   params: AcpTerminalCreateParams,
   canUseTool: CanUseTool,
-  signal: AbortSignal
+  signal: AbortSignal,
+  onAbandoned?: () => Promise<void>
 ): Promise<AcpTerminalCreateParams> {
   if (params.cwd != null || (params.env?.length ?? 0) > 0) {
     throw new Error('ACP terminal cwd and environment overrides are not supported');
@@ -359,7 +362,8 @@ async function authorizeAcpTerminalCreate(
       ],
     },
     canUseTool,
-    signal
+    signal,
+    onAbandoned
   );
   if (signal.aborted) throw new Error('ACP terminal command cancelled');
   if (
@@ -380,7 +384,8 @@ async function authorizeAcpTerminalCreate(
 async function handleAcpPermissionRequest(
   params: AcpPermissionRequest,
   canUseTool: CanUseTool,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onAbandoned?: () => Promise<void>
 ): Promise<AcpPermissionResponseResult> {
   if (params.options.length === 0) {
     return { outcome: { outcome: 'cancelled' } };
@@ -399,6 +404,7 @@ async function handleAcpPermissionRequest(
     description: params.toolCall.kind,
     requestId: generateUUID(),
   });
+  permission.catch(() => {});
   let resolveAbort: (() => void) | undefined;
   const aborted = new Promise<undefined>((resolve) => {
     resolveAbort = () => resolve(undefined);
@@ -410,6 +416,7 @@ async function handleAcpPermissionRequest(
   });
 
   if (permissionSignal.aborted) {
+    await onAbandoned?.();
     return { outcome: { outcome: 'cancelled' } };
   }
 
@@ -427,6 +434,10 @@ async function handleAcpPermissionRequest(
   }
 
   return { outcome: { outcome: 'cancelled' } };
+}
+
+function isAcpToolResultMessage(message: SDKMessage): boolean {
+  return message.type === 'user' && (message as SDKUserMessage).parent_tool_use_id != null;
 }
 
 function systemPromptText(systemPrompt: Options['systemPrompt']): string[] {
@@ -705,7 +716,9 @@ export class AcpQueryRunner {
             return {
               onTerminalCreate: async (params: AcpTerminalCreateParams) =>
                 manager.create(
-                  await authorizeAcpTerminalCreate(params, canUseTool, abortController.signal)
+                  await authorizeAcpTerminalCreate(params, canUseTool, abortController.signal, () =>
+                    this.orphanPendingAcpPermission()
+                  )
                 ),
               onTerminalOutput: (params: AcpTerminalOutputParams) => manager.output(params),
               onTerminalWaitForExit: (params: AcpTerminalWaitForExitParams) =>
@@ -717,7 +730,9 @@ export class AcpQueryRunner {
                     onFsRead: (params: AcpFsReadParams) => this.handleFsRead(params, workspace),
                     onFsWrite: async (params: AcpFsWriteParams) =>
                       this.handleFsWrite(
-                        await authorizeAcpFsWrite(params, canUseTool, abortController.signal),
+                        await authorizeAcpFsWrite(params, canUseTool, abortController.signal, () =>
+                          this.orphanPendingAcpPermission()
+                        ),
                         workspace,
                         abortController.signal
                       ),
@@ -737,7 +752,9 @@ export class AcpQueryRunner {
           this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
         onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
         onPermissionRequest: (params) =>
-          handleAcpPermissionRequest(params, canUseTool, abortController.signal),
+          handleAcpPermissionRequest(params, canUseTool, abortController.signal, () =>
+            this.orphanPendingAcpPermission()
+          ),
         ...hostCallbacks,
       });
 
@@ -1131,6 +1148,12 @@ export class AcpQueryRunner {
     await this.ctx.onMarkApiSuccess(message);
   }
 
+  private async orphanPendingAcpPermission(): Promise<void> {
+    try {
+      await this.ctx.askUserQuestionHandler.markQuestionOrphaned();
+    } catch {}
+  }
+
   private async handleFsRead(params: AcpFsReadParams, workspace: string): Promise<AcpFsReadResult> {
     const { workspacePath, segments } = await this.resolveWorkspaceSegments(params.path, workspace);
     return {
@@ -1440,7 +1463,7 @@ export class AcpQueryRunner {
         if (pendingNext) {
           try {
             const result = await pendingNext;
-            if (!result.done) {
+            if (!result.done && isAcpToolResultMessage(result.value)) {
               yield result.value;
             }
           } catch {}
@@ -1469,7 +1492,9 @@ export class AcpQueryRunner {
           if ('expired' in result) break;
           if (result.done) break;
           drained++;
-          yield result.value;
+          if (isAcpToolResultMessage(result.value)) {
+            yield result.value;
+          }
         }
         clearDrainTimer?.();
       }
