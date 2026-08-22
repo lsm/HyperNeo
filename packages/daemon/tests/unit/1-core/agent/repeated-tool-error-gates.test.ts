@@ -245,6 +245,18 @@ describe('decideConsecutiveError', () => {
     });
   });
 
+  it('restarts the streak at 1 for a different fingerprint', () => {
+    const state = makeState({
+      lastError: { toolName: 'Read', fingerprint: 'other' },
+      consecutiveCount: 5,
+    });
+    expect(decideConsecutiveError({ ...base, state, threshold: 10 })).toEqual({
+      action: 'count',
+      lastError: { toolName: 'Read', fingerprint: 'boom' },
+      consecutiveCount: 1,
+    });
+  });
+
   it('intervenes once the streak reaches the threshold', () => {
     const state = makeState({
       lastError: { toolName: 'Read', fingerprint: 'boom' },
@@ -261,6 +273,17 @@ describe('decideConsecutiveError', () => {
       action: 'intervene',
       consecutiveCount: 1,
     });
+  });
+
+  it('cools down instead of intervening when an in-window key reaches the threshold', () => {
+    expect(
+      decideConsecutiveError({
+        ...base,
+        state: makeState(),
+        threshold: 1,
+        lastInterventionAt: 999_000,
+      })
+    ).toEqual({ action: 'cooldown_reset' });
   });
 
   it('resets instead of counting while the key is inside its intervention cooldown', () => {
