@@ -78,8 +78,9 @@ path — the external-events analog replays from the store through
 `handleExternalEvent`, **bypassing any ingestion gate**. That is the correct property:
 config changes must not retroactively alter already-queued events — with the
 retained-row qualification of chain B (§3): rows persisted under an older
-projection config carry their ingestion-time version, and newly accepted
-filters skip incompatible versions rather than re-projecting history.
+projection config persist their projected schema, and newly accepted
+filters apply only to rows whose recorded schema includes their keys rather
+than re-projecting history.
 
 ### Where pilot 1's gates sit
 
@@ -359,14 +360,17 @@ polling sources.
   and its later retryable-duplicate republish would broadcast the stored
   K-less payload without re-projection — silently missing a newly valid
   subscription on K. Since stripped keys are unrecoverable from the projected
-  payload, **every retained row records its projection-config version at
-  ingestion, and newly accepted filters do not apply to incompatible-version
-  rows** — uniformly across recovery routes (review finding, PR #2723):
-  re-projecting rawPayload-carrying rows only on redelivery would make one
-  event ID's payload depend on whether it arrived via GitHub redelivery or via
-  `redispatchRetainedExternalEvents`, so the version rule governs both paths
-  and no route rewrites the canonical row. Defined behavior replaces silent
-  mismatch.
+  payload, **every retained row persists its projected schema** — the key set
+  the projection actually kept — **and a newly accepted filter applies only to
+  rows whose recorded schema includes its referenced keys**, uniformly across
+  recovery routes (review findings, PR #2723): a bare version number cannot be
+  evaluated without retaining version-to-config history, and treating every
+  unequal version as incompatible would skip queued rows after harmless
+  projection changes, retroactively altering them; the self-describing schema
+  distinguishes an older row that includes filter key K from one produced while
+  K was stripped. The rule also governs both recovery routes uniformly
+  (`redispatchRetainedExternalEvents` and GitHub redeliveries) and no route
+  rewrites the canonical row. Defined behavior replaces silent mismatch.
 - **PR A3 (surface):** UI and counters only — the `SpaceExternalEventsSettings`
   toggle UI reusing the write RPC A2 already delivered (review finding, PR #2723;
   A3 adds no RPC surface), plus a suppression counter with its own gate-side
