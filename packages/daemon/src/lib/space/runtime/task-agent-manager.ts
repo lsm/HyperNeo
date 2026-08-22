@@ -3243,12 +3243,13 @@ export class TaskAgentManager {
         ]
       : [{ type: 'text' as const, text: message }];
 
-    const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
+    const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean; inputKind: MessageInputKind } = {
       type: 'user' as const,
       uuid: messageId as UUID,
       session_id: sessionId,
       parent_tool_use_id: null,
       isSynthetic: isSyntheticMessage,
+      inputKind,
       message: {
         role: 'user' as const,
         content: sdkContent,

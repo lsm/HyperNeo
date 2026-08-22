@@ -14,7 +14,7 @@ import {
   withSessionResetCoordination,
 } from './message-delivery';
 import { decideTurnEndFlush, type TurnEndFlushPlan } from './message-delivery-pipeline';
-import type { FlushMessage } from './message-ownership-gates';
+import { type FlushMessage, isTaskFlushInput } from './message-ownership-gates';
 import type { MessageQueue } from './message-queue';
 
 export interface QueryModeHandlerContext {
@@ -121,7 +121,7 @@ export class QueryModeHandler {
         return {
           uuid: msg.uuid as string,
           isUserMessage,
-          isTaskInput: (msg as { isSynthetic?: boolean }).isSynthetic === true,
+          isTaskInput: isTaskFlushInput(msg as { isSynthetic?: boolean; inputKind?: string }),
           flattenedText: isUserMessage ? flattenDeliveryText(msg.message.content ?? '') : null,
         };
       });

@@ -749,6 +749,56 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(context).toEqual(['urgent task']);
   });
 
+  it('does NOT clear when replaying a stranded system recovery row on a reset slot', async () => {
+    const { manager, session } = makeManager({ slotResets: true });
+    let status = 'processing';
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '/compact',
+      true,
+      undefined,
+      'defer',
+      'system'
+    );
+    const stranded = session.saveUserMessage.mock.calls[0][1] as SDKMessage;
+    status = 'idle';
+    const flush = new QueryModeHandler({
+      session: live.session,
+      db: {
+        getUserMessagesByStatus: mock(() => ({
+          messages: [{ ...stranded, dbId: 'db-compact', timestamp: 1 }],
+          total: 1,
+        })),
+        updateMessageStatus: mock(() => {}),
+        getJobQueueRepo: mock(() => ({
+          activeDeliveryMessageUuids: () => new Set<string>(),
+          hasActiveTurnDeliveryJob: () => false,
+        })),
+      },
+      internalEventBus: { publish: mock(async () => {}) },
+      messageQueue: live.messageQueue,
+      logger: { error: mock(() => {}) },
+      ensureQueryStarted: session.ensureStartedMock,
+      slotResetsContext: () => true,
+      clearConversationContext: session.clearMock,
+    } as unknown as QueryModeHandlerContext);
+
+    await flush.handleQueryTrigger();
+
+    expect(session.clearMock).not.toHaveBeenCalled();
+    expect(session.enqueueMock).toHaveBeenCalledWith(expect.any(String), '/compact');
+  });
+
   it('does NOT clear on inject while unconsumed delivered work is pending (#1085)', async () => {
     const { manager, session } = makeManager({
       slotResets: true,
