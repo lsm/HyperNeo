@@ -143,6 +143,40 @@ describe('LimitErrorLlmClassifier', () => {
     expect(prompts).toHaveLength(1);
   });
 
+  it('unblocks the caller and skips the query when a queued lookup is aborted mid-queue', async () => {
+    let releaseFirst: () => void = () => {};
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const prompts: string[] = [];
+    const queryForTesting = ((params: { prompt: string }) => {
+      prompts.push(params.prompt);
+      return (async function* () {
+        await firstGate;
+        yield {
+          type: 'assistant',
+          message: {
+            content: [{ type: 'text', text: '{"is_limit":false,"kind":null,"reset_at":null}' }],
+          },
+        };
+      })();
+    }) as LimitErrorLlmClassifierDeps['queryForTesting'];
+    const { deps } = createDeps('{"is_limit":false,"kind":null,"reset_at":null}');
+    deps.queryForTesting = queryForTesting;
+    const classifier = new LimitErrorLlmClassifier('s1', deps);
+
+    const first = classifier.classify('first distinct queued waf block');
+    const controller = new AbortController();
+    const second = classifier.classify('second distinct queued waf block', controller.signal);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    controller.abort();
+
+    expect(await second).toBeNull();
+    releaseFirst();
+    expect(await first).not.toBeNull();
+    expect(prompts).toHaveLength(1);
+  });
+
   it('skips registry-unavailable providers and classifies via the next available one', async () => {
     const seenProviders: string[] = [];
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');

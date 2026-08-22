@@ -129,8 +129,8 @@ export class LimitErrorLlmClassifier {
     this.logger = new Logger(`LimitErrorLlmClassifier ${sessionId}`);
   }
 
-  async classify(rawText: string): Promise<LlmLimitAssessment | null> {
-    if (!rawText) return null;
+  async classify(rawText: string, signal?: AbortSignal): Promise<LlmLimitAssessment | null> {
+    if (!rawText || signal?.aborted) return null;
     const key = normalizeErrorText(rawText);
     const now = Date.now();
     const cached = assessmentCache.get(key);
@@ -138,12 +138,17 @@ export class LimitErrorLlmClassifier {
       return cached.assessment;
     }
     const pending = inflightClassifications.get(key);
-    if (pending) return pending;
-    const task = runSerialized(() => this.classifyUncached(rawText, now)).finally(() => {
+    if (pending) {
+      return signal ? this.raceWithAbort(pending, signal) : pending;
+    }
+    const task = runSerialized(() => {
+      if (signal?.aborted) return Promise.resolve(null);
+      return this.classifyUncached(rawText, now, signal);
+    }).finally(() => {
       inflightClassifications.delete(key);
     });
     inflightClassifications.set(key, task);
-    const assessment = await task;
+    const assessment = await (signal ? this.raceWithAbort(task, signal) : task);
     evictExpiredAssessments(Date.now());
     if (assessment && !assessment.relative) {
       assessmentCache.set(key, { assessment, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -151,8 +156,37 @@ export class LimitErrorLlmClassifier {
     return assessment;
   }
 
-  private async classifyUncached(rawText: string, now: number): Promise<LlmLimitAssessment | null> {
+  private raceWithAbort(
+    task: Promise<LlmLimitAssessment | null>,
+    signal: AbortSignal
+  ): Promise<LlmLimitAssessment | null> {
+    return new Promise((resolve) => {
+      if (signal.aborted) {
+        resolve(null);
+        return;
+      }
+      const onAbort = () => resolve(null);
+      signal.addEventListener('abort', onAbort, { once: true });
+      task.then(
+        (value) => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(value);
+        },
+        () => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(null);
+        }
+      );
+    });
+  }
+
+  private async classifyUncached(
+    rawText: string,
+    now: number,
+    signal?: AbortSignal
+  ): Promise<LlmLimitAssessment | null> {
     try {
+      if (signal?.aborted) return null;
       const providerId = await this.resolveClassifierProvider();
       if (!providerId) return null;
 
@@ -166,6 +200,10 @@ export class LimitErrorLlmClassifier {
         models.providerModelId
       );
       const abortController = new AbortController();
+      const onOuterAbort = () => abortController.abort();
+      if (signal) {
+        signal.addEventListener('abort', onOuterAbort, { once: true });
+      }
       const abortTimer = setTimeout(
         () => abortController.abort(),
         this.deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -222,6 +260,9 @@ export class LimitErrorLlmClassifier {
         return parseAssessment(payload);
       } finally {
         clearTimeout(abortTimer);
+        if (signal) {
+          signal.removeEventListener('abort', onOuterAbort);
+        }
         providerService.restoreEnvVars(originalEnv);
       }
     } catch (error) {
@@ -245,14 +286,11 @@ export class LimitErrorLlmClassifier {
 
   classifyWithTimeout(rawText: string): Promise<LlmLimitAssessment | null> {
     const timeoutMs = this.deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    return Promise.race([
-      this.classify(rawText),
-      new Promise<null>((resolve) => {
-        const timer = setTimeout(() => resolve(null), timeoutMs);
-        if (typeof timer === 'object' && 'unref' in timer) {
-          timer.unref();
-        }
-      }),
-    ]);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    if (typeof timer === 'object' && 'unref' in timer) {
+      timer.unref();
+    }
+    return this.classify(rawText, controller.signal).finally(() => clearTimeout(timer));
   }
 }
