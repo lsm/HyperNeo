@@ -877,7 +877,8 @@ note.
      independently installs `createPreToolUseHook()`, whose
      `interceptAskUserQuestion` call (`:220–224`) can replace the successor's
      pending resolver through the same shared question state; that hook binds
-     to the run generation and is included in the late-callback pin — and
+     to the **attempt token** (not the run generation, which retries leave
+     unchanged) and is included in the late-callback pin — and
      **ownership is revalidated after the user answers**: an entry-only
      binding does not reject an in-flight request, so a replacement starting
      while the question awaits its answer would receive that answer as
