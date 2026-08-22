@@ -611,8 +611,17 @@ note.
   unconditional status update with no claim token or expected status, so a
   superseded claim can mark the replacement's members `submitted` and halt
   before admitting them, leaving rows the handler treats as already submitted.
-  A claim/expected-state-guarded transition or compensation covers both. Spawn
-  reservation has no analog need here (in-memory startup gate suffices).
+  A claim/expected-state-guarded transition or compensation covers both. And
+  if `ensureQueryStarted` stays inside the staged pass, a query-startup
+  reservation/compensation (or durable dedup) is required after all — the
+  in-memory startup permit neither compensates an already-spawned query after a
+  later stage failure nor deduplicates replay, per the `stagedRun` failure
+  contract; otherwise startup remains a shell-preceding step outside the pass.
+  The admission block's installed resources — `deliveryResponseObserver` and
+  the `waitForIdleTransition` waiter (:1350–1393) — likewise need registered
+  cleanup compensations (a stale observer can attribute the replacement turn's
+  first response to the failed delivery; the waiter can fire against a later
+  idle transition), or their ownership stays in the shell.
 - **Impact/risk:** highest ceiling — this is the repo's recurring fix area
   (delivery duplication, deferred-backlog gaps, park-vs-cancel), and ~500 lines
   of cascade become tables. Highest risk: session lock + job queue + four
