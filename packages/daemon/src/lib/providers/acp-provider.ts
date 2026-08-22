@@ -31,7 +31,6 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
   });
   try {
     await client.initialize();
-    await client.authenticate();
   } finally {
     client.close();
   }

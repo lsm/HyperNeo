@@ -4,7 +4,6 @@ import type { AcpClientOptions } from '../../../../src/lib/acp/acp-client';
 const calls: string[] = [];
 let clientOptions: AcpClientOptions | undefined;
 let initializeError: Error | undefined;
-let authenticateError: Error | undefined;
 
 class MockAcpClient {
   constructor(options: AcpClientOptions) {
@@ -19,7 +18,6 @@ class MockAcpClient {
 
   authenticate = mock(async () => {
     calls.push('authenticate');
-    if (authenticateError) throw authenticateError;
   });
 
   close = mock(() => {
@@ -42,7 +40,6 @@ describe('defaultAcpCommandProbe', () => {
     calls.length = 0;
     clientOptions = undefined;
     initializeError = undefined;
-    authenticateError = undefined;
   });
 
   afterAll(() => {
@@ -67,10 +64,10 @@ describe('defaultAcpCommandProbe', () => {
     expect(clientOptions?.replaceEnv).toBe(true);
   });
 
-  test('completes the handshake before resolving', async () => {
+  test('completes the initialize handshake without authenticating before resolving', async () => {
     await defaultAcpCommandProbe('devin acp');
 
-    expect(calls).toEqual(['initialize', 'authenticate', 'close']);
+    expect(calls).toEqual(['initialize', 'close']);
   });
 
   test('bounds each handshake request by the probe timeout', async () => {
@@ -86,12 +83,5 @@ describe('defaultAcpCommandProbe', () => {
       'agent exited before initialize'
     );
     expect(calls).toEqual(['initialize', 'close']);
-  });
-
-  test('rejects when authentication fails and still closes the client', async () => {
-    authenticateError = new Error('authentication required');
-
-    await expect(defaultAcpCommandProbe('devin acp')).rejects.toThrow('authentication required');
-    expect(calls).toEqual(['initialize', 'authenticate', 'close']);
   });
 });
