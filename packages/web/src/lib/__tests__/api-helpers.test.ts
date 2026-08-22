@@ -1031,6 +1031,89 @@ describe('api-helpers', () => {
     });
   });
 
+  describe('provider operations', () => {
+    function mockConnectedHub(resolveValue: unknown) {
+      const mockHub = { request: vi.fn().mockResolvedValue(resolveValue) };
+      (
+        connectionManager as unknown as {
+          getHubOrConnected: { mockReturnValue: (arg: unknown) => void };
+          getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+          getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+        }
+      ).getHubIfConnected.mockReturnValue(mockHub);
+      return mockHub;
+    }
+
+    describe('updateProvider', () => {
+      it('should update provider with 35000ms timeout', async () => {
+        const mockHub = mockConnectedHub({ success: true, provider: { id: 'p-1' } });
+
+        const result = await apiHelpers.updateProvider('p-1', { displayName: 'ACP Agent' });
+
+        expect(result).toEqual({ success: true, provider: { id: 'p-1' } });
+        expect(mockHub.request).toHaveBeenCalledWith(
+          'providers.update',
+          { id: 'p-1', params: { displayName: 'ACP Agent' }, credentials: undefined },
+          { timeout: 35000 }
+        );
+      });
+    });
+
+    describe('testProvider', () => {
+      it('should test provider with 25000ms timeout', async () => {
+        const mockHub = mockConnectedHub({ healthy: true });
+
+        const result = await apiHelpers.testProvider('p-1');
+
+        expect(result).toEqual({ healthy: true });
+        expect(mockHub.request).toHaveBeenCalledWith(
+          'providers.test',
+          { id: 'p-1' },
+          { timeout: 25000 }
+        );
+      });
+    });
+
+    describe('fetchAcpModels', () => {
+      it('should fetch ACP models with id and command at 30000ms timeout', async () => {
+        const mockHub = mockConnectedHub({ models: [{ id: 'devin-model' }] });
+
+        const result = await apiHelpers.fetchAcpModels('p-1', 'devin acp');
+
+        expect(result).toEqual({ models: [{ id: 'devin-model' }] });
+        expect(mockHub.request).toHaveBeenCalledWith(
+          'providers.fetchAcpModels',
+          { id: 'p-1', command: 'devin acp' },
+          { timeout: 30000 }
+        );
+      });
+
+      it('should forward an empty command as an explicit environment fallback', async () => {
+        const mockHub = mockConnectedHub({ models: [] });
+
+        await apiHelpers.fetchAcpModels('p-1', '');
+
+        expect(mockHub.request).toHaveBeenCalledWith(
+          'providers.fetchAcpModels',
+          { id: 'p-1', command: '' },
+          { timeout: 30000 }
+        );
+      });
+
+      it('should omit the command when not provided', async () => {
+        const mockHub = mockConnectedHub({ models: [] });
+
+        await apiHelpers.fetchAcpModels('p-1');
+
+        expect(mockHub.request).toHaveBeenCalledWith(
+          'providers.fetchAcpModels',
+          { id: 'p-1', command: undefined },
+          { timeout: 30000 }
+        );
+      });
+    });
+  });
+
   describe('Non-blocking pattern', () => {
     it('should throw immediately when not connected (< 10ms)', async () => {
       (

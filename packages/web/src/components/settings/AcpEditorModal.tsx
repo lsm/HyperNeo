@@ -1,5 +1,5 @@
 import { getAcpCommandIdentity } from '@hyperneo/shared/acp';
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import { updateProvider, fetchAcpModels } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { Button } from '../ui/Button.tsx';
@@ -46,12 +46,24 @@ export function AcpEditorModal({
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const activeFetchRef = useRef(0);
   const commandChanged = !acpCommandsEquivalent(command, initialCommand);
+  const currentCommand = command.trim();
+  const persistedModels = !commandChanged
+    ? acpCommandsEquivalent(modelsCommand, initialCommand)
+      ? models
+      : initialModels
+    : acpCommandsEquivalent(modelsCommand, currentCommand) &&
+        fetchedCommand !== null &&
+        acpCommandsEquivalent(fetchedCommand, currentCommand)
+      ? models
+      : [];
 
-  const existingModelIds = new Set((models ?? []).map((m) => m.id));
+  const existingModelIds = new Set((persistedModels ?? []).map((m) => m.id));
   const selectableFetched = fetchedModels?.filter((m) => !existingModelIds.has(m.id)) ?? [];
 
   const handleFetch = async () => {
+    const reqId = ++activeFetchRef.current;
     const trimmedCommand = command.trim();
     setFetching(true);
     setError(null);
@@ -60,6 +72,7 @@ export function AcpEditorModal({
     setSelectedIds([]);
     try {
       const { models: fetched } = await fetchAcpModels(providerId, trimmedCommand || '');
+      if (reqId !== activeFetchRef.current) return;
       if (!acpCommandsEquivalent(trimmedCommand, modelsCommand)) {
         setModels([]);
         setModelsCommand(trimmedCommand);
@@ -67,9 +80,12 @@ export function AcpEditorModal({
       setFetchedModels(fetched);
       setFetchedCommand(trimmedCommand);
     } catch (err) {
+      if (reqId !== activeFetchRef.current) return;
       setError(err instanceof Error ? err.message : 'Failed to fetch models');
     } finally {
-      setFetching(false);
+      if (reqId === activeFetchRef.current) {
+        setFetching(false);
+      }
     }
   };
 
@@ -97,15 +113,7 @@ export function AcpEditorModal({
       await updateProvider(providerId, {
         configJson: JSON.stringify({
           ...(trimmedCommand ? { command: trimmedCommand } : {}),
-          models: !commandChanged
-            ? acpCommandsEquivalent(modelsCommand, initialCommand)
-              ? models
-              : initialModels
-            : acpCommandsEquivalent(modelsCommand, trimmedCommand) &&
-                fetchedCommand !== null &&
-                acpCommandsEquivalent(fetchedCommand, trimmedCommand)
-              ? models
-              : [],
+          models: persistedModels,
         }),
       });
       toast.success(`${providerName} updated`);
@@ -126,7 +134,11 @@ export function AcpEditorModal({
             type="text"
             value={command}
             placeholder="e.g. devin acp"
-            onInput={(e) => setCommand(e.currentTarget.value)}
+            onInput={(e) => {
+              activeFetchRef.current++;
+              setFetching(false);
+              setCommand(e.currentTarget.value);
+            }}
             class="w-full bg-dark-950 border border-dark-700 rounded px-2 py-1.5 text-sm text-gray-100 font-mono focus:outline-none focus:border-blue-500"
           />
           <span class="text-[11px] text-gray-500 mt-1 block">
@@ -194,13 +206,13 @@ export function AcpEditorModal({
             </div>
           )}
 
-          {!models?.length ? (
+          {!persistedModels?.length ? (
             <p class="text-xs text-gray-500 italic">
               No models selected — fetch and add models, or leave empty to use ACP Default.
             </p>
           ) : (
             <div class="space-y-1.5">
-              {models.map((m) => (
+              {persistedModels.map((m) => (
                 <div
                   key={m.id}
                   class="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-dark-900/60 px-3 py-1.5"

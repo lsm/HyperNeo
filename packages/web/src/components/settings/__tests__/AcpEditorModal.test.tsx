@@ -307,6 +307,145 @@ describe('AcpEditorModal', () => {
     });
   });
 
+  it('hides curated models from the list as soon as the command changes', async () => {
+    mockUpdateProvider.mockResolvedValue({ success: true });
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command="old acp"
+        models={[{ id: 'old-model' }]}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />
+    );
+
+    expect(screen.getByText('old-model')).toBeTruthy();
+
+    fireEvent.input(screen.getByDisplayValue('old acp'), { target: { value: 'new acp' } });
+
+    expect(screen.queryByText('old-model')).toBeNull();
+    expect(screen.getByText(/No models selected/)).toBeTruthy();
+  });
+
+  it('restores the initial model list in the display after reverting a fetched command', async () => {
+    mockFetchAcpModels.mockResolvedValue({
+      models: [{ id: 'fetch-model', name: 'Fetched Model' }],
+    });
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command="old acp"
+        models={[{ id: 'old-model' }]}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />
+    );
+
+    const commandInput = screen.getByDisplayValue('old acp');
+    fireEvent.input(commandInput, { target: { value: 'new acp' } });
+    fireEvent.click(screen.getByText('Fetch models'));
+    await waitFor(() => expect(screen.getByText('fetch-model')).toBeTruthy());
+    fireEvent.click(screen.getByText('fetch-model'));
+    fireEvent.click(screen.getByText('Add selected'));
+    expect(screen.getByText('All fetched models are already added.')).toBeTruthy();
+
+    fireEvent.input(commandInput, { target: { value: 'old acp' } });
+
+    expect(screen.getByText('old-model')).toBeTruthy();
+    expect(screen.queryByText('All fetched models are already added.')).toBeNull();
+  });
+
+  it('discards fetch results for a superseded command', async () => {
+    let resolveFetch: (value: { models: Array<{ id: string }> }) => void = () => {};
+    mockFetchAcpModels.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command="old acp"
+        models={[]}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.click(screen.getByText('Fetch models'));
+    fireEvent.input(screen.getByDisplayValue('old acp'), { target: { value: 'new acp' } });
+
+    resolveFetch({ models: [{ id: 'stale-model' }] });
+    await waitFor(() => expect(mockFetchAcpModels).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText('stale-model')).toBeNull();
+    expect(screen.queryByText('1 model found')).toBeNull();
+    expect(screen.queryByText('Failed to fetch models')).toBeNull();
+  });
+
+  it('removes a curated model and persists the removal', async () => {
+    mockUpdateProvider.mockResolvedValue({ success: true });
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command="devin acp"
+        models={[{ id: 'keep-model' }, { id: 'drop-model' }]}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText('Remove drop-model'));
+
+    expect(screen.queryByText('drop-model')).toBeNull();
+    expect(screen.getByText('keep-model')).toBeTruthy();
+
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledWith('acp-1', {
+        configJson: JSON.stringify({
+          command: 'devin acp',
+          models: [{ id: 'keep-model' }],
+        }),
+      });
+    });
+  });
+
+  it('shows the save error and keeps the dialog open when updating fails', async () => {
+    mockUpdateProvider.mockRejectedValue(new Error('Save exploded'));
+    const onSaved = vi.fn();
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command="devin acp"
+        models={[]}
+        onClose={() => {}}
+        onSaved={onSaved}
+      />
+    );
+
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => expect(screen.getByText('Save exploded')).toBeTruthy());
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    const saveButton = screen.getByText('Save changes').closest('button');
+    expect(saveButton?.hasAttribute('disabled')).toBe(false);
+  });
+
   it('reports when discovery returns no models', async () => {
     mockFetchAcpModels.mockResolvedValue({ models: [] });
 
