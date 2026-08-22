@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { WorkflowNodeAgent } from '@hyperneo/shared';
-import { buildSlotOverrides } from '../../../../src/lib/space/runtime/task-agent-manager';
+import { buildSlotOverrides } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
 import { resolveCustomAgentPrompt } from '../../../../src/lib/space/agents/custom-agent';
 import type { SpaceWorkerAgent } from '@hyperneo/shared';
 
