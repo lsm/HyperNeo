@@ -9,8 +9,15 @@ type MergeWorkerResponse = {
   error?: string;
 };
 
+export type MessageSearchMergeStatus =
+  | 'merged'
+  | 'failed'
+  | 'worker-unavailable'
+  | 'timeout'
+  | 'cancelled';
+
 export interface MessageSearchMergeHandle {
-  promise: Promise<void>;
+  promise: Promise<MessageSearchMergeStatus>;
   cancel(): void;
 }
 
@@ -19,19 +26,19 @@ export function runMessageSearchMerge(
   timeoutMs: number = DEFAULT_MESSAGE_SEARCH_MERGE_TIMEOUT_MS
 ): MessageSearchMergeHandle {
   if (typeof Worker === 'undefined') {
-    return { promise: Promise.resolve(), cancel: () => {} };
+    return { promise: Promise.resolve('worker-unavailable'), cancel: () => {} };
   }
-  let finish: () => void = () => {};
-  const promise = new Promise<void>((resolve) => {
+  let finish: (status: MessageSearchMergeStatus) => void = () => {};
+  const promise = new Promise<MessageSearchMergeStatus>((resolve) => {
     let settled = false;
     let worker: Worker | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    finish = () => {
+    finish = (status) => {
       if (settled) return;
       settled = true;
       if (timer !== null) clearTimeout(timer);
       worker?.terminate();
-      resolve();
+      resolve(status);
     };
     try {
       worker = new Worker(new URL('./message-search-merge-worker.ts', import.meta.url).href, {
@@ -41,19 +48,21 @@ export function runMessageSearchMerge(
         const { ok, error } = event.data;
         if (!ok && error && !/no such table/i.test(error)) {
           log.warn('message_search_fts background merge failed:', error);
+          finish('failed');
+          return;
         }
-        finish();
+        finish('merged');
       };
       worker.onerror = (event: ErrorEvent) => {
         log.warn('message_search_fts background merge worker failed:', event.message);
-        finish();
+        finish('worker-unavailable');
       };
-      timer = setTimeout(finish, timeoutMs);
+      timer = setTimeout(() => finish('timeout'), timeoutMs);
       worker.postMessage({ dbPath });
     } catch (error) {
       log.warn('message_search_fts background merge could not start:', error);
-      finish();
+      finish('worker-unavailable');
     }
   });
-  return { promise, cancel: finish };
+  return { promise, cancel: () => finish('cancelled') };
 }

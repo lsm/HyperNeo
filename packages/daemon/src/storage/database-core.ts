@@ -17,6 +17,7 @@ import { Database as BunDatabase } from './sqlite-compat';
 
 const MIGRATION_BACKUP_RETENTION = 3;
 const MIGRATION_BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
+const MAX_MESSAGE_SEARCH_MERGE_WORKER_FAILURES = 3;
 
 export class DatabaseCore {
   private db: BunDatabase;
@@ -26,6 +27,7 @@ export class DatabaseCore {
   private messageSearchMergeInFlight = false;
   private messageSearchMergeClosed = false;
   private messageSearchMergeCancel: (() => void) | null = null;
+  private messageSearchMergeWorkerFailures = 0;
 
   constructor(private dbPath: string) {
     this.db = null as unknown as BunDatabase;
@@ -72,9 +74,20 @@ export class DatabaseCore {
       this.messageSearchMergeInFlight = true;
       const merge = runMessageSearchMerge(this.dbPath);
       this.messageSearchMergeCancel = merge.cancel;
-      void merge.promise.finally(() => {
+      void merge.promise.then((status) => {
         this.messageSearchMergeCancel = null;
         this.messageSearchMergeInFlight = false;
+        if (status === 'worker-unavailable') {
+          this.messageSearchMergeWorkerFailures++;
+          if (this.messageSearchMergeWorkerFailures >= MAX_MESSAGE_SEARCH_MERGE_WORKER_FAILURES) {
+            this.logger.error(
+              'message_search_fts merge worker unavailable after repeated attempts; background merges stopped'
+            );
+            return;
+          }
+        } else {
+          this.messageSearchMergeWorkerFailures = 0;
+        }
         this.scheduleMessageSearchMerge();
       });
     }, 30_000);
