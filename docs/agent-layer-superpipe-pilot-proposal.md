@@ -76,7 +76,15 @@ saves the old attempt's provider values as its own baseline; a guard that then
 skips the stale restore leaves the replacement later restoring those stale
 values instead of the daemon's originals. Provider-environment ownership must
 be serialized across replacements (no apply until the prior restoration
-completes) or made generation-scoped/stacked. The common finalizer shares the flaw at the
+completes) or made generation-scoped/stacked — and **daemon-wide, not
+per-session**: `process.env` is process-global, the mutation happens before
+startup-gate admission (:641–661 vs :686–701), and the gate permits multiple
+concurrent sessions by default, so two overlapping sessions corrupt each other
+regardless of generations (A applies, B snapshots A while applying B, A
+restores the daemon baseline, B then restores "A" — leaving provider A's
+credentials in `process.env`); the remedy is daemon-wide serialization or
+stack ownership across *all* sessions, or eliminating the shared mutation
+(e.g. per-session env passed to the spawn rather than `process.env`). The common finalizer shares the flaw at the
 largest scale: it snapshots staleness once at :1295, then can await the
 provider-service import and `setIdle` before clearing shared environment state,
 consumed-message state, and `ctx.queryPromise` at :1321–1338 — a replacement
