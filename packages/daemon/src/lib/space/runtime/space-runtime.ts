@@ -7646,11 +7646,15 @@ export class SpaceRuntime {
       if (!taskReopenedOutsideRuntime && this.getAvailableTaskSlots(space) <= 0) return;
 
       for (const execution of blockedExecutions) {
+        const bindingAlive =
+          !!execution.agentSessionId &&
+          (this.config.taskAgentManager?.isSessionInMemory(execution.agentSessionId) ?? false);
         this.config.nodeExecutionRepo.update(execution.id, {
           status: 'pending',
           result: null,
           startedAt: null,
           completedAt: null,
+          ...(bindingAlive ? {} : { agentSessionId: null }),
         });
       }
       this.blockedRetryCounts.set(runId, effectiveRetryCount + 1);

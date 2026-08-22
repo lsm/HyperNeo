@@ -58,6 +58,9 @@ function makeFakeAgentSession(
     restartQuery: async () => {
       state.calls.push('restartQuery');
     },
+    handleInterrupt: async () => {
+      state.calls.push('handleInterrupt');
+    },
     startStreamingQuery: async () => {
       state.calls.push('startStreamingQuery');
       state.startSawCallback = typeof state.onMissingWorkflowMcpServers === 'function';
@@ -271,6 +274,10 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(index.get(SUB_SESSION_ID)).toBe(started.agentSession);
     expect(registered.get(SUB_SESSION_ID)).toBe(started.agentSession);
     expect(started.state.calls).toContain('restartQuery');
+    expect(stale.state.calls).toContain('handleInterrupt');
+    const completionCallbacks = (tam as unknown as { completionCallbacks: Map<string, unknown[]> })
+      .completionCallbacks;
+    expect(completionCallbacks.get(SUB_SESSION_ID)).toHaveLength(1);
   });
 
   test('the wired self-heal callback restores node-agent on the session it was invoked with', async () => {

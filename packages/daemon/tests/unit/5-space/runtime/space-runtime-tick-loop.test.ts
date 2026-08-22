@@ -117,6 +117,7 @@ function makeMockTaskAgentManager(
     spawnWorkflowNodeAgent?: (task: unknown) => Promise<string>;
     isExecutionSpawning?: (executionId: string) => boolean;
     isSessionAlive?: (sessionId: string) => boolean;
+    isSessionInMemory?: (sessionId: string) => boolean;
     spawnWorkflowNodeAgentForExecution?: (
       task: unknown,
       space: unknown,
@@ -190,6 +191,7 @@ function makeMockTaskAgentManager(
     isTaskAgentAlive: overrides.isTaskAgentAlive ?? (() => false),
     spawnWorkflowNodeAgent: spawnImpl,
     isExecutionSpawning: overrides.isExecutionSpawning ?? (() => false),
+    isSessionInMemory: overrides.isSessionInMemory ?? (() => false),
     isSessionAlive:
       overrides.isSessionAlive ??
       ((sessionId: string) => {

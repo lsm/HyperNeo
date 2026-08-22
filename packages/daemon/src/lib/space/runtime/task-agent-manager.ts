@@ -2955,7 +2955,10 @@ export class TaskAgentManager {
       return null;
     }
 
-    const workspacePath = this.taskWorktreePaths.get(taskId) ?? space.workspacePath;
+    const workspacePath =
+      this.getTaskWorktreePath(taskId) ??
+      agentSession.getSessionData().workspacePath ??
+      space.workspacePath;
 
     const currentInit = this.resolveCurrentNodeAgentInitForExecution({
       task: parentTask,
@@ -3509,16 +3512,29 @@ export class TaskAgentManager {
 
     const agentSession = target;
     if (this.agentSessionIndex.get(sessionId) !== agentSession) {
+      const displaced = this.agentSessionIndex.get(sessionId);
       log.warn(
         `TaskAgentManager.mcpSelfHeal: adopting the started session instance for ${sessionId} ` +
           `as the canonical in-memory sub-session before healing`
       );
+      if (displaced) {
+        this.detachSessionBookkeeping(sessionId);
+        void displaced.handleInterrupt({ skipDeferredReplay: true }).catch((err) => {
+          log.warn(
+            `TaskAgentManager.mcpSelfHeal: failed to interrupt displaced session instance ` +
+              `${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
       if (!this.subSessions.has(parentTask.id)) {
         this.subSessions.set(parentTask.id, new Map());
       }
       this.subSessions.get(parentTask.id)!.set(sessionId, agentSession);
       this.agentSessionIndex.set(sessionId, agentSession);
       this.config.sessionManager.registerSession(agentSession);
+      this.registerCompletionCallback(sessionId, async () => {
+        await this.handleSubSessionComplete(parentTask.id, execution.workflowNodeId, sessionId);
+      });
     }
 
     await this.ensureRequiredMcpServersAttached(agentSession, {
@@ -3527,7 +3543,10 @@ export class TaskAgentManager {
       agentName: execution.agentName,
       spaceId: parentTask.spaceId,
       workflowRunId: execution.workflowRunId,
-      workspacePath: this.taskWorktreePaths.get(parentTask.id) ?? space.workspacePath,
+      workspacePath:
+        this.getTaskWorktreePath(parentTask.id) ??
+        agentSession.getSessionData().workspacePath ??
+        space.workspacePath,
       workflowNodeId: execution.workflowNodeId,
       phase: 'rehydrate',
     });
