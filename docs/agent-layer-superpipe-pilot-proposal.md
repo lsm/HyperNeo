@@ -675,8 +675,16 @@ note.
      called from `handleCircuitBreakerTrip`), each with its returned-false
      pin — otherwise the shell-retained helpers
      stay unchanged and clients keep receiving notices absent from the DB.
-     Because it edits `acp-query-runner.ts`, **PR 5 sequences after — or
-     explicitly coordinates with — ACP split 8/10** (the collision exemption
+     PR 5 also implements the **ownership-fenced SDK dispatch**: the runner
+     propagates its query generation through `handleSDKMessage` (adding the
+     owner token to `SDKMessageHandlerContext`) and validates it before the
+     shared handler begins its fence, with the late old-generation result
+     after a stop-timeout replacement pinned — the requirement is assigned
+     here because no other step touches the runner/context boundary.
+     Because it edits `acp-query-runner.ts` and `sdk-message-handler.ts`,
+     **PR 5 sequences after — or
+     explicitly coordinates with — ACP split 8/10 and open PR #2543** (the
+     collision exemption
      in §3 covers Chain B's query-runner scope only, and this PR steps
      outside it), and **Chain C's apply PR sequences after this PR**, whose
      fence primitive C's exceptional-exit contract consumes. Without this PR
@@ -1187,9 +1195,17 @@ ACP's pre-apply snapshot and the recursive arms' release-before-recursion, and
 ships concurrency pins for each interleaving named above (cross-session
 overlap, replacement-during-apply, reader-during-window). It lands before or
 with Chain B's apply PRs — and **after (or explicitly coordinating with) ACP
-split 8/10**, which owns `acp-query-runner.ts` around the same `:451–456`
-snapshot/apply region PR 0's ACP handling edits; running concurrently risks
-conflicting or lost ownership changes on that file.
+split 8/10 and open PR #2661**: the split owns `acp-query-runner.ts` around
+the same `:451–456` snapshot/apply region PR 0's ACP handling edits, and #2661
+touches `query-runner.ts`, whose credential-read/apply/copy region PR 0 also
+edits; running concurrently risks conflicting or lost ownership changes. PR 0
+moreover **enrolls or sanitizes env-inheriting spawns**: uncoordinated
+subprocesses launched without an `env` — e.g. the workflow executor's
+user-supplied condition expressions via `Bun.spawn(['sh','-c',…])`
+(workflow-executor.ts:32–37, :127–137) — inherit the active session's API
+keys, tokens, and routing variables during the lease window; every such spawn
+is enrolled, sanitized, or the ambient reads move to an immutable baseline so
+the mutation window can no longer span awaits.
 
 Create chain B first (sequence its apply PRs after #2661 merges), chain C in
 parallel once #2661/#2543 clear, chain A as the wave-2 capstone after #2543
