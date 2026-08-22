@@ -154,6 +154,36 @@ describe('getAcpCommandIdentityDigest', () => {
     );
   });
 
+  test('gates tool-specific user options on their executables', () => {
+    expect(getAcpCommandIdentityDigest('python3 -u agent-a.py')).not.toBe(
+      getAcpCommandIdentityDigest('python3 -u agent-b.py')
+    );
+    expect(getAcpCommandIdentityDigest('pip install --user package-a')).not.toBe(
+      getAcpCommandIdentityDigest('pip install --user package-b')
+    );
+    expect(getAcpCommandIdentityDigest('python3 -c \'print("one")\'')).not.toBe(
+      getAcpCommandIdentityDigest('python3 -c \'print("two")\'')
+    );
+    expect(getAcpCommandIdentityDigest('curl --user admin:topsecret https://a')).toBe(
+      getAcpCommandIdentityDigest('curl --user admin:othersafe https://a')
+    );
+    expect(getAcpCommandIdentityDigest('curl --user=admin:topsecret https://a')).toBe(
+      getAcpCommandIdentityDigest('curl --user=admin:othersafe https://a')
+    );
+    expect(getAcpCommandIdentityDigest('env API_TOKEN=topsecret agent')).toBe(
+      getAcpCommandIdentityDigest('env API_TOKEN=othersafe agent')
+    );
+    expect(getAcpCommandIdentityDigest('env MODE=fast agent')).not.toBe(
+      getAcpCommandIdentityDigest('env MODE=slow agent')
+    );
+    expect(getAcpCommandIdentityDigest("sh -c 'API_TOKEN=topsecret curl https://a'")).toBe(
+      getAcpCommandIdentityDigest("sh -c 'API_TOKEN=othersafe curl https://a'")
+    );
+    expect(getAcpCommandIdentityDigest("sh -c 'export API_TOKEN=topsecret'")).toBe(
+      getAcpCommandIdentityDigest("sh -c 'export API_TOKEN=othersafe'")
+    );
+  });
+
   test('does not swallow the next flag after a valueless secret flag', () => {
     expect(getAcpCommandIdentityDigest('agent --token --verbose one')).not.toBe(
       getAcpCommandIdentityDigest('agent --token --verbose two')
@@ -194,6 +224,14 @@ describe('redactCommandSecrets', () => {
     expect(
       redactCommandSecrets('sh', ['-c', `echo "safe; rm -rf /" && curl --token topsecret`])
     ).toEqual(['-c', `echo "safe; rm -rf /" && curl --token [redacted]`]);
+    expect(redactCommandSecrets('sh', ['-c', `API_TOKEN=topsecret curl https://a`])).toEqual([
+      '-c',
+      `API_TOKEN=[redacted] curl https://a`,
+    ]);
+    expect(redactCommandSecrets('sh', ['-c', `pip install --user package-a`])).toEqual([
+      '-c',
+      `pip install --user package-a`,
+    ]);
   });
 
   test('redisplays shell scripts verbatim when nothing was redacted', () => {

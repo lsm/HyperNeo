@@ -4,14 +4,14 @@ import { parseAcpCommand } from '@hyperneo/shared/acp';
 export { getAcpCommandIdentity, parseAcpCommand } from '@hyperneo/shared/acp';
 
 const SECRET_ARG_NAME_PATTERN =
-  /(?:^|[-_])(?:token|secret|password|passphrase|credential|api[-_]?key|bearer|user)$/i;
+  /(?:^|[-_])(?:token|secret|password|passphrase|credential|api[-_]?key|bearer)$/i;
 
 const SECRET_HEADER_NAME_PATTERN =
   /(?:^|[-_])(?:authorization|auth|cookie|session|token|secret|password|credential|api[-_]?key|bearer)$/i;
 
 const SHELL_COMMAND_NAMES = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 const CURL_COMMAND_NAMES = new Set(['curl']);
-const ENV_COMMAND_NAMES = new Set(['env']);
+const ENV_COMMAND_NAMES = new Set(['env', 'export']);
 
 function commandBaseName(command: string): string {
   return (command.split('/').pop() ?? command).toLowerCase();
@@ -69,25 +69,30 @@ function redactShellCommand(script: string, depth: number): string {
   try {
     const { command, args } = parseAcpCommand(script);
     const redactedArgs = redactCommandSecrets(command, args, depth - 1);
+    const redactedCommand = isSecretEnvAssignment(command)
+      ? `${command.slice(0, command.indexOf('='))}=[redacted]`
+      : command;
+    const replacements: Array<[string, string]> = [];
+    if (redactedCommand !== command) replacements.push([command, redactedCommand]);
+    for (let index = 0; index < redactedArgs.length; index++) {
+      if (redactedArgs[index] !== args[index])
+        replacements.push([args[index], redactedArgs[index]]);
+    }
     let result = script;
     let cursor = 0;
-    let changed = false;
     let missed = false;
-    for (let index = 0; index < redactedArgs.length; index++) {
-      if (redactedArgs[index] === args[index]) continue;
-      const span = result.indexOf(args[index], cursor);
+    for (const [from, to] of replacements) {
+      const span = result.indexOf(from, cursor);
       if (span === -1) {
         missed = true;
         break;
       }
-      result =
-        result.slice(0, span) + redactedArgs[index] + result.slice(span + args[index].length);
-      cursor = span + redactedArgs[index].length;
-      changed = true;
+      result = result.slice(0, span) + to + result.slice(span + from.length);
+      cursor = span + to.length;
     }
-    if (changed && !missed) return result;
-    if (changed) {
-      return [command, ...redactedArgs].map(displayQuote).join(' ');
+    if (replacements.length > 0 && !missed) return result;
+    if (replacements.length > 0) {
+      return [redactedCommand, ...redactedArgs].map(displayQuote).join(' ');
     }
     return script;
   } catch {
@@ -130,6 +135,8 @@ export function redactCommandSecrets(command: string, args: string[], depth = 3)
       if (isSecretArgName(name)) {
         redacted.push(`${name}=[redacted]`);
       } else if (isHeaderArgName(name) && isSecretHeaderValue(value)) {
+        redacted.push(`${name}=[redacted]`);
+      } else if (isCurl && isUserArgName(name)) {
         redacted.push(`${name}=[redacted]`);
       } else {
         redacted.push(arg);
