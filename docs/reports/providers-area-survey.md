@@ -254,7 +254,13 @@ Design (4 PRs):
    deselected editor would re-show defaults — in the generalized curation,
    `[]` must mean "no visible models" (deliberately superseding ACP's legacy
    mapping, with a migration note for existing empty-`models` ACP configs),
-   or the editor must prohibit saving an empty selection. OpenRouter's
+   or the editor must prohibit saving an empty selection. Existing
+   `config_json` writers must be converted to merge their provider-specific
+   field into the stored object rather than replace it — the Kimi region
+   editor currently writes `JSON.stringify({ region })` wholesale
+   (W`components/settings/ProvidersSettings.tsx:204-210`), which would
+   silently erase a saved curation/discovery list on every region change and
+   defeat C3-PR2's restart persistence. OpenRouter's
    env-allowlist (`providerModelAllowlists`)
    migrates onto it later — don't remove in this chain.
 4. **C3-PR4 — picker flow.** Curation applies inside the `model-service` merge
