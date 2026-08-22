@@ -527,6 +527,28 @@ describe('stagedRun declared-key access', () => {
       StagedRunContractError
     );
   });
+
+  test('a prototype-chain value does not satisfy a flow input key', async () => {
+    type Odd = { constructor: string; echo: string };
+    const flow = stagedRun<Odd>(
+      'proto-chain-input',
+      (s) => [
+        s.snapshot({
+          name: 'load',
+          provides: ['echo'],
+          reads: ['constructor'],
+          run: (view) => ({ echo: view.constructor as string }),
+        }),
+        s.halt({ name: 'end', reads: ['echo'], run: () => 'done' }),
+      ],
+      { input: ['constructor'] }
+    );
+    expect(() => flow({})).toThrow(/flow input key "constructor" is missing/);
+    await expect(flow({ constructor: 'own-value' } as unknown as Partial<Odd>)).resolves.toEqual({
+      status: 'completed',
+      result: 'done',
+    });
+  });
 });
 
 describe('stagedRun snapshot contract', () => {

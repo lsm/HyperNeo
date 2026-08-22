@@ -670,7 +670,7 @@ export function stagedRun<S extends object>(
         throw new StagedRunContractError(name, 'flow input must be an object');
       }
       for (const key of inputKeys) {
-        if (input[key] === undefined) {
+        if (input[key] === undefined || !Object.hasOwn(input, key)) {
           throw new StagedRunContractError(name, `flow input key "${key}" is missing`);
         }
       }
