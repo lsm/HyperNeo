@@ -288,6 +288,28 @@ describe('Provider RPC handlers', () => {
       expect(provider.getAcpCommand()).toBe('old acp');
     });
 
+    it('unregisters a live built-in provider when created as disabled', async () => {
+      getProviderRegistry().register(new AcpProvider({}, async () => {}));
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'acp',
+            displayName: 'ACP Agent',
+            kind: 'built_in',
+            authType: 'none',
+            isEnabled: false,
+            configJson: JSON.stringify({ command: 'new acp' }),
+          },
+        },
+        {}
+      )) as { provider: ProviderRecord };
+
+      expect(result.provider.isEnabled).toBe(false);
+      expect(getProviderRegistry().has('acp')).toBe(false);
+    });
+
     it('rolls back the provider row and surfaces keychain guidance when storeApiKey throws KeychainUnavailableError', async () => {
       creds.storeApiKey = mock(async () => {
         throw new KeychainUnavailableError('User interaction is not allowed.');

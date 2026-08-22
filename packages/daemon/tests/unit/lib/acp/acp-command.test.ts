@@ -37,6 +37,22 @@ describe('buildAcpSafeEnv', () => {
       NODE_EXTRA_CA_CERTS: '/certs/internal.pem',
     });
   });
+
+  test('keeps Windows runtime and profile variables required by native agents', () => {
+    const windowsEnv = {
+      USERPROFILE: 'C:\\Users\\devin',
+      APPDATA: 'C:\\Users\\devin\\AppData\\Roaming',
+      LOCALAPPDATA: 'C:\\Users\\devin\\AppData\\Local',
+      TEMP: 'C:\\Users\\devin\\AppData\\Local\\Temp',
+      TMP: 'C:\\Windows\\Temp',
+      SystemRoot: 'C:\\Windows',
+      SystemDrive: 'C:',
+      PATHEXT: '.COM;.EXE;.BAT;.CMD',
+      COMSPEC: 'C:\\Windows\\system32\\cmd.exe',
+    };
+
+    expect(buildAcpSafeEnv(windowsEnv)).toEqual(windowsEnv);
+  });
 });
 
 describe('parseAcpCommand', () => {

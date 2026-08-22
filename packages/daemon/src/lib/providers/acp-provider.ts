@@ -32,7 +32,7 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
   try {
     await client.initialize();
   } finally {
-    client.close();
+    await client.close();
   }
 };
 

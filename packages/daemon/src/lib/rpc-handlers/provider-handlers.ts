@@ -247,6 +247,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
               data.credentials
             );
             await syncProviderToRegistry(record, creds);
+          } else if (record.kind === 'built_in') {
+            markBuiltInProviderDisabled(record.providerId);
+            await removeProviderFromRegistry(record.providerId);
           }
         } catch (err) {
           providerRepo.deleteProvider(record.id);

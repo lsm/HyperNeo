@@ -22,6 +22,12 @@ class MockAcpClient {
 
   close = mock(() => {
     calls.push('close');
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        calls.push('close-done');
+        resolve();
+      }, 5);
+    });
   });
 }
 
@@ -67,7 +73,27 @@ describe('defaultAcpCommandProbe', () => {
   test('completes the initialize handshake without authenticating before resolving', async () => {
     await defaultAcpCommandProbe('devin acp');
 
-    expect(calls).toEqual(['initialize', 'close']);
+    expect(calls).toEqual(['initialize', 'close', 'close-done']);
+  });
+
+  test('waits for client shutdown to finish before resolving', async () => {
+    let probeSettled = false;
+    const pending = defaultAcpCommandProbe('devin acp').then(
+      () => {
+        probeSettled = true;
+      },
+      () => {
+        probeSettled = true;
+      }
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    expect(calls).toContain('close');
+    expect(probeSettled).toBe(false);
+
+    await pending;
+    expect(probeSettled).toBe(true);
+    expect(calls).toEqual(['initialize', 'close', 'close-done']);
   });
 
   test('bounds each handshake request by the probe timeout', async () => {
@@ -82,6 +108,6 @@ describe('defaultAcpCommandProbe', () => {
     await expect(defaultAcpCommandProbe('false acp')).rejects.toThrow(
       'agent exited before initialize'
     );
-    expect(calls).toEqual(['initialize', 'close']);
+    expect(calls).toEqual(['initialize', 'close', 'close-done']);
   });
 });
