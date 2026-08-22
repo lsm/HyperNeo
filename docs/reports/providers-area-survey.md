@@ -75,10 +75,14 @@ Each defect below is stuck until one of those three things happens.
   `models.list {forceRefresh:true}` (the Models settings refresh button)
   bypasses the marker entirely by calling `refreshModels` directly — manual
   recovery paths exist; what's missing is any **automatic** retry.
-- `refreshModels` additionally refuses to shrink the cache (`:320-324`), so a
-  provider missing at build time never re-enters; the only residual path is the
-  4-hour TTL background refresh (`:27`, `:200-204`) — "never" to a user sitting
-  at the picker.
+- The shrink-guard in `refreshModels` (`:320-324`) is **not** the re-entry
+  blocker: it only keeps a *currently cached* provider listed when a degraded
+  refresh returns fewer models — recovery makes the merged list larger, the
+  `previousModels.length > mergedModels.length` condition is false, and the
+  recovered list installs. What blocks re-entry is that the one-shot marker
+  means no refresh runs at all on ordinary cached requests, leaving the 4-hour
+  TTL background refresh (`:27`, `:200-204`) as the only automatic path —
+  "never" to a user sitting at the picker.
 
 ### Cause C (why models go missing at build time): seven providers throw out of `getModels()` on transient upstream failure
 
