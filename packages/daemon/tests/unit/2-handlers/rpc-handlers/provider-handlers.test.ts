@@ -239,6 +239,31 @@ describe('Provider RPC handlers', () => {
         else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
       }
     });
+
+    it('resolves an empty-string command through the environment fallback', async () => {
+      const originalCommand = process.env.HYPERNEO_ACP_COMMAND;
+      process.env.HYPERNEO_ACP_COMMAND = 'hyperneo-env-acp-binary';
+      const acp = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'hyperneo-missing-acp-binary' }),
+      });
+      const handlers = setup();
+
+      try {
+        await expect(
+          handlers.get('providers.fetchAcpModels')!({ id: acp.id, command: '' }, {})
+        ).rejects.toThrow('hyperneo-env-acp-binary');
+        await expect(handlers.get('providers.fetchAcpModels')!({ id: acp.id }, {})).rejects.toThrow(
+          'hyperneo-missing-acp-binary'
+        );
+      } finally {
+        if (originalCommand === undefined) delete process.env.HYPERNEO_ACP_COMMAND;
+        else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
+      }
+    });
   });
 
   describe('providers.create', () => {
