@@ -12,6 +12,7 @@ import { syncProviderToRegistry, removeProviderFromRegistry } from '../providers
 import { getProviderRegistry } from '../providers/registry.js';
 import { markBuiltInProviderDisabled } from '../providers/factory.js';
 import { AcpProvider } from '../providers/acp-provider.js';
+import { fetchAcpModels } from '../acp/acp-model-fetcher.js';
 import { parseAcpCommand } from '../acp/acp-command.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -202,6 +203,26 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     const available = provider ? await provider.isAvailable() : false;
     return { provider: { ...record, available } };
   });
+
+  messageHub.onRequest(
+    'providers.fetchAcpModels',
+    async (data: { id: string; command?: string }) => {
+      const record = providerRepo.getProvider(data.id);
+      if (!record) throw new Error(`Provider ${data.id} not found`);
+      if (record.providerId !== 'acp')
+        throw new Error(`Provider ${data.id} is not an ACP provider`);
+      if (data.command !== undefined) {
+        if (typeof data.command !== 'string') throw new Error('ACP command must be a string');
+        if (!data.command.trim()) throw new Error('ACP command is required');
+        if (data.command.length > MAX_JSON_FIELD_LEN)
+          throw new Error(`ACP command must be ≤ ${MAX_JSON_FIELD_LEN} chars`);
+      }
+      const registered = getProviderRegistry().get('acp');
+      const provider = registered instanceof AcpProvider ? registered : new AcpProvider();
+      const models = await fetchAcpModels(provider, { command: data.command });
+      return { models };
+    }
+  );
 
   messageHub.onRequest(
     'providers.create',

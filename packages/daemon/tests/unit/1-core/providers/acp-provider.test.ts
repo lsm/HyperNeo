@@ -185,6 +185,106 @@ describe('AcpProvider', () => {
     });
   });
 
+  describe('setAcpModels', () => {
+    it('should expose curated models from getModels', async () => {
+      provider.setAcpCommand('devin acp');
+      provider.setAcpModels([{ id: 'devin-model-a', name: 'Model A' }, { id: 'devin-model-b' }]);
+
+      const models = await provider.getModels();
+
+      expect(models.map((m) => m.id)).toEqual(['devin-model-a', 'devin-model-b']);
+      expect(models[0].name).toBe('Model A');
+      expect(models[1].name).toBe('devin-model-b');
+      expect(models[0].provider).toBe('acp');
+    });
+
+    it('should probe the command during explicit health checks', async () => {
+      let calls = 0;
+      const probed = new AcpProvider(process.env, async () => {
+        calls++;
+      });
+      probed.setAcpCommand('devin acp');
+      probed.setAcpModels([{ id: 'devin-model-a' }]);
+
+      await probed.verifyCommandAvailable();
+
+      expect(calls).toBe(1);
+    });
+
+    it('should surface command probe failures despite curated models', async () => {
+      const probed = new AcpProvider(process.env, async () => {
+        throw new Error('probe failed');
+      });
+      probed.setAcpCommand('broken acp');
+      probed.setAcpModels([{ id: 'devin-model-a' }]);
+
+      await expect(probed.verifyCommandAvailable()).rejects.toThrow('probe failed');
+      await expect(probed.getModels()).rejects.toThrow('probe failed');
+    });
+
+    it('should fall back to defaults when curated list is cleared', async () => {
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
+      provider.setAcpModels([{ id: 'devin-model-a' }]);
+      provider.setAcpModels(undefined);
+
+      const models = await provider.getModels();
+
+      expect(models[0].id).toBe('acp-default');
+    });
+
+    it('should not be overwritten by live config negotiation', () => {
+      provider.setAcpCommand('devin acp');
+      provider.setAcpModels([{ id: 'devin-model-a' }]);
+      provider.setConfigOptions([
+        {
+          id: 'model',
+          name: 'Model',
+          type: 'select',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [{ name: 'Sonnet', value: 'sonnet' }],
+        },
+      ]);
+
+      expect(provider.getCachedModels()?.map((m) => m.id)).toEqual(['devin-model-a']);
+    });
+
+    it('should preserve default-only curation during live config negotiation', () => {
+      provider.setAcpCommand('devin acp');
+      provider.setAcpModels([]);
+      provider.setConfigOptions([
+        {
+          id: 'model',
+          name: 'Model',
+          type: 'select',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [{ name: 'Sonnet', value: 'sonnet' }],
+        },
+      ]);
+
+      expect(provider.getCachedModels()?.map((m) => m.id)).toEqual(['acp-default']);
+    });
+
+    it('should own curated model ids', () => {
+      provider.setAcpCommand('devin acp');
+      provider.setAcpModels([{ id: 'devin-model-a' }]);
+
+      expect(provider.ownsModel('devin-model-a')).toBe(true);
+      expect(provider.ownsModel('acp-default')).toBe(true);
+    });
+
+    it('should survive clearModelCache (e.g. model refresh)', async () => {
+      provider.setAcpCommand('devin acp');
+      provider.setAcpModels([{ id: 'devin-model-a' }]);
+      provider.clearModelCache();
+
+      const models = await provider.getModels();
+
+      expect(models.map((m) => m.id)).toEqual(['devin-model-a']);
+    });
+  });
+
   describe('getContextWindow', () => {
     it('should return default context window when env is not set', () => {
       expect(provider.getContextWindow()).toBe(200000);

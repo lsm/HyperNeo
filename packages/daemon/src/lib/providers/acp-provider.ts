@@ -16,6 +16,11 @@ const ACP_PROBE_TIMEOUT_MS = 10_000;
 
 export type AcpCommandProbe = (command: string, timeoutMs?: number) => Promise<void>;
 
+export interface AcpConfiguredModel {
+  id: string;
+  name?: string;
+}
+
 export const defaultAcpCommandProbe: AcpCommandProbe = async (
   commandLine: string,
   timeoutMs: number = ACP_PROBE_TIMEOUT_MS
@@ -79,12 +84,14 @@ export class AcpProvider implements Provider {
   ];
 
   private cachedModels: ModelInfo[] | null = null;
+  private cachedModelsCommandIdentity: string | undefined;
 
   private lastProbeAt = 0;
   private lastProbeKey: string | undefined;
   private static readonly PROBE_TTL_MS = 30_000;
 
   private commandOverride: string | undefined;
+  private curatedModels: AcpConfiguredModel[] | undefined;
 
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
@@ -127,6 +134,39 @@ export class AcpProvider implements Provider {
     return command ? getAcpCommandIdentity(command) : undefined;
   }
 
+  setAcpModels(models: AcpConfiguredModel[] | undefined): void {
+    this.curatedModels = models;
+    this.rebuildModelsFromCurated();
+  }
+
+  private rebuildModelsFromCurated(): void {
+    const commandIdentity = this.getCommandIdentity();
+    if (commandIdentity && this.curatedModels !== undefined) {
+      this.cachedModels =
+        this.curatedModels.length > 0
+          ? this.curatedModels.map((model) => ({
+              id: model.id,
+              name: model.name ?? model.id,
+              alias: model.id,
+              family: 'acp',
+              provider: 'acp',
+              contextWindow: this.getContextWindow(),
+              description: `ACP model ${model.name ?? model.id}`,
+              releaseDate: '2026-01-01',
+              available: true,
+              preferContextWindowMetadata: false,
+            }))
+          : AcpProvider.MODELS.map((model) => ({
+              ...model,
+              contextWindow: this.getContextWindow(),
+            }));
+      this.cachedModelsCommandIdentity = commandIdentity;
+    } else {
+      this.cachedModels = null;
+      this.cachedModelsCommandIdentity = undefined;
+    }
+  }
+
   getContextWindow(): number {
     return parseContextWindow(this.env[ACP_CONTEXT_WINDOW_ENV_VAR]);
   }
@@ -158,15 +198,20 @@ export class AcpProvider implements Provider {
   }
 
   async getModels(): Promise<ModelInfo[]> {
-    if (!this.isAvailable()) {
+    const commandIdentity = this.getCommandIdentity();
+    if (!commandIdentity) {
       this.clearModelCache();
       return [];
     }
-    if (this.cachedModels) {
-      return this.cachedModels;
+    if (this.cachedModelsCommandIdentity !== commandIdentity) {
+      this.rebuildModelsFromCurated();
     }
 
     await this.verifyCommandAvailable();
+
+    if (this.cachedModels) {
+      return this.cachedModels;
+    }
 
     const contextWindow = this.getContextWindow();
     return AcpProvider.MODELS.map((model) => ({
@@ -177,6 +222,7 @@ export class AcpProvider implements Provider {
 
   setCachedModels(models: ModelInfo[]): void {
     this.cachedModels = models;
+    this.cachedModelsCommandIdentity = this.getCommandIdentity();
   }
 
   getCachedModels(): ModelInfo[] | null {
@@ -184,6 +230,7 @@ export class AcpProvider implements Provider {
   }
 
   setConfigOptions(configOptions: AcpConfigOption[]): void {
+    if (this.curatedModels !== undefined) return;
     const modelOption = configOptions.find((option) => option.category === 'model');
     if (!modelOption) {
       this.clearModelCache();
@@ -202,10 +249,11 @@ export class AcpProvider implements Provider {
       available: true,
       preferContextWindowMetadata: false,
     }));
+    this.cachedModelsCommandIdentity = this.getCommandIdentity();
   }
 
   clearModelCache(): void {
-    this.cachedModels = null;
+    this.rebuildModelsFromCurated();
   }
 
   ownsModel(modelId: string): boolean {
@@ -236,6 +284,8 @@ export class AcpProvider implements Provider {
   }
 }
 
-function flattenModelChoices(option: AcpConfigOption): Array<{ name: string; value: string }> {
+export function flattenModelChoices(
+  option: AcpConfigOption
+): Array<{ name: string; value: string }> {
   return option.options.flatMap((entry) => ('options' in entry ? entry.options : [entry]));
 }
