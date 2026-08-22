@@ -112,7 +112,14 @@ startup-timeout, message-not-found, and transient arms recurse at `:967`,
 acquire it before its credential reads, a self-deadlock; the provider-5xx arm
 already restores at `:1116–1123` before recursing, and the other recursive
 arms release/transfer ownership before recursion (pinned ordering) or the
-lease is explicitly reentrant. — and
+lease is explicitly reentrant. Ambient credential **readers** join the
+coordination too: `AnthropicProvider.isAvailable()` reads `process.env`
+directly (anthropic-provider.ts:99–110) and is called outside any ownership
+boundary (auth-handlers.ts:73–86, provider-handlers.ts:187–208,
+model-service.ts:183–188), so while a non-Anthropic session holds the window
+those calls can report Anthropic authenticated on another provider's temporary
+token — or unavailable while its baseline is cleared; ambient provider-auth
+readers acquire the same lease or read an immutable daemon baseline. — and
 **the coordinator must live at the shared `ProviderService` boundary, not in
 QueryRunner**: the same global environment has other concurrent owners —
 `acp-query-runner.ts:456` (`applyEnvVarsToProcessForSession`) and
