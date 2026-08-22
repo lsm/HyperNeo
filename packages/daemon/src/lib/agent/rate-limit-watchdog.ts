@@ -1,14 +1,16 @@
 import type { FallbackModelEntry, MessageContent } from '@hyperneo/shared';
-import type { ProcessingStateManager } from './processing-state-manager';
+import { Logger } from '../logger';
 import {
   BACKOFF_LADDER_MS,
+  type CooldownDecision,
   classifyLimitKind,
   computeCooldown,
   entryKey,
+  MAX_RESET_HORIZON_MS,
   selectNextFallback,
-  type CooldownDecision,
 } from './fallback-recovery';
-import { Logger } from '../logger';
+import { cooldownFromReset, type LimitRetryHint } from './limit-error-classifier';
+import type { ProcessingStateManager } from './processing-state-manager';
 
 export interface RateLimitWatchdogConfig {
   cooldownMs: number;
@@ -84,6 +86,9 @@ export class RateLimitWatchdog {
   private startupExhausted = false;
   private bannerCancelled = false;
   private episodeMessageUuid: string | null = null;
+  private lastHint: LimitRetryHint | null = null;
+  private billingPauseSurfaced = false;
+  private retryCallbackInFlight = false;
 
   constructor(
     sessionId: string,
@@ -123,12 +128,14 @@ export class RateLimitWatchdog {
 
   async scheduleRetry(
     errorMessage: string,
-    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
+    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
+    hint?: LimitRetryHint
   ): Promise<boolean> {
     const entryGeneration = this.generation;
 
     this.cancelCooldownTimer();
     this.lastErrorMessage = errorMessage;
+    if (hint) this.lastHint = hint;
 
     if (!lastUserMessage) {
       this.logger.warn('Cannot schedule rate limit recovery: no user message to retry.');
@@ -144,6 +151,8 @@ export class RateLimitWatchdog {
       this.startupRetries = 0;
       this.startupExhausted = false;
       this.bannerCancelled = false;
+      this.billingPauseSurfaced = false;
+      this.lastHint = hint ?? null;
     }
 
     const { provider, model } = this.deps.getCurrentModel();
@@ -192,7 +201,24 @@ export class RateLimitWatchdog {
       );
     }
 
-    const decision = computeCooldown(errorMessage, this.retryCount);
+    if (this.lastHint?.billingTerminal) {
+      this.logger.warn(
+        `Billing-cycle limit with no available fallback; surfacing instead of cooling down. ` +
+          `Error: ${errorMessage}`
+      );
+      return false;
+    }
+
+    const now = Date.now();
+    const hintedReset = this.lastHint?.resetAtMs ?? null;
+    const usableHintedReset =
+      hintedReset !== null && hintedReset > now && hintedReset <= now + MAX_RESET_HORIZON_MS
+        ? hintedReset
+        : null;
+    const decision =
+      usableHintedReset !== null
+        ? cooldownFromReset(usableHintedReset, now)
+        : computeCooldown(errorMessage, this.retryCount, now);
 
     if (!decision.freeWait && this.retryCount >= this.config.maxAutoRetries) {
       this.logger.warn(
@@ -221,7 +247,7 @@ export class RateLimitWatchdog {
     decision: CooldownDecision,
     episodeGeneration: number
   ): Promise<void> {
-    const kind = classifyLimitKind(errorMessage, decision);
+    const kind = this.lastHint?.kind ?? classifyLimitKind(errorMessage, decision);
     this.limitKind = kind;
 
     const retryAt = decision.retryAtMs;
@@ -268,6 +294,15 @@ export class RateLimitWatchdog {
 
   private async fireCooldownRetry(errorMessage: string): Promise<void> {
     const entryGeneration = this.generation;
+    this.retryCallbackInFlight = true;
+    try {
+      await this.runCooldownRetry(errorMessage, entryGeneration);
+    } finally {
+      this.retryCallbackInFlight = false;
+    }
+  }
+
+  private async runCooldownRetry(errorMessage: string, entryGeneration: number): Promise<void> {
     if (!this.retryCallback) {
       if (entryGeneration === this.generation) this.notifyResume();
       return;
@@ -342,6 +377,7 @@ export class RateLimitWatchdog {
     }
 
     let ok = false;
+    this.retryCallbackInFlight = true;
     try {
       ok = await this.deps.switchAndRetry(lastUserMessage, entry, episodeGeneration);
     } catch (err) {
@@ -351,6 +387,7 @@ export class RateLimitWatchdog {
       );
       ok = false;
     } finally {
+      this.retryCallbackInFlight = false;
       this.fallbackPending = false;
     }
 
@@ -373,16 +410,48 @@ export class RateLimitWatchdog {
     this.triedKeys.add(`${entry.provider}/${canonical}`);
     if (this.lastUserMessage) {
       try {
-        const scheduled = await this.scheduleRetry(this.lastErrorMessage, this.lastUserMessage);
+        const scheduled = await this.scheduleRetry(
+          this.lastErrorMessage,
+          this.lastUserMessage,
+          this.lastHint ?? undefined
+        );
         if (!scheduled) {
-          this.logger.warn(
-            'Fallback re-entry returned false (budget exhausted); scheduling a deferred cooldown.'
-          );
-          await this.scheduleCooldown(
-            this.lastErrorMessage,
-            computeCooldown(this.lastErrorMessage, this.retryCount),
-            episodeGeneration
-          );
+          if (this.lastHint?.billingTerminal) {
+            if (episodeGeneration !== this.generation) {
+              this.logger.info(
+                'Billing surfacing aborted (episode superseded) after fallback re-entry failed.'
+              );
+              return;
+            }
+            this.logger.warn(
+              'Billing-cycle limit persisted after the fallback switch failed; ' +
+                'surfacing a manual-retry pause instead of abandoning the request.'
+            );
+            this.limitKind = this.lastHint.kind ?? 'usage_limit';
+            this.startupExhausted = true;
+            await this.stateManager.setRateLimitCooldown({
+              retryCount: this.retryCount,
+              maxRetries: this.config.maxAutoRetries,
+              retryAt: Date.now(),
+            });
+            if (episodeGeneration !== this.generation) {
+              this.logger.info(
+                'Episode superseded during billing pause state write; not publishing pause.'
+              );
+              return;
+            }
+            this.notifyPause({ kind: this.limitKind, reason: 'billing-terminal' });
+            this.billingPauseSurfaced = true;
+          } else {
+            this.logger.warn(
+              'Fallback re-entry returned false (budget exhausted); scheduling a deferred cooldown.'
+            );
+            await this.scheduleCooldown(
+              this.lastErrorMessage,
+              computeCooldown(this.lastErrorMessage, this.retryCount),
+              episodeGeneration
+            );
+          }
         }
       } catch (err) {
         this.logger.error('Fallback re-entry rejected; scheduling a deferred cooldown:', err);
@@ -402,6 +471,7 @@ export class RateLimitWatchdog {
     this.cancelCooldownTimer();
     this.fallbackPending = false;
     this.startupExhausted = false;
+    this.billingPauseSurfaced = false;
     this.episodeMessageUuid = null;
     this.lastUserMessage = null;
     if (notifyResume) {
@@ -448,6 +518,7 @@ export class RateLimitWatchdog {
       this.startupExhausted = false;
       this.startupRetries = 0;
     }
+    this.billingPauseSurfaced = false;
 
     this.logger.info(
       `Immediate retry triggered (step ${this.retryCount}/${this.config.maxAutoRetries}).`
@@ -462,11 +533,13 @@ export class RateLimitWatchdog {
     this.startupRetries = 0;
     this.startupExhausted = false;
     this.bannerCancelled = false;
+    this.billingPauseSurfaced = false;
     this.lastUserMessage = null;
     this.lastErrorMessage = '';
     this.triedKeys.clear();
     this.chain = null;
     this.limitKind = null;
+    this.lastHint = null;
   }
 
   private getRemainingMs(): number {
@@ -479,6 +552,25 @@ export class RateLimitWatchdog {
 
   isPending(): boolean {
     return this.cooldownTimer !== null;
+  }
+
+  isRecoveryPending(): boolean {
+    return (
+      this.cooldownTimer !== null ||
+      this.fallbackPending ||
+      this.billingPauseSurfaced ||
+      this.retryCallbackInFlight ||
+      this.startupExhausted
+    );
+  }
+
+  isManualRecoveryPause(): boolean {
+    return (
+      this.cooldownTimer === null &&
+      !this.fallbackPending &&
+      !this.retryCallbackInFlight &&
+      (this.startupExhausted || this.billingPauseSurfaced)
+    );
   }
 
   isRateLimitBannerCancelled(): boolean {

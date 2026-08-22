@@ -448,6 +448,20 @@ describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
     expect(h.order).toEqual([]);
   });
 
+  test('single-agent node with a renamed sole slot is a permanent rejection even though slot lookup resolves the sole slot', async () => {
+    const h = makeSpawnHarness({
+      workflow: makeWorkflow([
+        { id: NODE_ID, agents: [{ agentId: AGENT_ID, name: 'renamed-slot' }] },
+      ]),
+    });
+
+    await expect(h.spawn()).rejects.toBeInstanceOf(PermanentSpawnError);
+    await expect(h.spawn()).rejects.toThrow(
+      `Agent slot ${AGENT_NAME} no longer exists on workflow node ${NODE_ID}`
+    );
+    expect(h.order).toEqual([]);
+  });
+
   test('task-status validation precedes workflow validation', async () => {
     const h = makeSpawnHarness({
       taskStatus: 'cancelled',

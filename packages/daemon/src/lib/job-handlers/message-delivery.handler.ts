@@ -118,6 +118,10 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         deps.jobQueue.requeue(job.id, result.retryAt, job.claimToken);
         return { parked: 'sdk_resume_choice', retryAt: result.retryAt };
       }
+      if (result.outcome === 'recovery_pending') {
+        deps.jobQueue.requeue(job.id, result.retryAt, job.claimToken);
+        return { parked: 'limit_recovery', retryAt: result.retryAt };
+      }
       if (result.outcome === 'aborted') {
         await session.settleSkippedDelivery?.(payload.messageUuid);
         return { outcome: 'aborted' };

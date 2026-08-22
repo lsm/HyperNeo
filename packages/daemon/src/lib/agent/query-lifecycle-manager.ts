@@ -505,22 +505,53 @@ export class QueryLifecycleManager {
   async startQueryAndEnqueue(
     messageId: string,
     messageContent: string | MessageContent[],
-    episodeGeneration?: number
+    episodeGeneration?: number,
+    options?: { prepend?: boolean }
   ): Promise<void> {
     const { session, messageQueue, stateManager, internalEventBus } = this.ctx;
 
-    const queryStartResult = await this.ensureQueryStarted();
+    if (options?.prepend) {
+      await stateManager.setQueued(messageId);
+      void messageQueue
+        .enqueueWithId(messageId, messageContent, false, { prepend: true })
+        .catch((error) => this.handleQueuedMessageFailure(messageId, messageContent, error))
+        .catch((handlerError) => {
+          this.logger.warn('Failed to handle queued message delivery error', handlerError);
+        });
+    }
+
+    let queryStartResult: EnsureQueryStartedResult;
+    try {
+      queryStartResult = await this.ensureQueryStarted();
+    } catch (error) {
+      if (options?.prepend) {
+        messageQueue.remove(messageId);
+      }
+      throw error;
+    }
     if (
       episodeGeneration !== undefined &&
       this.ctx.isRateLimitEpisodeSuperseded?.(episodeGeneration)
     ) {
       this.logger.info(
-        `startQueryAndEnqueue: aborting enqueue of ${messageId} ` +
+        `startQueryAndEnqueue: aborting retry of ${messageId} ` +
           `(rate-limit episode superseded during query startup).`
       );
+      if (messageQueue.remove(messageId)) {
+        this.logger.info(
+          `startQueryAndEnqueue: removed superseded retry message ${messageId} from the queue.`
+        );
+      }
       return;
     }
     if (queryStartResult === 'blocked') {
+      if (options?.prepend) {
+        messageQueue.remove(messageId);
+        throw new Error(
+          `Rate limit retry of ${messageId} is blocked on sdk_resume_choice; ` +
+            `not reporting the recovery query as started.`
+        );
+      }
       await stateManager.setQueued(messageId);
       this.logger.debug(
         `startQueryAndEnqueue: session ${session.id} is blocked on sdk_resume_choice; ` +
@@ -531,6 +562,14 @@ export class QueryLifecycleManager {
     if (!messageQueue.isRunning() || !this.ctx.queryPromise) {
       throw new Error('Agent query did not start; message remains queued for retry.');
     }
+
+    if (options?.prepend) {
+      internalEventBus.publish('message.sent', { sessionId: session.id }).catch((error) => {
+        this.logger.warn('Failed to emit message.sent event', error);
+      });
+      return;
+    }
+
     await stateManager.setQueued(messageId);
 
     try {

@@ -1028,6 +1028,131 @@ describe('AgentSession', () => {
       expect(retrySpy).toHaveBeenCalledTimes(1);
     });
 
+    it('driveDeliveryTurn parks instead of reopening while limit recovery is pending', async () => {
+      const retrySpy = mock(() => 'db-1');
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
+        hasTerminalResultAfter: mock(() => false),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryRetryableByUuid: retrySpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const cooldownRetryAt = Date.now() + 60 * 60 * 1000;
+      const watchdog = (agentSession as unknown as { rateLimitWatchdog: unknown })
+        .rateLimitWatchdog as {
+        isRecoveryPending: () => boolean;
+        getState: () => { retryAt: number | null };
+      };
+      watchdog.isRecoveryPending = () => true;
+      watchdog.getState = mock(() => ({ retryAt: cooldownRetryAt })) as never;
+
+      await agentSession.stateManager.setProcessing('uuid-park');
+      const drive = agentSession.driveDeliveryTurn('uuid-park', 'hello', null, true, () => true);
+      await agentSession.stateManager.setIdle();
+      const result = await drive;
+
+      expect(result).toEqual({ outcome: 'recovery_pending', retryAt: cooldownRetryAt });
+      expect(retrySpy).not.toHaveBeenCalled();
+    });
+
+    it('driveDeliveryTurn parks a manual-only pause on a long horizon without short polling', async () => {
+      const retrySpy = mock(() => 'db-1');
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
+        hasTerminalResultAfter: mock(() => false),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryRetryableByUuid: retrySpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const before = Date.now();
+      const watchdog = (agentSession as unknown as { rateLimitWatchdog: unknown })
+        .rateLimitWatchdog as {
+        isRecoveryPending: () => boolean;
+        isManualRecoveryPause: () => boolean;
+        getState: () => { retryAt: number | null };
+      };
+      watchdog.isRecoveryPending = () => true;
+      watchdog.isManualRecoveryPause = () => true;
+      watchdog.getState = mock(() => ({ retryAt: null })) as never;
+
+      await agentSession.stateManager.setProcessing('uuid-manual-park');
+      const drive = agentSession.driveDeliveryTurn(
+        'uuid-manual-park',
+        'hello',
+        null,
+        true,
+        () => true
+      );
+      await agentSession.stateManager.setIdle();
+      const result = (await drive) as { outcome: string; retryAt: number };
+
+      expect(result.outcome).toBe('recovery_pending');
+      expect(result.retryAt).toBeGreaterThanOrEqual(before + 4 * 60_000);
+      expect(retrySpy).not.toHaveBeenCalled();
+    });
+
+    it('driveDeliveryTurn reopens a consumed reclaim immediately when no query or recovery owns it', async () => {
+      const retrySpy = mock(() => 'db-1');
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
+        hasTerminalResultAfter: mock(() => false),
+        hasRecoveryInterceptedResultAfter: mock(() => true),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryRetryableByUuid: retrySpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+
+      await agentSession.stateManager.setProcessing('uuid-reclaim');
+      const drive = agentSession.driveDeliveryTurn('uuid-reclaim', 'hello', null, true, () => true);
+      const error = await drive.catch((caught) => caught);
+
+      expect(error).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
+      expect(error).toMatchObject({ message: 'Turn ended without a response' });
+      expect(retrySpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancelRateLimitRetry cancels the parked delivery for the episode message', async () => {
+      const cancelDelivery = mock(() => true);
+      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);
+      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        cancel: mock(() => {}),
+        getState: mock(() => ({
+          lastUserMessage: { uuid: 'msg-episode', content: 'hi' },
+        })),
+      } as never;
+
+      agentSession.cancelRateLimitRetry();
+
+      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
+    });
+
     it('driveDeliveryTurn makes a terminal turn error non-retryable without reopening', async () => {
       const retrySpy = mock(() => 'db-terminal');
       mockDb.getSDKMessageRepo = mock(() => ({
@@ -2773,7 +2898,12 @@ describe('AgentSession', () => {
 
       await agentSession.startQueryAndEnqueue('msg-id', 'test content');
 
-      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', 'test content', undefined);
+      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith(
+        'msg-id',
+        'test content',
+        undefined,
+        undefined
+      );
     });
 
     it('should handle MessageContent array', async () => {
@@ -2786,7 +2916,7 @@ describe('AgentSession', () => {
       const content = [{ type: 'text', text: 'hello' }];
       await agentSession.startQueryAndEnqueue('msg-id', content);
 
-      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', content, undefined);
+      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', content, undefined, undefined);
     });
 
     it('cancels the in-flight recovery episode for genuine new input (undefined generation)', async () => {
