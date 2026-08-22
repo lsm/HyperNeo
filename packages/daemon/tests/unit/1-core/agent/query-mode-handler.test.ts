@@ -618,6 +618,57 @@ describe('QueryModeHandler', () => {
       expect(enqueueWithIdSpy).toHaveBeenCalledTimes(3);
     });
 
+    it('never clears while another delivery job is active for the session', async () => {
+      const clearSpy = mock(async () => {});
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(deferredBatch(3)));
+      resetSlotDb();
+      mockDb = {
+        getUserMessagesByStatus: getUserMessagesByStatusSpy,
+        updateMessageStatus: updateMessageStatusSpy,
+        getJobQueueRepo: () => ({
+          activeDeliveryMessageUuids: () => new Set<string>(['uuid-active']),
+          hasActiveTurnDeliveryJob: () => false,
+        }),
+      } as unknown as Database;
+
+      handler = new QueryModeHandler(resetSlotContext(clearSpy));
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 3 });
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(3);
+    });
+
+    it('clears ahead of a human-only backlog when a task input is pending behind it', async () => {
+      const order: string[] = [];
+      const clearSpy = mock(async () => {
+        order.push('clear');
+      });
+      enqueueWithIdSpy.mockImplementation(async (uuid: string) => {
+        order.push(uuid);
+      });
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          {
+            dbId: 'db-human',
+            uuid: 'uuid-human',
+            type: 'user',
+            isSynthetic: false,
+            inputKind: 'human',
+            message: { role: 'user', content: 'a human follow-up' },
+          },
+        ] as unknown as SDKMessage[])
+      );
+      resetSlotDb();
+
+      handler = new QueryModeHandler(resetSlotContext(clearSpy));
+      const result = await handler.handleQueryTrigger({ pendingTaskInput: true });
+
+      expect(result).toEqual({ success: true, messageCount: 1 });
+      expect(order).toEqual(['clear', 'uuid-human']);
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('never clears for human-only deliverables on a reset slot', async () => {
       const clearSpy = mock(async () => {});
       getUserMessagesByStatusSpy.mockReturnValue(

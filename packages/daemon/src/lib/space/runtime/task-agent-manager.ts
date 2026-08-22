@@ -3201,7 +3201,10 @@ export class TaskAgentManager {
     return (['enqueued', 'deferred'] as const).some((status) =>
       this.config.db
         .getUserMessageIdsByStatus(sessionId, status)
-        .some((row) => row.uuid !== excludeMessageId)
+        .some(
+          (row) =>
+            typeof row.uuid === 'string' && row.uuid.length > 0 && row.uuid !== excludeMessageId
+        )
     );
   }
 
@@ -3329,6 +3332,9 @@ export class TaskAgentManager {
         deliverIndividually: true,
         excludeMessageUuid: messageId,
         skipResetCoordination: true,
+        pendingTaskInput:
+          outcome.decision.action === 'deliver_without_clear' &&
+          outcome.decision.reason === 'unconsumed_work_pending',
       });
       if (!replay.success) {
         log.warn(

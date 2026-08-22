@@ -98,6 +98,7 @@ describe('planTurnEndFlushContextReset', () => {
       planTurnEndFlushContextReset({
         slotResetsContext: true,
         hasPriorContext: true,
+        hasActiveDeliveryJob: false,
         taskDeliverableCount: 3,
       })
     ).toEqual({ action: 'clear_then_flush' });
@@ -109,6 +110,7 @@ describe('planTurnEndFlushContextReset', () => {
         planTurnEndFlushContextReset({
           slotResetsContext: true,
           hasPriorContext: true,
+          hasActiveDeliveryJob: false,
           taskDeliverableCount,
         })
       ).toEqual({
@@ -122,6 +124,7 @@ describe('planTurnEndFlushContextReset', () => {
       planTurnEndFlushContextReset({
         slotResetsContext: false,
         hasPriorContext: true,
+        hasActiveDeliveryJob: false,
         taskDeliverableCount: 3,
       })
     ).toEqual({ action: 'flush_without_clear' });
@@ -132,6 +135,7 @@ describe('planTurnEndFlushContextReset', () => {
       planTurnEndFlushContextReset({
         slotResetsContext: true,
         hasPriorContext: true,
+        hasActiveDeliveryJob: false,
         taskDeliverableCount: 0,
       })
     ).toEqual({ action: 'flush_without_clear' });
@@ -142,6 +146,18 @@ describe('planTurnEndFlushContextReset', () => {
       planTurnEndFlushContextReset({
         slotResetsContext: true,
         hasPriorContext: false,
+        hasActiveDeliveryJob: false,
+        taskDeliverableCount: 3,
+      })
+    ).toEqual({ action: 'flush_without_clear' });
+  });
+
+  test('an active delivery job suppresses the flush clear', () => {
+    expect(
+      planTurnEndFlushContextReset({
+        slotResetsContext: true,
+        hasPriorContext: true,
+        hasActiveDeliveryJob: true,
         taskDeliverableCount: 3,
       })
     ).toEqual({ action: 'flush_without_clear' });

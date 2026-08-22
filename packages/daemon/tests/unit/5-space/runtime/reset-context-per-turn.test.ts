@@ -824,6 +824,75 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(session.enqueueMock).not.toHaveBeenCalled();
   });
 
+  it('clears at the front when an injected task follows a human-only backlog (#1085)', async () => {
+    const { manager, session } = makeManager({ slotResets: true });
+    let status = 'processing';
+    const order: string[] = [];
+    session.enqueueMock.mockImplementation(async (_uuid: string, content: string) => {
+      order.push(content);
+    });
+    session.clearMock.mockImplementation(async () => {
+      order.push('/clear');
+    });
+    const humanDeferredRow = {
+      dbId: 'db-human',
+      uuid: 'uuid-human',
+      timestamp: 1,
+      type: 'user',
+      isSynthetic: false,
+      inputKind: 'human',
+      message: { role: 'user', content: 'a human follow-up' },
+    };
+    const backlogFlush = new QueryModeHandler({
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      db: {
+        getUserMessagesByStatus: mock(() => ({
+          messages: [humanDeferredRow],
+          total: 1,
+        })),
+        updateMessageStatus: mock(() => {}),
+        getJobQueueRepo: mock(() => ({
+          activeDeliveryMessageUuids: () => new Set<string>(),
+          hasActiveTurnDeliveryJob: () => false,
+        })),
+      },
+      internalEventBus: { publish: mock(async () => {}) },
+      messageQueue: { enqueueWithId: session.enqueueMock },
+      logger: { error: mock(() => {}) },
+      ensureQueryStarted: session.ensureStartedMock,
+      slotResetsContext: () => true,
+      clearConversationContext: session.clearMock,
+    } as unknown as QueryModeHandlerContext);
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: (opts?: Parameters<QueryModeHandler['handleQueryTrigger']>[0]) =>
+        backlogFlush.handleQueryTrigger(opts),
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      'a human follow-up',
+      false,
+      undefined,
+      'defer'
+    );
+    session.getUserMessageIdsByStatus.mockImplementation(
+      (_sessionId: string, sendStatus: string) =>
+        sendStatus === 'deferred' ? [{ dbId: 'db-human', uuid: 'uuid-human', timestamp: 1 }] : []
+    );
+
+    status = 'idle';
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    expect(order).toEqual(['/clear', 'a human follow-up', '─── Message from coder ───']);
+    expect(session.clearMock).toHaveBeenCalledTimes(1);
+  });
+
   it('does NOT clear on inject while unconsumed delivered work is pending (#1085)', async () => {
     const { manager, session } = makeManager({
       slotResets: true,
@@ -865,6 +934,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       deliverIndividually: true,
       excludeMessageUuid: expect.any(String),
       skipResetCoordination: true,
+      pendingTaskInput: false,
     });
     expect(session.saveUserMessage).toHaveBeenCalled();
     expect(session.enqueueMock).toHaveBeenCalled();

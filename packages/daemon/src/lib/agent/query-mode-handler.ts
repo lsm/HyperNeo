@@ -41,6 +41,7 @@ export class QueryModeHandler {
     excludeMessageUuid?: string;
     skipContextReset?: boolean;
     skipResetCoordination?: boolean;
+    pendingTaskInput?: boolean;
   }): Promise<{
     success: boolean;
     messageCount: number;
@@ -128,25 +129,30 @@ export class QueryModeHandler {
       });
   }
 
-  private planFlush(flushMessages: FlushMessage[]): TurnEndFlushPlan {
+  private planFlush(
+    flushMessages: FlushMessage[],
+    options?: { pendingTaskInput?: boolean }
+  ): TurnEndFlushPlan {
     const jobQueue = this.ctx.db.getJobQueueRepo();
+    const activeInJobQueue = jobQueue.activeDeliveryMessageUuids(this.ctx.session.id);
     return decideTurnEndFlush({
       messages: flushMessages,
-      activeInJobQueue: jobQueue.activeDeliveryMessageUuids(this.ctx.session.id),
+      activeInJobQueue,
       pendingInMemoryUuids: new Set<string>(),
       activeTurnInJobQueue: jobQueue.hasActiveTurnDeliveryJob(this.ctx.session.id),
       slotResetsContext: this.ctx.slotResetsContext?.() ?? false,
       hasPriorContext: !!this.ctx.session.sdkSessionId,
+      pendingTaskInput: options?.pendingTaskInput === true,
     });
   }
 
   private async clearContextAheadOfFlush(
     flushMessages: FlushMessage[],
-    options?: { skipContextReset?: boolean }
+    options?: { skipContextReset?: boolean; pendingTaskInput?: boolean }
   ): Promise<boolean> {
     if (options?.skipContextReset) return false;
     if (!this.ctx.clearConversationContext) return false;
-    const plan = this.planFlush(flushMessages);
+    const plan = this.planFlush(flushMessages, options);
     if (plan.action === 'noop') return false;
     if (plan.contextReset.action !== 'clear_then_flush') return false;
     try {
@@ -165,10 +171,14 @@ export class QueryModeHandler {
   private async deliverFlushUnderV2(
     flushMessages: FlushMessage[],
     origin: MessageDeliveryOrigin,
-    options?: { deliverIndividually?: boolean; skipContextReset?: boolean }
+    options?: {
+      deliverIndividually?: boolean;
+      skipContextReset?: boolean;
+      pendingTaskInput?: boolean;
+    }
   ): Promise<boolean> {
     const jobQueue = this.ctx.db.getJobQueueRepo();
-    const plan = this.planFlush(flushMessages);
+    const plan = this.planFlush(flushMessages, options);
     if (plan.action === 'noop') return false;
     let clearedContext = false;
     if (plan.contextReset.action === 'clear_then_flush') {

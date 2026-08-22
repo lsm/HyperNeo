@@ -79,6 +79,7 @@ function makeFlushInput(overrides: Partial<TurnEndFlushInput> = {}): TurnEndFlus
     activeTurnInJobQueue: false,
     slotResetsContext: true,
     hasPriorContext: true,
+    pendingTaskInput: false,
     ...overrides,
   };
 }
@@ -432,6 +433,26 @@ describe('message turn-end flush decision pipeline', () => {
       { hasPriorContext: false },
       { action: 'batch', uuids: ['a', 'b'], contextReset: { action: 'flush_without_clear' } },
     ],
+    [
+      'an active delivery job suppresses the flush clear',
+      { activeInJobQueue: new Set(['uuid-active']) },
+      { action: 'batch', uuids: ['a', 'b'], contextReset: { action: 'flush_without_clear' } },
+    ],
+    [
+      'a pending task input behind a human-only backlog plans one clear ahead of the batch',
+      {
+        messages: [
+          makeFlushMessage({ uuid: 'human-1', isTaskInput: false }),
+          makeFlushMessage({ uuid: 'human-2', isTaskInput: false, flattenedText: 'follow-up' }),
+        ],
+        pendingTaskInput: true,
+      },
+      {
+        action: 'batch',
+        uuids: ['human-1', 'human-2'],
+        contextReset: { action: 'clear_then_flush' },
+      },
+    ],
   ];
 
   for (const [label, overrides, expected] of cases) {
@@ -485,6 +506,7 @@ describe('message turn-end flush decision pipeline', () => {
         planTurnEndFlushContextReset({
           slotResetsContext: true,
           hasPriorContext: true,
+          hasActiveDeliveryJob: false,
           taskDeliverableCount: 2,
         })
       );
@@ -540,7 +562,8 @@ describe('message turn-end flush decision pipeline', () => {
                 contextReset: planTurnEndFlushContextReset({
                   slotResetsContext: input.slotResetsContext,
                   hasPriorContext: input.hasPriorContext,
-                  taskDeliverableCount,
+                  hasActiveDeliveryJob: input.activeInJobQueue.size > 0,
+                  taskDeliverableCount: taskDeliverableCount + (input.pendingTaskInput ? 1 : 0),
                 }),
               };
         expect(decideTurnEndFlush(input)).toEqual(expected);

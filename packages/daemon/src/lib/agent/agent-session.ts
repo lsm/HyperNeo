@@ -152,6 +152,7 @@ import {
   throwIfDeliveryAborted,
   waitForDeliveryAbort,
   withSessionLock,
+  withSessionResetCoordination,
 } from './message-delivery';
 import {
   classifyTurnCompletion,
@@ -1256,6 +1257,7 @@ export class AgentSession
     excludeMessageUuid?: string;
     skipContextReset?: boolean;
     skipResetCoordination?: boolean;
+    pendingTaskInput?: boolean;
   }): Promise<{ success: boolean; messageCount: number; error?: string }> {
     return this.queryModeHandler.handleQueryTrigger(options);
   }
@@ -2027,21 +2029,23 @@ export class AgentSession
       return 0;
     }
 
-    const reEnqueued = await withSessionLock(this.session.id, async () => {
-      const active = jobQueue.activeDeliveryMessageUuids(this.session.id);
-      const stranded = selectStrandedDeliveries(
-        this.db.getUserMessageIdsByStatus(this.session.id, 'enqueued'),
-        active,
-        (uuid) => this.messageQueue.hasPendingOrInFlight(uuid)
-      );
-      for (const uuid of stranded) {
-        const role = deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
-        if (role === 'turn') {
-          await this.stateManager.setQueuedIfIdle(uuid).catch(() => {});
+    const reEnqueued = await withSessionResetCoordination(this.session.id, async () =>
+      withSessionLock(this.session.id, async () => {
+        const active = jobQueue.activeDeliveryMessageUuids(this.session.id);
+        const stranded = selectStrandedDeliveries(
+          this.db.getUserMessageIdsByStatus(this.session.id, 'enqueued'),
+          active,
+          (uuid) => this.messageQueue.hasPendingOrInFlight(uuid)
+        );
+        for (const uuid of stranded) {
+          const role = deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
+          if (role === 'turn') {
+            await this.stateManager.setQueuedIfIdle(uuid).catch(() => {});
+          }
         }
-      }
-      return stranded.length;
-    });
+        return stranded.length;
+      })
+    );
     let settled = 0;
     const sdkRepo = this.db.getSDKMessageRepo();
     await withSessionLock(this.session.id, async () => {

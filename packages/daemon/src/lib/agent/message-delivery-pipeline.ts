@@ -109,6 +109,7 @@ export interface TurnEndFlushCtx {
   activeTurnInJobQueue: boolean;
   slotResetsContext: boolean;
   hasPriorContext: boolean;
+  pendingTaskInput: boolean;
   flushPlan: FlushDeliveryPlan | null;
   contextReset: TurnEndFlushContextResetPlan | null;
   decision: TurnEndFlushPlan | null;
@@ -141,14 +142,15 @@ export function applyFlushContextResetGate(ctx: TurnEndFlushCtx): TurnEndFlushCt
         ? flushPlan.deliver
         : [];
   const deliverableSet = new Set(deliverables);
-  const taskDeliverableCount = ctx.messages.filter(
-    (message) => deliverableSet.has(message.uuid) && message.isTaskInput
-  ).length;
+  const taskDeliverableCount =
+    ctx.messages.filter((message) => deliverableSet.has(message.uuid) && message.isTaskInput)
+      .length + (ctx.pendingTaskInput ? 1 : 0);
   return {
     ...ctx,
     contextReset: planTurnEndFlushContextReset({
       slotResetsContext: ctx.slotResetsContext,
       hasPriorContext: ctx.hasPriorContext,
+      hasActiveDeliveryJob: ctx.activeInJobQueue.size > 0,
       taskDeliverableCount,
     }),
   };
