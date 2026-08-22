@@ -76,7 +76,12 @@ consumed-message state, and `ctx.queryPromise` at :1321–1338 — a replacement
 starting after that snapshot can have its environment restored/erased and its
 live query promise nulled by the stale finalizer, so the window joins the pins
 and shared mutations require generation/identity revalidation after the
-finalizer's awaits. The
+finalizer's awaits — **and its trailing `setIdle` (:1331–1332) is gated on a
+full route-appropriate lifecycle check, not identity alone**: an interrupt sets
+processing to `interrupted` and clears the abort controller *without* a
+generation bump (interrupt-handler.ts:105, :152–155), so identity guards pass
+and the finalizer could publish an idle transition while interruption is still
+cancelling SDK work. The
 startup-timeout arm has the same shape after its last guard: it awaits
 `displayErrorAsAssistantMessage` (:959–965) and recurses at :967 with no
 entry-generation guard on `runQuery`, so a replacement landing during that await
