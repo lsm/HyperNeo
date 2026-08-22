@@ -122,14 +122,18 @@ non-Anthropic branch copies ambient provider credentials and routing values
 `:522–526` preserves the captured auth, so a lease starting at `:451` still
 captures another owner's values during options building; ACP ownership
 precedes `build()` or that build stops reading ambient credentials.
-The coordinator must also be **reentrancy-safe**: the
+The coordinator must also be **reentrancy-safe — conditionally, per lease
+lifetime**: under the required copy-and-restore boundary the lease is already
+released before startup-gate admission, so no recursive arm can hold it and
+nothing extra is owed; if a deliberately longer-lived or reentrant lease is
+ever chosen instead, the
 startup-timeout, message-not-found, and transient arms recurse at `:967`,
 `:1007`, and `:1063` *without* restoring the environment — the outer attempt's
 `finally` cannot release the daemon-wide lease while the nested attempt must
-acquire it before its credential reads, a self-deadlock; the provider-5xx arm
-already restores at `:1116–1123` before recursing, and the other recursive
-arms release/transfer ownership before recursion (pinned ordering) or the
-lease is explicitly reentrant. Ambient credential **readers** join the
+acquire it before its credential reads, a self-deadlock (the provider-5xx arm
+already restores at `:1116–1123` before recursing), and under that design the
+other recursive arms release/transfer ownership before recursion (pinned
+ordering). Ambient credential **readers** join the
 coordination too: `AnthropicProvider.isAvailable()` reads `process.env`
 directly (anthropic-provider.ts:99–110) and is called outside any ownership
 boundary (auth-handlers.ts:73–86, provider-handlers.ts:187–208,
@@ -689,12 +693,17 @@ note.
      called from `handleCircuitBreakerTrip`), each with its returned-false
      pin — otherwise the shell-retained helpers
      stay unchanged and clients keep receiving notices absent from the DB.
-     PR 5 also implements the **ownership-fenced SDK dispatch**: the runner
-     propagates its query generation through `handleSDKMessage` (adding the
+     PR 5 also implements the **ownership-fenced SDK dispatch — for BOTH
+     runners**: each propagates its query generation through its
+     `handleSDKMessage` (adding the
      owner token to `SDKMessageHandlerContext`) and validates it before the
      shared handler begins its fence, with the late old-generation result
-     after a stop-timeout replacement pinned — the requirement is assigned
-     here because no other step touches the runner/context boundary.
+     after a stop-timeout replacement pinned — the ACP runner has its own
+     generationless dispatch (`acp-query-runner.ts:925–929` calls the shared
+     `ctx.onSDKMessage` without its local `queryGeneration`), so fencing only
+     the QueryRunner would leave ACP able to fire the replacement's terminal
+     callbacks; the ACP late-result case is pinned too. The requirement is
+     assigned here because no other step touches the runner/context boundary.
      Because it edits `acp-query-runner.ts` and `sdk-message-handler.ts`,
      **PR 5 sequences after — or
      explicitly coordinates with — ACP split 8/10 and open PR #2543** (the
