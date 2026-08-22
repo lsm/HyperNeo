@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { constants, fchmodSync, fstatSync } from 'node:fs';
+import { constants, fchmodSync, fstatSync, realpathSync } from 'node:fs';
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -242,7 +242,13 @@ async function openWorkspacePath(
 ): Promise<{ symbols: LibcSymbols; directoryFd: number; fileName: string }> {
   validateSegments(segments);
   const { atFdcwd, symbols } = await getSafeFsBackend();
-  let directoryFd = openDirectory(symbols, atFdcwd, workspace);
+  let workspaceRoot = workspace;
+  try {
+    workspaceRoot = realpathSync(workspace);
+  } catch {
+    throwFsError('open', workspace);
+  }
+  let directoryFd = openDirectory(symbols, atFdcwd, workspaceRoot);
   if (directoryFd < 0) throwFsError('open', workspace);
 
   try {
@@ -281,10 +287,6 @@ export async function readFileWithinWorkspace(
   );
   closeFile(symbols, directoryFd);
   if (fileFd < 0) throwFsError('open', fileName);
-  if (!fstatSync(fileFd).isFile()) {
-    closeFile(symbols, fileFd);
-    throwFsError('read', fileName);
-  }
 
   const endLine =
     options.lineLimit === undefined
@@ -296,15 +298,17 @@ export async function readFileWithinWorkspace(
   let line = 0;
 
   try {
+    if (!fstatSync(fileFd).isFile()) throwFsError('read', fileName);
     while (line < endLine) {
-      const buffer = Buffer.allocUnsafe(READ_BUFFER_BYTES);
+      const remainingBytes = options.maxBytes - scannedBytes;
+      if (remainingBytes <= 0) {
+        throw new Error(`ACP filesystem scan exceeds ${options.maxBytes} bytes`);
+      }
+      const buffer = Buffer.allocUnsafe(Math.min(READ_BUFFER_BYTES, remainingBytes));
       const bytesRead = Number(symbols.read(fileFd, buffer, buffer.length));
       if (bytesRead < 0) throwFsError('read', fileName);
       if (bytesRead === 0) break;
       scannedBytes += bytesRead;
-      if (scannedBytes > options.maxBytes) {
-        throw new Error(`ACP filesystem scan exceeds ${options.maxBytes} bytes`);
-      }
       const content = buffer.subarray(0, bytesRead);
       let cursor = 0;
 

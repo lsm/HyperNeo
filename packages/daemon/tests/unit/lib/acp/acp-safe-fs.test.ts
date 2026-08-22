@@ -326,7 +326,13 @@ bunRuntimeTest('rejects path segments containing path separators', async () => {
   await mkdir(workspace);
 
   try {
-    for (const segments of [['../outside.txt'], ['/tmp/outside.txt'], ['nested', 'sub/file.txt']]) {
+    for (const segments of [
+      ['../outside.txt'],
+      ['/tmp/outside.txt'],
+      ['nested', 'sub/file.txt'],
+      ['..', 'outside.txt'],
+      ['.', 'outside.txt'],
+    ]) {
       await expect(
         readFileWithinWorkspace(workspace, segments, {
           startLine: 0,
@@ -344,6 +350,52 @@ bunRuntimeTest('rejects path segments containing path separators', async () => {
       )
     ).rejects.toThrow('Unable to access ACP filesystem path');
     await expect(readFile(join(root, 'outside.txt'), 'utf-8')).rejects.toThrow();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+bunRuntimeTest('does not charge trailing bytes to the scan budget of a bounded range', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-range-'));
+  const workspace = join(root, 'workspace');
+  await mkdir(workspace);
+  await writeFile(join(workspace, 'content.txt'), `ok\n${'x'.repeat(128 * 1024)}`);
+
+  try {
+    expect(
+      await readFileWithinWorkspace(workspace, ['content.txt'], {
+        startLine: 0,
+        lineLimit: 1,
+        maxBytes: 3,
+      })
+    ).toBe('ok\n');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+bunRuntimeTest('opens a symlinked workspace root without following segment symlinks', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-root-'));
+  const real = join(root, 'real');
+  const workspace = join(root, 'workspace');
+  await mkdir(join(real, 'nested'), { recursive: true });
+  await symlink(real, workspace);
+
+  try {
+    await writeFileWithinWorkspace(
+      workspace,
+      ['nested', 'written.txt'],
+      'written',
+      new AbortController().signal
+    );
+    expect(await readFile(join(real, 'nested', 'written.txt'), 'utf-8')).toBe('written');
+    expect(
+      await readFileWithinWorkspace(workspace, ['nested', 'written.txt'], {
+        startLine: 0,
+        lineLimit: undefined,
+        maxBytes: 1024,
+      })
+    ).toBe('written');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
