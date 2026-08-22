@@ -742,7 +742,12 @@ note.
      `interceptAskUserQuestion` and can supersede the replacement's pending
      question (`:164–185`) without ever passing the SDK-message guard; the
      callbacks bind to the run generation and reject stale permission
-     requests in both runners, with a late-callback replacement pin. The
+     requests in both runners, with a late-callback replacement pin — **and
+     the separate PreToolUse hook joins them**: `query-runner.ts:518`
+     independently installs `createPreToolUseHook()`, whose
+     `interceptAskUserQuestion` call (`:220–224`) can replace the successor's
+     pending resolver through the same shared question state; that hook binds
+     to the run generation and is included in the late-callback pin. The
      stale stop
      **returns a distinct outcome that propagates to the runner**: both
      wrappers unconditionally call `onMarkApiSuccess` after `onSDKMessage`
