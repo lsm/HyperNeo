@@ -11,6 +11,7 @@ import {
   isMessageDeliveryV2Enabled,
   type MessageDeliveryOrigin,
 } from './message-delivery';
+import { decideTurnEndFlush } from './message-delivery-pipeline';
 import type { MessageQueue } from './message-queue';
 
 export interface QueryModeHandlerContext {
@@ -100,37 +101,36 @@ export class QueryModeHandler {
     options?: { deliverIndividually?: boolean }
   ): Promise<void> {
     const jobQueue = this.ctx.db.getJobQueueRepo();
-    const pending = messages.filter(
-      (msg) => isSDKUserMessage(msg) && typeof msg.uuid === 'string' && msg.uuid.length > 0
-    );
-    const allBatchable = pending.every((msg) => {
-      if (!isSDKUserMessage(msg)) return false;
-      const text = flattenDeliveryText(msg.message.content ?? '');
-      return text !== null && !text.startsWith('/');
+    const flushMessages = messages
+      .filter((msg) => typeof msg.uuid === 'string' && msg.uuid.length > 0)
+      .map((msg) => {
+        const isUserMessage = isSDKUserMessage(msg);
+        return {
+          uuid: msg.uuid as string,
+          isUserMessage,
+          flattenedText: isUserMessage ? flattenDeliveryText(msg.message.content ?? '') : null,
+        };
+      });
+    const plan = decideTurnEndFlush({
+      messages: flushMessages,
+      activeInJobQueue: jobQueue.activeDeliveryMessageUuids(this.ctx.session.id),
+      pendingInMemoryUuids: new Set<string>(),
+      activeTurnInJobQueue: jobQueue.hasActiveTurnDeliveryJob(this.ctx.session.id),
+      slotResetsContext: false,
     });
-
-    if (!options?.deliverIndividually && allBatchable && pending.length >= 2) {
+    if (plan.action === 'noop') return;
+    const deliverables = plan.action === 'batch' ? plan.uuids : plan.deliver;
+    if (plan.action === 'batch' && !options?.deliverIndividually) {
       const batched = await deliverBatchAndMarkQueued({
         jobQueue,
         stateManager: this.ctx.stateManager,
         sessionId: this.ctx.session.id,
-        messageUuids: pending.map((m) => m.uuid as string),
+        messageUuids: deliverables,
         origin,
       });
       if (batched) return;
     }
-    await this.deliverEachUnderV2(pending, origin);
-  }
-
-  private async deliverEachUnderV2(
-    messages: Array<SDKMessage & { dbId: string; timestamp: number }>,
-    origin: MessageDeliveryOrigin
-  ): Promise<void> {
-    const jobQueue = this.ctx.db.getJobQueueRepo();
-    const active = jobQueue.activeDeliveryMessageUuids(this.ctx.session.id);
-    for (const msg of messages) {
-      const uuid = msg.uuid as string;
-      if (active.has(uuid)) continue;
+    for (const uuid of deliverables) {
       await deliverAndMarkQueued({
         jobQueue,
         stateManager: this.ctx.stateManager,

@@ -134,18 +134,21 @@ import {
   type FeedSteerOutcome,
   flattenDeliveryText,
   isMessageDeliveryV2Enabled,
-  isRetryableErrorResultSubtype,
-  isTerminalTurnError,
   MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliveryAttemptObserver,
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
-  reconcileStrandedDeliveries as reconcileStrandedDeliveriesCore,
   signalDeliveryConsumed,
   throwIfDeliveryAborted,
   waitForDeliveryAbort,
   withSessionLock,
 } from './message-delivery';
+import {
+  classifyTurnCompletion,
+  decideReconcileAdmission,
+  selectStrandedDeliveries,
+  shouldRearmSpuriousTurnEnd,
+} from './message-delivery-pipeline';
 import { deliveryMetrics } from './message-delivery-metrics';
 import { MessageQueue } from './message-queue';
 import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler';
@@ -1575,13 +1578,14 @@ export class AgentSession
         const hasAnyTerminalResult =
           !!turnResultRepo?.hasTerminalResultAfter(this.session.id, messageUuid) ||
           !!turnResultRepo?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
-        const spuriousFire =
-          feedAcknowledged &&
-          turnEndFired &&
-          !queryEnded &&
-          Date.now() - raceArmedAt <= SPURIOUS_TURN_END_GRACE_MS &&
-          graceRearms < 2 &&
-          !hasAnyTerminalResult;
+        const spuriousFire = shouldRearmSpuriousTurnEnd({
+          feedAcknowledged,
+          turnEndFired,
+          queryEnded,
+          withinGraceMs: Date.now() - raceArmedAt <= SPURIOUS_TURN_END_GRACE_MS,
+          graceRearms,
+          hasTerminalResult: hasAnyTerminalResult,
+        });
         if (!spuriousFire) break;
         graceRearms++;
         activeTurnEnd.cancel();
@@ -1613,24 +1617,22 @@ export class AgentSession
       const errorResultSubtype = this.db
         .getSDKMessageRepo()
         ?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
-      const detail =
-        turnError?.userMessage ||
-        turnError?.message ||
-        (errorResultSubtype
-          ? `Turn ended with a terminal error (${errorResultSubtype})`
-          : this.deliveryTurnStalled
-            ? 'No response from the model — resetting and retrying'
-            : 'Turn ended without a response');
-      if (turnError && isTerminalTurnError(turnError)) {
-        throw new MessageDeliveryTerminalTurnError(detail, turnError.category);
+      const completion = classifyTurnCompletion({
+        producedResult,
+        turnError,
+        errorResultSubtype,
+        deliveryTurnStalled: this.deliveryTurnStalled,
+        claimGuardHeld: claimGuard ? claimGuard() : undefined,
+      });
+      if (completion.outcome === 'terminal_error') {
+        throw new MessageDeliveryTerminalTurnError(completion.detail, completion.category);
       }
-      if (!turnError && errorResultSubtype && !isRetryableErrorResultSubtype(errorResultSubtype)) {
-        throw new MessageDeliveryTerminalTurnError(detail, errorResultSubtype);
+      if (completion.outcome === 'recoverable_error') {
+        if (completion.reopenForRetry) {
+          this.reopenDeliveryForRetry(messageUuid);
+        }
+        throw new MessageDeliveryRecoverableTurnError(completion.detail, completion.category);
       }
-      if (!claimGuard || claimGuard()) {
-        this.reopenDeliveryForRetry(messageUuid);
-      }
-      throw new MessageDeliveryRecoverableTurnError(detail, turnError?.category);
     }
     return { outcome: 'completed' };
   }
@@ -1949,16 +1951,24 @@ export class AgentSession
     const jobQueue = this.db.getJobQueueRepo?.();
     if (!jobQueue) return 0;
     const status = this.stateManager.getState().status;
-    if (status === 'processing' || status === 'queued' || status === 'waiting_for_input') {
+    if (decideReconcileAdmission({ processingStatus: status }).action === 'skip') {
       return 0;
     }
 
-    const reEnqueued = await reconcileStrandedDeliveriesCore({
-      sessionId: this.session.id,
-      db: this.db,
-      jobQueue,
-      stateManager: this.stateManager,
-      isInFlight: (uuid) => this.messageQueue.hasPendingOrInFlight(uuid),
+    const reEnqueued = await withSessionLock(this.session.id, async () => {
+      const active = jobQueue.activeDeliveryMessageUuids(this.session.id);
+      const stranded = selectStrandedDeliveries(
+        this.db.getUserMessageIdsByStatus(this.session.id, 'enqueued'),
+        active,
+        (uuid) => this.messageQueue.hasPendingOrInFlight(uuid)
+      );
+      for (const uuid of stranded) {
+        const role = deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
+        if (role === 'turn') {
+          await this.stateManager.setQueuedIfIdle(uuid).catch(() => {});
+        }
+      }
+      return stranded.length;
     });
     let settled = 0;
     const sdkRepo = this.db.getSDKMessageRepo();

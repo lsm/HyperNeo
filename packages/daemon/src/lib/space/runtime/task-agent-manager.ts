@@ -27,6 +27,7 @@ import {
   deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
 } from '../../../lib/agent/message-delivery';
+import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline';
 import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
@@ -3222,10 +3223,26 @@ export class TaskAgentManager {
     const existing = v2Enabled
       ? this.config.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)
       : null;
-    if (existing?.sendStatus === 'consumed') {
+    const inRateLimitCooldown = state.status === 'rate_limit_cooldown';
+    const parentTaskId = this.findParentTaskIdForSubSession(sessionId);
+    const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
+    const parentLimited = parentTask ? isRateOrUsageLimited(parentTask.status) : false;
+    const outcome = decideInjectDelivery({
+      existingSendStatus: existing?.sendStatus ?? null,
+      deliveryMode,
+      isBusy,
+      inRateLimitCooldown,
+      parentTaskLimited: parentLimited,
+      inputKind,
+      hasPriorContext: !!session.session.sdkSessionId,
+      slotResetsContext: this.slotResetsContextForSession(sessionId),
+      hasActiveDeliveryJob: this.hasActiveDeliveryJob(sessionId),
+    });
+
+    if (outcome.decision.action === 'noop') {
       return messageId;
     }
-    if (existing?.sendStatus === 'failed') {
+    if (outcome.reopenFailedDelivery) {
       const reopenedDbId = this.config.db
         .getSDKMessageRepo()
         .reopenDeliveryByUuid(sessionId, messageId);
@@ -3233,12 +3250,7 @@ export class TaskAgentManager {
         await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
       }
     }
-
-    const inRateLimitCooldown = state.status === 'rate_limit_cooldown';
-    const parentTaskId = this.findParentTaskIdForSubSession(sessionId);
-    const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
-    const parentLimited = parentTask ? isRateOrUsageLimited(parentTask.status) : false;
-    if ((deliveryMode === 'defer' && isBusy) || inRateLimitCooldown || parentLimited) {
+    if (outcome.decision.action === 'defer') {
       if (v2Enabled && existing && existing.sendStatus !== 'deferred') {
         this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
       }
@@ -3248,15 +3260,10 @@ export class TaskAgentManager {
       await this.publishMessageStatusChanged(sessionId, dbId, 'deferred');
       return dbId;
     }
-
-    const hasPriorContext = !!session.session.sdkSessionId;
-    const shouldClearContext =
-      inputKind === 'task' &&
-      !isBusy &&
-      hasPriorContext &&
-      this.slotResetsContextForSession(sessionId) &&
-      !this.hasActiveDeliveryJob(sessionId);
-    if (shouldClearContext) {
+    if (
+      outcome.decision.action === 'clear_before_deliver' &&
+      !this.hasActiveDeliveryJob(sessionId)
+    ) {
       try {
         await session.clearConversationContext();
       } catch (err) {
