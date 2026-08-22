@@ -783,6 +783,7 @@ describe('SDKMessageHandler', () => {
       expect(await wait).toBe('confirmed');
       expect(settled).toBe('confirmed');
       expect(setIdleSpy).toHaveBeenCalled();
+      expect(emitSpy.mock.calls.filter((call) => call[0] === 'query.trigger')).toHaveLength(0);
     });
 
     it('a result for another turn (e.g. /compact) does not confirm the correlated clear wait', async () => {
@@ -905,6 +906,75 @@ describe('SDKMessageHandler', () => {
       handler.cancelSuppressedResultWait();
 
       expect(await wait).toBe('cancelled');
+    });
+
+    it('the confirmation timeout stops once the correlated result enters processing', async () => {
+      let releaseBookkeeping!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseBookkeeping = resolve;
+      });
+      let publishes = 0;
+      emitSpy.mockImplementation(async () => {
+        publishes += 1;
+        if (publishes === 2) {
+          await gate;
+        }
+      });
+
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(30, 'clear-msg-id');
+
+      const handled = handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'clear-result',
+        user_message_uuid: 'clear-msg-id',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+
+      releaseBookkeeping();
+      await handled;
+
+      expect(await wait).toBe('confirmed');
+    });
+
+    it('clear recovery resets session-state turn flags so result-based idle still works', async () => {
+      handler.suppressIdleForNextResult();
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'busy',
+        uuid: 'state-busy',
+        session_id: 'sdk-session-123',
+      } as unknown as SDKMessage);
+      handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      setIdleSpy.mockClear();
+
+      handler.clearIdleSuppression();
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'next-turn-result',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(setIdleSpy).toHaveBeenCalled();
     });
 
     it('settles the correlated clear wait only after the turn-end acknowledgement', async () => {
