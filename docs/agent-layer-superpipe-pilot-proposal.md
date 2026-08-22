@@ -722,7 +722,14 @@ note.
      acceptance can consume the replacement's re-enqueued UUID or overwrite
      its model state even though the eventual SDK message is dropped; every
      adapter callback binds to the run generation and validates before its
-     effect, with late-acceptance and pre-yield config-notification pins. The
+     effect, with late-acceptance and pre-yield config-notification pins.
+     The **ACP handshake continuation is fenced too**: a stale run still
+     awaiting `initialize`/auth/session-load resumes before any iterator
+     exists (`:588–598` persists the old session ID, updates the shared model
+     cache, restores the queue callback, and can clear the replacement's
+     startup timer) — lifecycle is revalidated after each awaited handshake
+     operation and before every shared write or handoff, with a
+     replacement-during-handshake pin. The
      generation check
      also runs **immediately after the iterator yields, before any shared
      startup/message bookkeeping** — the old loop clears
@@ -758,7 +765,13 @@ note.
      past `drainDeliveryWaitersOnTerminalSDKMessage` (`:804–812`), whose bare
      `setIdle()` would otherwise mark the replacement idle, skipping or
      owner-scoping that drain when the emitting generation no longer owns the
-     session. The requirement is
+     session — and the **whole catch is fenced, not just the drain**:
+     QueryRunner still calls `errorManager.handleError` (`:814–820`) and ACP
+     has its own catch (`:679–693`) doing the unscoped drain plus error
+     publication; ownership is revalidated before the entire catch in both
+     runners and all of its shared effects are skipped when stale, so a
+     rejected stale handler can publish no reset error and idle no
+     replacement. The requirement is
      assigned here because no other step touches the runner/context boundary.
      Because it edits `acp-query-runner.ts` and `sdk-message-handler.ts`,
      **PR 5 sequences after — or
