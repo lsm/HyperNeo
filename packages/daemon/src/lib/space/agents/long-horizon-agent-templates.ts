@@ -1,3 +1,13 @@
+import {
+  LH_COORDINATOR_INSTRUCTIONS,
+  LH_FAMILY_OPS_CHORES_INSTRUCTIONS,
+  LH_MARKETING_INSTRUCTIONS,
+  LH_PRODUCT_QUALITY_MANAGER_INSTRUCTIONS,
+  LH_RELEASE_MANAGER_INSTRUCTIONS,
+  LH_RESEARCH_INSTRUCTIONS,
+  LH_SALES_INSTRUCTIONS,
+  LH_SECURITY_AUDITOR_INSTRUCTIONS,
+} from '@hyperneo/prompts';
 import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
 
 const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
@@ -7,8 +17,7 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
     displayName: 'Coordinator',
     description:
       'Orchestrates goals, reminders, reactive subscriptions, and handoffs across the Space.',
-    instructions:
-      'Coordinate long-horizon Space activity. Keep goals moving, route work to suitable agents, maintain reminders, monitor event subscriptions, surface blockers early, and keep durable summaries current. Prefer creating clear tasks with owners over doing all work yourself.',
+    instructions: LH_COORDINATOR_INSTRUCTIONS,
     suggestedAutonomyLevel: 2,
     suggestedEventSubscriptions: [
       {
@@ -51,8 +60,7 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
     displayName: 'Product Quality Manager',
     description:
       'Turns dogfood feedback, QA signals, and completed work into prioritized quality improvements.',
-    instructions:
-      'Own product quality learning loops. Review completed tasks, review feedback, QA artifacts, telemetry, and user dogfood notes. Identify bugs, UX gaps, reliability risks, and recurring friction. Convert useful findings into prioritized goals or tasks with evidence and preserve lessons for future work.',
+    instructions: LH_PRODUCT_QUALITY_MANAGER_INSTRUCTIONS,
     suggestedAutonomyLevel: 2,
     suggestedEventSubscriptions: [
       {
@@ -95,8 +103,7 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
     displayName: 'Release Manager',
     description:
       'Coordinates release readiness, changelog inputs, validation gates, and post-release checks.',
-    instructions:
-      'Manage releases from readiness through follow-up. Track candidate changes, verify required checks, coordinate QA and approvals, prepare release notes inputs, watch deployment signals, and create follow-up tasks for regressions or missing validation.',
+    instructions: LH_RELEASE_MANAGER_INSTRUCTIONS,
     suggestedAutonomyLevel: 2,
     suggestedEventSubscriptions: [
       {
@@ -139,8 +146,7 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
     displayName: 'Security Auditor',
     description:
       'Monitors code, dependencies, permissions, and operational changes for security risk.',
-    instructions:
-      'Audit security-relevant changes. Watch dependency, auth, permission, networking, storage, and secret-handling changes. Produce evidence-backed findings, recommend scoped mitigations, and escalate high-risk issues before release.',
+    instructions: LH_SECURITY_AUDITOR_INSTRUCTIONS,
     suggestedAutonomyLevel: 1,
     suggestedEventSubscriptions: [
       {
@@ -183,8 +189,7 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
     displayName: 'Marketing',
     description:
       'Turns product progress and customer signals into positioning, content ideas, and launch assets.',
-    instructions:
-      'Maintain marketing momentum. Track shipped capabilities, user pain points, customer language, launch timing, and content opportunities. Draft concise positioning, campaign ideas, and asset tasks while coordinating with product and release owners.',
+    instructions: LH_MARKETING_INSTRUCTIONS,
     suggestedAutonomyLevel: 2,
     suggestedEventSubscriptions: [
       {
@@ -227,8 +232,7 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
     displayName: 'Sales',
     description:
       'Tracks pipeline follow-ups, account context, objections, and product asks from prospects.',
-    instructions:
-      'Support sales execution. Track prospect follow-ups, account context, objections, feature asks, and handoffs. Prepare next-step reminders, summarize buying signals, and convert repeated objections or product gaps into actionable tasks.',
+    instructions: LH_SALES_INSTRUCTIONS,
     suggestedAutonomyLevel: 2,
     suggestedEventSubscriptions: [
       {
@@ -271,8 +275,7 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
     displayName: 'Research',
     description:
       'Deep-dives topics, synthesizes sources, and delivers structured findings with evidence.',
-    instructions:
-      'Conduct thorough research. Search broadly, synthesize sources critically, surface contradictions, and deliver structured findings with citations. Prefer depth over speed, flag uncertainty explicitly, and create tasks for follow-up investigation when needed.',
+    instructions: LH_RESEARCH_INSTRUCTIONS,
     suggestedAutonomyLevel: 2,
     suggestedEventSubscriptions: [
       {
@@ -310,8 +313,7 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
     displayName: 'Family Ops/Chores',
     description:
       'Coordinates household routines, chores, appointments, errands, and recurring family logistics.',
-    instructions:
-      'Coordinate household operations. Track chores, errands, appointments, recurring maintenance, family commitments, and reminders. Keep plans practical, assign clear owners when known, escalate time-sensitive conflicts, and avoid making commitments without human confirmation.',
+    instructions: LH_FAMILY_OPS_CHORES_INSTRUCTIONS,
     suggestedAutonomyLevel: 1,
     suggestedEventSubscriptions: [
       {

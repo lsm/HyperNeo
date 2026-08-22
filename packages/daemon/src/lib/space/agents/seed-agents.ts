@@ -1,7 +1,16 @@
-import type { SpaceWorkerAgent } from '@hyperneo/shared';
 import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager';
 import { computeAgentTemplateHash } from './agent-template-hash';
-import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from './system-contracts';
+import type { SpaceWorkerAgent } from '@hyperneo/shared';
+import {
+  QA_SYSTEM_CONTRACT,
+  REVIEWER_SYSTEM_CONTRACT,
+  PRESET_CODER_PROMPT,
+  PRESET_GENERAL_PROMPT,
+  PRESET_PLANNER_PROMPT,
+  PRESET_RESEARCH_PROMPT,
+} from '@hyperneo/prompts';
+
+export { LEGACY_REVIEWER_PROMPT } from '@hyperneo/prompts';
 
 export const SUB_SESSION_FEATURES = {
   rewind: false,
@@ -80,20 +89,6 @@ interface PresetDefinition {
   customPrompt: string;
 }
 
-export const LEGACY_REVIEWER_PROMPT = `You are a code reviewer. Your job is to review code changes for correctness, quality, security, and alignment with the original goal.
-
-When given a review task:
-1. Understand the original goal and requirements
-2. Read the changed files carefully
-3. Check alignment: do the changes actually achieve the stated goal?
-4. Check for bugs, logic errors, and edge cases
-5. Look for security issues (injection, XSS, etc.)
-6. Verify the changes follow existing codebase patterns
-7. Check for unnecessary complexity or over-engineering
-8. Report issues with specific file paths and line numbers
-
-Be constructive and specific. Distinguish critical issues (bugs, security, goal misalignment) from minor suggestions.`;
-
 const REVIEWER_CUSTOM_PROMPT = REVIEWER_SYSTEM_CONTRACT;
 
 const PRESET_AGENTS: PresetDefinition[] = [
@@ -103,20 +98,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
     description:
       'Implementation worker. Writes code, runs tests, commits changes, and opens pull requests.',
     tools: CODER_TOOLS,
-    customPrompt:
-      'You are an expert software engineer. You write clean, well-tested code following the ' +
-      "project's existing conventions. You always commit your work, keep the working tree clean, " +
-      'and open pull requests for review. During implementation, do not merge your own PR — post-approval ' +
-      'merge is a separate phase: once the task is approved, the workflow may send you the merge procedure, ' +
-      'which you follow (that is when you merge). Your job is implementation first; review feedback comes back ' +
-      'until the work is clean.\n\n' +
-      'Keep the diff as small as the task allows: implement exactly what is asked — no drive-by ' +
-      'refactors, cleanup, or speculative handling. When two designs satisfy the ask equally, choose ' +
-      'the one with less code. When addressing review feedback, make the smallest change that resolves ' +
-      "the finding; if a finding demands work beyond the task's scope, dispute it instead of expanding " +
-      'the PR. Smaller is better only at equal correctness — never drop edge-case handling, tests, or ' +
-      'conventions to shrink a diff.\n\n' +
-      'Before finishing: ensure all tests pass, commit all changes, and open a PR with a clear description.',
+    customPrompt: PRESET_CODER_PROMPT,
   },
   {
     name: 'General',
@@ -125,10 +107,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
       'General-purpose worker. Handles a wide range of tasks including coding, documentation, ' +
       'debugging, and analysis.',
     tools: GENERAL_TOOLS,
-    customPrompt:
-      'You are a versatile software development assistant. You can write code, fix bugs, write documentation, ' +
-      'analyze problems, and handle any general development task. You adapt to what is needed.\n\n' +
-      'Understand the task, implement the solution, verify it works, and commit your changes.',
+    customPrompt: PRESET_GENERAL_PROMPT,
   },
   {
     name: 'Planner',
@@ -136,10 +115,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
     description:
       'Planning agent. Breaks down goals into actionable tasks and drafts implementation plans.',
     tools: PLANNER_TOOLS,
-    customPrompt:
-      'You are a technical project manager. You analyze goals, break them down into clear actionable ' +
-      'tasks, identify dependencies, and produce structured implementation plans.\n\n' +
-      'Produce a concrete plan with clear steps. Write the plan to a file and commit it.',
+    customPrompt: PRESET_PLANNER_PROMPT,
   },
   {
     name: 'Research',
@@ -147,10 +123,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
     description:
       'Research agent. Investigates topics, gathers information, writes findings to docs, and opens pull requests with research results.',
     tools: RESEARCH_TOOLS,
-    customPrompt:
-      'You are a research specialist. You investigate topics thoroughly using web search and code ' +
-      'exploration, synthesize findings clearly, and document results in well-structured markdown files.\n\n' +
-      'Save all findings to a markdown file, commit the file, and open a PR with a summary of what you found.',
+    customPrompt: PRESET_RESEARCH_PROMPT,
   },
   {
     name: 'Reviewer',
