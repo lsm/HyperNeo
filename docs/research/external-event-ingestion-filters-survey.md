@@ -55,8 +55,13 @@ builds the persisted `ExternalEvent`. Every normalized event carries
 ### Persistence / dedupe
 
 `ExternalEventStore.store` (`external-event-store.ts:93-146`):
-`INSERT … ON CONFLICT(space_id, source, dedupe_key) DO NOTHING`; duplicates re-publish
-the canonical row. Delivery rows track per-target state; TTL sweep
+`INSERT … ON CONFLICT(space_id, source, dedupe_key) DO NOTHING`; the store itself
+never republishes — `ExternalEventService.publish` distinguishes the outcomes
+(review finding, PR #2723): **terminal duplicates** (`delivered`/`failed`/`ignored`)
+return immediately with no bus publish, while **retryable duplicates** (still
+`published`) re-publish the canonical row to the bus (`external-event-service.ts:41-71`).
+Pins/parity tests must not expect terminal duplicates to re-enter bus subscribers.
+Delivery rows track per-target state; TTL sweep
 `markPublishedEventsFailedBefore :235`.
 
 ### Replay / recovery (downstream, unaffected by ingestion gates)
