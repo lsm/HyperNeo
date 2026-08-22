@@ -758,7 +758,17 @@ note.
      `stop()`'s tracked-process snapshot so the stale-gated finalizer never
      closes it, leaving an unowned ACP process; ownership is revalidated
      after each setup await and immediately before spawn, unwinding the
-     bridge/lease when stale. The
+     bridge/lease when stale. And the **outer prompt generator is fenced at
+     its own boundary**: a stale continuation awaiting `onModelsFetched()`
+     can still enter `messageQueue.messageGenerator` (`:603–606`), and
+     because the generator snapshots its generation only when iteration
+     begins (`message-queue.ts:272–283`) it snapshots the *replacement's*
+     generation, claims the replacement's prompt, and mutates processing
+     state (`:610–615`) — later callback fencing cannot return that prompt
+     from `yielded`; ownership is checked before entering and immediately
+     after each yield of the outer prompt generator, stale claims are
+     requeued, and the same ownership binding applies to late pulls of
+     QueryRunner's `createMessageGeneratorWrapper`. The
      generation check
      also runs **immediately after the iterator yields, before any shared
      startup/message bookkeeping** — the old loop clears
