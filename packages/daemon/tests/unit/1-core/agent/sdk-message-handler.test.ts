@@ -3053,6 +3053,19 @@ describe('SDKMessageHandler', () => {
       expect(publishedTopics()).not.toContain('query.trigger');
     });
 
+    it('marks the intercepted result so delivery re-claim stays scoped to limit turns', async () => {
+      const onResultLimitError = mock(async () => true);
+      mockContext.onResultLimitError = onResultLimitError;
+      const markRecoveryIntercepted = mock(() => {});
+      mockDb.getSDKMessageRepo = mock(
+        () => ({ markResultRecoveryIntercepted: markRecoveryIntercepted }) as never
+      ) as never;
+
+      await handler.handleMessage(makeApiErrorResult());
+
+      expect(markRecoveryIntercepted).toHaveBeenCalledWith('test-session-id', 'result-uuid');
+    });
+
     it('ignores allowed rate-limit telemetry when assessing a later api error', async () => {
       const onResultLimitError = mock(async () => true);
       mockContext.onResultLimitError = onResultLimitError;

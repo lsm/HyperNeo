@@ -785,6 +785,14 @@ export class SDKMessageHandler {
     });
 
     if (limitEngaged) {
+      const resultUuid = (message as SDKResultMessage).uuid;
+      if (resultUuid) {
+        try {
+          db.getSDKMessageRepo()?.markResultRecoveryIntercepted(session.id, resultUuid);
+        } catch (error) {
+          this.logger.warn('Failed to mark intercepted limit result:', error);
+        }
+      }
       await this.recordResultUsageMetadata(message as SDKResultMessage);
       void this.refreshContextUsage('turn-end');
       return;

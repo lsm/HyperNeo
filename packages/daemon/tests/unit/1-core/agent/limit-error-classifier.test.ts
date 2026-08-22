@@ -218,6 +218,24 @@ describe('assessLimitError', () => {
     expect(assessment.kind).toBe('usage_limit');
   });
 
+  it('routes the SDK billing_error tag as a billing-terminal limit', () => {
+    const assessment = assessLimitError(
+      { rawText: 'The request could not be completed', sdkErrorTag: 'billing_error' },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(true);
+    expect(assessment.billingTerminal).toBe(true);
+    expect(assessment.kind).toBe('usage_limit');
+  });
+
+  it('does not treat a bare 402 token without billing context as billing-terminal', () => {
+    const assessment = assessLimitError(
+      { rawText: 'request failed after 402 ms (req-402-abcdef)' },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(false);
+  });
+
   it('ignores allowed rate-limit telemetry as limit evidence', () => {
     const resetsAtSeconds = Math.floor((NOW + 5 * HOUR) / 1000);
     for (const status of ['allowed', 'allowed_warning'] as const) {

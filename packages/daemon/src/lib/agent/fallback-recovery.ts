@@ -248,6 +248,8 @@ export function classifyLimitKind(
 
 const HTTP_402_STATUS_RE = /\b402\b/;
 
+const BILLING_402_CONTEXT_RE = /payment|insufficient|quota|credit|balance/i;
+
 export function isNonRetryableBillingError(
   errorMessage: string,
   now: number = Date.now()
@@ -255,7 +257,7 @@ export function isNonRetryableBillingError(
   const lower = errorMessage.toLowerCase();
   const resettable = !!extractResetTimestamp(errorMessage, now);
   return (
-    HTTP_402_STATUS_RE.test(errorMessage) ||
+    (HTTP_402_STATUS_RE.test(errorMessage) && BILLING_402_CONTEXT_RE.test(errorMessage)) ||
     (!resettable &&
       (lower.includes('no quota') ||
         lower.includes('quota exceeded') ||

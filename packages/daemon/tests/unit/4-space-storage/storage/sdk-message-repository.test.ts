@@ -2109,12 +2109,13 @@ describe('SDKMessageRepository', () => {
       expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
     });
 
-    it('is FALSE for a synthetic success result with is_error — intercepted limit turns stay recoverable', () => {
+    it('is FALSE for a synthetic success result with is_error ONLY when recovery intercepted it', () => {
       insertMessage('session-1', 'user', {
         uuid: 'msg-uuid',
         timestamp: '2026-08-11T15:25:00.000Z',
       });
       insertMessage('session-1', 'result', {
+        uuid: 'result-uuid',
         timestamp: '2026-08-11T15:25:53.000Z',
         terminal: true,
         subtype: 'success',
@@ -2125,6 +2126,11 @@ describe('SDKMessageRepository', () => {
           terminal_reason: 'api_error',
         }),
       });
+
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(true);
+
+      repository.markResultRecoveryIntercepted('session-1', 'result-uuid');
+
       expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
     });
 
