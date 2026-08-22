@@ -366,7 +366,16 @@ note.
   display is awaited (`:1161–1165`), so a replacement may
   hold the session or teardown may be underway by the time `setIdle()` runs,
   and a stale post-display
-  result routes to superseded/no-op before idling the replacement;
+  result routes to superseded/no-op **which cancels its owned terminal-idle
+  fence** — `beginTerminalIdle()` has already incremented both counters
+  (processing-state-manager.ts:86–90) and only a later `setIdle()` consumes
+  them (:143–175), so a no-op that merely skips the trailing idle leaks the
+  fence and leaves `terminalIdleInFlight` misleading
+  `reclaimTurnAlreadySucceeded` (:1833–1844) until some successor happens to
+  idle; the stale branch cancels its fence (or the fence is generation-scoped)
+  rather than just skipping the idle —
+  before idling the replacement; the same fence-unwind applies to the terminal
+  route's post-`errorManager` stale branch;
   folding it into `terminal(category)` would replace the actionable validation
   text with generic category handling |
   terminal(category, message_hint) — the category alone does not determine the
