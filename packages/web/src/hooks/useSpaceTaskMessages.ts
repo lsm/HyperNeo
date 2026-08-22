@@ -152,7 +152,8 @@ export function useSpaceTaskMessages(
   const { request, onEvent, getHub, isConnected } = useMessageHub();
   const [rows, setRows] = useState<SpaceTaskThreadMessageRow[]>([]);
   const [activeTurnRows, setActiveTurnRows] = useState<ActiveTurnEntryRow[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [messageError, setMessageError] = useState<string | null>(null);
+  const [activeTurnError, setActiveTurnError] = useState<string | null>(null);
   const [loadedForTaskId, setLoadedForTaskId] = useState<string | null>(null);
 
   const queryName =
@@ -163,7 +164,8 @@ export function useSpaceTaskMessages(
       setRows([]);
       setActiveTurnRows([]);
       setLoadedForTaskId(null);
-      setError(null);
+      setMessageError(null);
+      setActiveTurnError(null);
       return;
     }
 
@@ -175,7 +177,8 @@ export function useSpaceTaskMessages(
     setRows([]);
     setActiveTurnRows([]);
     setLoadedForTaskId(null);
-    setError(null);
+    setMessageError(null);
+    setActiveTurnError(null);
 
     const initial = createLiveQueryLifecycleState();
     let lifecycle: LiveQueryLifecycleState = initial.state;
@@ -183,7 +186,7 @@ export function useSpaceTaskMessages(
     const dispatch = (event: LiveQueryLifecycleEvent): LiveQueryLifecycleEffect[] => {
       const result = transitionLiveQueryLifecycle(lifecycle, event);
       lifecycle = result.state;
-      if (lifecycle.status !== 'disposed') setError(lifecycle.error);
+      if (lifecycle.status !== 'disposed') setMessageError(lifecycle.error);
       return result.effects;
     };
 
@@ -296,7 +299,7 @@ export function useSpaceTaskMessages(
             .catch(() => setActiveTurnRows([]));
           return;
         }
-        setError(event.message);
+        setActiveTurnError(event.message);
         setActiveTurnRows([]);
       }
     });
@@ -304,6 +307,7 @@ export function useSpaceTaskMessages(
     const unsubReconnect = getHub()?.onConnection((state) => {
       if (state !== 'connected') return;
       setLoadedForTaskId(null);
+      setActiveTurnError(null);
       executeEffects(dispatch({ type: 'transport-error', generation: lifecycle.generation }));
     });
 
@@ -329,6 +333,7 @@ export function useSpaceTaskMessages(
   );
 
   const isLoading = taskId !== null && isConnected && loadedForTaskId !== taskId;
+  const error = messageError ?? activeTurnError;
 
   return {
     rows: sortedRows,

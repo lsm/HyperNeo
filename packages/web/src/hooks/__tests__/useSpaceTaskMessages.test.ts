@@ -206,6 +206,37 @@ describe('useSpaceTaskMessages', () => {
     ]);
   });
 
+  it('keeps an active-turn snapshot-phase error while message events keep flowing', () => {
+    const { result } = renderHook(() => useSpaceTaskMessages('task-1'));
+    const messageSubId = lastMessageSubscribeSubId();
+    const activeTurnSubId = lastActiveTurnSubscribeSubId();
+
+    act(() => {
+      fireEvent('liveQuery.snapshot', {
+        subscriptionId: messageSubId,
+        rows: [{ id: 'msg-1', taskId: 'task-1', createdAt: 1 }],
+        version: 1,
+      });
+      fireEvent('liveQuery.error', {
+        subscriptionId: activeTurnSubId,
+        code: 'QUERY_FAILED',
+        message: 'active turn query failed',
+        phase: 'snapshot',
+      });
+    });
+    expect(result.current.error).toBe('active turn query failed');
+
+    act(() => {
+      fireEvent('liveQuery.delta', {
+        subscriptionId: messageSubId,
+        added: [{ id: 'msg-2', taskId: 'task-1', createdAt: 2 }],
+        version: 2,
+      });
+    });
+    expect(result.current.error).toBe('active turn query failed');
+    expect(result.current.rows.map((r) => r.id)).toEqual(['msg-1', 'msg-2']);
+  });
+
   describe('isLoading (empty-state flash prevention)', () => {
     it('reports isLoading=true on the very first render when a taskId is provided', () => {
       const { result } = renderHook(() => useSpaceTaskMessages('task-1'));
