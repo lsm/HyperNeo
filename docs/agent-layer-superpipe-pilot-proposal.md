@@ -729,7 +729,16 @@ note.
      cache, restores the queue callback, and can clear the replacement's
      startup timer) — lifecycle is revalidated after each awaited handshake
      operation and before every shared write or handoff, with a
-     replacement-during-handshake pin. The
+     replacement-during-handshake pin. The **startup callbacks are
+     generation-bound too**: a replacement captures the old run's
+     `onMessageEnqueued` as `previousOnMessageEnqueued` (`:485`), so a later
+     enqueue invokes the old callback first — outside the post-handshake
+     continuation checks — where it can install an old-generation startup
+     timer (`:487–493`), prevent the replacement installing its own, and
+     eventually close the replacement's shared `ctx.queryObject`
+     (`:491–520`); both the enqueue and timer callbacks bind to the run
+     generation, closing only the owned query object, with an
+     enqueue-during-stale-handshake pin. The
      generation check
      also runs **immediately after the iterator yields, before any shared
      startup/message bookkeeping** — the old loop clears
