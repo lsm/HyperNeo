@@ -173,7 +173,7 @@ stacked on daemon-side network I/O under a 10s RPC timeout.**
 | --- | --- | --- |
 | **C2-PR1 (pin, web)** | Characterization tests | Mount while disconnected → `listProviders` rejects with `ConnectionNotReadyError` → error toast + empty state, and (pin) a later successful connect performs **no** refetch. Extend W`components/settings/__tests__/ProvidersSettings.test.tsx` (already pins the rejection toast `:586-594`). |
 | **C2-PR2 (fix, web)** | Connect-then-fetch + liveness | (a) `loadProviders` gates on `connectionManager.onceConnected(...)` (W`lib/connection-manager.ts:111-127` — runs immediately when connected, otherwise on the next connect event) rather than `await getHub()`: the cached `connectionPromise` stays resolved after the first successful connection, so during a reconnect `getHub()` can return an already-resolved promise while `transport.isReady()` is false, leaving the request still throwing with no event to recover on; (b) subscribe to `providers.changed` (idiom already used by W`components/SessionStatusBar.tsx:207-216` and W`hooks/useModelSwitcher.ts:278-287`); (c) generation guard per `useFetchModels`; (d) durable error state + Retry button instead of the silent empty state; (e) `filterModelsForPicker` must not hide a provider on a *transient* auth failure — but `error` presence alone is the wrong predicate, because every provider's normal unauthenticated state also carries an error ("Set GLM_API_KEY…", glm-provider.ts:150-157, "Not logged in…", copilot `provider.ts:331-355`); add an explicit transient signal to the auth status (e.g. `errorKind: 'transient' \| 'credential'` on `ProviderAuthStatusInfo`, stamped `'transient'` only by the catch-all error path at auth-handlers.ts:93-101 and probe-failure paths, `'credential'` by the definitive key-absence/rejection states) and hide only on the definitive kind — since no consumer re-polls auth status after a transient failure (the ACUTE-1 UI amplifier). |
-| **C2-PR3 (fix, daemon)** | Cheap availability | (a) ollama `isAvailable` fetch gets `AbortSignal.timeout(DEFAULT_PROBE_TIMEOUT_MS)` (5s, same constant as peers); (b) copilot `isAvailable` drops only the 20s `validateCopilotToken` subprocess (moving it to explicit login/test flows) — the bounded `gh auth token` lookup (5s, `provider.ts:498-506`) must stay, since gh CLI installs that keep credentials in the OS keyring rather than `hosts.yml` are discoverable only that way; token presence (file/env/CLI) without subprocess validation becomes the availability signal. In the same PR, `getAuthStatus` must resolve credentials through the same discovery chain — today it checks only `storedCredentialToken` and the auth file (copilot `provider.ts:331-348`), so installs authenticated via `COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`gh auth token` report the definitive "Not logged in" state while `isAvailable()` is true, and under C2-PR2(e)'s `errorKind` scheme that misclassified status would wrongly hide Copilot from the picker; the `ghp_` classic-PAT rejection stays definitive. Kills the 10s-timeout error class. |
+| **C2-PR3 (fix, daemon)** | Cheap availability | (a) ollama `isAvailable` fetch gets `AbortSignal.timeout(DEFAULT_PROBE_TIMEOUT_MS)` (5s, same constant as peers); (b) copilot `isAvailable` drops only the 20s `validateCopilotToken` subprocess (moving it to explicit login/test flows) — the bounded `gh auth token` lookup (5s, `provider.ts:498-506`) must stay, since gh CLI installs that keep credentials in the OS keyring rather than `hosts.yml` are discoverable only that way; token presence (file/env/CLI) without subprocess validation becomes the availability signal. In the same PR, `getAuthStatus` must resolve credentials through the same discovery chain — today it checks only `storedCredentialToken` and the auth file (copilot `provider.ts:331-348`), so installs authenticated via `COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`gh auth token` report the definitive "Not logged in" state while `isAvailable()` is true, and under C2-PR2(e)'s `errorKind` scheme that misclassified status would wrongly hide Copilot from the picker; the `ghp_` classic-PAT rejection stays definitive; (c) `providers.list`'s enrichment uses a bare `Promise.all` over `provider.isAvailable()` (provider-handlers.ts:187-201), so one rejecting provider — reachable for codex when `importFromCodexAuth`'s `saveCredentials()` throws (e.g. read-only auth dir) — fails the whole listing and defeats the page fix; catch per provider and return that record as unavailable, as `auth.providers` already does (auth-handlers.ts:93-101). Kills the 10s-timeout error class. |
 
 **ADR classification:** the textbook **`requestRun`** candidate
 (generation-guarded request/apply — "a stale response structurally cannot
@@ -233,12 +233,21 @@ Design (4 PRs):
 2. **C3-PR2 — discovery cache (daemon).** Per-provider discovered-list cache
    (TTL 5 min, matching ollama/copilot) + explicit refresh RPC that writes it,
    **replaces the provider's slice in the global `modelsCache` before
-   publishing** (the `updateAcpModelCache` pattern,
+   publishing — after applying the same curation filter as C3-PR4's merge**
+   (an unfiltered splice with an existing curation would expose curated-out
+   models until the next full rebuild) (the `updateAcpModelCache` pattern,
    acp/acp-query-runner.ts:1100-1119 — publishing alone is insufficient:
    `providers.changed` subscribers re-fetch a *cached* `models.list`, which
    returns the existing global cache, and stranded-provider detection will not
    refresh a provider that is already present), then publishes
-   `providers.changed`; `getModels()` merges discovered ⊕ static when
+   `providers.changed`; the write/slice-replace/persist path applies only to
+   the **saved** configuration — probes invoked with `options` overrides
+   (C3-PR1) are read-only, returning models to the caller without touching the
+   provider cache, the global slice, or the persisted last-good list, which
+   otherwise leaves trial-command/baseUrl models attached to the old config
+   after an editor cancel; promote an override result into the caches only
+   after the corresponding `providers.update` succeeds; `getModels()` merges
+   discovered ⊕ static when
    discovery is enabled per provider. Persist the last-good discovered list in
    `providers.config_json` so restarts don't blank curated setups.
    **ADR shape:** fetch+cache = `requestRun`-shaped staged flow (snapshot →
@@ -305,8 +314,12 @@ behind their merge. No rebase risk for the acute chains.
    `Boolean(config.baseUrl)` and their probe, already timeout-bounded, runs
    only in explicit test/`getModels` paths,
    D`lib/providers/custom-endpoint-provider.ts:132-134,143-176`); consider
-   persisting `OAuthRefreshScheduler` retry state across restarts. Only if
-   C2-PR3 leaves gaps.
+   persisting `OAuthRefreshScheduler` retry state across restarts — but only
+   with a re-arm condition: persisting the current retry-count map as-is would
+   also persist its terminal state (after 3 strikes `refreshProviderIfNeeded`
+   returns before retrying, oauth-refresh-scheduler.ts:66-90), turning a
+   process-lifetime outage into one that survives restarts; persist timestamps
+   with decay/backoff rather than raw counts. Only if C2-PR3 leaves gaps.
 5. **C5 — provider-concurrency admission gate (structural, ADR Roadmap Phase
    2):** `decisionRun` admission in the message pipeline that queues a message
    *before* session persistence when its provider is at its concurrency limit;
