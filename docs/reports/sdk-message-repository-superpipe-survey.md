@@ -209,7 +209,13 @@ ADR sanctions pure-function admission gates from pilots 1/5).
   cross only `saveUserMessageCore` (anchor conditions incl. the deliberate
   status-gate divergence, badge counting, turn-index anchor/non-anchor
   assignment :519–530, replacement-edge recording incl. the refusal-subtype
-  gate, `consumed_seq` assignment).
+  gate, `consumed_seq` assignment — including the divergence:
+  `saveSDKMessage` allocates `consumed_seq` for terminal results (:579–586),
+  while `saveUserMessageCore` leaves it NULL at insert (:1106–1137 perform
+  insert + side effects only; the user path allocates only at the consumed
+  flip, :1356–1358) — B2 must encode this as a variant parameter so the
+  shared `isTerminal` admission field cannot allocate a sequence on the user
+  path and shift the consumed-seq boundary probes).
   `saveHyperNeoActionMessage` takes the disjoint `HyperNeoActionMessage` type,
   so no single valid message crosses all three APIs — its fixed-shape
   admission (badge, turn index, no send_status) is pinned in a separate table,
