@@ -332,7 +332,11 @@ note.
   :1159–1165), deliberately skips `errorManager`, with no terminal category —
   **and still performs the idle transitions**: `beginTerminalIdle()` before the
   display and the common `setIdle()` afterward (:1287–1289), so an interpreter
-  following only display-and-skip would strand the session in processing;
+  following only display-and-skip would strand the session in processing —
+  and like the declined handoff, the route takes a **post-display generation
+  resnapshot**: the display is awaited (`:1161–1165`), so a replacement may
+  hold the session by the time `setIdle()` runs, and a stale post-display
+  result routes to superseded/no-op before idling the replacement;
   folding it into `terminal(category)` would replace the actionable validation
   text with generic category handling |
   terminal(category, message_hint) — the category alone does not determine the
