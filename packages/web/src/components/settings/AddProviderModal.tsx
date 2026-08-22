@@ -139,10 +139,6 @@ export function AddProviderModal({
       toast.error('API key is required');
       return;
     }
-    if (preset.configField === 'command' && !command) {
-      toast.error('ACP command is required');
-      return;
-    }
     setAddingId(preset.providerId);
     try {
       await createProvider(
@@ -155,7 +151,7 @@ export function AddProviderModal({
           configJson:
             preset.providerId === 'kimi'
               ? JSON.stringify({ region: kimiRegion })
-              : preset.configField === 'command'
+              : preset.configField === 'command' && command
                 ? JSON.stringify({ command })
                 : undefined,
         },

@@ -264,9 +264,19 @@ describe('AddProviderModal', () => {
     });
   });
 
-  it('shows error when ACP command is empty', async () => {
+  it('adds environment-backed ACP provider without a command', async () => {
+    mockCreateProvider.mockResolvedValue({
+      success: true,
+      provider: { id: '2', providerId: 'acp' },
+    });
+    const onProviderAdded = vi.fn();
+
     render(
-      <AddProviderModal existingProviderIds={[]} onClose={() => {}} onProviderAdded={() => {}} />
+      <AddProviderModal
+        existingProviderIds={[]}
+        onClose={() => {}}
+        onProviderAdded={onProviderAdded}
+      />
     );
     await waitFor(() => screen.getByText('More providers'));
     fireEvent.click(screen.getByText('More providers'));
@@ -275,8 +285,18 @@ describe('AddProviderModal', () => {
     fireEvent.click(screen.getAllByText('Add').at(-1)!);
 
     await waitFor(() => {
-      expect(mockToastError).toHaveBeenCalledWith('ACP command is required');
+      expect(mockCreateProvider).toHaveBeenCalled();
     });
+    const params = mockCreateProvider.mock.calls[0][0] as {
+      providerId: string;
+      kind: string;
+      authType: string;
+      configJson?: string;
+    };
+    expect(params).toMatchObject({ providerId: 'acp', kind: 'built_in', authType: 'none' });
+    expect(params.configJson).toBeUndefined();
+    expect(mockToastSuccess).toHaveBeenCalledWith('ACP Agent added');
+    expect(onProviderAdded).toHaveBeenCalled();
   });
 
   it('opens preset picker for custom endpoint', async () => {
