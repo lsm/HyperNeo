@@ -2574,7 +2574,7 @@ describe('SDKMessageRepository', () => {
       );
     });
 
-    it('follows the EARLIEST non-NULL watermark when duplicate rows carry different consumed_seq values (retry layout)', () => {
+    it('follows the LATEST non-NULL watermark when duplicate rows carry different consumed_seq values — prior-attempt results stay invisible (retry layout)', () => {
       const insertDuplicate = db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
          VALUES (?, 'session-1', 'user', NULL, '{}', ?, 'consumed', 0, 'dup-seq-msg', ?)`
@@ -2586,7 +2586,44 @@ describe('SDKMessageRepository', () => {
          VALUES ('dup-seq-result', 'session-1', 'result', 'success', '{}', '2026-08-11T15:22:00.000Z', NULL, 1, 'dup-seq-result-uuid', 7, NULL)`
       ).run();
 
+      expect(repository.hasTerminalResultAfter('session-1', 'dup-seq-msg')).toBe(false);
+
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
+         VALUES ('dup-seq-result-own', 'session-1', 'result', 'success', '{}', '2026-08-11T15:23:00.000Z', NULL, 1, 'dup-seq-result-own-uuid', 12, NULL)`
+      ).run();
+
       expect(repository.hasTerminalResultAfter('session-1', 'dup-seq-msg')).toBe(true);
+    });
+
+    it('a stale prior-attempt recovery-intercepted result does not reopen the latest attempt (Codex P1)', () => {
+      const insertDuplicate = db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
+         VALUES (?, 'session-1', 'user', NULL, '{}', ?, 'consumed', 0, 'stale-msg', ?)`
+      );
+      insertDuplicate.run('stale-old', '2026-08-11T15:20:00.000Z', 5);
+      insertDuplicate.run('stale-new', '2026-08-11T15:21:00.000Z', 10);
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
+         VALUES ('stale-intercepted', 'session-1', 'result', 'success', ?, '2026-08-11T15:22:00.000Z', NULL, 1, 'stale-intercepted-uuid', 7, NULL)`
+      ).run(
+        JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          terminal_reason: 'api_error',
+          recovery_intercepted: 1,
+          recovery_billing_terminal: 0,
+        })
+      );
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
+         VALUES ('stale-success', 'session-1', 'result', 'success', '{}', '2026-08-11T15:23:00.000Z', NULL, 1, 'stale-success-uuid', 12, NULL)`
+      ).run();
+
+      expect(repository.hasTerminalResultAfter('session-1', 'stale-msg')).toBe(true);
+      expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'stale-msg')).toBe(false);
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'stale-msg')).toBeNull();
     });
 
     it('is true when a terminal result shares the consumption millisecond but inserts after (P2 tiebreak)', () => {
