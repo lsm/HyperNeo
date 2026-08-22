@@ -272,11 +272,11 @@ async function openWorkspacePath(
     for (const segment of segments.slice(0, -1)) {
       let nextFd = openDirectory(symbols, directoryFd, segment);
       if (nextFd < 0 && createParents) {
-        symbols.mkdirat(directoryFd, cString(segment), DIRECTORY_MODE);
+        const created = symbols.mkdirat(directoryFd, cString(segment), DIRECTORY_MODE) === 0;
         nextFd = openDirectory(symbols, directoryFd, segment);
         if (nextFd >= 0) {
           fchmodSync(nextFd, DIRECTORY_MODE);
-        } else {
+        } else if (created) {
           symbols.fchmodat(directoryFd, cString(segment), DIRECTORY_MODE, 0);
           nextFd = openDirectory(symbols, directoryFd, segment);
         }

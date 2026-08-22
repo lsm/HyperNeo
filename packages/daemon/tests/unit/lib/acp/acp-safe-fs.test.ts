@@ -519,6 +519,30 @@ bunRuntimeTest('leaves no open descriptors after a write', async () => {
   }
 });
 
+bunRuntimeTest('does not chmod a symlink parent during directory creation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-linkdir-'));
+  const workspace = join(root, 'workspace');
+  const outside = join(root, 'outside');
+  await mkdir(workspace);
+  await mkdir(outside);
+  await chmod(outside, 0o755);
+  await symlink(outside, join(workspace, 'link'));
+
+  try {
+    await expect(
+      writeFileWithinWorkspace(
+        workspace,
+        ['link', 'escaped.txt'],
+        'blocked',
+        new AbortController().signal
+      )
+    ).rejects.toThrow('Unable to open ACP filesystem path');
+    expect((await stat(outside)).mode & 0o777).toBe(0o755);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 bunRuntimeTest('bounds bytes scanned before the requested line', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-scan-'));
   const workspace = join(root, 'workspace');
