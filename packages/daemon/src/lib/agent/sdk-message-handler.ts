@@ -1122,6 +1122,9 @@ export class SDKMessageHandler {
       }
       if (this.clearAwaitingTrailingIdle) {
         this.clearAwaitingTrailingIdle = false;
+        this.usesSessionStateChangedTurnEnd = false;
+        this.expectsSessionStateIdleAfterResult = false;
+        this.lastResultWasSuccess = null;
         this.settleSuppressedResultWaiter('confirmed');
       }
     }

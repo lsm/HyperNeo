@@ -787,6 +787,22 @@ describe('SDKMessageHandler', () => {
         suppressIdleCallback: true,
       });
       expect(emitSpy.mock.calls.filter((call) => call[0] === 'query.trigger')).toHaveLength(0);
+
+      setIdleSpy.mockClear();
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'next-turn-result',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+      expect(setIdleSpy).toHaveBeenCalled();
     });
 
     it('a result for another turn (e.g. /compact) does not confirm the correlated clear wait', async () => {
