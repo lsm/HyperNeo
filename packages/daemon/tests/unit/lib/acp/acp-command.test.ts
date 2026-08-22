@@ -95,6 +95,9 @@ describe('getAcpCommandIdentityDigest', () => {
     expect(getAcpCommandIdentityDigest('agent --password p1 run')).toBe(
       getAcpCommandIdentityDigest('agent --password p2 run')
     );
+    expect(getAcpCommandIdentityDigest('devin acp --auth-token=a')).toBe(
+      getAcpCommandIdentityDigest('devin acp --auth-token=b')
+    );
   });
 
   test('still distinguishes commands that differ outside secret arguments', () => {
@@ -106,6 +109,12 @@ describe('getAcpCommandIdentityDigest', () => {
     );
     expect(getAcpCommandIdentityDigest('devin acp --token a --stdio')).not.toBe(
       getAcpCommandIdentityDigest('devin acp --token a --verbose')
+    );
+    expect(getAcpCommandIdentityDigest('devin acp --max-tokens 4096')).not.toBe(
+      getAcpCommandIdentityDigest('devin acp --max-tokens 8192')
+    );
+    expect(getAcpCommandIdentityDigest('devin acp --password-policy strict')).not.toBe(
+      getAcpCommandIdentityDigest('devin acp --password-policy relaxed')
     );
   });
 });

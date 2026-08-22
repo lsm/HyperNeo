@@ -711,7 +711,11 @@ export class AcpQueryRunner {
       const processTreeOwner = await getAcpProcessTreeOwner();
       const hostCallbacks = workspace
         ? (() => {
-            const manager = new AcpTerminalManager(buildAcpSafeEnv(), workspace, processTreeOwner);
+            const manager = new AcpTerminalManager(
+              buildAcpSafeEnv(acpEnv),
+              workspace,
+              processTreeOwner
+            );
             terminalManager = manager;
             return {
               onTerminalCreate: async (params: AcpTerminalCreateParams) =>

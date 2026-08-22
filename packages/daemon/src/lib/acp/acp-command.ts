@@ -3,7 +3,12 @@ import { parseAcpCommand } from '@hyperneo/shared/acp';
 
 export { getAcpCommandIdentity, parseAcpCommand } from '@hyperneo/shared/acp';
 
-const SECRET_ARG_NAME_PATTERN = /(token|secret|password|passphrase|credential|api[-_]?key)/i;
+const SECRET_ARG_NAME_PATTERN =
+  /(?:^|[-_])(?:token|secret|password|passphrase|credential|api[-_]?key)$/i;
+
+function isSecretArgName(name: string): boolean {
+  return SECRET_ARG_NAME_PATTERN.test(name.replace(/^-+/, ''));
+}
 
 function redactSecretArgs(args: string[]): string[] {
   const redacted: string[] = [];
@@ -16,11 +21,11 @@ function redactSecretArgs(args: string[]): string[] {
     const equalsIndex = arg.indexOf('=');
     if (equalsIndex >= 0) {
       const name = arg.slice(0, equalsIndex);
-      redacted.push(SECRET_ARG_NAME_PATTERN.test(name) ? `${name}=[redacted]` : arg);
+      redacted.push(isSecretArgName(name) ? `${name}=[redacted]` : arg);
       continue;
     }
     const next = args[index + 1];
-    if (SECRET_ARG_NAME_PATTERN.test(arg) && next !== undefined && !next.startsWith('-')) {
+    if (isSecretArgName(arg) && next !== undefined && !next.startsWith('-')) {
       redacted.push(arg, '[redacted]');
       index++;
       continue;

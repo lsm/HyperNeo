@@ -1180,6 +1180,11 @@ describe('AcpQueryRunner', () => {
     const { client, promptStarted, releasePrompt } = createHeldPromptClient();
     const { runner, ctx, constructorOptions } = createRunnerFixture({
       client,
+      queryOptions: {
+        cwd: '/tmp/acp-session',
+        mcpServers: {},
+        env: { HTTPS_PROXY: 'http://session-proxy.example:8080' },
+      },
       canUseTool: async (_toolName, input) => {
         const question = (input.questions as Array<{ question: string }>)[0].question;
         return { behavior: 'allow', updatedInput: { answers: { [question]: 'Allow once' } } };
@@ -1216,6 +1221,7 @@ describe('AcpQueryRunner', () => {
       }
 
       expect(terminalEnv.PATH).toBe(process.env.PATH);
+      expect(terminalEnv.HTTPS_PROXY).toBe('http://session-proxy.example:8080');
       expect(terminalEnv.GITHUB_TOKEN).toBeUndefined();
       expect(terminalEnv.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     } finally {
