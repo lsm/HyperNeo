@@ -220,7 +220,7 @@ describe('redactCommandSecrets', () => {
     ]);
     expect(
       redactCommandSecrets('sh', ['-c', `curl -H 'Authorization: Bearer topsecret' https://a`])
-    ).toEqual(['-c', `curl -H [redacted] https://a`]);
+    ).toEqual(['-c', `curl -H '[redacted]' https://a`]);
     expect(
       redactCommandSecrets('sh', ['-c', `echo "safe; rm -rf /" && curl --token topsecret`])
     ).toEqual(['-c', `echo "safe; rm -rf /" && curl --token [redacted]`]);
@@ -238,7 +238,7 @@ describe('redactCommandSecrets', () => {
     ]);
     expect(
       redactCommandSecrets('sh', ['-c', `echo 'Bearer x' && curl -H 'Authorization: Bearer x'`])
-    ).toEqual(['-c', `echo 'Bearer x' && curl -H [redacted]`]);
+    ).toEqual(['-c', `echo 'Bearer x' && curl -H '[redacted]'`]);
     expect(
       redactCommandSecrets('sh', ['-c', `echo "--token topsecret" && curl --token topsecret`])
     ).toEqual(['-c', `echo "--token topsecret" && curl --token [redacted]`]);
@@ -259,6 +259,29 @@ describe('redactCommandSecrets', () => {
     expect(getAcpCommandIdentityDigest('env FOO=1 cmd data=one')).not.toBe(
       getAcpCommandIdentityDigest('env FOO=1 cmd data=two')
     );
+    expect(getAcpCommandIdentityDigest('env MODE=prod API_TOKEN=topsecret agent')).toBe(
+      getAcpCommandIdentityDigest('env MODE=prod API_TOKEN=othersafe agent')
+    );
+    expect(getAcpCommandIdentityDigest("sh -c 'export MODE=prod API_TOKEN=topsecret'")).toBe(
+      getAcpCommandIdentityDigest("sh -c 'export MODE=prod API_TOKEN=othersafe'")
+    );
+  });
+
+  test('keeps the quote wrapper around redacted url tokens', () => {
+    expect(redactCommandSecrets('sh', ['-c', `curl 'https://u:p@h/a?x=1&y=2'`])).toEqual([
+      '-c',
+      `curl 'https://u:[redacted]@h/a?x=1&y=2'`,
+    ]);
+  });
+
+  test('recurses combined shell flags with c before other letters', () => {
+    expect(getAcpCommandIdentityDigest(`bash -cl 'curl --token topsecret'`)).toBe(
+      getAcpCommandIdentityDigest(`bash -cl 'curl --token othersafe'`)
+    );
+    expect(redactCommandSecrets('bash', ['-cl', `curl --token topsecret`])).toEqual([
+      '-cl',
+      `curl --token [redacted]`,
+    ]);
   });
 
   test('redacts leading assignments inside shell scripts', () => {

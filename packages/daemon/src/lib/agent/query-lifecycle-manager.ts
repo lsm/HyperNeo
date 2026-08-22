@@ -193,6 +193,7 @@ export class QueryLifecycleManager {
     const queryAbortController = this.ctx.queryAbortController;
     const queryPromise = this.ctx.queryPromise;
     const queryObject = this.ctx.queryObject;
+    const startupTimeoutTimer = this.ctx.startupTimeoutTimer;
 
     messageQueue.stop();
     queryAbortController?.abort();
@@ -237,7 +238,7 @@ export class QueryLifecycleManager {
     }
 
     const staleTimer = this.ctx.startupTimeoutTimer;
-    if (staleTimer) {
+    if (staleTimer && staleTimer === startupTimeoutTimer) {
       clearTimeout(staleTimer);
       this.ctx.startupTimeoutTimer = null;
     }

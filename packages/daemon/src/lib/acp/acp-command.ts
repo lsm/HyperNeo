@@ -36,10 +36,6 @@ function isUserArgName(name: string): boolean {
   return /^u$/i.test(stripped) || /^user$/i.test(stripped);
 }
 
-function isShellCommandArgName(name: string): boolean {
-  return /^-[a-z]*c$/i.test(name);
-}
-
 function isSecretEnvAssignment(arg: string): boolean {
   const equalsIndex = arg.indexOf('=');
   if (equalsIndex <= 0) return false;
@@ -84,7 +80,18 @@ function redactShellCommand(script: string, depth: number): string {
         changed = false;
         break;
       }
-      result = result.slice(0, span.start) + redactedTokens[index] + result.slice(span.end);
+      const rawText = result.slice(span.start, span.end);
+      const at = rawText.indexOf(tokens[index]);
+      if (at >= 0) {
+        result =
+          result.slice(0, span.start) +
+          rawText.slice(0, at) +
+          redactedTokens[index] +
+          rawText.slice(at + tokens[index].length) +
+          result.slice(span.end);
+      } else {
+        result = result.slice(0, span.start) + redactedTokens[index] + result.slice(span.end);
+      }
       changed = true;
     }
     if (changed) return result;
@@ -115,10 +122,11 @@ export function redactCommandSecrets(
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (!arg.startsWith('-')) {
+      const isAssignmentShaped = arg.indexOf('=') > 0;
       if (inLeadingAssignments && assignmentsAllowed && isSecretEnvAssignment(arg)) {
         redacted.push(`${arg.slice(0, arg.indexOf('='))}=[redacted]`);
       } else {
-        if (!isSecretEnvAssignment(arg)) {
+        if (!isAssignmentShaped) {
           inLeadingAssignments = false;
         }
         redacted.push(redactUrlUserinfo(arg));
@@ -133,12 +141,21 @@ export function redactCommandSecrets(
       redacted.push('-u[redacted]');
       continue;
     }
-    if (isShell && /^-[a-z]*c./i.test(arg)) {
-      const attachedScript = arg.slice(arg.toLowerCase().lastIndexOf('c') + 1);
-      redacted.push(
-        `${arg.slice(0, arg.length - attachedScript.length)}${redactShellCommand(attachedScript, depth)}`
-      );
-      continue;
+    if (isShell && /^-[a-z]*c[a-z]*$/i.test(arg)) {
+      const next = args[index + 1];
+      if (next !== undefined) {
+        redacted.push(arg, redactShellCommand(next, depth));
+        index++;
+        continue;
+      }
+    }
+    if (isShell && /^-[a-z]*c/i.test(arg)) {
+      const cIndex = arg.toLowerCase().lastIndexOf('c');
+      const attachedScript = arg.slice(cIndex + 1);
+      if (attachedScript && !/[a-zA-Z]/.test(attachedScript)) {
+        redacted.push(`${arg.slice(0, cIndex + 1)}${redactShellCommand(attachedScript, depth)}`);
+        continue;
+      }
     }
     const equalsIndex = arg.indexOf('=');
     if (equalsIndex >= 0) {
@@ -173,16 +190,6 @@ export function redactCommandSecrets(
     }
     if (isCurl && isUserArgName(arg) && next !== undefined && !next.startsWith('--')) {
       redacted.push(arg, '[redacted]');
-      index++;
-      continue;
-    }
-    if (isShell && isShellCommandArgName(arg) && next !== undefined) {
-      redacted.push(arg, redactShellCommand(next, depth));
-      index++;
-      continue;
-    }
-    if (isShell && /^-[a-z]*c$/i.test(arg) && next !== undefined) {
-      redacted.push(arg, redactShellCommand(next, depth));
       index++;
       continue;
     }

@@ -229,6 +229,24 @@ describe('QueryLifecycleManager', () => {
       expect(mockContext.queryPromise).toBe(newerPromise);
     });
 
+    test('preserves a replacement startup timer installed during stop', async () => {
+      const entryTimer = setTimeout(() => {}, 10_000);
+      const newerTimer = setTimeout(() => {}, 10_000);
+      mockContext.startupTimeoutTimer = entryTimer;
+      const originalStop = messageQueue.stop.bind(messageQueue);
+      spyOn(messageQueue, 'stop').mockImplementation(() => {
+        mockContext.startupTimeoutTimer = newerTimer;
+        mockContext.queryPromise = Promise.resolve();
+        originalStop();
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.stop();
+
+      expect(mockContext.startupTimeoutTimer).toBe(newerTimer);
+      clearTimeout(newerTimer);
+    });
+
     test('aborts a controller installed by the stopped query during the stop window', async () => {
       const lateController = new AbortController();
       mockContext.queryPromise = new Promise(() => {});
