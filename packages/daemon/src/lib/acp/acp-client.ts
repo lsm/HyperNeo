@@ -39,6 +39,7 @@ import type {
 } from '@hyperneo/shared';
 import { AcpTransport } from './acp-transport';
 import type { AcpTransportCallbacks } from './acp-transport';
+import type { AcpProcessTreeOwner } from './acp-process-tree';
 
 export interface AcpClientCallbacks {
   onFsRead?(params: AcpFsReadParams): Promise<AcpFsReadResult>;
@@ -62,6 +63,7 @@ export interface AcpClientOptions
   replaceEnv?: boolean;
   cwd?: string;
   requestTimeoutMs?: number;
+  processTreeOwner?: AcpProcessTreeOwner;
 }
 
 export class AcpClient {

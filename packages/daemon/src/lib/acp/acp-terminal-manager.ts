@@ -50,7 +50,6 @@ interface TerminalSession {
   processGroupGone: boolean;
 }
 
-/* @public - wired into the ACP query runner in a later stack PR */
 export class AcpTerminalManager {
   private sessions = new Map<string, TerminalSession>();
   private disposed = false;

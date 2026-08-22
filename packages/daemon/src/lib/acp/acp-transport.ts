@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { kill as processKill } from 'node:process';
 import type {
   AcpJsonRpcError,
   AcpJsonRpcNotification,
@@ -8,9 +7,23 @@ import type {
   AcpJsonRpcResponse,
 } from '@hyperneo/shared';
 import { Logger } from '../logger';
+import {
+  type AcpProcessTree,
+  type AcpProcessTreeOwner,
+  basicAcpProcessTreeOwner,
+} from './acp-process-tree';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 const CLOSE_SIGTERM_TIMEOUT_MS = 5_000;
+
+const defaultProcessGroupProbe = (pid: number): boolean => {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+};
 
 const logger = new Logger('AcpTransport');
 
@@ -44,6 +57,9 @@ export interface AcpTransportOptions extends AcpTransportCallbacks {
   replaceEnv?: boolean;
   cwd?: string;
   requestTimeoutMs?: number;
+  closeSIGKILLTimeoutMs?: number;
+  processGroupProbe?: (pid: number) => boolean;
+  processTreeOwner?: AcpProcessTreeOwner;
 }
 
 interface PendingRequest {
@@ -54,11 +70,15 @@ interface PendingRequest {
 
 export class AcpTransport {
   private process: ChildProcess | null = null;
+  private processTree: AcpProcessTree | null = null;
   private nextId = 1;
   private pendingRequests = new Map<number | string, PendingRequest>();
   private buffer = '';
   private closed = false;
   private processExited = false;
+  private processPid: number | undefined;
+  private processGroupGone = false;
+  private killTimer: ReturnType<typeof setTimeout> | null = null;
   private closePromise: Promise<void> | null = null;
   private closeResolve: (() => void) | null = null;
 
@@ -82,6 +102,23 @@ export class AcpTransport {
     });
 
     this.process = proc;
+    this.processPid = proc.pid ?? undefined;
+
+    proc.on('error', (err) => {
+      logger.error('ACP agent process error:', err.message);
+      this.recordProcessGroupGone();
+      this.process = null;
+      this.processExited = true;
+      this.rejectAllPending(new Error(`ACP agent process error: ${err.message}`));
+      if (this.options.onExit) {
+        this.options.onExit(null, null);
+      }
+      if (this.closeResolve) {
+        this.closeResolve();
+      }
+    });
+
+    this.processTree = (this.options.processTreeOwner ?? basicAcpProcessTreeOwner)(proc);
     this.options.onProcessSpawn?.(proc);
 
     proc.stdout?.on('data', (chunk: Buffer) => {
@@ -99,6 +136,7 @@ export class AcpTransport {
 
     proc.on('exit', (code, signal) => {
       logger.info(`ACP agent exited (code=${code}, signal=${signal})`);
+      this.recordProcessGroupGone();
       this.process = null;
       this.processExited = true;
       if (this.options.onExit) {
@@ -108,19 +146,6 @@ export class AcpTransport {
 
     proc.on('close', () => {
       this.rejectAllPending(new Error('ACP agent process exited'));
-      if (this.closeResolve) {
-        this.closeResolve();
-      }
-    });
-
-    proc.on('error', (err) => {
-      logger.error('ACP agent process error:', err.message);
-      this.process = null;
-      this.processExited = true;
-      this.rejectAllPending(new Error(`ACP agent process error: ${err.message}`));
-      if (this.options.onExit) {
-        this.options.onExit(null, null);
-      }
       if (this.closeResolve) {
         this.closeResolve();
       }
@@ -327,16 +352,20 @@ export class AcpTransport {
   }
 
   private killProcess(signal: NodeJS.Signals): void {
-    const proc = this.process;
-    if (!proc) return;
+    this.processTree?.terminate(signal);
+  }
 
-    if (process.platform !== 'win32' && proc.pid != null) {
-      try {
-        processKill(-proc.pid, signal);
-        return;
-      } catch {}
+  private recordProcessGroupGone(): void {
+    if (!this.processGroupGone) {
+      const pid = this.processPid;
+      if (pid != null && !(this.options.processGroupProbe ?? defaultProcessGroupProbe)(pid)) {
+        this.processGroupGone = true;
+      }
     }
-    proc.kill(signal);
+    if (this.processGroupGone && this.killTimer) {
+      clearTimeout(this.killTimer);
+      this.killTimer = null;
+    }
   }
 
   close(): Promise<void> {
@@ -350,23 +379,31 @@ export class AcpTransport {
     this.closePromise = new Promise((resolve) => {
       this.closeResolve = resolve;
 
-      if (!this.process || this.processExited) {
+      if (!this.processTree) {
+        resolve();
+        return;
+      }
+
+      this.recordProcessGroupGone();
+      if (this.processGroupGone) {
         resolve();
         return;
       }
 
       this.killProcess('SIGTERM');
 
-      const killTimer = setTimeout(() => {
-        if (!this.processExited) {
-          logger.warn('ACP agent did not exit after SIGTERM, sending SIGKILL');
-          this.killProcess('SIGKILL');
-        }
-      }, CLOSE_SIGTERM_TIMEOUT_MS);
+      this.killTimer = setTimeout(() => {
+        this.killTimer = null;
+        this.recordProcessGroupGone();
+        if (this.processGroupGone) return;
+        logger.warn('ACP agent cleanup escalation after SIGTERM');
+        this.killProcess('SIGKILL');
+      }, this.options.closeSIGKILLTimeoutMs ?? CLOSE_SIGTERM_TIMEOUT_MS);
+      this.killTimer.unref();
 
-      const cleanup = () => clearTimeout(killTimer);
-      this.process.once('exit', cleanup);
-      this.process.once('error', cleanup);
+      if (this.processExited) {
+        resolve();
+      }
     });
 
     return this.closePromise;

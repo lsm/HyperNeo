@@ -1,43 +1,61 @@
-import type { UUID } from 'crypto';
+import { isAbsolute, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
 import {
   generateUUID,
-  THINKING_LEVEL_TOKENS,
   type MessageContent,
   type Session,
+  THINKING_LEVEL_TOKENS,
 } from '@hyperneo/shared';
 import type {
   AcpConfigOption,
   AcpContentBlock,
+  AcpFsReadParams,
+  AcpFsReadResult,
+  AcpFsWriteParams,
+  AcpFsWriteResult,
   AcpMcpServerConfig,
   AcpPermissionRequest,
   AcpPermissionResponseResult,
+  AcpTerminalCreateParams,
+  AcpTerminalKillParams,
+  AcpTerminalOutputParams,
+  AcpTerminalReleaseParams,
+  AcpTerminalWaitForExitParams,
 } from '@hyperneo/shared/acp';
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
-import { ErrorCategory } from '../error-manager';
-import { getModelsCache, setModelsCache } from '../model-service';
-import { getProviderRegistry } from '../providers/factory';
-import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-service';
-import { AcpProvider } from '../providers/acp-provider';
-import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
+import type { UUID } from 'crypto';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery';
 import {
-  refreshQueryEnvFromProcess,
   type QueryRunnerContext,
+  refreshQueryEnvFromProcess,
   type TrackedAgentProcess,
 } from '../agent/query-runner';
+import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
+import { ErrorCategory } from '../error-manager';
+import { getModelsCache, setModelsCache } from '../model-service';
+import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-service';
+import { AcpProvider } from '../providers/acp-provider';
+import { getProviderRegistry } from '../providers/factory';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy';
 import { AcpClient, type AcpClientOptions } from './acp-client';
-import { parseAcpCommand } from './acp-command';
+import { buildAcpSafeEnv, getAcpCommandIdentityDigest, parseAcpCommand } from './acp-command';
+import { getAcpProcessTreeOwner } from './acp-process-tree';
 import { AcpQueryAdapter } from './acp-query-adapter';
+import { AcpTerminalManager } from './acp-terminal-manager';
+import {
+  isSafeFsSupported,
+  readFileWithinWorkspace,
+  writeFileWithinWorkspace,
+} from './acp-safe-fs';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
+const MAX_FS_READ_BYTES = 4 * 1024 * 1024;
 
 function getStartupTimeoutMs(): number {
   const raw = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
@@ -249,10 +267,8 @@ export function convertMcpServersForAcp(
   });
 }
 
-function getAcpWorkspacePath(session: Session, queryOptions: Options): string {
-  return (
-    queryOptions.cwd ?? session.worktree?.worktreePath ?? session.workspacePath ?? process.cwd()
-  );
+function getAcpWorkspacePath(session: Session, queryOptions: Options): string | undefined {
+  return queryOptions.cwd ?? session.worktree?.worktreePath ?? session.workspacePath ?? undefined;
 }
 
 function acpPermissionQuestion(params: AcpPermissionRequest): string {
@@ -278,24 +294,118 @@ function acpPermissionQuestionInput(params: AcpPermissionRequest): Record<string
   };
 }
 
+function shellQuote(value: string): string {
+  return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+async function authorizeAcpFsWrite(
+  params: AcpFsWriteParams,
+  canUseTool: CanUseTool,
+  signal: AbortSignal
+): Promise<AcpFsWriteParams> {
+  const permission = await handleAcpPermissionRequest(
+    {
+      sessionId: params.sessionId,
+      toolCall: {
+        toolCallId: generateUUID(),
+        title: `write ${params.path}`,
+        kind: 'edit',
+        rawInput: { file_path: params.path, content: params.content },
+      },
+      options: [
+        { optionId: 'allow-write', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'deny-write', name: 'Deny', kind: 'reject_once' },
+      ],
+    },
+    canUseTool,
+    signal
+  );
+  if (signal.aborted) {
+    throw new Error('ACP filesystem write cancelled');
+  }
+  if (permission.outcome.outcome !== 'selected' || permission.outcome.optionId !== 'allow-write') {
+    throw new Error('ACP filesystem write denied');
+  }
+  return params;
+}
+
+async function authorizeAcpTerminalCreate(
+  params: AcpTerminalCreateParams,
+  canUseTool: CanUseTool,
+  signal: AbortSignal
+): Promise<AcpTerminalCreateParams> {
+  if (params.cwd != null || (params.env?.length ?? 0) > 0) {
+    throw new Error('ACP terminal cwd and environment overrides are not supported');
+  }
+  const parsed =
+    params.args === undefined
+      ? parseAcpCommand(params.command)
+      : { command: params.command, args: params.args };
+  const command = [parsed.command, ...parsed.args].map(shellQuote).join(' ');
+  const permission = await handleAcpPermissionRequest(
+    {
+      sessionId: params.sessionId,
+      toolCall: {
+        toolCallId: generateUUID(),
+        title: `terminal command ${command}`,
+        kind: 'execute',
+      },
+      options: [
+        { optionId: 'allow-terminal', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'deny-terminal', name: 'Deny', kind: 'reject_once' },
+      ],
+    },
+    canUseTool,
+    signal
+  );
+  if (signal.aborted) throw new Error('ACP terminal command cancelled');
+  if (
+    permission.outcome.outcome !== 'selected' ||
+    permission.outcome.optionId !== 'allow-terminal'
+  ) {
+    throw new Error('ACP terminal command denied');
+  }
+  return {
+    ...params,
+    command: parsed.command,
+    args: parsed.args,
+    cwd: undefined,
+    env: undefined,
+  };
+}
+
 async function handleAcpPermissionRequest(
   params: AcpPermissionRequest,
-  canUseTool: CanUseTool
+  canUseTool: CanUseTool,
+  signal?: AbortSignal
 ): Promise<AcpPermissionResponseResult> {
   if (params.options.length === 0) {
     return { outcome: { outcome: 'cancelled' } };
   }
 
-  const controller = new AbortController();
+  const permissionSignal = signal ?? new AbortController().signal;
   const question = acpPermissionQuestion(params);
-  const result = await canUseTool('AskUserQuestion', acpPermissionQuestionInput(params), {
-    signal: controller.signal,
+  const permission = canUseTool('AskUserQuestion', acpPermissionQuestionInput(params), {
+    signal: permissionSignal,
     toolUseID: params.toolCall.toolCallId,
     title: question,
     displayName: params.toolCall.title ?? params.toolCall.kind ?? 'ACP tool',
     description: params.toolCall.kind,
     requestId: generateUUID(),
   });
+  let resolveAbort: (() => void) | undefined;
+  const aborted = new Promise<undefined>((resolve) => {
+    resolveAbort = () => resolve(undefined);
+    permissionSignal.addEventListener('abort', resolveAbort, { once: true });
+    if (permissionSignal.aborted) resolveAbort();
+  });
+  const result = await Promise.race([permission, aborted]).finally(() => {
+    if (resolveAbort) permissionSignal.removeEventListener('abort', resolveAbort);
+  });
+
+  if (permissionSignal.aborted) {
+    return { outcome: { outcome: 'cancelled' } };
+  }
 
   if (!result || result.behavior === 'deny') {
     return { outcome: { outcome: 'cancelled' } };
@@ -393,6 +503,17 @@ export class AcpQueryRunner {
     recoveryState = { rateLimitCooldownScheduled: false }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
+    const assertActiveAcpStartup = () => {
+      if (
+        this.ctx.isCleaningUp() ||
+        this.ctx.getQueryGeneration() !== queryGeneration ||
+        stateManager.getState().status === 'interrupted'
+      ) {
+        const error = new Error('ACP query aborted during startup');
+        error.name = 'AbortError';
+        throw error;
+      }
+    };
     let client: AcpClient | null = null;
     let queryStartTime = Date.now();
     let startupTimeoutReached = false;
@@ -400,6 +521,7 @@ export class AcpQueryRunner {
     let receivedAcpMessageDuringRun = false;
     let restoreMessageEnqueuedHandler: (() => void) | undefined;
     let proxyBridge: AcpMcpProxyBridge | null = null;
+    let terminalManager: AcpTerminalManager | null = null;
     let turnCompletedNormally = false;
     let runAbortController: AbortController | null = this.ctx.queryAbortController;
 
@@ -448,6 +570,32 @@ export class AcpQueryRunner {
         throw new Error('Set HYPERNEO_ACP_COMMAND to enable ACP agents.');
       }
       const { command, args } = parseAcpCommand(acpCommand);
+      const commandIdentity = getAcpCommandIdentityDigest(acpCommand);
+      const storedIdentity = session.metadata?.acpCommandIdentity;
+      if (
+        session.acpSessionId &&
+        storedIdentity !== undefined &&
+        storedIdentity !== commandIdentity
+      ) {
+        session.acpSessionId = undefined;
+        session.metadata = {
+          ...session.metadata,
+          acpCommandIdentity: commandIdentity,
+          acpInstructionsSent: undefined,
+          acpContextUsageEstimate: undefined,
+          acpSessionCommand: undefined,
+        };
+        this.ctx.db.updateSession(session.id, {
+          acpSessionId: undefined,
+          metadata: session.metadata,
+        });
+      } else if (storedIdentity !== commandIdentity) {
+        session.metadata = {
+          ...session.metadata,
+          acpCommandIdentity: commandIdentity,
+        };
+        this.ctx.db.updateSession(session.id, { metadata: session.metadata });
+      }
       const preCleanupAuth = {
         ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
         CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
@@ -469,8 +617,10 @@ export class AcpQueryRunner {
         (message) => logger.warn(message),
         proxyBridge
       );
-      const cwd = getAcpWorkspacePath(session, queryOptions);
+      const workspace = getAcpWorkspacePath(session, queryOptions);
+      const cwd = workspace ?? process.cwd();
       const startupTimeoutMs = getStartupTimeoutMs();
+      assertActiveAcpStartup();
       const abortController = new AbortController();
       this.ctx.queryAbortController = abortController;
       runAbortController = abortController;
@@ -498,6 +648,12 @@ export class AcpQueryRunner {
                 `(Hint: set HYPERNEO_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${startupTimeoutMs}ms)`
             );
             abortController.abort();
+            try {
+              client?.cancel();
+              if (client?.canCloseSession()) {
+                client.closeSession().catch(() => {});
+              }
+            } catch {}
             this.ctx.queryObject?.close();
             client?.close();
           }
@@ -536,15 +692,48 @@ export class AcpQueryRunner {
         acpEnv.CLAUDE_CODE_OAUTH_TOKEN = preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN;
       }
 
+      const processTreeOwner = await getAcpProcessTreeOwner();
+      const hostCallbacks = workspace
+        ? (() => {
+            const manager = new AcpTerminalManager(buildAcpSafeEnv(), workspace, processTreeOwner);
+            terminalManager = manager;
+            return {
+              onTerminalCreate: async (params: AcpTerminalCreateParams) =>
+                manager.create(
+                  await authorizeAcpTerminalCreate(params, canUseTool, abortController.signal)
+                ),
+              onTerminalOutput: (params: AcpTerminalOutputParams) => manager.output(params),
+              onTerminalWaitForExit: (params: AcpTerminalWaitForExitParams) =>
+                manager.waitForExit(params),
+              onTerminalKill: (params: AcpTerminalKillParams) => manager.kill(params),
+              onTerminalRelease: (params: AcpTerminalReleaseParams) => manager.release(params),
+              ...(isSafeFsSupported()
+                ? {
+                    onFsRead: (params: AcpFsReadParams) => this.handleFsRead(params, workspace),
+                    onFsWrite: async (params: AcpFsWriteParams) =>
+                      this.handleFsWrite(
+                        await authorizeAcpFsWrite(params, canUseTool, abortController.signal),
+                        workspace,
+                        abortController.signal
+                      ),
+                  }
+                : {}),
+            };
+          })()
+        : {};
+      assertActiveAcpStartup();
       client = this.createAcpClient({
         command,
         args,
         cwd,
         env: acpEnv as Record<string, string> | undefined,
+        processTreeOwner,
         onProcessSpawn: (proc) =>
           this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
         onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
-        onPermissionRequest: (params) => handleAcpPermissionRequest(params, canUseTool),
+        onPermissionRequest: (params) =>
+          handleAcpPermissionRequest(params, canUseTool, abortController.signal),
+        ...hostCallbacks,
       });
 
       if (messageQueue.size() > 0) {
@@ -565,12 +754,12 @@ export class AcpQueryRunner {
 
         try {
           const result = await client.loadSession(existingAcpSessionId, cwd, acpMcpServers);
-          this.persistAcpSessionId(result.sessionId);
+          this.persistAcpSessionId(result.sessionId, acpCommand);
           this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
         } catch (loadError) {
           try {
             const result = await client.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
-            this.persistAcpSessionId(result.sessionId);
+            this.persistAcpSessionId(result.sessionId, acpCommand);
             this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
           } catch (resumeError) {
             const loadMessage = loadError instanceof Error ? loadError.message : String(loadError);
@@ -586,7 +775,7 @@ export class AcpQueryRunner {
         }
       } else {
         const result = await client.createSession(cwd, acpMcpServers);
-        this.persistAcpSessionId(result.sessionId);
+        this.persistAcpSessionId(result.sessionId, acpCommand);
         this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
         createdAcpSessionDuringRun = true;
       }
@@ -724,6 +913,8 @@ export class AcpQueryRunner {
         createdAcpSessionDuringRun,
         receivedAcpMessageDuringRun,
         async () => {
+          terminalManager?.dispose();
+          terminalManager = null;
           await proxyBridge?.close();
           proxyBridge = null;
         },
@@ -731,6 +922,7 @@ export class AcpQueryRunner {
       );
     } finally {
       restoreMessageEnqueuedHandler?.();
+      terminalManager?.dispose();
       await proxyBridge?.close();
       proxyBridge = null;
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
@@ -777,6 +969,7 @@ export class AcpQueryRunner {
           });
         }
 
+        this._lastConsumedUserMessage = null;
         this.ctx.queryPromise = null;
       }
     }
@@ -827,7 +1020,7 @@ export class AcpQueryRunner {
       await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
       if (isStartupTimeout && createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
-        this.persistAcpSessionId(undefined);
+        this.clearAcpSessionState();
       }
 
       const lastMsg = this._lastConsumedUserMessage;
@@ -928,6 +1121,55 @@ export class AcpQueryRunner {
     await this.ctx.onMarkApiSuccess(message);
   }
 
+  private async handleFsRead(params: AcpFsReadParams, workspace: string): Promise<AcpFsReadResult> {
+    const { workspacePath, segments } = await this.resolveWorkspaceSegments(params.path, workspace);
+    return {
+      content: await readFileWithinWorkspace(workspacePath, segments, {
+        startLine: Math.max(0, (params.line ?? 1) - 1),
+        lineLimit: params.limit ?? undefined,
+        maxBytes: MAX_FS_READ_BYTES,
+      }),
+    };
+  }
+
+  private async handleFsWrite(
+    params: AcpFsWriteParams,
+    workspace: string,
+    signal: AbortSignal
+  ): Promise<AcpFsWriteResult> {
+    if (signal.aborted) throw new Error('ACP filesystem write cancelled');
+    const { workspacePath, segments } = await this.resolveWorkspaceSegments(params.path, workspace);
+    await writeFileWithinWorkspace(workspacePath, segments, params.content, signal);
+    return {};
+  }
+
+  private async resolveWorkspaceSegments(
+    path: string,
+    workspace: string
+  ): Promise<{ workspacePath: string; segments: string[] }> {
+    const { realpath } = await import('node:fs/promises');
+    const { resolve } = await import('node:path');
+    const workspacePath = await realpath(workspace);
+    const lexicalWorkspace = resolve(workspace);
+    const requestedPath = isAbsolute(path) ? resolve(path) : resolve(lexicalWorkspace, path);
+    let relativePath = relative(lexicalWorkspace, requestedPath);
+    try {
+      this.assertWorkspacePath(requestedPath, lexicalWorkspace, path);
+    } catch {
+      this.assertWorkspacePath(requestedPath, workspacePath, path);
+      relativePath = relative(workspacePath, requestedPath);
+    }
+    if (!relativePath) throw new Error(`ACP filesystem path must identify a file: ${path}`);
+    return { workspacePath, segments: relativePath.split(sep) };
+  }
+
+  private assertWorkspacePath(path: string, workspace: string, requestedPath: string): void {
+    const relativePath = relative(workspace, path);
+    if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+      throw new Error(`ACP filesystem path escapes workspace: ${requestedPath}`);
+    }
+  }
+
   private async ensureRequiredMcpServersForAcp(queryOptions: Options): Promise<Options> {
     const { session, logger } = this.ctx;
     const policy = resolveSpaceMcpSessionPolicy(session, {
@@ -1011,11 +1253,29 @@ export class AcpQueryRunner {
     }
   }
 
-  private persistAcpSessionId(acpSessionId: string | undefined): void {
+  private persistAcpSessionId(acpSessionId: string, acpCommand: string): void {
     const { session, db } = this.ctx;
     if (session.acpSessionId === acpSessionId) return;
     session.acpSessionId = acpSessionId;
-    db.updateSession(session.id, { acpSessionId });
+    session.metadata = {
+      ...session.metadata,
+      acpSessionCommand: acpCommand,
+    };
+    db.updateSession(session.id, { acpSessionId, metadata: session.metadata });
+  }
+
+  private clearAcpSessionState(): void {
+    const { session, db } = this.ctx;
+    session.acpSessionId = undefined;
+    session.metadata = {
+      ...session.metadata,
+      acpContextUsageEstimate: undefined,
+      acpSessionCommand: undefined,
+    };
+    db.updateSession(session.id, {
+      acpSessionId: undefined,
+      metadata: session.metadata,
+    });
   }
 
   private persistAcpInstructionsSent(): void {
@@ -1139,6 +1399,8 @@ export class AcpQueryRunner {
       resolveAbort = resolve;
     });
     const onAbort = () => resolveAbort(abortResult);
+    let messageDelivered = false;
+    let pendingNext: Promise<IteratorResult<SDKMessage>> | null = null;
 
     try {
       if (signal.aborted) {
@@ -1148,20 +1410,47 @@ export class AcpQueryRunner {
       signal.addEventListener('abort', onAbort, { once: true });
 
       while (!signal.aborted) {
-        const result = await Promise.race([iterator.next(), abortPromise]);
+        pendingNext = iterator.next();
+        const result = await Promise.race([pendingNext, abortPromise]);
 
-        if ('aborted' in result || signal.aborted) {
+        if ('aborted' in result) {
           break;
         }
+
+        pendingNext = null;
 
         if (result.done) {
           break;
         }
 
+        messageDelivered = true;
         yield result.value;
       }
     } finally {
       signal.removeEventListener('abort', onAbort);
+      if (signal.aborted && messageDelivered) {
+        for (const msg of queryObj.flushPendingMessages()) {
+          yield msg;
+        }
+        if (pendingNext) {
+          try {
+            const result = await pendingNext;
+            if (!result.done) {
+              yield result.value;
+            }
+          } catch {}
+          pendingNext = null;
+        }
+        while (true) {
+          try {
+            const result = await iterator.next();
+            if (result.done) break;
+            yield result.value;
+          } catch {
+            break;
+          }
+        }
+      }
       try {
         await iterator.return?.();
       } catch {}
