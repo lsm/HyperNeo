@@ -3318,13 +3318,31 @@ export class TaskAgentManager {
     }
 
     if (!isBusy) {
+      const clearSuppressedByPendingWork =
+        outcome.decision.action === 'deliver_without_clear' &&
+        outcome.decision.reason === 'unconsumed_work_pending';
+      let clearedUpstream = false;
+      const sendEnqueued = (
+        session as AgentSession & {
+          sendEnqueuedMessagesOnTurnEnd?: (options?: {
+            pendingTaskInput?: boolean;
+            skipResetCoordination?: boolean;
+          }) => Promise<{ replayedWork: boolean; clearedContext: boolean }>;
+        }
+      ).sendEnqueuedMessagesOnTurnEnd;
+      if (clearSuppressedByPendingWork && typeof sendEnqueued === 'function') {
+        const replayed = await sendEnqueued.call(session, {
+          pendingTaskInput: true,
+          skipResetCoordination: true,
+        });
+        clearedUpstream = replayed.clearedContext;
+      }
       const replay = await session.handleQueryTrigger({
         deliverIndividually: true,
         excludeMessageUuid: messageId,
         skipResetCoordination: true,
-        pendingTaskInput:
-          outcome.decision.action === 'deliver_without_clear' &&
-          outcome.decision.reason === 'unconsumed_work_pending',
+        skipContextReset: clearedUpstream,
+        pendingTaskInput: clearSuppressedByPendingWork && !clearedUpstream,
       });
       if (!replay.success) {
         log.warn(

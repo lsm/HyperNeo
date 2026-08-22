@@ -31,7 +31,7 @@ describe('QueryModeHandler', () => {
   let updateMessageStatusSpy: ReturnType<typeof mock>;
   let emitSpy: ReturnType<typeof mock>;
   let enqueueWithIdSpy: ReturnType<typeof mock>;
-  let isRunningSpy: ReturnType<typeof mock>;
+  let sizeSpy: ReturnType<typeof mock>;
   let hasPendingOrInFlightSpy: ReturnType<typeof mock>;
   let ensureQueryStartedSpy: ReturnType<typeof mock>;
   let v2Previous: string | undefined;
@@ -80,12 +80,12 @@ describe('QueryModeHandler', () => {
     } as unknown as DaemonHub;
 
     enqueueWithIdSpy = mock(async () => {});
-    isRunningSpy = mock(() => false);
+    sizeSpy = mock(() => 0);
     hasPendingOrInFlightSpy = mock(() => false);
     mockMessageQueue = {
       enqueueWithId: enqueueWithIdSpy,
       hasPendingOrInFlight: hasPendingOrInFlightSpy,
-      isRunning: isRunningSpy,
+      size: sizeSpy,
     } as unknown as MessageQueue;
 
     mockLogger = {
@@ -688,7 +688,7 @@ describe('QueryModeHandler', () => {
         ] as unknown as SDKMessage[])
       );
       resetSlotDb();
-      isRunningSpy.mockImplementation(() => true);
+      sizeSpy.mockImplementation(() => 1);
 
       handler = new QueryModeHandler(resetSlotContext(clearSpy));
       const result = await handler.handleQueryTrigger();

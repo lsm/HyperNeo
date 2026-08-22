@@ -72,7 +72,7 @@ function makeManager(opts: {
       handleQueryTrigger: replayMock,
       ensureQueryStarted: ensureStartedMock,
       clearConversationContext: clearMock,
-      messageQueue: { enqueueWithId: enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
   }
 
@@ -186,7 +186,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -206,7 +206,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -225,7 +225,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -244,7 +244,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -261,7 +261,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -278,7 +278,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -295,7 +295,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -312,7 +312,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -328,7 +328,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       getProcessingState: () => ({ status: 'processing' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -353,7 +353,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       getProcessingState: () => ({ status: 'processing' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -371,7 +371,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -402,7 +402,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       clearConversationContext: mock(async () => {
         await clearGate;
       }),
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -430,7 +430,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       clearConversationContext: mock(async () => {
         throw new ClearConversationCancelledError();
       }),
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -465,7 +465,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       clearConversationContext: mock(async () => {
         await clearGate;
       }),
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
     attachSessionToTask(manager, live);
@@ -537,7 +537,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       clearConversationContext: mock(async () => {
         await clearGate;
       }),
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
     attachSessionToTask(manager, live);
@@ -583,7 +583,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -602,7 +602,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -630,7 +630,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -701,7 +701,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -758,7 +758,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -811,7 +811,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -857,7 +857,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
         })),
       },
       internalEventBus: { publish: mock(async () => {}) },
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
       logger: { error: mock(() => {}) },
       ensureQueryStarted: session.ensureStartedMock,
       slotResetsContext: () => true,
@@ -870,7 +870,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       handleQueryTrigger: (opts?: Parameters<QueryModeHandler['handleQueryTrigger']>[0]) =>
         backlogFlush.handleQueryTrigger(opts),
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -893,6 +893,73 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(session.clearMock).toHaveBeenCalledTimes(1);
   });
 
+  it('clears for an injected task behind a stranded enqueued row with no delivery job (#1085)', async () => {
+    const { manager, session } = makeManager({ slotResets: true });
+    const order: string[] = [];
+    session.enqueueMock.mockImplementation(async (_uuid: string, content: string) => {
+      order.push(content);
+    });
+    session.clearMock.mockImplementation(async () => {
+      order.push('/clear');
+    });
+    session.getUserMessageIdsByStatus.mockImplementation(
+      (_sessionId: string, sendStatus: string) =>
+        sendStatus === 'enqueued'
+          ? [{ dbId: 'db-stranded', uuid: 'uuid-stranded', timestamp: 1 }]
+          : []
+    );
+    const strandedRow = {
+      dbId: 'db-stranded',
+      uuid: 'uuid-stranded',
+      timestamp: 1,
+      type: 'user',
+      isSynthetic: true,
+      inputKind: 'task',
+      message: { role: 'user', content: 'stranded task' },
+    };
+    const enqueuedFlush = new QueryModeHandler({
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      db: {
+        getUserMessagesByStatus: mock(() => ({
+          messages: [strandedRow],
+          total: 1,
+        })),
+        updateMessageStatus: mock(() => {}),
+        getJobQueueRepo: mock(() => ({
+          activeDeliveryMessageUuids: () => new Set<string>(),
+          hasActiveTurnDeliveryJob: () => false,
+        })),
+      },
+      internalEventBus: { publish: mock(async () => {}) },
+      messageQueue: {
+        enqueueWithId: session.enqueueMock,
+        size: () => 0,
+        hasPendingOrInFlight: () => false,
+      },
+      logger: { error: mock(() => {}) },
+      ensureQueryStarted: session.ensureStartedMock,
+      slotResetsContext: () => true,
+      clearConversationContext: session.clearMock,
+    } as unknown as QueryModeHandlerContext);
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      sendEnqueuedMessagesOnTurnEnd: (
+        opts?: Parameters<QueryModeHandler['sendEnqueuedMessagesOnTurnEnd']>[0]
+      ) => enqueuedFlush.sendEnqueuedMessagesOnTurnEnd(opts),
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    expect(order).toEqual(['/clear', 'stranded task', '─── Message from coder ───']);
+    expect(session.clearMock).toHaveBeenCalledTimes(1);
+  });
+
   it('does NOT clear on inject while unconsumed delivered work is pending (#1085)', async () => {
     const { manager, session } = makeManager({
       slotResets: true,
@@ -904,7 +971,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -923,7 +990,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -934,6 +1001,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       deliverIndividually: true,
       excludeMessageUuid: expect.any(String),
       skipResetCoordination: true,
+      skipContextReset: false,
       pendingTaskInput: false,
     });
     expect(session.saveUserMessage).toHaveBeenCalled();
@@ -948,7 +1016,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -974,7 +1042,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -1008,7 +1076,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
   }
 
@@ -1072,7 +1140,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -1090,7 +1158,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -1108,7 +1176,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       getProcessingState: () => ({ status: 'idle' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
     attachSessionToTask(manager, live);
@@ -1127,7 +1195,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -1154,7 +1222,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       getProcessingState: () => ({ status: 'processing' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 
@@ -1196,7 +1264,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       getProcessingState: () => ({ status: 'rate_limit_cooldown' }),
       ensureQueryStarted: session.ensureStartedMock,
       clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, isRunning: () => false },
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
     indexSession(manager, live);
 

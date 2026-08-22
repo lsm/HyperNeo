@@ -127,7 +127,7 @@ export class QueryModeHandler {
       const replayContent = this.toReplayContent(msg.message.content);
       if (!replayContent) continue;
       if (!clearAttempted && taskUuids.has(msg.uuid)) {
-        if (this.ctx.messageQueue.isRunning()) {
+        if (this.ctx.messageQueue.size() > 0) {
           await this.deferRemainingRows(messages, v2Owned, msg.uuid);
           return clearedContext;
         }
@@ -135,10 +135,12 @@ export class QueryModeHandler {
       }
       await this.ctx.messageQueue.enqueueWithId(msg.uuid, replayContent);
     }
-    if (!clearAttempted && options?.pendingTaskInput === true) {
-      if (!this.ctx.messageQueue.isRunning()) {
-        await clearAheadOfTask();
-      }
+    if (
+      !clearAttempted &&
+      options?.pendingTaskInput === true &&
+      this.ctx.messageQueue.size() === 0
+    ) {
+      await clearAheadOfTask();
     }
     return clearedContext;
   }
@@ -260,7 +262,10 @@ export class QueryModeHandler {
     return clearedContext;
   }
 
-  async sendEnqueuedMessagesOnTurnEnd(): Promise<{
+  async sendEnqueuedMessagesOnTurnEnd(options?: {
+    pendingTaskInput?: boolean;
+    skipResetCoordination?: boolean;
+  }): Promise<{
     replayedWork: boolean;
     clearedContext: boolean;
   }> {
@@ -282,18 +287,24 @@ export class QueryModeHandler {
       if (isMessageDeliveryV2Enabled()) {
         clearedContext = await this.deliverFlushUnderV2(
           this.toFlushMessages(pendingMessages),
-          'recovery'
+          'recovery',
+          { pendingTaskInput: options?.pendingTaskInput }
         );
       } else {
         clearedContext = await this.deliverRowsViaMemoryQueue(
           pendingMessages,
-          this.toFlushMessages(pendingMessages)
+          this.toFlushMessages(pendingMessages),
+          { pendingTaskInput: options?.pendingTaskInput }
         );
       }
     };
 
     try {
-      await withSessionResetCoordination(session.id, runReplay);
+      if (options?.skipResetCoordination) {
+        await runReplay();
+      } else {
+        await withSessionResetCoordination(session.id, runReplay);
+      }
     } catch (error) {
       if (error instanceof ClearConversationCancelledError) throw error;
       logger.error('Failed to send enqueued messages on turn end:', error);

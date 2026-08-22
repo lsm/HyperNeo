@@ -680,6 +680,13 @@ export class AgentSession
     await this.queryModeHandler.replayPendingMessagesForImmediateMode();
   }
 
+  async sendEnqueuedMessagesOnTurnEnd(options?: {
+    pendingTaskInput?: boolean;
+    skipResetCoordination?: boolean;
+  }): Promise<{ replayedWork: boolean; clearedContext: boolean }> {
+    return this.queryModeHandler.sendEnqueuedMessagesOnTurnEnd(options);
+  }
+
   async ensureQueryStarted(): Promise<void> {
     await this.lifecycleManager.ensureQueryStarted();
   }
