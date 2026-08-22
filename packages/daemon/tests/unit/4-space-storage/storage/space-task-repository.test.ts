@@ -626,6 +626,131 @@ describe('SpaceTaskRepository', () => {
     });
   });
 
+  describe('casStatusWithPayload', () => {
+    const limitableSources = ['in_progress', 'rate_limited', 'usage_limited'] as const;
+    const resumeSources = ['rate_limited', 'usage_limited'] as const;
+
+    function seedLimitedTask(status: 'rate_limited' | 'usage_limited', resetAt: number): string {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      repo.updateTask(task.id, {
+        status,
+        restrictions: {
+          type: status === 'usage_limited' ? 'usage_limit' : 'rate_limit',
+          limit: 'seed',
+          resetAt,
+          sessionRole: 'worker',
+        },
+      });
+      return task.id;
+    }
+
+    it("returns 'won' and writes status plus restrictions payload on a matching source", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      const startedAtBefore = repo.getTask(task.id)?.startedAt;
+      const before = Date.now();
+      const resetAt = Date.now() + 60_000;
+      const outcome = repo.casStatusWithPayload(task.id, limitableSources, 'rate_limited', {
+        restrictions: { type: 'rate_limit', limit: 'backoff', resetAt, sessionRole: 'worker' },
+      });
+      expect(outcome).toBe('won');
+      const updated = repo.getTask(task.id);
+      expect(updated?.status).toBe('rate_limited');
+      expect(updated?.restrictions).toMatchObject({
+        type: 'rate_limit',
+        limit: 'backoff',
+        resetAt,
+        sessionRole: 'worker',
+      });
+      expect(updated?.updatedAt).toBeGreaterThanOrEqual(before);
+      expect(updated?.startedAt).toBe(startedAtBefore);
+    });
+
+    it("returns 'won' flipping between limited kinds via the expected set", () => {
+      const taskId = seedLimitedTask('rate_limited', Date.now() + 60_000);
+      const resetAt = Date.now() + 120_000;
+      const outcome = repo.casStatusWithPayload(taskId, limitableSources, 'usage_limited', {
+        restrictions: { type: 'usage_limit', limit: 'parsed', resetAt, sessionRole: 'worker' },
+      });
+      expect(outcome).toBe('won');
+      expect(repo.getTask(taskId)?.status).toBe('usage_limited');
+      expect(repo.getTask(taskId)?.restrictions?.resetAt).toBe(resetAt);
+    });
+
+    it("returns 'won' refreshing a same-status row with a new payload", () => {
+      const taskId = seedLimitedTask('rate_limited', Date.now() + 60_000);
+      const laterReset = Date.now() + 300_000;
+      const outcome = repo.casStatusWithPayload(taskId, limitableSources, 'rate_limited', {
+        restrictions: {
+          type: 'rate_limit',
+          limit: 'backoff',
+          resetAt: laterReset,
+          sessionRole: 'worker',
+        },
+      });
+      expect(outcome).toBe('won');
+      expect(repo.getTask(taskId)?.restrictions?.resetAt).toBe(laterReset);
+    });
+
+    it('clears restrictions, refreshes started_at, and clears completed_at on resume (in_progress)', () => {
+      const taskId = seedLimitedTask('usage_limited', Date.now() + 60_000);
+      repo.updateTask(taskId, { startedAt: 1000, completedAt: 2000 });
+      const before = Date.now();
+      const outcome = repo.casStatusWithPayload(taskId, resumeSources, 'in_progress', {
+        restrictions: null,
+      });
+      expect(outcome).toBe('won');
+      const restored = repo.getTask(taskId);
+      expect(restored?.status).toBe('in_progress');
+      expect(restored?.restrictions).toBeNull();
+      expect(restored?.startedAt).toBeGreaterThanOrEqual(before);
+      expect(restored?.completedAt).toBeNull();
+    });
+
+    it("returns 'superseded' and leaves the row unchanged when the status moved first", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      repo.updateTask(task.id, { status: 'done', result: 'shipped' });
+      const before = repo.getTask(task.id);
+      const outcome = repo.casStatusWithPayload(task.id, limitableSources, 'rate_limited', {
+        restrictions: { type: 'rate_limit', limit: 'backoff', resetAt: 1, sessionRole: 'worker' },
+      });
+      expect(outcome).toBe('superseded');
+      expect(repo.getTask(task.id)).toEqual(before);
+    });
+
+    it("returns 'superseded' when resuming a task that is no longer limited", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      repo.updateTask(task.id, { status: 'blocked', blockReason: 'dependency_failed' });
+      expect(
+        repo.casStatusWithPayload(task.id, resumeSources, 'in_progress', { restrictions: null })
+      ).toBe('superseded');
+      expect(repo.getTask(task.id)?.status).toBe('blocked');
+    });
+
+    it("returns 'superseded' for an unknown task id", () => {
+      expect(
+        repo.casStatusWithPayload('nonexistent', resumeSources, 'in_progress', {
+          restrictions: null,
+        })
+      ).toBe('superseded');
+    });
+
+    it("returns 'superseded' for an empty expected set without writing", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      expect(
+        repo.casStatusWithPayload(task.id, [], 'rate_limited', {
+          restrictions: { type: 'rate_limit', limit: 'x', resetAt: 1, sessionRole: 'worker' },
+        })
+      ).toBe('superseded');
+      expect(repo.getTask(task.id)?.status).toBe('in_progress');
+      expect(repo.getTask(task.id)?.restrictions).toBeNull();
+    });
+  });
+
   describe('reserveSpawnForTick / releaseSpawnReservation', () => {
     const runningStatuses = ['in_progress', 'review'] as const;
 

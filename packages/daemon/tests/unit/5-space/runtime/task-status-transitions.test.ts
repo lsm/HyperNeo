@@ -264,18 +264,107 @@ describe('VALID_SPACE_TASK_TRANSITIONS — matrix gap closures (task #849)', () 
     const EXPECTED = {
       draft: ['open', 'archived'],
       open: ['in_progress', 'blocked', 'review', 'done', 'cancelled', 'archived'],
-      in_progress: ['open', 'review', 'approved', 'done', 'blocked', 'cancelled', 'stopped'],
+      in_progress: [
+        'open',
+        'review',
+        'approved',
+        'done',
+        'blocked',
+        'cancelled',
+        'stopped',
+        'rate_limited',
+        'usage_limited',
+      ],
       review: ['done', 'approved', 'in_progress', 'cancelled', 'archived', 'stopped'],
       approved: ['done', 'in_progress', 'archived', 'cancelled'],
       done: ['in_progress', 'archived'],
       blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived', 'stopped'],
       cancelled: ['open', 'in_progress', 'done', 'archived'],
-      rate_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived', 'stopped'],
-      usage_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived', 'stopped'],
+      rate_limited: [
+        'in_progress',
+        'usage_limited',
+        'open',
+        'blocked',
+        'cancelled',
+        'archived',
+        'stopped',
+      ],
+      usage_limited: [
+        'in_progress',
+        'rate_limited',
+        'open',
+        'blocked',
+        'cancelled',
+        'archived',
+        'stopped',
+      ],
       archived: [],
       stopped: ['in_progress', 'open', 'review', 'cancelled', 'archived'],
     };
     expect(VALID_SPACE_TASK_TRANSITIONS).toEqual(EXPECTED);
+  });
+});
+
+describe('VALID_SPACE_TASK_TRANSITIONS — limited-status edges (task #1223)', () => {
+  test.each([
+    ['in_progress', 'rate_limited'],
+    ['in_progress', 'usage_limited'],
+    ['rate_limited', 'usage_limited'],
+    ['usage_limited', 'rate_limited'],
+  ] as const)('%s → %s is a valid transition', (from, to) => {
+    expect(VALID_SPACE_TASK_TRANSITIONS[from]).toContain(to);
+    expect(isValidSpaceTaskTransition(from, to)).toBe(true);
+  });
+});
+
+describe('SpaceTaskManager.setTaskStatus — runtime-owned limited targets (task #1223)', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+  let taskManager: SpaceTaskManager;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+    taskManager = new SpaceTaskManager(db, SPACE_ID);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  test.each([
+    'rate_limited',
+    'usage_limited',
+  ] as const)('rejects %s as a target even from in_progress and leaves the row unchanged', async (target) => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    await expect(taskManager.setTaskStatus(task.id, target)).rejects.toThrow('runtime-owned');
+    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(task.id)?.restrictions).toBeNull();
+  });
+
+  test('still allows leaving the limited statuses back to in_progress', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    taskRepo.updateTask(task.id, {
+      status: 'rate_limited',
+      restrictions: {
+        type: 'rate_limit',
+        limit: 'backoff-ladder',
+        resetAt: Date.now() + 60_000,
+        sessionRole: 'worker',
+      },
+    });
+    const restored = await taskManager.setTaskStatus(task.id, 'in_progress');
+    expect(restored.status).toBe('in_progress');
+    expect(restored.restrictions).toBeNull();
   });
 });
 

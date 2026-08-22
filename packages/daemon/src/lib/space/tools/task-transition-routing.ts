@@ -24,6 +24,7 @@ export type TaskUpdateRejectReason =
   | 'task_not_in_space'
   | 'review_direct'
   | 'approved_direct'
+  | 'limited_direct'
   | 'review_to_done'
   | 'archive_active_run';
 
@@ -174,6 +175,17 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
           `Use approve_pending_completion after submit_for_approval, or let the ` +
           `runtime's post-approval router handle the transition — both stamp ` +
           `the approval metadata and dispatch the configured post-approval step.`,
+      };
+    }
+    if (isRateOrUsageLimited(requestedStatus as SpaceTaskStatus)) {
+      return {
+        action: 'reject',
+        reason: 'limited_direct',
+        message:
+          `update_task cannot transition a task into '${requestedStatus}' directly. ` +
+          `rate_limited and usage_limited are runtime-owned: the rate-limit pause ` +
+          `path sets them with a restrictions payload and the resume path clears ` +
+          `them automatically.`,
       };
     }
     if (requestedStatus === 'stopped' && hasWorkflowRun) {
