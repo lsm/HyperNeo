@@ -99,7 +99,13 @@ lease would naturally start — so a runner starting under another owner's
 applied environment copies that owner's token, and
 `refreshQueryEnvFromProcess(... preserveAnthropicOAuthToken: true)` retains it
 after the owner restores; ownership is acquired before the auth/options reads
-or those reads stop being ambient. — and
+or those reads stop being ambient — and the **ACP runner has its own
+pre-apply snapshot**: `preCleanupAuth` captures `ANTHROPIC_AUTH_TOKEN` and
+`CLAUDE_CODE_OAUTH_TOKEN` at acp-query-runner.ts:451–454 *before* the apply at
+`:456`, then injects them into the subprocess environment at `:532–536`, so
+the ACP process can launch with another session's credentials despite a
+serialized apply/restore; the ACP lease begins before `:451` or stops reading
+ambient auth there. — and
 **the coordinator must live at the shared `ProviderService` boundary, not in
 QueryRunner**: the same global environment has other concurrent owners —
 `acp-query-runner.ts:456` (`applyEnvVarsToProcessForSession`) and
@@ -651,7 +657,13 @@ note.
   regardless of staleness — so a replacement alone does not leak the fence,
   but when cleanup has begun the drain is skipped and this handler-owned
   fence stays live, misleading
-  `reclaimTurnAlreadySucceeded`; the failure path cancels its owned fence
+  `reclaimTurnAlreadySucceeded`; and the unwind covers **every exceptional
+  handler exit while the fence is pending**, not only rejection of the initial
+  publication: with `usesSessionStateChangedTurnEnd` the direct `setIdle()`
+  (`:746–750`) is skipped so the fence stays pending after the publish, and a
+  later awaited effect — e.g. `session.errorClear` (`:932–934`) — can reject;
+  with cleanup started the runner's catch skips its drain (`:810–812`) and the
+  fence leaks identically; the failure path cancels its owned fence
   while retaining the pre/post-publication ordering; the
   core also returns the updated flag state, since the scoped machine mutates it:
   results set `lastResultWasSuccess`; suppressed **successful** results clear
