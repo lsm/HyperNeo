@@ -11,6 +11,7 @@ type ClassifierProviderService = Pick<
   ReturnType<typeof getProviderService>,
   | 'getAvailableProviders'
   | 'isProviderAvailable'
+  | 'getCheapTierModel'
   | 'getTitleGenerationModels'
   | 'applyEnvVarsToProcessForProvider'
   | 'getEnvVarsForModel'
@@ -146,7 +147,7 @@ export class LimitErrorLlmClassifier {
     if (pending) {
       return signal ? this.raceWithAbort(pending, signal) : pending;
     }
-    const task = runSerialized(() => this.classifyUncached(rawText, now))
+    const task = runSerialized(() => this.classifyUncached(rawText, Date.now()))
       .then((assessment) => {
         evictExpiredAssessments(Date.now());
         if (assessment && !assessment.relative) {
@@ -205,8 +206,13 @@ export class LimitErrorLlmClassifier {
       const providerId = await raceWithDeadline(this.resolveClassifierProvider(), deadline);
       if (!providerId) return null;
 
+      const cheapFallback = await raceWithDeadline(
+        this.deps.providerService.getCheapTierModel(providerId),
+        deadline
+      );
+      if (!cheapFallback) return null;
       const models = await raceWithDeadline(
-        this.deps.providerService.getTitleGenerationModels(providerId, 'haiku'),
+        this.deps.providerService.getTitleGenerationModels(providerId, cheapFallback),
         deadline
       );
       if (!models) return null;
@@ -286,7 +292,9 @@ export class LimitErrorLlmClassifier {
       ...usable.filter((p) => p.id === this.deps.excludeProvider),
     ];
     for (const candidate of ordered) {
-      if (await providerService.isProviderAvailable(candidate.id)) return candidate.id;
+      if (!(await providerService.isProviderAvailable(candidate.id))) continue;
+      if (!(await providerService.getCheapTierModel(candidate.id))) continue;
+      return candidate.id;
     }
     return null;
   }

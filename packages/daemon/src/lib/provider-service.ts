@@ -219,10 +219,7 @@ export class ProviderService {
   ): Promise<{ providerModelId: string; sdkModelId: string }> {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
-    const providerModelId =
-      provider?.getTitleGenerationModel?.() ??
-      provider?.getModelForTier?.('haiku') ??
-      sessionModelId;
+    const providerModelId = provider?.getTitleGenerationModel?.() ?? sessionModelId;
     let sdkModelId = provider?.translateModelIdForSdk?.(providerModelId) ?? providerModelId;
     try {
       const sdkConfig = provider?.buildSdkConfig(providerModelId);
@@ -232,6 +229,13 @@ export class ProviderService {
       providerModelId,
       sdkModelId,
     };
+  }
+
+  async getCheapTierModel(providerId: string): Promise<string | null> {
+    const registry = await this.getReadyRegistry();
+    const provider = registry.get(providerId);
+    if (!provider) return null;
+    return provider.getTitleGenerationModel?.() ?? provider.getModelForTier?.('haiku') ?? null;
   }
 
   async getTitleGenerationModel(providerId: string, sessionModelId: string): Promise<string> {

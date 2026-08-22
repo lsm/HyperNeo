@@ -31,6 +31,7 @@ function createDeps(replyText: string | Error): {
         { id: 'deepseek', name: 'DeepSeek', models: [], available: true },
       ],
       isProviderAvailable: async () => true,
+      getCheapTierModel: async () => 'cheap-model',
       getTitleGenerationModels: async () => ({
         providerModelId: 'cheap-model',
         sdkModelId: 'sdk-cheap-model',
@@ -311,6 +312,27 @@ describe('LimitErrorLlmClassifier', () => {
     };
     const classifier = new LimitErrorLlmClassifier('s1', { ...deps, excludeProvider: 'anthropic' });
     await classifier.classify('acp never classifies this wall');
+    expect(seenProviders).toEqual(['glm']);
+  });
+
+  it('skips available providers that expose no cheap-tier model', async () => {
+    const seenProviders: string[] = [];
+    const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
+    const originalApply = deps.providerService.applyEnvVarsToProcessForProvider;
+    deps.providerService = {
+      ...deps.providerService,
+      getAvailableProviders: async () => [
+        { id: 'openrouter', name: 'OpenRouter', models: [], available: true },
+        { id: 'glm', name: 'GLM', models: [], available: true },
+      ],
+      getCheapTierModel: async (id: string) => (id === 'glm' ? 'cheap-model' : null),
+      applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
+        seenProviders.push(providerId);
+        return originalApply(providerId, modelId);
+      },
+    };
+    const classifier = new LimitErrorLlmClassifier('s1', { ...deps, excludeProvider: 'anthropic' });
+    await classifier.classify('no cheap tier on the first candidate');
     expect(seenProviders).toEqual(['glm']);
   });
 
