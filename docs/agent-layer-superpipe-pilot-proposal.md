@@ -535,7 +535,8 @@ note.
   `driveDeliveryTurn` admission cascade (:1338–1497) as `stagedRun` flows
   (effects: `ensureQueryStarted` — a spawned query is an external effect the
   startup gate's in-memory permit cannot unwind or durably deduplicate, so per
-  the stagedRun failure contract it needs a reservation/compensation or stays
+  the stagedRun failure contract it needs a durable conditional startup intent
+  **plus** idempotence-or-compensation, or stays
   outside the staged pass as a shell-preceding step; DB reloads,
   queue admit — idempotent or UNIQUE-guarded, **except** batch narrowing:
   `narrowActiveDeliveryBatchUuids` reads the active batch and updates matching
@@ -665,11 +666,14 @@ note.
   handlers via `Promise.all` with no ordering between concurrent publishes
   (internal-event-bus.ts:105–150) and a compensation can deliver `enqueued`
   before a slow subscriber finishes the earlier `submitted`. And
-  if `ensureQueryStarted` stays inside the staged pass, a query-startup
-  reservation/compensation (or durable dedup) is required after all — the
-  in-memory startup permit neither compensates an already-spawned query after a
-  later stage failure nor deduplicates replay, per the `stagedRun` failure
-  contract; otherwise startup remains a shell-preceding step outside the pass.
+  if `ensureQueryStarted` stays inside the staged pass, **both obligations**
+  apply, not a choice between them (ADR :148–153, :201–219): a durable
+  conditional startup intent (the crash-recovery/dedup record) **and**
+  idempotence or compensation for the spawned query — the
+  in-memory startup permit provides neither, and compensation alone leaves no
+  dedup record while durable dedup alone cannot unwind a spawned query on a
+  later stage failure; otherwise startup remains a shell-preceding step outside
+  the pass.
   The admission block's installed resources — `deliveryResponseObserver` and
   the `waitForIdleTransition` waiter (:1350–1393) — likewise need registered
   cleanup compensations (a stale observer can attribute the replacement turn's
