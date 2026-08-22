@@ -1068,6 +1068,50 @@ describe('AgentSession', () => {
       expect(retrySpy).not.toHaveBeenCalled();
     });
 
+    it('driveDeliveryTurn reopens a consumed reclaim immediately when no query or recovery owns it', async () => {
+      const retrySpy = mock(() => 'db-1');
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
+        hasTerminalResultAfter: mock(() => false),
+        hasRecoveryInterceptedResultAfter: mock(() => true),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryRetryableByUuid: retrySpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+
+      await agentSession.stateManager.setProcessing('uuid-reclaim');
+      const drive = agentSession.driveDeliveryTurn('uuid-reclaim', 'hello', null, true, () => true);
+      const error = await drive.catch((caught) => caught);
+
+      expect(error).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
+      expect(error).toMatchObject({ message: 'Turn ended without a response' });
+      expect(retrySpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancelRateLimitRetry cancels the parked delivery for the episode message', async () => {
+      const cancelDelivery = mock(() => true);
+      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);
+      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        cancel: mock(() => {}),
+        getState: mock(() => ({
+          lastUserMessage: { uuid: 'msg-episode', content: 'hi' },
+        })),
+      } as never;
+
+      agentSession.cancelRateLimitRetry();
+
+      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
+    });
+
     it('driveDeliveryTurn makes a terminal turn error non-retryable without reopening', async () => {
       const retrySpy = mock(() => 'db-terminal');
       mockDb.getSDKMessageRepo = mock(() => ({

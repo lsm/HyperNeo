@@ -510,19 +510,37 @@ export class QueryLifecycleManager {
   ): Promise<void> {
     const { session, messageQueue, stateManager, internalEventBus } = this.ctx;
 
+    await stateManager.setQueued(messageId);
+
+    if (options?.prepend) {
+      await messageQueue
+        .enqueueWithId(messageId, messageContent, false, { prepend: true })
+        .catch((error) => this.handleQueuedMessageFailure(messageId, messageContent, error))
+        .catch((handlerError) => {
+          this.logger.warn('Failed to handle queued message delivery error', handlerError);
+        });
+    }
+
     const queryStartResult = await this.ensureQueryStarted();
     if (
       episodeGeneration !== undefined &&
       this.ctx.isRateLimitEpisodeSuperseded?.(episodeGeneration)
     ) {
       this.logger.info(
-        `startQueryAndEnqueue: aborting enqueue of ${messageId} ` +
+        `startQueryAndEnqueue: aborting retry of ${messageId} ` +
           `(rate-limit episode superseded during query startup).`
       );
+      if (messageQueue.remove(messageId)) {
+        this.logger.info(
+          `startQueryAndEnqueue: removed superseded retry message ${messageId} from the queue.`
+        );
+      }
       return;
     }
     if (queryStartResult === 'blocked') {
-      await stateManager.setQueued(messageId);
+      if (options?.prepend) {
+        messageQueue.remove(messageId);
+      }
       this.logger.debug(
         `startQueryAndEnqueue: session ${session.id} is blocked on sdk_resume_choice; ` +
           `leaving message ${messageId} persisted as enqueued for replay after the choice.`
@@ -532,13 +550,17 @@ export class QueryLifecycleManager {
     if (!messageQueue.isRunning() || !this.ctx.queryPromise) {
       throw new Error('Agent query did not start; message remains queued for retry.');
     }
-    await stateManager.setQueued(messageId);
+
+    if (options?.prepend) {
+      internalEventBus.publish('message.sent', { sessionId: session.id }).catch((error) => {
+        this.logger.warn('Failed to emit message.sent event', error);
+      });
+      return;
+    }
 
     try {
-      const enqueuePromise = options?.prepend
-        ? messageQueue.enqueueWithId(messageId, messageContent, false, { prepend: true })
-        : messageQueue.enqueueWithId(messageId, messageContent);
-      void enqueuePromise
+      void messageQueue
+        .enqueueWithId(messageId, messageContent)
         .catch((error) => this.handleQueuedMessageFailure(messageId, messageContent, error))
         .catch((handlerError) => {
           this.logger.warn('Failed to handle queued message delivery error', handlerError);

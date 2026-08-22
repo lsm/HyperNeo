@@ -133,7 +133,7 @@ export function assessLimitError(
       isStructuredBillingTerminal(signal.rateLimitInfo) ||
       (rawText !== '' && isBillingTerminal(rawText, now)));
   const textLimit = rawText !== '' && looksLikeLimitText(rawText);
-  const statusLimit = signal.httpStatus === 429;
+  const statusLimit = signal.httpStatus === 429 || signal.httpStatus === 402;
   const tagLimit = signal.sdkErrorTag === 'rate_limit';
   const terminalLimit =
     signal.terminalReason !== undefined &&

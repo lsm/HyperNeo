@@ -218,6 +218,16 @@ describe('assessLimitError', () => {
     expect(assessment.kind).toBe('usage_limit');
   });
 
+  it('keeps a resettable HTTP 402 response in the limit pipeline', () => {
+    const assessment = assessLimitError(
+      { rawText: 'Payment Required; retry after 2 hours', httpStatus: 402 },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(true);
+    expect(assessment.billingTerminal).toBe(false);
+    expect(assessment.resetAtMs).toBe(NOW + 2 * 60 * 60 * 1000);
+  });
+
   it('routes the SDK billing_error tag as a billing-terminal limit', () => {
     const assessment = assessLimitError(
       { rawText: 'The request could not be completed', sdkErrorTag: 'billing_error' },

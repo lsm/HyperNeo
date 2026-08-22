@@ -2128,10 +2128,12 @@ describe('SDKMessageRepository', () => {
       });
 
       expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(true);
+      expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'msg-uuid')).toBe(false);
 
       repository.markResultRecoveryIntercepted('session-1', 'result-uuid');
 
       expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
+      expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'msg-uuid')).toBe(true);
     });
 
     it('getErrorTerminalResultSubtypeAfter returns the error subtype (null for success/none)', () => {

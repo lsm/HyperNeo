@@ -1030,6 +1030,26 @@ describe('QueryLifecycleManager', () => {
       expect(enqueueSpy).toHaveBeenCalledWith('msg-123', 'Hello');
     });
 
+    test('prepended retry is admitted before the replacement query starts', async () => {
+      const callOrder: string[] = [];
+      spyOn(messageQueue, 'enqueueWithId').mockImplementation(async () => {
+        callOrder.push('enqueue');
+        return 'msg-retry';
+      });
+      mockContext = createMockContext({
+        startStreamingQuery: async () => {
+          callOrder.push('start');
+          messageQueue.start();
+          mockContext.queryPromise = Promise.resolve();
+        },
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.startQueryAndEnqueue('msg-retry', 'Hello', 7, { prepend: true });
+
+      expect(callOrder).toEqual(['enqueue', 'start']);
+    });
+
     test('emits message.sent event', async () => {
       spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-123');
 

@@ -885,9 +885,17 @@ export class AgentSession
   }
 
   cancelRateLimitRetry(): void {
+    const episodeMessage = this.rateLimitWatchdog.getState().lastUserMessage;
     this.rateLimitWatchdog.cancel(false);
     if (this.stateManager.getState().status === 'rate_limit_cooldown') {
       void this.stateManager.setIdle();
+    }
+    if (episodeMessage) {
+      try {
+        this.db.getJobQueueRepo()?.cancelDelivery(this.session.id, episodeMessage.uuid);
+      } catch (error) {
+        this.logger.warn('Failed to cancel the parked delivery for the retry episode:', error);
+      }
     }
   }
 
@@ -1528,6 +1536,22 @@ export class AgentSession
     }
     if (started.kind === 'aborted') {
       return { outcome: 'aborted' };
+    }
+    if (
+      alreadyConsumed &&
+      !this.rateLimitWatchdog.isRecoveryPending() &&
+      !!this.db
+        .getSDKMessageRepo()
+        ?.hasRecoveryInterceptedResultAfter?.(this.session.id, messageUuid)
+    ) {
+      this.logger.info(
+        `delivery-turn: reclaiming recovery-intercepted row directly (uuid=${messageUuid}); ` +
+          `the parked recovery episode no longer owns its retry.`
+      );
+      if (!claimGuard || claimGuard()) {
+        this.reopenDeliveryForRetry(messageUuid);
+      }
+      throw new MessageDeliveryRecoverableTurnError('Turn ended without a response');
     }
     this.deliveryTurnStalled = false;
     this.outstandingToolUseIds.clear();

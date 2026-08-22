@@ -1671,6 +1671,29 @@ export class SDKMessageRepository {
       .run(sessionId, sdkUuid);
   }
 
+  hasRecoveryInterceptedResultAfter(sessionId: string, uuid: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1
+           FROM sdk_messages r
+          WHERE r.session_id = ?
+            AND r.message_type = 'result'
+            AND r.is_terminal = 1
+            AND r.message_subtype = 'success'
+            AND r.parent_tool_use_id IS NULL
+            AND r.consumed_seq IS NOT NULL
+            AND r.consumed_seq >= (
+              SELECT m.consumed_seq FROM sdk_messages m
+               WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
+            )
+            AND COALESCE(json_extract(r.sdk_message, '$.is_error'), 0) = 1
+            AND COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
+          LIMIT 1`
+      )
+      .get(sessionId, sessionId, uuid) as { 1: number } | undefined | null;
+    return row != null;
+  }
+
   getErrorTerminalResultSubtypeAfter(sessionId: string, uuid: string): string | null {
     const row = this.db
       .prepare(
