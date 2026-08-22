@@ -175,6 +175,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       minutesAgo?: number;
       resultText?: string;
       apiErrorStatus?: number;
+      recoveryIntercepted?: boolean;
     }
   ): void {
     const id = `${sessionId}-result-${Math.random().toString(36).slice(2)}`;
@@ -375,12 +376,13 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
   });
 
-  test('api-error success result with HTTP 429 is carved out (limit machinery owns it)', async () => {
+  test('flagged 429 api-error result is carved out (limit machinery owns it)', async () => {
     const { runId, taskId, executionId } = seedIdleErrorRun({
       subtype: 'success',
       terminalReason: 'api_error',
       resultText: 'API Error: Too many requests',
       apiErrorStatus: 429,
+      recoveryIntercepted: true,
     });
     const tam = makeTam();
     const rt = new SpaceRuntime(buildConfig(tam));
@@ -395,11 +397,12 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(notifications).not.toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
   });
 
-  test('api-error success result with usage-limit text is carved out (limit machinery owns it)', async () => {
+  test('flagged usage-limit-text api-error result is carved out (limit machinery owns it)', async () => {
     const { executionId } = seedIdleErrorRun({
       subtype: 'success',
       terminalReason: 'api_error',
       resultText: 'API Error: usage limit reached, upgrades available',
+      recoveryIntercepted: true,
     });
     const tam = makeTam();
     const rt = new SpaceRuntime(buildConfig(tam));
@@ -408,6 +411,22 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     await rt.executeTick();
 
     expect(tam._injected).toHaveLength(0);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+  });
+
+  test('unflagged status-only 429 result falls through to runtime continue (limit pipeline declined it)', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      apiErrorStatus: 429,
+      resultText: 'API Error: Too many requests',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1);
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
   });
 

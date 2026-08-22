@@ -40,7 +40,6 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
-import { assessLimitError } from '../../agent/limit-error-classifier';
 import { formatExternalEventEssence } from '../../external-events/event-essence';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
@@ -7228,10 +7227,6 @@ export class SpaceRuntime {
 
       if (this.isRecoveryInterceptedResult(lastMessage)) continue;
 
-      if (this.isApiErrorTerminalResult(lastMessage) && this.isLimitErrorApiResult(lastMessage)) {
-        continue;
-      }
-
       if (
         sessionExecutions.some(
           (e) =>
@@ -7443,7 +7438,7 @@ export class SpaceRuntime {
     return (
       isSDKResultSuccess(message) &&
       message.is_error === true &&
-      message.terminal_reason === 'api_error'
+      (message.terminal_reason === 'api_error' || typeof message.api_error_status === 'number')
     );
   }
 
@@ -7452,19 +7447,6 @@ export class SpaceRuntime {
     recovery_intercepted?: boolean | number;
   }): boolean {
     return message.recovery_intercepted === true || message.recovery_intercepted === 1;
-  }
-
-  private isLimitErrorApiResult(message: {
-    result?: string;
-    api_error_status?: number | null;
-    terminal_reason?: string;
-  }): boolean {
-    return assessLimitError({
-      rawText: typeof message.result === 'string' ? message.result : '',
-      httpStatus:
-        typeof message.api_error_status === 'number' ? message.api_error_status : undefined,
-      terminalReason: message.terminal_reason,
-    }).isLimit;
   }
 
   private computeTerminalErrorSignature(message: {
