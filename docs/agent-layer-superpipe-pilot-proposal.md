@@ -154,9 +154,17 @@ auth gate yet then calls the enrolled `provider.isAvailable()`/
 on its own lease; the lease propagates current ownership into enrolled
 readers (or supports reentrancy, or in-owner-window reads use the immutable
 baseline), with a startup pin — all
-owner and reader enrollments, `AuthManager`/`EnvManager` included, are
+owner and reader enrollments, `AuthManager`/`EnvManager` and the **logout
+reader** included, are
 scheduled in the dedicated **Prerequisite PR 0** in the Recommendation, since
-no chain PR delivers it. — and
+no chain PR delivers it — the logout reader is
+`ProviderCredentialManager.hasEnvironmentCredentials()`
+(credentials/provider-credential-manager.ts:77–80), which `auth.logout`'s
+environment-managed early return consumes (auth-handlers.ts:182–189): during a
+foreign lease it sees the temporary key, deletes the stored credential, yet
+skips the in-memory clear and `providers.changed` notification (`:228–231`),
+leaving the user authenticated after the lease restores despite the logout.
+— and
 **the coordinator must live at the shared `ProviderService` boundary, not in
 QueryRunner**: the same global environment has other concurrent owners —
 `acp-query-runner.ts:456` (`applyEnvVarsToProcessForSession`) and
