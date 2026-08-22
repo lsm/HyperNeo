@@ -42,6 +42,7 @@ import {
   deliverAndMarkQueued,
   deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
+  withSessionResetCoordination,
 } from '../../agent/message-delivery';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { SpaceRuntime } from './space-runtime';
@@ -459,19 +460,21 @@ export class SpaceRuntimeService {
         messageUuid: id,
         timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
         deliver: () =>
-          deliverAndMarkQueued({
-            jobQueue: reactiveDb.getJobQueueRepo(),
-            stateManager: session.stateManager,
-            sessionId,
-            messageUuid: id,
-            origin: 'long_term_agent',
-            onEnqueueFailure: () => {
-              const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
-              if (failedDbId) {
-                void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
-              }
-            },
-          }),
+          withSessionResetCoordination(sessionId, async () =>
+            deliverAndMarkQueued({
+              jobQueue: reactiveDb.getJobQueueRepo(),
+              stateManager: session.stateManager,
+              sessionId,
+              messageUuid: id,
+              origin: 'long_term_agent',
+              onEnqueueFailure: () => {
+                const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
+                if (failedDbId) {
+                  void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+                }
+              },
+            })
+          ),
         ...(fresh
           ? {
               terminalizeOnTimeout: () => {

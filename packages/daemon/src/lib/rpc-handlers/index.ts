@@ -86,6 +86,7 @@ import {
   deliverAndMarkQueued,
   deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
+  withSessionResetCoordination,
 } from '../agent/message-delivery';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
@@ -799,25 +800,27 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         messageUuid: messageId,
         timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
         deliver: () =>
-          deliverAndMarkQueued({
-            jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
-            stateManager: session.stateManager,
-            sessionId,
-            messageUuid: messageId,
-            origin: 'space_agent',
-            onEnqueueFailure: () => {
-              const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
-              if (failedDbId) {
-                void deps.internalEventBus
-                  .publish('messages.statusChanged', {
-                    sessionId,
-                    messageIds: [failedDbId],
-                    status: 'failed',
-                  })
-                  .catch(() => {});
-              }
-            },
-          }),
+          withSessionResetCoordination(sessionId, async () =>
+            deliverAndMarkQueued({
+              jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
+              stateManager: session.stateManager,
+              sessionId,
+              messageUuid: messageId,
+              origin: 'space_agent',
+              onEnqueueFailure: () => {
+                const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
+                if (failedDbId) {
+                  void deps.internalEventBus
+                    .publish('messages.statusChanged', {
+                      sessionId,
+                      messageIds: [failedDbId],
+                      status: 'failed',
+                    })
+                    .catch(() => {});
+                }
+              },
+            })
+          ),
         ...(fresh
           ? {
               terminalizeOnTimeout: () => {
