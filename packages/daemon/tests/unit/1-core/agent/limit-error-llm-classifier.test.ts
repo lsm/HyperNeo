@@ -144,6 +144,80 @@ describe('LimitErrorLlmClassifier', () => {
     expect(prompts).toHaveLength(1);
   });
 
+  it('skips an unstarted queued task once every caller has timed out', async () => {
+    let releaseFirst: () => void = () => {};
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const prompts: string[] = [];
+    const queryForTesting = ((params: { prompt: string }) => {
+      prompts.push(params.prompt);
+      return (async function* () {
+        yield {
+          type: 'assistant',
+          message: {
+            content: [
+              { type: 'text', text: '{"is_limit":true,"kind":"rate_limit","reset_at":null}' },
+            ],
+          },
+        };
+      })();
+    }) as LimitErrorLlmClassifierDeps['queryForTesting'];
+    const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
+    deps.queryForTesting = queryForTesting;
+    let discoveryCalls = 0;
+    deps.providerService = {
+      ...deps.providerService,
+      getAvailableProviders: async () => {
+        discoveryCalls += 1;
+        if (discoveryCalls === 1) {
+          await firstGate;
+        }
+        return [{ id: 'glm', name: 'GLM', models: [], available: true }];
+      },
+    };
+    const slowClassifier = new LimitErrorLlmClassifier('s1', { ...deps, timeoutMs: 5000 });
+    const fastClassifier = new LimitErrorLlmClassifier('s2', { ...deps, timeoutMs: 60 });
+
+    const first = slowClassifier.classify('first abandoned queue wall');
+    const second = fastClassifier.classifyWithTimeout('second abandoned queue wall');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(await second).toBeNull();
+
+    releaseFirst();
+    const [firstResult] = await Promise.all([first]);
+    expect(firstResult?.kind).toBe('rate_limit');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(prompts).toHaveLength(1);
+  });
+
+  it('continues past candidates whose availability probe rejects', async () => {
+    const seenProviders: string[] = [];
+    const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
+    const originalApply = deps.providerService.applyEnvVarsToProcessForProvider;
+    deps.providerService = {
+      ...deps.providerService,
+      getAvailableProviders: async () => [
+        { id: 'broken', name: 'Broken', models: [], available: true },
+        { id: 'glm', name: 'GLM', models: [], available: true },
+      ],
+      isProviderAvailable: async (id: string) => {
+        if (id === 'broken') throw new Error('probe failed');
+        return true;
+      },
+      getCheapTierModel: async () => 'cheap-model',
+      applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
+        seenProviders.push(providerId);
+        return originalApply(providerId, modelId);
+      },
+    };
+    const classifier = new LimitErrorLlmClassifier('s1', { ...deps, excludeProvider: 'anthropic' });
+    const assessment = await classifier.classify('probe rejection wall');
+    expect(seenProviders).toEqual(['glm']);
+    expect(assessment?.kind).toBe('rate_limit');
+  });
+
   it('enforces its own deadline when provider discovery stalls, freeing the queue', async () => {
     const hangGate = new Promise<never>(() => {});
     const prompts: string[] = [];

@@ -42,6 +42,7 @@ interface CacheEntry {
 
 const assessmentCache = new Map<string, CacheEntry>();
 const inflightClassifications = new Map<string, Promise<LlmLimitAssessment | null>>();
+const activeWaiters = new Map<string, number>();
 
 function evictExpiredAssessments(now: number): void {
   for (const [key, entry] of assessmentCache) {
@@ -143,23 +144,40 @@ export class LimitErrorLlmClassifier {
     if (cached && cached.expiresAt > now) {
       return cached.assessment;
     }
-    const pending = inflightClassifications.get(key);
-    if (pending) {
-      return signal ? this.raceWithAbort(pending, signal) : pending;
+    activeWaiters.set(key, (activeWaiters.get(key) ?? 0) + 1);
+    try {
+      const pending = inflightClassifications.get(key);
+      const task =
+        pending ??
+        runSerialized(() => {
+          if ((activeWaiters.get(key) ?? 0) <= 0) {
+            inflightClassifications.delete(key);
+            return Promise.resolve(null);
+          }
+          return this.classifyUncached(rawText, Date.now());
+        })
+          .then((assessment) => {
+            evictExpiredAssessments(Date.now());
+            if (assessment && !assessment.relative) {
+              assessmentCache.set(key, { assessment, expiresAt: Date.now() + CACHE_TTL_MS });
+            }
+            return assessment;
+          })
+          .finally(() => {
+            inflightClassifications.delete(key);
+          });
+      if (!pending) {
+        inflightClassifications.set(key, task);
+      }
+      return await (signal ? this.raceWithAbort(task, signal) : task);
+    } finally {
+      const remaining = (activeWaiters.get(key) ?? 1) - 1;
+      if (remaining <= 0) {
+        activeWaiters.delete(key);
+      } else {
+        activeWaiters.set(key, remaining);
+      }
     }
-    const task = runSerialized(() => this.classifyUncached(rawText, Date.now()))
-      .then((assessment) => {
-        evictExpiredAssessments(Date.now());
-        if (assessment && !assessment.relative) {
-          assessmentCache.set(key, { assessment, expiresAt: Date.now() + CACHE_TTL_MS });
-        }
-        return assessment;
-      })
-      .finally(() => {
-        inflightClassifications.delete(key);
-      });
-    inflightClassifications.set(key, task);
-    return signal ? this.raceWithAbort(task, signal) : task;
   }
 
   private raceWithAbort(
@@ -292,9 +310,13 @@ export class LimitErrorLlmClassifier {
       ...usable.filter((p) => p.id === this.deps.excludeProvider),
     ];
     for (const candidate of ordered) {
-      if (!(await providerService.isProviderAvailable(candidate.id))) continue;
-      if (!(await providerService.getCheapTierModel(candidate.id))) continue;
-      return candidate.id;
+      try {
+        if (!(await providerService.isProviderAvailable(candidate.id))) continue;
+        if (!(await providerService.getCheapTierModel(candidate.id))) continue;
+        return candidate.id;
+      } catch {
+        continue;
+      }
     }
     return null;
   }
