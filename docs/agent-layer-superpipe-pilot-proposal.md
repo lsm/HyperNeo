@@ -696,7 +696,15 @@ note.
      replacement-during-fallback-resolution pin — and
      `ProcessingStateManager.setIdle`
      gains the generation/owner-scoped state transition and waiter drain with
-     the replacement-during-publish interleaving pinned
+     the replacement-during-publish interleaving pinned — **and the
+     post-publication idle callback joins the scope**: a stale `setIdle()`
+     resuming after the publish runs `onIdleCallback`
+     (processing-state-manager.ts:157–160), which — with a settings change
+     having set `pendingRestartReason` for the now-processing replacement —
+     fires `executeDeferredRestartIfPending()` (agent-session.ts:413–418)
+     and restarts the replacement instead of waiting for its own idle
+     boundary; ownership is rechecked before the callback and across its
+     awaits, or the callback is owner-scoped as well
      (processing-state-manager.ts:156, :168–175) — using a **separate
      query-owner token, not the existing `idleWaiters.gen`**: that field
      stores the *rate-limit episode* generation
@@ -950,7 +958,20 @@ note.
   potentially `finishTurn()`, idling or acknowledging the successor's work
   even though turn-scoped waiter filtering stops the original drain; the
   handler revalidates the turn owner after its awaits, with the same-query
-  interleaving pinned; the
+  interleaving pinned — and **ownership propagates into detached
+  continuations**: `handleMessage` detaches `refreshContextUsage()` at
+  `:793–795`, and after the handler returns its token can no longer cancel
+  the refresh's later awaits — which update the shared `contextTracker`,
+  publish `context.updated`, and may enqueue `/compact` into the
+  replacement queue (`:1106–1140`); every detached refresh continuation
+  captures and revalidates the query/turn owner before updating or
+  enqueueing. Model discovery is fenced at its cache write too:
+  `getSupportedModelsFromQuery` sets `modelsCache` immediately after the
+  `supportedModels()` await (model-service.ts:120–127) — before any
+  post-fetch generator check, detached at query-runner.ts:773–775, and
+  outside `refreshInProgress`/`cacheGeneration` so a replacement's cache
+  clear does not fence the late write; the run owner is passed into
+  discovery and validated immediately before `modelsCache.set`; the
   core also returns the updated flag state, since the scoped machine mutates it:
   results set `lastResultWasSuccess`; suppressed **successful** results clear
   `suppressIdleOnNextResult` (:936–937 is success-gated at :765–766), so a
