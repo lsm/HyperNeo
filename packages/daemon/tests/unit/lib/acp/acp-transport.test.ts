@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'bun:test';
+import { spawn } from 'node:child_process';
+import { acpProcessGroupAlive } from '../../../../src/lib/acp/acp-process-tree';
 import { AcpTransport, buildAcpProcessEnv } from '../../../../src/lib/acp/acp-transport';
 
 describe('buildAcpProcessEnv', () => {
@@ -48,6 +50,16 @@ describe('AcpTransport replaceEnv spawn', () => {
       delete process.env.ACP_PROBE_TEST_SECRET;
       await transport?.close();
     }
+  });
+});
+
+describe('acpProcessGroupAlive', () => {
+  it('probes the direct pid on win32 instead of a POSIX process group', async () => {
+    expect(acpProcessGroupAlive(process.pid, 'win32')).toBe(true);
+
+    const child = spawn('true', [], { stdio: 'ignore' });
+    await new Promise<void>((resolve) => child.on('exit', () => resolve()));
+    expect(acpProcessGroupAlive(child.pid!, 'win32')).toBe(false);
   });
 });
 

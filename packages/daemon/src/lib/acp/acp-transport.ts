@@ -8,6 +8,7 @@ import type {
 } from '@hyperneo/shared';
 import { Logger } from '../logger';
 import {
+  acpProcessGroupAlive,
   type AcpProcessTree,
   type AcpProcessTreeOwner,
   basicAcpProcessTreeOwner,
@@ -15,15 +16,6 @@ import {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 const CLOSE_SIGTERM_TIMEOUT_MS = 5_000;
-
-const defaultProcessGroupProbe = (pid: number): boolean => {
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
-  }
-};
 
 const logger = new Logger('AcpTransport');
 
@@ -358,7 +350,7 @@ export class AcpTransport {
   private recordProcessGroupGone(): void {
     if (!this.processGroupGone) {
       const pid = this.processPid;
-      if (pid != null && !(this.options.processGroupProbe ?? defaultProcessGroupProbe)(pid)) {
+      if (pid != null && !(this.options.processGroupProbe ?? acpProcessGroupAlive)(pid)) {
         this.processGroupGone = true;
       }
     }
