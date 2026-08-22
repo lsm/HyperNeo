@@ -33,9 +33,22 @@ describe('ACP provider sync', () => {
     resetProviderRegistry();
   });
 
-  it('parses valid command configuration', () => {
-    expect(parseAcpConfig(JSON.stringify({ command: 'devin acp' }))).toEqual({
+  it('parses valid command and model configuration', () => {
+    expect(
+      parseAcpConfig(
+        JSON.stringify({
+          command: 'devin acp',
+          models: [
+            { id: 'model-a', name: 'Model A' },
+            { id: 'model-b', name: 42 },
+            null,
+            { name: 'missing id' },
+          ],
+        })
+      )
+    ).toEqual({
       command: 'devin acp',
+      models: [{ id: 'model-a', name: 'Model A' }, { id: 'model-b' }],
     });
   });
 
@@ -43,7 +56,7 @@ describe('ACP provider sync', () => {
     expect(parseAcpConfig('{invalid')).toEqual({});
   });
 
-  it('applies the persisted ACP command to the registered provider', async () => {
+  it('applies persisted ACP command and models to the registered provider', async () => {
     const provider = new AcpProvider({}, async () => {});
     getProviderRegistry().register(provider);
     const record = {
@@ -55,7 +68,7 @@ describe('ACP provider sync', () => {
       isEnabled: true,
       isDefault: false,
       sortOrder: 0,
-      configJson: JSON.stringify({ command: 'devin acp' }),
+      configJson: JSON.stringify({ command: 'devin acp', models: [{ id: 'model-a' }] }),
       healthStatus: 'unknown',
       createdAt: 1,
       updatedAt: 1,
@@ -64,6 +77,7 @@ describe('ACP provider sync', () => {
     await syncProviderToRegistry(record);
 
     expect(provider.getAcpCommand()).toBe('devin acp');
+    expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['model-a']);
   });
 });
 
