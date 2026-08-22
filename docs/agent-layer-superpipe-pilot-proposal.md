@@ -293,6 +293,16 @@ note.
   via the `!isAbortError` gate (:1158–1291) and performs finally-cleanup only;
   without this route the interpreter would classify intentional cancellation as
   terminal and display an error or run terminal-idle handling |
+  cleanup_noop / superseded_noop — the early exits at :845–851 (cleaning-up
+  begun, or generation replaced) return before queue-clear or any arm; as
+  distinct routes (or shell-retained gates) those inputs cannot fall through to
+  terminal handling |
+  rate_limit_handoff(scheduled | declined) — the awaited `onRateLimitExhausted`
+  outcome decides the post-effect route: `scheduled` suppresses terminal
+  handling, while `declined` (no consumed prompt, exhausted watchdog budget)
+  falls back to `beginTerminalIdle` + `errorManager` + `setIdle`
+  (:1240–1289); the handoff interpreter carries this post-effect decision as a
+  pinned branch rather than nested routing |
   api_validation(text) — a parseable API validation failure (e.g.
   `400 prompt is too long`) is displayed verbatim with `markAsError` via
   `parseApiValidationError`/`displayErrorAsAssistantMessage` (:1568–1617,
@@ -319,10 +329,13 @@ note.
   `isNonRetryableBillingError` and fall through to terminal handling — the
   classifier therefore carries a billing-non-resettable input so a terminal
   billing failure cannot become repeated cooldown recovery. The backoff arm is
-  5xx **plus** the full `RETRYABLE_PROVIDER_ERROR_TEXT` loose-text set defined by
-  `isRetryableProviderError` — the overloaded/service-unavailable family
-  (including `temporarily unavailable`), the GLM strings (`访问量过大`,
-  `当前访问量过大`), and GLM `[1305]`; the classifier input should be defined
+  whatever `isRetryableProviderError` accepts — 5xx **and** the full
+  `RETRYABLE_PROVIDER_ERROR_TEXT` loose-text set
+  (the overloaded/service-unavailable family including `temporarily
+  unavailable`, the GLM strings `访问量过大`/`当前访问量过大`, and GLM `[1305]`)
+  — **with terminal-text precedence**: `TERMINAL_PROVIDER_ERROR_TEXT` is checked
+  before any 5xx acceptance, so e.g. `503 due to quota limits` is terminal, not
+  backoff; the classifier input should be defined
   directly from `isRetryableProviderError` rather than a duplicated partial
   list. The backoff arm's
   sleep→revalidate→re-enqueue→recurse (:1066–1151) is a `stagedRun` candidate
@@ -392,10 +405,16 @@ note.
   turn-boundary: keep inline unless separately benchmarked with pinned
   per-chunk behavior.
 - **ADR pattern:** `decisionRun` for the flag machine (flags in →
-  `{idle_fence, finish_turn, allow_queue_replay, next_flags}` plan out — the
+  `{idle_fence, early_set_idle, finish_turn, allow_queue_replay, next_flags}`
+  plan out — the legacy direct `setIdle` (:746–750) is a distinct action from
+  `finishTurn`'s own `setIdle` (:946), and the doubled transition it creates is
+  pinned behavior; the
   core also returns the updated flag state, since the scoped machine mutates it:
-  results set `lastResultWasSuccess`, suppressed results clear
-  `suppressIdleOnNextResult`, non-idle session-state events set the expectation
+  results set `lastResultWasSuccess`; suppressed **successful** results clear
+  `suppressIdleOnNextResult` (:936–937 is success-gated at :765–766), so a
+  suppressed error result leaves the flag set for the following result — the
+  error row retains the flag and PR 1 pins that asymmetry; non-idle
+  session-state events set the expectation
   flags and idle events reset them (:739–755, :936–969); alternatively narrow
   the core to action routing with flag mutation explicitly in shell — the
   direct counterpart of
@@ -475,7 +494,10 @@ note.
   `MessageQueue.admitWithId` unconditionally pushes even for an existing UUID,
   so while today's claimGuard→admit span is synchronous, staged async boundaries
   require a claim resnapshot immediately before `admitWithId` or a stale attempt
-  can enqueue a duplicate or canceled delivery);
+  can enqueue a duplicate or canceled delivery — and since `admitWithId`
+  unconditionally appends, the staged effect additionally needs UUID/claim-keyed
+  idempotence or an exact-entry compensation, because a retried pass under the
+  same still-current claim can otherwise double-admit);
   `reconcileStrandedDeliveries` stale-submitted sweep (:1977–1997); MessageQueue
   timeout policy (:105–128) as plain transform. Includes removing the
   production-dead module-level `reconcileStrandedDeliveries`
