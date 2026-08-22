@@ -441,7 +441,14 @@ but by hardening it.
   responsibility moved to the reconciler. The legacy-owned-turn guards and the
   now-dead `hasActiveTurnDelivery` repo method are removed — with every kickoff
   path on `deliverMessage`, every v2 turn is a durable turn job and the unique
-  index is the sole role arbiter.
+  index is the sole role arbiter. (Pilot 4 later added a distinct, non-arbiter
+  read with a different name — `hasActiveTurnDeliveryJob` — mirroring the
+  `uq_message_delivery_active_turn` index predicate. It is only the
+  `activeTurnInJobQueue` snapshot input to the pure turn-end flush planner
+  (`decideTurnEndFlush`), letting the core plan per-message delivery instead of
+  attempting a batch the index would reject; `deliverMessage` + the unique
+  index remain the sole role arbiter, and `deliverBatchAndMarkQueued` still
+  falls back on the constraint if state races past the snapshot.)
 - **Lease + reclaim (item 5):** a slow-but-alive turn (long MCP startup / model
   startup / provider request) is never falsely reclaimed — the handler
   heartbeats `started_at` (`touchStartedAt`, every 60s) throughout the turn

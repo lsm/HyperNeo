@@ -162,11 +162,6 @@ flag_names:
     paths:
       - packages/daemon/src/
       - packages/shared/src/
-  daemon-online-space-d:
-    description: Daemon online integration tests - space-d module
-    paths:
-      - packages/daemon/src/
-      - packages/shared/src/
   daemon-online-rewind-a:
     description: Daemon online integration tests - rewind-a module
     paths:

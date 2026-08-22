@@ -779,4 +779,56 @@ describe('JobQueueRepository', () => {
       expect(repository.getJob(job3.id)).not.toBeNull();
     });
   });
+
+  describe('hasActiveTurnDeliveryJob', () => {
+    function enqueueDeliveryJob(args: { sessionId: string; role: string; status?: string }): void {
+      const job = repository.enqueue({
+        queue: 'message_delivery',
+        payload: {
+          sessionId: args.sessionId,
+          messageUuid: `msg-${args.role}-${args.sessionId}`,
+          role: args.role,
+          origin: 'chat',
+          parentToolUseId: null,
+        },
+      });
+      if (args.status && args.status !== 'pending') {
+        db.prepare('UPDATE job_queue SET status = ? WHERE id = ?').run(args.status, job.id);
+      }
+    }
+
+    it('returns true when a pending turn-role delivery job exists for the session', () => {
+      enqueueDeliveryJob({ sessionId: 'sess-1', role: 'turn' });
+
+      expect(repository.hasActiveTurnDeliveryJob('sess-1')).toBe(true);
+    });
+
+    it('returns true when the turn-role delivery job is processing', () => {
+      enqueueDeliveryJob({ sessionId: 'sess-1', role: 'turn', status: 'processing' });
+
+      expect(repository.hasActiveTurnDeliveryJob('sess-1')).toBe(true);
+    });
+
+    it('returns false when only steer-role delivery jobs are active', () => {
+      enqueueDeliveryJob({ sessionId: 'sess-1', role: 'steer' });
+
+      expect(repository.hasActiveTurnDeliveryJob('sess-1')).toBe(false);
+    });
+
+    it('returns false when the turn-role delivery job has completed', () => {
+      enqueueDeliveryJob({ sessionId: 'sess-1', role: 'turn', status: 'completed' });
+
+      expect(repository.hasActiveTurnDeliveryJob('sess-1')).toBe(false);
+    });
+
+    it('ignores turn-role delivery jobs of other sessions', () => {
+      enqueueDeliveryJob({ sessionId: 'sess-other', role: 'turn' });
+
+      expect(repository.hasActiveTurnDeliveryJob('sess-1')).toBe(false);
+    });
+
+    it('returns false for a session with no delivery jobs', () => {
+      expect(repository.hasActiveTurnDeliveryJob('sess-1')).toBe(false);
+    });
+  });
 });

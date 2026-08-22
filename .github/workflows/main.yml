@@ -24,8 +24,11 @@
 # Release is handled separately in release.yml (triggered by version tags).
 # Test coverage (unit, online, web) is uploaded to Coveralls. Each test job's
 # repo-root-normalized lcov.info is also uploaded as an lcov-* workflow
-# artifact (retention 7d) so downstream tooling can consume coverage without
-# going through the Coveralls API.
+# artifact (retention 7d). The coverage-gate job merges those artifacts locally
+# (union of line hits across flags) and enforces thresholds against the
+# baseline kept on the coverage-baseline ref — no Coveralls API on the critical
+# path. The Coveralls upload/finalize steps remain for side-by-side comparison
+# during the migration; badge removal is follow-up work.
 
 name: CI
 
@@ -119,6 +122,9 @@ jobs:
       - name: Test strip-comments argument handling
         run: bun run test:strip-comments
 
+      - name: Test coverage gate script
+        run: bun run test:coverage-gate
+
       - name: Test CI balance report parser
         run: bun run test:ci-balance-report
 
@@ -204,7 +210,7 @@ jobs:
           - components
           - convo
           - coordinator
-          # features/ is hash-split 3-way by scripts/test-online.sh (features-a/b/c).
+          # features/ is split 3-way (duration-weighted) by scripts/test-online.sh (features-a/b/c).
           - features-a
           - features-b
           - features-c
@@ -215,10 +221,10 @@ jobs:
           # - providers-anthropic-to-codex-bridge
           # Copilot bridge tests disabled — COPILOT_GITHUB_TOKEN credential issue causing hard-fail
           # - providers-anthropic-copilot
-          # rewind/ is hash-split 2-way by scripts/test-online.sh (rewind-a/b).
+          # rewind/ is split 2-way (duration-weighted) by scripts/test-online.sh (rewind-a/b).
           - rewind-a
           - rewind-b
-          # rpc/ is hash-split 6-way by scripts/test-online.sh (rpc-a…rpc-f).
+          # rpc/ is split 6-way (duration-weighted) by scripts/test-online.sh (rpc-a…rpc-f).
           - rpc-a
           - rpc-b
           - rpc-c
@@ -226,11 +232,10 @@ jobs:
           - rpc-e
           - rpc-f
           - sdk
-          # space/ is hash-split 4-way by scripts/test-online.sh (space-a…space-d).
+          # space/ is split 3-way (duration-weighted) by scripts/test-online.sh (space-a…space-c).
           - space-a
           - space-b
           - space-c
-          - space-d
           - websocket
         include:
           # mock_sdk: true → uses Dev Proxy (HYPERNEO_USE_DEV_PROXY) for mocking instead of real API calls.
@@ -294,8 +299,6 @@ jobs:
           - module: space-b
             mock_sdk: true
           - module: space-c
-            mock_sdk: true
-          - module: space-d
             mock_sdk: true
           - module: websocket
             mock_sdk: true
@@ -661,91 +664,140 @@ jobs:
           fail-on-error: true
 
   # ============================================
-  # COVERAGE QUALITY GATE
-  # Verifies minimum coverage and regression thresholds via Coveralls API.
+  # COVERAGE QUALITY GATE (local)
+  # Downloads the per-job lcov-* artifacts, merges them locally (union of line
+  # hits per file across flags — daemon-unit and daemon-online overlap on
+  # packages/daemon/src, so hits are max-merged, never averaged), and enforces:
+  #   - overall coverage >= 30%
+  #   - overall coverage no more than 2% below the baseline
+  # Only files under packages/*/src count (mirrors the Coveralls flag paths;
+  # tests/ helpers and unmapped cross-package paths are excluded).
+  # The baseline lives on the coverage-baseline ref, not in the dev tree:
+  # dev's ruleset requires squash-merged PRs with signed commits, so CI cannot
+  # push baseline updates into dev itself. This job is strictly read-only.
+  # Replaces the former Coveralls API polling gate (~90s of sleeps that also
+  # silently skipped the gate when the API never answered).
   # Run on: PR to dev, push to dev, workflow_dispatch
   # ============================================
 
   coverage-gate:
     name: Coverage Quality Gate
     runs-on: ubuntu-latest
-    needs: [coveralls-finalize]
+    needs: [test-daemon-shared-unit, test-web, test-daemon-online]
     timeout-minutes: 3
     if: github.event.inputs.run_e2e_only != 'true'
+    permissions:
+      contents: read
+      actions: read
 
     steps:
-      - name: Check coverage thresholds via Coveralls API
+      - uses: actions/checkout@v6
+
+      - name: Fetch coverage baseline
         run: |
-          echo "Querying Coveralls for commit ${{ github.sha }}..."
-
-          # Retry logic — Coveralls may take time to process the finalized build
-          MAX_RETRIES=6
-          RETRY_DELAY=15
-          RESPONSE=""
-
-          for attempt in $(seq 1 $MAX_RETRIES); do
-            HTTP_CODE=$(curl -s -o /tmp/coveralls.json -w "%{http_code}" \
-              "https://coveralls.io/builds/${{ github.sha }}.json" 2>/dev/null) || true
-
-            if [ "$HTTP_CODE" = "200" ]; then
-              RESPONSE=$(cat /tmp/coveralls.json)
-              break
-            fi
-
-            echo "Attempt $attempt/$MAX_RETRIES: Coveralls API returned HTTP $HTTP_CODE, retrying in ${RETRY_DELAY}s..."
-            sleep $RETRY_DELAY
-          done
-
-          if [ -z "$RESPONSE" ]; then
-            echo "⚠️ Could not fetch coverage from Coveralls API after $MAX_RETRIES attempts"
-            echo "Skipping coverage gate (API unavailable)"
-            exit 0
-          fi
-
-          COVERED_PERCENT=$(echo "$RESPONSE" | jq -r '.covered_percent // empty')
-          COVERAGE_CHANGE=$(echo "$RESPONSE" | jq -r '.coverage_change // "0"')
-
-          if [ -z "$COVERED_PERCENT" ]; then
-            echo "⚠️ Coveralls response missing coverage data"
-            echo "Skipping coverage gate"
-            exit 0
-          fi
-
-          echo "==============================="
-          echo "📊 Project Coverage: ${COVERED_PERCENT}%"
-          echo "📈 Coverage Change:  ${COVERAGE_CHANGE}%"
-          echo "==============================="
-
-          FAILED=0
-
-          # --- Project gate: minimum overall coverage ---
-          MIN_COVERAGE=30
-          if (( $(echo "$COVERED_PERCENT < $MIN_COVERAGE" | bc -l) )); then
-            echo "❌ FAIL: Project coverage ${COVERED_PERCENT}% is below minimum ${MIN_COVERAGE}%"
-            FAILED=1
+          if git fetch --no-tags origin refs/heads/coverage-baseline; then
+            git show FETCH_HEAD:coverage-baseline.json > coverage-baseline.json
           else
-            echo "✅ Project coverage meets minimum threshold (>= ${MIN_COVERAGE}%)"
-          fi
-
-          # --- Regression gate: coverage must not drop more than threshold ---
-          MAX_REGRESSION=-2
-          if [ "$COVERAGE_CHANGE" != "null" ] && [ -n "$COVERAGE_CHANGE" ]; then
-            if (( $(echo "$COVERAGE_CHANGE < $MAX_REGRESSION" | bc -l) )); then
-              echo "❌ FAIL: Coverage regressed by ${COVERAGE_CHANGE}% (max allowed: ${MAX_REGRESSION}%)"
-              FAILED=1
-            else
-              echo "✅ Coverage regression within acceptable range (change: ${COVERAGE_CHANGE}%)"
-            fi
-          fi
-
-          if [ "$FAILED" -eq 1 ]; then
-            echo ""
-            echo "Coverage quality gate FAILED"
+            echo "::error::coverage-baseline ref not found on origin — push it (see coverage-baseline-update job) before the gate can run"
             exit 1
           fi
 
-          echo ""
-          echo "✅ Coverage quality gate passed!"
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.14
+
+      - name: Download lcov artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: lcov-*
+          path: lcov-artifacts
+
+      # --verify-completeness lists this run's successful test-matrix jobs via the
+      # actions API and fails when any of them produced no lcov artifact, so a
+      # shard whose coverage report silently failed to generate cannot be quietly
+      # averaged out of the merge. The job-name -> artifact-name mapping lives in
+      # jobNameToArtifactName (scripts/coverage-gate.ts) and must follow the
+      # display names and artifact names in this file.
+      - name: Merge lcov and enforce coverage thresholds
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          bun run scripts/coverage-gate.ts
+          --artifacts lcov-artifacts
+          --baseline coverage-baseline.json
+          --min-coverage 30
+          --max-regression -2
+          --verify-completeness
+
+  # ============================================
+  # COVERAGE BASELINE UPDATE
+  # Replays the same local merge and rewrites coverage-baseline.json on the
+  # coverage-baseline ref (a single-file ref) so PR gates compare against the
+  # latest dev numbers. Pushes to that ref do not trigger any workflow.
+  # Run on: push to dev only, after a green gate (needs contents: write).
+  # ============================================
+
+  coverage-baseline-update:
+    name: Update Coverage Baseline
+    runs-on: ubuntu-latest
+    needs: [coverage-gate]
+    timeout-minutes: 3
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.coverage-gate.result == 'success'
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.14
+
+      - name: Download lcov artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: lcov-*
+          path: lcov-artifacts
+
+      - name: Write updated baseline
+        run: >-
+          bun run scripts/coverage-gate.ts
+          --artifacts lcov-artifacts
+          --baseline coverage-baseline.json
+          --write-baseline
+          --source-commit ${{ github.sha }}
+
+      - name: Push baseline to the coverage-baseline ref
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          push_baseline() {
+            local parent=""
+            if git fetch --no-tags origin refs/heads/coverage-baseline 2>/dev/null; then
+              parent="-p $(git rev-parse FETCH_HEAD)"
+            fi
+            local blob tree commit
+            blob=$(git hash-object -w coverage-baseline.json)
+            tree=$(printf '100644 blob %s\tcoverage-baseline.json\n' "$blob" | git mktree)
+            commit=$(git commit-tree "$tree" $parent \
+              -m "chore(coverage): update baseline for $(git rev-parse --short HEAD)")
+            git push origin "$commit:refs/heads/coverage-baseline"
+          }
+
+          for attempt in 1 2 3; do
+            if push_baseline; then
+              echo "Baseline ref updated"
+              exit 0
+            fi
+            echo "Push attempt $attempt failed (likely raced another dev run); retrying after re-fetch"
+            sleep 5
+          done
+          echo "::error::could not update the coverage-baseline ref after 3 attempts"
+          exit 1
 
   # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
@@ -1027,6 +1079,7 @@ jobs:
       - test-daemon-shared-unit
       - test-web
       - coverage-gate
+      - coverage-baseline-update
       - build
       - discover
       - e2e-no-llm
@@ -1066,6 +1119,12 @@ jobs:
             FAILED=1
           fi
 
+          # coverage-baseline-update: push to dev only
+          if [[ "${{ needs.coverage-baseline-update.result }}" == "failure" ]]; then
+            echo "❌ coverage-baseline-update failed"
+            FAILED=1
+          fi
+
           # build: push to dev, workflow_dispatch
           if [[ "${{ needs.build.result }}" == "failure" ]]; then
             echo "❌ build failed"
@@ -1092,6 +1151,7 @@ jobs:
             echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
             echo "  test-web: ${{ needs.test-web.result }}"
             echo "  coverage-gate: ${{ needs.coverage-gate.result }}"
+            echo "  coverage-baseline-update: ${{ needs.coverage-baseline-update.result }}"
             echo "  build: ${{ needs.build.result }}"
             echo "  discover: ${{ needs.discover.result }}"
             echo "  e2e-no-llm: ${{ needs.e2e-no-llm.result }}"

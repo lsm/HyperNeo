@@ -13,6 +13,11 @@ Validated further by pilot 3 (2026-08-21): `processRunTick` rewritten as a stage
 interpreter over three extracted cores plus a `decisionRun` admission pipeline —
 see "Pilot 3" below for boundary caveats.
 
+Validated further by pilot 5 (2026-08-21): the eight task-mutation MCP tools in
+`space-agent-tools.ts` interpreted as staged pipelines over extracted
+admission/routing cores — see "Pilot 5" below for the recorded asymmetries and
+the group roadmap.
+
 Revised 2026-08-20 after owner review: scope widened from decision cores to pure
 pipelines generally — decisions, multi-step transforms (rendering/projection), and
 staged async flows (decide → effect → re-snapshot). The boundaries in
@@ -453,6 +458,220 @@ gate, spawn-failure outcomes). The review round also surfaced pre-existing
 production-unreachable defensive code outside the sweep's PR-6 scope — the
 `workflowRunId` rebind guard — recorded above rather than removed.
 
+## Pilot 5 — MCP tool-handler staged pipelines (2026-08-21)
+
+Pilot 5 carried the pattern from the runtime into the Space MCP tool surface. All
+eight task-mutation tools in `packages/daemon/src/lib/space/tools/space-agent-tools.ts`
+(`create_standalone_task`, `update_task`, `retry_task`, `cancel_task`,
+`publish_task`, `archive_task`, `reassign_task`, `approve_task`) are now staged
+interpreters over extracted routing cores — `update_task` alone runs the full
+three-core pipeline, the other seven call `task-transition-routing.ts` routers
+directly, and only `approve_task` additionally consumes the autonomy-admission
+core:
+
+- `tool-admission-gates.ts` — the shared autonomy-admission core:
+  `resolveEffectiveAutonomyLevel`, `decideAutonomyAdmission`, and
+  `TOOL_AUTONOMY_REQUIREMENTS`, now the single place *fixed session-write*
+  gating policy lives (previously a hardcoded `SESSION_WRITE_AUTONOMY_LEVEL = 4`
+  const inside the handler factory plus prose deny strings assembled at each
+  throw site). Workflow-derived requirements are deliberately outside the table:
+  `approve_task`'s threshold is gathered by the caller — `space-agent-tools.ts`
+  derives the workflow's `completionAutonomyLevel` (default 5) and passes it in
+  as `required` — while `routeApproveTask` only compares its inputs. The
+  threshold default has further owners: the bound node-agent approval path
+  (`end-node-handlers.ts`) independently derives
+  `workflow?.completionAutonomyLevel ?? 5` and enforces its own denial wording,
+  `task-agent-manager.ts` repeats the same default when advertising
+  `approve_task` availability in end-node prompts, and the `?? 5` fallback also
+  lives in the shared auto-close helper
+  (`packages/shared/src/space/workflow-autonomy.ts`) and the web autonomy
+  summary's displayed required
+  level — so a threshold or default change must touch every owner until the
+  derivation is centralized, or backend approval behavior diverges from the
+  UI's auto-close count and displayed level. Distinct from that runtime
+  missing-value fallback, creation and storage default the level to **3**: the
+  visual editor's state init and serialization (`?? 3`), import handling
+  (`space-export-import-handlers.ts`), the `completion_autonomy_level`
+  column backfill (DEFAULT 3, with per-template overrides), and the workflow
+  repository, which defaults omitted values to 3 when creating workflows and
+  when mapping *summary* rows — but the full-workflow mapper (`rowToWorkflow`)
+  assigns the nullable column through unchanged, so a legacy-null row resolves
+  to 3 through summary loads, while full-workflow loads pass the null through:
+  `?? 5` consumers coerce it back to 5, but the primary `approve_task` caller's
+  `!== undefined` guard admits the null, the threshold becomes null, and
+  `level < null` is false — so approval **bypasses the threshold entirely** for
+  legacy-null full-workflow loads. The defaults disagree and the null leaks;
+  both are part of the same centralization question. The
+  router owns only the denial routing — reason, message, and
+  precedence against the target check (see the second recorded asymmetry
+  below).
+- `task-transition-routing.ts` — pure routing tables: `routeTaskUpdate` (the
+  old seven-branch inline cascade as a typed precedence table), the shared
+  `routeTaskTarget`, and one router per remaining tool.
+- `space-tool-pipeline.ts` — the `decisionRun` composition for `update_task`
+  (autonomy → arg-changes → target → routing arbiter), exposed as
+  `decideUpdateTask`.
+
+**MCP TOOL HANDLER = STAGED PIPELINE.** The sanctioned handler shape,
+generalizing the pilot-1 sandwich to tool calls: admission (autonomy) →
+arg validation → target/scope resolution → action routing (pure table) →
+effects (manager/runtime calls) → result folding (a JSON result always; audit
+logging and task-updated emission are optional stages). Everything up to and
+including action routing is pure and
+unit-pinned; the shell gathers snapshot inputs (task row, run-active flag,
+workflow completion level, effective autonomy) and interprets the routed
+action. The stage order is the precedence contract and is the *implemented*
+order in `update_task`'s `decisionRun` (autonomy → arg-changes → target →
+routing arbiter), which preserves the pre-pilot precedence: a no-fields call
+fails with the argument error even for a missing or cross-space task id. A new
+handler following this shape inherits that arg-before-target ordering. The
+gather layer itself sits *ahead* of that contract: `update_task`'s shell awaits
+`getSpaceAutonomyLevel` before computing `hasChanges` or reading the task, even
+though `update_task` has no entry in `TOOL_AUTONOMY_REQUIREMENTS` and its
+autonomy gate is consequently a structural no-op — so a failing level lookup
+surfaces before the documented argument/target errors, and the read adds an
+async window the pre-pilot handler did not have (the gather was introduced by
+the pilot). The pure gate order is the precedence contract of the core, not
+the complete observable precedence of the tool call; gathering autonomy only
+when the tool has a requirement is the code-level follow-up. Audit
+and emission coverage is as-implemented, not uniform: every handler that
+reaches its try block folds to
+a JSON result, `update_task`/`publish_task`/`archive_task`/`approve_task` both
+audit and emit, `create_standalone_task` audits without emitting, `cancel_task`
+emits without auditing, and `retry_task`'s standalone branch and
+`reassign_task` do neither — `taskManager.retryTask` publishes nothing, so that
+mutation reaches no `space.task.updated` subscriber (the workflow-backed retry
+branch does, via the runtime's recovery emit). `reassign_task` is moreover a
+no-op beyond validation: `SpaceTaskManager.reassignTask` ignores its agent
+parameters, checks existence and an allowed-status list, and returns the task
+unchanged — nothing is mutated to audit or emit, a review question in its own
+right (deliberate deprecation or lost implementation?), not merely an emission
+asymmetry. Pre-try gathers bound the always-JSON claim as a rule: any read
+taken before a handler's try block — `approve_task`'s awaited autonomy snapshot
+(`getSpace`/`getSpaceAutonomyLevel`), `publish_task`/`archive_task`'s
+`taskRepo.getTask`, `create_standalone_task`'s workflow resolution — rejects
+the MCP call on error rather than folding into JSON, while `update_task`
+performs the same autonomy gather inside its try and folds. That
+spread is another facet of the emission-ownership question below. `update_task` is the fullest instance: its `TaskUpdateRouting` union —
+reject `no_updatable_fields` → target reject → `review_direct` →
+`approved_direct` → `park_stopped` → `review_to_done` → `archive_active_run` →
+`recover_transition` → `stop_for_status` → `set_status`, else `fields_only` —
+declares each arm's audit shape (`auditParamsShape`: `'transition' |
+'fields_only'`) and task-updated emission obligation (`emitTaskUpdated`:
+`'never' | 'only_with_field_updates' | 'always'`) as union fields. These are
+recorded contract, not consumed directives: the interpreter hardcodes auditing
+and emission per switch arm, and the parity suites pin the arm-by-arm
+correspondence. Whether the interpreter should instead branch on the fields —
+making the table the operative emission policy — is part of the
+emission-ownership review question below.
+
+**Recorded asymmetries — open review questions, not silently preserved
+behavior.** Both predate the pilot and were carried verbatim for parity; the
+table now renders them as data, which is the point of recording them:
+
+1. **Task-updated emission ownership is split by arm.** The handler's
+   `emitTaskUpdated` and the runtime's `safeOnTaskUpdated` publish the same
+   `space.task.updated` bus event (the runtime hook additionally drives
+   `goalService.handleTaskTerminal`). For `stop_for_status` the runtime owns
+   emission — `stopWorkflowBackedTaskForStatus` emits once and the handler arm
+   emits nothing, so `emitTaskUpdated: 'never'` really means "never
+   double-emit". For `park_stopped` and `recover_transition` the runtime emits
+   the transition row and the handler emits again only when field updates
+   accompany it — a park or recover *with* field updates publishes two events,
+   the first immediately stale, while a status-only park/recover publishes one.
+   For `set_status` and `fields_only` the task manager emits nothing (verified:
+   no bus publish in `space-task-manager.ts`) and the handler owns emission.
+   Review questions for the team: should ownership be unified (runtime always
+   emits, handlers never) instead of split by arm, and should the with-fields
+   double event be collapsed to the final row?
+2. **Autonomy deny messages have three provenances.** Session-write denies are
+   composed by `decideAutonomyAdmission` ("…Request human approval."),
+   `approve_task` denies inside `routeApproveTask` with submit-for-approval
+   advisory text, and the bound node-agent path (`end-node-handlers.ts`) with
+   its own findings/QA-aware advisory; the shared core parameterizes the tool
+   name but not the remediation wording, so unifying any two producers still
+   leaves the third divergent.
+
+**Boundary caveats.** `cancel_task` routes *after* its primary effect —
+`taskManager.cancelTaskCascade` runs first and `routeCancelTask` then decides
+only whether to also cancel the workflow run: an action router over
+post-effect state, not an admission gate (target errors surface from the
+manager throwing, as before). `reassign_task` keeps no target gate, and its worker validation precedes target
+resolution — `routeReassignTask` runs first, so an invalid `custom_agent_id`
+wins over an unknown `task_id`, with target errors surfacing only later from
+the manager throwing (pre-pilot parity; inserting `routeTaskTarget` in the
+documented position would change observable error precedence), and
+`approve_task` gathers `spaceLevel` preferring
+`space.autonomyLevel` over the `getSpaceAutonomyLevel` path that
+`requireSessionWriteAutonomy` uses — both pre-existing divergences, preserved.
+`approve_task` also inverts the shape's admission-first order: `routeApproveTask`
+checks the target before the autonomy level, so a below-threshold caller
+supplying a missing or cross-space task id receives the target error rather
+than the autonomy denial — the reverse of `update_task`'s autonomy-first gate
+order, and pre-existing parity (the inline handler checked target first too).
+The gather layer also re-derives predicate inputs (`statusDiffers`,
+`isRecoveryTransition`) from the same snapshots the table consumes — the price
+of keeping reads out of the core.
+
+**The closing sweep found no dead duplicates.** The conversion PRs removed
+every inline copy as they landed: the status cascades, the local transition
+predicates (`fromActivePaused`/`toStopped`/`toBlockedFromPaused`,
+`retryableStatuses`), and the old gate internals — the factory-local async
+closure `resolveEffectiveAutonomy` (succeeded by the pure
+`resolveEffectiveAutonomyLevel` export), the inline `isAgentCeilingBinding`
+predicate (succeeded by the exported type guard), and the
+`SESSION_WRITE_AUTONOMY_LEVEL` const (folded into
+`TOOL_AUTONOMY_REQUIREMENTS`) — no longer appear in
+`space-agent-tools.ts`; knip (files/dependencies/exports),
+oxlint, and `tsc --noEmit` are clean; every core export is production-consumed
+or pinned directly by the gate/routing suites per Decision item 6. Live
+near-duplicates remain only in never-converted surfaces — the hand-rolled
+target checks in `get_task_detail`, the node-agent `get_task`, the RPC
+`spaceTask.get`, `send_message_to_task`, `list_task_members`,
+`approve_pending_completion`, `attach_forge_task_evidence`, the task branch
+of `resolve_forge_scope`, and the RPC message handlers
+`space.task.sendMessage`/`space.task.activateNodeAgent`
+(`rpc-handlers/space-task-message-handlers.ts`), whose space-mismatch case
+collapses into the not-found error rather than a distinct message; the bound
+task-agent surface (`runtime/task-agent-manager.ts`), whose `onArchiveTask`
+re-implements the archive-active-run gate with its own message variant and
+whose `onPublishTask` enforces no draft-only gate at all — `publishTask` is a
+bare `setTaskStatus(taskId, 'open')`, so the node-agent publish path can
+publish a non-draft task that both the MCP tool (`routePublishTask`) and the
+RPC handler (inline check) would reject;
+and the largest ones: the UI-side RPC surface
+in `rpc-handlers/space-task-handlers.ts`, which re-implements the update
+routing by hand with UI-flavored messages, whose `spaceTask.publish` repeats
+the publish target resolution and draft-only gate, and whose
+`spaceTask.approvePendingCompletion` repeats the scoped lookup,
+pending-checkpoint/review gates, approval effects, and `space.task.updated`
+emission of the MCP `approve_pending_completion` handler — each with its own
+wording. These are follow-up mini-pilot
+material (below), deliberately not folded into a cleanup PR.
+
+**Costs:** production net +458 daemon lines across the pilot — +556 in the
+three new pure modules (82 + 414 + 60) against −98 in `space-agent-tools.ts`
+(5,143 at pilot start, 5,029 now; 16 of that difference came from unrelated
+interleaved PRs). The eight handlers shrank 521 → 420 lines (−19%:
+create 89→61, update 179→134, retry 36→29, cancel 30→33, publish 30→24,
+archive 33→29, reassign 27→28, approve 97→82 — the two that grew host their
+routing call plus plan interpretation). Tests +1,519 (three new core suites —
+268 + 827 + 407 — plus parity additions).
+
+**Group roadmap.** The same skeleton — admission gates + routing tables, with
+`decisionRun` composition where gate order itself is the contract — is the
+template for follow-up mini-pilots, each pinned by a decision-table test before
+extraction: session tools (`send_session_message`, `update_session_state`,
+`interrupt_session` — already gated by the shared autonomy core; their
+target/arg validation remains inline), agent CRUD (long-horizon agent
+create/update validation), forge/goals (automation-policy validation,
+evolution-scope merging), messaging (`send_message_to_task` target resolution),
+and the RPC-side `space-task-handlers.ts` update cascade, whose folding onto
+`routeTaskUpdate` would unify agent-side and UI-side transition policy in one
+table.
+
+Pilot 5 PRs: #2663, #2668, #2669, #2673, #2676, plus this closing sweep.
+
 ## Roadmap
 
 - **Done (pilot):** admission gates extracted as pure functions (no superpipe
@@ -460,6 +679,11 @@ production-unreachable defensive code outside the sweep's PR-6 scope — the
   combinator; interpreter dedup.
 - **Done (pilot 3):** run-tick admission/settlement/spawn cores and the
   `processRunTick` staged interpreter — see "Pilot 3" above.
+- **Done (pilot 5):** the eight task-mutation MCP tools as staged pipelines
+  over `tool-admission-gates` / `task-transition-routing` /
+  `space-tool-pipeline` — see "Pilot 5" above, which also records the group
+  follow-ups (session tools, agent CRUD, forge/goals, messaging, the RPC task
+  cascade) as mini-pilot candidates.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
@@ -518,6 +742,10 @@ production-unreachable defensive code outside the sweep's PR-6 scope — the
   run-tick-decision-pipeline, run-completion-settlement, run-spawn-decisions}.ts`;
   interpreter in `space-runtime.ts` (`processRunTick`). Pilot 3 PRs: #2601,
   #2604, #2620, #2624, #2629, #2641.
+- Pilot 5 files: `packages/daemon/src/lib/space/tools/{tool-admission-gates,
+  task-transition-routing,space-tool-pipeline}.ts`; interpreters in
+  `space-agent-tools.ts` (the eight task-mutation handlers). Pilot 5 PRs:
+  #2663, #2668, #2669, #2673, #2676.
 - RFC: issue #2670 (`stagedRun` rollout proposal; its open questions are answered
   by the "Staged run pipelines" section).
 - Staged combinator (Phase 1+): `packages/daemon/src/lib/space/runtime/staged-run.ts`.

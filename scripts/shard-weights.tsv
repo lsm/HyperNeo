@@ -3,6 +3,35 @@
 # Format: <weight-ms><TAB><repo-root-relative-path>, sorted by path.
 # scripts/lib/shard-split.sh packs listed files by measured duration; files absent
 # here keep the stableHash assignment (regenerate to pick up new files).
+40793	packages/daemon/tests/online/features/auto-title.test.ts
+4583	packages/daemon/tests/online/features/github-poll-job.test.ts
+31201	packages/daemon/tests/online/features/message-delivery-mode-queue.test.ts
+34487	packages/daemon/tests/online/features/message-persistence.test.ts
+95399	packages/daemon/tests/online/rewind/rewind-feature.test.ts
+64039	packages/daemon/tests/online/rewind/selective-rewind.test.ts
+9268	packages/daemon/tests/online/rpc/rpc-agent-handlers.test.ts
+49022	packages/daemon/tests/online/rpc/rpc-config-handlers.test.ts
+5194	packages/daemon/tests/online/rpc/rpc-draft-handlers.test.ts
+9626	packages/daemon/tests/online/rpc/rpc-file-handlers.test.ts
+2136	packages/daemon/tests/online/rpc/rpc-interrupt-handlers.test.ts
+1146	packages/daemon/tests/online/rpc/rpc-live-query.test.ts
+47521	packages/daemon/tests/online/rpc/rpc-message-handlers.test.ts
+5170	packages/daemon/tests/online/rpc/rpc-model-handlers.test.ts
+3134	packages/daemon/tests/online/rpc/rpc-model-switching.test.ts
+10594	packages/daemon/tests/online/rpc/rpc-remove-output.test.ts
+11875	packages/daemon/tests/online/rpc/rpc-rewind-handlers.test.ts
+24650	packages/daemon/tests/online/rpc/rpc-session-filtering.test.ts
+31924	packages/daemon/tests/online/rpc/rpc-session-handlers-extended.test.ts
+21420	packages/daemon/tests/online/rpc/rpc-session-workflow.test.ts
+18360	packages/daemon/tests/online/rpc/rpc-settings-handlers.test.ts
+7768	packages/daemon/tests/online/rpc/rpc-state-sync.test.ts
+1190	packages/daemon/tests/online/rpc/rpc-task-draft-handlers.test.ts
+1260	packages/daemon/tests/online/rpc/rpc-task-lifecycle.test.ts
+3631	packages/daemon/tests/online/rpc/session-handlers.test.ts
+55705	packages/daemon/tests/online/space/prompt-too-long-kimi-recovery.test.ts
+10006	packages/daemon/tests/online/space/space-chat-session.test.ts
+76626	packages/daemon/tests/online/space/task-agent-lifecycle.test.ts
+31926	packages/daemon/tests/online/space/task-agent-skills.test.ts
 19	packages/daemon/tests/unit/5-space/runtime/agent-message-routing-gates.test.ts
 11	packages/daemon/tests/unit/5-space/runtime/agent-message-routing-pipeline.test.ts
 21	packages/daemon/tests/unit/5-space/runtime/built-in-validator-registry.test.ts
