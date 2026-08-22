@@ -1508,6 +1508,16 @@ export class SpaceRuntimeService {
     }
   }
 
+  async reattachWorkflowMcpServers(session: AgentSession, missing: string[]): Promise<void> {
+    if (!this.taskAgentManager) {
+      log.warn(
+        `reattachWorkflowMcpServers: TaskAgentManager unavailable; cannot heal session ${session.getSessionData().id} missing [${missing.join(', ')}]`
+      );
+      return;
+    }
+    await this.taskAgentManager.mcpSelfHeal(session, missing);
+  }
+
   async setupSpaceAgentSession(
     space: Space,
     options: { replayPendingMessages?: boolean } = {}

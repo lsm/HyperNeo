@@ -40,6 +40,7 @@ import { ReferenceResolver } from './reference-resolver';
 
 export interface SpaceRuntimeMcpProvider {
   reattachMemberSpaceTools(sessionId: string): Promise<void>;
+  reattachWorkflowMcpServers?(session: AgentSession, missing: string[]): Promise<void>;
 }
 
 export enum CleanupState {
@@ -149,6 +150,12 @@ export class SessionManager {
       const provider = this.spaceRuntimeMcpProvider;
       agentSession.onMissingMemberSpaceMcpServers = () =>
         provider.reattachMemberSpaceTools(session.id);
+      if (provider.reattachWorkflowMcpServers) {
+        const reattachWorkflowMcpServers = provider.reattachWorkflowMcpServers.bind(provider);
+        agentSession.onMissingWorkflowMcpServers = async (target, missing) => {
+          await reattachWorkflowMcpServers(target, missing);
+        };
+      }
     }
     return agentSession;
   }

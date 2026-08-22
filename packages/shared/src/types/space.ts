@@ -176,7 +176,7 @@ export interface UpdateSpaceLongHorizonAgentSubscriptionParams {
 }
 
 export const MIN_SPACE_CONCURRENT_TASKS = 1;
-export const MAX_SPACE_CONCURRENT_TASKS = 10;
+export const MAX_SPACE_CONCURRENT_TASKS = 20;
 
 export type SpaceApprovalSource = 'human' | 'auto_policy' | 'agent';
 

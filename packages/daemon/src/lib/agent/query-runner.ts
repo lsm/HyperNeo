@@ -17,6 +17,7 @@ import {
   SPACE_COORDINATOR_REQUIRED_MCP_SERVERS,
   SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
 } from '../space/runtime/space-mcp-session-policy';
+import type { AgentSession } from './agent-session';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery';
@@ -304,7 +305,7 @@ export interface QueryRunnerContext {
   onModelsFetched(): Promise<void>;
   onMarkApiSuccess(message: SDKMessage): Promise<void>;
 
-  onMissingWorkflowMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
+  onMissingWorkflowMcpServers?: (session: AgentSession, missing: string[]) => Promise<void>;
 
   onMissingSpaceChatMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 
@@ -608,7 +609,7 @@ export class QueryRunner {
 
           if (this.ctx.onMissingWorkflowMcpServers) {
             try {
-              await this.ctx.onMissingWorkflowMcpServers(session.id, missingServers);
+              await this.ctx.onMissingWorkflowMcpServers(this.ctx as AgentSession, missingServers);
               logger.info(
                 `QueryRunner.start(): self-heal callback completed for session ${session.id}. ` +
                   `${JSON.stringify(diagnosticPayload)}`
