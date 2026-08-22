@@ -51,7 +51,13 @@ repeat one teardown liturgy four times (:912–934, :972–1002, :1018–1058,
 arm before it recurses, but they do **not** fence every async window: state
 mutations precede the arm's guard in several places — the transient arm awaits
 `setIdle` (:1024) and re-enqueues the consumed message (:1027–1034) before its
-first check (:1060); the message-not-found arm likewise awaits `setIdle` at
+first check (:1060); the transient arm's window extends further — after
+re-enqueueing it awaits its retry notice (:1036–1040), then closes the shared
+query object and may reset the process-exit promise (:1042–1057) before its
+first supersession check (:1060), so a replacement installed during that span
+loses its query/process ownership to the stale attempt (pin through :1058 with
+a resnapshot before touching those shared fields); the message-not-found arm
+likewise awaits `setIdle` at
 :978 before its first check at :980; and every arm's awaited `setIdle`
 (:906, :978, :1024) precedes its first guard (:908, :1060) — so a replacement landing
 inside those windows can have its state mutated by the stale arm. The 5xx arm's
@@ -276,9 +282,15 @@ note.
   prompt
   redeliverable — at attempt 0 a startup timeout with
   an empty consumed set and empty queue is futile and falls through to the
-  terminal cascade via `canRedeliverPromptOnStartupRetry`, :887–905) →
+  terminal cascade via `canRedeliverPromptOnStartupRetry`, :887–905; provider
+  family — the same exhausted error classifies `PROVIDER_UNAVAILABLE` vs
+  `SYSTEM` by `session.config.provider`, :1169–1229) →
   startup_timeout_retry | message_not_found_retry |
   transient_retry | provider_backoff(5xx) | rate_limit_handoff |
+  aborted_noop — an AbortError matching no arm skips the entire terminal path
+  via the `!isAbortError` gate (:1158–1291) and performs finally-cleanup only;
+  without this route the interpreter would classify intentional cancellation as
+  terminal and display an error or run terminal-idle handling |
   terminal(category)` — interpreted by thin shell arms. Routing note the table
   must preserve: rate-limit errors — explicit HTTP-429 **and** text-form — do
   not enter the provider-backoff arm: `isRetryableProviderError` excludes all
@@ -358,8 +370,14 @@ note.
   on providers emitting incremental updates, so they are hot-path, not
   turn-boundary: keep inline unless separately benchmarked with pinned
   per-chunk behavior.
-- **ADR pattern:** `decisionRun` for the flag machine (flags in → `{idle_fence,
-  finish_turn, allow_queue_replay}` plan out — the direct counterpart of
+- **ADR pattern:** `decisionRun` for the flag machine (flags in →
+  `{idle_fence, finish_turn, allow_queue_replay, next_flags}` plan out — the
+  core also returns the updated flag state, since the scoped machine mutates it:
+  results set `lastResultWasSuccess`, suppressed results clear
+  `suppressIdleOnNextResult`, non-idle session-state events set the expectation
+  flags and idle events reset them (:739–755, :936–969); alternatively narrow
+  the core to action routing with flag mutation explicitly in shell — the
+  direct counterpart of
   pilot-4's `classifyTurnCompletion`, closing the gap that the v2 path has a
   core and the dispatch path doesn't); a P6-style pure reducer body for cost
   accounting only (executed sync); plain transform for
@@ -444,7 +462,11 @@ note.
   1. **PR 1 (pins):** pilot-1-style transcript parity harness for
      `driveDeliveryTurn` + `feedDeliverySteer` + the job handler (instrument
      queue admits, DB marks, job mutations per scenario); decision tables for
-     the steer ladder (status × queryPromise × provider × validity × queue
+     the steer ladder (status × queryPromise × claim-current × delivery
+     validity × queue ownership — claim currency is its own dimension: the inner
+     `claimGuard` (:1699) must return `aborted` before the status ladder when
+     the claim was superseded during the lock wait, for every status, while an
+     invalid message only parks in the processing branch; queue
      ownership — `hasPendingOrInFlight(messageUuid)` distinguishes
      `awaiting_acceptance` from admitting a fresh feed, agent-session.ts:1701–1715)
      and handler outcomes (preflight gates × delivery-call result × role ×
