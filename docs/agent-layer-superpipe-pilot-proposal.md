@@ -59,7 +59,13 @@ revalidation gate (:1127–1138) sits immediately before the re-enqueue (:1140),
 but the arm is not fully fenced either: it awaits `displayErrorAsAssistantMessage`
 (:1091–1096), then closes the live query object and restores shared provider env
 before reaching :1127, so a replacement installed during those awaits can be
-closed or mutated by the stale attempt — this window joins PR 1's pins.
+closed or mutated by the stale attempt — this window joins PR 1's pins. The
+startup-timeout arm has the same shape after its last guard: it awaits
+`displayErrorAsAssistantMessage` (:959–965) and recurses at :967 with no
+entry-generation guard on `runQuery`, so a replacement landing during that await
+lets the stale retry continue through setup and spawn — PR 1 pins this too, and
+the apply shape adds a generation resnapshot immediately before each recursion
+so the extraction does not widen these windows.
 
 ### (b) Delivery/ordering machinery (the loops around the pilot-4 cores)
 
@@ -374,7 +380,11 @@ note.
      characterization (the legacy path's terminal-fence-plus-double-`setIdle`
      sequence, S3 below; stale
      `lastResultWasSuccess` window — pinned, not fixed); ack-selection table
-     over (sendStatus × durable ownership × yielded/claimed × active-message
+     over (sendStatus × durable ownership × yielded/claimed × pending-in-memory
+     — eligibility requires `hasPendingOrClaimed(uuid)` false at
+     sdk-message-handler.ts:341–345: a pending message with no durable job stays
+     queued for the next turn while an unowned row may be consumed now, so the
+     extracted selector needs this bit to avoid premature acknowledgement × active-message
      equality — a durable yielded message is eligible only when its UUID equals
      `activeMessageId`, sdk-message-handler.ts:338–345: the active yielded
      kickoff is consumed while a yielded steer of another turn stays enqueued;
@@ -408,8 +418,10 @@ note.
   (job-handlers/message-delivery.handler.ts:31–189) as `decisionRun` gate sets;
   `deliverMessage`/outbox role arbitration (message-delivery.ts:97–139, outbox
   :52–72) — **wire the already-extracted but dead `resolveDeliveryRole` core**;
-  `driveDeliveryTurn` admission cascade (:1338–1497) and turn-end race loop
-  (:1553–1614) as `stagedRun` flows (effects: `ensureQueryStarted`, DB reloads,
+  `driveDeliveryTurn` admission cascade (:1338–1497) as `stagedRun` flows
+  (effects: `ensureQueryStarted`, DB reloads,
+  queue admit — idempotent or UNIQUE-guarded, **except** batch narrowing:
+  `narrowActiveDeliveryBatchUuids` reads the active batch and updates matching
   queue admit — idempotent or UNIQUE-guarded, **except** batch narrowing:
   `narrowActiveDeliveryBatchUuids` reads the active batch and updates matching
   pending/processing jobs with no claim token or expected-payload predicate, so
@@ -466,8 +478,11 @@ note.
      :31–189, message-delivery.ts:97–139 + outbox; wire the sweep at
      agent-session.ts:1977–1997 and the timeout policy at
      message-queue.ts:105–128.
-  4. **PR 4 (stagedRun):** `driveDeliveryTurn` admission + turn-end loop as
-     staged sub-pipelines — independent of chain C: the loop's decisions already
+  4. **PR 4 (stagedRun):** `driveDeliveryTurn` admission as a staged
+     sub-pipeline; **the turn-end race/rearm loop stays in the shell**, which
+     invokes one bounded staged pass per iteration — embedding the repeated
+     await/mutate loop in a pipeline would make it recursively own control flow
+     (ADR exclusions) — independent of chain C: the loop's decisions already
      ride the pilot-4 `shouldRearmSpuriousTurnEnd`/`classifyTurnCompletion`
      cores, so A's PR 4 needs only the shared idle-transition contract to hold,
      not a Chain C artifact.
