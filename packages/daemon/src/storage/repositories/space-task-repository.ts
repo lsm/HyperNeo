@@ -167,10 +167,11 @@ export class SpaceTaskRepository {
           .get(params.spaceId) as { next: number }
       ).next;
 
+      const initialStatus = params.status ?? 'open';
       this.db
         .prepare(
-          `INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, preferred_workflow_id, created_by_task_id, goal_id, evolution_scope_id, depends_on, task_agent_session_id, created_by, created_by_session, created_by_task_schedule_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, preferred_workflow_id, created_by_task_id, goal_id, evolution_scope_id, depends_on, task_agent_session_id, created_by, created_by_session, created_by_task_schedule_id, created_at, updated_at, terminal_generation)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           id,
@@ -178,7 +179,7 @@ export class SpaceTaskRepository {
           nextNumber,
           params.title,
           params.description ?? '',
-          params.status ?? 'open',
+          initialStatus,
           params.priority ?? 'normal',
           JSON.stringify(params.labels ?? []),
           params.workflowRunId ?? null,
@@ -192,7 +193,8 @@ export class SpaceTaskRepository {
           params.createdBySession ?? null,
           params.createdByTaskScheduleId ?? null,
           now,
-          now
+          now,
+          isTerminalStatus(initialStatus) ? 1 : 0
         );
     });
 
