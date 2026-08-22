@@ -6,13 +6,13 @@ export type GoalOwnershipAdmissionDecision =
 
 export interface GoalOwnershipAdmissionInput {
   callerRole: SpaceMcpSessionRole | undefined;
-  isCoordinatorAgent: boolean;
+  hasSession: boolean;
 }
 
 export function decideGoalOwnershipMutationAdmission(
   input: GoalOwnershipAdmissionInput
 ): GoalOwnershipAdmissionDecision {
-  if (input.isCoordinatorAgent) return { action: 'allow' };
+  if (!input.hasSession) return { action: 'allow' };
   if (input.callerRole === 'coordinator') return { action: 'allow' };
   return {
     action: 'deny',

@@ -801,6 +801,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   function resolveCreateGoalOwnerId(explicitOwnerAgentId?: string | null): string | null {
     if (typeof explicitOwnerAgentId === 'string' && explicitOwnerAgentId.length > 0) {
       requireLongHorizonAgentInSpace(explicitOwnerAgentId);
+      const isSelf = typeof myAgentId === 'string' && myAgentId === explicitOwnerAgentId;
+      const admission = decideGoalOwnershipMutationAdmission({
+        callerRole,
+        hasSession: typeof mySessionId === 'string',
+      });
+      if (!isSelf && admission.action === 'deny') {
+        throw new Error(
+          'Specifying an owner other than yourself requires coordinator or explicit human authorization.'
+        );
+      }
       return explicitOwnerAgentId;
     }
     if (!config.longHorizonAgentRepo) return null;
@@ -1505,7 +1515,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         const admission = decideGoalOwnershipMutationAdmission({
           callerRole,
-          isCoordinatorAgent,
+          hasSession: typeof mySessionId === 'string',
         });
         if (admission.action === 'deny') {
           return jsonResult({ success: false, error: admission.message });
@@ -1528,7 +1538,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         const admission = decideGoalOwnershipMutationAdmission({
           callerRole,
-          isCoordinatorAgent,
+          hasSession: typeof mySessionId === 'string',
         });
         if (admission.action === 'deny') {
           return jsonResult({ success: false, error: admission.message });
