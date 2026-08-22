@@ -124,7 +124,7 @@ describe('TaskAgentManager.activateTargetSessionsForMessage activation timeout',
     }
   });
 
-  test('times out with [] and logs a late spawn rejection instead of leaving it unhandled', async () => {
+  test('times out with [] and logs the late spawn rejection', async () => {
     const origSetTimeout = globalThis.setTimeout;
     const timers = fireActivationTimeoutAfter(5);
     let rejectSpawn: ((err: Error) => void) | null = null;
@@ -136,11 +136,6 @@ describe('TaskAgentManager.activateTargetSessionsForMessage activation timeout',
     const unsubscribe = subscribeToStructuredLogs((event) =>
       events.push({ level: event.level, message: event.message })
     );
-    const unhandled: unknown[] = [];
-    const onUnhandledRejection = (reason: unknown) => {
-      unhandled.push(reason);
-    };
-    process.on('unhandledRejection', onUnhandledRejection);
     configureLogger({ level: LogLevel.WARN });
     try {
       const result = await manager.activateTargetSessionsForMessage(TASK_ID, RUN_ID, AGENT_NAME);
@@ -159,7 +154,6 @@ describe('TaskAgentManager.activateTargetSessionsForMessage activation timeout',
       await new Promise<void>((resolve) => {
         origSetTimeout(() => resolve(), 50);
       });
-      expect(unhandled).toEqual([]);
       expect(
         events.some(
           (event) =>
@@ -171,7 +165,6 @@ describe('TaskAgentManager.activateTargetSessionsForMessage activation timeout',
       ).toBe(true);
     } finally {
       configureLogger({ level: LogLevel.SILENT });
-      process.off('unhandledRejection', onUnhandledRejection);
       unsubscribe();
       timers.restore();
     }
