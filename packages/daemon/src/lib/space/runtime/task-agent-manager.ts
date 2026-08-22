@@ -3269,16 +3269,15 @@ export class TaskAgentManager {
     if (outcome.decision.action === 'noop') {
       return messageId;
     }
-    let reopenedDeliveryDbId: string | null = null;
-    if (outcome.reopenFailedDelivery) {
-      reopenedDeliveryDbId = this.config.db
-        .getSDKMessageRepo()
-        .reopenDeliveryByUuid(sessionId, messageId);
-      if (reopenedDeliveryDbId) {
-        await this.publishMessageStatusChanged(sessionId, reopenedDeliveryDbId, 'enqueued');
-      }
-    }
     if (outcome.decision.action === 'defer') {
+      if (outcome.reopenFailedDelivery) {
+        const reopenedDbId = this.config.db
+          .getSDKMessageRepo()
+          .reopenDeliveryByUuid(sessionId, messageId);
+        if (reopenedDbId) {
+          await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
+        }
+      }
       if (v2Enabled && existing && existing.sendStatus !== 'deferred') {
         this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
       }
@@ -3296,20 +3295,21 @@ export class TaskAgentManager {
         await session.clearConversationContext();
       } catch (err) {
         if (err instanceof ClearConversationCancelledError) {
-          if (reopenedDeliveryDbId) {
-            const failedDbId = this.config.db
-              .getSDKMessageRepo()
-              .markDeliveryFailedByUuid(sessionId, messageId);
-            if (failedDbId) {
-              await this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
-            }
-          }
           throw err;
         }
         log.warn(
           `TaskAgentManager: resetContextPerTurn clear failed for session ${sessionId}: ` +
             `${err instanceof Error ? err.message : String(err)} — delivering without clear`
         );
+      }
+    }
+
+    if (outcome.reopenFailedDelivery) {
+      const reopenedDbId = this.config.db
+        .getSDKMessageRepo()
+        .reopenDeliveryByUuid(sessionId, messageId);
+      if (reopenedDbId) {
+        await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
       }
     }
 

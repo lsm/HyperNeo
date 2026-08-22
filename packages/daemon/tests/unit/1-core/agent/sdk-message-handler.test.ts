@@ -783,6 +783,7 @@ describe('SDKMessageHandler', () => {
       expect(await wait).toBe('confirmed');
       expect(settled).toBe('confirmed');
       expect(setIdleSpy).toHaveBeenCalledWith({
+        suppressDeliveryWaiters: true,
         suppressIdlePublish: true,
         suppressIdleCallback: true,
       });
@@ -971,6 +972,10 @@ describe('SDKMessageHandler', () => {
       handler.markClearMessageSent();
       await handler.handleMessage(successResult);
       expect(await confirmedWait).toBe('confirmed');
+
+      await confirmedWait;
+
+      handler.markClearMessageSent();
 
       handler.suppressIdleForNextResult();
       let settled2: string | null = null;

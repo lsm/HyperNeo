@@ -179,6 +179,7 @@ export class SDKMessageHandler {
   }
 
   markClearMessageSent(): void {
+    if (!this.suppressedResultWaiter) return;
     this.clearMessageInFlight = true;
   }
 
@@ -1120,6 +1121,7 @@ export class SDKMessageHandler {
       const clearTurnPending = this.clearAwaitingTrailingIdle || this.suppressIdleOnNextResult;
       if (clearTurnPending) {
         await this.ctx.stateManager.setIdle({
+          suppressDeliveryWaiters: true,
           suppressIdlePublish: true,
           suppressIdleCallback: true,
         });
