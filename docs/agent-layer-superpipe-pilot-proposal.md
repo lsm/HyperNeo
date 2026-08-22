@@ -404,9 +404,14 @@ note.
      (:4985–5069).
   2. **PR 2 (additive cores):** `delivery-turn-routing.ts` (steer ladder +
      handler outcome tables + role-arbitration composition over the existing
-     `resolveDeliveryRole`).
+     `resolveDeliveryRole`), plus two plain transforms covering the rest of the
+     stated scope: `reconciler-sweep.ts` (stale-submitted selection for
+     `reconcileStrandedDeliveries`) and `message-queue-timeout-policy.ts` (the
+     pending/claimed/yielded×durable timeout decision).
   3. **PR 3 (apply ladders):** interpret at agent-session.ts:1696–1721, handler
-     :31–189, message-delivery.ts:97–139 + outbox.
+     :31–189, message-delivery.ts:97–139 + outbox; wire the sweep at
+     agent-session.ts:1977–1997 and the timeout policy at
+     message-queue.ts:105–128.
   4. **PR 4 (stagedRun):** `driveDeliveryTurn` admission + turn-end loop as
      staged sub-pipelines — independent of chain C: the loop's decisions already
      ride the pilot-4 `shouldRearmSpuriousTurnEnd`/`classifyTurnCompletion`
