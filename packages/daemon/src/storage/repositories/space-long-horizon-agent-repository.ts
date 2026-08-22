@@ -194,13 +194,23 @@ export class SpaceLongHorizonAgentRepository {
     const agent = this.requireAgent(agentId);
     this.requireMatchingSpace('space_goals', goalId, agent.spaceId, 'Goal');
     const now = Date.now();
-    this.db
-      .prepare(
-        `INSERT INTO space_long_horizon_agent_goals (agent_id, goal_id, relationship, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?)
-				 ON CONFLICT(agent_id, goal_id, relationship) DO UPDATE SET updated_at = excluded.updated_at`
-      )
-      .run(agentId, goalId, relationship, now, now);
+    const replace = this.db.transaction(() => {
+      if (relationship === 'owner') {
+        this.db
+          .prepare(
+            `DELETE FROM space_long_horizon_agent_goals WHERE goal_id = ? AND relationship = 'owner'`
+          )
+          .run(goalId);
+      }
+      this.db
+        .prepare(
+          `INSERT INTO space_long_horizon_agent_goals (agent_id, goal_id, relationship, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?)
+					 ON CONFLICT(agent_id, goal_id, relationship) DO UPDATE SET updated_at = excluded.updated_at`
+        )
+        .run(agentId, goalId, relationship, now, now);
+    });
+    replace();
   }
 
   listGoals(agentId: string): SpaceLongHorizonAgentGoal[] {

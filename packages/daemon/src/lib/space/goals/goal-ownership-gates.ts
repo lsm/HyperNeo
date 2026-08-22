@@ -13,9 +13,7 @@ export function decideGoalOwnershipMutationAdmission(
   input: GoalOwnershipAdmissionInput
 ): GoalOwnershipAdmissionDecision {
   if (input.isCoordinatorAgent) return { action: 'allow' };
-  if (input.callerRole === 'coordinator' || input.callerRole === 'ad_hoc_member') {
-    return { action: 'allow' };
-  }
+  if (input.callerRole === 'coordinator') return { action: 'allow' };
   return {
     action: 'deny',
     reason: 'not_coordinator_or_human',

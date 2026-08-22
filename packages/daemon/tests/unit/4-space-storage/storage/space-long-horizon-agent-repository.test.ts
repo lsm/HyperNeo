@@ -285,6 +285,33 @@ describe('SpaceLongHorizonAgentRepository', () => {
     });
   });
 
+  test('assigning a new owner replaces the existing owner atomically', () => {
+    const coordinator = repo.ensureCoordinator('space-1');
+    const newOwner = repo.create({
+      spaceId: 'space-1',
+      handle: 'new-owner',
+      displayName: 'New Owner',
+    });
+    db.prepare(
+      `INSERT INTO space_goals (
+				id, space_id, title, description, status, type, priority, labels, metrics,
+				summary, progress, next_steps, auto_trigger_next, pending_next_run, created_at, updated_at
+			) VALUES (?, ?, ?, '', 'active', 'one_shot', 'normal', '[]', '{}', '', 0, '[]', 0, 0, ?, ?)`
+    ).run('goal-1', 'space-1', 'Goal 1', 1, 1);
+
+    repo.assignGoal(coordinator.id, 'goal-1', 'owner');
+    repo.assignGoal(newOwner.id, 'goal-1', 'owner');
+
+    expect(repo.getPrimaryGoalOwner('goal-1', 'space-1')).toEqual({
+      action: 'resolved',
+      owner: expect.objectContaining({ agentId: newOwner.id }),
+      conflicts: [],
+    });
+    expect(
+      repo.listGoalAssignments('goal-1').filter((a) => a.relationship === 'owner')
+    ).toHaveLength(1);
+  });
+
   test('upserts, lists active, and deletes event subscriptions by route', () => {
     const agent = repo.ensureCoordinator('space-1');
 

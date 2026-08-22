@@ -14,13 +14,13 @@ describe('decideGoalOwnershipMutationAdmission', () => {
     ).toEqual({ action: 'allow' });
   });
 
-  test('allows an ad-hoc member (explicit human) session', () => {
+  test('denies an ad-hoc member session (not proof of human operator)', () => {
     expect(
       decideGoalOwnershipMutationAdmission({
         callerRole: 'ad_hoc_member',
         isCoordinatorAgent: false,
       })
-    ).toEqual({ action: 'allow' });
+    ).toMatchObject({ action: 'deny', reason: 'not_coordinator_or_human' });
   });
 
   test('denies a workflow worker', () => {
