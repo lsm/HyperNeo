@@ -289,7 +289,9 @@ export class SpaceGoalService {
     return { goal: updatedGoal, task, queued: false };
   }
 
-  handleTaskTerminal(taskId: string): { goal: SpaceGoal; nextTask: SpaceTask | null } | null {
+  handleTaskTerminal(
+    taskId: string
+  ): { goal: SpaceGoal; nextTask: SpaceTask | null; terminalGeneration: number } | null {
     const task = this.deps.taskRepo.getTask(taskId);
     if (!task?.goalId) return null;
     if (!isTerminalTaskStatus(task.status)) return null;
@@ -303,11 +305,12 @@ export class SpaceGoalService {
       note: `Task reached terminal status: ${task.status}`,
     });
     if (task.status === 'done') this.deps.goalAutomationService?.onTaskCompleted(taskId);
+    const terminalGeneration = task.terminalGeneration;
     if (!fresh.autoTriggerNext || !fresh.pendingNextRun || fresh.status !== 'active') {
-      return { goal: fresh, nextTask: null };
+      return { goal: fresh, nextTask: null, terminalGeneration };
     }
     const created = this.createImmediateTask(fresh.id, { source: 'system' });
-    return { goal: created.goal, nextTask: created.task };
+    return { goal: created.goal, nextTask: created.task, terminalGeneration };
   }
 
   canClaimScheduledTask(task: Pick<SpaceTask, 'spaceId' | 'goalId'>): {

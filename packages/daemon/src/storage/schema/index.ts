@@ -430,6 +430,7 @@ export function createTables(db: BunDatabase): void {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         completed_at INTEGER,
+        revision INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
       )
     `);

@@ -70,6 +70,7 @@ function makeTask(id: string, status = 'open', workflowRunId?: string): SpaceTas
     reportedSummary: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    terminalGeneration: 0,
     ...(workflowRunId ? { workflowRunId } : {}),
   };
 }
@@ -99,6 +100,7 @@ function makeGoal(overrides: Partial<SpaceGoal> = {}): SpaceGoal {
     createdAt: Date.now(),
     updatedAt: Date.now(),
     completedAt: null,
+    revision: 1,
     ...overrides,
   };
 }
