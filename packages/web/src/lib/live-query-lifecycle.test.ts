@@ -226,6 +226,17 @@ describe('live-query-lifecycle', () => {
       }
     });
 
+    it('rejects generation-bound events dispatched without a generation', () => {
+      const from = fixtureState('live');
+      const result = transitionLiveQueryLifecycle(from, {
+        type: 'delta-arrived',
+        // @ts-expect-error generation is required so a stale event cannot bypass the guard untagged
+        generation: undefined,
+      });
+      expect(result.state).toBe(from);
+      expect(result.effects).toEqual([]);
+    });
+
     it('applies events tagged with the current generation', () => {
       const result = transitionLiveQueryLifecycle(fixtureState('awaiting-snapshot'), {
         type: 'snapshot-arrived',

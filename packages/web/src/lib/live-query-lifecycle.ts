@@ -28,11 +28,11 @@ export type LiveQueryLifecycleEffect =
   | { kind: 'schedule-cleanup' };
 
 export type LiveQueryLifecycleEvent =
-  | { type: 'subscribed'; generation?: number }
-  | { type: 'snapshot-arrived'; generation?: number }
-  | { type: 'snapshot-failed'; generation?: number; message?: string }
-  | { type: 'delta-arrived'; generation?: number }
-  | { type: 'transport-error'; generation?: number }
+  | { type: 'subscribed'; generation: number }
+  | { type: 'snapshot-arrived'; generation: number }
+  | { type: 'snapshot-failed'; generation: number; message?: string }
+  | { type: 'delta-arrived'; generation: number }
+  | { type: 'transport-error'; generation: number }
   | { type: 'unsubscribe' };
 
 export interface LiveQueryLifecycleState {
@@ -76,7 +76,7 @@ export function transitionLiveQueryLifecycle(
       effects: [{ kind: 'schedule-cleanup' }],
     };
   }
-  if (event.generation !== undefined && event.generation !== state.generation) {
+  if (event.generation !== state.generation) {
     return { state, effects: [] };
   }
   switch (state.status) {
