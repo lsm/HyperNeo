@@ -320,6 +320,35 @@ bunRuntimeTest('rejects path segments containing NUL bytes', async () => {
   }
 });
 
+bunRuntimeTest('rejects path segments containing path separators', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-sep-'));
+  const workspace = join(root, 'workspace');
+  await mkdir(workspace);
+
+  try {
+    for (const segments of [['../outside.txt'], ['/tmp/outside.txt'], ['nested', 'sub/file.txt']]) {
+      await expect(
+        readFileWithinWorkspace(workspace, segments, {
+          startLine: 0,
+          lineLimit: undefined,
+          maxBytes: 1024,
+        })
+      ).rejects.toThrow('Unable to access ACP filesystem path');
+    }
+    await expect(
+      writeFileWithinWorkspace(
+        workspace,
+        ['../outside.txt'],
+        'blocked',
+        new AbortController().signal
+      )
+    ).rejects.toThrow('Unable to access ACP filesystem path');
+    await expect(readFile(join(root, 'outside.txt'), 'utf-8')).rejects.toThrow();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 bunRuntimeTest('bounds bytes scanned before the requested line', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-scan-'));
   const workspace = join(root, 'workspace');

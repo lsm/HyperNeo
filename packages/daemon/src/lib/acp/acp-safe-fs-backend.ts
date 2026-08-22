@@ -152,7 +152,12 @@ function validateSegments(segments: string[]): void {
   if (
     segments.length === 0 ||
     segments.some(
-      (segment) => !segment || segment === '.' || segment === '..' || segment.includes('\0')
+      (segment) =>
+        !segment ||
+        segment === '.' ||
+        segment === '..' ||
+        segment.includes('\0') ||
+        segment.includes('/')
     )
   ) {
     throwFsError('access', segments.join('/'));
