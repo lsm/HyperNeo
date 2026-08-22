@@ -12,6 +12,7 @@ const SECRET_HEADER_NAME_PATTERN =
 const SHELL_COMMAND_NAMES = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 const CURL_COMMAND_NAMES = new Set(['curl']);
 const ENV_COMMAND_NAMES = new Set(['env', 'export']);
+const SHELL_OPERATORS = new Set(['&&', '||', ';', '|', '&', '(', ')']);
 
 function commandBaseName(command: string): string {
   return (command.split('/').pop() ?? command).toLowerCase();
@@ -110,17 +111,19 @@ export function redactCommandSecrets(
   depth = 3,
   options: { shellScript?: boolean } = {}
 ): string[] {
-  const commandName = commandBaseName(command);
-  const isShell = SHELL_COMMAND_NAMES.has(commandName);
-  const isCurl = CURL_COMMAND_NAMES.has(commandName);
-  const isEnv = ENV_COMMAND_NAMES.has(commandName);
-  const isHeaderContext = isCurl || options.shellScript === true;
+  const isEnv = ENV_COMMAND_NAMES.has(commandBaseName(command));
   const assignmentsAllowed = isEnv || options.shellScript === true;
-  const commandIsAssignment = command.indexOf('=') > 0;
-  let inLeadingAssignments = options.shellScript === true ? commandIsAssignment || isEnv : true;
+  let inLeadingAssignments =
+    options.shellScript === true ? command.indexOf('=') > 0 || isEnv : true;
+  let currentCommand = command;
   const redacted: string[] = [];
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
+    if (options.shellScript === true && SHELL_OPERATORS.has(arg)) {
+      inLeadingAssignments = true;
+      redacted.push(arg);
+      continue;
+    }
     if (!arg.startsWith('-')) {
       const isAssignmentShaped = arg.indexOf('=') > 0;
       if (inLeadingAssignments && assignmentsAllowed && isSecretEnvAssignment(arg)) {
@@ -128,20 +131,24 @@ export function redactCommandSecrets(
       } else {
         if (!isAssignmentShaped) {
           inLeadingAssignments = false;
+          currentCommand = arg;
         }
         redacted.push(redactUrlUserinfo(arg));
       }
       continue;
     }
-    if (isHeaderContext && /^-H./.test(arg)) {
+    const tokenCommandName = commandBaseName(currentCommand);
+    const tokenCurl = CURL_COMMAND_NAMES.has(tokenCommandName);
+    const tokenShell = SHELL_COMMAND_NAMES.has(tokenCommandName);
+    if (tokenCurl && /^-H./.test(arg)) {
       redacted.push(isSecretHeaderValue(arg.slice(2)) ? '-H[redacted]' : arg);
       continue;
     }
-    if (isCurl && /^-u./.test(arg)) {
+    if (tokenCurl && /^-u./.test(arg)) {
       redacted.push('-u[redacted]');
       continue;
     }
-    if (isShell && /^-[a-z]*c[a-z]*$/i.test(arg)) {
+    if (tokenShell && /^-[a-z]*c[a-z]*$/i.test(arg)) {
       const next = args[index + 1];
       if (next !== undefined) {
         redacted.push(arg, redactShellCommand(next, depth));
@@ -149,7 +156,7 @@ export function redactCommandSecrets(
         continue;
       }
     }
-    if (isShell && /^-[a-z]*c/i.test(arg)) {
+    if (tokenShell && /^-[a-z]*c/i.test(arg)) {
       const cIndex = arg.toLowerCase().lastIndexOf('c');
       const attachedScript = arg.slice(cIndex + 1);
       if (attachedScript && !/[a-zA-Z]/.test(attachedScript)) {
@@ -163,9 +170,9 @@ export function redactCommandSecrets(
       const value = arg.slice(equalsIndex + 1);
       if (isSecretArgName(name)) {
         redacted.push(`${name}=[redacted]`);
-      } else if (isHeaderArgName(name) && isSecretHeaderValue(value)) {
+      } else if (tokenCurl && isHeaderArgName(name) && isSecretHeaderValue(value)) {
         redacted.push(`${name}=[redacted]`);
-      } else if (isCurl && isUserArgName(name)) {
+      } else if (tokenCurl && isUserArgName(name)) {
         redacted.push(`${name}=[redacted]`);
       } else {
         redacted.push(arg);
@@ -178,17 +185,12 @@ export function redactCommandSecrets(
       index++;
       continue;
     }
-    if (
-      isHeaderContext &&
-      isHeaderArgName(arg) &&
-      next !== undefined &&
-      isSecretHeaderValue(next)
-    ) {
+    if (tokenCurl && isHeaderArgName(arg) && next !== undefined && isSecretHeaderValue(next)) {
       redacted.push(arg, '[redacted]');
       index++;
       continue;
     }
-    if (isCurl && isUserArgName(arg) && next !== undefined && !next.startsWith('--')) {
+    if (tokenCurl && isUserArgName(arg) && next !== undefined && !next.startsWith('--')) {
       redacted.push(arg, '[redacted]');
       index++;
       continue;

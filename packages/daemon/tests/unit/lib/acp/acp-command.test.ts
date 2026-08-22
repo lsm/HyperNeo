@@ -265,6 +265,20 @@ describe('redactCommandSecrets', () => {
     expect(getAcpCommandIdentityDigest("sh -c 'export MODE=prod API_TOKEN=topsecret'")).toBe(
       getAcpCommandIdentityDigest("sh -c 'export MODE=prod API_TOKEN=othersafe'")
     );
+    expect(
+      getAcpCommandIdentityDigest(`sh -c 'curl https://a && API_TOKEN=topsecret curl https://b'`)
+    ).toBe(
+      getAcpCommandIdentityDigest(`sh -c 'curl https://a && API_TOKEN=othersafe curl https://b'`)
+    );
+  });
+
+  test('limits nested header redaction to header-taking commands', () => {
+    expect(getAcpCommandIdentityDigest(`bash -c "tool -H x file-a"`)).not.toBe(
+      getAcpCommandIdentityDigest(`bash -c "tool -H x file-b"`)
+    );
+    expect(
+      getAcpCommandIdentityDigest(`bash -c "curl -H 'Authorization: Bearer topsecret' /a"`)
+    ).toBe(getAcpCommandIdentityDigest(`bash -c "curl -H 'Authorization: Bearer othersafe' /a"`));
   });
 
   test('keeps the quote wrapper around redacted url tokens', () => {
