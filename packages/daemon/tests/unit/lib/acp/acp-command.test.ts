@@ -116,6 +116,15 @@ describe('getAcpCommandIdentityDigest', () => {
     expect(getAcpCommandIdentityDigest("curl -H'Authorization: Bearer topsecret' https://a")).toBe(
       getAcpCommandIdentityDigest("curl -H'Authorization: Bearer othersafe' https://a")
     );
+    expect(getAcpCommandIdentityDigest('curl -u admin:topsecret https://a')).toBe(
+      getAcpCommandIdentityDigest('curl -u admin:othersafe https://a')
+    );
+    expect(getAcpCommandIdentityDigest('curl -uadmin:topsecret https://a')).toBe(
+      getAcpCommandIdentityDigest('curl -uadmin:othersafe https://a')
+    );
+    expect(getAcpCommandIdentityDigest('curl --user admin:topsecret https://a')).toBe(
+      getAcpCommandIdentityDigest('curl --user admin:othersafe https://a')
+    );
   });
 
   test('keeps non-credential header values visible in the digest', () => {
@@ -139,8 +148,13 @@ describe('getAcpCommandIdentityDigest', () => {
       `rm -- 'important file'`,
     ]);
     expect(redactSecretArgs(['-c', `curl -H 'Authorization: Bearer topsecret' https://a`])).toEqual(
-      ['-c', `curl -H '[redacted]' https://a`]
+      ['-c', `curl -H [redacted] https://a`]
     );
+    expect(redactSecretArgs(['-c', 'echo safe && rm -- "important file"'])).toEqual([
+      '-c',
+      `echo safe && rm -- 'important file'`,
+    ]);
+    expect(redactSecretArgs(['-c', 'echo $HOME | wc -l'])).toEqual(['-c', 'echo $HOME | wc -l']);
   });
 
   test('does not swallow the next flag after a valueless secret flag', () => {

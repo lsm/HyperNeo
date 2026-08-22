@@ -4,7 +4,7 @@ import { parseAcpCommand } from '@hyperneo/shared/acp';
 export { getAcpCommandIdentity, parseAcpCommand } from '@hyperneo/shared/acp';
 
 const SECRET_ARG_NAME_PATTERN =
-  /(?:^|[-_])(?:token|secret|password|passphrase|credential|api[-_]?key|bearer)$/i;
+  /(?:^|[-_])(?:token|secret|password|passphrase|credential|api[-_]?key|bearer|user|u)$/i;
 
 const SECRET_HEADER_NAME_PATTERN =
   /(?:^|[-_])(?:authorization|auth|cookie|session|token|secret|password|credential|api[-_]?key|bearer)$/i;
@@ -32,11 +32,17 @@ export function shellQuote(value: string): string {
   return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
+function displayQuote(token: string): string {
+  if (!/\s/.test(token)) return token;
+  if (/[$`&|;<>()*?]/.test(token)) return token;
+  return shellQuote(token);
+}
+
 function redactShellCommand(script: string, depth: number): string {
   if (depth <= 0) return script;
   try {
     const { command, args } = parseAcpCommand(script);
-    return [command, ...redactSecretArgs(args, depth - 1)].map(shellQuote).join(' ');
+    return [command, ...redactSecretArgs(args, depth - 1)].map(displayQuote).join(' ');
   } catch {
     return script;
   }
@@ -52,6 +58,10 @@ export function redactSecretArgs(args: string[], depth = 3): string[] {
     }
     if (/^-H./.test(arg)) {
       redacted.push(isSecretHeaderValue(arg.slice(2)) ? '-H[redacted]' : arg);
+      continue;
+    }
+    if (/^-u./.test(arg)) {
+      redacted.push('-u[redacted]');
       continue;
     }
     if (/^-c./.test(arg)) {

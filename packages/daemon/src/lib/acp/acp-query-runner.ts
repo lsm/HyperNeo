@@ -1488,6 +1488,7 @@ export class AcpQueryRunner {
       }
     } finally {
       signal.removeEventListener('abort', onAbort);
+      pendingNext?.catch(() => {});
       if (signal.aborted && messageDelivered) {
         const drainDeadline = { expired: true } as const;
         let clearDrainTimer: (() => void) | undefined;
