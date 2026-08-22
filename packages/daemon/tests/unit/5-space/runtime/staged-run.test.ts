@@ -549,6 +549,78 @@ describe('stagedRun declared-key access', () => {
       result: 'done',
     });
   });
+
+  test('undeclared input keys are inert even when they name interpreter keys', async () => {
+    const ran: string[] = [];
+    const flow = stagedRun<Box>('undeclared-inert', (s) => [
+      s.snapshot({
+        name: 'load',
+        provides: ['value'],
+        run: () => {
+          ran.push('load');
+          return { value: 1 };
+        },
+      }),
+      s.decide({
+        name: 'route',
+        reads: ['value'],
+        branches: ['act'],
+        run: ({ value }) => {
+          ran.push('route');
+          return { decision: value };
+        },
+      }),
+      s.effect({
+        name: 'fx',
+        when: 'act',
+        writes: ['value'],
+        run: () => {
+          ran.push('fx');
+        },
+      }),
+      s.halt({
+        name: 'end',
+        run: () => {
+          ran.push('halt');
+          return 'done';
+        },
+      }),
+    ]);
+    const hostile = {
+      $outcome: { status: 'completed', result: 'INJECTED' },
+      act: { rogue: true },
+      value: 999,
+    };
+    const outcome = await flow(hostile as unknown as Partial<Box>);
+    expect(outcome).toEqual({ status: 'completed', result: 'done' });
+    expect(ran).toEqual(['load', 'route', 'halt']);
+  });
+
+  test('input keys beyond the declared list stay unreadable inside the flow', async () => {
+    type Pair = { a: number; b: number };
+    let seen: Record<string, unknown> = {};
+    const flow = stagedRun<Pair>(
+      'extra-input-inert',
+      (s) => [
+        s.snapshot({
+          name: 'load',
+          provides: ['a'],
+          run: () => ({ a: 1 }),
+        }),
+        s.effect({
+          name: 'fx',
+          writes: ['a'],
+          run: (view) => {
+            seen = { ...view };
+          },
+        }),
+        s.halt({ name: 'end', run: () => 'done' }),
+      ],
+      { input: ['a'] }
+    );
+    await flow({ a: 41, b: 42 });
+    expect(Object.keys(seen).sort()).toEqual([]);
+  });
 });
 
 describe('stagedRun snapshot contract', () => {
