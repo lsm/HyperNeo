@@ -37,8 +37,7 @@ function isUserArgName(name: string): boolean {
 }
 
 function isShellCommandArgName(name: string): boolean {
-  const stripped = name.replace(/^-+/, '');
-  return /^c$/i.test(stripped);
+  return /^-[a-z]*c$/i.test(name);
 }
 
 function isSecretEnvAssignment(arg: string): boolean {
@@ -64,25 +63,47 @@ function redactUrlUserinfo(value: string): string {
   return match ? `${match[1]}[redacted]${match[3]}` : value;
 }
 
+function findValueSpanAfter(text: string, anchor: string, value: string, from: number): number {
+  let anchorSpan = text.indexOf(anchor, from);
+  while (anchorSpan !== -1) {
+    let index = anchorSpan + anchor.length;
+    while (index < text.length && /\s/.test(text[index])) index++;
+    if (text[index] === "'" || text[index] === '"') index++;
+    if (text.startsWith(value, index)) return index;
+    anchorSpan = text.indexOf(anchor, anchorSpan + 1);
+  }
+  return -1;
+}
+
 function redactShellCommand(script: string, depth: number): string {
   if (depth <= 0) return script;
   try {
     const { command, args } = parseAcpCommand(script);
-    const redactedArgs = redactCommandSecrets(command, args, depth - 1);
+    const redactedArgs = redactCommandSecrets(command, args, depth - 1, { shellScript: true });
     const redactedCommand = isSecretEnvAssignment(command)
       ? `${command.slice(0, command.indexOf('='))}=[redacted]`
       : command;
-    const replacements: Array<[string, string]> = [];
-    if (redactedCommand !== command) replacements.push([command, redactedCommand]);
+    const replacements: Array<{ from: string; to: string; anchor?: string }> = [];
+    if (redactedCommand !== command) replacements.push({ from: command, to: redactedCommand });
     for (let index = 0; index < redactedArgs.length; index++) {
-      if (redactedArgs[index] !== args[index])
-        replacements.push([args[index], redactedArgs[index]]);
+      if (redactedArgs[index] === args[index]) continue;
+      const anchored =
+        redactedArgs[index] === '[redacted]' &&
+        index > 0 &&
+        args[index - 1] === redactedArgs[index - 1];
+      replacements.push({
+        from: args[index],
+        to: redactedArgs[index],
+        anchor: anchored ? args[index - 1] : undefined,
+      });
     }
     let result = script;
     let cursor = 0;
     let missed = false;
-    for (const [from, to] of replacements) {
-      const span = result.indexOf(from, cursor);
+    for (const { from, to, anchor } of replacements) {
+      const span = anchor
+        ? findValueSpanAfter(result, anchor, from, cursor)
+        : result.indexOf(from, cursor);
       if (span === -1) {
         missed = true;
         break;
@@ -100,23 +121,29 @@ function redactShellCommand(script: string, depth: number): string {
   }
 }
 
-export function redactCommandSecrets(command: string, args: string[], depth = 3): string[] {
+export function redactCommandSecrets(
+  command: string,
+  args: string[],
+  depth = 3,
+  options: { shellScript?: boolean } = {}
+): string[] {
   const commandName = commandBaseName(command);
   const isShell = SHELL_COMMAND_NAMES.has(commandName);
   const isCurl = CURL_COMMAND_NAMES.has(commandName);
   const isEnv = ENV_COMMAND_NAMES.has(commandName);
+  const isHeaderContext = isCurl || options.shellScript === true;
   const redacted: string[] = [];
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (!arg.startsWith('-')) {
-      if (isEnv && isSecretEnvAssignment(arg)) {
+      if ((isEnv || options.shellScript === true) && isSecretEnvAssignment(arg)) {
         redacted.push(`${arg.slice(0, arg.indexOf('='))}=[redacted]`);
       } else {
         redacted.push(redactUrlUserinfo(arg));
       }
       continue;
     }
-    if (isCurl && /^-H./.test(arg)) {
+    if (isHeaderContext && /^-H./.test(arg)) {
       redacted.push(isSecretHeaderValue(arg.slice(2)) ? '-H[redacted]' : arg);
       continue;
     }
@@ -124,8 +151,11 @@ export function redactCommandSecrets(command: string, args: string[], depth = 3)
       redacted.push('-u[redacted]');
       continue;
     }
-    if (isShell && /^-c./.test(arg)) {
-      redacted.push(`-c${redactShellCommand(arg.slice(2), depth)}`);
+    if (isShell && /^-[a-z]*c./i.test(arg)) {
+      const attachedScript = arg.slice(arg.toLowerCase().lastIndexOf('c') + 1);
+      redacted.push(
+        `${arg.slice(0, arg.length - attachedScript.length)}${redactShellCommand(attachedScript, depth)}`
+      );
       continue;
     }
     const equalsIndex = arg.indexOf('=');
@@ -149,7 +179,12 @@ export function redactCommandSecrets(command: string, args: string[], depth = 3)
       index++;
       continue;
     }
-    if (isCurl && isHeaderArgName(arg) && next !== undefined && isSecretHeaderValue(next)) {
+    if (
+      isHeaderContext &&
+      isHeaderArgName(arg) &&
+      next !== undefined &&
+      isSecretHeaderValue(next)
+    ) {
       redacted.push(arg, '[redacted]');
       index++;
       continue;
@@ -160,6 +195,11 @@ export function redactCommandSecrets(command: string, args: string[], depth = 3)
       continue;
     }
     if (isShell && isShellCommandArgName(arg) && next !== undefined) {
+      redacted.push(arg, redactShellCommand(next, depth));
+      index++;
+      continue;
+    }
+    if (isShell && /^-[a-z]*c$/i.test(arg) && next !== undefined) {
       redacted.push(arg, redactShellCommand(next, depth));
       index++;
       continue;

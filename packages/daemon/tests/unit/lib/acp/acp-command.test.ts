@@ -232,6 +232,33 @@ describe('redactCommandSecrets', () => {
       '-c',
       `pip install --user package-a`,
     ]);
+    expect(redactCommandSecrets('sh', ['-c', `echo topsecret && curl --token topsecret`])).toEqual([
+      '-c',
+      `echo topsecret && curl --token [redacted]`,
+    ]);
+    expect(
+      redactCommandSecrets('sh', ['-c', `echo 'Bearer x' && curl -H 'Authorization: Bearer x'`])
+    ).toEqual(['-c', `echo 'Bearer x' && curl -H '[redacted]'`]);
+  });
+
+  test('redacts leading assignments inside shell scripts', () => {
+    expect(
+      getAcpCommandIdentityDigest("sh -c 'MODE=prod API_TOKEN=topsecret curl https://a'")
+    ).toBe(getAcpCommandIdentityDigest("sh -c 'MODE=prod API_TOKEN=othersafe curl https://a'"));
+    expect(
+      redactCommandSecrets('sh', ['-lc', `MODE=prod API_TOKEN=topsecret curl https://a`])
+    ).toEqual(['-lc', `MODE=prod API_TOKEN=[redacted] curl https://a`]);
+    expect(getAcpCommandIdentityDigest('bash -xc "curl --token topsecret"')).toBe(
+      getAcpCommandIdentityDigest('bash -xc "curl --token othersafe"')
+    );
+    expect(redactCommandSecrets('bash', ['-lc', `curl --token topsecret`])).toEqual([
+      '-lc',
+      `curl --token [redacted]`,
+    ]);
+    expect(redactCommandSecrets('bash', ['-xc', `curl --token topsecret`])).toEqual([
+      '-xc',
+      `curl --token [redacted]`,
+    ]);
   });
 
   test('redisplays shell scripts verbatim when nothing was redacted', () => {
