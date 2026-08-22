@@ -200,6 +200,22 @@ describe('MessageQueue', () => {
       expect(queue.requeueYielded('consumed-id')).toBe(false);
       queue.stop();
     });
+
+    it('re-arms the queue timeout when the requeued message is yielded again', async () => {
+      queue.overrideTimeoutMsForTest(20);
+      queue.start();
+      const acknowledgment = queue.enqueueWithId('requeued-timeout', 'Message 1');
+      const generator = queue.messageGenerator(testSessionId);
+      const first = await generator.next();
+      expect(first.done).toBe(false);
+      expect(queue.requeueYielded('requeued-timeout')).toBe(true);
+      const second = await generator.next();
+      expect(second.done).toBe(false);
+      expect((second.value?.message as { uuid?: string }).uuid).toBe('requeued-timeout');
+
+      await expect(acknowledgment).rejects.toThrow('Message queue timeout');
+      queue.stop();
+    });
   });
 
   describe('hasPendingOrInFlight', () => {

@@ -102,30 +102,7 @@ export class MessageQueue {
         internal,
       };
 
-      queuedMessage.timeoutId = setTimeout(() => {
-        const timeoutError = new Error(
-          `Message queue timeout: SDK did not consume message ${messageId} within ${this.timeoutMs / 1000}s. ` +
-            `This usually indicates an SDK internal error. Please try again or create a new session.`
-        );
-        timeoutError.name = 'MessageQueueTimeoutError';
-        const index = this.queue.indexOf(queuedMessage);
-        if (index !== -1) {
-          this.queue.splice(index, 1);
-          queuedMessage.reject(timeoutError);
-          return;
-        }
-        if (this.claimed.delete(queuedMessage)) {
-          queuedMessage.reject(timeoutError);
-          return;
-        }
-        if (this.yielded.delete(queuedMessage)) {
-          if (queuedMessage.durable) {
-            queuedMessage.resolve(queuedMessage.id);
-          } else {
-            queuedMessage.reject(timeoutError);
-          }
-        }
-      }, this.timeoutMs);
+      this.armQueueTimeout(queuedMessage);
 
       if (options?.prepend) {
         this.queue.unshift(queuedMessage);
@@ -136,6 +113,36 @@ export class MessageQueue {
 
       this.wakeWaiters();
     });
+  }
+
+  private armQueueTimeout(queuedMessage: QueuedMessage): void {
+    if (queuedMessage.timeoutId) {
+      clearTimeout(queuedMessage.timeoutId);
+    }
+    queuedMessage.timeoutId = setTimeout(() => {
+      const timeoutError = new Error(
+        `Message queue timeout: SDK did not consume message ${queuedMessage.id} within ${this.timeoutMs / 1000}s. ` +
+          `This usually indicates an SDK internal error. Please try again or create a new session.`
+      );
+      timeoutError.name = 'MessageQueueTimeoutError';
+      const index = this.queue.indexOf(queuedMessage);
+      if (index !== -1) {
+        this.queue.splice(index, 1);
+        queuedMessage.reject(timeoutError);
+        return;
+      }
+      if (this.claimed.delete(queuedMessage)) {
+        queuedMessage.reject(timeoutError);
+        return;
+      }
+      if (this.yielded.delete(queuedMessage)) {
+        if (queuedMessage.durable) {
+          queuedMessage.resolve(queuedMessage.id);
+        } else {
+          queuedMessage.reject(timeoutError);
+        }
+      }
+    }, this.timeoutMs);
   }
 
   clear(): void {
@@ -343,6 +350,9 @@ export class MessageQueue {
 
       this.claimed.delete(queuedMessage);
       this.yielded.add(queuedMessage);
+      if (!queuedMessage.timeoutId) {
+        this.armQueueTimeout(queuedMessage);
+      }
       yield {
         message: sdkUserMessage,
         onSent: () => {
