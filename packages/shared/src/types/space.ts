@@ -404,6 +404,7 @@ export interface CreateSpaceGoalParams {
   checkInCronExpression?: string | null;
   checkInTimezone?: string;
   triggerImmediately?: boolean;
+  primaryOwnerAgentId?: string | null;
 }
 
 export interface UpdateSpaceGoalParams {

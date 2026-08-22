@@ -485,6 +485,10 @@ export function createSpaceTables(db: BunDatabase): void {
 
   createEvolutionTables(db);
   createLongHorizonAgentTables(db);
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_space_lh_agent_goals_one_owner ` +
+      `ON space_long_horizon_agent_goals(goal_id) WHERE relationship = 'owner'`
+  );
   createWorkflowEventSubscriptionTables(db);
 
   db.exec(`

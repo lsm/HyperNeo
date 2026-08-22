@@ -17,6 +17,7 @@ import type { SpaceRepository } from '../../../storage/repositories/space-reposi
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository';
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { ScheduleService } from '../schedule/schedule-service';
 import type { GoalAutomationService } from './goal-automation-service';
 import { pauseScheduleStrict } from './goal-automation-schedule-sync';
@@ -58,6 +59,7 @@ export interface SpaceGoalServiceDeps {
   };
   goalAutomationService?: Pick<GoalAutomationService, 'onTaskCompleted'>;
   onGoalResumed?: (goalId: string, spaceId: string) => void;
+  longHorizonAgentRepo?: Pick<SpaceLongHorizonAgentRepository, 'assignGoal'>;
 }
 
 export class SpaceGoalService {
@@ -77,6 +79,9 @@ export class SpaceGoalService {
 
     const result = this.runAtomic(() => {
       const goal = this.deps.goalRepo.create(params);
+      if (params.primaryOwnerAgentId && this.deps.longHorizonAgentRepo) {
+        this.deps.longHorizonAgentRepo.assignGoal(params.primaryOwnerAgentId, goal.id);
+      }
       if (params.checkInCronExpression) {
         const schedule = this.deps.scheduleService.createGoalSchedule({
           spaceId: params.spaceId,

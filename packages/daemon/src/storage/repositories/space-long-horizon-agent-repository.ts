@@ -1,5 +1,10 @@
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
+import {
+  decideGoalOwnerResolution,
+  type GoalOwnerAgentState,
+  type GoalOwnerResolutionDecision,
+} from '../../lib/space/goals/goal-owner-resolution';
 import type {
   CreateSpaceLongHorizonAgentParams,
   CreateSpaceLongHorizonAgentReminderParams,
@@ -189,13 +194,23 @@ export class SpaceLongHorizonAgentRepository {
     const agent = this.requireAgent(agentId);
     this.requireMatchingSpace('space_goals', goalId, agent.spaceId, 'Goal');
     const now = Date.now();
-    this.db
-      .prepare(
-        `INSERT INTO space_long_horizon_agent_goals (agent_id, goal_id, relationship, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?)
-				 ON CONFLICT(agent_id, goal_id, relationship) DO UPDATE SET updated_at = excluded.updated_at`
-      )
-      .run(agentId, goalId, relationship, now, now);
+    const replace = this.db.transaction(() => {
+      if (relationship === 'owner') {
+        this.db
+          .prepare(
+            `DELETE FROM space_long_horizon_agent_goals WHERE goal_id = ? AND relationship = 'owner'`
+          )
+          .run(goalId);
+      }
+      this.db
+        .prepare(
+          `INSERT INTO space_long_horizon_agent_goals (agent_id, goal_id, relationship, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?)
+					 ON CONFLICT(agent_id, goal_id, relationship) DO UPDATE SET updated_at = excluded.updated_at`
+        )
+        .run(agentId, goalId, relationship, now, now);
+    });
+    replace();
   }
 
   listGoals(agentId: string): SpaceLongHorizonAgentGoal[] {
@@ -207,10 +222,53 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToGoalLink);
   }
 
+  listGoalAssignments(goalId: string): SpaceLongHorizonAgentGoal[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM space_long_horizon_agent_goals WHERE goal_id = ?`)
+      .all(goalId) as Record<string, unknown>[];
+    return rows.map(rowToGoalLink);
+  }
+
   deleteGoalAssignment(agentId: string, goalId: string): void {
     this.db
       .prepare(`DELETE FROM space_long_horizon_agent_goals WHERE agent_id = ? AND goal_id = ?`)
       .run(agentId, goalId);
+  }
+
+  deleteGoalAssignmentByRelationship(
+    agentId: string,
+    goalId: string,
+    relationship: SpaceLongHorizonAgentGoal['relationship']
+  ): void {
+    this.db
+      .prepare(
+        `DELETE FROM space_long_horizon_agent_goals WHERE agent_id = ? AND goal_id = ? AND relationship = ?`
+      )
+      .run(agentId, goalId, relationship);
+  }
+
+  getPrimaryGoalOwner(goalId: string, spaceId: string): GoalOwnerResolutionDecision {
+    const assignments = this.listGoalAssignments(goalId);
+    const candidates = assignments
+      .filter((a) => a.relationship === 'owner')
+      .map((a) => ({ agentId: a.agentId, relationship: a.relationship, createdAt: a.createdAt }));
+    const agentStates: Record<string, GoalOwnerAgentState> = {};
+    for (const candidate of candidates) {
+      const agent = this.getById(candidate.agentId);
+      if (!agent) {
+        agentStates[candidate.agentId] = { state: 'missing' };
+      } else if (agent.spaceId !== spaceId) {
+        agentStates[candidate.agentId] = { state: 'missing' };
+      } else {
+        agentStates[candidate.agentId] = { state: agent.status };
+      }
+    }
+    const coordinator = this.getCoordinator(spaceId);
+    return decideGoalOwnerResolution({
+      candidates,
+      agentStates,
+      coordinatorAgentId: coordinator?.id ?? null,
+    });
   }
 
   assignForgeScope(
