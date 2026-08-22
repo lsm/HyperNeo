@@ -1027,6 +1027,43 @@ describe('QueryLifecycleManager', () => {
       expect(enqueueSpy).toHaveBeenCalledWith('msg-123', 'Hello');
     });
 
+    test('prepended retry is removed when query startup throws', async () => {
+      const removeSpy = spyOn(messageQueue, 'remove').mockReturnValue(true);
+      spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-retry');
+      mockContext = createMockContext({
+        startStreamingQuery: async () => {
+          throw new Error('SDK startup failed');
+        },
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await expect(
+        manager.startQueryAndEnqueue('msg-retry', 'Hello', 7, { prepend: true })
+      ).rejects.toThrow('SDK startup failed');
+
+      expect(removeSpy).toHaveBeenCalledWith('msg-retry');
+    });
+
+    test('prepended retry is admitted before the replacement query starts', async () => {
+      const callOrder: string[] = [];
+      spyOn(messageQueue, 'enqueueWithId').mockImplementation(async () => {
+        callOrder.push('enqueue');
+        return 'msg-retry';
+      });
+      mockContext = createMockContext({
+        startStreamingQuery: async () => {
+          callOrder.push('start');
+          messageQueue.start();
+          mockContext.queryPromise = Promise.resolve();
+        },
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.startQueryAndEnqueue('msg-retry', 'Hello', 7, { prepend: true });
+
+      expect(callOrder).toEqual(['enqueue', 'start']);
+    });
+
     test('emits message.sent event', async () => {
       spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-123');
 

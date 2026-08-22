@@ -135,6 +135,7 @@ import {
 } from './event-subscription-setup';
 import { resolveFallbackChain } from './fallback-recovery';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
+import type { LimitRetryHint } from './limit-error-classifier';
 import {
   BATCH_DELIVERY_MAX_CHARS,
   buildBatchedDeliveryContent,
@@ -144,6 +145,7 @@ import {
   type FeedSteerOutcome,
   flattenDeliveryText,
   isMessageDeliveryV2Enabled,
+  MANUAL_RECOVERY_PARK_MS,
   MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliveryAttemptObserver,
   MessageDeliveryRecoverableTurnError,
@@ -164,8 +166,8 @@ import { MessageQueue } from './message-queue';
 import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler';
 import { ProcessingStateManager } from './processing-state-manager';
 import {
-  QueryLifecycleManager,
   type EnsureQueryStartedResult,
+  QueryLifecycleManager,
   type QueryLifecycleManagerContext,
 } from './query-lifecycle-manager';
 import type { QueryLike } from './query-like';
@@ -684,14 +686,20 @@ export class AgentSession
   async startQueryAndEnqueue(
     messageId: string,
     messageContent: string | MessageContent[],
-    episodeGeneration?: number
+    episodeGeneration?: number,
+    options?: { prepend?: boolean }
   ): Promise<void> {
     if (episodeGeneration === undefined) {
       this.rateLimitWatchdog.cancel();
     } else {
       this.rateLimitWatchdog.clearPendingCooldown();
     }
-    await this.lifecycleManager.startQueryAndEnqueue(messageId, messageContent, episodeGeneration);
+    await this.lifecycleManager.startQueryAndEnqueue(
+      messageId,
+      messageContent,
+      episodeGeneration,
+      options
+    );
   }
 
   removeQueuedMessage(messageId: string): boolean {
@@ -931,7 +939,8 @@ export class AgentSession
       await this.startQueryAndEnqueue(
         lastUserMessage.uuid,
         lastUserMessage.content,
-        episodeGeneration
+        episodeGeneration,
+        { prepend: true }
       );
       return true;
     } catch (error) {
@@ -942,9 +951,17 @@ export class AgentSession
   }
 
   cancelRateLimitRetry(): void {
+    const episodeMessage = this.rateLimitWatchdog.getState().lastUserMessage;
     this.rateLimitWatchdog.cancel(false);
     if (this.stateManager.getState().status === 'rate_limit_cooldown') {
       void this.stateManager.setIdle();
+    }
+    if (episodeMessage) {
+      try {
+        this.db.getJobQueueRepo()?.cancelDelivery(this.session.id, episodeMessage.uuid);
+      } catch (error) {
+        this.logger.warn('Failed to cancel the parked delivery for the retry episode:', error);
+      }
     }
   }
 
@@ -1348,16 +1365,37 @@ export class AgentSession
 
   async onMarkApiSuccess(message: import('@hyperneo/shared/sdk').SDKMessage): Promise<void> {
     this.errorManager.markApiSuccess();
-    if (isSDKResultSuccess(message)) {
+    if (isSDKResultSuccess(message) && message.is_error !== true) {
+      const wasPending = this.rateLimitWatchdog.isPending();
       this.rateLimitWatchdog.reset();
+      if (wasPending && this.stateManager.getState().status === 'rate_limit_cooldown') {
+        await this.stateManager.setIdle();
+      }
     }
   }
 
   async onRateLimitExhausted(
     errorMessage: string,
-    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
+    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
+    hint?: LimitRetryHint
   ): Promise<boolean> {
-    return this.rateLimitWatchdog.scheduleRetry(errorMessage, lastUserMessage);
+    return this.rateLimitWatchdog.scheduleRetry(errorMessage, lastUserMessage, hint);
+  }
+
+  async onResultLimitError(
+    errorText: string,
+    hint: LimitRetryHint,
+    userMessageUuid?: string
+  ): Promise<boolean> {
+    return this.onRateLimitExhausted(
+      errorText,
+      this.queryRunner.resolveRetryUserMessage(userMessageUuid),
+      hint
+    );
+  }
+
+  isLimitRecoveryPending(): boolean {
+    return this.rateLimitWatchdog.isRecoveryPending();
   }
 
   setCleaningUp(value: boolean): void {
@@ -1572,6 +1610,26 @@ export class AgentSession
     if (started.kind === 'aborted') {
       return { outcome: 'aborted' };
     }
+    if (
+      alreadyConsumed &&
+      !this.rateLimitWatchdog.isRecoveryPending() &&
+      !!this.db
+        .getSDKMessageRepo()
+        ?.hasRecoveryInterceptedResultAfter?.(this.session.id, messageUuid)
+    ) {
+      this.logger.info(
+        `delivery-turn: reclaiming recovery-intercepted row directly (uuid=${messageUuid}); ` +
+          `the parked recovery episode no longer owns its retry.`
+      );
+      started.turnEnd.cancel();
+      if (started.responseObserver && this.deliveryResponseObserver === started.responseObserver) {
+        this.deliveryResponseObserver = null;
+      }
+      if (!claimGuard || claimGuard()) {
+        this.reopenDeliveryForRetry(messageUuid);
+      }
+      throw new MessageDeliveryRecoverableTurnError('Turn ended without a response');
+    }
     this.deliveryTurnStalled = false;
     this.outstandingToolUseIds.clear();
     let stallPromise: Promise<void> = new Promise<void>(() => {});
@@ -1680,6 +1738,18 @@ export class AgentSession
       .getSDKMessageRepo()
       ?.hasTerminalResultAfter(this.session.id, messageUuid);
     if (!producedResult) {
+      if (this.rateLimitWatchdog.isRecoveryPending()) {
+        const cooldownRetryAt = this.rateLimitWatchdog.getState().retryAt;
+        const retryAt = this.rateLimitWatchdog.isManualRecoveryPause()
+          ? Date.now() + MANUAL_RECOVERY_PARK_MS
+          : Math.max(Date.now() + MESSAGE_DELIVERY_PARK_MS, cooldownRetryAt ?? 0);
+        this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
+        this.logger.info(
+          `delivery-turn: parking job while limit recovery is pending ` +
+            `(uuid=${messageUuid}, retryAt=${new Date(retryAt).toISOString()})`
+        );
+        return { outcome: 'recovery_pending', retryAt };
+      }
       const turnError = this.consumeTerminalTurnError(turnStartedAt);
       this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
       const errorResultSubtype = this.db

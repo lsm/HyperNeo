@@ -73,7 +73,13 @@ export function selectNextFallback(
   return { next: null, exhausted: true, skipReason: lastSkip };
 }
 
-export type ResetTimestampStrategy = 'iso8601' | 'yyyymmdd-hms' | 'epoch-millis' | 'epoch-seconds';
+export type ResetTimestampStrategy =
+  | 'iso8601'
+  | 'yyyymmdd-hms'
+  | 'epoch-millis'
+  | 'epoch-seconds'
+  | 'relative-delay'
+  | 'structured';
 
 export interface ParsedReset {
   resetAtMs: number;
@@ -90,9 +96,27 @@ const EPOCH_MILLIS_RE = /\b\d{13}\b/g;
 
 const EPOCH_SECONDS_RE = /\b\d{10}\b/g;
 
+const RELATIVE_RESET_RE =
+  /\b(?:reset|retry|try again|lifted|available)[^.]{0,60}?\b(?:in|after)\s+(\d{1,4})\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)\b/gi;
+
+const RELATIVE_UNIT_MS: Record<string, number> = {
+  second: 1000,
+  sec: 1000,
+  minute: 60 * 1000,
+  min: 60 * 1000,
+  hour: 60 * 60 * 1000,
+  hr: 60 * 60 * 1000,
+  day: 24 * 60 * 60 * 1000,
+};
+
+function relativeUnitMs(unit: string): number {
+  const normalized = unit.toLowerCase().replace(/s$/, '');
+  return RELATIVE_UNIT_MS[normalized] ?? 0;
+}
+
 function isValidReset(ms: number, now: number): boolean {
   if (!Number.isFinite(ms)) return false;
-  return ms > now && ms < now + MAX_RESET_HORIZON_MS;
+  return ms > now && ms <= now + MAX_RESET_HORIZON_MS;
 }
 
 function parseLocalGroups(groups: RegExpMatchArray): number {
@@ -137,6 +161,14 @@ export function extractResetTimestamp(
   for (const m of errorMessage.matchAll(EPOCH_SECONDS_RE)) {
     const ms = Number.parseInt(m[0], 10) * 1000;
     if (isValidReset(ms, now)) return { resetAtMs: ms, strategy: 'epoch-seconds' };
+  }
+
+  for (const m of errorMessage.matchAll(RELATIVE_RESET_RE)) {
+    const delayMs = Number.parseInt(m[1], 10) * relativeUnitMs(m[2]);
+    const ms = now + delayMs;
+    if (delayMs > 0 && isValidReset(ms, now)) {
+      return { resetAtMs: ms, strategy: 'relative-delay' };
+    }
   }
 
   return null;
@@ -188,7 +220,7 @@ export function computeCooldown(
   };
 }
 
-const USAGE_CAP_KEYWORDS = [
+export const USAGE_CAP_KEYWORDS = [
   'usage',
   'cap',
   'quota',
@@ -214,6 +246,10 @@ export function classifyLimitKind(
   return 'rate_limit';
 }
 
+const HTTP_402_STATUS_RE = /\b402\b/;
+
+const BILLING_402_CONTEXT_RE = /payment|insufficient|quota|credit|balance/i;
+
 export function isNonRetryableBillingError(
   errorMessage: string,
   now: number = Date.now()
@@ -221,7 +257,7 @@ export function isNonRetryableBillingError(
   const lower = errorMessage.toLowerCase();
   const resettable = !!extractResetTimestamp(errorMessage, now);
   return (
-    errorMessage.includes('402') ||
+    (HTTP_402_STATUS_RE.test(errorMessage) && BILLING_402_CONTEXT_RE.test(errorMessage)) ||
     (!resettable &&
       (lower.includes('no quota') ||
         lower.includes('quota exceeded') ||

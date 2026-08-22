@@ -22,6 +22,7 @@ import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-s
 import { AcpProvider } from '../providers/acp-provider';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery';
+import { assessLimitError } from '../agent/limit-error-classifier';
 import type { AgentSession } from '../agent/agent-session';
 import {
   refreshQueryEnvFromProcess,
@@ -360,6 +361,12 @@ export class AcpQueryRunner {
     return this._lastConsumedUserMessage;
   }
 
+  resolveRetryUserMessage(
+    _userMessageUuid?: string
+  ): { uuid: string; content: string | MessageContent[] } | null {
+    return this._lastConsumedUserMessage;
+  }
+
   constructor(
     private ctx: QueryRunnerContext,
     private readonly createAcpClient: AcpClientFactory = (options) => new AcpClient(options)
@@ -606,6 +613,16 @@ export class AcpQueryRunner {
         suppressPreYieldCallback: true,
       })) {
         if (abortController.signal.aborted) break;
+        if (this.ctx.isLimitRecoveryPending?.()) {
+          logger.info(
+            'ACP prompt loop: limit recovery engaged; requeueing prompt until the retry.'
+          );
+          const yieldedUuid = (message as SDKUserMessage).uuid;
+          if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {
+            logger.warn(`ACP prompt loop: could not requeue yielded prompt ${yieldedUuid}.`);
+          }
+          break;
+        }
 
         const queuedMessage = message as SDKUserMessage & { internal?: boolean };
         if (!queuedMessage.internal) {
@@ -769,7 +786,12 @@ export class AcpQueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
-        if (!this.ctx.isCleaningUp() && !recoveryState.rateLimitCooldownScheduled) {
+        if (
+          !this.ctx.isCleaningUp() &&
+          !recoveryState.rateLimitCooldownScheduled &&
+          !(this.ctx.isLimitRecoveryPending?.() ?? false) &&
+          stateManager.getState().status !== 'rate_limit_cooldown'
+        ) {
           await stateManager.setIdle();
           void processExitSnapshot.then(() => {
             if (
@@ -895,10 +917,14 @@ export class AcpQueryRunner {
         category = ErrorCategory.PERMISSION;
       }
 
-      const is429Error = category === ErrorCategory.RATE_LIMIT;
+      const limitAssessment = assessLimitError({ rawText: errorMessage });
       const rateLimitCooldownScheduled =
-        is429Error &&
-        !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
+        limitAssessment.isLimit &&
+        !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage, {
+          resetAtMs: limitAssessment.resetAtMs,
+          kind: limitAssessment.kind,
+          billingTerminal: limitAssessment.billingTerminal,
+        }));
       if (rateLimitCooldownScheduled) {
         recoveryState.rateLimitCooldownScheduled = true;
       }

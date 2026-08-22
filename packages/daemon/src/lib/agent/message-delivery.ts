@@ -281,11 +281,14 @@ export type DeliveryLoadResult = { content: DeliveryContent; sendStatus: string 
 
 export const MESSAGE_DELIVERY_PARK_MS = 5_000;
 
+export const MANUAL_RECOVERY_PARK_MS = 5 * 60_000;
+
 export const MAX_STEER_PARKS = 60;
 
 export type DriveTurnOutcome =
   | { outcome: 'completed' }
   | { outcome: 'blocked'; retryAt: number }
+  | { outcome: 'recovery_pending'; retryAt: number }
   | { outcome: 'aborted' }
   | { outcome: 'turn_terminated' };
 

@@ -535,12 +535,17 @@ export class TaskAgentManager {
     let resetAt = -Infinity;
     let reason = '';
     let hasUsageLimit = false;
+    let hasBillingTerminal = false;
     for (const entry of entries.values()) {
       if (entry.kind === 'usage_limit') hasUsageLimit = true;
+      if (entry.reason === 'billing-terminal') hasBillingTerminal = true;
       if (entry.resetAt > resetAt) {
         resetAt = entry.resetAt;
         reason = entry.reason;
       }
+    }
+    if (hasBillingTerminal) {
+      reason = 'billing-terminal';
     }
     const status: 'rate_limited' | 'usage_limited' = hasUsageLimit
       ? 'usage_limited'

@@ -19,7 +19,7 @@ import {
 } from '../space/runtime/space-mcp-session-policy';
 import type { AgentSession } from './agent-session';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
-import { isNonRetryableBillingError } from './fallback-recovery';
+import { assessLimitError, type LimitRetryHint } from './limit-error-classifier';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
@@ -315,8 +315,11 @@ export interface QueryRunnerContext {
 
   onRateLimitExhausted?: (
     errorMessage: string,
-    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
+    lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
+    hint?: LimitRetryHint
   ) => Promise<boolean>;
+
+  isLimitRecoveryPending?(): boolean;
 }
 
 export class QueryRunner {
@@ -330,7 +333,27 @@ export class QueryRunner {
     Array<{ uuid: string; content: string | MessageContent[] }>
   >();
 
+  private _turnConsumedUserMessages: Array<{ uuid: string; content: string | MessageContent[] }> =
+    [];
+
   get lastConsumedUserMessage() {
+    return this._lastConsumedUserMessage;
+  }
+
+  resolveRetryUserMessage(
+    userMessageUuid?: string
+  ): { uuid: string; content: string | MessageContent[] } | null {
+    if (userMessageUuid) {
+      for (let i = this._turnConsumedUserMessages.length - 1; i >= 0; i--) {
+        const entry = this._turnConsumedUserMessages[i];
+        if (entry.uuid === userMessageUuid) return entry;
+      }
+      for (const messages of this._consumedUserMessages.values()) {
+        const found = messages.find((entry) => entry.uuid === userMessageUuid);
+        if (found) return found;
+      }
+      return null;
+    }
     return this._lastConsumedUserMessage;
   }
 
@@ -1232,15 +1255,14 @@ export class QueryRunner {
 
           const processingState = stateManager.getState();
 
-          const lowerMsg = errorMessage.toLowerCase();
-          const isBillingError = isNonRetryableBillingError(errorMessage);
-          const is429Error =
-            category === ErrorCategory.RATE_LIMIT &&
-            !isBillingError &&
-            (errorMessage.includes('429') || lowerMsg.includes('rate limit'));
+          const limitAssessment = assessLimitError({ rawText: errorMessage });
           recoveryState.rateLimitCooldownScheduled =
-            is429Error &&
-            !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
+            limitAssessment.isLimit &&
+            !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage, {
+              resetAtMs: limitAssessment.resetAtMs,
+              kind: limitAssessment.kind,
+              billingTerminal: limitAssessment.billingTerminal,
+            }));
           if (!recoveryState.rateLimitCooldownScheduled) {
             stateManager.beginTerminalIdle();
           }
@@ -1329,11 +1351,17 @@ export class QueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
-        if (!this.ctx.isCleaningUp() && !recoveryState.rateLimitCooldownScheduled) {
+        if (
+          !this.ctx.isCleaningUp() &&
+          !recoveryState.rateLimitCooldownScheduled &&
+          !(this.ctx.isLimitRecoveryPending?.() ?? false) &&
+          stateManager.getState().status !== 'rate_limit_cooldown'
+        ) {
           await stateManager.setIdle();
         }
 
         this._lastConsumedUserMessage = null;
+        this._turnConsumedUserMessages = [];
         this._consumedUserMessages.delete(queryGeneration);
 
         this.ctx.queryPromise = null;
@@ -1479,7 +1507,18 @@ export class QueryRunner {
   async *createMessageGeneratorWrapper(queryGeneration: number) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
 
-    for await (const { message, onSent } of messageQueue.messageGenerator(session.id)) {
+    for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
+      suppressPreYieldCallback: true,
+    })) {
+      if (this.ctx.isLimitRecoveryPending?.()) {
+        logger.info('Prompt feed: limit recovery engaged; requeueing prompt until the retry.');
+        const yieldedUuid = message.uuid;
+        if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {
+          logger.warn(`Prompt feed: could not requeue yielded prompt ${yieldedUuid}.`);
+        }
+        break;
+      }
+      messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
       const isInternal = queuedMessage.internal || false;
 
@@ -1489,6 +1528,13 @@ export class QueryRunner {
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
         };
+        this._turnConsumedUserMessages.push({
+          uuid: message.uuid ?? '',
+          content: (message.message?.content ?? '') as unknown as string | MessageContent[],
+        });
+        if (this._turnConsumedUserMessages.length > 32) {
+          this._turnConsumedUserMessages.shift();
+        }
         if (!this.ctx.firstMessageReceived) {
           const generationMessages = this._consumedUserMessages.get(queryGeneration) ?? [];
           generationMessages.push({

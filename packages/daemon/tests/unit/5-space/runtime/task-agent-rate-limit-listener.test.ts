@@ -82,6 +82,44 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     expect(task?.restrictions?.type).toBe('rate_limit');
   });
 
+  it('records a billing-terminal pause with its reason so recovery stays manual-only', async () => {
+    bus.publish('session.rate_limit_pause', {
+      sessionId: subSessionId,
+      kind: 'usage_limit',
+      reason: 'billing-terminal',
+    });
+    await flush();
+
+    const task = taskRepo.getTask(taskId);
+    expect(task?.status).toBe('usage_limited');
+    expect(task?.restrictions?.limit).toBe('billing-terminal');
+    expect(task?.restrictions?.resetAt).toBeDefined();
+  });
+
+  it('keeps billing-terminal dominant when a later normal limit also pauses the task', async () => {
+    bus.publish('session.rate_limit_pause', {
+      sessionId: 'worker-session-2',
+      kind: 'usage_limit',
+      resetAt: Date.now() + 5 * 60 * 60 * 1000,
+      reason: 'parsed-reset',
+    });
+    await flush();
+    const subSessions = (manager as unknown as { subSessions: Map<string, Map<string, unknown>> })
+      .subSessions;
+    subSessions.get(taskId)!.set('worker-session-2', { id: 'worker-session-2' });
+
+    bus.publish('session.rate_limit_pause', {
+      sessionId: subSessionId,
+      kind: 'usage_limit',
+      reason: 'billing-terminal',
+    });
+    await flush();
+
+    const task = taskRepo.getTask(taskId);
+    expect(task?.status).toBe('usage_limited');
+    expect(task?.restrictions?.limit).toBe('billing-terminal');
+  });
+
   it('flips an already rate_limited task to usage_limited when a usage-capped session pauses', async () => {
     taskRepo.updateTask(taskId, {
       status: 'rate_limited',

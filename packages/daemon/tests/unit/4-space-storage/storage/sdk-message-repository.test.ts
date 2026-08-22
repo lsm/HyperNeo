@@ -2016,6 +2016,7 @@ describe('SDKMessageRepository', () => {
         terminal?: boolean;
         subtype?: string;
         sendStatus?: string;
+        sdkMessage?: string;
       }
     ): void {
       const effectiveStatus = opts.sendStatus ?? (type === 'user' ? 'consumed' : null);
@@ -2039,7 +2040,7 @@ describe('SDKMessageRepository', () => {
         sessionId,
         type,
         opts.subtype ?? (type === 'result' && opts.terminal ? 'success' : null),
-        '{}',
+        opts.sdkMessage ?? '{}',
         opts.timestamp,
         effectiveStatus,
         opts.terminal ? 1 : 0,
@@ -2072,6 +2073,81 @@ describe('SDKMessageRepository', () => {
         subtype: 'error_during_execution',
       });
       expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
+    });
+
+    it('is FALSE for a synthetic success result with is_error ONLY when recovery intercepted it', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-uuid',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        uuid: 'result-uuid',
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+        subtype: 'success',
+        sdkMessage: JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          terminal_reason: 'api_error',
+        }),
+      });
+
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(true);
+      expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'msg-uuid')).toBe(false);
+
+      repository.markResultRecoveryIntercepted('session-1', 'result-uuid');
+
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
+      expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'msg-uuid')).toBe(true);
+    });
+
+    it('reclaims intercepted error-subtype results after a restart', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-err',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        uuid: 'result-err-uuid',
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+        subtype: 'error_during_execution',
+        sdkMessage: JSON.stringify({
+          type: 'result',
+          subtype: 'error_during_execution',
+          is_error: true,
+          errors: ['API Error: 429 rate limit exceeded'],
+        }),
+      });
+      expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'msg-err')).toBe(false);
+
+      repository.markResultRecoveryIntercepted('session-1', 'result-err-uuid');
+
+      expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'msg-err')).toBe(true);
+    });
+
+    it('keeps billing-terminal intercepted results terminal and skips their restart reclaim', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-billing',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        uuid: 'result-billing-uuid',
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+        subtype: 'success',
+        sdkMessage: JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          terminal_reason: 'api_error',
+        }),
+      });
+
+      repository.markResultRecoveryIntercepted('session-1', 'result-billing-uuid', true);
+
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-billing')).toBe(true);
+      expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'msg-billing')).toBe(false);
     });
 
     it('getErrorTerminalResultSubtypeAfter returns the error subtype (null for success/none)', () => {

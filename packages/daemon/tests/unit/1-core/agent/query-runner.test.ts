@@ -242,6 +242,128 @@ describe('QueryRunner', () => {
     });
   });
 
+  describe('resolveRetryUserMessage', () => {
+    it('prefers the message identified by the result uuid and never guesses on a miss', async () => {
+      async function* generator() {
+        yield {
+          message: { uuid: 'init-uuid', message: { content: 'first prompt' } },
+          onSent: () => {},
+        };
+        yield {
+          message: { uuid: 'steer-uuid', message: { content: 'later steer' } },
+          onSent: () => {},
+        };
+      }
+      runner = createRunner({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: generator,
+        } as unknown as MessageQueue,
+      });
+
+      const wrapper = runner.createMessageGeneratorWrapper(1);
+      for await (const yielded of wrapper) {
+        void yielded;
+      }
+
+      expect(runner.lastConsumedUserMessage?.uuid).toBe('steer-uuid');
+      expect(runner.resolveRetryUserMessage('init-uuid')?.uuid).toBe('init-uuid');
+      expect(runner.resolveRetryUserMessage('init-uuid')?.content).toBe('first prompt');
+      expect(runner.resolveRetryUserMessage('unknown-uuid')).toBeNull();
+      expect(runner.resolveRetryUserMessage(undefined)).toBe(runner.lastConsumedUserMessage);
+    });
+
+    it('retains uuid correlation after the first SDK response clears the startup map', async () => {
+      async function* generator() {
+        yield {
+          message: { uuid: 'init-uuid', message: { content: 'first prompt' } },
+          onSent: () => {},
+        };
+        yield {
+          message: { uuid: 'steer-uuid', message: { content: 'later steer' } },
+          onSent: () => {},
+        };
+      }
+      const ctx = createContext({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: generator,
+        } as unknown as MessageQueue,
+      });
+      runner = new QueryRunner(ctx);
+
+      const wrapper = runner.createMessageGeneratorWrapper(1);
+      let first = true;
+      for await (const yielded of wrapper) {
+        void yielded;
+        if (first) {
+          ctx.firstMessageReceived = true;
+          first = false;
+        }
+      }
+
+      expect(runner.resolveRetryUserMessage('init-uuid')?.uuid).toBe('init-uuid');
+      expect(runner.resolveRetryUserMessage('init-uuid')?.content).toBe('first prompt');
+    });
+
+    it('stops feeding prompts and requeues them while limit recovery is pending', async () => {
+      async function* generator() {
+        yield {
+          message: { uuid: 'queued-uuid', message: { content: 'queued steer' } },
+          onSent: () => {},
+        };
+      }
+      const requeueYieldedSpy = mock(() => true);
+      runner = createRunner({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: generator,
+          requeueYielded: requeueYieldedSpy,
+        } as unknown as MessageQueue,
+        isLimitRecoveryPending: () => true,
+      });
+
+      const wrapper = runner.createMessageGeneratorWrapper(1);
+      const yielded: unknown[] = [];
+      for await (const item of wrapper) {
+        yielded.push(item);
+      }
+
+      expect(yielded).toEqual([]);
+      expect(requeueYieldedSpy).toHaveBeenCalledWith('queued-uuid');
+      expect(runner.lastConsumedUserMessage).toBeNull();
+    });
+
+    it('marks the prompt consumed through the pre-yield callback only after the gate passes', async () => {
+      async function* generator() {
+        yield {
+          message: { uuid: 'normal-uuid', message: { content: 'normal prompt' } },
+          onSent: () => {},
+        };
+      }
+      const onMessageYieldedSpy = mock(() => {});
+      runner = createRunner({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: generator,
+          onMessageYielded: onMessageYieldedSpy,
+        } as unknown as MessageQueue,
+        isLimitRecoveryPending: () => false,
+      });
+
+      const wrapper = runner.createMessageGeneratorWrapper(1);
+      let yieldedCount = 0;
+      for await (const item of wrapper) {
+        void item;
+        yieldedCount++;
+      }
+
+      expect(yieldedCount).toBe(1);
+      expect(onMessageYieldedSpy).toHaveBeenCalledWith('normal-uuid', expect.any(Number));
+      expect(runner.lastConsumedUserMessage?.uuid).toBe('normal-uuid');
+    });
+  });
+
   describe('start', () => {
     async function withAnthropicApiKey(fn: () => Promise<void>): Promise<void> {
       const savedApiKey = process.env.ANTHROPIC_API_KEY;
@@ -1784,12 +1906,29 @@ describe('QueryRunner', () => {
       ]);
 
       runner.start();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      const deadline = Date.now() + 5000;
+      while (
+        !setIdleSpy.mock.calls.some(
+          (call) =>
+            (call[0] as { suppressDeliveryWaiters?: boolean } | undefined)
+              ?.suppressDeliveryWaiters === true
+        ) &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
       ctx.incrementQueryGeneration();
       resolveExit!();
       await ctx.queryPromise?.catch(() => {});
 
       expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(
+        setIdleSpy.mock.calls.some(
+          (call) =>
+            (call[0] as { suppressDeliveryWaiters?: boolean } | undefined)
+              ?.suppressDeliveryWaiters === true
+        )
+      ).toBe(true);
       expect(
         (
           runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
