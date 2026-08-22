@@ -36,6 +36,8 @@ export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 
 const SESSION_RECONCILE_INTERVAL_MS = 60_000;
 
+const CLEAR_CONFIRM_TIMEOUT_MS = 45_000;
+
 const DELIVERY_TURN_NO_ACTIVITY_MS = (() => {
   const env = Number(process.env.HYPERNEO_DELIVERY_NO_ACTIVITY_MS);
   return Number.isFinite(env) && env >= 30_000 ? env : 3 * 60 * 1000;
@@ -246,6 +248,7 @@ export class AgentSession
   private reconcilerProvisioned = false;
   pendingRestartReason: 'settings.local.json' | null = null;
   private initialPendingReplayScheduled = false;
+  private clearConfirmTimeoutMs = CLEAR_CONFIRM_TIMEOUT_MS;
 
   readonly errorManager: ErrorManager;
   settingsManager: SettingsManager;
@@ -759,12 +762,24 @@ export class AgentSession
 
     await this.lifecycleManager.ensureQueryStarted();
     this.messageHandler.suppressIdleForNextResult();
+    const confirmedClear = this.messageHandler.waitForSuppressedResult(this.clearConfirmTimeoutMs);
     try {
       await this.messageQueue.enqueue('/clear', true);
     } catch (err) {
       this.messageHandler.clearIdleSuppression();
       throw err;
     }
+    if (!(await confirmedClear)) {
+      this.messageHandler.clearIdleSuppression();
+      this.logger.warn(
+        `clearConversationContext: /clear result not observed within ` +
+          `${this.clearConfirmTimeoutMs / 1000}s — proceeding without confirmed clear`
+      );
+    }
+  }
+
+  overrideClearConfirmTimeoutMsForTest(ms: number): void {
+    this.clearConfirmTimeoutMs = ms;
   }
 
   private nextPastSdkSessionIds(): string[] | undefined {

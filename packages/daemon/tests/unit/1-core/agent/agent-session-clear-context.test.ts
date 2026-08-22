@@ -1,5 +1,6 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type {
   DaemonInternalEventMap,
@@ -39,7 +40,9 @@ function createAgentSession(
     getSession: mock(() => mockSession),
     updateSession: mock(() => {}),
     getUserMessages: mock(() => []),
+    getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
     getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
+    saveSDKMessage: mock(() => true),
     deleteMessagesAfter: mock(() => 0),
     deleteMessagesAtAndAfter: mock(() => 0),
     getUserMessageByUuid: mock(() => undefined),
@@ -52,7 +55,7 @@ function createAgentSession(
   return new AgentSession(
     mockSession,
     mockDb,
-    {} as MessageHub,
+    { event: mock(() => {}) } as MessageHub,
     eventBus,
     mock(async () => 'test-api-key')
   );
@@ -61,6 +64,24 @@ function createAgentSession(
 function stubClearExternals(session: AgentSession): void {
   spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
   spyOn(session.messageQueue, 'enqueue').mockResolvedValue('clear-msg-id');
+  spyOn(session.messageHandler, 'waitForSuppressedResult').mockResolvedValue(true);
+}
+
+function makeClearResult(uuid: string): SDKMessage {
+  return {
+    type: 'result',
+    subtype: 'success',
+    uuid,
+    is_error: false,
+    usage: {
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    },
+    total_cost_usd: 0.001,
+    modelUsage: {},
+  } as unknown as SDKMessage;
 }
 
 describe('AgentSession.clearConversationContext', () => {
@@ -74,6 +95,7 @@ describe('AgentSession.clearConversationContext', () => {
       order.push('enqueue');
       return 'clear-msg-id';
     });
+    spyOn(session.messageHandler, 'waitForSuppressedResult').mockResolvedValue(true);
 
     await session.clearConversationContext();
 
@@ -102,10 +124,45 @@ describe('AgentSession.clearConversationContext', () => {
     expect(releaseSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('KNOWN-BUG clear resolves on sent not on result after arming idle suppression', async () => {
+  it('clear resolves on the SDK result of the /clear turn, not on sent (confirmed clear)', async () => {
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
     spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
     const suppressSpy = spyOn(session.messageHandler, 'suppressIdleForNextResult');
+    const warnSpy = spyOn(session.logger, 'warn').mockImplementation(() => {});
+    session.messageQueue.start();
+    const messages = session.messageQueue.messageGenerator(session.session.id);
+
+    let deliveredAfterClear: string | null = null;
+    const caller = (async () => {
+      await session.clearConversationContext();
+      deliveredAfterClear = 'delivered';
+    })();
+    const yielded = await messages.next();
+
+    expect(suppressSpy).toHaveBeenCalledTimes(1);
+    expect(yielded.done).toBe(false);
+    expect(yielded.value?.message.internal).toBe(true);
+    expect(yielded.value?.message.message.content).toEqual([{ type: 'text', text: '/clear' }]);
+
+    yielded.value?.onSent();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(deliveredAfterClear).toBe(null);
+
+    await session.messageHandler.handleMessage(makeClearResult('clear-result'));
+    await caller;
+
+    expect(deliveredAfterClear).toBe('delivered');
+    expect(warnSpy).not.toHaveBeenCalled();
+    session.messageQueue.stop();
+    await messages.return(undefined);
+  });
+
+  it('timeout fallback: warns and resolves without the clear when no result arrives', async () => {
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
+    session.overrideClearConfirmTimeoutMsForTest(15);
+    const warnSpy = spyOn(session.logger, 'warn').mockImplementation(() => {});
+    const setIdleSpy = spyOn(session.stateManager, 'setIdle').mockResolvedValue(undefined);
     session.messageQueue.start();
     const messages = session.messageQueue.messageGenerator(session.session.id);
 
@@ -114,17 +171,17 @@ describe('AgentSession.clearConversationContext', () => {
       resolved = true;
     });
     const yielded = await messages.next();
-
-    expect(suppressSpy).toHaveBeenCalledTimes(1);
-    expect(yielded.done).toBe(false);
-    expect(yielded.value?.message.internal).toBe(true);
-    expect(yielded.value?.message.message.content).toEqual([{ type: 'text', text: '/clear' }]);
-    expect(resolved).toBe(false);
-
     yielded.value?.onSent();
+
     await clear;
 
     expect(resolved).toBe(true);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain('proceeding without confirmed clear');
+
+    await session.messageHandler.handleMessage(makeClearResult('late-result'));
+    expect(setIdleSpy).toHaveBeenCalled();
+
     session.messageQueue.stop();
     await messages.return(undefined);
   });

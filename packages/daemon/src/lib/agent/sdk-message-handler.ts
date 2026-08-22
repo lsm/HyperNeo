@@ -80,6 +80,10 @@ export class SDKMessageHandler {
   private expectsSessionStateIdleAfterResult: boolean = false;
   private lastResultWasSuccess: boolean | null = null;
   private suppressIdleOnNextResult: boolean = false;
+  private suppressedResultWaiter: {
+    resolve: (confirmed: boolean) => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
 
   private eventsSinceContextRefresh: number = 0;
 
@@ -165,8 +169,28 @@ export class SDKMessageHandler {
     this.suppressIdleOnNextResult = true;
   }
 
+  waitForSuppressedResult(timeoutMs: number): Promise<boolean> {
+    this.settleSuppressedResultWaiter(false);
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => this.settleSuppressedResultWaiter(false), timeoutMs);
+      if (typeof timer.unref === 'function') {
+        timer.unref();
+      }
+      this.suppressedResultWaiter = { resolve, timer };
+    });
+  }
+
   clearIdleSuppression(): void {
     this.suppressIdleOnNextResult = false;
+    this.settleSuppressedResultWaiter(false);
+  }
+
+  private settleSuppressedResultWaiter(confirmed: boolean): void {
+    const waiter = this.suppressedResultWaiter;
+    if (!waiter) return;
+    this.suppressedResultWaiter = null;
+    clearTimeout(waiter.timer);
+    waiter.resolve(confirmed);
   }
 
   markApiSuccess(): void {
@@ -692,6 +716,14 @@ export class SDKMessageHandler {
       }
     }
 
+    const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
+      .parent_tool_use_id;
+    const isTopLevelResult =
+      isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
+    if (isTopLevelResult && this.suppressIdleOnNextResult) {
+      this.settleSuppressedResultWaiter(true);
+    }
+
     const deferredSuccessfully = this.withDbChangeBatch(() =>
       db.saveSDKMessage(session.id, message)
     );
@@ -701,10 +733,6 @@ export class SDKMessageHandler {
       return;
     }
 
-    const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
-      .parent_tool_use_id;
-    const isTopLevelResult =
-      isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
     const processingState = stateManager.getState();
     const activeMessageId =
       isTopLevelResult && processingState.status === 'processing'

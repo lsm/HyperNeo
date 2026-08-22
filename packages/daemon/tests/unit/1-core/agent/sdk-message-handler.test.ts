@@ -699,6 +699,59 @@ describe('SDKMessageHandler', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
+    it('waitForSuppressedResult resolves on the first top-level result after arming', async () => {
+      const result = (uuid: string, parentToolUseId?: string): SDKMessage =>
+        ({
+          type: 'result',
+          subtype: 'success',
+          uuid,
+          parent_tool_use_id: parentToolUseId ?? null,
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        }) as unknown as SDKMessage;
+
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+      let settled: boolean | null = null;
+      void wait.then((confirmed) => {
+        settled = confirmed;
+      });
+
+      await handler.handleMessage({
+        type: 'status',
+        uuid: 'status-uuid',
+        session_id: 'sdk-session-123',
+      } as unknown as SDKMessage);
+      await handler.handleMessage(result('nested-result', 'toolu-1'));
+      expect(settled).toBe(null);
+
+      await handler.handleMessage(result('clear-result'));
+      expect(await wait).toBe(true);
+      expect(settled).toBe(true);
+    });
+
+    it('waitForSuppressedResult resolves false on timeout', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(15);
+
+      expect(await wait).toBe(false);
+    });
+
+    it('clearIdleSuppression settles a pending wait as unconfirmed', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+
+      handler.clearIdleSuppression();
+
+      expect(await wait).toBe(false);
+    });
+
     it('should persist and broadcast api_retry message', async () => {
       const message: SDKMessage = {
         type: 'system',
