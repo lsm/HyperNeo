@@ -288,10 +288,12 @@ note.
   `isNonRetryableBillingError` and fall through to terminal handling — the
   classifier therefore carries a billing-non-resettable input so a terminal
   billing failure cannot become repeated cooldown recovery. The backoff arm is
-  5xx **plus** retryable loose text (`overloaded`,
-  "internal server error", "service unavailable", "bad gateway", "gateway
-  timeout" — taxonomy overloaded entry, error-taxonomy.ts:79–92) plus GLM
-  `[1305]`. The backoff arm's
+  5xx **plus** the full `RETRYABLE_PROVIDER_ERROR_TEXT` loose-text set defined by
+  `isRetryableProviderError` — the overloaded/service-unavailable family
+  (including `temporarily unavailable`), the GLM strings (`访问量过大`,
+  `当前访问量过大`), and GLM `[1305]`; the classifier input should be defined
+  directly from `isRetryableProviderError` rather than a duplicated partial
+  list. The backoff arm's
   sleep→revalidate→re-enqueue→recurse (:1066–1151) is a `stagedRun` candidate
   (async stages: sleep, re-check, re-enqueue) but sync-core-first per Decision
   item 5; the existing generation guards inform the resnapshot stage but must not
@@ -304,8 +306,12 @@ note.
   plain helper extraction, not a pipeline.
 - **PR sketch:**
   1. **PR 1 (test-only pins):** decision-table tests for retry-route
-     classification (error class × attempt × recoveryState × supersede flags →
-     arm), incl. the 429-handoff suppression contract (`rateLimitCooldownScheduled`
+     classification covering **every declared classifier input as a dimension**
+     (error class × subtype × attempt × retry-cap exhaustion × lifecycle
+     interrupted/cleaning-up × prompt redeliverability × billing-non-resettable ×
+     recoveryState/supersede flags → arm) — e.g. a configured cap of zero, an
+     attempt-zero startup timeout with no prompt, and a billing-flavored 429 are
+     all pinned rows — incl. the 429-handoff suppression contract (`rateLimitCooldownScheduled`
      ⇒ no `errorManager`/`setIdle`), the teardown-liturgy invariant (what each
      arm clears/closes/re-enqueues/restores), and the unfenced-window map above
      (guard placement pinned as-is, not assumed complete). The existing 3,352-line
@@ -349,8 +355,8 @@ note.
 - **ADR pattern:** `decisionRun` for the flag machine (flags in → `{idle_fence,
   finish_turn, allow_queue_replay}` plan out — the direct counterpart of
   pilot-4's `classifyTurnCompletion`, closing the gap that the v2 path has a
-  core and the dispatch path doesn't); P6-style pure reducer bodies for cost
-  accounting and thinking-delta stamping (executed sync); plain transform for
+  core and the dispatch path doesn't); a P6-style pure reducer body for cost
+  accounting only (executed sync); plain transform for
   ack selection.
 - **PR sketch:**
   1. **PR 1 (pins):** flag-machine truth table (suppress ×
@@ -407,7 +413,11 @@ note.
   queue admit — idempotent or UNIQUE-guarded, **except** batch narrowing:
   `narrowActiveDeliveryBatchUuids` reads the active batch and updates matching
   pending/processing jobs with no claim token or expected-payload predicate, so
-  it needs the new primitive below before staging);
+  it needs the new primitive below before staging; and queue admission itself —
+  `MessageQueue.admitWithId` unconditionally pushes even for an existing UUID,
+  so while today's claimGuard→admit span is synchronous, staged async boundaries
+  require a claim resnapshot immediately before `admitWithId` or a stale attempt
+  can enqueue a duplicate or canceled delivery);
   `reconcileStrandedDeliveries` stale-submitted sweep (:1977–1997); MessageQueue
   timeout policy (:105–128) as plain transform. Includes removing the
   production-dead module-level `reconcileStrandedDeliveries`
@@ -425,11 +435,17 @@ note.
      the steer ladder (status × queryPromise × provider × validity × queue
      ownership — `hasPendingOrInFlight(messageUuid)` distinguishes
      `awaiting_acceptance` from admitting a fresh feed, agent-session.ts:1701–1715)
-     and handler outcomes (delivery-call result — `FeedSteerOutcome`/
+     and handler outcomes (preflight gates × delivery-call result × role ×
+     sendStatus × park budgets × waiting-for-input. Preflight: stale claim →
+     `stale_attempt`; archived session → fail batch members and settle; missing
+     session → throw; missing content → settle as `no_content`
+     (message-delivery.handler.ts:31–85) — or these are explicitly retained in
+     the shell with the core's scope narrowed to post-preflight routing.
+     Delivery-call result — `FeedSteerOutcome`/
      `DriveTurnOutcome`: identical tuples choose different mutations by outcome,
      park→requeue, awaiting_acceptance→requeueParked, promote→requeueAs('turn')
      with UNIQUE fallback, consumed→complete; turn results distinguish
-     blocked/aborted/terminated, message-delivery.handler.ts:104–188 — × role ×
+     blocked/aborted/terminated, message-delivery.handler.ts:104–188 — plus role ×
      sendStatus × park budgets × waiting-for-input:
      a submitted steer parks under the ACP acceptance budget while an otherwise
      identical submitted turn settles as skipped — message-delivery.handler.ts:71–84,
