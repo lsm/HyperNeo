@@ -201,6 +201,7 @@ export class LimitErrorLlmClassifier {
       const onOuterAbort = () => abortController.abort();
       if (signal) {
         signal.addEventListener('abort', onOuterAbort, { once: true });
+        if (signal.aborted) onOuterAbort();
       }
       const abortTimer = setTimeout(
         () => abortController.abort(),
@@ -210,6 +211,7 @@ export class LimitErrorLlmClassifier {
         abortTimer.unref();
       }
       try {
+        if (abortController.signal.aborted) return null;
         const providerEnvVars = await providerService.getEnvVarsForModel(
           models.providerModelId,
           providerId

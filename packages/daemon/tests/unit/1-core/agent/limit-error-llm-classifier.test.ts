@@ -143,6 +143,45 @@ describe('LimitErrorLlmClassifier', () => {
     expect(prompts).toHaveLength(1);
   });
 
+  it('skips the query when the caller aborts during provider setup', async () => {
+    let releaseSetup: () => void = () => {};
+    const setupGate = new Promise<void>((resolve) => {
+      releaseSetup = resolve;
+    });
+    const prompts: string[] = [];
+    const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
+    deps.providerService = {
+      ...deps.providerService,
+      applyEnvVarsToProcessForProvider: async () => {
+        await setupGate;
+        return {};
+      },
+    };
+    deps.queryForTesting = ((params: { prompt: string }) => {
+      prompts.push(params.prompt);
+      return (async function* () {
+        yield {
+          type: 'assistant',
+          message: {
+            content: [
+              { type: 'text', text: '{"is_limit":true,"kind":"rate_limit","reset_at":null}' },
+            ],
+          },
+        };
+      })();
+    }) as LimitErrorLlmClassifierDeps['queryForTesting'];
+    const classifier = new LimitErrorLlmClassifier('s1', deps);
+
+    const controller = new AbortController();
+    const pending = classifier.classify('setup abort wall', controller.signal);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    controller.abort();
+    releaseSetup();
+
+    expect(await pending).toBeNull();
+    expect(prompts).toHaveLength(0);
+  });
+
   it('unblocks the caller and skips the query when a queued lookup is aborted mid-queue', async () => {
     let releaseFirst: () => void = () => {};
     const firstGate = new Promise<void>((resolve) => {
