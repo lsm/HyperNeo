@@ -331,9 +331,14 @@ note.
   outcome decides the post-effect route: `scheduled` suppresses terminal
   handling, while `declined` (no consumed prompt, exhausted watchdog budget)
   falls back to `beginTerminalIdle` + `errorManager` + `setIdle`
-  (:1240–1289) — **after a generation resnapshot**: the handoff effect awaits
+  (:1240–1289) — **after a full lifecycle resnapshot** (generation plus
+  cleaning-up/processing-status/abort-signal, matching the adjacent validation
+  and terminal routes): the handoff effect awaits
   (e.g. its no-prompt path awaits `setIdle`), so a replacement may have taken
-  the session by the time `declined` returns, and a stale result must route to
+  the session — or teardown begun without a generation bump — by the time
+  `declined` returns (scheduleRetry can return false at
+  rate-limit-watchdog.ts:197–203 after its own awaits), and a stale result must
+  route to
   superseded/no-op before applying the declined terminal actions — and
   **`scheduleRetry` can reject** (it awaits fallback resolution and
   `setRateLimitCooldown`, rate-limit-watchdog.ts:149–215): production then
