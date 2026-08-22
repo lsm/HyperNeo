@@ -39,8 +39,16 @@ startup-timeout timer (:739) → per-event loop (:781–824) → catch classific
 :969–1008, transient :1010–1064, provider 5xx/429 backoff :1066–1151) → terminal
 cascade + 429 handoff (:1153–1291) → finally (:1292–1340). The four retry arms
 repeat one teardown liturgy four times (:912–934, :972–1002, :1018–1058,
-:1078–1114). Generation guards (`retrySupersededByReplacement` :1471) fence every
-async window.
+:1078–1114). Generation guards (`retrySupersededByReplacement` :1471) close each
+arm before it recurses, but they do **not** fence every async window: state
+mutations precede the arm's guard in several places — the transient arm awaits
+`setIdle` (:1024) and re-enqueues the consumed message (:1027–1034) before its
+first check (:1060); the message-not-found arm consumes the one-shot resume
+pointer (:970) before any check; and every arm's awaited `setIdle`
+(:906, :1024) precedes its first guard (:908, :1060) — so a replacement landing
+inside those windows can have its state mutated by the stale arm. The 5xx arm is
+the fenced one: its revalidation gate (:1127–1138) sits immediately before the
+re-enqueue (:1140).
 
 ### (b) Delivery/ordering machinery (the loops around the pilot-4 cores)
 
@@ -215,14 +223,19 @@ note.
   — interpreted by thin shell arms. The backoff arm's
   sleep→revalidate→re-enqueue→recurse (:1066–1151) is a `stagedRun` candidate
   (async stages: sleep, re-check, re-enqueue) but sync-core-first per Decision
-  item 5; the existing generation guards become the resnapshot stage. Teardown
-  dedup is plain helper extraction, not a pipeline.
+  item 5; the existing generation guards inform the resnapshot stage but must not
+  be presented as complete fencing — PR 1 pins the unfenced windows (transient
+  arm :1024–1034 ahead of :1060; message-not-found :970; every arm's awaited
+  `setIdle` ahead of its first guard) as characterization, and tightening them is
+  a behavior change deliberately left out of the refactor. Teardown dedup is
+  plain helper extraction, not a pipeline.
 - **PR sketch:**
   1. **PR 1 (test-only pins):** decision-table tests for retry-route
      classification (error class × attempt × recoveryState × supersede flags →
      arm), incl. the 429-handoff suppression contract (`rateLimitCooldownScheduled`
-     ⇒ no `errorManager`/`setIdle`) and the teardown-liturgy invariant (what each
-     arm clears/closes/re-enqueues/restores). The existing 3,352-line
+     ⇒ no `errorManager`/`setIdle`), the teardown-liturgy invariant (what each
+     arm clears/closes/re-enqueues/restores), and the unfenced-window map above
+     (guard placement pinned as-is, not assumed complete). The existing 3,352-line
      `query-runner.test.ts` (error categorization :2635, transient retry :1879,
      bounded 5xx retry :2143) plus the two startup-gate suites are the parity
      base; PR 1 adds the missing arm-by-arm table.
