@@ -715,6 +715,11 @@ export class AcpQueryRunner {
             }
             this.ctx.firstMessageReceived = true;
 
+            const sdkMessage = acpMessage as SDKMessage & { user_message_uuid?: string };
+            if (sdkMessage.type === 'result' && !sdkMessage.user_message_uuid) {
+              sdkMessage.user_message_uuid = message.uuid;
+            }
+
             try {
               await this.handleSDKMessage(acpMessage as SDKMessage);
             } catch (error) {

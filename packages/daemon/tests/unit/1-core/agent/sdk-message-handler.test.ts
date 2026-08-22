@@ -782,7 +782,10 @@ describe('SDKMessageHandler', () => {
 
       expect(await wait).toBe('confirmed');
       expect(settled).toBe('confirmed');
-      expect(setIdleSpy).toHaveBeenCalledWith({ suppressIdlePublish: true });
+      expect(setIdleSpy).toHaveBeenCalledWith({
+        suppressIdlePublish: true,
+        suppressIdleCallback: true,
+      });
       expect(emitSpy.mock.calls.filter((call) => call[0] === 'query.trigger')).toHaveLength(0);
     });
 
@@ -987,10 +990,8 @@ describe('SDKMessageHandler', () => {
       const gate = new Promise<void>((resolve) => {
         releaseBookkeeping = resolve;
       });
-      let publishes = 0;
-      emitSpy.mockImplementation(async () => {
-        publishes += 1;
-        if (publishes === 2) {
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') {
           await gate;
         }
       });
@@ -1018,6 +1019,77 @@ describe('SDKMessageHandler', () => {
       await handled;
 
       expect(await wait).toBe('confirmed');
+    });
+
+    it('the result deadline stays disarmed until startSuppressedResultTimer runs', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.armSuppressedResultWait('clear-msg-id');
+      let settled: string | null = null;
+      void wait.then((outcome) => {
+        settled = outcome;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(settled).toBe(null);
+
+      handler.startSuppressedResultTimer(10);
+      expect(await wait).toBe('reset');
+    });
+
+    it('a correlated clear result skips the turn-end fallback acknowledgement', async () => {
+      const reopenedRow = {
+        type: 'user',
+        uuid: 'handoff-uuid',
+        dbId: 'db-1',
+        timestamp: 1,
+        message: { role: 'user', content: [] },
+      };
+      (mockDb as unknown as { getJobQueueRepo: () => unknown }).getJobQueueRepo = () => ({
+        activeDeliveryMessageUuids: () => new Set<string>(),
+      });
+      const markConsumedSpy = mock(() => ({ ids: ['db-1'], uuids: ['handoff-uuid'] }));
+      (mockDb as unknown as { getSDKMessageRepo: () => unknown }).getSDKMessageRepo = () => ({
+        markDeliveriesConsumedAtTurnEnd: markConsumedSpy,
+      });
+      const clearResult: SDKMessage = {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'clear-result',
+        user_message_uuid: 'clear-msg-id',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+
+      handler.suppressIdleForNextResult();
+      getUserMessagesByStatusSpy.mockReturnValue({
+        messages: [reopenedRow],
+        total: 1,
+      });
+      const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      await handler.handleMessage(clearResult);
+      await wait;
+      expect(getUserMessagesByStatusSpy).not.toHaveBeenCalled();
+
+      handler.suppressIdleForNextResult();
+      getUserMessagesByStatusSpy.mockClear();
+      const plainWait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      const plainResult = { ...clearResult, user_message_uuid: 'other-turn' } as SDKMessage;
+      await handler.handleMessage(plainResult);
+      handler.clearIdleSuppression();
+      await plainWait;
+
+      expect(getUserMessagesByStatusSpy).toHaveBeenCalled();
+      expect(markConsumedSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        ['handoff-uuid'],
+        'clear-result'
+      );
     });
 
     it('clear recovery resets session-state turn flags so result-based idle still works', async () => {
@@ -1051,11 +1123,10 @@ describe('SDKMessageHandler', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
-    it('settles the correlated clear wait only after the turn-end acknowledgement', async () => {
+    it('settles the correlated clear wait only after the result bookkeeping', async () => {
       const order: string[] = [];
-      getUserMessagesByStatusSpy.mockImplementation(() => {
-        order.push('turn-end-ack');
-        return { messages: [], total: 0 };
+      updateSessionSpy.mockImplementation(() => {
+        order.push('metadata-write');
       });
 
       handler.suppressIdleForNextResult();
@@ -1079,7 +1150,7 @@ describe('SDKMessageHandler', () => {
         modelUsage: {},
       } as unknown as SDKMessage);
 
-      expect(order).toEqual(['turn-end-ack', 'settled:confirmed']);
+      expect(order).toEqual(['metadata-write', 'settled:confirmed']);
       expect(await wait).toBe('confirmed');
     });
 

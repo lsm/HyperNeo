@@ -86,7 +86,7 @@ export class SDKMessageHandler {
   private clearAwaitingTrailingIdle: boolean = false;
   private suppressedResultWaiter: {
     resolve: (outcome: SuppressedResultOutcome) => void;
-    timer: ReturnType<typeof setTimeout>;
+    timer: ReturnType<typeof setTimeout> | undefined;
     timeoutMs: number;
     expectedUserMessageUuid?: string;
   } | null = null;
@@ -177,18 +177,37 @@ export class SDKMessageHandler {
     this.suppressIdleOnNextResult = true;
   }
 
+  armSuppressedResultWait(expectedUserMessageUuid?: string): Promise<SuppressedResultOutcome> {
+    this.settleSuppressedResultWaiter('reset');
+    return new Promise<SuppressedResultOutcome>((resolve) => {
+      this.suppressedResultWaiter = {
+        resolve,
+        timer: undefined,
+        timeoutMs: 0,
+        expectedUserMessageUuid,
+      };
+    });
+  }
+
+  startSuppressedResultTimer(timeoutMs: number): void {
+    const waiter = this.suppressedResultWaiter;
+    if (!waiter) return;
+    clearTimeout(waiter.timer);
+    const timer = setTimeout(() => this.settleSuppressedResultWaiter('reset'), timeoutMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    waiter.timer = timer;
+    waiter.timeoutMs = timeoutMs;
+  }
+
   waitForSuppressedResult(
     timeoutMs: number,
     expectedUserMessageUuid?: string
   ): Promise<SuppressedResultOutcome> {
-    this.settleSuppressedResultWaiter('reset');
-    return new Promise<SuppressedResultOutcome>((resolve) => {
-      const timer = setTimeout(() => this.settleSuppressedResultWaiter('reset'), timeoutMs);
-      if (typeof timer.unref === 'function') {
-        timer.unref();
-      }
-      this.suppressedResultWaiter = { resolve, timer, timeoutMs, expectedUserMessageUuid };
-    });
+    const wait = this.armSuppressedResultWait(expectedUserMessageUuid);
+    this.startSuppressedResultTimer(timeoutMs);
+    return wait;
   }
 
   clearIdleSuppression(): void {
@@ -217,7 +236,7 @@ export class SDKMessageHandler {
 
   private rearmSuppressedResultTimer(): void {
     const waiter = this.suppressedResultWaiter;
-    if (!waiter) return;
+    if (!waiter || waiter.timeoutMs <= 0) return;
     clearTimeout(waiter.timer);
     const timer = setTimeout(() => this.settleSuppressedResultWaiter('reset'), waiter.timeoutMs);
     if (typeof timer.unref === 'function') {
@@ -794,10 +813,18 @@ export class SDKMessageHandler {
       return;
     }
 
-    const settlesArmedClearError =
-      this.matchesArmedClearResult(message) && !isSDKResultSuccess(message);
-    if (settlesArmedClearError) {
-      this.rearmSuppressedResultTimer();
+    const observesArmedClearResult = this.matchesArmedClearResult(message);
+    const settlesArmedClearError = observesArmedClearResult && !isSDKResultSuccess(message);
+    if (observesArmedClearResult) {
+      const successAwaitingTrailingIdle =
+        isSDKResultSuccess(message) &&
+        this.usesSessionStateChangedTurnEnd &&
+        this.expectsSessionStateIdleAfterResult;
+      if (settlesArmedClearError || successAwaitingTrailingIdle) {
+        this.rearmSuppressedResultTimer();
+      } else {
+        this.cancelSuppressedResultTimer();
+      }
     }
 
     const processingState = stateManager.getState();
@@ -959,13 +986,6 @@ export class SDKMessageHandler {
     if (!isSDKResultSuccess(message)) return;
 
     const confirmsArmedClear = this.matchesArmedClearResult(message);
-    if (confirmsArmedClear) {
-      if (this.usesSessionStateChangedTurnEnd && this.expectsSessionStateIdleAfterResult) {
-        this.rearmSuppressedResultTimer();
-      } else {
-        this.cancelSuppressedResultTimer();
-      }
-    }
 
     try {
       await this.processResultMessage(message, activeMessageId, confirmsArmedClear);
@@ -1040,7 +1060,7 @@ export class SDKMessageHandler {
       this.circuitBreaker.markSuccess();
     }
 
-    if (!this.acknowledgedPersistedUserThisTurn) {
+    if (!this.acknowledgedPersistedUserThisTurn && !confirmsArmedClear) {
       await this.acknowledgeOldestQueuedUserOnTurnEnd(activeMessageId, message.uuid ?? '');
     }
     this.acknowledgedPersistedUserThisTurn = false;
@@ -1087,17 +1107,20 @@ export class SDKMessageHandler {
     this.usesSessionStateChangedTurnEnd = true;
     if (message.state === 'idle') {
       this.resetThinkingTokenTracking();
-      const clearTurnIdle = this.clearAwaitingTrailingIdle;
-      const allowQueueReplay = !clearTurnIdle && this.lastResultWasSuccess !== false;
-      if (clearTurnIdle) {
-        await this.ctx.stateManager.setIdle({ suppressIdlePublish: true });
+      const clearTurnPending = this.clearAwaitingTrailingIdle || this.suppressIdleOnNextResult;
+      if (clearTurnPending) {
+        await this.ctx.stateManager.setIdle({
+          suppressIdlePublish: true,
+          suppressIdleCallback: true,
+        });
       } else {
+        const allowQueueReplay = this.lastResultWasSuccess !== false;
         await this.finishTurn(allowQueueReplay);
+        this.usesSessionStateChangedTurnEnd = false;
+        this.expectsSessionStateIdleAfterResult = false;
+        this.lastResultWasSuccess = null;
       }
-      this.usesSessionStateChangedTurnEnd = false;
-      this.expectsSessionStateIdleAfterResult = false;
-      this.lastResultWasSuccess = null;
-      if (clearTurnIdle) {
+      if (this.clearAwaitingTrailingIdle) {
         this.clearAwaitingTrailingIdle = false;
         this.settleSuppressedResultWaiter('confirmed');
       }

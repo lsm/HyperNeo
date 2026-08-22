@@ -1,7 +1,10 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import {
+  AgentSession,
+  ClearConversationCancelledError,
+} from '../../../../src/lib/agent/agent-session.ts';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
@@ -64,7 +67,8 @@ function createAgentSession(
 function stubClearExternals(session: AgentSession): void {
   spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
   spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
-  spyOn(session.messageHandler, 'waitForSuppressedResult').mockResolvedValue('confirmed');
+  spyOn(session.messageHandler, 'armSuppressedResultWait').mockResolvedValue('confirmed');
+  spyOn(session.messageHandler, 'startSuppressedResultTimer').mockImplementation(() => {});
 }
 
 function makeClearResult(uuid: string, userMessageUuid?: string): SDKMessage {
@@ -118,7 +122,8 @@ describe('AgentSession.clearConversationContext', () => {
         order.push('enqueue');
       }
     );
-    spyOn(session.messageHandler, 'waitForSuppressedResult').mockResolvedValue('confirmed');
+    spyOn(session.messageHandler, 'armSuppressedResultWait').mockResolvedValue('confirmed');
+    spyOn(session.messageHandler, 'startSuppressedResultTimer').mockImplementation(() => {});
 
     await session.clearConversationContext();
 
@@ -327,6 +332,34 @@ describe('AgentSession.clearConversationContext', () => {
     expect(warnSpy).not.toHaveBeenCalled();
     expect(resetSpy).not.toHaveBeenCalled();
     expect(stopSpy).not.toHaveBeenCalled();
+
+    session.messageQueue.stop();
+    await messages.return(undefined);
+  });
+
+  it('teardown while the /clear is still queued rejects as cancelled, not a queue failure', async () => {
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
+    const warnSpy = spyOn(session.logger, 'warn').mockImplementation(() => {});
+    const resetSpy = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
+    session.messageQueue.start();
+    const messages = session.messageQueue.messageGenerator(session.session.id);
+
+    const clear = session.clearConversationContext();
+    await messages.next();
+    await session.stateManager.setProcessing('in-flight-turn', 'initializing');
+
+    await session.handleInterrupt();
+
+    let rejection: unknown = null;
+    try {
+      await clear;
+    } catch (err) {
+      rejection = err;
+    }
+    expect(rejection).toBeInstanceOf(ClearConversationCancelledError);
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(resetSpy).not.toHaveBeenCalled();
 
     session.messageQueue.stop();
     await messages.return(undefined);

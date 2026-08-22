@@ -179,7 +179,11 @@ import {
 } from './query-runner';
 import { RateLimitWatchdog } from './rate-limit-watchdog';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
-import { SDKMessageHandler, type SDKMessageHandlerContext } from './sdk-message-handler';
+import {
+  SDKMessageHandler,
+  type SDKMessageHandlerContext,
+  type SuppressedResultOutcome,
+} from './sdk-message-handler';
 import { SDKRuntimeConfig, type SDKRuntimeConfigContext } from './sdk-runtime-config';
 import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager';
@@ -772,14 +776,18 @@ export class AgentSession
     await this.lifecycleManager.ensureQueryStarted();
     this.messageHandler.suppressIdleForNextResult();
     const clearMessageId = generateUUID();
-    const confirmedClear = this.messageHandler.waitForSuppressedResult(
-      this.clearConfirmTimeoutMs,
-      clearMessageId
-    );
+    const confirmedClear = this.messageHandler.armSuppressedResultWait(clearMessageId);
+    let clearWaitOutcome: SuppressedResultOutcome | null = null;
+    void confirmedClear.then((outcome) => {
+      clearWaitOutcome = outcome;
+    });
     try {
       await this.messageQueue.enqueueWithId(clearMessageId, '/clear', true);
     } catch (err) {
       this.messageHandler.clearIdleSuppression();
+      if (clearWaitOutcome === 'cancelled') {
+        throw new ClearConversationCancelledError();
+      }
       if (err instanceof Error && err.name === 'MessageQueueTimeoutError') {
         this.logger.warn(
           `clearConversationContext: /clear delivery to the SDK timed out — resetting the ` +
@@ -789,6 +797,7 @@ export class AgentSession
       }
       throw err;
     }
+    this.messageHandler.startSuppressedResultTimer(this.clearConfirmTimeoutMs);
     const clearOutcome = await confirmedClear;
     if (clearOutcome === 'confirmed') {
       return;

@@ -143,6 +143,7 @@ export class ProcessingStateManager {
   async setIdle(opts?: {
     suppressDeliveryWaiters?: boolean;
     suppressIdlePublish?: boolean;
+    suppressIdleCallback?: boolean;
   }): Promise<void> {
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
     const consumesTerminalFence = this.pendingTerminalIdleTransitions > 0;
@@ -157,7 +158,7 @@ export class ProcessingStateManager {
     }
     try {
       await this.setState({ status: 'idle' }, opts?.suppressIdlePublish);
-      if (this.onIdleCallback && !this.idleCallbackInFlight) {
+      if (this.onIdleCallback && !opts?.suppressIdleCallback && !this.idleCallbackInFlight) {
         this.idleCallbackInFlight = true;
         try {
           await this.onIdleCallback();
