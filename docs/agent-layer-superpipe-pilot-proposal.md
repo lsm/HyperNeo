@@ -425,7 +425,9 @@ note.
   (processing-state-manager.ts:86–90) and only a later `setIdle()` consumes
   them (:143–175), so a no-op that merely skips the trailing idle leaks the
   fence and leaves `terminalIdleInFlight` misleading
-  `reclaimTurnAlreadySucceeded` (:1833–1844) until some successor happens to
+  `reclaimTurnAlreadySucceeded` (agent-session.ts:1833–1845, consuming
+  `classifyReclaimTermination` from message-delivery.ts:246–255) until some
+  successor happens to
   idle; the stale branch cancels its fence (or the fence is generation-scoped)
   rather than just skipping the idle —
   before idling the replacement; the same fence-unwind applies to the terminal
