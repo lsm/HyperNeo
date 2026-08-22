@@ -770,11 +770,13 @@ export class AgentSession
       throw err;
     }
     if (!(await confirmedClear)) {
-      this.messageHandler.clearIdleSuppression();
       this.logger.warn(
         `clearConversationContext: /clear result not observed within ` +
-          `${this.clearConfirmTimeoutMs / 1000}s — proceeding without confirmed clear`
+          `${this.clearConfirmTimeoutMs / 1000}s — resetting the query and proceeding without ` +
+          `confirmed clear`
       );
+      this.messageHandler.clearIdleSuppression();
+      await this.resetQuery();
     }
   }
 

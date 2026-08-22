@@ -179,6 +179,7 @@ describe('AgentSession.clearConversationContext', () => {
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
     spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
     const warnSpy = spyOn(session.logger, 'warn').mockImplementation(() => {});
+    const resetSpy = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
     const setIdleSpy = spyOn(session.stateManager, 'setIdle').mockResolvedValue(undefined);
     session.messageQueue.start();
     const messages = session.messageQueue.messageGenerator(session.session.id);
@@ -196,6 +197,7 @@ describe('AgentSession.clearConversationContext', () => {
     expect(resolved).toBe(true);
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy.mock.calls[0][0]).toContain('proceeding without confirmed clear');
+    expect(resetSpy).toHaveBeenCalledTimes(1);
     expect(setIdleSpy).toHaveBeenCalledTimes(1);
 
     await session.messageHandler.handleMessage(makeClearResult('next-turn-result'));
@@ -205,11 +207,12 @@ describe('AgentSession.clearConversationContext', () => {
     await messages.return(undefined);
   });
 
-  it('timeout fallback: warns and resolves without the clear when no result arrives', async () => {
+  it('timeout fallback: warns, resets the query, and resolves without the clear when no result arrives', async () => {
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
     spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
     session.overrideClearConfirmTimeoutMsForTest(15);
     const warnSpy = spyOn(session.logger, 'warn').mockImplementation(() => {});
+    const resetSpy = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
     const setIdleSpy = spyOn(session.stateManager, 'setIdle').mockResolvedValue(undefined);
     session.messageQueue.start();
     const messages = session.messageQueue.messageGenerator(session.session.id);
@@ -226,6 +229,7 @@ describe('AgentSession.clearConversationContext', () => {
     expect(resolved).toBe(true);
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy.mock.calls[0][0]).toContain('proceeding without confirmed clear');
+    expect(resetSpy).toHaveBeenCalledTimes(1);
 
     await session.messageHandler.handleMessage(makeClearResult('late-result'));
     expect(setIdleSpy).toHaveBeenCalled();
