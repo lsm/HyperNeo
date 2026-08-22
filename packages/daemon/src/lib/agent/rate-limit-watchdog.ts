@@ -306,15 +306,17 @@ export class RateLimitWatchdog {
         `Error: ${errorMessage}`
     );
 
+    const timerAtEntry = this.cooldownTimer;
     await this.stateManager.setRateLimitCooldown({
       retryCount: this.retryCount,
       maxRetries: this.config.maxAutoRetries,
       retryAt,
     });
 
-    if (episodeGeneration !== this.generation) {
+    if (episodeGeneration !== this.generation || this.cooldownTimer !== timerAtEntry) {
       this.logger.info(
-        'Episode superseded during cooldown state write; not publishing pause or arming.'
+        'Cooldown state write completed but a newer action owns the cooldown; ' +
+          'not publishing pause or arming.'
       );
       return;
     }

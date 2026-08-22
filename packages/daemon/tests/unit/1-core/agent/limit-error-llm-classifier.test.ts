@@ -177,6 +177,37 @@ describe('LimitErrorLlmClassifier', () => {
     expect(prompts).toHaveLength(1);
   });
 
+  it('preserves the Kimi title thinking config when Kimi classifies', async () => {
+    const seenThinking: unknown[] = [];
+    const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
+    deps.providerService = {
+      ...deps.providerService,
+      getAvailableProviders: async () => [
+        { id: 'kimi', name: 'Kimi', models: [], available: true },
+      ],
+      getTitleGenerationModels: async () => ({
+        providerModelId: 'kimi-for-coding',
+        sdkModelId: 'kimi-for-coding',
+      }),
+    };
+    deps.queryForTesting = ((params: { prompt: string; options: { thinking?: unknown } }) => {
+      seenThinking.push(params.options.thinking);
+      return (async function* () {
+        yield {
+          type: 'assistant',
+          message: {
+            content: [
+              { type: 'text', text: '{"is_limit":true,"kind":"rate_limit","reset_at":null}' },
+            ],
+          },
+        };
+      })();
+    }) as LimitErrorLlmClassifierDeps['queryForTesting'];
+    const classifier = new LimitErrorLlmClassifier('s1', { ...deps, excludeProvider: 'glm' });
+    await classifier.classify('kimi thinking wall');
+    expect(seenThinking).toEqual([{ type: 'enabled', budgetTokens: 16000 }]);
+  });
+
   it('skips registry-unavailable providers and classifies via the next available one', async () => {
     const seenProviders: string[] = [];
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');

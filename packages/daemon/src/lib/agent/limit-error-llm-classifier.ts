@@ -1,4 +1,5 @@
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
+import { KimiProvider } from '../providers/kimi-provider.js';
 import { Logger } from '../logger';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention';
@@ -190,10 +191,7 @@ export class LimitErrorLlmClassifier {
       const providerId = await this.resolveClassifierProvider();
       if (!providerId) return null;
 
-      const models = await this.deps.providerService.getTitleGenerationModels(
-        providerId,
-        'default'
-      );
+      const models = await this.deps.providerService.getTitleGenerationModels(providerId, 'haiku');
       const providerService = this.deps.providerService;
       const originalEnv = await providerService.applyEnvVarsToProcessForProvider(
         providerId,
@@ -232,7 +230,10 @@ export class LimitErrorLlmClassifier {
             executable: isRunningUnderBun() ? 'bun' : undefined,
             settings: withSdkTranscriptRetention(),
             env: mergeProviderEnvVars(providerEnvVars as Record<string, string>),
-            thinking: { type: 'disabled' },
+            thinking:
+              providerId === 'kimi'
+                ? KimiProvider.resolveKimiTitleThinkingConfig(models.providerModelId)
+                : { type: 'disabled' },
             abortController,
           },
         });
