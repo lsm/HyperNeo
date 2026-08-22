@@ -1001,6 +1001,36 @@ describe('SDKMessageHandler', () => {
       expect(await wait).toBe('reset');
     });
 
+    it('an sdk.message subscriber failure settles the clear wait before the deadline is cancelled', async () => {
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') {
+          throw new Error('sdk.message subscriber failed');
+        }
+      });
+
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+
+      await expect(
+        handler.handleMessage({
+          type: 'result',
+          subtype: 'success',
+          uuid: 'clear-result',
+          user_message_uuid: 'clear-msg-id',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage)
+      ).rejects.toThrow('sdk.message subscriber failed');
+
+      expect(await wait).toBe('reset');
+    });
+
     it('the confirmation timeout stops once the correlated result enters processing', async () => {
       let releaseBookkeeping!: () => void;
       const gate = new Promise<void>((resolve) => {

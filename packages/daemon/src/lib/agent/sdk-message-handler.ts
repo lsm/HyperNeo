@@ -846,10 +846,17 @@ export class SDKMessageHandler {
       { channel: `session:${session.id}` }
     );
 
-    await this.ctx.internalEventBus.publish('sdk.message', {
-      sessionId: session.id,
-      message,
-    });
+    try {
+      await this.ctx.internalEventBus.publish('sdk.message', {
+        sessionId: session.id,
+        message,
+      });
+    } catch (error) {
+      if (observesArmedClearResult) {
+        this.clearIdleSuppression();
+      }
+      throw error;
+    }
 
     if (isSDKSessionStateChangedMessage(message)) {
       this.usesSessionStateChangedTurnEnd = true;
