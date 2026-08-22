@@ -350,7 +350,12 @@ note.
   user message: :1247–1269 selects tailored text per variant (an exhausted
   startup timeout and an ordinary timeout are both `TIMEOUT`, but only the
   former gets startup-specific guidance), so the route carries the hint/subtype
-  and the decision table asserts it instead of the interpreter re-deriving it` —
+  and the decision table asserts it instead of the interpreter re-deriving it —
+  **with a post-effect lifecycle resnapshot**: `errorManager.handleError` is
+  awaited (:1271–1285) before the common `setIdle` (:1289), so a replacement or
+  cleanup can take ownership during that effect, and a stale result routes to
+  no-op before the trailing idle, symmetric with the api-validation and
+  declined-handoff routes` —
   interpreted by thin shell arms. Routing note the table
   must preserve: rate-limit errors — explicit HTTP-429 **and** text-form — do
   not enter the provider-backoff arm: `isRetryableProviderError` excludes all
@@ -381,7 +386,12 @@ note.
   (`displayErrorAsAssistantMessage`, :1091–1096 → :1619–1643, a fresh UUID per
   call): if staged, that write/publication is a reserved-and-compensable effect
   with an idempotency key, or it stays in the shell, since a retried pass can
-  otherwise duplicate the notice; the existing generation guards inform the resnapshot stage but must not
+  otherwise duplicate the notice — and the **prompt re-enqueue** at
+  `messageQueue.enqueueWithId` (:1145) is likewise an external session
+  injection with unconditional insertion: it needs a conditional durable
+  reservation plus idempotence or exact compensation, or it too stays in the
+  shell, since replay after a later-stage failure can re-append the consumed
+  prompt and a crash leaves no reconciliation record; the existing generation guards inform the resnapshot stage but must not
   be presented as complete fencing — PR 1 pins the unfenced windows (transient
   arm :1024–1034 ahead of :1060; every arm's awaited `setIdle` ahead of its
   first guard; the message-not-found pointer consumption at :970 is *not* one —
@@ -452,7 +462,13 @@ note.
   `thinking_tokens` operational message and every assistant chunk with thinking
   on providers emitting incremental updates, so they are hot-path, not
   turn-boundary: keep inline unless separately benchmarked with pinned
-  per-chunk behavior.
+  per-chunk behavior — while the **reset** calls
+  (`resetThinkingTokenTracking` at :754 on top-level results and :962 on
+  session-state idle) are turn-boundary and must survive the extraction:
+  retain them explicitly in the shell (or add a reset action to the plan and
+  pin those rows), since losing them carries
+  `lastStampedThinkingTokensEstimate` into the next turn and undercounts its
+  thinking delta.
 - **ADR pattern:** `decisionRun` for the flag machine (flags in →
   `{idle_fence, early_set_idle, finish_turn, allow_queue_replay, next_flags}`
   plan out — the legacy direct `setIdle` (:746–750) is a distinct action from
@@ -462,7 +478,12 @@ note.
   results set `lastResultWasSuccess`; suppressed **successful** results clear
   `suppressIdleOnNextResult` (:936–937 is success-gated at :765–766), so a
   suppressed error result leaves the flag set for the following result — the
-  error row retains the flag and PR 1 pins that asymmetry; non-idle
+  error row retains the flag and PR 1 pins that asymmetry; the transitions are
+  **phased, not aggregate**: `lastResultWasSuccess` is set at :753 while the
+  suppression clear happens at :936 only after several awaited metadata/ack/
+  error-clear effects, so an effect failure leaves flags partially updated —
+  the core models phase-specific transitions (or the mutations stay at their
+  current shell locations), and PR 1 pins those failure paths; non-idle
   session-state events set the expectation
   flags and idle events reset them (:739–755, :936–969); alternatively narrow
   the core to action routing with flag mutation explicitly in shell — the
@@ -552,7 +573,12 @@ note.
   admitting into the replacement queue while returning the old promise/generation
   makes the outer turn race treat the old query's completion as the admitted
   delivery's completion (:1378–1393, :1481–1493; rebuild waiter/observer
-  bindings when identity changed) — or a stale attempt
+  bindings when identity changed) — **and immediately after the awaited
+  `ensureQueryStarted` for every path** (:1365): the `alreadyConsumed` branch
+  bypasses the whole `!alreadyConsumed` block and never reaches a
+  pre-`admitWithId` check, so without a post-startup resnapshot a stale pass
+  can bind the observer/waiter and return `driving` against the replacement
+  query — or a stale attempt
   can enqueue a duplicate or canceled delivery — and since `admitWithId`
   unconditionally appends, the staged effect additionally needs UUID/claim-keyed
   idempotence or an exact-entry compensation, because a retried pass under the
