@@ -210,8 +210,12 @@ apply PRs):
    query-runner's finally (:1331) and sdk-message-handler's result path
    (:746–750, :936–946), and awaited by `driveDeliveryTurn`'s turn-end race
    (:1569–1605, generation-scoped with the watchdog's generation). Chain C makes
-   these semantics explicit as a core; chain A's turn-end-loop extraction
-   consumes that core ⇒ C before A's loop PRs.
+   these semantics explicit as a core, but Chain A's turn-end loop does **not**
+   consume it: `driveDeliveryTurn` races the idle waiter/query promise/stall
+   watchdog/abort signal and already rides the pilot-4 cores
+   (`shouldRearmSpuriousTurnEnd` :1585, `classifyTurnCompletion` :1624). The real
+   coupling is the shared `ProcessingStateManager` idle-transition contract; C
+   before A is a facade-churn preference, not a hard ordering.
 3. **`sdk_messages.send_status` writes are unguarded check-then-act across all
    three flows** (query-mode-handler.ts:55, sdk-message-handler ack/consume
    paths, agent-session reopen :1937–1951). Groundwork here needs more than a
@@ -319,7 +323,11 @@ note.
 - **PR sketch:**
   1. **PR 1 (pins):** flag-machine truth table (suppress ×
      sessionStateChanged-mode × expectsIdle × lastResultWasSuccess × success/
-     error result → idle/finish/replay), incl. the known fragilities as
+     error result × queryMode → idle/finish/replay — `finishTurn` publishes
+     `query.trigger` only outside `manual` mode, sdk-message-handler.ts:943–950,
+     so manual sessions with identical flags must not replay deferred messages;
+     the queryMode gate may alternatively stay in the shell with the core
+     contract narrowed accordingly), incl. the known fragilities as
      characterization (the legacy path's terminal-fence-plus-double-`setIdle`
      sequence, S3 below; stale
      `lastResultWasSuccess` window — pinned, not fixed); ack-selection table
@@ -381,9 +389,12 @@ note.
      the steer ladder (status × queryPromise × provider × validity × queue
      ownership — `hasPendingOrInFlight(messageUuid)` distinguishes
      `awaiting_acceptance` from admitting a fresh feed, agent-session.ts:1701–1715)
-     and handler outcomes (skip/park/requeue/requeueAs/settle × park budgets ×
-     waiting-for-input: a waiting session requeues plain and bypasses
-     park-budget dead-lettering, message-delivery.handler.ts:150–163).
+     and handler outcomes (role × sendStatus × park budgets × waiting-for-input:
+     a submitted steer parks under the ACP acceptance budget while an otherwise
+     identical submitted turn settles as skipped — message-delivery.handler.ts:71–84,
+     pinned by message-delivery-v2.test.ts:842–871; a waiting session requeues
+     plain and bypasses park-budget dead-lettering,
+     message-delivery.handler.ts:150–163).
      Existing base:
      `message-delivery-v2.test.ts` (1,400 ln conformance),
      `query-mode-handler.test.ts` (891), `agent-session.test.ts` delivery cases
@@ -394,7 +405,10 @@ note.
   3. **PR 3 (apply ladders):** interpret at agent-session.ts:1696–1721, handler
      :31–189, message-delivery.ts:97–139 + outbox.
   4. **PR 4 (stagedRun):** `driveDeliveryTurn` admission + turn-end loop as
-     staged sub-pipelines, consuming chain C's turn-end core.
+     staged sub-pipelines — independent of chain C: the loop's decisions already
+     ride the pilot-4 `shouldRearmSpuriousTurnEnd`/`classifyTurnCompletion`
+     cores, so A's PR 4 needs only the shared idle-transition contract to hold,
+     not a Chain C artifact.
   5. **PR 5 (cleanup: dead-code removal, ADR pilot note).**
 - **Phase 0 primitives:** for the query-mode-handler write-before-ownership bug
   class, the structural fix is transactional ownership creation — status change
@@ -564,7 +578,9 @@ refresh can publish after teardown (:794).
 ## Recommendation
 
 Create chain B first (sequence its apply PRs after #2661 merges), chain C in
-parallel once #2661/#2543 clear, chain A as the wave-2 capstone after C and
-#2543. Add `output-limiter-hook.ts` to the policy-core pilot series. Hold
+parallel once #2661/#2543 clear, chain A as the wave-2 capstone after #2543
+(its turn-end loop no longer depends on a Chain C artifact — §4.2 — so A can
+start once #2543 lands and the facade is free of another chain's in-flight
+edits). Add `output-limiter-hook.ts` to the policy-core pilot series. Hold
 model-switch/rewind/question-handler extractions until ACP 8/10 settles (#2548
 part 2 has landed as #2696).
