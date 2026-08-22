@@ -1541,21 +1541,18 @@ export class SDKMessageRepository {
     sessionId: string,
     uuid: string
   ): { uuid: string; timestamp: number; content: string } | undefined {
-    const rows = this.db
+    const row = this.db
       .prepare(
         `SELECT sdk_message, timestamp FROM sdk_messages
          WHERE session_id = ?
            AND message_type = 'user'
-           AND sdk_uuid = ?`
+           AND sdk_uuid = ?
+         ORDER BY timestamp ASC, rowid ASC
+         LIMIT 1`
       )
-      .all(sessionId, uuid) as Array<{ sdk_message: string; timestamp: string }>;
-    if (rows.length === 0) return undefined;
-
-    let earliest = rows[0];
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i].timestamp < earliest.timestamp) earliest = rows[i];
-    }
-    return this.parseUserMessageRow(earliest, uuid);
+      .get(sessionId, uuid) as { sdk_message: string; timestamp: string } | undefined;
+    if (!row) return undefined;
+    return this.parseUserMessageRow(row, uuid);
   }
 
   getUserMessageContentByUuid(sessionId: string, uuid: string): string | MessageContent[] | null {
@@ -1615,7 +1612,8 @@ export class SDKMessageRepository {
             AND r.consumed_seq IS NOT NULL
             AND r.consumed_seq >= (
               SELECT m.consumed_seq FROM sdk_messages m
-               WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
+               WHERE m.session_id = ? AND m.sdk_uuid = ?
+               ORDER BY m.consumed_seq IS NULL, m.consumed_seq LIMIT 1
             )
             AND NOT (
               COALESCE(json_extract(r.sdk_message, '$.is_error'), 0) = 1
@@ -1654,7 +1652,8 @@ export class SDKMessageRepository {
             AND r.consumed_seq IS NOT NULL
             AND r.consumed_seq >= (
               SELECT m.consumed_seq FROM sdk_messages m
-               WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
+               WHERE m.session_id = ? AND m.sdk_uuid = ?
+               ORDER BY m.consumed_seq IS NULL, m.consumed_seq LIMIT 1
             )
             AND COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
             AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
@@ -1678,7 +1677,8 @@ export class SDKMessageRepository {
             AND r.consumed_seq IS NOT NULL
             AND r.consumed_seq >= (
               SELECT m.consumed_seq FROM sdk_messages m
-               WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
+               WHERE m.session_id = ? AND m.sdk_uuid = ?
+               ORDER BY m.consumed_seq IS NULL, m.consumed_seq LIMIT 1
             )
           ORDER BY r.consumed_seq DESC
           LIMIT 1`
