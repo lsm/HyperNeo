@@ -779,6 +779,35 @@ describe('SDKMessageHandler', () => {
       expect(await wait).toBe(false);
     });
 
+    it('a result that fails to persist resolves the wait unconfirmed and releases suppression', async () => {
+      const result: SDKMessage = {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'clear-result',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+      saveSDKMessageSpy.mockReturnValueOnce(false);
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage(result);
+
+      expect(await wait).toBe(false);
+
+      saveSDKMessageSpy.mockReturnValueOnce(true);
+      await handler.handleMessage({ ...result, uuid: 'next-turn-result' });
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
+
     it('should persist and broadcast api_retry message', async () => {
       const message: SDKMessage = {
         type: 'system',

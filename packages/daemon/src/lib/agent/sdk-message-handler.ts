@@ -720,13 +720,6 @@ export class SDKMessageHandler {
       .parent_tool_use_id;
     const isTopLevelResult =
       isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
-    if (isTopLevelResult && this.suppressIdleOnNextResult) {
-      if (isSDKResultSuccess(message)) {
-        this.settleSuppressedResultWaiter(true);
-      } else {
-        this.clearIdleSuppression();
-      }
-    }
 
     const deferredSuccessfully = this.withDbChangeBatch(() =>
       db.saveSDKMessage(session.id, message)
@@ -734,7 +727,18 @@ export class SDKMessageHandler {
 
     if (!deferredSuccessfully) {
       this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
+      if (isTopLevelResult && this.suppressIdleOnNextResult) {
+        this.clearIdleSuppression();
+      }
       return;
+    }
+
+    if (isTopLevelResult && this.suppressIdleOnNextResult) {
+      if (isSDKResultSuccess(message)) {
+        this.settleSuppressedResultWaiter(true);
+      } else {
+        this.clearIdleSuppression();
+      }
     }
 
     const processingState = stateManager.getState();
