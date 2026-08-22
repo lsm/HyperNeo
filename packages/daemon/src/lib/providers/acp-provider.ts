@@ -140,7 +140,12 @@ export class AcpProvider implements Provider {
   }
 
   private rebuildModelsFromCurated(): void {
-    const commandIdentity = this.getCommandIdentity();
+    let commandIdentity: string | undefined;
+    try {
+      commandIdentity = this.getCommandIdentity();
+    } catch {
+      commandIdentity = undefined;
+    }
     if (commandIdentity && this.curatedModels !== undefined) {
       this.cachedModels =
         this.curatedModels.length > 0
