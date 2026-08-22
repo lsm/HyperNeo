@@ -504,9 +504,8 @@ export class QueryLifecycleManager {
   ): Promise<void> {
     const { session, messageQueue, stateManager, internalEventBus } = this.ctx;
 
-    await stateManager.setQueued(messageId);
-
     if (options?.prepend) {
+      await stateManager.setQueued(messageId);
       void messageQueue
         .enqueueWithId(messageId, messageContent, false, { prepend: true })
         .catch((error) => this.handleQueuedMessageFailure(messageId, messageContent, error))
@@ -542,6 +541,8 @@ export class QueryLifecycleManager {
     if (queryStartResult === 'blocked') {
       if (options?.prepend) {
         messageQueue.remove(messageId);
+      } else {
+        await stateManager.setQueued(messageId);
       }
       this.logger.debug(
         `startQueryAndEnqueue: session ${session.id} is blocked on sdk_resume_choice; ` +
@@ -559,6 +560,8 @@ export class QueryLifecycleManager {
       });
       return;
     }
+
+    await stateManager.setQueued(messageId);
 
     try {
       void messageQueue
