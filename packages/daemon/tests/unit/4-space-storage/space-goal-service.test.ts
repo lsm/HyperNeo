@@ -4,6 +4,7 @@ import { SpaceGoalService } from '../../../src/lib/space/goals/goal-service';
 import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
 import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
 import { SpaceGoalEventRepository } from '../../../src/storage/repositories/space-goal-event-repository';
+import { SpaceGoalOutcomeNotificationRepository } from '../../../src/storage/repositories/space-goal-outcome-notification-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
@@ -38,6 +39,7 @@ describe('SpaceGoalService', () => {
   let goalRepo: SpaceGoalRepository;
   let goalEventRepo: SpaceGoalEventRepository;
   let taskRepo: SpaceTaskRepository;
+  let notificationRepo: SpaceGoalOutcomeNotificationRepository;
   let spaceRepo: SpaceRepository;
   let scheduleRepo: TaskScheduleRepository;
   let scheduleService: ScheduleService;
@@ -52,6 +54,7 @@ describe('SpaceGoalService', () => {
     goalRepo = new SpaceGoalRepository(db as never);
     goalEventRepo = new SpaceGoalEventRepository(db as never);
     taskRepo = new SpaceTaskRepository(db as never);
+    notificationRepo = new SpaceGoalOutcomeNotificationRepository(db as never);
     spaceRepo = new SpaceRepository(db as never);
     scheduleRepo = new TaskScheduleRepository(db as never);
     scheduleService = new ScheduleService({
@@ -67,6 +70,7 @@ describe('SpaceGoalService', () => {
       spaceRepo,
       scheduleService,
       db: db as never,
+      outcomeNotificationRepo: notificationRepo,
     });
 
     const space = spaceRepo.createSpace({
@@ -1033,5 +1037,50 @@ describe('SpaceGoalService', () => {
 
     taskRepo.archiveTask(task.task!.id);
     expect(taskRepo.getTask(task.task!.id)?.terminalGeneration).toBe(1);
+  });
+
+  it('persists a pending outcome notification for a reportable terminal transition', () => {
+    const goal = service.createGoal({ spaceId, title: 'Notify goal' });
+    const task = service.createImmediateTask(goal.id);
+    expect(task.task).not.toBeNull();
+    taskRepo.updateTask(task.task!.id, { status: 'in_progress' });
+    taskRepo.updateTask(task.task!.id, { status: 'open' });
+    taskRepo.updateTask(task.task!.id, { status: 'done' });
+
+    service.handleTaskTerminal(task.task!.id);
+
+    const pending = notificationRepo.listPendingByGoal(goal.id);
+    expect(pending).toHaveLength(1);
+    expect(pending[0].taskId).toBe(task.task!.id);
+    expect(pending[0].goalRevision).toBe(goalRepo.getById(goal.id)?.revision);
+    expect(pending[0].terminalGeneration).toBe(1);
+    expect(pending[0].payload.taskTitle).toBe(task.task!.title);
+    expect(pending[0].payload.goalTitle).toBe(goal.title);
+  });
+
+  it('does not persist a notification for an administrative (unstarted) terminal transition', () => {
+    const goal = service.createGoal({ spaceId, title: 'No notify goal' });
+    const task = service.createImmediateTask(goal.id);
+    expect(task.task).not.toBeNull();
+    taskRepo.archiveTask(task.task!.id);
+
+    service.handleTaskTerminal(task.task!.id);
+
+    expect(notificationRepo.listPendingByGoal(goal.id)).toHaveLength(0);
+  });
+
+  it('supersedes pending notifications when a terminal task is reopened', () => {
+    const goal = service.createGoal({ spaceId, title: 'Supersede goal' });
+    const task = service.createImmediateTask(goal.id);
+    expect(task.task).not.toBeNull();
+    taskRepo.updateTask(task.task!.id, { status: 'in_progress' });
+    taskRepo.updateTask(task.task!.id, { status: 'done' });
+    service.handleTaskTerminal(task.task!.id);
+    expect(notificationRepo.listPendingByGoal(goal.id)).toHaveLength(1);
+
+    service.supersedeOutcomeNotificationsForTask(task.task!.id);
+
+    expect(notificationRepo.listPendingByGoal(goal.id)).toHaveLength(0);
+    expect(notificationRepo.countByGoal(goal.id, 'superseded')).toBe(1);
   });
 });

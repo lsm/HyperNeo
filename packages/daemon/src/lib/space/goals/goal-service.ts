@@ -8,6 +8,7 @@ import type {
   SpaceGoalEventSource,
   SpaceGoalEventType,
   SpaceGoalListParams,
+  SpaceGoalOutcomeNotification,
   SpaceTask,
   UpdateSpaceGoalParams,
 } from '@hyperneo/shared';
@@ -16,11 +17,13 @@ import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type { SpaceRepository } from '../../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository';
+import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository';
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { ScheduleService } from '../schedule/schedule-service';
 import type { GoalAutomationService } from './goal-automation-service';
 import { pauseScheduleStrict } from './goal-automation-schedule-sync';
+import { decideReportableTerminal } from './reportable-terminal-gates';
 
 export type PublicSpaceGoalUpdateParams = Pick<
   UpdateSpaceGoalParams,
@@ -60,6 +63,8 @@ export interface SpaceGoalServiceDeps {
   goalAutomationService?: Pick<GoalAutomationService, 'onTaskCompleted'>;
   onGoalResumed?: (goalId: string, spaceId: string) => void;
   longHorizonAgentRepo?: Pick<SpaceLongHorizonAgentRepository, 'assignGoal'>;
+  outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
+  onOutcomeNotification?: (notification: SpaceGoalOutcomeNotification) => void;
 }
 
 export class SpaceGoalService {
@@ -297,20 +302,69 @@ export class SpaceGoalService {
     if (!isTerminalTaskStatus(task.status)) return null;
     const goal = this.deps.goalRepo.getById(task.goalId);
     if (!goal || goal.spaceId !== task.spaceId) return null;
-    this.deps.goalRepo.clearActiveTaskIfMatches(goal.id, taskId);
-    const fresh = this.requireGoal(goal.id);
-    this.recordGoalEvent(fresh, 'task_terminal', goal, fresh, {
-      source: 'system',
-      sourceTaskId: taskId,
-      note: `Task reached terminal status: ${task.status}`,
+    const result = this.runAtomic(() => {
+      this.deps.goalRepo.clearActiveTaskIfMatches(goal.id, taskId);
+      const fresh = this.requireGoal(goal.id);
+      this.recordGoalEvent(fresh, 'task_terminal', goal, fresh, {
+        source: 'system',
+        sourceTaskId: taskId,
+        note: `Task reached terminal status: ${task.status}`,
+      });
+      if (task.status === 'done') this.deps.goalAutomationService?.onTaskCompleted(taskId);
+      const terminalGeneration = task.terminalGeneration;
+      this.recordOutcomeNotification(task, fresh, terminalGeneration);
+      if (!fresh.autoTriggerNext || !fresh.pendingNextRun || fresh.status !== 'active') {
+        return { goal: fresh, nextTask: null as SpaceTask | null, terminalGeneration };
+      }
+      const created = this.createImmediateTask(fresh.id, { source: 'system' });
+      return { goal: created.goal, nextTask: created.task, terminalGeneration };
     });
-    if (task.status === 'done') this.deps.goalAutomationService?.onTaskCompleted(taskId);
-    const terminalGeneration = task.terminalGeneration;
-    if (!fresh.autoTriggerNext || !fresh.pendingNextRun || fresh.status !== 'active') {
-      return { goal: fresh, nextTask: null, terminalGeneration };
+    if (result.goal && this.deps.outcomeNotificationRepo) {
+      const pending = this.deps.outcomeNotificationRepo.listPendingByGoal(result.goal.id);
+      for (const notification of pending) {
+        this.deps.onOutcomeNotification?.(notification);
+      }
     }
-    const created = this.createImmediateTask(fresh.id, { source: 'system' });
-    return { goal: created.goal, nextTask: created.task, terminalGeneration };
+    return result;
+  }
+
+  supersedeOutcomeNotificationsForTask(taskId: string): void {
+    this.deps.outcomeNotificationRepo?.supersedeForTask(taskId);
+  }
+
+  private recordOutcomeNotification(
+    task: SpaceTask,
+    goal: SpaceGoal,
+    terminalGeneration: number
+  ): void {
+    if (!this.deps.outcomeNotificationRepo) return;
+    const hasStartGeneration = task.startedAt !== null;
+    const priorPending = this.deps.outcomeNotificationRepo
+      .listPendingByGoal(goal.id)
+      .filter((n) => n.taskId === task.id);
+    const decision = decideReportableTerminal({
+      fromStatus: null,
+      toStatus: task.status,
+      hasStartGeneration,
+      hasPriorTerminalGeneration: priorPending.length > 0,
+    });
+    if (decision.action === 'none') return;
+    if (decision.action === 'supersede_notify') {
+      this.deps.outcomeNotificationRepo.supersedeForTask(task.id);
+    }
+    this.deps.outcomeNotificationRepo.create({
+      spaceId: goal.spaceId,
+      goalId: goal.id,
+      taskId: task.id,
+      terminalGeneration,
+      goalRevision: goal.revision,
+      payload: {
+        summary: (task.reportedSummary ?? task.result ?? '').slice(0, 400),
+        taskStatus: task.status,
+        taskTitle: task.title,
+        goalTitle: goal.title,
+      },
+    });
   }
 
   canClaimScheduledTask(task: Pick<SpaceTask, 'spaceId' | 'goalId'>): {
