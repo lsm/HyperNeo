@@ -334,6 +334,38 @@ describe('SDKMessageRenderer', () => {
       expect(container.textContent).toContain('Authenticating');
     });
 
+    it('should render prompt suggestion message', () => {
+      const message = {
+        type: 'prompt_suggestion',
+        suggestion: 'Add unit tests for the renderer',
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as unknown as SDKMessage;
+
+      const { container } = render(<SDKMessageRenderer message={message} />);
+
+      expect(container.querySelector('[data-testid="prompt-suggestion"]')).toBeTruthy();
+      expect(container.textContent).toContain('Add unit tests for the renderer');
+      expect(container.textContent).not.toContain('Unknown message type');
+    });
+
+    it('should render tool use summary message', () => {
+      const message = {
+        type: 'tool_use_summary',
+        summary: 'Searched the codebase for renderers',
+        preceding_tool_use_ids: ['toolu_first', 'toolu_second'],
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as unknown as SDKMessage;
+
+      const { container } = render(<SDKMessageRenderer message={message} />);
+
+      expect(container.querySelector('[data-testid="tool-use-summary"]')).toBeTruthy();
+      expect(container.textContent).toContain('Searched the codebase for renderers');
+      expect(container.textContent).toContain('2 tool uses');
+      expect(container.textContent).not.toContain('Unknown message type');
+    });
+
     it('should render user replay message (slash command response)', async () => {
       const message = createUserReplayMessage();
       const { container } = render(<SDKMessageRenderer message={message} />);
