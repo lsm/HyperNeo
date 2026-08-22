@@ -55,7 +55,7 @@ describe('runMessageSearchMerge without a worker runtime', () => {
       writable: true,
     });
     try {
-      await expect(runMessageSearchMerge(join(dir, 'test.db'))).resolves.toBeUndefined();
+      await expect(runMessageSearchMerge(join(dir, 'test.db')).promise).resolves.toBeUndefined();
     } finally {
       Object.defineProperty(globalThis, 'Worker', {
         configurable: true,
@@ -76,7 +76,7 @@ describe.skipIf(!isBun)('runMessageSearchMerge', () => {
   test('runs the merge off-thread and keeps the index queryable', async () => {
     const dbPath = createFtsDb();
 
-    await runMessageSearchMerge(dbPath);
+    await runMessageSearchMerge(dbPath).promise;
 
     const db = new BunDatabase(dbPath, { readonly: true });
     const hits = db
@@ -96,12 +96,21 @@ describe.skipIf(!isBun)('runMessageSearchMerge', () => {
     db.exec('CREATE TABLE rooms (id TEXT PRIMARY KEY)');
     db.close();
 
-    await expect(runMessageSearchMerge(dbPath)).resolves.toBeUndefined();
+    await expect(runMessageSearchMerge(dbPath).promise).resolves.toBeUndefined();
   });
 
   test('still resolves when the merge worker exceeds its timeout', async () => {
     const dbPath = createFtsDb();
 
-    await expect(runMessageSearchMerge(dbPath, 1)).resolves.toBeUndefined();
+    await expect(runMessageSearchMerge(dbPath, 1).promise).resolves.toBeUndefined();
+  });
+
+  test('cancel terminates an in-flight merge and resolves the promise', async () => {
+    const dbPath = createFtsDb();
+
+    const handle = runMessageSearchMerge(dbPath);
+    handle.cancel();
+    handle.cancel();
+    await expect(handle.promise).resolves.toBeUndefined();
   });
 });

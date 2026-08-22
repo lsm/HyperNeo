@@ -13,6 +13,7 @@ type DbQueryWorkerRequest = {
 };
 
 type DbQueryWorkerResponse =
+  | { id: string; started: true }
   | { id: string; result: ScopedDbQueryResult }
   | { id: string; error: string };
 
@@ -39,6 +40,7 @@ function getDatabase(dbPath: string): BunDatabase {
 
 worker.onmessage = (event) => {
   const { id, dbPath, scopeType, scopeValue, sql, params, limit } = event.data;
+  worker.postMessage({ id, started: true });
   try {
     const result = runScopedQuery(getDatabase(dbPath), scopeType, scopeValue, {
       sql,

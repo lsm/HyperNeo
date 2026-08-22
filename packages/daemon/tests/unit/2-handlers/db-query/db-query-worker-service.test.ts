@@ -3,7 +3,10 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { DbQueryWorkerService } from '../../../../src/lib/db-query/db-query-worker-service';
+import {
+  DbQueryWorkerService,
+  DbQueryWorkerUnavailableError,
+} from '../../../../src/lib/db-query/db-query-worker-service';
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
@@ -34,6 +37,10 @@ class FakeWorker {
 
   terminate(): void {
     this.terminated = true;
+  }
+
+  start(id: string): void {
+    this.onmessage?.({ data: { id, started: true } });
   }
 
   respond(message: Record<string, unknown>): void {
@@ -75,6 +82,7 @@ describe('DbQueryWorkerService', () => {
     expect(fake.posted[0].sql).toBe('SELECT * FROM space_tasks');
     expect(fake.posted[0].limit).toBe(50);
 
+    fake.start(fake.posted[0].id);
     fake.respond({ id: fake.posted[0].id, result: sampleResult });
     await expect(pending).resolves.toEqual(sampleResult);
     expect(fake.terminated).toBe(false);
@@ -98,6 +106,7 @@ describe('DbQueryWorkerService', () => {
     expect(fake.posted).toHaveLength(2);
     const [firstMessage, secondMessage] = fake.posted;
 
+    fake.start(secondMessage.id);
     fake.respond({ id: secondMessage.id, result: sampleResult });
     await expect(second).resolves.toEqual(sampleResult);
 
@@ -113,6 +122,7 @@ describe('DbQueryWorkerService', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(firstSettled).toBe(false);
 
+    fake.start(firstMessage.id);
     fake.respond({
       id: firstMessage.id,
       result: { rows: [], rowCount: 0, truncated: false },
@@ -130,11 +140,38 @@ describe('DbQueryWorkerService', () => {
     await expect(pending).rejects.toThrow('Query execution error: no such column: x');
   });
 
+  test('does not arm the timeout before the worker starts the query', async () => {
+    const fake = new FakeWorker();
+    const service = new DbQueryWorkerService('/tmp/hyperneo.db', 20, () => asWorker(fake));
+
+    const firstStates: string[] = [];
+    const secondStates: string[] = [];
+    const first = service.query({ scopeType: 'global', scopeValue: '', sql: 'SELECT 1' }).then(
+      () => firstStates.push('resolved'),
+      (err: Error) => firstStates.push(err.message)
+    );
+    const second = service.query({ scopeType: 'global', scopeValue: '', sql: 'SELECT 2' }).then(
+      () => secondStates.push('resolved'),
+      (err: Error) => secondStates.push(err.message)
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(firstStates).toHaveLength(0);
+    expect(secondStates).toHaveLength(0);
+
+    fake.start(fake.posted[0].id);
+    await Promise.all([first, second]);
+    expect(firstStates).toEqual(['Query timed out']);
+    expect(secondStates).toEqual(['Query timed out']);
+    expect(fake.terminated).toBe(true);
+  });
+
   test('terminates the worker and rejects with a timeout error', async () => {
     const fake = new FakeWorker();
     const service = new DbQueryWorkerService('/tmp/hyperneo.db', 20, () => asWorker(fake));
 
     const pending = service.query({ scopeType: 'global', scopeValue: '', sql: 'SELECT 1' });
+    fake.start(fake.posted[0].id);
     await expect(pending).rejects.toThrow('Query timed out');
     expect(fake.terminated).toBe(true);
     expect(fake.posted).toHaveLength(1);
@@ -144,15 +181,21 @@ describe('DbQueryWorkerService', () => {
     const fake = new FakeWorker();
     const service = new DbQueryWorkerService('/tmp/hyperneo.db', 20, () => asWorker(fake));
 
-    const slow = expect(
-      service.query({ scopeType: 'global', scopeValue: '', sql: 'SELECT 1' })
-    ).rejects.toThrow('Query timed out');
-    const queued = expect(
-      service.query({ scopeType: 'global', scopeValue: '', sql: 'SELECT 2' })
-    ).rejects.toThrow('Query timed out');
+    const slowStates: string[] = [];
+    const queuedStates: string[] = [];
+    const slow = service.query({ scopeType: 'global', scopeValue: '', sql: 'SELECT 1' }).then(
+      () => slowStates.push('resolved'),
+      (err: Error) => slowStates.push(err.message)
+    );
+    const queued = service.query({ scopeType: 'global', scopeValue: '', sql: 'SELECT 2' }).then(
+      () => queuedStates.push('resolved'),
+      (err: Error) => queuedStates.push(err.message)
+    );
 
-    await slow;
-    await queued;
+    fake.start(fake.posted[0].id);
+    await Promise.all([slow, queued]);
+    expect(slowStates).toEqual(['Query timed out']);
+    expect(queuedStates).toEqual(['Query timed out']);
     expect(fake.terminated).toBe(true);
   });
 
@@ -162,26 +205,48 @@ describe('DbQueryWorkerService', () => {
     const service = new DbQueryWorkerService('/tmp/hyperneo.db', 20, () => asWorker(current));
 
     const timedOut = service.query({ scopeType: 'global', scopeValue: '', sql: 'SELECT 1' });
+    first.start(first.posted[0].id);
     await expect(timedOut).rejects.toThrow('Query timed out');
     expect(first.terminated).toBe(true);
 
     current = new FakeWorker();
     const retry = service.query({ scopeType: 'global', scopeValue: '', sql: 'SELECT 2' });
     expect(current.posted).toHaveLength(1);
+    current.start(current.posted[0].id);
     current.respond({ id: current.posted[0].id, result: sampleResult });
     await expect(retry).resolves.toEqual(sampleResult);
   });
 
-  test('rejects all queries when the worker errors', async () => {
+  test('rejects with the worker-unavailable error when spawning fails', async () => {
+    const service = new DbQueryWorkerService('/tmp/hyperneo.db', 1_000, () => {
+      throw new Error('Worker is not defined');
+    });
+
+    await expect(
+      service.query({ scopeType: 'global', scopeValue: '', sql: 'SELECT 1' })
+    ).rejects.toBeInstanceOf(DbQueryWorkerUnavailableError);
+  });
+
+  test('rejects unstarted queries with worker-unavailable and started ones with a timeout on worker error', async () => {
     const fake = new FakeWorker();
     const service = new DbQueryWorkerService('/tmp/hyperneo.db', 1_000, () => asWorker(fake));
 
-    const first = service.query({ scopeType: 'global', scopeValue: '', sql: 'SELECT 1' });
-    const second = service.query({ scopeType: 'global', scopeValue: '', sql: 'SELECT 2' });
-    fake.crash();
+    const startedErrors: Error[] = [];
+    const unstartedErrors: Error[] = [];
+    const started = service.query({ scopeType: 'global', scopeValue: '', sql: 'SELECT 1' }).then(
+      () => startedErrors.push(new Error('resolved')),
+      (err: Error) => startedErrors.push(err)
+    );
+    const unstarted = service.query({ scopeType: 'global', scopeValue: '', sql: 'SELECT 2' }).then(
+      () => unstartedErrors.push(new Error('resolved')),
+      (err: Error) => unstartedErrors.push(err)
+    );
 
-    await expect(first).rejects.toThrow('db_query worker failed');
-    await expect(second).rejects.toThrow('db_query worker failed');
+    fake.start(fake.posted[0].id);
+    fake.crash();
+    await Promise.all([started, unstarted]);
+    expect(startedErrors[0].message).toBe('Query timed out');
+    expect(unstartedErrors[0]).toBeInstanceOf(DbQueryWorkerUnavailableError);
     expect(fake.terminated).toBe(true);
   });
 

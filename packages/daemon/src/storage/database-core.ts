@@ -25,6 +25,7 @@ export class DatabaseCore {
   private messageSearchMergeTimer: Timer | null = null;
   private messageSearchMergeInFlight = false;
   private messageSearchMergeClosed = false;
+  private messageSearchMergeCancel: (() => void) | null = null;
 
   constructor(private dbPath: string) {
     this.db = null as unknown as BunDatabase;
@@ -69,7 +70,10 @@ export class DatabaseCore {
     this.messageSearchMergeTimer = setTimeout(() => {
       this.messageSearchMergeTimer = null;
       this.messageSearchMergeInFlight = true;
-      void runMessageSearchMerge(this.dbPath).finally(() => {
+      const merge = runMessageSearchMerge(this.dbPath);
+      this.messageSearchMergeCancel = merge.cancel;
+      void merge.promise.finally(() => {
+        this.messageSearchMergeCancel = null;
         this.messageSearchMergeInFlight = false;
         this.scheduleMessageSearchMerge();
       });
@@ -90,6 +94,8 @@ export class DatabaseCore {
       clearTimeout(this.messageSearchMergeTimer);
       this.messageSearchMergeTimer = null;
     }
+    this.messageSearchMergeCancel?.();
+    this.messageSearchMergeCancel = null;
     try {
       this.db.exec('PRAGMA optimize');
     } catch {}

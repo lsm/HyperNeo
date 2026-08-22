@@ -10,14 +10,27 @@ export type DbQueryRequest = ScopedDbQuery & {
 };
 
 type ActiveDbQuery = {
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | null;
   resolve: (result: ScopedDbQueryResult) => void;
   reject: (error: Error) => void;
 };
 
 type DbQueryWorkerMessage =
+  | { id: string; started: true }
   | { id: string; result: ScopedDbQueryResult }
   | { id: string; error: string };
+
+function createDbQueryWorker(): Worker {
+  return new Worker(new URL('./db-query-worker.ts', import.meta.url).href, {
+    type: 'module',
+  });
+}
+
+export class DbQueryWorkerUnavailableError extends Error {
+  constructor(reason?: string) {
+    super(reason ? `db_query worker unavailable: ${reason}` : 'db_query worker unavailable');
+  }
+}
 
 export class DbQueryWorkerService {
   private worker: Worker | null = null;
@@ -27,10 +40,7 @@ export class DbQueryWorkerService {
   constructor(
     private dbPath: string,
     private timeoutMs: number = DEFAULT_DB_QUERY_TIMEOUT_MS,
-    private spawnWorker: () => Worker = () =>
-      new Worker(new URL('./db-query-worker.ts', import.meta.url).href, {
-        type: 'module',
-      })
+    private spawnWorker: () => Worker = createDbQueryWorker
   ) {}
 
   query(request: DbQueryRequest): Promise<ScopedDbQueryResult> {
@@ -41,14 +51,13 @@ export class DbQueryWorkerService {
     try {
       worker = this.ensureWorker();
     } catch (error) {
-      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      return Promise.reject(
+        new DbQueryWorkerUnavailableError(error instanceof Error ? error.message : String(error))
+      );
     }
     const id = generateUUID();
     return new Promise<ScopedDbQueryResult>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.failAll(new Error('Query timed out'));
-      }, this.timeoutMs);
-      this.activeById.set(id, { timer, resolve, reject });
+      this.activeById.set(id, { timer: null, resolve, reject });
       try {
         worker.postMessage({
           id,
@@ -61,7 +70,6 @@ export class DbQueryWorkerService {
         });
       } catch (error) {
         this.activeById.delete(id);
-        clearTimeout(timer);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
@@ -79,8 +87,18 @@ export class DbQueryWorkerService {
       const message = event.data;
       const active = this.activeById.get(message.id);
       if (!active) return;
+      if ('started' in message) {
+        if (active.timer === null) {
+          active.timer = setTimeout(() => {
+            this.failAll(new Error('Query timed out'));
+          }, this.timeoutMs);
+        }
+        return;
+      }
       this.activeById.delete(message.id);
-      clearTimeout(active.timer);
+      if (active.timer !== null) {
+        clearTimeout(active.timer);
+      }
       if ('result' in message) {
         active.resolve(message.result);
       } else {
@@ -88,20 +106,24 @@ export class DbQueryWorkerService {
       }
     };
     worker.onerror = () => {
-      this.failAll(new Error('db_query worker failed'));
+      this.failAll(new DbQueryWorkerUnavailableError(), new Error('Query timed out'));
     };
     this.worker = worker;
     return worker;
   }
 
-  private failAll(error: Error): void {
+  private failAll(unstartedError: Error, startedError: Error = unstartedError): void {
     this.worker?.terminate();
     this.worker = null;
     const activeRequests = [...this.activeById.values()];
     this.activeById.clear();
     for (const active of activeRequests) {
-      clearTimeout(active.timer);
-      active.reject(error);
+      if (active.timer !== null) {
+        clearTimeout(active.timer);
+        active.reject(startedError);
+      } else {
+        active.reject(unstartedError);
+      }
     }
   }
 }

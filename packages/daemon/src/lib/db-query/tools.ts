@@ -1,7 +1,8 @@
 import { Database } from '../../storage/sqlite-compat';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { DbQueryWorkerService } from './db-query-worker-service.ts';
+import { Logger } from '../logger';
+import { DbQueryWorkerService, DbQueryWorkerUnavailableError } from './db-query-worker-service.ts';
 import { type DbScopeType, type ScopeTableConfig, getScopeConfig } from './scope-config.ts';
 import { DEFAULT_LIMIT, MAX_LIMIT, runScopedQuery } from './scoped-query.ts';
 
@@ -25,6 +26,8 @@ interface DbQueryMcpServer {
   instance: any;
   close(): void;
 }
+
+const dbQueryLog = new Logger('DbQuery');
 
 function jsonResult(data: Record<string, unknown>): ToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(data) }] };
@@ -149,6 +152,7 @@ export function createDbQueryMcpServer(config: DbQueryToolsConfig): DbQueryMcpSe
 
   const handlers = createDbQueryToolHandlers(config, db);
   const workerService = new DbQueryWorkerService(config.dbPath);
+  let warnedWorkerFallback = false;
 
   const scopeDescription =
     config.scopeType === 'global'
@@ -190,7 +194,19 @@ export function createDbQueryMcpServer(config: DbQueryToolsConfig): DbQueryMcpSe
           })
           .then(
             (result) => jsonResult(result),
-            (err: unknown) => errorResult(err instanceof Error ? err.message : String(err))
+            async (err: unknown) => {
+              if (err instanceof DbQueryWorkerUnavailableError) {
+                if (!warnedWorkerFallback) {
+                  warnedWorkerFallback = true;
+                  dbQueryLog.warn(
+                    'db_query worker unavailable, executing queries on the main thread:',
+                    err.message
+                  );
+                }
+                return handlers.db_query(args);
+              }
+              return errorResult(err instanceof Error ? err.message : String(err));
+            }
           )
     ),
     tool(
