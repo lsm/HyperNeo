@@ -282,20 +282,17 @@ export class RateLimitWatchdog {
         if (result.kind) {
           this.lastHint = { ...this.lastHint, kind: result.kind };
         }
-        const refunded = chargedLadder && this.retryCount > 0;
-        if (refunded) {
-          this.retryCount--;
-        }
+        const refund = chargedLadder && this.retryCount > 0;
         const armed = await this.scheduleCooldown(
           errorMessage,
           cooldownFromReset(resetMs, now),
-          entryGeneration
+          entryGeneration,
+          refund ? this.retryCount - 1 : this.retryCount
         );
         if (!armed) {
           this.lastHint = previousHint;
-          if (refunded) {
-            this.retryCount++;
-          }
+        } else if (refund) {
+          this.retryCount--;
         }
       })
       .catch(() => {})
@@ -307,7 +304,8 @@ export class RateLimitWatchdog {
   private async scheduleCooldown(
     errorMessage: string,
     decision: CooldownDecision,
-    episodeGeneration: number
+    episodeGeneration: number,
+    displayRetryCount?: number
   ): Promise<boolean> {
     const kind = this.lastHint?.kind ?? classifyLimitKind(errorMessage, decision);
     this.limitKind = kind;
@@ -320,7 +318,7 @@ export class RateLimitWatchdog {
 
     const timerAtEntry = this.cooldownTimer;
     await this.stateManager.setRateLimitCooldown({
-      retryCount: this.retryCount,
+      retryCount: displayRetryCount ?? this.retryCount,
       maxRetries: this.config.maxAutoRetries,
       retryAt,
     });
