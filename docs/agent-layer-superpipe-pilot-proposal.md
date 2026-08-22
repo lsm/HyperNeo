@@ -147,7 +147,13 @@ projection call `getAuthStatus()` through them (auth-handlers.ts:55–57,
 system-handlers.ts:71–81, state-projection-service.ts:302–314), so a
 non-Anthropic window can report authentication via that session's injected
 `ANTHROPIC_AUTH_TOKEN`; ambient provider-auth
-readers acquire the same lease or read an immutable daemon baseline — all
+readers acquire the same lease or read an immutable daemon baseline — with
+**reentrancy made explicit**: a QueryRunner already holds the lease before its
+auth gate yet then calls the enrolled `provider.isAvailable()`/
+`getAuthStatus()` readers during startup, so a non-reentrant mutex deadlocks
+on its own lease; the lease propagates current ownership into enrolled
+readers (or supports reentrancy, or in-owner-window reads use the immutable
+baseline), with a startup pin — all
 owner and reader enrollments, `AuthManager`/`EnvManager` included, are
 scheduled in the dedicated **Prerequisite PR 0** in the Recommendation, since
 no chain PR delivers it. — and
@@ -946,7 +952,13 @@ note.
   expected query identity while the claim is still current, and the pass would
   install the waiter/observer and return `driving` as cleanup stops its queue;
   cleaning-up, queue-running, abort, and route-appropriate processing state
-  are all rechecked before either branch proceeds — pinned by a
+  are all rechecked before either branch proceeds — **along with delivery
+  ownership**: claim currency and `messageDeliveryValid` are re-checked too,
+  because the `alreadyConsumed` path's only `claimGuard`/validity checks ran
+  *before* the await and the path bypasses the later `!alreadyConsumed`
+  checks, so without them a superseded handler still installs the
+  waiter/observer and returns `driving` for the replacement query — claim
+  supersession joins the interleaving pin — pinned by a
   **deterministic interleaving test** (deferred `ensureQueryStarted` promise;
   start cleanup before resolving it; assert the resnapshot disarms the
   preinstalled observer, creates no idle waiter, and returns without
