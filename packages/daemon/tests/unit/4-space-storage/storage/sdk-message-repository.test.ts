@@ -2455,6 +2455,177 @@ describe('SDKMessageRepository', () => {
       expect(repository.hasTerminalResultAfter('session-1', 'migrated-msg')).toBe(false);
     });
 
+    it('duplicate-uuid rows leave the watermark pick ambiguous — either pick flips the re-claim outcome (bug-#2 characterization)', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'dup-msg',
+        timestamp: '2026-08-11T15:20:00.000Z',
+        sendStatus: 'failed',
+      });
+      insertMessage('session-1', 'user', {
+        uuid: 'dup-msg',
+        timestamp: '2026-08-11T15:21:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:22:00.000Z',
+        terminal: true,
+        subtype: 'success',
+      });
+
+      const picks = db
+        .prepare(`SELECT consumed_seq FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
+        .all('session-1', 'dup-msg') as Array<{ consumed_seq: number | null }>;
+      const seqs = picks.map((pick) => pick.consumed_seq);
+      expect(seqs).toContain(null);
+      const consumedSeqs = seqs.filter((seq): seq is number => seq !== null);
+      expect(consumedSeqs).toHaveLength(1);
+
+      const successSeenWithWatermark = (watermark: number | null) =>
+        db
+          .prepare(
+            `SELECT 1 FROM sdk_messages r
+              WHERE r.session_id = 'session-1' AND r.message_type = 'result' AND r.is_terminal = 1
+                AND r.message_subtype = 'success' AND r.parent_tool_use_id IS NULL
+                AND r.consumed_seq IS NOT NULL AND r.consumed_seq >= ? LIMIT 1`
+          )
+          .get(watermark) != null;
+      expect(successSeenWithWatermark(consumedSeqs[0])).toBe(true);
+      expect(successSeenWithWatermark(null)).toBe(false);
+    });
+
+    it('the same duplicate-uuid ambiguity hides the terminal-error subtype from the error probe (bug-#2 characterization)', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'dup-err',
+        timestamp: '2026-08-11T15:20:00.000Z',
+        sendStatus: 'failed',
+      });
+      insertMessage('session-1', 'user', {
+        uuid: 'dup-err',
+        timestamp: '2026-08-11T15:21:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:22:00.000Z',
+        terminal: true,
+        subtype: 'error_max_budget_usd',
+      });
+
+      const errorSubtypeWithWatermark = (watermark: number | null): string | null => {
+        const row = db
+          .prepare(
+            `SELECT r.message_subtype AS subtype FROM sdk_messages r
+              WHERE r.session_id = 'session-1' AND r.message_type = 'result' AND r.is_terminal = 1
+                AND r.message_subtype IS NOT NULL AND r.message_subtype != 'success'
+                AND r.parent_tool_use_id IS NULL AND r.consumed_seq IS NOT NULL
+                AND r.consumed_seq >= ? ORDER BY r.consumed_seq DESC LIMIT 1`
+          )
+          .get(watermark) as { subtype: string | null } | undefined;
+        return row?.subtype ?? null;
+      };
+      const consumedSeq = (
+        db
+          .prepare(
+            `SELECT consumed_seq FROM sdk_messages
+              WHERE session_id = ? AND sdk_uuid = ? AND consumed_seq IS NOT NULL LIMIT 1`
+          )
+          .get('session-1', 'dup-err') as { consumed_seq: number }
+      ).consumed_seq;
+      expect(errorSubtypeWithWatermark(consumedSeq)).toBe('error_max_budget_usd');
+      expect(errorSubtypeWithWatermark(null)).toBeNull();
+    });
+
+    it('prefers the non-NULL watermark across duplicate-uuid rows — all probes deterministic (bug-#2 fix)', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'dup-msg',
+        timestamp: '2026-08-11T15:20:00.000Z',
+        sendStatus: 'failed',
+      });
+      insertMessage('session-1', 'user', {
+        uuid: 'dup-msg',
+        timestamp: '2026-08-11T15:21:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        uuid: 'dup-result',
+        timestamp: '2026-08-11T15:22:00.000Z',
+        terminal: true,
+        subtype: 'success',
+        sdkMessage: JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          terminal_reason: 'api_error',
+        }),
+      });
+
+      expect(repository.hasTerminalResultAfter('session-1', 'dup-msg')).toBe(true);
+      expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'dup-msg')).toBe(false);
+
+      repository.markResultRecoveryIntercepted('session-1', 'dup-result');
+
+      expect(repository.hasTerminalResultAfter('session-1', 'dup-msg')).toBe(false);
+      expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'dup-msg')).toBe(true);
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'dup-msg')).toBeNull();
+
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:23:00.000Z',
+        terminal: true,
+        subtype: 'error_max_budget_usd',
+      });
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'dup-msg')).toBe(
+        'error_max_budget_usd'
+      );
+    });
+
+    it('follows the LATEST non-NULL watermark when duplicate rows carry different consumed_seq values — prior-attempt results stay invisible (retry layout)', () => {
+      const insertDuplicate = db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
+         VALUES (?, 'session-1', 'user', NULL, '{}', ?, 'consumed', 0, 'dup-seq-msg', ?)`
+      );
+      insertDuplicate.run('dup-seq-first', '2026-08-11T15:20:00.000Z', 10);
+      insertDuplicate.run('dup-seq-second', '2026-08-11T15:21:00.000Z', 5);
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
+         VALUES ('dup-seq-result', 'session-1', 'result', 'success', '{}', '2026-08-11T15:22:00.000Z', NULL, 1, 'dup-seq-result-uuid', 7, NULL)`
+      ).run();
+
+      expect(repository.hasTerminalResultAfter('session-1', 'dup-seq-msg')).toBe(false);
+
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
+         VALUES ('dup-seq-result-own', 'session-1', 'result', 'success', '{}', '2026-08-11T15:23:00.000Z', NULL, 1, 'dup-seq-result-own-uuid', 12, NULL)`
+      ).run();
+
+      expect(repository.hasTerminalResultAfter('session-1', 'dup-seq-msg')).toBe(true);
+    });
+
+    it('a stale prior-attempt recovery-intercepted result does not reopen the latest attempt (Codex P1)', () => {
+      const insertDuplicate = db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
+         VALUES (?, 'session-1', 'user', NULL, '{}', ?, 'consumed', 0, 'stale-msg', ?)`
+      );
+      insertDuplicate.run('stale-old', '2026-08-11T15:20:00.000Z', 5);
+      insertDuplicate.run('stale-new', '2026-08-11T15:21:00.000Z', 10);
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
+         VALUES ('stale-intercepted', 'session-1', 'result', 'success', ?, '2026-08-11T15:22:00.000Z', NULL, 1, 'stale-intercepted-uuid', 7, NULL)`
+      ).run(
+        JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          terminal_reason: 'api_error',
+          recovery_intercepted: 1,
+          recovery_billing_terminal: 0,
+        })
+      );
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
+         VALUES ('stale-success', 'session-1', 'result', 'success', '{}', '2026-08-11T15:23:00.000Z', NULL, 1, 'stale-success-uuid', 12, NULL)`
+      ).run();
+
+      expect(repository.hasTerminalResultAfter('session-1', 'stale-msg')).toBe(true);
+      expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'stale-msg')).toBe(false);
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'stale-msg')).toBeNull();
+    });
+
     it('is true when a terminal result shares the consumption millisecond but inserts after (P2 tiebreak)', () => {
       insertMessage('session-1', 'user', {
         uuid: 'tie-msg',
@@ -2812,17 +2983,7 @@ describe('SDKMessageRepository', () => {
       expect(searchRow!.timestamp).toBeLessThanOrEqual(after);
     });
 
-    describe('duplicate-uuid watermark ambiguity — unordered LIMIT 1 probes (A1)', () => {
-      function unorderedWatermarkPick(sessionId: string, uuid: string): number | null {
-        const row = db
-          .prepare(
-            `SELECT m.consumed_seq AS seq FROM sdk_messages m
-              WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1`
-          )
-          .get(sessionId, uuid) as { seq: number | null } | undefined;
-        return row?.seq ?? null;
-      }
-
+    describe('duplicate-uuid watermark rows — ordered pick across probes (A1, updated for bug-#2 fix)', () => {
       function expectDuplicateWatermarkRows(sessionId: string, uuid: string): void {
         const duplicates = db
           .prepare(`SELECT consumed_seq FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
@@ -2832,7 +2993,7 @@ describe('SDKMessageRepository', () => {
         expect(duplicates.some((row) => row.consumed_seq !== null)).toBe(true);
       }
 
-      it('hasTerminalResultAfter tracks the unordered pick either way — unsequenced duplicate first', () => {
+      it('hasTerminalResultAfter prefers the non-NULL watermark — unsequenced duplicate first (bug-#2 fix)', () => {
         const sessionId = 'session-dup-null-first';
         insertMessage(sessionId, 'user', {
           uuid: 'dup-watermark',
@@ -2850,12 +3011,10 @@ describe('SDKMessageRepository', () => {
         });
         expectDuplicateWatermarkRows(sessionId, 'dup-watermark');
 
-        const picked = unorderedWatermarkPick(sessionId, 'dup-watermark');
-
-        expect(repository.hasTerminalResultAfter(sessionId, 'dup-watermark')).toBe(picked !== null);
+        expect(repository.hasTerminalResultAfter(sessionId, 'dup-watermark')).toBe(true);
       });
 
-      it('hasTerminalResultAfter tracks the unordered pick either way — sequenced duplicate first', () => {
+      it('hasTerminalResultAfter prefers the non-NULL watermark — sequenced duplicate first (bug-#2 fix)', () => {
         const sessionId = 'session-dup-seq-first';
         insertMessage(sessionId, 'user', {
           uuid: 'dup-watermark',
@@ -2873,12 +3032,10 @@ describe('SDKMessageRepository', () => {
         });
         expectDuplicateWatermarkRows(sessionId, 'dup-watermark');
 
-        const picked = unorderedWatermarkPick(sessionId, 'dup-watermark');
-
-        expect(repository.hasTerminalResultAfter(sessionId, 'dup-watermark')).toBe(picked !== null);
+        expect(repository.hasTerminalResultAfter(sessionId, 'dup-watermark')).toBe(true);
       });
 
-      it('getErrorTerminalResultSubtypeAfter shares the unordered pick: subtype or null, never a third outcome', () => {
+      it('getErrorTerminalResultSubtypeAfter returns the subtype regardless of duplicate order (bug-#2 fix)', () => {
         const sessionId = 'session-dup-error';
         insertMessage(sessionId, 'user', {
           uuid: 'dup-watermark',
@@ -2896,10 +3053,8 @@ describe('SDKMessageRepository', () => {
         });
         expectDuplicateWatermarkRows(sessionId, 'dup-watermark');
 
-        const picked = unorderedWatermarkPick(sessionId, 'dup-watermark');
-
         expect(repository.getErrorTerminalResultSubtypeAfter(sessionId, 'dup-watermark')).toBe(
-          picked !== null ? 'error_max_budget_usd' : null
+          'error_max_budget_usd'
         );
       });
     });
@@ -3394,6 +3549,41 @@ describe('SDKMessageRepository', () => {
       expect(message?.content).toBe('Earliest failed copy');
     });
 
+    it('breaks timestamp ties by earliest rowid across duplicate rows', () => {
+      const sessionId = 'session-tied';
+      const insert = db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+         VALUES (?, ?, 'user', ?, ?, ?, 'tied-uuid')`
+      );
+      insert.run(
+        'tied-a',
+        sessionId,
+        JSON.stringify({
+          type: 'user',
+          uuid: 'tied-uuid',
+          message: { role: 'user', content: [{ type: 'text', text: 'First copy' }] },
+        }),
+        '2026-08-11T15:20:00.000Z',
+        'failed'
+      );
+      insert.run(
+        'tied-b',
+        sessionId,
+        JSON.stringify({
+          type: 'user',
+          uuid: 'tied-uuid',
+          message: { role: 'user', content: [{ type: 'text', text: 'Second copy' }] },
+        }),
+        '2026-08-11T15:20:00.000Z',
+        'consumed'
+      );
+
+      const message = repository.getUserMessageByUuid(sessionId, 'tied-uuid');
+
+      expect(message).toBeDefined();
+      expect(message?.content).toBe('First copy');
+    });
+
     it('resolves a same-millisecond uuid tie to whichever row the unordered scan returns first (A1)', () => {
       const sessionId = 'session-ms-tie';
       const tiedTimestamp = '2026-08-11T15:40:00.000Z';
@@ -3721,7 +3911,9 @@ describe('SDKMessageRepository', () => {
         `SELECT sdk_message, timestamp FROM sdk_messages
          WHERE session_id = ?
            AND message_type = 'user'
-           AND sdk_uuid = ?`,
+           AND sdk_uuid = ?
+         ORDER BY timestamp ASC, rowid ASC
+         LIMIT 1`,
         ['s1', 'uuid-5']
       );
       expect(plan).toContain('idx_sdk_messages_session_uuid');
