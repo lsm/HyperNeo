@@ -743,6 +743,33 @@ describe('SDKMessageHandler', () => {
       expect(await wait).toBe(false);
     });
 
+    it('an error result resolves the wait unconfirmed and releases idle suppression', async () => {
+      const errorResult: SDKMessage = {
+        type: 'result',
+        subtype: 'error_max_turns',
+        uuid: 'clear-error',
+        is_error: true,
+        errors: ['max turns exceeded'],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage(errorResult);
+
+      expect(await wait).toBe(false);
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
+
     it('clearIdleSuppression settles a pending wait as unconfirmed', async () => {
       handler.suppressIdleForNextResult();
       const wait = handler.waitForSuppressedResult(5_000);

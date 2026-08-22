@@ -84,6 +84,24 @@ function makeClearResult(uuid: string): SDKMessage {
   } as unknown as SDKMessage;
 }
 
+function makeClearErrorResult(uuid: string): SDKMessage {
+  return {
+    type: 'result',
+    subtype: 'error_max_turns',
+    uuid,
+    is_error: true,
+    errors: ['max turns exceeded'],
+    usage: {
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    },
+    total_cost_usd: 0.001,
+    modelUsage: {},
+  } as unknown as SDKMessage;
+}
+
 describe('AgentSession.clearConversationContext', () => {
   it('issues /clear as an internal control message after ensuring the query is pulling', async () => {
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
@@ -153,6 +171,36 @@ describe('AgentSession.clearConversationContext', () => {
 
     expect(deliveredAfterClear).toBe('delivered');
     expect(warnSpy).not.toHaveBeenCalled();
+    session.messageQueue.stop();
+    await messages.return(undefined);
+  });
+
+  it('an error result for the /clear turn resolves unconfirmed, warns, and releases idle suppression', async () => {
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
+    const warnSpy = spyOn(session.logger, 'warn').mockImplementation(() => {});
+    const setIdleSpy = spyOn(session.stateManager, 'setIdle').mockResolvedValue(undefined);
+    session.messageQueue.start();
+    const messages = session.messageQueue.messageGenerator(session.session.id);
+
+    let resolved = false;
+    const clear = session.clearConversationContext().then(() => {
+      resolved = true;
+    });
+    const yielded = await messages.next();
+    yielded.value?.onSent();
+
+    await session.messageHandler.handleMessage(makeClearErrorResult('clear-error'));
+    await clear;
+
+    expect(resolved).toBe(true);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain('proceeding without confirmed clear');
+    expect(setIdleSpy).toHaveBeenCalledTimes(1);
+
+    await session.messageHandler.handleMessage(makeClearResult('next-turn-result'));
+    expect(setIdleSpy.mock.calls.length).toBeGreaterThan(1);
+
     session.messageQueue.stop();
     await messages.return(undefined);
   });

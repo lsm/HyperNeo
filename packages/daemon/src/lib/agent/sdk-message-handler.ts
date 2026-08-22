@@ -721,7 +721,11 @@ export class SDKMessageHandler {
     const isTopLevelResult =
       isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
     if (isTopLevelResult && this.suppressIdleOnNextResult) {
-      this.settleSuppressedResultWaiter(true);
+      if (isSDKResultSuccess(message)) {
+        this.settleSuppressedResultWaiter(true);
+      } else {
+        this.clearIdleSuppression();
+      }
     }
 
     const deferredSuccessfully = this.withDbChangeBatch(() =>
