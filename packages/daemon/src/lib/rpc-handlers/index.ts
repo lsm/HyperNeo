@@ -839,16 +839,18 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           : {}),
       });
     } else {
-      await session.ensureQueryStarted();
-      const dbId = deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-      await deps.internalEventBus
-        .publish('messages.statusChanged', {
-          sessionId,
-          messageIds: [dbId],
-          status: 'enqueued',
-        })
-        .catch(() => {});
-      await session.messageQueue.enqueueWithId(messageId, message);
+      await withSessionResetCoordination(sessionId, async () => {
+        await session.ensureQueryStarted();
+        const dbId = deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+        await deps.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId,
+            messageIds: [dbId],
+            status: 'enqueued',
+          })
+          .catch(() => {});
+        await session.messageQueue.enqueueWithId(messageId, message);
+      });
     }
   };
 

@@ -1169,7 +1169,9 @@ export function setupSessionHandlers(
         })
       );
     } else {
-      await agentSession.startQueryAndEnqueue(message.uuid, replayContent);
+      await withSessionResetCoordination(targetSessionId, async () => {
+        await agentSession.startQueryAndEnqueue(messageUuid, replayContent);
+      });
     }
 
     return {
@@ -1245,7 +1247,9 @@ export function setupSessionHandlers(
       } else {
         const replayContent = toReplayContent(message.message.content);
         if (replayContent) {
-          await agentSession.startQueryAndEnqueue(message.uuid, replayContent);
+          await withSessionResetCoordination(targetSessionId, async () => {
+            await agentSession.startQueryAndEnqueue(messageUuid, replayContent);
+          });
         }
       }
     } catch (err) {
