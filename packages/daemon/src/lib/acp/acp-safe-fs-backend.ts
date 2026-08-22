@@ -27,6 +27,7 @@ interface BunFfiModule {
 
 interface LibcSymbols {
   close: (fd: number) => number;
+  fchmodat: (fd: number, path: Buffer, mode: number, flags: number) => number;
   fstatat: (fd: number, path: Buffer, stat: Buffer, flags: number) => number;
   mkdirat: (fd: number, path: Buffer, mode: number) => number;
   openat: (fd: number, path: Buffer, flags: number, mode: number) => number;
@@ -100,6 +101,10 @@ async function loadSafeFsBackend(): Promise<SafeFsBackend> {
     const ffi = (await import(moduleName)) as unknown as BunFfiModule;
     const definitions = {
       close: { args: [ffi.FFIType.i32], returns: ffi.FFIType.i32 },
+      fchmodat: {
+        args: [ffi.FFIType.i32, ffi.FFIType.cstring, ffi.FFIType.u32, ffi.FFIType.i32],
+        returns: ffi.FFIType.i32,
+      },
       fstatat: {
         args: [ffi.FFIType.i32, ffi.FFIType.cstring, ffi.FFIType.ptr, ffi.FFIType.i32],
         returns: ffi.FFIType.i32,
@@ -267,13 +272,14 @@ async function openWorkspacePath(
     for (const segment of segments.slice(0, -1)) {
       let nextFd = openDirectory(symbols, directoryFd, segment);
       if (nextFd < 0 && createParents) {
-        const previousUmask = process.umask(0);
-        try {
-          symbols.mkdirat(directoryFd, cString(segment), DIRECTORY_MODE);
-        } finally {
-          process.umask(previousUmask);
-        }
+        symbols.mkdirat(directoryFd, cString(segment), DIRECTORY_MODE);
         nextFd = openDirectory(symbols, directoryFd, segment);
+        if (nextFd >= 0) {
+          fchmodSync(nextFd, DIRECTORY_MODE);
+        } else {
+          symbols.fchmodat(directoryFd, cString(segment), DIRECTORY_MODE, 0);
+          nextFd = openDirectory(symbols, directoryFd, segment);
+        }
       }
       if (nextFd < 0) throwFsError('open', segment);
       closeFile(symbols, directoryFd);

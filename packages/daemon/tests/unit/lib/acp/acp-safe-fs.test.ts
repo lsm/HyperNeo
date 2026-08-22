@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import {
   chmod,
   link,
@@ -470,6 +471,50 @@ bunRuntimeTest('creates parent directories with the pinned mode despite the umas
     expect((await stat(join(workspace, 'nested', 'created.txt'))).mode & 0o777).toBe(0o600);
   } finally {
     process.umask(previousUmask);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+bunRuntimeTest('creates missing parent directories on write', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-parents-'));
+  const workspace = join(root, 'workspace');
+  await mkdir(workspace);
+
+  try {
+    await writeFileWithinWorkspace(
+      workspace,
+      ['made', 'up', 'written.txt'],
+      'content',
+      new AbortController().signal
+    );
+    expect(await readFile(join(workspace, 'made', 'up', 'written.txt'), 'utf-8')).toBe('content');
+    expect((await stat(join(workspace, 'made', 'up'))).mode & 0o777).toBe(0o700);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+bunRuntimeTest('leaves no open descriptors after a write', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-fds-'));
+  const workspace = join(root, 'workspace');
+  await mkdir(join(workspace, 'nested'), { recursive: true });
+
+  try {
+    await writeFileWithinWorkspace(
+      workspace,
+      ['nested', 'written.txt'],
+      'content',
+      new AbortController().signal
+    );
+    const descriptors = readdirSync('/dev/fd').length;
+    await writeFileWithinWorkspace(
+      workspace,
+      ['nested', 'written.txt'],
+      'replacement',
+      new AbortController().signal
+    );
+    expect(readdirSync('/dev/fd').length).toBe(descriptors);
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
