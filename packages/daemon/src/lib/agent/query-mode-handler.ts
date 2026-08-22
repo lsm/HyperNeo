@@ -127,14 +127,43 @@ export class QueryModeHandler {
       const replayContent = this.toReplayContent(msg.message.content);
       if (!replayContent) continue;
       if (!clearAttempted && taskUuids.has(msg.uuid)) {
+        if (this.ctx.messageQueue.isRunning()) {
+          await this.deferRemainingRows(messages, v2Owned, msg.uuid);
+          return clearedContext;
+        }
         await clearAheadOfTask();
       }
       await this.ctx.messageQueue.enqueueWithId(msg.uuid, replayContent);
     }
     if (!clearAttempted && options?.pendingTaskInput === true) {
-      await clearAheadOfTask();
+      if (!this.ctx.messageQueue.isRunning()) {
+        await clearAheadOfTask();
+      }
     }
     return clearedContext;
+  }
+
+  private async deferRemainingRows(
+    messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>,
+    v2Owned: ReadonlySet<string>,
+    fromUuid: string
+  ): Promise<void> {
+    const dbIds: string[] = [];
+    let delaying = false;
+    for (const msg of messages) {
+      if (!delaying && msg.uuid !== fromUuid) continue;
+      delaying = true;
+      if (typeof msg.uuid !== 'string' || msg.uuid.length === 0) continue;
+      if (v2Owned.has(msg.uuid)) continue;
+      dbIds.push(msg.dbId);
+    }
+    if (dbIds.length === 0) return;
+    this.ctx.db.updateMessageStatus(dbIds, 'deferred');
+    await this.ctx.internalEventBus.publish('messages.statusChanged', {
+      sessionId: this.ctx.session.id,
+      messageIds: dbIds,
+      status: 'deferred',
+    });
   }
 
   private toFlushMessages(
@@ -157,13 +186,13 @@ export class QueryModeHandler {
     flushMessages: FlushMessage[],
     options?: { pendingTaskInput?: boolean }
   ): TurnEndFlushPlan {
-    const jobQueue = this.ctx.db.getJobQueueRepo();
-    const activeInJobQueue = jobQueue.activeDeliveryMessageUuids(this.ctx.session.id);
+    const jobQueue = this.ctx.db.getJobQueueRepo?.();
     return decideTurnEndFlush({
       messages: flushMessages,
-      activeInJobQueue,
+      activeInJobQueue:
+        jobQueue?.activeDeliveryMessageUuids(this.ctx.session.id) ?? new Set<string>(),
       pendingInMemoryUuids: new Set<string>(),
-      activeTurnInJobQueue: jobQueue.hasActiveTurnDeliveryJob(this.ctx.session.id),
+      activeTurnInJobQueue: jobQueue?.hasActiveTurnDeliveryJob(this.ctx.session.id) ?? false,
       slotResetsContext: this.ctx.slotResetsContext?.() ?? false,
       hasPriorContext: !!this.ctx.session.sdkSessionId,
       pendingTaskInput: options?.pendingTaskInput === true,
@@ -274,6 +303,12 @@ export class QueryModeHandler {
 
   async replayPendingMessagesForImmediateMode(): Promise<void> {
     const { clearedContext } = await this.sendEnqueuedMessagesOnTurnEnd();
+    if (!clearedContext) {
+      const jobQueue = this.ctx.db.getJobQueueRepo?.();
+      if (jobQueue?.activeDeliveryMessageUuids(this.ctx.session.id).size) {
+        return;
+      }
+    }
     await this.handleQueryTrigger({ skipContextReset: clearedContext });
   }
 

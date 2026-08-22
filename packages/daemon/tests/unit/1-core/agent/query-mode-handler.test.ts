@@ -31,6 +31,7 @@ describe('QueryModeHandler', () => {
   let updateMessageStatusSpy: ReturnType<typeof mock>;
   let emitSpy: ReturnType<typeof mock>;
   let enqueueWithIdSpy: ReturnType<typeof mock>;
+  let isRunningSpy: ReturnType<typeof mock>;
   let hasPendingOrInFlightSpy: ReturnType<typeof mock>;
   let ensureQueryStartedSpy: ReturnType<typeof mock>;
   let v2Previous: string | undefined;
@@ -79,10 +80,12 @@ describe('QueryModeHandler', () => {
     } as unknown as DaemonHub;
 
     enqueueWithIdSpy = mock(async () => {});
+    isRunningSpy = mock(() => false);
     hasPendingOrInFlightSpy = mock(() => false);
     mockMessageQueue = {
       enqueueWithId: enqueueWithIdSpy,
       hasPendingOrInFlight: hasPendingOrInFlightSpy,
+      isRunning: isRunningSpy,
     } as unknown as MessageQueue;
 
     mockLogger = {
@@ -669,6 +672,34 @@ describe('QueryModeHandler', () => {
       expect(clearSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('defers task rows without clearing while the memory queue is mid-turn', async () => {
+      const clearSpy = mock(async () => {});
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          {
+            dbId: 'db-human',
+            uuid: 'uuid-human',
+            type: 'user',
+            isSynthetic: false,
+            inputKind: 'human',
+            message: { role: 'user', content: 'a human follow-up' },
+          },
+          ...deferredBatch(2),
+        ] as unknown as SDKMessage[])
+      );
+      resetSlotDb();
+      isRunningSpy.mockImplementation(() => true);
+
+      handler = new QueryModeHandler(resetSlotContext(clearSpy));
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 3 });
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-human', 'a human follow-up');
+      expect(updateMessageStatusSpy).toHaveBeenLastCalledWith(['db-1', 'db-2'], 'deferred');
+    });
+
     it('delivers leading human rows before the clear that fronts the task rows', async () => {
       const order: string[] = [];
       const clearSpy = mock(async () => {
@@ -1252,6 +1283,48 @@ describe('QueryModeHandler', () => {
       expect(deliveryUuids()).toEqual([]);
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
       expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
+    });
+
+    it('replay defers the deferred-task pass while the replayed human job is active', async () => {
+      const clearSpy = mock(async () => {});
+      getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
+        byStatusResult(
+          status === 'enqueued'
+            ? [
+                {
+                  dbId: 'db-human',
+                  uuid: 'uuid-human',
+                  type: 'user',
+                  isSynthetic: false,
+                  inputKind: 'human',
+                  message: { role: 'user', content: 'a human follow-up' },
+                },
+              ]
+            : [
+                {
+                  dbId: 'db-task',
+                  uuid: 'uuid-task',
+                  type: 'user',
+                  isSynthetic: true,
+                  inputKind: 'task',
+                  message: { role: 'user', content: 'the deferred task' },
+                },
+              ]
+        )
+      );
+
+      handler = new QueryModeHandler({
+        ...createContext(),
+        session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
+        slotResetsContext: () => true,
+        clearConversationContext: clearSpy,
+      });
+      await handler.replayPendingMessagesForImmediateMode();
+
+      expect(clearSpy).not.toHaveBeenCalled();
+      const jobs = deliveryUuids();
+      expect(jobs).toEqual([{ uuid: 'uuid-human', role: 'turn' }]);
+      expect(updateMessageStatusSpy).not.toHaveBeenCalled();
     });
 
     it('handleQueryTrigger clears exactly once before the durable batch job is created (#1085)', async () => {
