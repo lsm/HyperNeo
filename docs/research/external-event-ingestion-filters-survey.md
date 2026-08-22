@@ -228,8 +228,11 @@ polling sources.
   per-space `settings_json` — and the minimal write RPC for that flag ships **in
   A2**, not A3 (review finding, PR #2723): `space.github.*` has no generic settings
   writer today (`listConfig` is read-only), so a default-on flip without a supported
-  opt-out is not shippable. Case-insensitive login compare; Bot actors (e.g.
-  `github-actions[bot]`) never match a user token identity.
+  opt-out is not shippable. Case-insensitive login compare; Bot initiators never
+  match the **automatic token-derived identity** (a `/user` login is a user
+  account, so e.g. `github-actions[bot]` echoes are not auto-suppressed), but
+  explicitly configured `suppressSelfEventsLogins` entries — bot logins
+  included — participate fully in the comparison (review finding, PR #2723).
 - **Identity-resolution policy (review findings, PR #2723):** the self identity is
   a **configurable login set**, not a single derived value. The extension's
   ingestion credential (`neokai.external-events.github` or `GITHUB_TOKEN`,
