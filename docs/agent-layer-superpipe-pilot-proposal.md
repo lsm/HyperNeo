@@ -1162,9 +1162,14 @@ note.
   passed, and a claim superseded during that await resumes into
   `markDeliveryBatchConsumed()` and consumption signaling even when
   replacement teardown resolved the yielded durable entry via
-  `MessageQueue.clear()` — cleared, not consumed; delivery ownership is
-  revalidated after the acknowledgement and before the durable
-  status/signaling effects — pinned by a
+  `MessageQueue.clear()` — cleared, not consumed; the full
+  **lifecycle/abort state is rechecked alongside delivery ownership** after
+  the acknowledgement and before the durable
+  status/signaling effects — cleanup can clear a yielded entry's
+  acknowledgment (message-queue.ts:156–162 resolves it) without superseding
+  the claim or losing the abort race, and the continuation at
+  `:1523–1526`/`:1537–1549` would otherwise persist consumption for a
+  cleared prompt — pinned by a
   **deterministic interleaving test** (deferred `ensureQueryStarted` promise;
   start cleanup before resolving it; assert the resnapshot disarms the
   preinstalled observer, creates no idle waiter, and returns without
