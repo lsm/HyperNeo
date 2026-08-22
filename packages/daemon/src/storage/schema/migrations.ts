@@ -441,6 +441,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(200), () => runMigration200(db));
 
   run(migrationMarkerKey(201), () => runMigration201(db));
+
+  run(migrationMarkerKey(202), () => runMigration202(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -9519,4 +9521,10 @@ export function runMigration201(db: BunDatabase): void {
   if (!tableHasColumn(db, 'space_tasks', 'spawn_reservation_token')) {
     db.exec(`ALTER TABLE space_tasks ADD COLUMN spawn_reservation_token TEXT`);
   }
+}
+
+export function runMigration202(db: BunDatabase): void {
+  if (!tableExists(db, 'space_tasks')) return;
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_created
+    ON space_tasks(goal_id, created_at DESC, id DESC)`);
 }

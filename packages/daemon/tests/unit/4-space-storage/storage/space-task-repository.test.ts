@@ -1366,7 +1366,7 @@ describe('SpaceTaskRepository', () => {
   describe('listByGoal', () => {
     const goalId = 'goal-pagination';
 
-    function seedTask(title: string, updatedAt: number, status: string = 'open'): string {
+    function seedTask(title: string, createdAt: number, status: string = 'open'): string {
       const task = repo.createTask({
         spaceId,
         title,
@@ -1375,12 +1375,12 @@ describe('SpaceTaskRepository', () => {
         status: status as any,
       });
       (db as any)
-        .prepare(`UPDATE space_tasks SET updated_at = ? WHERE id = ?`)
-        .run(updatedAt, task.id);
+        .prepare(`UPDATE space_tasks SET created_at = ? WHERE id = ?`)
+        .run(createdAt, task.id);
       return task.id;
     }
 
-    it('returns only tasks for the goal, ordered by updated_at DESC, excluding archived by default', () => {
+    it('returns only tasks for the goal, ordered by created_at DESC, excluding archived by default', () => {
       const older = seedTask('older', 1000);
       const newer = seedTask('newer', 3000);
 
@@ -1390,7 +1390,7 @@ describe('SpaceTaskRepository', () => {
         description: '',
         goalId: 'other-goal',
       });
-      (db as any).prepare(`UPDATE space_tasks SET updated_at = ? WHERE id = ?`).run(6000, other.id);
+      (db as any).prepare(`UPDATE space_tasks SET created_at = ? WHERE id = ?`).run(6000, other.id);
 
       const { tasks, total, hasMore } = repo.listByGoal(goalId);
       expect(tasks.map((t) => t.id)).toEqual([newer, older]);
@@ -1438,11 +1438,53 @@ describe('SpaceTaskRepository', () => {
         collected.push(...page.tasks.map((t) => t.id));
         if (!page.hasMore) break;
         const last = page.tasks[page.tasks.length - 1];
-        before = last.updatedAt;
+        before = last.createdAt;
         beforeId = last.id;
       }
 
       expect(collected).toEqual(expected);
+    });
+
+    it('reports a stable total across pages (independent of the cursor)', () => {
+      for (let i = 0; i < 5; i++) seedTask(`task-${i}`, 1000 + i * 100);
+
+      const first = repo.listByGoal(goalId, { limit: 2 });
+      expect(first.total).toBe(5);
+      expect(first.tasks.length).toBe(2);
+
+      const second = repo.listByGoal(goalId, {
+        limit: 2,
+        before: first.tasks[first.tasks.length - 1].createdAt,
+        beforeId: first.tasks[first.tasks.length - 1].id,
+      });
+      expect(second.total).toBe(5);
+      expect(second.tasks.length).toBe(2);
+    });
+
+    it('keeps an updated-but-unseen task in the traversal (immutable created_at key)', () => {
+      const ids: string[] = [];
+      for (let i = 0; i < 4; i++) ids.push(seedTask(`task-${i}`, 1000 + i * 100));
+
+      const first = repo.listByGoal(goalId, { limit: 2 });
+      const lastUnseen = ids[1];
+      (db as any)
+        .prepare(`UPDATE space_tasks SET updated_at = ? WHERE id = ?`)
+        .run(999999, lastUnseen);
+
+      const collected = [...first.tasks.map((t) => t.id)];
+      let before = first.tasks[first.tasks.length - 1].createdAt;
+      let beforeId = first.tasks[first.tasks.length - 1].id;
+      for (let guard = 0; guard < 10; guard++) {
+        const page = repo.listByGoal(goalId, { limit: 10, before, beforeId });
+        collected.push(...page.tasks.map((t) => t.id));
+        if (!page.hasMore) break;
+        const last = page.tasks[page.tasks.length - 1];
+        before = last.createdAt;
+        beforeId = last.id;
+      }
+
+      expect(new Set(collected).size).toBe(ids.length);
+      expect(collected).toContain(lastUnseen);
     });
 
     it('clamps the page size to the bounded range', () => {
@@ -1467,13 +1509,13 @@ describe('SpaceTaskRepository', () => {
       seedTask('late-insert', 9000);
 
       const collected = [...first.tasks.map((t) => t.id)];
-      let before = first.tasks[0].updatedAt;
+      let before = first.tasks[0].createdAt;
       let beforeId = first.tasks[0].id;
       for (let guard = 0; guard < 10; guard++) {
         const page = repo.listByGoal(goalId, { limit: 1, before, beforeId });
         if (page.tasks.length === 0) break;
         collected.push(page.tasks[0].id);
-        before = page.tasks[0].updatedAt;
+        before = page.tasks[0].createdAt;
         beforeId = page.tasks[0].id;
         if (!page.hasMore) break;
       }

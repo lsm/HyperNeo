@@ -249,33 +249,34 @@ export class SpaceTaskRepository {
     const limit = Math.max(1, Math.min(100, Math.trunc(params.limit ?? 20)));
     const cursorId =
       typeof params.beforeId === 'string' && params.beforeId.length > 0 ? params.beforeId : null;
-    const where: string[] = [`goal_id = ?`];
-    const bind: SQLiteValue[] = [goalId];
+    const scopeWhere: string[] = [`goal_id = ?`];
+    const scopeBind: SQLiteValue[] = [goalId];
     if (params.status) {
-      where.push(`status = ?`);
-      bind.push(params.status);
+      scopeWhere.push(`status = ?`);
+      scopeBind.push(params.status);
     } else {
-      where.push(`status != 'archived'`);
+      scopeWhere.push(`status != 'archived'`);
     }
+    const countRow = this.db
+      .prepare(`SELECT COUNT(*) as count FROM space_tasks WHERE ${scopeWhere.join(' AND ')}`)
+      .get(...scopeBind) as { count: number } | undefined;
+    const total = countRow?.count ?? 0;
+    const pageWhere = [...scopeWhere];
+    const pageBind = [...scopeBind];
     if (params.before !== undefined) {
       if (cursorId) {
-        where.push(`(updated_at < ? OR (updated_at = ? AND id < ?))`);
-        bind.push(params.before, params.before, cursorId);
+        pageWhere.push(`(created_at < ? OR (created_at = ? AND id < ?))`);
+        pageBind.push(params.before, params.before, cursorId);
       } else {
-        where.push(`updated_at < ?`);
-        bind.push(params.before);
+        pageWhere.push(`created_at < ?`);
+        pageBind.push(params.before);
       }
     }
-    const whereSql = where.join(' AND ');
-    const countRow = this.db
-      .prepare(`SELECT COUNT(*) as count FROM space_tasks WHERE ${whereSql}`)
-      .get(...bind) as { count: number } | undefined;
-    const total = countRow?.count ?? 0;
     const rows = this.db
       .prepare(
-        `SELECT * FROM space_tasks WHERE ${whereSql} ORDER BY updated_at DESC, id DESC LIMIT ?`
+        `SELECT * FROM space_tasks WHERE ${pageWhere.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ?`
       )
-      .all(...bind, limit + 1) as Record<string, unknown>[];
+      .all(...pageBind, limit + 1) as Record<string, unknown>[];
     const hasMore = rows.length > limit;
     const tasks = rows.slice(0, limit).map((r) => this.rowToSpaceTask(r));
     return { tasks, total, hasMore };

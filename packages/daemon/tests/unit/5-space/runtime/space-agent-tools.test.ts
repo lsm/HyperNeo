@@ -2149,7 +2149,7 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
       });
       ids.push(task.id);
       ctx.db
-        .prepare(`UPDATE space_tasks SET updated_at = ? WHERE id = ?`)
+        .prepare(`UPDATE space_tasks SET created_at = ? WHERE id = ?`)
         .run(1000 + i * 100, task.id);
     }
     const expected = [...ids].reverse();
@@ -2183,7 +2183,7 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
       }
       if (!out.has_more) break;
       const last = out.tasks[out.tasks.length - 1];
-      before = last.updatedAt;
+      before = last.createdAt;
       beforeId = last.id;
     }
 
@@ -2215,9 +2215,9 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
       goalId: goal.id,
     });
 
-    ctx.db.prepare(`UPDATE space_tasks SET updated_at = ? WHERE id = ?`).run(3000, openTask.id);
-    ctx.db.prepare(`UPDATE space_tasks SET updated_at = ? WHERE id = ?`).run(2000, doneTask.id);
-    ctx.db.prepare(`UPDATE space_tasks SET updated_at = ? WHERE id = ?`).run(1000, archived.id);
+    ctx.db.prepare(`UPDATE space_tasks SET created_at = ? WHERE id = ?`).run(3000, openTask.id);
+    ctx.db.prepare(`UPDATE space_tasks SET created_at = ? WHERE id = ?`).run(2000, doneTask.id);
+    ctx.db.prepare(`UPDATE space_tasks SET created_at = ? WHERE id = ?`).run(1000, archived.id);
 
     const open = JSON.parse((await handlers.list_goal_tasks({ goal_id: goal.id })).content[0].text);
     expect(open.total).toBe(2);

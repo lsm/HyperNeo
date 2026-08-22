@@ -4580,7 +4580,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'list_goal_tasks',
-        "List tasks linked to a goal in this space, optionally filtered by status. Returns a bounded page (default 20, max 100) ordered by most-recently-updated; pass the last item's updatedAt as `before` and its id as `before_id` to fetch the next page.",
+        "List tasks linked to a goal in this space, optionally filtered by status. Returns a bounded page (default 20, max 100) ordered by most-recently-created; pass the last item's createdAt as `before` and its id as `before_id` to fetch the next page.",
         {
           goal_id: z.string().describe('Goal ID'),
           status: z
@@ -4608,7 +4608,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
             .number()
             .int()
             .optional()
-            .describe('Return tasks updated before this timestamp (cursor)'),
+            .describe('Return tasks created before this timestamp (cursor)'),
           before_id: z.string().optional().describe('Cursor id for same-timestamp pagination'),
         },
         (args) => handlers.list_goal_tasks(args)
