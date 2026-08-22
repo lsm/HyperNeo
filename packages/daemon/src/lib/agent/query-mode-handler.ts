@@ -274,10 +274,12 @@ export class QueryModeHandler {
   }): Promise<{
     replayedWork: boolean;
     clearedContext: boolean;
+    replayFailed: boolean;
   }> {
     const { session, db, messageQueue, logger } = this.ctx;
     let replayedWork = false;
     let clearedContext = false;
+    let replayFailed = false;
 
     const runReplay = async (): Promise<void> => {
       const { messages: queuedMessages } = db.getUserMessagesByStatus(session.id, 'enqueued');
@@ -313,9 +315,10 @@ export class QueryModeHandler {
       }
     } catch (error) {
       if (error instanceof ClearConversationCancelledError) throw error;
+      replayFailed = true;
       logger.error('Failed to send enqueued messages on turn end:', error);
     }
-    return { replayedWork, clearedContext };
+    return { replayedWork, clearedContext, replayFailed };
   }
 
   async replayPendingMessagesForImmediateMode(): Promise<void> {

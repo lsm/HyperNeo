@@ -1384,8 +1384,10 @@ export class TaskAgentManager {
         this.agentSessionIndex.get(subSessionId) ??
         Array.from(this.subSessions.values())
           .map((nodeMap) => nodeMap.get(subSessionId))
-          .find((session) => session !== undefined) ??
-        target;
+          .find((session) => session !== undefined);
+      if (!currentTarget) {
+        throw new Error(`Sub-session not found: ${subSessionId}`);
+      }
 
       return await this.injectMessageIntoSession(
         currentTarget,
@@ -3336,12 +3338,13 @@ export class TaskAgentManager {
         outcome.decision.action === 'deliver_without_clear' &&
         outcome.decision.reason === 'unconsumed_work_pending';
       let clearedUpstream = false;
+      let backlogReplayFailed = false;
       const sendEnqueued = (
         session as AgentSession & {
           sendEnqueuedMessagesOnTurnEnd?: (options?: {
             pendingTaskInput?: boolean;
             skipResetCoordination?: boolean;
-          }) => Promise<{ replayedWork: boolean; clearedContext: boolean }>;
+          }) => Promise<{ replayedWork: boolean; clearedContext: boolean; replayFailed: boolean }>;
         }
       ).sendEnqueuedMessagesOnTurnEnd;
       if (clearSuppressedByPendingWork && typeof sendEnqueued === 'function') {
@@ -3350,6 +3353,7 @@ export class TaskAgentManager {
           skipResetCoordination: true,
         });
         clearedUpstream = replayed.clearedContext;
+        backlogReplayFailed = replayed.replayFailed;
       }
       const replay = await session.handleQueryTrigger({
         deliverIndividually: true,
@@ -3364,7 +3368,11 @@ export class TaskAgentManager {
             `${replay.error ?? 'unknown error'} — delivering current message only`
         );
       }
-      if (clearSuppressedByPendingWork && !clearedUpstream && this.clearStillBlocked(session)) {
+      if (
+        clearSuppressedByPendingWork &&
+        !clearedUpstream &&
+        (backlogReplayFailed || this.clearStillBlocked(session))
+      ) {
         const deferredDbId = existing
           ? messageId
           : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);

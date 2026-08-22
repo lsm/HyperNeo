@@ -988,6 +988,34 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(session.enqueueMock).not.toHaveBeenCalled();
   });
 
+  it('defers the injected task when the backlog replay fails (#1085)', async () => {
+    const { manager, session } = makeManager({
+      slotResets: true,
+      unconsumedCounts: { deferred: 1 },
+    });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      sendEnqueuedMessagesOnTurnEnd: async () => ({
+        replayedWork: true,
+        clearedContext: false,
+        replayFailed: true,
+      }),
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    expect(session.clearMock).not.toHaveBeenCalled();
+    expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
+    expect(session.saveUserMessage.mock.calls[0][2]).toBe('deferred');
+    expect(session.enqueueMock).not.toHaveBeenCalled();
+  });
+
   it('does NOT clear on inject while unconsumed delivered work is pending (#1085)', async () => {
     const { manager, session } = makeManager({
       slotResets: true,

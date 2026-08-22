@@ -300,6 +300,58 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
   });
 
+  test('rejects the injection when the resolved session disappears before the lock', async () => {
+    const { tam } = makeManager();
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    const config = (
+      tam as unknown as {
+        config: {
+          db: Record<string, unknown>;
+          nodeExecutionRepo: Record<string, unknown>;
+        };
+      }
+    ).config;
+    config.nodeExecutionRepo.getByAgentSessionId = () => makeExecution();
+    config.db.getSDKMessageRepo = () => ({
+      getDeliveryContent: () => null,
+      reopenDeliveryByUuid: () => null,
+      markDeliveryFailedByUuid: () => null,
+      markDeliveryDeferredByUuid: () => null,
+    });
+    config.db.getJobQueueRepo = () => ({
+      activeDeliveryMessageUuids: () => new Set<string>(),
+      hasActiveTurnDeliveryJob: () => false,
+      getActiveDeliveryRole: () => null,
+      enqueue: () => ({ id: 'job-1' }),
+    });
+    config.db.saveUserMessage = () => 'db-id';
+    config.db.getUserMessageIdsByStatus = () => [];
+    const session = fake.agentSession as unknown as Record<string, unknown>;
+    session.handleQueryTrigger = async () => ({ success: true, messageCount: 0 });
+    session.ensureQueryStarted = async () => {};
+    session.messageQueue = { enqueueWithId: async () => {}, size: () => 0 };
+    const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
+      .agentSessionIndex;
+    index.set(SUB_SESSION_ID, fake.agentSession);
+
+    let releaseLock!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const holder = withSessionResetCoordination(SUB_SESSION_ID, async () => {
+      await gate;
+    });
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const injectPromise = tam.injectSubSessionMessage(SUB_SESSION_ID, 'handoff', true);
+    await settle();
+    await settle();
+
+    index.delete(SUB_SESSION_ID);
+    releaseLock();
+    await holder;
+    await expect(injectPromise).rejects.toThrow(`Sub-session not found: ${SUB_SESSION_ID}`);
+  });
+
   test('injecting into an uncached sub-session never deadlocks against the reset-coordination lock', async () => {
     const { tam } = makeManager();
     const fake = makeFakeAgentSession(SUB_SESSION_ID);

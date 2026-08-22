@@ -683,7 +683,7 @@ export class AgentSession
   async sendEnqueuedMessagesOnTurnEnd(options?: {
     pendingTaskInput?: boolean;
     skipResetCoordination?: boolean;
-  }): Promise<{ replayedWork: boolean; clearedContext: boolean }> {
+  }): Promise<{ replayedWork: boolean; clearedContext: boolean; replayFailed: boolean }> {
     return this.queryModeHandler.sendEnqueuedMessagesOnTurnEnd(options);
   }
 
