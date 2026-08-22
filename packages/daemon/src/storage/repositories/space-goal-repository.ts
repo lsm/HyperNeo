@@ -35,8 +35,8 @@ export class SpaceGoalRepository {
 					id, space_id, title, description, status, type, priority, labels, metrics,
 					summary, progress, next_steps, preferred_workflow_id, auto_trigger_next,
 					pending_next_run, active_task_id, last_task_id, last_check_in_at,
-					next_check_in_at, created_at, updated_at, completed_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					next_check_in_at, created_at, updated_at, completed_at, revision
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -60,7 +60,8 @@ export class SpaceGoalRepository {
         null,
         now,
         now,
-        null
+        null,
+        1
       );
     this.reactiveDb?.notifyChange('space_goals');
     return this.getById(id) as SpaceGoal;
@@ -143,8 +144,8 @@ export class SpaceGoalRepository {
     }
 
     if (sets.length === 0) return this.getById(id);
-    add('updated_at', Date.now());
-    values.push(id);
+    sets.push(`updated_at = ?`, `revision = revision + 1`);
+    values.push(Date.now(), id);
     this.db.prepare(`UPDATE space_goals SET ${sets.join(', ')} WHERE id = ?`).run(...values);
     this.reactiveDb?.notifyChange('space_goals');
     return this.getById(id);
@@ -152,7 +153,9 @@ export class SpaceGoalRepository {
 
   setTaskScheduleId(id: string, scheduleId: string | null): SpaceGoal | null {
     this.db
-      .prepare(`UPDATE space_goals SET task_schedule_id = ?, updated_at = ? WHERE id = ?`)
+      .prepare(
+        `UPDATE space_goals SET task_schedule_id = ?, updated_at = ?, revision = revision + 1 WHERE id = ?`
+      )
       .run(scheduleId, Date.now(), id);
     this.reactiveDb?.notifyChange('space_goals');
     return this.getById(id);
@@ -163,7 +166,7 @@ export class SpaceGoalRepository {
       .prepare(
         `UPDATE space_goals
 				 SET active_task_id = ?, last_task_id = ?, pending_next_run = 0,
-				     last_check_in_at = ?, updated_at = ?
+				     last_check_in_at = ?, updated_at = ?, revision = revision + 1
 				 WHERE id = ? AND status = 'active' AND active_task_id IS NULL`
       )
       .run(taskId, taskId, Date.now(), Date.now(), goalId);
@@ -179,7 +182,7 @@ export class SpaceGoalRepository {
     const result = this.db
       .prepare(
         `UPDATE space_goals
-				 SET active_task_id = NULL, last_task_id = ?, updated_at = ?
+				 SET active_task_id = NULL, last_task_id = ?, updated_at = ?, revision = revision + 1
 				 WHERE id = ? AND active_task_id = ?`
       )
       .run(taskId, Date.now(), goalId, taskId);
@@ -212,6 +215,7 @@ export class SpaceGoalRepository {
       createdAt: row.created_at as number,
       updatedAt: row.updated_at as number,
       completedAt: (row.completed_at as number | null) ?? null,
+      revision: (row.revision as number) ?? 0,
     };
   }
 }

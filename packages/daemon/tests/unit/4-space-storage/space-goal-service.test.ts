@@ -969,4 +969,38 @@ describe('SpaceGoalService', () => {
     expect((last?.diff?.checkInCronExpression as { previous: string }).previous).toBe('0 9 * * 1');
     expect((last?.diff?.checkInCronExpression as { current: string }).current).toBe('0 * * * *');
   });
+
+  it('increments the goal revision monotonically on each mutation', () => {
+    const goal = service.createGoal({ spaceId, title: 'Revision counter' });
+    expect(goal.revision).toBe(1);
+
+    const updated = service.updateGoal(goal.id, { summary: 'v2' });
+    expect(updated.revision).toBe(2);
+
+    const again = service.updateGoal(goal.id, { progress: 50 });
+    expect(again.revision).toBe(3);
+
+    expect(goalRepo.getById(goal.id)?.revision).toBe(3);
+  });
+
+  it('exposes the durable terminal generation from handleTaskTerminal', () => {
+    const goal = service.createGoal({ spaceId, title: 'Generation goal' });
+    const task = service.createImmediateTask(goal.id);
+    expect(task.task).not.toBeNull();
+
+    taskRepo.updateTask(task.task!.id, { status: 'in_progress' });
+    taskRepo.updateTask(task.task!.id, { status: 'open' });
+    taskRepo.updateTask(task.task!.id, { status: 'done' });
+
+    const done = taskRepo.getTask(task.task!.id);
+    expect(done?.terminalGeneration).toBe(1);
+
+    const terminal = service.handleTaskTerminal(task.task!.id);
+    expect(terminal?.terminalGeneration).toBe(1);
+
+    taskRepo.updateTask(task.task!.id, { status: 'open' });
+    taskRepo.updateTask(task.task!.id, { status: 'cancelled' });
+    const reopened = taskRepo.getTask(task.task!.id);
+    expect(reopened?.terminalGeneration).toBe(2);
+  });
 });

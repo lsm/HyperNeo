@@ -386,6 +386,7 @@ export interface SpaceGoal {
   createdAt: number;
   updatedAt: number;
   completedAt: number | null;
+  revision: number;
 }
 
 export interface CreateSpaceGoalParams {
@@ -519,6 +520,7 @@ export interface SpaceTask {
   postApprovalSourceNodeId?: string | null;
   restrictions?: TaskRestriction | null;
   updatedAt: number;
+  terminalGeneration: number;
 }
 
 export interface PaginatedSpaceTaskResult {
