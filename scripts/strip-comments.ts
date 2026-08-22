@@ -109,7 +109,7 @@ function mergeRanges(ranges: Range[]): Range[] {
   return merged;
 }
 
-const IDENT_CONTINUE = /[\p{L}\p{N}_$]/u;
+const IDENT_CONTINUE = /[$\u200C\u200D\p{ID_Continue}]/u;
 
 const LINE_TERMINATOR = /[\n\r\u2028\u2029]/;
 

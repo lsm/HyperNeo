@@ -186,6 +186,11 @@ describe('strip-comments', () => {
     expect(stripComments(source, 'a.ts', false)).toBe('const r = typeof \\u0076alue;\n');
   });
 
+  it('separates identifiers that use Other_ID_Start characters', () => {
+    const source = 'const r = typeof/* note */℘;\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('const r = typeof ℘;\n');
+  });
+
   it('treats carriage return inside a removed comment as a line terminator', () => {
     const source = 'function f() {\n  return/* note\r   */1;\n}\n';
     expect(stripComments(source, 'a.ts', false)).toBe('function f() {\n  return\n1;\n}\n');
