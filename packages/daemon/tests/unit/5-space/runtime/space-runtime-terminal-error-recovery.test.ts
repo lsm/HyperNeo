@@ -806,8 +806,58 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(tam._cancelled).toContain(SESSION);
     expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
     expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
+    expect(taskRepo.getTask(taskId)?.result).toContain('Connection refused');
     expect(notifications).toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
     expect(notifications).toContainEqual(expect.objectContaining({ kind: 'workflow_run_blocked' }));
+  });
+
+  test('declined blocking-limit result falls through to runtime continue (limit pipeline did not claim it)', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'blocking_limit',
+      resultText: 'API Error: usage limit reached',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+  });
+
+  test('status-only results with different HTTP statuses are distinct signatures', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      apiErrorStatus: 502,
+      resultText: '',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(1);
+
+    resumeToIdle(executionId, {
+      subtype: 'success',
+      apiErrorStatus: 503,
+      resultText: '',
+    });
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(2);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+
+    resumeToIdle(executionId, {
+      subtype: 'success',
+      apiErrorStatus: 504,
+      resultText: '',
+    });
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(2);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
   });
 
   test('distinct api-error texts are distinct signatures (second continue before budget exhaustion)', async () => {

@@ -7370,11 +7370,13 @@ export class SpaceRuntime {
     spaceId: string,
     canonicalTask: SpaceTask,
     execution: NodeExecution,
-    errorResult: { subtype: string; errors?: string[] },
+    errorResult: { subtype: string; errors?: string[]; result?: string },
     tam: TaskAgentManager,
     detail: string
   ): Promise<void> {
-    const errorSnippet = (errorResult.errors ?? []).join('; ').slice(0, 280);
+    const errorDetails = (errorResult.errors ?? []).join('; ');
+    const fallbackText = typeof errorResult.result === 'string' ? errorResult.result : '';
+    const errorSnippet = (errorDetails !== '' ? errorDetails : fallbackText).slice(0, 280);
     const reason =
       `Agent session ended on a terminal error result and exhausted runtime auto-continue recovery ` +
       `(node ${execution.workflowNodeId}, agent ${execution.agentName}, subtype ${errorResult.subtype}): ` +
@@ -7438,7 +7440,10 @@ export class SpaceRuntime {
     return (
       isSDKResultSuccess(message) &&
       message.is_error === true &&
-      (message.terminal_reason === 'api_error' || typeof message.api_error_status === 'number')
+      (message.terminal_reason === 'api_error' ||
+        message.terminal_reason === 'blocking_limit' ||
+        message.terminal_reason === 'rapid_refill_breaker' ||
+        typeof message.api_error_status === 'number')
     );
   }
 
@@ -7454,13 +7459,16 @@ export class SpaceRuntime {
     terminal_reason?: string;
     errors?: string[];
     result?: string;
+    api_error_status?: number | null;
   }): string {
     const terminalReason =
       typeof message.terminal_reason === 'string' ? message.terminal_reason : '';
     const errors = (message.errors ?? []).map((entry) => entry.trim().slice(0, 200));
     const resultText =
       typeof message.result === 'string' ? message.result.trim().slice(0, 200) : '';
-    return `${message.subtype}|${terminalReason}|${errors.join('\n')}${resultText}`;
+    const status =
+      typeof message.api_error_status === 'number' ? String(message.api_error_status) : '';
+    return `${message.subtype}|${terminalReason}|${errors.join('\n')}${resultText}|${status}`;
   }
 
   private isPromptTooLongResultError(message: {
