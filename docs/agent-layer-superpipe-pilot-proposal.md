@@ -204,8 +204,10 @@ apply PRs):
   `limit-error-classifier.ts`. Collides with chains B and C.
 - **PR #2543 (open)** — Codex-findings triage: touches `agent-session.ts`,
   `message-delivery.ts`, `sdk-message-handler.ts`,
-  `job-handlers/message-delivery.handler.ts`. Collides with chains A, B, and C
-  — those are exactly Chain A's target files as well as B/C regions.
+  `job-handlers/message-delivery.handler.ts`. Collides with chains A and C
+  — those are exactly Chain A's target files as well as C regions. No
+  query-runner code, so **Chain B is not blocked** by this PR (it sequences only
+  behind #2661, per its own impact line).
 - **Landed since the survey basis:** #2696 (Issue #2548 part 2 — SDK interrupt
   receipt + refusal rewind target; `61e5f9b`) touched interrupt-handler.ts,
   sdk-message-handler.ts, agent-session.ts — no longer a collision, but it added
@@ -297,7 +299,12 @@ note.
   :1159–1165) and deliberately skips `errorManager`, with no terminal category;
   folding it into `terminal(category)` would replace the actionable validation
   text with generic category handling |
-  terminal(category)` — interpreted by thin shell arms. Routing note the table
+  terminal(category, message_hint) — the category alone does not determine the
+  user message: :1247–1269 selects tailored text per variant (an exhausted
+  startup timeout and an ordinary timeout are both `TIMEOUT`, but only the
+  former gets startup-specific guidance), so the route carries the hint/subtype
+  and the decision table asserts it instead of the interpreter re-deriving it` —
+  interpreted by thin shell arms. Routing note the table
   must preserve: rate-limit errors — explicit HTTP-429 **and** text-form — do
   not enter the provider-backoff arm: `isRetryableProviderError` excludes all
   `\b4\d{2}\b` matches, and text-only "rate limit" errors fail it too because
@@ -395,7 +402,11 @@ note.
 - **PR sketch:**
   1. **PR 1 (pins):** flag-machine truth table (suppress ×
      sessionStateChanged-mode × expectsIdle × lastResultWasSuccess × success/
-     error result × queryMode × current session-state event kind/state (a
+     error result × **top-level-result bit** — a nested result (non-null
+     `parent_tool_use_id`) is saved and published but performs none of the
+     idle/flag transitions an identical top-level result performs (:713–753);
+     either the bit is a table dimension or the `isTopLevelResult` gate stays in
+     the shell × queryMode × current session-state event kind/state (a
      non-idle event only records that an idle event is expected, while an idle
      event calls `finishTurn`, gates replay on `lastResultWasSuccess`, and
      resets all three flags — sdk-message-handler.ts:957–969; alternatively
@@ -474,7 +485,16 @@ note.
 - **PR sketch:**
   1. **PR 1 (pins):** pilot-1-style transcript parity harness for
      `driveDeliveryTurn` + `feedDeliverySteer` + the job handler (instrument
-     queue admits, DB marks, job mutations per scenario); decision tables for
+     queue admits, DB marks, job mutations per scenario); **call-site
+     characterization for role arbitration before PR 3 rewires
+     `deliverMessage`/outbox through `resolveDeliveryRole`** — existing role ×
+     requested role × UNIQUE outcome × entrypoint, since the two sites
+     intentionally differ (`deliverMessage` reuses an active same-UUID role and
+     propagates an explicit-role UNIQUE failure, message-delivery.ts:111–137;
+     the outbox has no ownership precheck and converts an implicit turn
+     collision to steer inside its transaction, outbox :52–72) so the wiring
+     cannot silently duplicate a delivery or change rollback behavior; decision
+     tables for
      the steer ladder (status × queryPromise × provider type × claim-current ×
      delivery
      validity × queue ownership — provider type is its own gate: with processing,
@@ -487,7 +507,8 @@ note.
      ownership — `hasPendingOrInFlight(messageUuid)` distinguishes
      `awaiting_acceptance` from admitting a fresh feed, agent-session.ts:1701–1715)
      and handler outcomes (preflight gates × delivery-call result × role ×
-     sendStatus × park budgets × waiting-for-input. Preflight: stale claim →
+     sendStatus × park budgets × waiting-for-input. Preflight: **unparseable
+     payload → throw (:34–37, before every other check)**; stale claim →
      `stale_attempt`; archived session → fail batch members and settle; missing
      session → throw; missing content → settle as `no_content`
      (message-delivery.handler.ts:31–85) — or these are explicitly retained in
