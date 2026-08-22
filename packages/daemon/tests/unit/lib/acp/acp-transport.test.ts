@@ -28,6 +28,29 @@ describe('buildAcpProcessEnv', () => {
   });
 });
 
+describe('AcpTransport replaceEnv spawn', () => {
+  it('spawns a real subprocess that cannot see non-allowlisted process env vars', async () => {
+    process.env.ACP_PROBE_TEST_SECRET = 'secret';
+    let transport: AcpTransport | undefined;
+    try {
+      const exited = new Promise<number | null>((resolve) => {
+        transport = new AcpTransport({
+          command: 'sh',
+          args: ['-c', '[ -z "$ACP_PROBE_TEST_SECRET" ]'],
+          env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+          replaceEnv: true,
+          onExit: (code) => resolve(code),
+        });
+      });
+
+      expect(await exited).toBe(0);
+    } finally {
+      delete process.env.ACP_PROBE_TEST_SECRET;
+      await transport?.close();
+    }
+  });
+});
+
 describe('AcpTransport.sendRequest onSubmitted', () => {
   it('rejects when the onSubmitted callback throws instead of pending until timeout (#3744105279)', async () => {
     const transport = new AcpTransport({
