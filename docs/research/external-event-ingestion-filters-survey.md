@@ -378,5 +378,8 @@ polling sources.
    `settings_json` wholesale (`extension-config-store.ts:114-122`), so any other key
    is silently destroyed by the next watch/unwatch/toggle RPC (8 call sites: `:354`,
    `:368`, `:443`, `:455`, `:486`, `:506`, `:535`, `:653`). Load-bearing for chains
-   A and B — the read-merge-write fix is scoped into PR A2. Global config writers
-   all spread and are not affected.
+   A and B — the read-merge-write fix is scoped into PR A2. Global config has the
+   same concurrency hazard (spread protects keys, not atomicity — `setGlobalConfig`
+   also replaces `settings_json` wholesale, `:75-100`) and is **not** exempt: all
+   `github` global config mutations route through the same PR's source-scoped
+   queue (see chain A PR A2).
