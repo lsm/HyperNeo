@@ -472,14 +472,6 @@ polls `getTrackedAgentRootPidsSplit` every five minutes, which expires the map
 queued-answer-without-`ensureQueryStarted` report (M4) is likewise withdrawn:
 the only production construction (agent-session.ts:339) always supplies the
 callback; the gap exists only in test doubles.)
-processing-state guard; races an in-flight turn (rewind-handler.ts:239–274,
-:606–645). (F3) diff revert replaces first occurrence only; Write-created files
-silently skipped (:374–400). (F4) selective rewind 10k-message window +
-`messageIds[0]`-as-checkpoint (:436, :461, :513). (F5) terminal errors
-correlated to turns by wall-clock, not uuid (agent-session.ts:1681–1686). (F6)
-`replayPendingMessagesForImmediateMode` force-enables the periodic reconciler
-even for Space-gated sessions (:658). (F7) `recentlyExitedAgentRootPids` grows
-unboundedly if never read (:2194–2200).
 
 **State machines:** (M1) orphan records hardcode
 `cancelReason:'agent_session_terminated'` while the event carries the real
