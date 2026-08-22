@@ -322,10 +322,15 @@ note.
 - **Scope:** the turn-end flag machine (:720–755 + :936–973 →
   `setIdle`/`finishTurn`/queue-replay gating), turn-end fallback ack selection
   (:333–392, pure filter :338–345), cost/usage accounting with cost-reset
-  detection (:872–889), thinking-token delta stamping (:653–663 + :689–700).
+  detection (:872–889).
   **Explicitly out:** the `stream_event` arm (:603–606) and
   `detectPhaseFromMessage` — per-token hot, stay inline; the universal
-  save/publish effects (:702–737) stay shell.
+  save/publish effects (:702–737) stay shell; **and thinking-token handling**
+  (estimate stash :653–663, delta stamping :689–700) — these run for every
+  `thinking_tokens` operational message and every assistant chunk with thinking
+  on providers emitting incremental updates, so they are hot-path, not
+  turn-boundary: keep inline unless separately benchmarked with pinned
+  per-chunk behavior.
 - **ADR pattern:** `decisionRun` for the flag machine (flags in → `{idle_fence,
   finish_turn, allow_queue_replay}` plan out — the direct counterpart of
   pilot-4's `classifyTurnCompletion`, closing the gap that the v2 path has a
@@ -432,11 +437,17 @@ note.
   explicit compensating transition on enqueue failure; a bare `send_status`
   CAS/transition table only orders competing writers and leaves the stranded-row
   window open. Staging `driveDeliveryTurn` additionally requires a
-  **claim-fenced batch-update primitive** before PR 4: without one,
-  `narrowActiveDeliveryBatchUuids`'s read-then-update lets a superseded handler
-  mutate a batch now owned by a replacement claim across the new async stage
-  boundaries. Spawn reservation has no analog need here (in-memory startup gate
-  suffices).
+  **claim-fenced batch-update primitive** before PR 4, covering two unfenced
+  persistent effects: `narrowActiveDeliveryBatchUuids`'s read-then-update (no
+  claim token or expected-payload predicate — a superseded handler could mutate
+  a batch now owned by a replacement claim across the new async stage
+  boundaries), and batch submission marking —
+  `markDeliverySubmittedByUuids` selects `enqueued` rows then issues an
+  unconditional status update with no claim token or expected status, so a
+  superseded claim can mark the replacement's members `submitted` and halt
+  before admitting them, leaving rows the handler treats as already submitted.
+  A claim/expected-state-guarded transition or compensation covers both. Spawn
+  reservation has no analog need here (in-memory startup gate suffices).
 - **Impact/risk:** highest ceiling — this is the repo's recurring fix area
   (delivery duplication, deferred-backlog gaps, park-vs-cancel), and ~500 lines
   of cascade become tables. Highest risk: session lock + job queue + four
