@@ -414,6 +414,7 @@ export class RateLimitWatchdog {
                 'surfacing a manual-retry pause instead of abandoning the request.'
             );
             this.limitKind = this.lastHint.kind ?? 'usage_limit';
+            this.startupExhausted = true;
             await this.stateManager.setRateLimitCooldown({
               retryCount: this.retryCount,
               maxRetries: this.config.maxAutoRetries,

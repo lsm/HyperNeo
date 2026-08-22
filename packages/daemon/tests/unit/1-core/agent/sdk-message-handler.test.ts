@@ -3177,5 +3177,26 @@ describe('SDKMessageHandler', () => {
       const thirdArg = onResultLimitError.mock.calls[0][2] as string | undefined;
       expect(thirdArg).toBe('steer-uuid-1');
     });
+
+    it('consumes captured limit signals even when recovery declines', async () => {
+      const onResultLimitError = mock(async () => false);
+      mockContext.onResultLimitError = onResultLimitError;
+
+      await handler.handleMessage(
+        makeRateLimitEvent(Math.floor((Date.now() + 60 * 60 * 1000) / 1000))
+      );
+      await handler.handleMessage(
+        makeApiErrorResult({ result: 'upstream rejected', api_error_status: 429 })
+      );
+      await handler.handleMessage(
+        makeApiErrorResult({
+          api_error_status: 500,
+          result: 'Error: 500 Internal Server Error',
+        })
+      );
+
+      expect(onResultLimitError).toHaveBeenCalledTimes(1);
+      expect(publishedTopics()).toContain('query.trigger');
+    });
   });
 });

@@ -340,6 +340,7 @@ describe('RateLimitWatchdog', () => {
       );
       expect(watchdog.getState().status).toBe('idle');
       expect(watchdog.getState().retryAt).toBeNull();
+      expect(watchdog.retryNow()).toBe(true);
     });
   });
 

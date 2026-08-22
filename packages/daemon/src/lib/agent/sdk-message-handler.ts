@@ -755,6 +755,8 @@ export class SDKMessageHandler {
           )) ?? false;
       }
       this.lastResultWasSuccess = !limitEngaged && isSDKResultSuccess(message);
+      this.lastRateLimitInfo = null;
+      this.lastSdkErrorTag = null;
     }
 
     if (isTopLevelResult && !limitEngaged && !this.suppressIdleOnNextResult) {
@@ -777,8 +779,6 @@ export class SDKMessageHandler {
     });
 
     if (limitEngaged) {
-      this.lastRateLimitInfo = null;
-      this.lastSdkErrorTag = null;
       await this.recordResultUsageMetadata(message as SDKResultMessage);
       void this.refreshContextUsage('turn-end');
       return;
