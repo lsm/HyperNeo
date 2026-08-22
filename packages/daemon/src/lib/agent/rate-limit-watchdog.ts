@@ -9,11 +9,7 @@ import {
   MAX_RESET_HORIZON_MS,
   selectNextFallback,
 } from './fallback-recovery';
-import {
-  cooldownFromReset,
-  normalizeEpochMs,
-  type LimitRetryHint,
-} from './limit-error-classifier';
+import { cooldownFromReset, normalizeEpochMs, type LimitRetryHint } from './limit-error-classifier';
 import type { LlmLimitAssessment } from './limit-error-llm-classifier';
 import type { ProcessingStateManager } from './processing-state-manager';
 
@@ -254,18 +250,23 @@ export class RateLimitWatchdog {
       !this.llmRefinementInFlight &&
       entryGeneration === this.generation
     ) {
-      this.fireLlmRefinement(errorMessage, entryGeneration);
+      this.fireLlmRefinement(errorMessage, entryGeneration, !decision.freeWait);
     }
     return true;
   }
 
-  private fireLlmRefinement(errorMessage: string, entryGeneration: number): void {
+  private fireLlmRefinement(
+    errorMessage: string,
+    entryGeneration: number,
+    chargedLadder: boolean
+  ): void {
     const classify = this.deps.classifyUnknownLimit;
     if (!classify) return;
     this.llmRefinementInFlight = true;
+    const timerAtFire = this.cooldownTimer;
     void classify(errorMessage)
       .then(async (result) => {
-        if (entryGeneration !== this.generation || this.cooldownTimer === null) return;
+        if (entryGeneration !== this.generation || this.cooldownTimer !== timerAtFire) return;
         if (!result || result.notALimit) return;
         const resetMs =
           typeof result.resetAtMs === 'number' && Number.isFinite(result.resetAtMs)
@@ -279,6 +280,9 @@ export class RateLimitWatchdog {
         );
         if (result.kind) {
           this.lastHint = { ...this.lastHint, kind: result.kind };
+        }
+        if (chargedLadder && this.retryCount > 0) {
+          this.retryCount--;
         }
         await this.scheduleCooldown(errorMessage, cooldownFromReset(resetMs, now), entryGeneration);
       })
@@ -321,6 +325,7 @@ export class RateLimitWatchdog {
       reason: decision.reason,
     });
 
+    this.cancelCooldownTimer();
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
       this.logger.info(

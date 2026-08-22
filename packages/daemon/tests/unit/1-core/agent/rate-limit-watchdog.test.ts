@@ -520,6 +520,106 @@ describe('RateLimitWatchdog', () => {
         (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls
       ).toHaveLength(1);
     });
+
+    it('clears the ladder timer when the refined reset re-arms the cooldown', async () => {
+      let resolveClassify: (value: {
+        resetAtMs: number;
+        kind: 'usage_limit';
+        notALimit: false;
+      }) => void = () => {};
+      const classify = mock(
+        () =>
+          new Promise((resolve) => {
+            resolveClassify = resolve;
+          })
+      );
+      const { deps } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify as unknown as ReturnType<typeof mock>;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const realClearTimeout = globalThis.clearTimeout;
+      const clearedHandles: unknown[] = [];
+      globalThis.clearTimeout = ((handle: unknown) => {
+        clearedHandles.push(handle);
+        return realClearTimeout(handle as Parameters<typeof clearTimeout>[0]);
+      }) as typeof clearTimeout;
+
+      try {
+        await watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+        const ladderTimer = (watchdog as unknown as { cooldownTimer: unknown }).cooldownTimer;
+        expect(ladderTimer).not.toBeNull();
+
+        resolveClassify({
+          resetAtMs: Date.now() + 2 * 60 * 60 * 1000,
+          kind: 'usage_limit',
+          notALimit: false,
+        });
+        await flush();
+        await flush();
+
+        const refinedTimer = (watchdog as unknown as { cooldownTimer: unknown }).cooldownTimer;
+        expect(refinedTimer).not.toBeNull();
+        expect(refinedTimer).not.toBe(ladderTimer);
+        expect(clearedHandles).toContain(ladderTimer);
+      } finally {
+        globalThis.clearTimeout = realClearTimeout;
+        watchdog.cancel();
+      }
+    });
+
+    it('refunds the ladder charge when refinement converts to a free wait', async () => {
+      const resetAt = Date.now() + 2 * 60 * 60 * 1000;
+      const classify = mock(async () => ({
+        resetAtMs: resetAt,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry('firewall throttled, no timestamps in body', {
+        uuid: 'm1',
+        content: 'x',
+      });
+      await flush();
+      await flush();
+
+      expect(watchdog.getState().retryCount).toBe(0);
+      watchdog.cancel();
+    });
+
+    it('does not overwrite a newer cooldown armed while classification is in flight', async () => {
+      let resolveClassify: (value: {
+        resetAtMs: number;
+        kind: 'usage_limit';
+        notALimit: false;
+      }) => void = () => {};
+      const classify = mock(
+        () =>
+          new Promise((resolve) => {
+            resolveClassify = resolve;
+          })
+      );
+      const { deps } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify as unknown as ReturnType<typeof mock>;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+      expect(watchdog.retryNow()).toBe(true);
+      await flush();
+
+      resolveClassify({
+        resetAtMs: Date.now() + 2 * 60 * 60 * 1000,
+        kind: 'usage_limit',
+        notALimit: false,
+      });
+      await flush();
+      await flush();
+
+      expect(
+        (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls
+      ).toHaveLength(1);
+    });
   });
 
   describe('Phase A — immediate fallback switch', () => {

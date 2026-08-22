@@ -115,6 +115,56 @@ describe('LimitErrorLlmClassifier', () => {
     expect(prompts).toHaveLength(1);
   });
 
+  it('re-classifies relative-delay errors instead of reusing a cached reset', async () => {
+    const { deps, prompts } = createDeps(
+      '{"is_limit":true,"kind":"rate_limit","reset_at":1755800000000,"relative":true}'
+    );
+    const classifier = new LimitErrorLlmClassifier('s1', deps);
+    await classifier.classify('quota wall, retry soon');
+    await classifier.classify('quota wall, retry soon');
+    expect(prompts).toHaveLength(2);
+  });
+
+  it('does not cache failed classifications', async () => {
+    const { deps, prompts } = createDeps('no json here');
+    const classifier = new LimitErrorLlmClassifier('s1', deps);
+    await classifier.classify('waf block page');
+    await classifier.classify('waf block page');
+    expect(prompts).toHaveLength(2);
+  });
+
+  it('deduplicates concurrent classifications of the same error text', async () => {
+    const { deps, prompts } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
+    const classifier = new LimitErrorLlmClassifier('s1', deps);
+    await Promise.all([
+      classifier.classify('concurrent waf block'),
+      classifier.classify('concurrent waf block'),
+    ]);
+    expect(prompts).toHaveLength(1);
+  });
+
+  it('skips registry-unavailable providers and classifies via the next available one', async () => {
+    const seenProviders: string[] = [];
+    const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
+    const originalApply = deps.providerService.applyEnvVarsToProcessForProvider;
+    deps.providerService = {
+      ...deps.providerService,
+      getAvailableProviders: async () => [
+        { id: 'glm', name: 'GLM', models: [], available: true },
+        { id: 'kimi', name: 'Kimi', models: [], available: true },
+        { id: 'deepseek', name: 'DeepSeek', models: [], available: true },
+      ],
+      isProviderAvailable: async (id: string) => id === 'deepseek',
+      applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
+        seenProviders.push(providerId);
+        return originalApply(providerId, modelId);
+      },
+    };
+    const classifier = new LimitErrorLlmClassifier('s1', { ...deps, excludeProvider: 'glm' });
+    await classifier.classify('429 from glm via unavailable relay');
+    expect(seenProviders).toEqual(['deepseek']);
+  });
+
   it('returns null when no provider is available', async () => {
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":1}');
     deps.providerService = {

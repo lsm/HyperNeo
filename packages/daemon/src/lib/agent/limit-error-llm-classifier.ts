@@ -20,6 +20,7 @@ export interface LlmLimitAssessment {
   resetAtMs: number | null;
   kind: 'rate_limit' | 'usage_limit' | null;
   notALimit: boolean;
+  relative?: boolean;
 }
 
 export interface LimitErrorLlmClassifierDeps {
@@ -38,6 +39,15 @@ interface CacheEntry {
 }
 
 const assessmentCache = new Map<string, CacheEntry>();
+const inflightClassifications = new Map<string, Promise<LlmLimitAssessment | null>>();
+
+function evictExpiredAssessments(now: number): void {
+  for (const [key, entry] of assessmentCache) {
+    if (entry.expiresAt <= now) {
+      assessmentCache.delete(key);
+    }
+  }
+}
 
 let serializedQueue: Promise<unknown> = Promise.resolve();
 
@@ -85,6 +95,7 @@ function parseAssessment(payload: Record<string, unknown>): LlmLimitAssessment {
     resetAtMs: isLimit ? resetAtMs : null,
     kind: isLimit ? kind : null,
     notALimit: !isLimit,
+    relative: isLimit && payload.relative === true,
   };
 }
 
@@ -101,6 +112,7 @@ ${rawText.slice(0, 1500)}
 Rules:
 1. is_limit is true only for rate limits, usage caps, quota windows, or throttling — not for auth, payment, server, or network errors.
 2. reset_at is the epoch-milliseconds instant when the limit lifts. Use an absolute timestamp in the text (assume timezone UTC+8 for Chinese text unless an explicit zone is given), or compute current time + relative delay for phrases like "retry in 2 hours". Use null when no reset time can be determined.
+3. Set "relative":true when reset_at was computed from a relative delay rather than an absolute timestamp in the text; otherwise omit the field.
 
 Reply with ONLY minified JSON, no markdown fences:
 {"is_limit":true,"kind":"usage_limit","reset_at":1755800000000}
@@ -125,8 +137,17 @@ export class LimitErrorLlmClassifier {
     if (cached && cached.expiresAt > now) {
       return cached.assessment;
     }
-    const assessment = await runSerialized(() => this.classifyUncached(rawText, now));
-    assessmentCache.set(key, { assessment, expiresAt: now + CACHE_TTL_MS });
+    const pending = inflightClassifications.get(key);
+    if (pending) return pending;
+    const task = runSerialized(() => this.classifyUncached(rawText, now)).finally(() => {
+      inflightClassifications.delete(key);
+    });
+    inflightClassifications.set(key, task);
+    const assessment = await task;
+    evictExpiredAssessments(Date.now());
+    if (assessment && !assessment.relative) {
+      assessmentCache.set(key, { assessment, expiresAt: Date.now() + CACHE_TTL_MS });
+    }
     return assessment;
   }
 
@@ -144,6 +165,14 @@ export class LimitErrorLlmClassifier {
         providerId,
         models.providerModelId
       );
+      const abortController = new AbortController();
+      const abortTimer = setTimeout(
+        () => abortController.abort(),
+        this.deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
+      );
+      if (typeof abortTimer === 'object' && 'unref' in abortTimer) {
+        abortTimer.unref();
+      }
       try {
         const providerEnvVars = await providerService.getEnvVarsForModel(
           models.providerModelId,
@@ -166,6 +195,7 @@ export class LimitErrorLlmClassifier {
             settings: withSdkTranscriptRetention(),
             env: mergeProviderEnvVars(providerEnvVars as Record<string, string>),
             thinking: { type: 'disabled' },
+            abortController,
           },
         });
 
@@ -191,6 +221,7 @@ export class LimitErrorLlmClassifier {
         if (!payload) return null;
         return parseAssessment(payload);
       } finally {
+        clearTimeout(abortTimer);
         providerService.restoreEnvVars(originalEnv);
       }
     } catch (error) {
@@ -202,10 +233,14 @@ export class LimitErrorLlmClassifier {
   private async resolveClassifierProvider(): Promise<string | null> {
     const providerService = this.deps.providerService;
     const available = await providerService.getAvailableProviders();
-    const candidate = available.find((p) => p.id !== this.deps.excludeProvider) ?? available[0];
-    if (!candidate) return null;
-    if (!(await providerService.isProviderAvailable(candidate.id))) return null;
-    return candidate.id;
+    const ordered = [
+      ...available.filter((p) => p.id !== this.deps.excludeProvider),
+      ...available.filter((p) => p.id === this.deps.excludeProvider),
+    ];
+    for (const candidate of ordered) {
+      if (await providerService.isProviderAvailable(candidate.id)) return candidate.id;
+    }
+    return null;
   }
 
   classifyWithTimeout(rawText: string): Promise<LlmLimitAssessment | null> {

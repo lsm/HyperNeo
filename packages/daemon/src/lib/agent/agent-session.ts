@@ -218,7 +218,6 @@ export class AgentSession
   readonly optionsBuilder: QueryOptionsBuilder;
 
   private queryRunner: QueryRunner | AcpQueryRunner;
-  private limitErrorLlmClassifier: LimitErrorLlmClassifier | null = null;
   readonly interruptHandler: InterruptHandler;
   private sdkRuntimeConfig: SDKRuntimeConfig;
   private eventSubscriptionSetup: EventSubscriptionSetup;
@@ -418,13 +417,11 @@ export class AgentSession
           sessionId: this.session.id,
         });
       },
-      classifyUnknownLimit: (rawText: string) => {
-        this.limitErrorLlmClassifier ??= new LimitErrorLlmClassifier(this.session.id, {
+      classifyUnknownLimit: (rawText: string) =>
+        new LimitErrorLlmClassifier(this.session.id, {
           providerService: getProviderService(),
-          excludeProvider: (this.session.config.provider as string | undefined) ?? undefined,
-        });
-        return this.limitErrorLlmClassifier.classifyWithTimeout(rawText);
-      },
+          excludeProvider: (this.session.config.provider as string | undefined) ?? 'anthropic',
+        }).classifyWithTimeout(rawText),
     });
     this.rateLimitWatchdog.setRetryCallback(
       async (lastUserMessage, switchTo, episodeGeneration) => {
