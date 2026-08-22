@@ -686,7 +686,14 @@ note.
      replacement, which a later cancel cannot undo, so the resnapshot (or an
      owner-scoped `beginTerminalIdle` that filters whose waiters it fires)
      precedes the fence, with replacement/cleanup during the rate-limit
-     handoff await (`:893–895`) pinned — and
+     handoff await (`:893–895`) pinned — and the **cooldown state write
+     inside the handoff is fenced too**: `scheduleCooldown` awaits
+     `setRateLimitCooldown()` at rate-limit-watchdog.ts:233–237 *before*
+     checking its episode generation (`:239`), so a stale handoff can mark
+     the replacement as in cooldown even though PR 5 later detects
+     staleness; query/turn ownership is revalidated immediately before that
+     state write (or the cooldown transition is owner-scoped), with a
+     replacement-during-fallback-resolution pin — and
      `ProcessingStateManager.setIdle`
      gains the generation/owner-scoped state transition and waiter drain with
      the replacement-during-publish interleaving pinned
@@ -808,7 +815,14 @@ note.
      independently installs `createPreToolUseHook()`, whose
      `interceptAskUserQuestion` call (`:220–224`) can replace the successor's
      pending resolver through the same shared question state; that hook binds
-     to the run generation and is included in the late-callback pin. The
+     to the run generation and is included in the late-callback pin — and
+     **ownership is revalidated after the user answers**: an entry-only
+     binding does not reject an in-flight request, so a replacement starting
+     while the question awaits its answer would receive that answer as
+     `allow` at the old process, which may then execute the stale tool;
+     lifecycle and turn ownership are revalidated when the question promise
+     settles, the stale process is denied, and only the old question state
+     unwinds before returning. The
      stale stop
      **returns a distinct outcome that propagates to the runner**: both
      wrappers unconditionally call `onMarkApiSuccess` after `onSDKMessage`
@@ -928,7 +942,15 @@ note.
   the counters, so merely stopping leaves them live and delivery reclaim
   returns `live` until some later idle transition; cancellation precedes the
   stale return (assigned to PR 5 with the interleaving pin), with a
-  replacement-during-`sdk.message`-publication pin; the
+  replacement-during-`sdk.message`-publication pin — with the
+  **turn/delivery owner propagated through the handler as well**: a
+  successor delivery on the same live query has a new turn owner but the
+  same query generation, so post-await validation accepting on generation
+  alone still resumes the old handler into flag/accounting mutations and
+  potentially `finishTurn()`, idling or acknowledging the successor's work
+  even though turn-scoped waiter filtering stops the original drain; the
+  handler revalidates the turn owner after its awaits, with the same-query
+  interleaving pinned; the
   core also returns the updated flag state, since the scoped machine mutates it:
   results set `lastResultWasSuccess`; suppressed **successful** results clear
   `suppressIdleOnNextResult` (:936–937 is success-gated at :765–766), so a
