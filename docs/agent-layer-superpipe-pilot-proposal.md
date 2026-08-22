@@ -614,8 +614,6 @@ note.
   outside the staged pass as a shell-preceding step; DB reloads,
   queue admit — idempotent or UNIQUE-guarded, **except** batch narrowing:
   `narrowActiveDeliveryBatchUuids` reads the active batch and updates matching
-  queue admit — idempotent or UNIQUE-guarded, **except** batch narrowing:
-  `narrowActiveDeliveryBatchUuids` reads the active batch and updates matching
   pending/processing jobs with no claim token or expected-payload predicate, so
   it needs the new primitive below before staging; and queue admission itself —
   `MessageQueue.admitWithId` unconditionally pushes even for an existing UUID,
