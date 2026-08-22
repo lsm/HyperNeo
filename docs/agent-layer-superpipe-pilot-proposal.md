@@ -785,8 +785,13 @@ note.
   replacement starting while `internalEventBus.publish('sdk.message')` is
   awaited lets the stale handler resume into the unscoped `setIdle()` at
   `:746–748`, marking the replacement idle and draining its waiters; the
-  owner token is revalidated after each awaited effect (or passed to every
-  idle transition so the owner-scoped manager rejects the stale call), with a
+  owner token is revalidated after each awaited effect **and the stale
+  handler stops there** — owner-scoped idle transitions alone are *not* a
+  sufficient alternative: with `usesSessionStateChangedTurnEnd` the immediate
+  `setIdle()` (`:746–750`) is skipped entirely, after which the stale result
+  still mutates shared flags (`:752–755`) and runs `handleResultMessage`,
+  updating session accounting and acknowledging queued work (`:891–934`);
+  revalidate-and-stop is the requirement, with a
   replacement-during-`sdk.message`-publication pin; the
   core also returns the updated flag state, since the scoped machine mutates it:
   results set `lastResultWasSuccess`; suppressed **successful** results clear
