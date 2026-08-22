@@ -102,6 +102,12 @@ export class QueryModeHandler {
     }
   }
 
+  private flushClearBlockedByLiveWork(): boolean {
+    if (this.ctx.messageQueue.size() > 0) return true;
+    const status = this.ctx.stateManager?.getState().status;
+    return status !== undefined && status !== 'idle';
+  }
+
   private async deliverRowsViaMemoryQueue(
     messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>,
     flushMessages: FlushMessage[],
@@ -127,7 +133,7 @@ export class QueryModeHandler {
       const replayContent = this.toReplayContent(msg.message.content);
       if (!replayContent) continue;
       if (!clearAttempted && taskUuids.has(msg.uuid)) {
-        if (this.ctx.messageQueue.size() > 0) {
+        if (this.flushClearBlockedByLiveWork()) {
           await this.deferRemainingRows(messages, v2Owned, msg.uuid);
           return clearedContext;
         }
@@ -138,7 +144,7 @@ export class QueryModeHandler {
     if (
       !clearAttempted &&
       options?.pendingTaskInput === true &&
-      this.ctx.messageQueue.size() === 0
+      !this.flushClearBlockedByLiveWork()
     ) {
       await clearAheadOfTask();
     }

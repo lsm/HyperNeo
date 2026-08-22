@@ -3198,6 +3198,20 @@ export class TaskAgentManager {
     );
   }
 
+  private clearStillBlocked(session: AgentSession): boolean {
+    const state = session.getProcessingState();
+    if (
+      state.status === 'processing' ||
+      state.status === 'queued' ||
+      state.status === 'waiting_for_input' ||
+      state.status === 'interrupted' ||
+      state.status === 'rate_limit_cooldown'
+    ) {
+      return true;
+    }
+    return this.hasActiveDeliveryJob(session.session.id);
+  }
+
   private async injectMessageIntoSession(
     session: AgentSession,
     message: string,
@@ -3349,6 +3363,13 @@ export class TaskAgentManager {
           `TaskAgentManager: deferred backlog replay for session ${sessionId} failed: ` +
             `${replay.error ?? 'unknown error'} — delivering current message only`
         );
+      }
+      if (clearSuppressedByPendingWork && !clearedUpstream && this.clearStillBlocked(session)) {
+        const deferredDbId = existing
+          ? messageId
+          : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
+        await this.publishMessageStatusChanged(sessionId, deferredDbId, 'deferred');
+        return deferredDbId;
       }
     }
 

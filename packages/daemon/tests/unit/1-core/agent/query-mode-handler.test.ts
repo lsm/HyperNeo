@@ -700,6 +700,40 @@ describe('QueryModeHandler', () => {
       expect(updateMessageStatusSpy).toHaveBeenLastCalledWith(['db-1', 'db-2'], 'deferred');
     });
 
+    it('defers task rows while the leading human row turn is still processing', async () => {
+      const clearSpy = mock(async () => {});
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          {
+            dbId: 'db-human',
+            uuid: 'uuid-human',
+            type: 'user',
+            isSynthetic: false,
+            inputKind: 'human',
+            message: { role: 'user', content: 'a human follow-up' },
+          },
+          ...deferredBatch(2),
+        ] as unknown as SDKMessage[])
+      );
+      resetSlotDb();
+      sizeSpy.mockImplementation(() => 0);
+
+      handler = new QueryModeHandler({
+        ...resetSlotContext(clearSpy),
+        stateManager: {
+          setQueuedIfIdle: async () => false,
+          getState: () => ({ status: 'processing' }),
+        },
+      });
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 3 });
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-human', 'a human follow-up');
+      expect(updateMessageStatusSpy).toHaveBeenLastCalledWith(['db-1', 'db-2'], 'deferred');
+    });
+
     it('delivers leading human rows before the clear that fronts the task rows', async () => {
       const order: string[] = [];
       const clearSpy = mock(async () => {
