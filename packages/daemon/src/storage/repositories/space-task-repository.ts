@@ -237,6 +237,52 @@ export class SpaceTaskRepository {
     return rows.map((r) => this.rowToSpaceTask(r));
   }
 
+  listByGoal(
+    spaceId: string,
+    goalId: string,
+    params: {
+      status?: SpaceTaskStatus;
+      limit?: number;
+      before?: number;
+      beforeId?: string;
+    } = {}
+  ): { tasks: SpaceTask[]; total: number; hasMore: boolean } {
+    const limit = Math.max(1, Math.min(100, Math.trunc(params.limit ?? 20)));
+    const cursorId =
+      typeof params.beforeId === 'string' && params.beforeId.length > 0 ? params.beforeId : null;
+    const scopeWhere: string[] = [`goal_id = ?`, `space_id = ?`];
+    const scopeBind: SQLiteValue[] = [goalId, spaceId];
+    if (params.status) {
+      scopeWhere.push(`status = ?`);
+      scopeBind.push(params.status);
+    } else {
+      scopeWhere.push(`status != 'archived'`);
+    }
+    const countRow = this.db
+      .prepare(`SELECT COUNT(*) as count FROM space_tasks WHERE ${scopeWhere.join(' AND ')}`)
+      .get(...scopeBind) as { count: number } | undefined;
+    const total = countRow?.count ?? 0;
+    const pageWhere = [...scopeWhere];
+    const pageBind = [...scopeBind];
+    if (params.before !== undefined) {
+      if (cursorId) {
+        pageWhere.push(`(created_at < ? OR (created_at = ? AND id < ?))`);
+        pageBind.push(params.before, params.before, cursorId);
+      } else {
+        pageWhere.push(`created_at < ?`);
+        pageBind.push(params.before);
+      }
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM space_tasks WHERE ${pageWhere.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ?`
+      )
+      .all(...pageBind, limit + 1) as Record<string, unknown>[];
+    const hasMore = rows.length > limit;
+    const tasks = rows.slice(0, limit).map((r) => this.rowToSpaceTask(r));
+    return { tasks, total, hasMore };
+  }
+
   hasApprovedTaskForWorkflow(workflowId: string): boolean {
     const row = this.db
       .prepare(

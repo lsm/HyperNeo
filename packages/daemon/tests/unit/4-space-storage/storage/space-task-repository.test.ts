@@ -1362,4 +1362,188 @@ describe('SpaceTaskRepository', () => {
       expect(active).toEqual([]);
     });
   });
+
+  describe('listByGoal', () => {
+    const goalId = 'goal-pagination';
+
+    function seedTask(title: string, createdAt: number, status: string = 'open'): string {
+      const task = repo.createTask({
+        spaceId,
+        title,
+        description: '',
+        goalId,
+        status: status as any,
+      });
+      (db as any)
+        .prepare(`UPDATE space_tasks SET created_at = ? WHERE id = ?`)
+        .run(createdAt, task.id);
+      return task.id;
+    }
+
+    it('excludes tasks from other spaces even when the goal id matches', () => {
+      const inSpace = seedTask('in-space', 1000);
+      const otherSpace = spaceRepo.createSpace({
+        workspacePath: '/workspace/other',
+        slug: 'other',
+        name: 'Other',
+      });
+      const crossSpace = repo.createTask({
+        spaceId: otherSpace.id,
+        title: 'cross-space',
+        description: '',
+        goalId,
+      });
+      (db as any)
+        .prepare(`UPDATE space_tasks SET created_at = ? WHERE id = ?`)
+        .run(2000, crossSpace.id);
+
+      const { tasks, total } = repo.listByGoal(spaceId, goalId);
+      expect(tasks.map((t) => t.id)).toEqual([inSpace]);
+      expect(total).toBe(1);
+    });
+
+    it('returns only tasks for the goal, ordered by created_at DESC, excluding archived by default', () => {
+      const older = seedTask('older', 1000);
+      const newer = seedTask('newer', 3000);
+
+      const other = repo.createTask({
+        spaceId,
+        title: 'other',
+        description: '',
+        goalId: 'other-goal',
+      });
+      (db as any).prepare(`UPDATE space_tasks SET created_at = ? WHERE id = ?`).run(6000, other.id);
+
+      const { tasks, total, hasMore } = repo.listByGoal(spaceId, goalId);
+      expect(tasks.map((t) => t.id)).toEqual([newer, older]);
+      expect(total).toBe(2);
+      expect(hasMore).toBe(false);
+    });
+
+    it('filters by status when provided', () => {
+      seedTask('open-a', 1000, 'open');
+      const done = seedTask('done-b', 2000, 'done');
+      seedTask('open-c', 3000, 'open');
+
+      const { tasks, total } = repo.listByGoal(spaceId, goalId, { status: 'done' });
+      expect(tasks.map((t) => t.id)).toEqual([done]);
+      expect(total).toBe(1);
+    });
+
+    it('includes archived tasks only when status is archived', () => {
+      const archived = seedTask('archived-a', 1000, 'archived');
+      const open = seedTask('open-b', 2000, 'open');
+
+      const defaultPage = repo.listByGoal(spaceId, goalId);
+      expect(defaultPage.tasks.map((t) => t.id)).toEqual([open]);
+
+      const archivedPage = repo.listByGoal(spaceId, goalId, { status: 'archived' });
+      expect(archivedPage.tasks.map((t) => t.id)).toEqual([archived]);
+    });
+
+    it('paginates with a keyset cursor and yields every matching task exactly once', () => {
+      const ids: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        ids.push(seedTask(`task-${i}`, 1000 + i * 100));
+      }
+      const expected = [...ids].reverse();
+
+      const collected: string[] = [];
+      let before: number | undefined;
+      let beforeId: string | undefined;
+      for (let guard = 0; guard < 10; guard++) {
+        const page = repo.listByGoal(spaceId, goalId, {
+          limit: 2,
+          before,
+          beforeId,
+        });
+        collected.push(...page.tasks.map((t) => t.id));
+        if (!page.hasMore) break;
+        const last = page.tasks[page.tasks.length - 1];
+        before = last.createdAt;
+        beforeId = last.id;
+      }
+
+      expect(collected).toEqual(expected);
+    });
+
+    it('reports a stable total across pages (independent of the cursor)', () => {
+      for (let i = 0; i < 5; i++) seedTask(`task-${i}`, 1000 + i * 100);
+
+      const first = repo.listByGoal(spaceId, goalId, { limit: 2 });
+      expect(first.total).toBe(5);
+      expect(first.tasks.length).toBe(2);
+
+      const second = repo.listByGoal(spaceId, goalId, {
+        limit: 2,
+        before: first.tasks[first.tasks.length - 1].createdAt,
+        beforeId: first.tasks[first.tasks.length - 1].id,
+      });
+      expect(second.total).toBe(5);
+      expect(second.tasks.length).toBe(2);
+    });
+
+    it('keeps an updated-but-unseen task in the traversal (immutable created_at key)', () => {
+      const ids: string[] = [];
+      for (let i = 0; i < 4; i++) ids.push(seedTask(`task-${i}`, 1000 + i * 100));
+
+      const first = repo.listByGoal(spaceId, goalId, { limit: 2 });
+      const lastUnseen = ids[1];
+      (db as any)
+        .prepare(`UPDATE space_tasks SET updated_at = ? WHERE id = ?`)
+        .run(999999, lastUnseen);
+
+      const collected = [...first.tasks.map((t) => t.id)];
+      let before = first.tasks[first.tasks.length - 1].createdAt;
+      let beforeId = first.tasks[first.tasks.length - 1].id;
+      for (let guard = 0; guard < 10; guard++) {
+        const page = repo.listByGoal(spaceId, goalId, { limit: 10, before, beforeId });
+        collected.push(...page.tasks.map((t) => t.id));
+        if (!page.hasMore) break;
+        const last = page.tasks[page.tasks.length - 1];
+        before = last.createdAt;
+        beforeId = last.id;
+      }
+
+      expect(new Set(collected).size).toBe(ids.length);
+      expect(collected).toContain(lastUnseen);
+    });
+
+    it('clamps the page size to the bounded range', () => {
+      for (let i = 0; i < 5; i++) seedTask(`task-${i}`, 1000 + i * 100);
+
+      const tiny = repo.listByGoal(spaceId, goalId, { limit: -1 });
+      expect(tiny.tasks.length).toBe(1);
+      expect(tiny.hasMore).toBe(true);
+
+      const huge = repo.listByGoal(spaceId, goalId, { limit: 1000 });
+      expect(huge.tasks.length).toBe(5);
+      expect(huge.hasMore).toBe(false);
+    });
+
+    it('does not skip or duplicate tasks when a new task is inserted mid-iteration', () => {
+      const ids: string[] = [];
+      for (let i = 0; i < 3; i++) ids.push(seedTask(`task-${i}`, 1000 + i * 100));
+
+      const first = repo.listByGoal(spaceId, goalId, { limit: 1 });
+      expect(first.tasks.length).toBe(1);
+
+      seedTask('late-insert', 9000);
+
+      const collected = [...first.tasks.map((t) => t.id)];
+      let before = first.tasks[0].createdAt;
+      let beforeId = first.tasks[0].id;
+      for (let guard = 0; guard < 10; guard++) {
+        const page = repo.listByGoal(spaceId, goalId, { limit: 1, before, beforeId });
+        if (page.tasks.length === 0) break;
+        collected.push(page.tasks[0].id);
+        before = page.tasks[0].createdAt;
+        beforeId = page.tasks[0].id;
+        if (!page.hasMore) break;
+      }
+
+      expect(collected).toEqual([...ids].reverse());
+      expect(new Set(collected).size).toBe(collected.length);
+    });
+  });
 });

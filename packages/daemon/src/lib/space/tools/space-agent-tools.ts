@@ -3085,14 +3085,33 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     async list_goal_tasks(args: {
       goal_id: string;
       status?: SpaceTaskStatus;
+      limit?: number;
+      before?: number;
+      before_id?: string;
     }): Promise<ToolResult> {
       try {
         requireGoalInSpace(args.goal_id);
-        const tasks = taskRepo
-          .listBySpace(spaceId, args.status === 'archived')
-          .filter((task) => task.goalId === args.goal_id)
-          .filter((task) => (args.status ? task.status === args.status : true));
-        return jsonResult({ success: true, total: tasks.length, tasks });
+        const page = taskRepo.listByGoal(spaceId, args.goal_id, {
+          status: args.status,
+          limit: args.limit,
+          before: args.before,
+          beforeId: args.before_id,
+        });
+        const tasks = page.tasks.map((task) => ({
+          id: task.id,
+          taskNumber: task.taskNumber,
+          title: task.title,
+          status: task.status,
+          priority: task.priority,
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt,
+        }));
+        return jsonResult({
+          success: true,
+          total: page.total,
+          tasks,
+          has_more: page.hasMore,
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });
@@ -4561,7 +4580,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'list_goal_tasks',
-        'List tasks linked to a goal in this space, optionally filtered by status.',
+        "List tasks linked to a goal in this space, optionally filtered by status. Returns a bounded page (default 20, max 100) of compact task summaries (id, task_number, title, status, priority, createdAt, updatedAt) ordered by most-recently-created; results omit description and result. Pass the last item's createdAt as `before` and its id as `before_id` to fetch the next page. Use `get_task_detail` to retrieve the full record for any task whose outcome you need to inspect.",
         {
           goal_id: z.string().describe('Goal ID'),
           status: z
@@ -4578,6 +4597,19 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
             ])
             .optional()
             .describe('Filter by linked task status'),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(100)
+            .optional()
+            .describe('Max tasks to return (default 20)'),
+          before: z
+            .number()
+            .int()
+            .optional()
+            .describe('Return tasks created before this timestamp (cursor)'),
+          before_id: z.string().optional().describe('Cursor id for same-timestamp pagination'),
         },
         (args) => handlers.list_goal_tasks(args)
       ),

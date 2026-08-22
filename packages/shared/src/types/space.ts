@@ -525,6 +525,16 @@ export interface PaginatedSpaceTaskResult {
   total: number;
 }
 
+export interface SpaceTaskCompact {
+  id: string;
+  taskNumber: number;
+  title: string;
+  status: SpaceTaskStatus;
+  priority: SpaceTaskPriority;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface SpaceTaskActivityMember {
   id: string;
   sessionId: string;
