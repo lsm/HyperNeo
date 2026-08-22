@@ -418,13 +418,17 @@ Additions from the survey:
 
 ## 7. Bugs / races noticed (report only)
 
-**Query lifecycle:** (Q1) startup-timeout vs first-message race — timer abort
-can throw after a frame arrived; message dropped (query-runner.ts:742–770 vs
-:783–786). (Q2) superseded-retry exits abandon suppressed idle waiters
+**Query lifecycle:** (Q2) superseded-retry exits abandon suppressed idle waiters
 (:906–908, :978, :1024). (Retraction: the earlier `emitSdkResumeChoiceMessage`
 TOCTOU report is withdrawn — its unresolved-check (:370), synchronous save
 (:383), and re-check (:385–390) contain no await, so two invocations cannot
-interleave in the single-process daemon.) (Q4)
+interleave in the single-process daemon. The earlier startup-timeout vs
+first-message race report is likewise withdrawn: when the timer wins,
+`abort()` sets the signal synchronously and `createAbortableQuery` breaks at
+query-runner.ts:1542–1544 without yielding the pending frame; when the frame
+wins, its settlement drains through microtasks into the timer-clear at
+:791–795 before the timer callback can run — the :784 guard never observes
+flag-set-with-fresh-frame.) (Q4)
 deferred→enqueued written before durable V2 ownership; failure leaves owner-less
 `enqueued` rows (query-mode-handler.ts:55–68); legacy path's stale `v2Owned`
 snapshot can double-enqueue (:78–86). (Q6) `QueryRunner.start` silently
