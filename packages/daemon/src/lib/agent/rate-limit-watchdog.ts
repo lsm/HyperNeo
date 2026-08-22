@@ -277,20 +277,36 @@ export class RateLimitWatchdog {
             `(was backoff ladder) for error: ${errorMessage}`
         );
         const previousHint = this.lastHint;
+        const previousLimitKind = this.limitKind;
         if (result.kind) {
           this.lastHint = { ...this.lastHint, kind: result.kind };
         }
         const refund = chargedLadder && this.retryCount > 0;
-        const armed = await this.scheduleCooldown(
-          errorMessage,
-          cooldownFromReset(resetMs, now),
-          entryGeneration,
-          refund ? this.retryCount - 1 : this.retryCount
-        );
-        if (!armed) {
+        try {
+          const armed = await this.scheduleCooldown(
+            errorMessage,
+            cooldownFromReset(resetMs, now),
+            entryGeneration,
+            refund ? this.retryCount - 1 : this.retryCount
+          );
+          if (!armed) {
+            this.lastHint = previousHint;
+          } else if (refund) {
+            this.retryCount--;
+          }
+        } catch (err) {
+          this.logger.warn('LLM refinement cooldown scheduling threw; reconciling state:', err);
           this.lastHint = previousHint;
-        } else if (refund) {
-          this.retryCount--;
+          this.limitKind = previousLimitKind;
+          if (this.cooldownTimer === timerAtFire && this.currentRetryAt !== null) {
+            await this.stateManager
+              .setRateLimitCooldown({
+                retryCount: this.retryCount,
+                maxRetries: this.config.maxAutoRetries,
+                retryAt: this.currentRetryAt,
+              })
+              .catch(() => {});
+          }
         }
       })
       .catch(() => {});

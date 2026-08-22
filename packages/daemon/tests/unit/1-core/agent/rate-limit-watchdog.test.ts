@@ -777,6 +777,42 @@ describe('RateLimitWatchdog', () => {
       watchdog.cancel();
     });
 
+    it('reconciles persisted state and hint when the refined write throws', async () => {
+      const classify = mock(async () => ({
+        resetAtMs: Date.now() + 2 * 60 * 60 * 1000,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const originalSet = stateManager.setRateLimitCooldown as ReturnType<typeof mock>;
+      let stateWrites = 0;
+      (stateManager as unknown as { setRateLimitCooldown: unknown }).setRateLimitCooldown = mock(
+        async (payload: unknown) => {
+          stateWrites += 1;
+          if (stateWrites === 2) {
+            throw new Error('publish rejected after persist');
+          }
+          return originalSet(payload);
+        }
+      );
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+      await flush();
+      await flush();
+      await flush();
+
+      const writes = originalSet.mock.calls;
+      const lastPayload = writes[writes.length - 1][0] as { retryAt: number };
+      const ownerRetryAt = (watchdog as unknown as { currentRetryAt: number | null })
+        .currentRetryAt;
+      expect(ownerRetryAt).not.toBeNull();
+      expect(lastPayload.retryAt).toBe(ownerRetryAt);
+      expect(watchdog.getState().retryCount).toBe(1);
+      watchdog.cancel();
+    });
+
     it('refines a newer cooldown even while an older refinement is in flight', async () => {
       const classifyCalls: string[] = [];
       let releaseAll: (() => void) | undefined;

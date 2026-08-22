@@ -389,6 +389,32 @@ describe('LimitErrorLlmClassifier', () => {
     expect(seenProviders).toEqual(['glm']);
   });
 
+  it('frees the queue when provider env application stalls past the deadline', async () => {
+    const seenRestores: unknown[] = [];
+    const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
+    let applyCalls = 0;
+    deps.providerService = {
+      ...deps.providerService,
+      applyEnvVarsToProcessForProvider: (() => {
+        applyCalls += 1;
+        if (applyCalls === 1) {
+          return new Promise(() => {});
+        }
+        return Promise.resolve({});
+      }) as typeof deps.providerService.applyEnvVarsToProcessForProvider,
+      restoreEnvVars: (env: unknown) => {
+        seenRestores.push(env);
+      },
+    };
+    const classifier = new LimitErrorLlmClassifier('s1', { ...deps, timeoutMs: 40 });
+
+    const stalled = classifier.classify('env apply stall wall');
+    const queued = classifier.classify('proceeds after the stalled task clears');
+
+    expect(await stalled).toBeNull();
+    expect((await queued)?.kind).toBe('rate_limit');
+  });
+
   it('skips providers whose model probe returned an empty list', async () => {
     const seenProviders: string[] = [];
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');

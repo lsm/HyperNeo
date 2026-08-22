@@ -236,10 +236,18 @@ export class LimitErrorLlmClassifier {
       );
       if (!models) return null;
       const providerService = this.deps.providerService;
-      const originalEnv = await providerService.applyEnvVarsToProcessForProvider(
+      const applyTask = providerService.applyEnvVarsToProcessForProvider(
         providerId,
         models.providerModelId
       );
+      const originalEnv = await raceWithDeadline(applyTask, deadline);
+      if (!originalEnv) {
+        applyTask.then(
+          (lateEnv) => providerService.restoreEnvVars(lateEnv),
+          () => {}
+        );
+        return null;
+      }
       try {
         const providerEnvVars = await raceWithDeadline(
           providerService.getEnvVarsForModel(models.providerModelId, providerId),
