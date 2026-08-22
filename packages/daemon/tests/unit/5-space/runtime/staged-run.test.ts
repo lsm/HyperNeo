@@ -297,6 +297,22 @@ describe('stagedRun composition contract', () => {
     ).toThrow(/provides no keys/);
   });
 
+  test('refuses a stage def whose run lives on the prototype', () => {
+    class ProtoSnapshot {
+      name = 'load';
+      provides = ['value'];
+      run() {
+        return { value: 1 };
+      }
+    }
+    expect(() =>
+      stagedRun<Box>('proto-def', (s) => [
+        s.snapshot(new ProtoSnapshot() as unknown as Parameters<typeof s.snapshot>[0]),
+        s.halt({ name: 'end', run: () => 'done' }),
+      ])
+    ).toThrow(/callable run as an own property/);
+  });
+
   test('two sequential writes to the same key stay expressible', async () => {
     const flow = stagedRun<Box>('double-write', (s) => [
       s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),

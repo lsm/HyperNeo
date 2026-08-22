@@ -493,6 +493,22 @@ function validateStageContract(
     if (!stage.name || names.has(stage.name)) {
       throw new StagedRunContractError(flow, `stage name "${stage.name}" is missing or duplicated`);
     }
+    if (typeof stage.run !== 'function') {
+      throw new StagedRunContractError(
+        flow,
+        `stage ${stage.name} must provide a callable run as an own property — class-instance defs with prototype methods are dropped by the copy`
+      );
+    }
+    if (
+      stage.kind === 'effect' &&
+      stage.compensate !== undefined &&
+      typeof stage.compensate !== 'function'
+    ) {
+      throw new StagedRunContractError(
+        flow,
+        `effect stage ${stage.name} must provide compensate as a callable own property`
+      );
+    }
     names.add(stage.name);
   }
   const stateKeys = new Set<string>(inputKeys);
