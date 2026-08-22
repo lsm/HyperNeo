@@ -73,6 +73,7 @@ export class RateLimitWatchdog {
   private deps: RateLimitWatchdogDeps;
   private retryCount = 0;
   private cooldownTimer: ReturnType<typeof setTimeout> | null = null;
+  private currentRetryAt: number | null = null;
   private lastUserMessage: { uuid: string; content: string | MessageContent[] } | null = null;
   private lastErrorMessage = '';
   private retryCallback: RateLimitRetryCallback | null = null;
@@ -328,6 +329,7 @@ export class RateLimitWatchdog {
         'Cooldown state write completed but a newer action owns the cooldown; ' +
           'not publishing pause or arming.'
       );
+      await this.restoreCooldownStateForCurrentOwner(decision.retryAtMs);
       return false;
     }
 
@@ -340,11 +342,13 @@ export class RateLimitWatchdog {
     this.cancelCooldownTimer();
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
+      this.currentRetryAt = null;
       this.logger.info(
         `Cooldown elapsed; firing retry (step ${this.retryCount}/${this.config.maxAutoRetries}).`
       );
       void this.fireCooldownRetry(errorMessage);
     }, decision.delayMs);
+    this.currentRetryAt = decision.retryAtMs;
 
     if (
       this.cooldownTimer &&
@@ -418,8 +422,10 @@ export class RateLimitWatchdog {
     }
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
+      this.currentRetryAt = null;
       void this.fireCooldownRetry(errorMessage);
     }, STARTUP_RETRY_DELAY_MS);
+    this.currentRetryAt = Date.now() + STARTUP_RETRY_DELAY_MS;
     if (
       this.cooldownTimer &&
       typeof this.cooldownTimer === 'object' &&
@@ -562,8 +568,24 @@ export class RateLimitWatchdog {
     if (this.cooldownTimer !== null) {
       clearTimeout(this.cooldownTimer);
       this.cooldownTimer = null;
+      this.currentRetryAt = null;
       this.logger.info('Cancelled pending rate limit cooldown.');
     }
+  }
+
+  private async restoreCooldownStateForCurrentOwner(staleRetryAtMs: number): Promise<void> {
+    if (
+      this.cooldownTimer === null ||
+      this.currentRetryAt === null ||
+      this.currentRetryAt === staleRetryAtMs
+    ) {
+      return;
+    }
+    await this.stateManager.setRateLimitCooldown({
+      retryCount: this.retryCount,
+      maxRetries: this.config.maxAutoRetries,
+      retryAt: this.currentRetryAt,
+    });
   }
 
   retryNow(): boolean {
@@ -577,6 +599,7 @@ export class RateLimitWatchdog {
     if (this.cooldownTimer !== null) {
       clearTimeout(this.cooldownTimer);
       this.cooldownTimer = null;
+      this.currentRetryAt = null;
     }
     if (this.startupExhausted) {
       this.startupExhausted = false;

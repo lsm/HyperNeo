@@ -693,6 +693,49 @@ describe('RateLimitWatchdog', () => {
       expect((watchdog as unknown as { cooldownTimer: unknown }).cooldownTimer).toBeNull();
       expect(watchdog.getState().retryCount).toBe(1);
     });
+
+    it('restores the persisted state of a newer cooldown after a stale refinement write', async () => {
+      const classify = mock(async () => ({
+        resetAtMs: Date.now() + 2 * 60 * 60 * 1000,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const originalSet = stateManager.setRateLimitCooldown as ReturnType<typeof mock>;
+      let releaseStateWrite: () => void = () => {};
+      const writeGate = new Promise<void>((resolve) => {
+        releaseStateWrite = resolve;
+      });
+      let stateWrites = 0;
+      (stateManager as unknown as { setRateLimitCooldown: unknown }).setRateLimitCooldown = mock(
+        async (payload: unknown) => {
+          stateWrites += 1;
+          if (stateWrites === 2) await writeGate;
+          return originalSet(payload);
+        }
+      );
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+      await flush();
+      await flush();
+      await watchdog.scheduleRetry('throttled by proxy again', { uuid: 'm1', content: 'x' });
+      await flush();
+      releaseStateWrite();
+      await flush();
+      await flush();
+
+      const writes = originalSet.mock.calls;
+      expect(notifyPause).toHaveBeenCalledTimes(2);
+      const newerOwnerPayload = writes[1][0] as { retryAt: number };
+      const staleRefinedPayload = writes[2][0] as { retryAt: number };
+      const lastPayload = writes[writes.length - 1][0] as { retryAt: number };
+      expect(lastPayload.retryAt).toBe(newerOwnerPayload.retryAt);
+      expect(lastPayload.retryAt).not.toBe(staleRefinedPayload.retryAt);
+      expect((watchdog as unknown as { cooldownTimer: unknown }).cooldownTimer).not.toBeNull();
+      watchdog.cancel();
+    });
   });
 
   describe('Phase A — immediate fallback switch', () => {
