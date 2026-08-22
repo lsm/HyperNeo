@@ -1056,8 +1056,13 @@ note.
   the refresh's later awaits — which update the shared `contextTracker`,
   publish `context.updated`, and may enqueue `/compact` into the
   replacement queue (`:1106–1140`); every detached refresh continuation
-  captures and revalidates the query/turn owner before updating or
-  enqueueing — and the **guardrail recovery enqueue and circuit-breaker trip
+  captures and revalidates the query/turn owner **and the attempt token**
+  before updating or
+  enqueueing — retries preserve the query generation and turn owner while
+  invalidating only the attempt token, so a predecessor refresh finishing
+  after the retry starts still passes the query/turn checks and would
+  update the tracker, publish stale usage, or enqueue `/compact` into the
+  retry — and the **guardrail recovery enqueue and circuit-breaker trip
   join them**: `routeRecoveryMessage` detaches `messageQueue.enqueue`
   (sdk-message-handler.ts:155–158) whose synchronous admission delivers the
   old turn's recovery prompt to the replacement before any outer check, so
@@ -1073,7 +1078,16 @@ note.
   post-fetch generator check, detached at query-runner.ts:773–775, and
   outside `refreshInProgress`/`cacheGeneration` so a replacement's cache
   clear does not fence the late write; the run owner is passed into
-  discovery and validated immediately before `modelsCache.set`; the
+  discovery and validated immediately before `modelsCache.set`; and the
+  parallel **slash-command discovery** is fenced at the same boundary:
+  `SlashCommandManager.fetchAndCache()` captures the current query, awaits
+  `supportedCommands()`, then writes `slashCommands`,
+  `session.availableCommands`, and the DB (slash-command-manager.ts:95–125)
+  — a replacement or provider/model switch during that await has the
+  predecessor overwrite the successor's commands and set
+  `commandsFetchedFromSDK`, making the successor's `updateFromInit()` return
+  early (`:53–54`); the same owner/attempt validation precedes these cache
+  writes; the
   core also returns the updated flag state, since the scoped machine mutates it:
   results set `lastResultWasSuccess`; suppressed **successful** results clear
   `suppressIdleOnNextResult` (:936–937 is success-gated at :765–766), so a
