@@ -621,7 +621,9 @@ describe('TaskAgentManager.inspectSessionDown', () => {
     const startedAt = Date.now();
     const results = await manager.stopSessionsVerified(['sess-1']);
 
-    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(400);
+    const elapsed = Date.now() - startedAt;
+    expect(elapsed).toBeGreaterThanOrEqual(400);
+    expect(elapsed).toBeLessThan(1500);
     expect(fake.calls.interrupts).toBe(1);
     expect(fake.calls.terminations).toBe(0);
     expect(results).toEqual([{ sessionId: 'sess-1', stopped: true }]);
