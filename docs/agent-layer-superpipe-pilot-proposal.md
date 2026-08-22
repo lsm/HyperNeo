@@ -291,6 +291,12 @@ note.
   via the `!isAbortError` gate (:1158–1291) and performs finally-cleanup only;
   without this route the interpreter would classify intentional cancellation as
   terminal and display an error or run terminal-idle handling |
+  api_validation(text) — a parseable API validation failure (e.g.
+  `400 prompt is too long`) is displayed verbatim with `markAsError` via
+  `parseApiValidationError`/`displayErrorAsAssistantMessage` (:1568–1617,
+  :1159–1165) and deliberately skips `errorManager`, with no terminal category;
+  folding it into `terminal(category)` would replace the actionable validation
+  text with generic category handling |
   terminal(category)` — interpreted by thin shell arms. Routing note the table
   must preserve: rate-limit errors — explicit HTTP-429 **and** text-form — do
   not enter the provider-backoff arm: `isRetryableProviderError` excludes all
@@ -319,8 +325,10 @@ note.
   arm :1024–1034 ahead of :1060; every arm's awaited `setIdle` ahead of its
   first guard; the message-not-found pointer consumption at :970 is *not* one —
   the stale-generation return at :849–851 reaches it with no intervening await)
-  as characterization, and tightening them is
-  a behavior change deliberately left out of the refactor. Teardown dedup is
+  as characterization — **and closing the reachable ones is an explicit
+  apply-PR requirement**: the apply arms add a generation resnapshot before
+  touching shared query/process fields and immediately before each recursion,
+  since staged async boundaries widen these windows. Teardown dedup is
   plain helper extraction, not a pipeline.
 - **PR sketch:**
   1. **PR 1 (test-only pins):** decision-table tests for retry-route
@@ -392,7 +400,10 @@ note.
      event calls `finishTurn`, gates replay on `lastResultWasSuccess`, and
      resets all three flags — sdk-message-handler.ts:957–969; alternatively
      leave session-state handling in the shell with the core contract narrowed)
-     → idle/finish/replay — `finishTurn` publishes
+     → {idle / finish / replay} **with `next_flags` asserted on every row** (two
+     rows can share immediate actions yet need different next flag state — e.g.
+     a non-idle session-state event sets the idle expectation while a suppressed
+     result clears `suppressIdleOnNextResult`) — `finishTurn` publishes
      `query.trigger` only outside `manual` mode, sdk-message-handler.ts:943–950,
      so manual sessions with identical flags must not replay deferred messages;
      the queryMode gate may alternatively stay in the shell with the core
@@ -464,8 +475,12 @@ note.
   1. **PR 1 (pins):** pilot-1-style transcript parity harness for
      `driveDeliveryTurn` + `feedDeliverySteer` + the job handler (instrument
      queue admits, DB marks, job mutations per scenario); decision tables for
-     the steer ladder (status × queryPromise × claim-current × delivery
-     validity × queue ownership — claim currency is its own dimension: the inner
+     the steer ladder (status × queryPromise × provider type × claim-current ×
+     delivery
+     validity × queue ownership — provider type is its own gate: with processing,
+     live query, current claim, valid delivery, and an already-pending message
+     held constant, ACP returns `awaiting_acceptance` while non-ACP proceeds to
+     admission; claim currency is its own dimension: the inner
      `claimGuard` (:1699) must return `aborted` before the status ladder when
      the claim was superseded during the lock wait, for every status, while an
      invalid message only parks in the processing branch; queue
