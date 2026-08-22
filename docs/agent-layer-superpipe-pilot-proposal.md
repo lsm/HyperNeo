@@ -798,7 +798,15 @@ note.
      from `yielded`; ownership is checked before entering and immediately
      after each yield of the outer prompt generator, stale claims are
      requeued, and the same ownership binding applies to late pulls of
-     QueryRunner's `createMessageGeneratorWrapper`. The
+     QueryRunner's `createMessageGeneratorWrapper` — **and to the pre-yield
+     consumption callback**: `messageGenerator` invokes `onMessageYielded`
+     *before* yielding (message-queue.ts:316–323), and that callback marks
+     the durable message consumed and publishes it through
+     `handleMessageYielded`, so a stale generator blocked in
+     `waitForNextMessage` performs those effects before any post-yield
+     wrapper check runs; the run owner is passed into `MessageQueue` and
+     validated before the callback (or the callback is suppressed and
+     invoked only after the wrapper's ownership check). The
      generation check
      also runs **immediately after the iterator yields, before any shared
      startup/message bookkeeping** — the old loop clears
