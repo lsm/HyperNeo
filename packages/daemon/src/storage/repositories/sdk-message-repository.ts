@@ -588,8 +588,13 @@ export class SDKMessageRepository {
         this.scheduleMessageSearchIndex(id);
         if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
       })();
-      if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
-      this.deleteSupersededMessageSearchRows(sessionId, message);
+      try {
+        if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
+        this.deleteSupersededMessageSearchRows(sessionId, message);
+      } catch (error) {
+        this.logger.error('[Database] Post-commit side effects failed for SDK message:', error);
+        this.logger.error('[Database] Message type:', message.type, 'Session:', sessionId);
+      }
       return true;
     } catch (error) {
       this.logger.error('[Database] Failed to save SDK message:', error);
