@@ -119,7 +119,9 @@ boundary (auth-handlers.ts:73–86, provider-handlers.ts:187–208,
 model-service.ts:183–188), so while a non-Anthropic session holds the window
 those calls can report Anthropic authenticated on another provider's temporary
 token — or unavailable while its baseline is cleared; ambient provider-auth
-readers acquire the same lease or read an immutable daemon baseline. — and
+readers acquire the same lease or read an immutable daemon baseline — all
+scheduled as the dedicated **Prerequisite PR 0** in the Recommendation, since
+no chain PR delivers it. — and
 **the coordinator must live at the shared `ProviderService` boundary, not in
 QueryRunner**: the same global environment has other concurrent owners —
 `acp-query-runner.ts:456` (`applyEnvVarsToProcessForSession`) and
@@ -1120,6 +1122,18 @@ silent return on unknown uuid (:518–522). (S8) dead
 refresh can publish after teardown (:794).
 
 ## Recommendation
+
+**Prerequisite PR 0 — provider-environment coordinator.** The daemon-wide
+credential isolation this proposal requires (§1(a)) is delivered by no chain
+PR and must not ride along implicitly: one dedicated PR implements the
+ProviderService-boundary coordinator (credential-reads → apply → spawn/use
+serialization), enrolls every owner and reader in the inventory — both
+runners, the four ProviderService services, the Anthropic model loader, the
+GitHub security/router spawns, and the ambient availability readers — handles
+ACP's pre-apply snapshot and the recursive arms' release-before-recursion, and
+ships concurrency pins for each interleaving named above (cross-session
+overlap, replacement-during-apply, reader-during-window). It lands before or
+with Chain B's apply PRs.
 
 Create chain B first (sequence its apply PRs after #2661 merges), chain C in
 parallel once #2661/#2543 clear, chain A as the wave-2 capstone after #2543
