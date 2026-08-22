@@ -2,7 +2,7 @@ import type { ProviderRecord, CustomEndpointConfig } from '@hyperneo/shared';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import { getProviderRegistry } from './registry.js';
 import { initializeProviders, registerBuiltInProvider } from './factory.js';
-import { AcpProvider } from './acp-provider.js';
+import { AcpProvider, type AcpConfiguredModel } from './acp-provider.js';
 import { CustomEndpointProvider, customProviderIdFor } from './custom-endpoint-provider.js';
 import { Logger } from '../logger.js';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.js';
@@ -10,12 +10,28 @@ import { resolveKimiRegion } from './kimi-provider.js';
 
 const logger = new Logger('providers:sync');
 
-export function parseAcpConfig(configJson: string | undefined): { command?: string } {
+export function parseAcpConfig(configJson: string | undefined): {
+  command?: string;
+  models?: AcpConfiguredModel[];
+} {
   if (!configJson) return {};
   try {
-    const parsed = JSON.parse(configJson) as { command?: unknown };
+    const parsed = JSON.parse(configJson) as { command?: unknown; models?: unknown };
     const command = typeof parsed.command === 'string' ? parsed.command : undefined;
-    return { command };
+    const models = Array.isArray(parsed.models)
+      ? parsed.models
+          .filter(
+            (model: unknown): model is AcpConfiguredModel =>
+              !!model &&
+              typeof model === 'object' &&
+              typeof (model as AcpConfiguredModel).id === 'string'
+          )
+          .map((model) => ({
+            id: model.id,
+            name: typeof model.name === 'string' ? model.name : undefined,
+          }))
+      : undefined;
+    return { command, models };
   } catch {
     return {};
   }
@@ -43,8 +59,9 @@ export async function syncProviderToRegistry(
       logger.info(`Kimi provider region set to '${region}'`);
     }
     if (provider instanceof AcpProvider) {
-      const { command } = parseAcpConfig(record.configJson);
+      const { command, models } = parseAcpConfig(record.configJson);
       provider.setAcpCommand(command);
+      provider.setAcpModels(models);
       logger.info(`ACP provider command ${command ? 'configured' : 'reset to env default'}`);
     }
     if (provider?.setCredentials && credentials) {

@@ -20,7 +20,7 @@ import type { AppMcpServerRepository } from '../../../storage/repositories/app-m
 import type { UUID } from 'crypto';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
-import { AgentSession } from '../../../lib/agent/agent-session';
+import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session';
 import {
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
@@ -74,7 +74,6 @@ import {
   PermanentSpawnError,
   validateTaskAllowsSpawn,
 } from './workflow-node-execution-validation';
-import type { DbQueryMcpServer } from '../../db-query/tools';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
@@ -356,6 +355,8 @@ export class TaskAgentManager {
 
   private readonly sessionRestoreLocks = new Map<string, Promise<void>>();
 
+  private readonly rehydrateInFlight = new Map<string, Promise<AgentSession | null>>();
+
   private spawningExecutionIds = new Set<string>();
 
   private completionCallbacks: CompletionCallbackMap = new Map();
@@ -364,10 +365,7 @@ export class TaskAgentManager {
 
   private taskWorktreePaths = new Map<string, string>();
 
-  private taskDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly auditLogRepo: McpAuditLogRepository;
-
-  private eagerSubSessionIds = new Map<string, Map<string, string>>();
 
   private taskArchiveListenerUnsub: (() => void) | null = null;
   private rateLimitListenerUnsubs: Array<() => void> = [];
@@ -568,16 +566,27 @@ export class TaskAgentManager {
     ) {
       return;
     }
-    this.config.taskRepo.updateTask(taskId, { status, restrictions });
-    this.emitTaskUpdatedEvent(taskId);
+    const outcome = this.config.taskRepo.casStatusWithPayload(
+      taskId,
+      ['in_progress', 'rate_limited', 'usage_limited'],
+      status,
+      { restrictions }
+    );
+    if (outcome === 'won') {
+      this.emitTaskUpdatedEvent(taskId);
+    }
   }
 
   private async restoreTaskFromRateLimit(taskId: string): Promise<void> {
-    const task = this.config.taskRepo.getTask(taskId);
-    if (!task) return;
-    if (!isRateOrUsageLimited(task.status)) return;
-    this.config.taskRepo.updateTask(taskId, { status: 'in_progress', restrictions: null });
-    this.emitTaskUpdatedEvent(taskId);
+    const outcome = this.config.taskRepo.casStatusWithPayload(
+      taskId,
+      ['rate_limited', 'usage_limited'],
+      'in_progress',
+      { restrictions: null }
+    );
+    if (outcome === 'won') {
+      this.emitTaskUpdatedEvent(taskId);
+    }
   }
 
   private emitTaskUpdatedEvent(taskId: string): void {
@@ -873,7 +882,9 @@ export class TaskAgentManager {
         const kickoffMessage = runtimeContract
           ? `${initialMessage}\n\n${runtimeContract}`
           : initialMessage;
-        await this.injectMessageIntoSession(spawned, kickoffMessage);
+        await this.withSessionInjectLock(spawned.session.id, () =>
+          this.injectMessageIntoSession(spawned, kickoffMessage)
+        );
       }
       return actualSessionId;
     } catch (err) {
@@ -905,29 +916,10 @@ export class TaskAgentManager {
     if (memberInfo?.agentName) {
       const parentTask = this.config.taskRepo.getTask(taskId);
       if (parentTask?.workflowRunId) {
-        const eagerSessionId = this.eagerSubSessionIds.get(taskId)?.get(memberInfo.agentName);
-        let prevExec = this.config.nodeExecutionRepo
+        const prevExec = this.config.nodeExecutionRepo
           .listByWorkflowRun(parentTask.workflowRunId)
           .filter((e) => e.agentName === memberInfo.agentName && e.agentSessionId)
           .at(-1);
-        if (!prevExec && eagerSessionId) {
-          prevExec = {
-            id: '',
-            workflowRunId: parentTask.workflowRunId,
-            workflowNodeId: memberInfo.nodeId ?? '',
-            agentName: memberInfo.agentName,
-            agentId: memberInfo.agentId ?? null,
-            agentSessionId: eagerSessionId,
-            status: 'pending',
-            result: null,
-            data: null,
-            createdAt: 0,
-            startedAt: null,
-            completedAt: null,
-            updatedAt: 0,
-            lastActivityAt: null,
-          };
-        }
         if (prevExec?.agentSessionId) {
           const existing =
             this.agentSessionIndex.get(prevExec.agentSessionId) ??
@@ -1022,10 +1014,10 @@ export class TaskAgentManager {
             }
 
             existing.onMissingWorkflowMcpServers = async (
-              cbSessionId: string,
+              target: AgentSession,
               missing: string[]
             ) => {
-              await this.mcpSelfHeal(cbSessionId, missing);
+              await this.mcpSelfHeal(target, missing);
             };
 
             const runId = parentTask.workflowRunId;
@@ -1100,8 +1092,8 @@ export class TaskAgentManager {
       }
     }
 
-    subSession.onMissingWorkflowMcpServers = async (cbSessionId: string, missing: string[]) => {
-      await this.mcpSelfHeal(cbSessionId, missing);
+    subSession.onMissingWorkflowMcpServers = async (target: AgentSession, missing: string[]) => {
+      await this.mcpSelfHeal(target, missing);
     };
 
     await subSession.startStreamingQuery();
@@ -1345,25 +1337,31 @@ export class TaskAgentManager {
   ): Promise<string> {
     const guardExecution = this.resolveNodeExecutionForSubSession(subSessionId);
     if (guardExecution) {
-      const guardTask = this.config.taskRepo.listByWorkflowRunIncludingArchived(
-        guardExecution.workflowRunId
-      )[0];
-      const guardRun = this.config.workflowRunRepo.getRun(guardExecution.workflowRunId);
-      if (
-        guardTask?.status === 'cancelled' ||
-        guardTask?.status === 'archived' ||
-        guardRun?.status === 'cancelled'
-      ) {
+      const guardStatus = this.resolveTerminalInjectionStatus(guardExecution.workflowRunId);
+      if (guardStatus) {
         log.warn(
-          `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ${subSessionId} — task/run is terminal (${guardTask?.status ?? guardRun?.status})`
+          `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ${subSessionId} — task/run is terminal (${guardStatus})`
         );
         throw new Error(
-          `Cannot inject message to session ${subSessionId} — task/run is terminal (${guardTask?.status ?? guardRun?.status})`
+          `Cannot inject message to session ${subSessionId} — task/run is terminal (${guardStatus})`
         );
       }
     }
 
     return this.withSessionInjectLock(subSessionId, async () => {
+      const lockedExecution = this.resolveNodeExecutionForSubSession(subSessionId);
+      if (lockedExecution) {
+        const lockedStatus = this.resolveTerminalInjectionStatus(lockedExecution.workflowRunId);
+        if (lockedStatus) {
+          log.warn(
+            `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ${subSessionId} after lock acquisition — task/run is terminal (${lockedStatus})`
+          );
+          throw new Error(
+            `Cannot inject message to session ${subSessionId} — task/run is terminal (${lockedStatus})`
+          );
+        }
+      }
+
       const indexed = this.agentSessionIndex.get(subSessionId);
       if (indexed) {
         return await this.injectMessageIntoSession(
@@ -1409,6 +1407,20 @@ export class TaskAgentManager {
       }
       throw new Error(`Sub-session not found: ${subSessionId}`);
     });
+  }
+
+  private resolveTerminalInjectionStatus(workflowRunId: string): string | null {
+    const guardTask =
+      this.config.taskRepo?.listByWorkflowRunIncludingArchived?.(workflowRunId)?.[0] ?? null;
+    const guardRun = this.config.workflowRunRepo?.getRun?.(workflowRunId) ?? null;
+    if (
+      guardTask?.status === 'cancelled' ||
+      guardTask?.status === 'archived' ||
+      guardRun?.status === 'cancelled'
+    ) {
+      return guardTask?.status ?? guardRun?.status ?? 'terminal';
+    }
+    return null;
   }
 
   private async withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
@@ -1833,8 +1845,8 @@ export class TaskAgentManager {
     agentSession.onMissingMemberSpaceMcpServers = async (sid: string) => {
       await this.config.spaceRuntimeService.reattachMemberSpaceTools(sid);
     };
-    agentSession.onMissingWorkflowMcpServers = async (cbSessionId: string, missing: string[]) => {
-      await this.mcpSelfHeal(cbSessionId, missing);
+    agentSession.onMissingWorkflowMcpServers = async (target: AgentSession, missing: string[]) => {
+      await this.mcpSelfHeal(target, missing);
     };
 
     if (!this.subSessions.has(taskId)) {
@@ -1939,10 +1951,22 @@ export class TaskAgentManager {
       execution
     );
     const timeoutMs = 30_000;
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<null>((resolve) => {
-      setTimeout(() => resolve(null), timeoutMs);
+      timeoutTimer = setTimeout(() => resolve(null), timeoutMs);
+      timeoutTimer.unref();
     });
-    const sessionId = await Promise.race([spawnPromise, timeoutPromise]);
+    spawnPromise.catch((err) => {
+      log.warn(
+        `TaskAgentManager.activateTargetSessionsForMessage: spawn of agent "${agentName}" for run ${workflowRunId} failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    });
+    let sessionId: string | null;
+    try {
+      sessionId = await Promise.race([spawnPromise, timeoutPromise]);
+    } finally {
+      clearTimeout(timeoutTimer);
+    }
     if (!sessionId) {
       log.warn(
         `TaskAgentManager.activateTargetSessionsForMessage: timed out after ${timeoutMs}ms activating agent "${agentName}" for run ${workflowRunId}`
@@ -2012,10 +2036,6 @@ export class TaskAgentManager {
     }
   }
 
-  isSpawning(_taskId: string): boolean {
-    return false;
-  }
-
   isExecutionSpawning(executionId: string): boolean {
     return this.spawningExecutionIds.has(executionId);
   }
@@ -2059,10 +2079,6 @@ export class TaskAgentManager {
     return undefined;
   }
 
-  getTaskAgent(_taskId: string): AgentSession | undefined {
-    return undefined;
-  }
-
   getSubSession(subSessionId: string): AgentSession | undefined {
     for (const [, nodeMap] of this.subSessions) {
       const session = nodeMap.get(subSessionId);
@@ -2099,7 +2115,7 @@ export class TaskAgentManager {
     if (!this.isSessionAlive(sessionId)) return false;
     const session = this.getAgentSessionById(sessionId);
     if (!session) return false;
-    await this.mcpSelfHeal(sessionId, ['node-agent']);
+    await this.mcpSelfHeal(session, ['node-agent']);
     return true;
   }
 
@@ -2424,18 +2440,6 @@ export class TaskAgentManager {
 
     this.taskWorktreePaths.delete(taskId);
 
-    this.eagerSubSessionIds.delete(taskId);
-
-    const dbQueryServer = this.taskDbQueryServers.get(taskId);
-    if (dbQueryServer) {
-      try {
-        dbQueryServer.close();
-      } catch (err) {
-        log.warn(`TaskAgentManager: failed to close db-query server for task ${taskId}:`, err);
-      }
-      this.taskDbQueryServers.delete(taskId);
-    }
-
     log.info(`TaskAgentManager: shutdown complete for task ${taskId} (DB state preserved)`);
   }
 
@@ -2478,18 +2482,6 @@ export class TaskAgentManager {
     }
 
     this.taskWorktreePaths.delete(taskId);
-
-    this.eagerSubSessionIds.delete(taskId);
-
-    const dbQueryServer = this.taskDbQueryServers.get(taskId);
-    if (dbQueryServer) {
-      try {
-        dbQueryServer.close();
-      } catch (err) {
-        log.warn(`TaskAgentManager: failed to close db-query server for task ${taskId}:`, err);
-      }
-      this.taskDbQueryServers.delete(taskId);
-    }
 
     log.info(
       `TaskAgentManager: cleaned up in-memory state for task ${taskId} (reason: ${reason}, DB + worktree preserved)`
@@ -2889,6 +2881,29 @@ export class TaskAgentManager {
   }
 
   private async rehydrateSubSession(subSessionId: string): Promise<AgentSession | null> {
+    const indexed = this.agentSessionIndex.get(subSessionId);
+    if (indexed) return indexed;
+
+    const inFlight = this.rehydrateInFlight.get(subSessionId);
+    if (inFlight) return inFlight;
+
+    const rehydrateTask = this.withSessionRestoreLock(subSessionId, () =>
+      this.performSubSessionRehydrate(subSessionId)
+    );
+    this.rehydrateInFlight.set(subSessionId, rehydrateTask);
+    try {
+      return await rehydrateTask;
+    } finally {
+      if (this.rehydrateInFlight.get(subSessionId) === rehydrateTask) {
+        this.rehydrateInFlight.delete(subSessionId);
+      }
+    }
+  }
+
+  private async performSubSessionRehydrate(subSessionId: string): Promise<AgentSession | null> {
+    const alreadyIndexed = this.agentSessionIndex.get(subSessionId);
+    if (alreadyIndexed) return alreadyIndexed;
+
     log.warn(`TaskAgentManager: rehydrating ghost sub-session ${subSessionId} from DB...`);
 
     const execution = this.resolveNodeExecutionForSubSession(subSessionId);
@@ -2942,16 +2957,19 @@ export class TaskAgentManager {
       : null;
     const workflowRunId = execution.workflowRunId;
 
-    const agentSession = AgentSession.restore(
-      subSessionId,
-      this.config.db,
-      this.config.messageHub,
-      this.config.internalEventBus,
-      this.config.getApiKey,
-      this.config.skillsManager,
-      this.config.appMcpServerRepo,
-      { autoReplayPendingMessages: false }
-    );
+    const cached = this.config.sessionManager.getCachedSession(subSessionId);
+    const agentSession =
+      cached ??
+      AgentSession.restore(
+        subSessionId,
+        this.config.db,
+        this.config.messageHub,
+        this.config.internalEventBus,
+        this.config.getApiKey,
+        this.config.skillsManager,
+        this.config.appMcpServerRepo,
+        { autoReplayPendingMessages: false }
+      );
     if (!agentSession) {
       log.warn(
         `TaskAgentManager.rehydrateSubSession: AgentSession.restore() returned null for ${subSessionId} — session not in DB`
@@ -2959,7 +2977,10 @@ export class TaskAgentManager {
       return null;
     }
 
-    const workspacePath = this.taskWorktreePaths.get(taskId) ?? space.workspacePath;
+    const workspacePath =
+      this.getTaskWorktreePath(taskId) ??
+      agentSession.getSessionData().workspacePath ??
+      space.workspacePath;
 
     const currentInit = this.resolveCurrentNodeAgentInitForExecution({
       task: parentTask,
@@ -3018,8 +3039,8 @@ export class TaskAgentManager {
       await this.handleSubSessionComplete(taskId, execution.workflowNodeId, subSessionId);
     });
 
-    agentSession.onMissingWorkflowMcpServers = async (cbSessionId: string, missing: string[]) => {
-      await this.mcpSelfHeal(cbSessionId, missing);
+    agentSession.onMissingWorkflowMcpServers = async (target: AgentSession, missing: string[]) => {
+      await this.mcpSelfHeal(target, missing);
     };
 
     const pendingToolContinuations =
@@ -3034,8 +3055,17 @@ export class TaskAgentManager {
 
     this.sanitizeSDKSessionTranscriptForRehydration(agentSession, workspacePath);
 
-    await agentSession.startStreamingQuery();
-    await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+    try {
+      await agentSession.startStreamingQuery();
+      await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+    } catch (err) {
+      this.detachSessionBookkeeping(subSessionId);
+      this.agentSessionIndex.delete(subSessionId);
+      if (this.config.sessionManager.getCachedSession(subSessionId) === agentSession) {
+        await this.config.sessionManager.unregisterSession(subSessionId).catch(() => {});
+      }
+      throw err;
+    }
 
     void this.flushPendingMessagesForTarget(workflowRunId, execution.agentName, subSessionId).catch(
       (err) => {
@@ -3247,15 +3277,15 @@ export class TaskAgentManager {
     if (outcome.decision.action === 'noop') {
       return messageId;
     }
-    if (outcome.reopenFailedDelivery) {
-      const reopenedDbId = this.config.db
-        .getSDKMessageRepo()
-        .reopenDeliveryByUuid(sessionId, messageId);
-      if (reopenedDbId) {
-        await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
-      }
-    }
     if (outcome.decision.action === 'defer') {
+      if (outcome.reopenFailedDelivery) {
+        const reopenedDbId = this.config.db
+          .getSDKMessageRepo()
+          .reopenDeliveryByUuid(sessionId, messageId);
+        if (reopenedDbId) {
+          await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
+        }
+      }
       if (v2Enabled && existing && existing.sendStatus !== 'deferred') {
         this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
       }
@@ -3272,10 +3302,22 @@ export class TaskAgentManager {
       try {
         await session.clearConversationContext();
       } catch (err) {
+        if (err instanceof ClearConversationCancelledError) {
+          throw err;
+        }
         log.warn(
           `TaskAgentManager: resetContextPerTurn clear failed for session ${sessionId}: ` +
             `${err instanceof Error ? err.message : String(err)} — delivering without clear`
         );
+      }
+    }
+
+    if (outcome.reopenFailedDelivery) {
+      const reopenedDbId = this.config.db
+        .getSDKMessageRepo()
+        .reopenDeliveryByUuid(sessionId, messageId);
+      if (reopenedDbId) {
+        await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
       }
     }
 
@@ -3472,7 +3514,8 @@ export class TaskAgentManager {
     );
   }
 
-  async mcpSelfHeal(sessionId: string, missing: string[]): Promise<void> {
+  async mcpSelfHeal(target: AgentSession, missing: string[]): Promise<void> {
+    const sessionId = target.getSessionData().id;
     log.warn(
       `TaskAgentManager.mcpSelfHeal: triggered for session ${sessionId}, missing [${missing.join(', ')}]`
     );
@@ -3501,12 +3544,31 @@ export class TaskAgentManager {
       return;
     }
 
-    const agentSession = this.agentSessionIndex.get(sessionId);
-    if (!agentSession) {
-      log.error(
-        `TaskAgentManager.mcpSelfHeal: AgentSession ${sessionId} not in memory — cannot self-heal`
+    const agentSession = target;
+    if (this.agentSessionIndex.get(sessionId) !== agentSession) {
+      const displaced = this.agentSessionIndex.get(sessionId);
+      log.warn(
+        `TaskAgentManager.mcpSelfHeal: adopting the started session instance for ${sessionId} ` +
+          `as the canonical in-memory sub-session before healing`
       );
-      return;
+      if (displaced) {
+        this.detachSessionBookkeeping(sessionId);
+        void displaced.handleInterrupt({ skipDeferredReplay: true }).catch((err) => {
+          log.warn(
+            `TaskAgentManager.mcpSelfHeal: failed to interrupt displaced session instance ` +
+              `${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
+      if (!this.subSessions.has(parentTask.id)) {
+        this.subSessions.set(parentTask.id, new Map());
+      }
+      this.subSessions.get(parentTask.id)!.set(sessionId, agentSession);
+      this.agentSessionIndex.set(sessionId, agentSession);
+      this.config.sessionManager.registerSession(agentSession);
+      this.registerCompletionCallback(sessionId, async () => {
+        await this.handleSubSessionComplete(parentTask.id, execution.workflowNodeId, sessionId);
+      });
     }
 
     await this.ensureRequiredMcpServersAttached(agentSession, {
@@ -3515,7 +3577,10 @@ export class TaskAgentManager {
       agentName: execution.agentName,
       spaceId: parentTask.spaceId,
       workflowRunId: execution.workflowRunId,
-      workspacePath: this.taskWorktreePaths.get(parentTask.id) ?? space.workspacePath,
+      workspacePath:
+        this.getTaskWorktreePath(parentTask.id) ??
+        agentSession.getSessionData().workspacePath ??
+        space.workspacePath,
       workflowNodeId: execution.workflowNodeId,
       phase: 'rehydrate',
     });
@@ -4054,7 +4119,19 @@ export class TaskAgentManager {
           `spawnPostApprovalSubSession: live session ${existingSessionId} for agent "${matchedSlot.name}" vanished before injection (task ${taskId})`
         );
       }
-      await this.injectMessageIntoSession(existing, kickoffMessage);
+      await this.withSessionInjectLock(existing.session.id, async () => {
+        const terminalStatus = task.workflowRunId
+          ? this.resolveTerminalInjectionStatus(task.workflowRunId)
+          : null;
+        if (terminalStatus) {
+          log.warn(
+            `TaskAgentManager.spawnPostApprovalSubSession: skipping inject to live session ` +
+              `${existingSessionId} — task/run is terminal (${terminalStatus})`
+          );
+          return;
+        }
+        await this.injectMessageIntoSession(existing, kickoffMessage);
+      });
       log.info(
         `TaskAgentManager.spawnPostApprovalSubSession: reused live session ${existingSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
       );
@@ -4140,7 +4217,9 @@ export class TaskAgentManager {
       phase: 'spawn',
     });
 
-    await this.injectMessageIntoSession(spawned, kickoffMessage);
+    await this.withSessionInjectLock(spawned.session.id, () =>
+      this.injectMessageIntoSession(spawned, kickoffMessage)
+    );
 
     log.info(
       `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`

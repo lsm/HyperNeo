@@ -28,6 +28,7 @@ import {
   type EditorState,
 } from './CustomEndpointEditor.tsx';
 import { useFetchModels } from './useFetchModels.ts';
+import { AcpEditorModal, type AcpConfiguredModel } from './AcpEditorModal.tsx';
 
 interface EnrichedProvider extends ProviderRecord {
   available: boolean;
@@ -44,6 +45,32 @@ function readKimiRegion(provider: EnrichedProvider): 'china' | 'global' {
   }
 }
 
+function readAcpCommand(provider: EnrichedProvider): string {
+  if (!provider.configJson) return '';
+  try {
+    const parsed = JSON.parse(provider.configJson) as { command?: unknown };
+    return typeof parsed.command === 'string' ? parsed.command : '';
+  } catch {
+    return '';
+  }
+}
+
+function readAcpModels(provider: EnrichedProvider): AcpConfiguredModel[] | undefined {
+  if (!provider.configJson) return undefined;
+  try {
+    const parsed = JSON.parse(provider.configJson) as { models?: unknown };
+    if (!Array.isArray(parsed.models)) return undefined;
+    return parsed.models.flatMap((model) => {
+      if (!model || typeof model !== 'object') return [];
+      const { id, name } = model as { id?: unknown; name?: unknown };
+      if (typeof id !== 'string') return [];
+      return [{ id, ...(typeof name === 'string' ? { name } : {}) }];
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 const KIMI_REGION_LABELS: Record<'china' | 'global', string> = {
   china: 'China (api.kimi.com)',
   global: 'Global (api.moonshot.ai)',
@@ -57,6 +84,13 @@ export function ProvidersSettings() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [oauthFlow, setOauthFlow] = useState<OAuthFlowState | null>(null);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
+  const [acpEditor, setAcpEditor] = useState<{
+    providerId: string;
+    providerName: string;
+    command: string;
+    models?: AcpConfiguredModel[];
+    envBacked?: boolean;
+  } | null>(null);
   const [kimiRegions, setKimiRegions] = useState<Record<string, 'china' | 'global'>>({});
   const [customEditor, setCustomEditor] = useState<EditorState | null>(null);
   const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
@@ -667,6 +701,52 @@ export function ProvidersSettings() {
                           </div>
                         )}
 
+                        {provider.providerId === 'acp' && !isCustom && (
+                          <div>
+                            <div class="flex items-center justify-between gap-2">
+                              <div class="min-w-0">
+                                <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
+                                  Configuration
+                                </h5>
+                                <div class="text-xs text-gray-500 font-mono truncate">
+                                  {readAcpCommand(provider) ||
+                                    (provider.available
+                                      ? 'Using HYPERNEO_ACP_COMMAND'
+                                      : 'No command set')}
+                                </div>
+                                {(readAcpModels(provider)?.length ?? 0) > 0 && (
+                                  <div class="mt-1 flex flex-wrap gap-1">
+                                    {readAcpModels(provider)?.map((model) => (
+                                      <span
+                                        key={model.id}
+                                        class="text-[10px] px-1.5 py-0.5 rounded bg-dark-800 text-gray-300"
+                                      >
+                                        {model.name ?? model.id}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() =>
+                                  setAcpEditor({
+                                    providerId: provider.id,
+                                    providerName: provider.displayName,
+                                    command: readAcpCommand(provider),
+                                    models: readAcpModels(provider),
+                                    envBacked: !readAcpCommand(provider),
+                                  })
+                                }
+                                disabled={isPending}
+                              >
+                                Edit
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
                         <div>
                           <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
                             Health
@@ -769,6 +849,21 @@ export function ProvidersSettings() {
           fetchedModels={fetchedModels}
           fetchModelsError={fetchModelsError}
           fetchedAt={fetchedAt}
+        />
+      )}
+
+      {acpEditor && (
+        <AcpEditorModal
+          providerId={acpEditor.providerId}
+          providerName={acpEditor.providerName}
+          command={acpEditor.command}
+          models={acpEditor.models}
+          envBacked={acpEditor.envBacked}
+          onClose={() => setAcpEditor(null)}
+          onSaved={() => {
+            setAcpEditor(null);
+            loadProviders();
+          }}
         />
       )}
     </>

@@ -26,6 +26,7 @@ import type {
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery';
+import type { AgentSession } from '../agent/agent-session';
 import {
   type QueryRunnerContext,
   refreshQueryEnvFromProcess,
@@ -863,6 +864,11 @@ export class AcpQueryRunner {
             }
             this.ctx.firstMessageReceived = true;
 
+            const sdkMessage = acpMessage as SDKMessage & { user_message_uuid?: string };
+            if (sdkMessage.type === 'result' && !sdkMessage.user_message_uuid) {
+              sdkMessage.user_message_uuid = message.uuid;
+            }
+
             try {
               await this.handleSDKMessage(acpMessage as SDKMessage);
             } catch (error) {
@@ -1242,7 +1248,7 @@ export class AcpQueryRunner {
     missing: string[]
   ): Promise<void> {
     if (policy.isWorkflowWorker && this.ctx.onMissingWorkflowMcpServers) {
-      await this.ctx.onMissingWorkflowMcpServers(this.ctx.session.id, missing);
+      await this.ctx.onMissingWorkflowMcpServers(this.ctx as AgentSession, missing);
       return;
     }
     if (policy.attachCoordinatorTools && this.ctx.onMissingSpaceChatMcpServers) {

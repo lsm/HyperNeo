@@ -284,6 +284,8 @@ function parseResult(result: {
   }
 }
 
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
 describe('db-query tools', () => {
   let db: Database;
 
@@ -1540,7 +1542,43 @@ describe('db-query tools', () => {
       expect(() => server.close()).not.toThrow();
     });
 
-    it('tools are functional through the MCP server', async () => {
+    it('db_list_tables and db_describe_table are functional through the MCP server', async () => {
+      const dbPath = join(tmpDir, 'test.db');
+      const initDb = new Database(dbPath);
+      initDb.exec('CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT, config TEXT)');
+      initDb.exec("INSERT INTO rooms VALUES ('r1', 'Room 1', '{\"m\":\"o\"}')");
+      initDb.close();
+
+      const server = createDbQueryMcpServer({
+        dbPath,
+        scopeType: 'global',
+        scopeValue: '',
+      });
+
+      expect(server.type).toBe('sdk');
+      const listHandler = (
+        server.instance._registeredTools.db_list_tables as {
+          handler: () => Promise<{ content: Array<{ text: string }> }>;
+        }
+      ).handler;
+      const listed = await listHandler();
+      const listData = JSON.parse(listed.content[0].text);
+      expect(listData.tables).toContain('rooms');
+
+      const describeHandler = (
+        server.instance._registeredTools.db_describe_table as {
+          handler: (args: { table_name: string }) => Promise<{ content: Array<{ text: string }> }>;
+        }
+      ).handler;
+      const described = await describeHandler({ table_name: 'rooms' });
+      const describeData = JSON.parse(described.content[0].text);
+      expect(describeData.description).toContain('## rooms');
+      expect(describeData.description).not.toContain('| config |');
+
+      server.close();
+    });
+
+    it.skipIf(!isBun)('db_query runs on the worker through the MCP server', async () => {
       const dbPath = join(tmpDir, 'test.db');
       const initDb = new Database(dbPath);
       initDb.exec('CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT, config TEXT)');
@@ -1563,6 +1601,48 @@ describe('db-query tools', () => {
       const data = JSON.parse(result.content[0].text);
       expect(data.rows).toHaveLength(1);
       expect(data.rows[0]).not.toHaveProperty('config');
+
+      server.close();
+    });
+
+    it('db_query returns a controlled error when workers are unavailable', async () => {
+      const dbPath = join(tmpDir, 'test.db');
+      const initDb = new Database(dbPath);
+      initDb.exec('CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT, config TEXT)');
+      initDb.exec("INSERT INTO rooms VALUES ('r1', 'Room 1', '{\"m\":\"o\"}')");
+      initDb.close();
+
+      const server = createDbQueryMcpServer({
+        dbPath,
+        scopeType: 'global',
+        scopeValue: '',
+      });
+
+      const originalWorker = (globalThis as { Worker?: unknown }).Worker;
+      Object.defineProperty(globalThis, 'Worker', {
+        configurable: true,
+        value: undefined,
+        writable: true,
+      });
+      try {
+        const queryHandler = (
+          server.instance._registeredTools.db_query as {
+            handler: (args: { sql: string }) => Promise<{
+              content: Array<{ text: string }>;
+              isError?: boolean;
+            }>;
+          }
+        ).handler;
+        const result = await queryHandler({ sql: 'SELECT * FROM rooms' });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain('db_query worker unavailable');
+      } finally {
+        Object.defineProperty(globalThis, 'Worker', {
+          configurable: true,
+          value: originalWorker,
+          writable: true,
+        });
+      }
 
       server.close();
     });

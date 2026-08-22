@@ -46,6 +46,8 @@ import { reserveBasedThreshold } from './context-tracker.js';
 
 const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
 
+export type SuppressedResultOutcome = 'confirmed' | 'reset' | 'cancelled';
+
 export interface SDKMessageHandlerContext {
   readonly session: Session;
   readonly db: Database;
@@ -81,6 +83,14 @@ export class SDKMessageHandler {
   private expectsSessionStateIdleAfterResult: boolean = false;
   private lastResultWasSuccess: boolean | null = null;
   private suppressIdleOnNextResult: boolean = false;
+  private clearAwaitingTrailingIdle: boolean = false;
+  private clearMessageInFlight: boolean = false;
+  private suppressedResultWaiter: {
+    resolve: (outcome: SuppressedResultOutcome) => void;
+    timer: ReturnType<typeof setTimeout> | undefined;
+    timeoutMs: number;
+    expectedUserMessageUuid?: string;
+  } | null = null;
 
   private eventsSinceContextRefresh: number = 0;
 
@@ -168,8 +178,105 @@ export class SDKMessageHandler {
     this.suppressIdleOnNextResult = true;
   }
 
+  markClearMessageSent(): void {
+    if (!this.suppressedResultWaiter) return;
+    this.clearMessageInFlight = true;
+  }
+
+  armSuppressedResultWait(expectedUserMessageUuid?: string): Promise<SuppressedResultOutcome> {
+    this.settleSuppressedResultWaiter('reset');
+    return new Promise<SuppressedResultOutcome>((resolve) => {
+      this.suppressedResultWaiter = {
+        resolve,
+        timer: undefined,
+        timeoutMs: 0,
+        expectedUserMessageUuid,
+      };
+    });
+  }
+
+  startSuppressedResultTimer(timeoutMs: number): void {
+    const waiter = this.suppressedResultWaiter;
+    if (!waiter) return;
+    clearTimeout(waiter.timer);
+    const timer = setTimeout(() => this.settleSuppressedResultWaiter('reset'), timeoutMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    waiter.timer = timer;
+    waiter.timeoutMs = timeoutMs;
+  }
+
+  waitForSuppressedResult(
+    timeoutMs: number,
+    expectedUserMessageUuid?: string
+  ): Promise<SuppressedResultOutcome> {
+    const wait = this.armSuppressedResultWait(expectedUserMessageUuid);
+    this.startSuppressedResultTimer(timeoutMs);
+    return wait;
+  }
+
   clearIdleSuppression(): void {
+    this.abandonClearTurnBookkeeping();
+    this.settleSuppressedResultWaiter('reset');
+  }
+
+  cancelSuppressedResultWait(): void {
+    this.abandonClearTurnBookkeeping();
+    this.settleSuppressedResultWaiter('cancelled');
+  }
+
+  private abandonClearTurnBookkeeping(): void {
     this.suppressIdleOnNextResult = false;
+    this.clearAwaitingTrailingIdle = false;
+    this.clearMessageInFlight = false;
+    this.usesSessionStateChangedTurnEnd = false;
+    this.expectsSessionStateIdleAfterResult = false;
+    this.lastResultWasSuccess = null;
+  }
+
+  private cancelSuppressedResultTimer(): void {
+    const waiter = this.suppressedResultWaiter;
+    if (!waiter) return;
+    clearTimeout(waiter.timer);
+  }
+
+  private rearmSuppressedResultTimer(): void {
+    const waiter = this.suppressedResultWaiter;
+    if (!waiter || waiter.timeoutMs <= 0) return;
+    clearTimeout(waiter.timer);
+    const timer = setTimeout(() => this.settleSuppressedResultWaiter('reset'), waiter.timeoutMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    waiter.timer = timer;
+  }
+
+  private matchesArmedClearResult(message: SDKMessage): boolean {
+    if (!this.suppressIdleOnNextResult || !isSDKResultMessage(message)) {
+      return false;
+    }
+    const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
+      .parent_tool_use_id;
+    if (parentToolUseId !== null && parentToolUseId !== undefined) {
+      return false;
+    }
+    const expected = this.suppressedResultWaiter?.expectedUserMessageUuid;
+    if (!isSDKResultSuccess(message)) {
+      return this.clearMessageInFlight;
+    }
+    if (expected === undefined) {
+      return true;
+    }
+    return (message as { user_message_uuid?: string }).user_message_uuid === expected;
+  }
+
+  private settleSuppressedResultWaiter(outcome: SuppressedResultOutcome): void {
+    const waiter = this.suppressedResultWaiter;
+    if (!waiter) return;
+    this.suppressedResultWaiter = null;
+    clearTimeout(waiter.timer);
+    waiter.resolve(outcome);
   }
 
   markApiSuccess(): void {
@@ -699,19 +806,29 @@ export class SDKMessageHandler {
       }
     }
 
+    const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
+      .parent_tool_use_id;
+    const isTopLevelResult =
+      isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
+
     const deferredSuccessfully = this.withDbChangeBatch(() =>
       db.saveSDKMessage(session.id, message)
     );
 
     if (!deferredSuccessfully) {
       this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
+      if (this.matchesArmedClearResult(message)) {
+        this.clearIdleSuppression();
+      }
       return;
     }
 
-    const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
-      .parent_tool_use_id;
-    const isTopLevelResult =
-      isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
+    const observesArmedClearResult = this.matchesArmedClearResult(message);
+    const settlesArmedClearError = observesArmedClearResult && !isSDKResultSuccess(message);
+    if (observesArmedClearResult) {
+      this.cancelSuppressedResultTimer();
+    }
+
     const processingState = stateManager.getState();
     const activeMessageId =
       isTopLevelResult && processingState.status === 'processing'
@@ -731,10 +848,17 @@ export class SDKMessageHandler {
       { channel: `session:${session.id}` }
     );
 
-    await this.ctx.internalEventBus.publish('sdk.message', {
-      sessionId: session.id,
-      message,
-    });
+    try {
+      await this.ctx.internalEventBus.publish('sdk.message', {
+        sessionId: session.id,
+        message,
+      });
+    } catch (error) {
+      if (observesArmedClearResult) {
+        this.clearIdleSuppression();
+      }
+      throw error;
+    }
 
     if (isSDKSessionStateChangedMessage(message)) {
       this.usesSessionStateChangedTurnEnd = true;
@@ -744,7 +868,7 @@ export class SDKMessageHandler {
     }
 
     if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
-      if (!this.suppressIdleOnNextResult) {
+      if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
         await stateManager.setIdle();
       }
     }
@@ -792,6 +916,9 @@ export class SDKMessageHandler {
 
     if (isSDKResultMessage(message)) {
       void this.refreshContextUsage('turn-end');
+      if (settlesArmedClearError) {
+        this.clearIdleSuppression();
+      }
       return;
     }
 
@@ -865,9 +992,27 @@ export class SDKMessageHandler {
     message: SDKMessage,
     activeMessageId: string | null
   ): Promise<void> {
-    const { session, db, internalEventBus } = this.ctx;
-
     if (!isSDKResultSuccess(message)) return;
+
+    const confirmsArmedClear = this.matchesArmedClearResult(message);
+
+    try {
+      await this.processResultMessage(message, activeMessageId, confirmsArmedClear);
+    } catch (error) {
+      if (confirmsArmedClear) {
+        this.clearIdleSuppression();
+      }
+      throw error;
+    }
+  }
+
+  private async processResultMessage(
+    message: SDKMessage,
+    activeMessageId: string | null,
+    confirmsArmedClear: boolean
+  ): Promise<void> {
+    if (!isSDKResultSuccess(message)) return;
+    const { session, db, internalEventBus } = this.ctx;
 
     const usage = message.usage ?? {
       input_tokens: 0,
@@ -924,7 +1069,7 @@ export class SDKMessageHandler {
       this.circuitBreaker.markSuccess();
     }
 
-    if (!this.acknowledgedPersistedUserThisTurn) {
+    if (!this.acknowledgedPersistedUserThisTurn && !this.suppressIdleOnNextResult) {
       await this.acknowledgeOldestQueuedUserOnTurnEnd(activeMessageId, message.uuid ?? '');
     }
     this.acknowledgedPersistedUserThisTurn = false;
@@ -933,10 +1078,23 @@ export class SDKMessageHandler {
       sessionId: session.id,
     });
 
-    if (this.suppressIdleOnNextResult) {
+    if (confirmsArmedClear) {
       this.suppressIdleOnNextResult = false;
-    } else if (!this.usesSessionStateChangedTurnEnd && !this.expectsSessionStateIdleAfterResult) {
+    } else if (
+      !this.suppressIdleOnNextResult &&
+      !this.usesSessionStateChangedTurnEnd &&
+      !this.expectsSessionStateIdleAfterResult
+    ) {
       await this.finishTurn();
+    }
+    if (confirmsArmedClear) {
+      if (this.usesSessionStateChangedTurnEnd && this.expectsSessionStateIdleAfterResult) {
+        this.clearAwaitingTrailingIdle = true;
+        this.rearmSuppressedResultTimer();
+      } else {
+        this.clearMessageInFlight = false;
+        this.settleSuppressedResultWaiter('confirmed');
+      }
     }
   }
 
@@ -960,11 +1118,32 @@ export class SDKMessageHandler {
     this.usesSessionStateChangedTurnEnd = true;
     if (message.state === 'idle') {
       this.resetThinkingTokenTracking();
-      const allowQueueReplay = this.lastResultWasSuccess !== false;
-      await this.finishTurn(allowQueueReplay);
-      this.usesSessionStateChangedTurnEnd = false;
-      this.expectsSessionStateIdleAfterResult = false;
-      this.lastResultWasSuccess = null;
+      const clearTurnPending = this.clearAwaitingTrailingIdle || this.suppressIdleOnNextResult;
+      if (clearTurnPending) {
+        await this.ctx.stateManager.setIdle({
+          suppressDeliveryWaiters: true,
+          suppressIdlePublish: true,
+          suppressIdleCallback: true,
+        });
+      } else {
+        const allowQueueReplay = this.lastResultWasSuccess !== false;
+        await this.finishTurn(allowQueueReplay);
+        this.usesSessionStateChangedTurnEnd = false;
+        this.expectsSessionStateIdleAfterResult = false;
+        this.lastResultWasSuccess = null;
+      }
+      if (this.clearAwaitingTrailingIdle) {
+        this.clearAwaitingTrailingIdle = false;
+        this.clearMessageInFlight = false;
+        this.usesSessionStateChangedTurnEnd = false;
+        this.expectsSessionStateIdleAfterResult = false;
+        this.lastResultWasSuccess = null;
+        this.settleSuppressedResultWaiter('confirmed');
+      } else if (clearTurnPending) {
+        this.usesSessionStateChangedTurnEnd = false;
+        this.expectsSessionStateIdleAfterResult = false;
+        this.lastResultWasSuccess = null;
+      }
     }
   }
 

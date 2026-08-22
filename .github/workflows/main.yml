@@ -589,8 +589,6 @@ jobs:
   # The baseline lives on the coverage-baseline ref, not in the dev tree:
   # dev's ruleset requires squash-merged PRs with signed commits, so CI cannot
   # push baseline updates into dev itself. This job is strictly read-only.
-  # Replaces the former Coveralls API polling gate (~90s of sleeps that also
-  # silently skipped the gate when the API never answered).
   # Run on: PR to dev, push to dev, workflow_dispatch
   # ============================================
 

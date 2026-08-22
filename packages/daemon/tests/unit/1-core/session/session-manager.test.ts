@@ -327,6 +327,55 @@ describe('SessionManager', () => {
       expect(session).not.toBeNull();
       expect(session!.onMissingMemberSpaceMcpServers).toBeUndefined();
     });
+
+    it('wires onMissingWorkflowMcpServers on constructed sessions when the provider implements it', async () => {
+      const mockSession: Session = {
+        id: 'space:s1:task:t1:exec:e1',
+        title: 'Worker',
+        workspacePath: '/ops',
+        status: 'active',
+        config: {},
+        metadata: {},
+        context: { spaceId: 's1', taskId: 't1' },
+      };
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
+
+      const provider = {
+        reattachMemberSpaceTools: mock(async () => {}),
+        reattachWorkflowMcpServers: mock(async () => {}),
+      };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const session = sessionManager.getSession('space:s1:task:t1:exec:e1');
+
+      expect(session).not.toBeNull();
+      expect(typeof session!.onMissingWorkflowMcpServers).toBe('function');
+      await session!.onMissingWorkflowMcpServers!(session!, ['node-agent']);
+
+      expect(provider.reattachWorkflowMcpServers).toHaveBeenCalledTimes(1);
+      expect(provider.reattachWorkflowMcpServers).toHaveBeenCalledWith(session, ['node-agent']);
+    });
+
+    it('leaves onMissingWorkflowMcpServers undefined when the provider does not implement it', () => {
+      const mockSession: Session = {
+        id: 'space:s2:task:t2:exec:e2',
+        title: 'Worker',
+        workspacePath: '/ops',
+        status: 'active',
+        config: {},
+        metadata: {},
+        context: { spaceId: 's2', taskId: 't2' },
+      };
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
+
+      const provider = { reattachMemberSpaceTools: mock(async () => {}) };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const session = sessionManager.getSession('space:s2:task:t2:exec:e2');
+
+      expect(session).not.toBeNull();
+      expect(session!.onMissingWorkflowMcpServers).toBeUndefined();
+    });
   });
 
   describe('registerSession / unregisterSession', () => {

@@ -589,6 +589,38 @@ export class SpaceTaskRepository {
     return result.changes > 0 ? 'won' : 'superseded';
   }
 
+  casStatusWithPayload(
+    taskId: string,
+    expected: SpaceTaskStatus | readonly SpaceTaskStatus[],
+    next: SpaceTaskStatus,
+    payload: { restrictions: TaskRestriction | null }
+  ): 'won' | 'superseded' {
+    const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
+    if (expectedStatuses.length === 0) return 'superseded';
+    const placeholders = expectedStatuses.map(() => '?').join(', ');
+    const now = Date.now();
+    const sets = ['status = ?', 'restrictions = ?', 'updated_at = ?'];
+    const values: SQLiteValue[] = [
+      next,
+      payload.restrictions ? JSON.stringify(payload.restrictions) : null,
+      now,
+    ];
+    if (next === 'in_progress') {
+      sets.push('started_at = ?', 'completed_at = ?');
+      values.push(now, null);
+    }
+    const result = this.db
+      .prepare(
+        `UPDATE space_tasks SET ${sets.join(', ')} WHERE id = ? AND status IN (${placeholders})`
+      )
+      .run(...values, taskId, ...expectedStatuses);
+    if (result.changes === 0) return 'superseded';
+    this.upsertTaskSearchRow(taskId);
+    this.deleteExpiredTerminalTaskMessageRows(taskId);
+    this.reactiveDb?.notifyChange('space_tasks');
+    return 'won';
+  }
+
   reserveSpawnForTick(
     taskId: string,
     allowedStatuses: readonly SpaceTaskStatus[]

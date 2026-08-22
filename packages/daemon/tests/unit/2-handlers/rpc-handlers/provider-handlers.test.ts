@@ -182,6 +182,90 @@ describe('Provider RPC handlers', () => {
     });
   });
 
+  describe('providers.fetchAcpModels', () => {
+    it('rejects unknown and non-ACP providers', async () => {
+      const anthropic = repo.createProvider({
+        providerId: 'anthropic',
+        displayName: 'Anthropic',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.fetchAcpModels')!({ id: 'missing', command: 'devin acp' }, {})
+      ).rejects.toThrow('Provider missing not found');
+      await expect(
+        handlers.get('providers.fetchAcpModels')!({ id: anthropic.id, command: 'devin acp' }, {})
+      ).rejects.toThrow('is not an ACP provider');
+    });
+
+    it('rejects invalid command overrides before discovery', async () => {
+      const acp = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      getProviderRegistry().register(new AcpProvider({}, async () => {}));
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.fetchAcpModels')!({ id: acp.id, command: '   ' }, {})
+      ).rejects.toThrow('ACP command is required');
+      await expect(
+        handlers.get('providers.fetchAcpModels')!({ id: acp.id, command: 42 }, {})
+      ).rejects.toThrow('ACP command must be a string');
+    });
+
+    it('hydrates the fallback provider from the requested record command', async () => {
+      const originalCommand = process.env.HYPERNEO_ACP_COMMAND;
+      delete process.env.HYPERNEO_ACP_COMMAND;
+      const acp = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'hyperneo-missing-acp-binary' }),
+      });
+      const handlers = setup();
+
+      try {
+        await expect(handlers.get('providers.fetchAcpModels')!({ id: acp.id }, {})).rejects.toThrow(
+          'hyperneo-missing-acp-binary'
+        );
+      } finally {
+        if (originalCommand === undefined) delete process.env.HYPERNEO_ACP_COMMAND;
+        else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
+      }
+    });
+
+    it('resolves an empty-string command through the environment fallback', async () => {
+      const originalCommand = process.env.HYPERNEO_ACP_COMMAND;
+      process.env.HYPERNEO_ACP_COMMAND = 'hyperneo-env-acp-binary';
+      const acp = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'hyperneo-missing-acp-binary' }),
+      });
+      const handlers = setup();
+
+      try {
+        await expect(
+          handlers.get('providers.fetchAcpModels')!({ id: acp.id, command: '' }, {})
+        ).rejects.toThrow('hyperneo-env-acp-binary');
+        await expect(handlers.get('providers.fetchAcpModels')!({ id: acp.id }, {})).rejects.toThrow(
+          'hyperneo-missing-acp-binary'
+        );
+      } finally {
+        if (originalCommand === undefined) delete process.env.HYPERNEO_ACP_COMMAND;
+        else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
+      }
+    });
+  });
+
   describe('providers.create', () => {
     it('creates a provider and stores credentials', async () => {
       const handlers = setup();

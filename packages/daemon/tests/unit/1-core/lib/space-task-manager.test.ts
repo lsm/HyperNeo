@@ -745,7 +745,7 @@ describe('SpaceTaskManager', () => {
       ]);
     });
 
-    it('in_progress allows open, review, approved, done, blocked, cancelled, and stopped', () => {
+    it('in_progress allows open, review, approved, done, blocked, cancelled, stopped, and the runtime-owned limited statuses', () => {
       expect(VALID_SPACE_TASK_TRANSITIONS.in_progress).toEqual([
         'open',
         'review',
@@ -754,6 +754,8 @@ describe('SpaceTaskManager', () => {
         'blocked',
         'cancelled',
         'stopped',
+        'rate_limited',
+        'usage_limited',
       ]);
     });
   });

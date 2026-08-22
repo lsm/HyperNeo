@@ -8,10 +8,15 @@ import {
   KEYCHAIN_UNAVAILABLE_MESSAGE,
   KeychainUnavailableError,
 } from '../credentials/credential-store.js';
-import { syncProviderToRegistry, removeProviderFromRegistry } from '../providers/provider-sync.js';
+import {
+  parseAcpConfig,
+  syncProviderToRegistry,
+  removeProviderFromRegistry,
+} from '../providers/provider-sync.js';
 import { getProviderRegistry } from '../providers/registry.js';
 import { markBuiltInProviderDisabled } from '../providers/factory.js';
 import { AcpProvider } from '../providers/acp-provider.js';
+import { fetchAcpModels } from '../acp/acp-model-fetcher.js';
 import { parseAcpCommand } from '../acp/acp-command.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -202,6 +207,34 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     const available = provider ? await provider.isAvailable() : false;
     return { provider: { ...record, available } };
   });
+
+  messageHub.onRequest(
+    'providers.fetchAcpModels',
+    async (data: { id: string; command?: string }) => {
+      const record = providerRepo.getProvider(data.id);
+      if (!record) throw new Error(`Provider ${data.id} not found`);
+      if (record.providerId !== 'acp')
+        throw new Error(`Provider ${data.id} is not an ACP provider`);
+      if (data.command !== undefined && typeof data.command !== 'string')
+        throw new Error('ACP command must be a string');
+      if (typeof data.command === 'string' && !data.command.trim() && data.command !== '')
+        throw new Error('ACP command is required');
+      const commandOverride = typeof data.command === 'string' ? data.command.trim() : undefined;
+      if (commandOverride && commandOverride.length > MAX_JSON_FIELD_LEN)
+        throw new Error(`ACP command must be ≤ ${MAX_JSON_FIELD_LEN} chars`);
+      const useEnvCommand = data.command === '';
+      const registered = getProviderRegistry().get('acp');
+      const provider =
+        registered instanceof AcpProvider && !useEnvCommand ? registered : new AcpProvider();
+      if (!(registered instanceof AcpProvider) && !useEnvCommand) {
+        provider.setAcpCommand(parseAcpConfig(record.configJson).command);
+      }
+      const models = await fetchAcpModels(provider, {
+        command: commandOverride ? commandOverride : undefined,
+      });
+      return { models };
+    }
+  );
 
   messageHub.onRequest(
     'providers.create',
