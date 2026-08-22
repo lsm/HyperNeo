@@ -212,14 +212,60 @@ export const CODER_ONLY_PROMPT =
   "(the fork case, where the PR URL names the upstream base repository). A typo'd, stale, or " +
   'unrelated-repository URL would otherwise make you review and merge the wrong PR; if either ' +
   'check fails, fix the artifact before proceeding. ' +
-  'Review is delegated to two external GitHub reviewers: Codex and Devon. ' +
-  'Before you may request approval, BOTH must pass on the CURRENT PR head. ' +
   'Do not hand off to any internal Review node — there is none. ' +
   'If the task requires no code changes (validation-only, diagnostic, or already complete), do ' +
   'NOT fabricate an empty commit or PR — escalate via send_message to the escalation target in ' +
   'your Runtime Execution Contract, explain that the task produced no code changes and needs ' +
   're-routing, and stop and wait for guidance. ' +
-  'Codex gate: wait for the codex review bot thumbs-up reaction on the current head. ' +
+  'Review is delegated to the external AI review bots that exist for this repository. You cannot ' +
+  'know in advance which bots are installed, so do NOT assume a fixed set and do NOT wait on ' +
+  'bots that are not there — DISCOVER the bots actually available for this PR, gate on exactly ' +
+  'those, and read their verdicts from what they post. ' +
+  'Discover your gate set once the PR is open: (1) paginate the reviews (and comments) already on ' +
+  'this PR — the GraphQL lookups below — and collect author logins that are BOT accounts: a login ' +
+  'ending in `[bot]` or one of the known bot logins in the knowledge list below (a human account ' +
+  'whose name merely resembles a bot must NOT count); (2) run `gh pr checks <pr_url>` and note ' +
+  'review-app checks (e.g. "Devin Review", "Cursor Bugbot", "Copilot code review"); (3) if ' +
+  'nothing has reviewed yet, inspect one or two recent merged PRs of the same repository ' +
+  '(`gh pr list --state merged --limit 3`, then their reviews) for bots that habitually review ' +
+  'there. The bots found this way are your gate set — a repository with exactly one review bot ' +
+  'gates on that one bot alone. ' +
+  'Known review bots — hints for recognizing and triggering them, never a fixed checklist ' +
+  '(handles and phrasing change over time; an unrecognized bot login ending in `[bot]` simply ' +
+  'uses the generic verdict rule below): ' +
+  'OpenAI Codex — login containing `codex` and ending `[bot]` (e.g. `chatgpt-codex-connector[bot]`); ' +
+  'trigger: comment `@codex review`; pass: a `THUMBS_UP` (+1) reaction, per the reaction gate ' +
+  'below. GitHub Copilot — `copilot-pull-request-reviewer[bot]` (shows as Copilot); trigger: ' +
+  'comment `@copilot`, or request `copilot-pull-request-reviewer[bot]` as a reviewer (some ' +
+  'repositories review automatically on open/push); pass: its review or summary comment ' +
+  'explicitly reporting no issues. Devin — `devin-ai-integration[bot]`; runs automatically via ' +
+  'the installed app (a "Devin Review" check); no comment trigger is known, so rely on its ' +
+  'automatic run; pass: a review stating "No Issues Found" or equivalent. CodeRabbit — ' +
+  '`coderabbitai[bot]`; reviews automatically on push, or comment `@coderabbitai review`; pass: ' +
+  'a "no notable findings" / LGTM summary, and it can flip to APPROVED once its comments are ' +
+  'resolved. Cursor Bugbot — automatic on push, or a standalone comment `@cursor review`; pass: ' +
+  'an explicit no-issues verdict. Greptile — `greptile-app[bot]`; automatic on ready-for-review, ' +
+  'or comment `@greptileai`; pass: a summary reporting no (major) issues. Qodo PR-Agent — ' +
+  'trigger: comment `/review`; pass: a summary with no issues. ' +
+  'Trigger every gate-set bot that has no verdict on the CURRENT head, using its trigger above. ' +
+  'A trigger to a bot that is not actually installed does nothing: if a triggered bot shows no ' +
+  'activity at all within the poll window, drop it from the gate set (say so in the gate ' +
+  'artifact) instead of waiting on it forever. If NO external review bot is available for the ' +
+  'repository, record an empty gate set, rely on your informal review, and state that plainly ' +
+  'when you request human sign-off — the human approval is then the only review. ' +
+  'Verdicts are language, so read them. A gate-set bot has PASSED only when a review or comment ' +
+  'from its BOT account on the CURRENT head carries an EXPLICIT clean verdict: state `APPROVED`, ' +
+  'or body language that unambiguously reports no problems (e.g. "No Issues Found", "no notable ' +
+  'findings", "no major issues", "nothing to flag", "LGTM"), or — Codex only — a `THUMBS_UP` ' +
+  'reaction on the PR. Silence is NOT a pass — some bots post little or nothing when clean, so ' +
+  'keep polling until a verdict appears or the no-activity rule above drops the bot. A ' +
+  '`COMMENTED` review without an explicit clean verdict is NOT a pass — informational or ' +
+  'progress reviews do not count. A hedged verdict — clean words paired with any reported ' +
+  'defect, caveat, or severity language — is NOT a pass: minor findings are still findings, so ' +
+  'address them, push, and re-trigger. A `CHANGES_REQUESTED` review or a body flagging a major, ' +
+  'blocking, or similarly severe issue (any severity language, not just those two words) from ' +
+  'ANY bot or human reviewer is a blocker — address it, push, and re-trigger that bot. ' +
+  'Reaction gate (Codex): wait for the codex review bot thumbs-up reaction on the current head. ' +
   'Use the run-scoped GraphQL reaction lookup (the Coder contract permits the run-scoped ' +
   '`gh api graphql` lookup; direct `gh api repos/...` REST reads against other repos are ' +
   'forbidden by contract), resolving the PR number and host from your PR URL and reading `reactions` ' +
@@ -248,60 +294,57 @@ export const CODER_ONLY_PROMPT =
   'later than that trigger comment AND the headRefOid has not changed since the trigger — the ' +
   'trigger comment is the push-to-pass anchor (PullRequest exposes no pushed-time field, and the ' +
   'commit authored date can predate the push). ' +
-  'Devon gate: wait for a Devon-authored PR review on the current head that does NOT request changes ' +
-  'and does NOT flag a major or blocking issue. Inspect the reviews with the paginated GraphQL ' +
-  'lookup (`gh pr view --json reviews` can silently truncate past 100 reviews, hiding a newer ' +
-  'blocking review). Re-derive the host in the same command — shell state does not carry across ' +
-  'Bash calls: ' +
+  'Review gate (every bot except Codex): read verdicts from PR reviews and comments. Inspect the ' +
+  'reviews with the paginated GraphQL lookup (`gh pr view --json reviews` can silently truncate ' +
+  'past 100 reviews, hiding a newer blocking review). Re-derive the host in the same command — ' +
+  'shell state does not carry across Bash calls: ' +
   '`PR_URL=<pr_url>; HOST=${PR_URL#https://}; HOST=${HOST%%/*}; gh api graphql --hostname "$HOST" ' +
   "-f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviews(first:100,after:$cursor){nodes{author{login} state submittedAt commit{oid} url body} pageInfo{hasNextPage endCursor}}}}}' -f owner=<owner> -f name=<repo> -F number=<number>` " +
-  'Paginate while `pageInfo.hasNextPage` using `endCursor`. Count a review only from the Devon ' +
-  'BOT/APP account: a login ending with `[bot]` or the known integration account (e.g. ' +
-  '`devin-ai-integration`, `devin-ai-integration[bot]`, `devon[bot]`) whose name contains `devon` ' +
-  'or `devin` — a human account whose name merely contains `devon` or `devin` must NOT satisfy ' +
-  'the gate. A review covers the current head ONLY when its `commit.oid` equals the CURRENT ' +
-  'headRefOid (from `gh pr view <pr_url> --json headRefOid` or the Codex-gate query); never ' +
-  'substitute a `submittedAt` comparison — a review started on an old head and submitted after a ' +
-  'push still names the old commit and must not count. Reject `DISMISSED` and `PENDING` reviews ' +
-  'outright: a dismissed review was deliberately withdrawn and its retained body must not count. ' +
-  'The pass requires an EXPLICIT zero-findings verdict on a current-head `APPROVED` or `COMMENTED` ' +
-  'review: either state `APPROVED`, or a body containing an unambiguous no-findings statement ' +
-  'such as "No Issues Found". A hedged verdict — "no major issues" paired with any reported ' +
-  'defect, caveat, or severity language — is NOT a pass: minor findings are still findings, so ' +
-  'address them, push, and re-trigger. A `COMMENTED` review that merely lacks blocking words is ' +
-  'NOT a pass — informational or progress reviews do not count, so keep waiting or re-trigger. ' +
-  'A `CHANGES_REQUESTED` review or a body flagging a major, blocking, or similarly severe issue ' +
-  '(any severity language, not just those two words) from Devon is a blocker — address it, push, ' +
-  'and re-trigger Devon. If Devon has no passing review on the current head, trigger it ' +
-  '(e.g. `@devon review`) and wait. ' +
-  'Poll both gates every 60 seconds in a bounded loop. If either external reviewer has not passed ' +
-  'within the timeout window (~2 hours), escalate via send_message to the escalation target in your ' +
-  'Runtime Execution Contract, record a note artifact (kind "external-review-timeout"), and STOP — ' +
-  'do NOT proceed to approval without both signals; there is no internal backstop. ' +
+  'Paginate while `pageInfo.hasNextPage` using `endCursor`. Count a review only from a BOT/APP ' +
+  'account: a login ending with `[bot]` or a known integration login (e.g. `devin-ai-integration`, ' +
+  '`devin-ai-integration[bot]`) that belongs to your gate set — a human account whose name merely ' +
+  'resembles a bot login must NOT satisfy the gate. A review covers the current head ONLY when ' +
+  'its `commit.oid` equals the CURRENT headRefOid (from `gh pr view <pr_url> --json headRefOid` ' +
+  'or the reaction-gate query); never substitute a `submittedAt` comparison — a review started on ' +
+  'an old head and submitted after a push still names the old commit and must not count. Reject ' +
+  '`DISMISSED` and `PENDING` reviews outright: a dismissed review was deliberately withdrawn and ' +
+  'its retained body must not count. Apply the generic verdict rule above to every current-head ' +
+  'review and to bot-authored issue comments (`gh pr view <pr_url> --json comments`) — some bots ' +
+  'report their verdict as a plain comment rather than a formal review. ' +
+  'Poll the gate every 60 seconds in a bounded loop. If a bot that has ENGAGED (started ' +
+  'reviewing — e.g. an `EYES` reaction or an in-progress review-app check) has not produced a ' +
+  'verdict within the timeout window (~2 hours), escalate via send_message to the escalation ' +
+  'target in your Runtime Execution Contract, record a note artifact (kind ' +
+  '"external-review-timeout"), and STOP — do NOT proceed to approval past an unresolved engaged ' +
+  'bot; there is no internal backstop. ' +
   'Address any valid review comments from ANY reviewer (human or bot): reply on the thread, make the ' +
-  'fix, resolve the thread, rerun tests, and re-push. A push changes the head, so re-run both external ' +
-  'gates against the new head. ' +
-  'After BOTH external gates pass on the current head, run your informal review: re-read the diff for ' +
-  'obvious defects, run the focused tests, confirm the PR required checks are green ' +
+  'fix, resolve the thread, rerun tests, and re-push. A push changes the head, so re-run the whole ' +
+  'external gate against the new head. ' +
+  'After every gate-set bot passes on the current head, run your informal review: re-read the diff ' +
+  'for obvious defects, run the focused tests, confirm the PR required checks are green ' +
   '(`gh pr checks <pr_url> --required` — check names vary per repository, so never gate on a ' +
   'hard-coded check name; if the base defines no required checks the command reports exactly ' +
   'that, which counts as green — only a failing or pending required check is a blocker), confirm ' +
-  'zero unresolved review threads, confirm the PR is mergeable, and confirm Codex and Devon both ' +
-  'cover the CURRENT head. Capture the baseRefName when you START the external gate (before ' +
-  'triggering either reviewer), and confirm it is still unchanged when you finish — a retarget ' +
-  'between the reviewer responses and the artifact write would otherwise record evidence for a ' +
-  'diff neither reviewer saw; if the base changed mid-gate, re-run BOTH gates under the new base. ' +
+  'zero unresolved review threads, confirm the PR is mergeable, and confirm every gate-set bot ' +
+  'still covers the CURRENT head. Capture the baseRefName when you START the external gate ' +
+  '(before triggering any reviewer), and confirm it is still unchanged when you finish — a ' +
+  'retarget between the reviewer responses and the artifact write would otherwise record ' +
+  'evidence for a diff no reviewer saw; if the base changed mid-gate, re-run the whole gate ' +
+  'under the new base. ' +
   'Record the gate with an explicit key so later notes cannot overwrite ' +
   'it (an unkeyed note is stored under a shared rolling key): ' +
   '`save_artifact({ shape: "note", kind: "external-review-gate", key: "gate", summary: "...", ' +
-  'data: { pr_url: "<url>", codex_reaction: { login, content: "THUMBS_UP", created_at }, ' +
-  'devon_review_url: "<url>", head_oid: "<oid>", base_ref: "<baseRefName>" } })` — reactions ' +
-  'have no permalink, so record the reaction fields inline from the gate query, and record the ' +
-  'base branch so a later retarget of the PR visibly invalidates the gate. ' +
-  'Then request human sign-off: call submit_for_approval({ reason: "Codex +1: <bot login> ' +
-  'THUMBS_UP at <reaction createdAt> on <pr_url>; Devon: <review url>; informal review: <result>" ' +
-  '}) — the Codex evidence is the recorded reaction login/timestamp plus the PR URL, since ' +
-  'reactions have no permalink. ' +
+  'data: { pr_url: "<url>", gate_set: ["<bot logins>"], verdicts: [{ bot: "<login>", result: ' +
+  '"pass", evidence: "<review or comment url>" }], head_oid: "<oid>", base_ref: "<baseRefName>" } })` — ' +
+  'reactions have no permalink, so record reaction evidence inline from the gate query as fields ' +
+  '(e.g. codex_reaction: { login, content: "THUMBS_UP", created_at }) rather than a URL, one ' +
+  'verdict entry per gate-set bot, and record the base branch so a later retarget of the PR ' +
+  'visibly invalidates the gate. ' +
+  'Then request human sign-off: call submit_for_approval({ reason: "External gate on <pr_url> head ' +
+  '<head_oid>: <bot login> <verdict> at <evidence url or reaction fields> (one clause per gate-set ' +
+  'bot, or "no external review bot available" for an empty gate set); informal review: <result>" }) — ' +
+  'reaction evidence is the recorded login/timestamp plus the PR URL, since reactions have no ' +
+  'permalink. ' +
   'Human sign-off is required — never call approve_task for this ' +
   'workflow, even when space autonomy level 5 makes the tool available to you: ' +
   'completionAutonomyLevel 5 is the strongest threshold the autonomy system offers and still ' +
@@ -848,7 +891,7 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
 export const CODER_ONLY_MERGE_INSTRUCTIONS: string = [
   'The task has been approved. You are the agent who implemented PR {{pr_url}}; now finish it by merging that PR.',
   '',
-  'Approval source: {{approval_source}}. Approval was granted by a human after the external reviewers Codex and Devon both passed the current head and your informal review recorded a clean gate. The gate artifacts (Codex reaction URL, Devon review URL, head OID) were recorded before approval.',
+  'Approval source: {{approval_source}}. Approval was granted by a human after the external review bots in your recorded gate set passed the current head and your informal review recorded a clean gate. The gate artifacts (per-bot verdict evidence, head OID, base ref) were recorded before approval.',
   '',
   '## Verify before you merge (do NOT skip)',
   '',
@@ -856,10 +899,9 @@ export const CODER_ONLY_MERGE_INSTRUCTIONS: string = [
   '  - the PR is open;',
   '  - required CI / checks are passing (every required check green under `gh pr checks {{pr_url}} --required`; check names vary per repository, so do not gate on a hard-coded check name; a base that defines no required checks reports exactly that and counts as green);',
   '  - there are zero unresolved review conversations;',
-  '  - there is NO effective outstanding `CHANGES_REQUESTED` review — even one on an OLDER head that no other reviewer superseded. A `CHANGES_REQUESTED` from Devon or from a human reviewer blocks the merge until that reviewer dismisses it or approves;',
+  '  - there is NO effective outstanding `CHANGES_REQUESTED` review — even one on an OLDER head that no other reviewer superseded. A `CHANGES_REQUESTED` from any bot or from a human reviewer blocks the merge until that reviewer dismisses it or approves;',
   '  - if the base repository requires approving GitHub reviews (`reviewDecision` is `REVIEW_REQUIRED`), that is an ADMINISTRATIVE blocker — this gate does not supply GitHub approvals, so escalate per step 4 and never bypass it with `--admin`;',
-  '  - the Codex `THUMBS_UP` (+1) reaction belongs to a review cycle started on the CURRENT head — posted after a `@codex review` trigger that itself postdates the last push, with the head unchanged since that trigger (a late `THUMBS_UP` from a cycle begun on an older head does not count);',
-  '  - a Devon-authored review covers the CURRENT head, carries an EXPLICIT zero-findings verdict (APPROVED state or an unambiguous no-findings body), and does NOT request changes or flag any issue;',
+  '  - every bot in your recorded gate set passes on the CURRENT head: reaction-signaling bots (Codex) via a `THUMBS_UP` (+1) reaction from a review cycle started on the CURRENT head — posted after a trigger that itself postdates the last push, with the head unchanged since that trigger (a late `THUMBS_UP` from a cycle begun on an older head does not count) — and review-signaling bots via a review covering the CURRENT head (`commit.oid` equality) that carries an EXPLICIT clean verdict (APPROVED state or an unambiguous no-findings body) and does NOT request changes or flag any issue;',
   '  - your informal-review gate artifact (`external-review-gate`) was recorded for the CURRENT head (or an earlier head with no intervening push) AND for the CURRENT base branch — retargeting the PR to a different base changes the reviewed diff without changing the head, so a base change also stales the gate and the human approval;',
   '',
   'Derive the GitHub-approval requirement from the PR itself, not from any repository-specific assumption: an empty or APPROVED `reviewDecision` means the base requires no approving GitHub review beyond this gate, while REVIEW_REQUIRED is the administrative blocker above.',
@@ -879,7 +921,7 @@ export const CODER_ONLY_MERGE_INSTRUCTIONS: string = [
   '     HEAD_OID=$(gh pr view {{pr_url}} --json headRefOid --jq .headRefOid)',
   '     REVIEW_DECISION=$(gh pr view {{pr_url}} --json reviewDecision --jq .reviewDecision)',
   '     case "$REVIEW_DECISION" in CHANGES_REQUESTED) echo "GitHub reviewDecision is CHANGES_REQUESTED — an outstanding change request stands; do NOT merge." >&2; exit 1;; REVIEW_REQUIRED) echo "GitHub reviewDecision is REVIEW_REQUIRED — the base repository requires an approving GitHub review this gate cannot supply; treat it as an ADMINISTRATIVE blocker per step 4 and never use --admin." >&2; exit 1;; esac',
-  '   Re-run the external gate from the coding phase against the CURRENT head: the Codex `THUMBS_UP` (+1) reaction must come from a cycle triggered after the last push with the head unchanged since (see the coding-phase gate), and a Devon-authored review must cover the current head (commit.oid equality) with an explicit clean verdict and no changes-requested. Also scan the paginated reviews lookup for any outstanding `CHANGES_REQUESTED` review by ANY author (human or Devon) that has not been superseded by a later `APPROVED` from that same author — `reviewDecision` can miss reviews from reviewers outside branch protection, and such a review blocks the merge even when it opened no inline thread. If any of these is stale or missing, re-trigger the reviewer (`@codex review` / `@devon review`), re-wait for both to pass, and do NOT merge until both are fresh on the CURRENT head.',
+  '   Re-run the external gate from the coding phase against the CURRENT head: for each bot in your recorded gate set, re-verify its pass — a reaction-signaling bot (Codex) needs a `THUMBS_UP` from a cycle triggered after the last push with the head unchanged since (see the coding-phase gate), and a review-signaling bot needs a review covering the current head (commit.oid equality) with an explicit clean verdict and no changes-requested. Also scan the paginated reviews lookup for any outstanding `CHANGES_REQUESTED` review by ANY author (human or bot) that has not been superseded by a later `APPROVED` from that same author — `reviewDecision` can miss reviews from reviewers outside branch protection, and such a review blocks the merge even when it opened no inline thread. If any verdict is stale or missing, re-trigger that bot (per the coding-phase trigger knowledge), re-wait for it to pass, and do NOT merge until every gate-set bot is fresh on the CURRENT head.',
   '   Confirm your keyed `external-review-gate` note artifact (key "gate") exists, its head OID equals $HEAD_OID, and its recorded base_ref equals the current baseRefName; if the head OR the base changed after approval, BOTH the gate AND the human approval are stale — re-run the FULL external gate and your informal review against the CURRENT head, re-record the artifact, and obtain fresh human sign-off on the new head via space-agent (as in step 4b) BEFORE merging.',
   '   Otherwise merge, bound to the verified head:',
   '     gh pr merge {{pr_url}} --squash --match-head-commit "$HEAD_OID"',
@@ -889,7 +931,7 @@ export const CODER_ONLY_MERGE_INSTRUCTIONS: string = [
   '        gh pr view {{pr_url}} --json state,mergeable,mergeStateStatus,headRefOid,reviewDecision',
   '        gh pr checks {{pr_url}}',
   '   b. Then EITHER fix it yourself OR escalate:',
-  '      - FIXABLE blocker (DIRTY conflict, BEHIND rebase, UNSTABLE because the code fails a required check, an unresolved review thread you can resolve, or a stale external gate): fix it in this PR and push the new head. A push changes the head, so neither the external gate nor the human approval covers it — re-run the FULL gate against the new head (re-trigger Codex and Devon, re-wait for both to pass, re-run your informal review, re-record the `external-review-gate` artifact), then obtain fresh human sign-off on the new head before merging:',
+  '      - FIXABLE blocker (DIRTY conflict, BEHIND rebase, UNSTABLE because the code fails a required check, an unresolved review thread you can resolve, or a stale external gate): fix it in this PR and push the new head. A push changes the head, so neither the external gate nor the human approval covers it — re-run the FULL gate against the new head (re-trigger the gate-set bots, re-wait for every one to pass, re-run your informal review, re-record the `external-review-gate` artifact), then obtain fresh human sign-off on the new head before merging:',
   '          send_message(target="space-agent",',
   '            message="Post-approval fix on {{pr_url}}: <one-line summary of the fix>. New head <headRefOid> passed the external gate; please re-review and re-approve the CURRENT head, then reply to continue the merge.",',
   '            data: { pr_url: "{{pr_url}}", headRefOid: "<new headRefOid>", reason: "merge_fix_pushed" })',
@@ -947,7 +989,7 @@ export const CODER_ONLY_WORKFLOW: SpaceWorkflow = {
   name: 'Coder-Only Workflow',
   handle: 'coder-only-workflow',
   description:
-    'Single-coder workflow with no internal reviewer. Review is delegated to the external GitHub reviewers Codex and Devon; the coder waits for both to pass on the current head, runs a final informal review, then requests human approval and merges post-approval.',
+    'Single-coder workflow with no internal reviewer. Review is delegated to whichever external AI review bots are installed for the repository — the coder discovers them, waits for their clean verdicts on the current head, runs a final informal review, then requests human approval and merges post-approval.',
   nodes: [
     {
       id: CODER_ONLY_NODE,

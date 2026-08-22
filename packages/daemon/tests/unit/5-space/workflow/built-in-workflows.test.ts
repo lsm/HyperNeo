@@ -281,15 +281,36 @@ describe('coder-only workflow template', () => {
     ]);
   });
 
-  test('coder prompt gates on Codex and Devon, runs an informal review, and requests human sign-off', () => {
+  test('coder prompt gates on the bots it discovers, runs an informal review, and requests human sign-off', () => {
     expect(CODER_ONLY_PROMPT).toContain(CODER_OWNED_PR_SUBSCRIBE_GUIDANCE);
     expect(CODER_ONLY_PROMPT).toContain('Codex');
-    expect(CODER_ONLY_PROMPT).toContain('Devon');
+    expect(CODER_ONLY_PROMPT).toContain('Devin');
+    expect(CODER_ONLY_PROMPT).toContain('Copilot');
+    expect(CODER_ONLY_PROMPT).toContain('CodeRabbit');
     expect(CODER_ONLY_PROMPT).toContain('informal review');
     expect(CODER_ONLY_PROMPT).toContain('submit_for_approval');
     expect(CODER_ONLY_PROMPT).toContain('Runtime Execution Contract');
     expect(CODER_ONLY_PROMPT).not.toContain('approve_task(');
     expect(CODER_ONLY_PROMPT).not.toContain('Do NOT merge PRs');
+    expect(CODER_ONLY_PROMPT).not.toContain('@devon');
+  });
+
+  test('gate discovers its bot set instead of assuming a fixed reviewer list', () => {
+    expect(CODER_ONLY_PROMPT).toContain('DISCOVER the bots actually available');
+    expect(CODER_ONLY_PROMPT).toContain('never a fixed checklist');
+    expect(CODER_ONLY_PROMPT).toContain('gates on that one bot alone');
+    expect(CODER_ONLY_PROMPT).toContain('no external review bot available');
+    expect(CODER_ONLY_PROMPT).toContain('Verdicts are language, so read them');
+    expect(CODER_ONLY_PROMPT).toContain('Silence is NOT a pass');
+    expect(CODER_ONLY_PROMPT).toContain('drop it from the gate set');
+    expect(CODER_ONLY_PROMPT).toContain('chatgpt-codex-connector[bot]');
+    expect(CODER_ONLY_PROMPT).toContain('copilot-pull-request-reviewer[bot]');
+    expect(CODER_ONLY_PROMPT).toContain('devin-ai-integration[bot]');
+    expect(CODER_ONLY_PROMPT).toContain('coderabbitai[bot]');
+    expect(CODER_ONLY_PROMPT).toContain('@coderabbitai review');
+    expect(CODER_ONLY_PROMPT).toContain('Cursor Bugbot');
+    expect(CODER_ONLY_PROMPT).toContain('greptile-app[bot]');
+    expect(CODER_ONLY_PROMPT).toContain('Qodo PR-Agent');
   });
 
   test('gate evidence uses GraphQL enum names, cycle binding, and paginated reviews', () => {
@@ -300,7 +321,6 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('reviews(first:100,after:$cursor)');
     expect(CODER_ONLY_PROMPT).toContain('commit{oid} url body');
     expect(CODER_ONLY_PROMPT).toContain('pageInfo.hasNextPage');
-    expect(CODER_ONLY_PROMPT).toContain('`devin`');
     expect(CODER_ONLY_PROMPT).toContain('`[bot]`');
     expect(CODER_ONLY_PROMPT).toContain('ONLY when its `commit.oid` equals');
     expect(CODER_ONLY_PROMPT).toContain('is NOT a pass');
@@ -308,6 +328,9 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('review CYCLE');
     expect(CODER_ONLY_PROMPT).toContain('Serialize review cycles');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('cycle triggered after the last push');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('every bot in your recorded gate set');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('per the coding-phase trigger knowledge');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).not.toContain('@devon');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('recover idempotently');
     expect(CODER_ONLY_PROMPT).not.toContain('content `+1` means');
     expect(CODER_ONLY_PROMPT).not.toContain('or its `submittedAt` is on or after');
@@ -332,8 +355,9 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('re-routing');
   });
 
-  test('gate note artifact carries an explicit key and inline reaction evidence', () => {
+  test('gate note artifact carries an explicit key, gate set, and inline reaction evidence', () => {
     expect(CODER_ONLY_PROMPT).toContain('kind: "external-review-gate", key: "gate"');
+    expect(CODER_ONLY_PROMPT).toContain('gate_set: ["<bot logins>"]');
     expect(CODER_ONLY_PROMPT).toContain(
       'codex_reaction: { login, content: "THUMBS_UP", created_at }'
     );
@@ -369,7 +393,7 @@ describe('coder-only workflow template', () => {
 
   test('gate captures the base before reviewers run and verifies the recorded PR link', () => {
     expect(CODER_ONLY_PROMPT).toContain('Capture the baseRefName when you START the external gate');
-    expect(CODER_ONLY_PROMPT).toContain('re-run BOTH gates under the new base');
+    expect(CODER_ONLY_PROMPT).toContain('re-run the whole gate under the new base');
     expect(CODER_ONLY_PROMPT).toContain('headRefName,isCrossRepository,headRepository,url');
     expect(CODER_ONLY_PROMPT).toContain('must match the origin remote');
     expect(CODER_ONLY_PROMPT).toContain('the fork case');
@@ -390,15 +414,15 @@ describe('coder-only workflow template', () => {
   });
 
   test('merge instructions scan all reviews and verify merged-state recovery', () => {
-    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('by ANY author (human or Devon)');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('by ANY author (human or bot)');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('a later `APPROVED` from that same author');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'gate artifact `head_oid` still equals the PR headRefOid'
     );
   });
 
-  test('Devon pass requires an unambiguous zero-findings verdict', () => {
-    expect(CODER_ONLY_PROMPT).toContain('EXPLICIT zero-findings verdict');
+  test('bot pass requires an unambiguous clean verdict', () => {
+    expect(CODER_ONLY_PROMPT).toContain('EXPLICIT clean verdict');
     expect(CODER_ONLY_PROMPT).toContain('"No Issues Found"');
     expect(CODER_ONLY_PROMPT).toContain('minor findings are still findings');
   });
