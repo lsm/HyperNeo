@@ -107,7 +107,14 @@ restoration (:172), reached via `model-service.ts:187` and
 `provider-handlers.ts:435,476`; model enumeration concurrent with a session
 query can therefore snapshot/restore another owner's values despite a
 ProviderService coordinator — this direct owner joins the coordinator or
-eliminates its shared mutation too. The common finalizer shares the flaw at the
+eliminates its shared mutation too — and **two more production spawns mutate
+the environment directly and partially**: `github/security-agent.ts:162–183`
+and `github/router-agent.ts:202–223` replace only `ANTHROPIC_API_KEY` /
+`CLAUDE_CODE_OAUTH_TOKEN` (restored in `finally`) without clearing the active
+session's `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, or model variables, so
+a GitHub inference running while a provider session owns `process.env` spawns
+its SDK subprocess against the session's endpoint or credentials; both paths
+join the coordinator or use an isolated subprocess environment. The common finalizer shares the flaw at the
 largest scale: it snapshots staleness once at :1295, then can await the
 provider-service import and `setIdle` before clearing shared environment state,
 consumed-message state, and `ctx.queryPromise` at :1321–1338 — a replacement
