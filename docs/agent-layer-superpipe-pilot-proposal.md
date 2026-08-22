@@ -144,8 +144,11 @@ accounting with cost-reset detection :872–889 (inside `handleResultMessage`
 ladder, limit classification). `context-fetcher.ts` (307) — `toContextInfo`
 :131–306 already a pure cascade. `output-limiter-hook.ts` (202) — stateless
 policy core of the same class as the excluded loop-detector (only consumer:
-query-options-builder.ts:906–923). `interrupt-handler.ts` (175) — linear
-teardown procedure. `rewind-handler.ts` (667) — mode cascade + diff revert, **no
+query-options-builder.ts:906–923). `interrupt-handler.ts` (~252, post-#2696) —
+teardown plus a real decision region: receipt handling at :115–158 branches over
+surviving queued messages, cancellation outcomes, and control deadlines, so it
+is no longer purely linear teardown and belongs in extraction analysis.
+`rewind-handler.ts` (667) — mode cascade + diff revert, **no
 session lock / processing-state guard anywhere**. `coordinator/*` — pure agent
 role configs. `event-subscription-setup.ts`, `session-config-handler.ts`,
 `sdk-runtime-config.ts` — wiring/mutators.
@@ -422,51 +425,47 @@ Additions from the survey:
 
 ## 7. Bugs / races noticed (report only)
 
-**Query lifecycle:** (Q2) superseded-retry exits abandon suppressed idle waiters
-(:906–908, :978, :1024). (Retraction: the earlier `emitSdkResumeChoiceMessage`
-TOCTOU report is withdrawn — its unresolved-check (:370), synchronous save
-(:383), and re-check (:385–390) contain no await, so two invocations cannot
-interleave in the single-process daemon. The earlier startup-timeout vs
-first-message race report is likewise withdrawn: when the timer wins,
-`abort()` sets the signal synchronously and `createAbortableQuery` breaks at
-query-runner.ts:1542–1544 without yielding the pending frame; when the frame
-wins, its settlement drains through microtasks into the timer-clear at
-:791–795 before the timer callback can run — the :784 guard never observes
-flag-set-with-fresh-frame.) (Q4)
-deferred→enqueued written before durable V2 ownership; failure leaves owner-less
-`enqueued` rows (query-mode-handler.ts:55–68); legacy path's stale `v2Owned`
-snapshot can double-enqueue (:78–86). (Q6) `QueryRunner.start` silently
-no-ops on stale running-with-null-promise state (:341–348). (Q7) deferred
-restart reason dropped + failure swallowed (query-lifecycle-manager.ts:644–649).
-(Q8) deferred-permission TOCTOU (query-runner.ts:373–399). (Retraction: the
-earlier 429-handoff stranding report (Q9) is withdrawn — episode generation
-advances only via watchdog `cancel()`/`reset()`, and every production caller
-either installs a replacement owner (`deliverChatMessage` cancels after
-creating the durable turn and then queues it), runs lifecycle normalization
-(interrupt/reset/restart), or finishes a turn; `scheduleRetry` returning true on
-a generation mismatch intentionally defers to the successor rather than
-stranding state.) (Q10) process-env mutated
-before startup-gate admission; queued session holds mutated env
-(query-runner.ts:660 vs :690). (Q11) startup-gate cap re-read per call; release
-bypasses cap re-check (sdk-startup-gate.ts:43–53, :102–107). (Q12) substring
-error classification over-matches ("permission"/"Exit code: 1" → PERMISSION,
-:1224–1229).
+**Query lifecycle:** (Q4)
+deferred→enqueued written before durable V2 ownership; an enqueue failure leaves
+owner-less `enqueued` rows (query-mode-handler.ts:55–68). (Q7) deferred restart
+reason dropped + failure swallowed (query-lifecycle-manager.ts:644–649).
+(Q8) deferred-permission TOCTOU (query-runner.ts:373–399). (Q10) process-env
+mutated before startup-gate admission; queued session holds mutated env
+(query-runner.ts:660 vs :690). (Q12) substring error classification over-matches
+("permission"/"Exit code: 1" → PERMISSION, :1224–1229).
+(Retractions, each verified against production callers: the Q2 suppressed-waiter
+report — keeping waiters alive across a superseded retry is the handoff
+contract; the successor's terminal `setIdle` drains them and restart/reset
+failure paths call `releaseIdleWaiters()`. The Q6 stale-start report —
+`ensureQueryStarted` (query-lifecycle-manager.ts:418–455) detects
+running-with-null-promise and force-recovers, while restart/reset stop the
+queue before clearing refs, so no production path reaches `start()` in that
+state. The Q11 dynamic-cap report — `HYPERNEO_SDK_STARTUP_MAX_CONCURRENT` is
+never mutated after startup outside tests, so FIFO permit transfer cannot
+bypass a fixed cap. The Q9 429-handoff stranding report — episode generation
+advances only via watchdog `cancel()`/`reset()` whose callers install a
+replacement owner or normalize lifecycle. The Q3 `emitSdkResumeChoiceMessage`
+TOCTOU report — check/save/re-check are await-free. The Q1 startup-timeout race
+report — abort wins by breaking at :1542–1544 without yielding; a won frame
+drains through microtasks into the timer-clear at :791–795 first.)
 
 **Delivery:** (D1) dead duplicate `reconcileStrandedDeliveries` inlined instead
 of using the extracted core (message-delivery.ts:207–242). (D2)
 `resolveDeliveryRole` core dead — `deliverMessage` (:97–139) keeps the imperative
 try/catch; its `getActiveDeliveryRole` pre-check is redundant with the UNIQUE
 constraint rather than racy (check and enqueue are both synchronous), and callers
-today only branch on turn-vs-steer for `setQueuedIfIdle`. (D3)
-`deliverBatchAndMarkQueued`
-swallows `setQueuedIfIdle` failure (message-delivery.ts:194–198).
-(Retraction: three earlier reports in this space were false positives and are
+today only branch on turn-vs-steer for `setQueuedIfIdle`.
+(Retractions: three earlier reports in this space were false positives and are
 withdrawn — `withSessionLock`'s abort path cannot leave an unhandled rejection
-(lock-tail promises are resolver-only and never reject); 
+(lock-tail promises are resolver-only and never reject);
 `waitForPendingOrInFlight` chains waiter callbacks rather than clobbering them;
 the claim-check→yield span in `messageGenerator` is synchronous under JS
 run-to-completion, so the 30s timeout cannot interleave between claim-check and
-yield.)
+yield. A fourth, D3's queued-state rejection report, is also withdrawn:
+`setQueuedIfIdle` assigns state synchronously and persists before its single
+await with persistence errors caught internally, so the only swallowable
+rejection is a late `session.updated` publish after state and delivery job
+already exist — propagating it would wrongly fail a successful enqueue.)
 
 **Facade/satellites:** (F1) ~~`queryObject.interrupt()` had no timeout~~ —
 resolved since the survey basis by #2696: interrupt calls now run under
