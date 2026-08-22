@@ -1,3 +1,4 @@
+import { NON_DELEGATING_GENERAL_PROMPT } from '@hyperneo/prompts';
 import type { AgentSessionInit, PromptProvenanceInit } from '../../agent/agent-session';
 import type {
   AgentDefinition,
@@ -33,8 +34,7 @@ export const NON_DELEGATING_GENERAL_AGENT: AgentDefinition = {
     'Investigate a focused question using files, search, shell commands, and web sources. Complete the assigned work directly; do not delegate it to another agent.',
   tools: ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Skill', 'ToolSearch'],
   disallowedTools: ['Agent', 'Task', 'TaskOutput', 'TaskStop'],
-  prompt:
-    'Complete the assigned investigation directly. You may use the available read, search, shell, and web tools, but you must not spawn or delegate to other agents.',
+  prompt: NON_DELEGATING_GENERAL_PROMPT,
   model: 'inherit',
 };
 
