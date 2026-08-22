@@ -78,6 +78,7 @@ import {
 import { decideActivationRouting, selectWorkflowNodeForAgent } from './activation-routing';
 import { decideSpawnExecutionAdmission } from './spawn-admission-gates';
 import {
+  isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
   runSpawnExecutionFlow,
   type SpawnExecutionFlowDeps,
@@ -915,6 +916,9 @@ export class TaskAgentManager {
     const result = outcome.result;
     if (isSpawnFlowWaitConcurrent(result)) {
       return this.waitForConcurrentSpawnSession(execution);
+    }
+    if (isSpawnFlowReusedSession(result)) {
+      return result.sessionId;
     }
     this.spawningExecutionIds.delete(execution.id);
     return result as string;

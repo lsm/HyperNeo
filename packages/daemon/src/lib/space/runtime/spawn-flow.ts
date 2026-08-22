@@ -105,6 +105,17 @@ export function isSpawnFlowWaitConcurrent(result: unknown): result is {
   );
 }
 
+export function isSpawnFlowReusedSession(result: unknown): result is {
+  kind: 'reused_session';
+  sessionId: string;
+} {
+  return (
+    typeof result === 'object' &&
+    result !== null &&
+    (result as { kind?: unknown }).kind === 'reused_session'
+  );
+}
+
 interface SpawnAttemptBox {
   sessionId: string | null;
   workspacePath: string | null;
@@ -176,7 +187,10 @@ export function runSpawnExecutionFlow(
       s.halt({
         name: 'return-live-session',
         when: 'reuseLive',
-        run: (view) => (view.reuseLive as { sessionId: string }).sessionId,
+        run: (view) => ({
+          kind: 'reused_session',
+          sessionId: (view.reuseLive as { sessionId: string }).sessionId,
+        }),
       }),
       s.halt({
         name: 'defer-to-concurrent-spawn',

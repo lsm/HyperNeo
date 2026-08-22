@@ -277,6 +277,19 @@ describe('spawnWorkflowNodeAgentForExecutionViaFlow — staged composition parit
     expect(h.order).toEqual([]);
   });
 
+  test('reuse_live clears no reservation: a concurrent peer keeps its in-flight spawn guard', async () => {
+    const h = makeSpawnFlowHarness({
+      execution: makeExecution({ agentSessionId: 'live-session', status: 'idle' }),
+    });
+    seedIndexedSession(h.tam, 'live-session');
+    h.spawningIds().add('exec-1');
+
+    const result = await h.spawn();
+
+    expect(result).toBe('live-session');
+    expect(h.spawningIds().has('exec-1')).toBe(true);
+  });
+
   test('indexed but dead session: evicted from the index and spawned fresh', async () => {
     const h = makeSpawnFlowHarness({
       execution: makeExecution({ agentSessionId: 'zombie-session', status: 'idle' }),

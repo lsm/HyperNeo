@@ -8,6 +8,7 @@ import type {
 } from '@hyperneo/shared';
 import type { SpawnExecutionFlowDeps } from '../../../../src/lib/space/runtime/spawn-flow';
 import {
+  isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
   runSpawnExecutionFlow,
 } from '../../../../src/lib/space/runtime/spawn-flow';
@@ -273,7 +274,7 @@ describe('spawn flow — proceed_fresh path', () => {
 });
 
 describe('spawn flow — alternative admission branches', () => {
-  test('reuse_live rebinds the indexed session and halts with its id', async () => {
+  test('reuse_live rebinds the indexed session and halts with a reused-session result', async () => {
     const h = makeFlowFixture();
     const outcome = await h.run({
       inspectIndexedSession: (agentSessionId) => ({
@@ -281,7 +282,11 @@ describe('spawn flow — alternative admission branches', () => {
         alive: true,
       }),
     });
-    expect(outcome).toEqual({ status: 'completed', result: 'live-1' });
+    expect(outcome).toEqual({
+      status: 'completed',
+      result: { kind: 'reused_session', sessionId: 'live-1' },
+    });
+    expect(isSpawnFlowReusedSession(outcome.result)).toBe(true);
     expect(h.rebinds).toEqual([{ executionId: EXECUTION_ID, sessionId: 'live-1' }]);
     expect(h.calls).toEqual(['rebind:live-1']);
     expect(h.reservations).toEqual([]);
@@ -403,7 +408,10 @@ describe('spawn flow microtask profile', () => {
       }),
     });
     expect(h.calls).toEqual(['rebind:live-1']);
-    await expect(promise).resolves.toEqual({ status: 'completed', result: 'live-1' });
+    await expect(promise).resolves.toEqual({
+      status: 'completed',
+      result: { kind: 'reused_session', sessionId: 'live-1' },
+    });
   });
 
   test('admission and the reservation commit before the first awaited effect boundary', async () => {
