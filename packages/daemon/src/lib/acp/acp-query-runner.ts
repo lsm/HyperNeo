@@ -488,7 +488,10 @@ export class AcpQueryRunner {
       let queryOptions = await optionsBuilder.build();
       queryOptions = await this.ensureRequiredMcpServersForAcp(queryOptions);
 
-      const acpCommand = process.env.HYPERNEO_ACP_COMMAND;
+      const acpCommand =
+        provider instanceof AcpProvider
+          ? provider.getAcpCommand()
+          : process.env.HYPERNEO_ACP_COMMAND;
       if (!acpCommand) {
         throw new Error('Set HYPERNEO_ACP_COMMAND to enable ACP agents.');
       }

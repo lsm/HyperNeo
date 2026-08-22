@@ -148,6 +148,34 @@ describe('AcpProvider', () => {
     });
   });
 
+  describe('verifyCommandAvailable', () => {
+    it('should reuse a successful probe within the TTL window', async () => {
+      let probes = 0;
+      const probed = new AcpProvider(process.env, async () => {
+        probes++;
+      });
+      probed.setAcpCommand('devin acp');
+
+      await probed.verifyCommandAvailable();
+      await probed.verifyCommandAvailable();
+
+      expect(probes).toBe(1);
+    });
+
+    it('should bypass the probe TTL when forced', async () => {
+      let probes = 0;
+      const probed = new AcpProvider(process.env, async () => {
+        probes++;
+      });
+      probed.setAcpCommand('devin acp');
+
+      await probed.verifyCommandAvailable();
+      await probed.verifyCommandAvailable({ force: true });
+
+      expect(probes).toBe(2);
+    });
+  });
+
   describe('getContextWindow', () => {
     it('should return default context window when env is not set', () => {
       expect(provider.getContextWindow()).toBe(200000);

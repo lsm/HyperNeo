@@ -854,6 +854,27 @@ describe('Provider RPC handlers', () => {
       expect(result).toEqual({ healthy: false, error: 'command unavailable' });
     });
 
+    it('re-probes the ACP command on repeated explicit provider tests', async () => {
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      let probes = 0;
+      const provider = new AcpProvider({}, async () => {
+        probes++;
+      });
+      provider.setAcpCommand('devin acp');
+      getProviderRegistry().register(provider);
+      const handlers = setup();
+
+      await handlers.get('providers.test')!({ id: created.id }, {});
+      await handlers.get('providers.test')!({ id: created.id }, {});
+
+      expect(probes).toBe(2);
+    });
+
     it('returns unhealthy for missing provider', async () => {
       const created = repo.createProvider({
         providerId: 'missing',

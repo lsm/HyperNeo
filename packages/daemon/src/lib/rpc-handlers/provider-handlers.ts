@@ -398,7 +398,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         return { healthy: false, error: 'Provider not available' };
       }
       if (provider instanceof AcpProvider) {
-        await provider.verifyCommandAvailable();
+        await provider.verifyCommandAvailable({ force: true });
       }
       await provider.getModels();
       providerRepo.updateProvider(data.id, {

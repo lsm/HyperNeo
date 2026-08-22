@@ -135,12 +135,16 @@ export class AcpProvider implements Provider {
     };
   }
 
-  async verifyCommandAvailable(): Promise<void> {
+  async verifyCommandAvailable(options: { force?: boolean } = {}): Promise<void> {
     const command = this.getAcpCommand();
     if (!command) {
       throw new Error('HYPERNEO_ACP_COMMAND not set');
     }
-    if (this.lastProbeKey === command && Date.now() - this.lastProbeAt < AcpProvider.PROBE_TTL_MS) {
+    if (
+      !options.force &&
+      this.lastProbeKey === command &&
+      Date.now() - this.lastProbeAt < AcpProvider.PROBE_TTL_MS
+    ) {
       return;
     }
     await this.commandProbe(command, ACP_PROBE_TIMEOUT_MS);
