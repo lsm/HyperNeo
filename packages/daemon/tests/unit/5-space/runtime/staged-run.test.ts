@@ -704,6 +704,32 @@ describe('stagedRun declared-key access', () => {
     expect(reads).toBe(1);
   });
 
+  test('a shifting reads declaration cannot bypass the stale-read validation', async () => {
+    type Pair = { a: number; b: number };
+    let reads = 0;
+    let seen: Record<string, unknown> = {};
+    const flow = stagedRun<Pair>('shifting-reads', (s) => [
+      s.snapshot({ name: 'load', provides: ['a', 'b'], run: () => ({ a: 1, b: 2 }) }),
+      s.effect({ name: 'dirty-b', writes: ['b'], run: () => {} }),
+      s.effect({
+        name: 'shifty',
+        writes: ['a'],
+        get reads() {
+          reads += 1;
+          return reads === 1 ? ['a'] : ['b'];
+        },
+        run: (view) => {
+          seen = { ...view };
+        },
+      } as unknown as Parameters<typeof s.effect>[0]),
+      s.halt({ name: 'end', run: () => 'done' }),
+    ]);
+    const outcome = await flow({});
+    expect(outcome.status).toBe('completed');
+    expect(Object.keys(seen).sort()).toEqual(['a']);
+    expect(reads).toBe(1);
+  });
+
   test('input keys beyond the declared list stay unreadable inside the flow', async () => {
     type Pair = { a: number; b: number };
     let seen: Record<string, unknown> = {};

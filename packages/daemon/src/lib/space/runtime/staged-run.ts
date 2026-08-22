@@ -469,6 +469,17 @@ function validateKeyShape(flow: string, key: string, label: string): void {
   }
 }
 
+function materializeStageMetadata(stage: AnyStage): AnyStage {
+  const copy: Record<string, unknown> = { ...stage };
+  for (const field of ['provides', 'reads', 'writes', 'branches']) {
+    const value = copy[field];
+    if (Array.isArray(value)) {
+      copy[field] = [...(value as readonly unknown[])];
+    }
+  }
+  return copy as unknown as AnyStage;
+}
+
 function validateStageContract(
   flow: string,
   inputKeys: readonly string[],
@@ -640,7 +651,7 @@ export function stagedRun<S extends object>(
     effect: (def) => ({ kind: 'effect', ...def }) as AnyStage,
     halt: (def) => ({ kind: 'halt', ...def }) as AnyStage,
   };
-  const stages = [...build(builders)];
+  const stages = [...build(builders)].map(materializeStageMetadata);
   validateStageContract(name, inputKeys, stages);
   const functions: Record<string, unknown> = {
     $init: () => [] as unknown[],
