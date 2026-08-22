@@ -863,7 +863,16 @@ note.
      `interceptAskUserQuestion` and can supersede the replacement's pending
      question (`:164–185`) without ever passing the SDK-message guard; the
      callbacks bind to the run generation and reject stale permission
-     requests in both runners, with a late-callback replacement pin — **and
+     requests in both runners, with a late-callback replacement pin — and
+     the owner is **attempt-scoped, not generation-scoped**: every retry arm
+     recurses with the *unchanged* `queryGeneration` (query-runner `:967`,
+     `:1007`, `:1063`; acp `:858`), so after a `RETRY_EXIT_TIMEOUT_MS`
+     teardown a late `onAccepted`, config update, permission request, or SDK
+     message from the predecessor still passes a generation check and can
+     consume the retry's re-enqueued UUID or mutate its shared state; a
+     per-`runQuery` **attempt token** is allocated before recursion and
+     invalidated on the predecessor's exit, with callbacks and iterators
+     bound to it, and a late-callback-after-retry-teardown-timeout pin — **and
      the separate PreToolUse hook joins them**: `query-runner.ts:518`
      independently installs `createPreToolUseHook()`, whose
      `interceptAskUserQuestion` call (`:220–224`) can replace the successor's
