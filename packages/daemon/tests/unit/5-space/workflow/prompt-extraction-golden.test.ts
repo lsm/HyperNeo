@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { POST_APPROVAL_COMPLETION_INSTRUCTIONS } from '@hyperneo/prompts';
 import { createHash } from 'node:crypto';
 import {
   CODEX_REACTION_APPROVAL_GUIDANCE,
@@ -41,6 +42,10 @@ import { verifierAgent } from '../../../../src/lib/agent/coordinator/verifier.ts
 import { ROUTER_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/router-prompt.ts';
 import { SECURITY_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/security-prompt.ts';
 import { buildSpaceChatSystemPrompt } from '../../../../src/lib/space/agents/space-chat-agent.ts';
+import { buildTitleGenerationPrompt } from '../../../../src/lib/session/session-lifecycle.ts';
+import { appendPostApprovalCompletionInstructions } from '../../../../src/lib/space/runtime/post-approval-router.ts';
+import { buildPromptTooLongContinueNag } from '../../../../src/lib/space/runtime/prompt-too-long-recovery.ts';
+import { buildSelectionPrompt } from '../../../../src/lib/space/runtime/llm-workflow-selector.ts';
 
 const GOLDEN: Record<string, string> = {
   CODEX_REACTION_APPROVAL_GUIDANCE:
@@ -100,6 +105,12 @@ const GOLDEN: Record<string, string> = {
   SUBAGENT_TESTER_PROMPT: '9197c4c373bd99d8b3fb88dd7ed98788cd30521ca710c8adc8be139983a40bad',
   SUBAGENT_VCS_PROMPT: 'ea28eae3d3fb3291df5324077b0f7d602ff9abe8222ffb2eec71c69fedbdb2b1',
   SUBAGENT_VERIFIER_PROMPT: 'b5c24ec4a2b90c6ddc5b851e33e14da2fad554c528fa93027a9bc5a08dbfbfe0',
+  POST_APPROVAL_COMPLETION_INSTRUCTIONS:
+    '75598a241dc358e67b88139046bd4947d503c47520a091dc68bfbbdb54321f1f',
+  PROMPT_TOO_LONG_CONTINUE_NAG: '6087c6a95dc3d926b9c7e683ea1f125dc8fd26052b6291c93fab1d0512f79005',
+  TITLE_GENERATION_PROMPT: '90eb78808852b1639e84818f8447dcb02a2b3f9e2e1fb664edf54c930c3610dd',
+  WORKFLOW_SELECTOR_INSTRUCTIONS:
+    'edacda28ae7fb8b7eb43631c3324b3fa8e01a82ea096313fcb7057bede914d83',
 };
 
 const byPreset = new Map(getPresetAgentTemplates().map((p) => [p.handle, p.customPrompt]));
@@ -111,6 +122,14 @@ const lhInstructions = new Map(
 );
 
 const VALUES: Record<string, string> = {
+  WORKFLOW_SELECTOR_INSTRUCTIONS: (() => {
+    const full = buildSelectionPrompt(
+      { title: 't', description: 'd' } as never,
+      [{ id: 'x', name: 'n', description: 'e', tags: [] }] as never
+    );
+    const marker = 'Instructions:\n';
+    return full.slice(full.lastIndexOf(marker) + marker.length);
+  })(),
   CODEX_REACTION_APPROVAL_GUIDANCE,
   CODER_ONLY_MERGE_INSTRUCTIONS,
   CODER_ONLY_PROMPT,
@@ -155,6 +174,9 @@ const VALUES: Record<string, string> = {
   SUBAGENT_TESTER_PROMPT: testerAgent.prompt,
   SUBAGENT_VCS_PROMPT: vcsAgent.prompt,
   SUBAGENT_VERIFIER_PROMPT: verifierAgent.prompt,
+  POST_APPROVAL_COMPLETION_INSTRUCTIONS,
+  PROMPT_TOO_LONG_CONTINUE_NAG: buildPromptTooLongContinueNag(),
+  TITLE_GENERATION_PROMPT: buildTitleGenerationPrompt('').slice(0, -1),
   GITHUB_ROUTER_SYSTEM_PROMPT: ROUTER_AGENT_SYSTEM_PROMPT,
   GITHUB_SECURITY_SYSTEM_PROMPT: SECURITY_AGENT_SYSTEM_PROMPT,
 };
@@ -200,5 +222,39 @@ describe('space-chat system prompt assembly', () => {
     }
     const empty = createHash('sha256').update(buildSpaceChatSystemPrompt({})).digest('hex');
     expect(empty).toBe(ASSEMBLED_GOLDEN['SPACE_CHAT_ASSEMBLED_EMPTY']!);
+  });
+});
+
+describe('builder-internal prompt seams', () => {
+  test('title, selector, nag, and completion instructions compose their extracted values', () => {
+    const titleOut = buildTitleGenerationPrompt('FIXTURE_MSG');
+    expect(titleOut.startsWith('Based on the user')).toBe(true);
+    expect(titleOut.endsWith('FIXTURE_MSG')).toBe(true);
+    expect(
+      createHash('sha256')
+        .update(titleOut.slice(0, titleOut.length - 'FIXTURE_MSG'.length - 1))
+        .digest('hex')
+    ).toBe(GOLDEN.TITLE_GENERATION_PROMPT);
+
+    const selectorOut = buildSelectionPrompt(
+      { title: 't', description: 'd' } as never,
+      [{ id: 'x', name: 'n', description: 'e', tags: [] }] as never
+    );
+    const marker = 'Instructions:\n';
+    const selectorValue = selectorOut.slice(selectorOut.lastIndexOf(marker) + marker.length);
+    expect(createHash('sha256').update(selectorValue).digest('hex')).toBe(
+      GOLDEN.WORKFLOW_SELECTOR_INSTRUCTIONS
+    );
+
+    expect(createHash('sha256').update(buildPromptTooLongContinueNag()).digest('hex')).toBe(
+      GOLDEN.PROMPT_TOO_LONG_CONTINUE_NAG
+    );
+
+    expect(createHash('sha256').update(POST_APPROVAL_COMPLETION_INSTRUCTIONS).digest('hex')).toBe(
+      GOLDEN.POST_APPROVAL_COMPLETION_INSTRUCTIONS
+    );
+    expect(appendPostApprovalCompletionInstructions('')).toBe(
+      `\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`
+    );
   });
 });
