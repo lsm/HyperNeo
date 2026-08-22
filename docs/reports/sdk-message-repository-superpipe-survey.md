@@ -26,8 +26,13 @@ Admission-seam fact: the module-top pure helpers — `isVisibleBadgeRow` :65,
 `extractReplacementEdges` :144 — are the started extraction. One near-miss:
 `isOlderThanMessageSearchTtl` :80–85 reads `Date.now()` internally (:84), so it
 is time-dependent, not referentially pure — any core consuming it (C2) must
-take `now` as an injected input (the shell gathers it once per flush pass) so
-the retention cutoff is deterministically testable. The three save
+take `now` as an injected input so the retention cutoff is deterministically
+testable — and **every admission shell must supply one**, including the
+synchronous fallback: when `message_search_pending` is absent,
+`scheduleMessageSearchIndex` calls `upsertMessageSearchRow` directly
+(:415–417), bypassing the flush pass, so gathering `now` only per flush would
+leave that path either retaining an internal `Date.now()` or skipping
+retention entirely. The three save
 variants each re-derive subsets inline with one deliberate divergence:
 `saveUserMessageCore` gates the conversation anchor on `sendStatus ∈
 {consumed, failed}` (:1094–1097) while `saveSDKMessage` does not (:542). Pin,
