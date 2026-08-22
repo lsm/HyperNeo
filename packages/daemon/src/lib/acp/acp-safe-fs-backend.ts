@@ -182,6 +182,18 @@ function closeFile(symbols: LibcSymbols, fd: number): void {
   if (fd >= 0) symbols.close(fd);
 }
 
+function openRootDirectory(symbols: LibcSymbols, atFdcwd: number, workspaceRoot: string): number {
+  let directoryFd = openDirectory(symbols, atFdcwd, '/');
+  for (const component of workspaceRoot.split('/')) {
+    if (!component) continue;
+    if (directoryFd < 0) return -1;
+    const nextFd = openDirectory(symbols, directoryFd, component);
+    closeFile(symbols, directoryFd);
+    directoryFd = nextFd;
+  }
+  return directoryFd;
+}
+
 export function locateStatModeOffset(statBuf: Buffer, knownMode: number, fallback: number): number {
   for (let offset = 0; offset + 2 <= statBuf.length && offset < 32; offset += 2) {
     if (statBuf.readUInt16LE(offset) === knownMode) return offset;
@@ -253,7 +265,7 @@ async function openWorkspacePath(
   } catch {
     throwFsError('open', workspace);
   }
-  let directoryFd = openDirectory(symbols, atFdcwd, workspaceRoot);
+  let directoryFd = openRootDirectory(symbols, atFdcwd, workspaceRoot);
   if (directoryFd < 0) throwFsError('open', workspace);
 
   try {
