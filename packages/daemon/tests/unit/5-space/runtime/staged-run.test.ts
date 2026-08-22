@@ -354,6 +354,31 @@ describe('stagedRun composition contract', () => {
     ).toThrow(/callable run as an own property/);
   });
 
+  test('a prototype-polluted run cannot satisfy the own-callback requirement', () => {
+    const original = Object.prototype.run;
+    Object.prototype.run = function prototypeRun() {
+      return { value: 1 };
+    };
+    try {
+      expect(() =>
+        stagedRun<Box>('polluted-run', (s) => [
+          s.snapshot({
+            name: 'load',
+            provides: ['value'],
+            run: undefined as unknown as () => { value: number },
+          }),
+          s.halt({ name: 'end', run: () => 'done' }),
+        ])
+      ).toThrow(/callable run as an own property/);
+    } finally {
+      if (original === undefined) {
+        delete Object.prototype.run;
+      } else {
+        Object.prototype.run = original;
+      }
+    }
+  });
+
   test('two sequential writes to the same key stay expressible', async () => {
     const flow = stagedRun<Box>('double-write', (s) => [
       s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
@@ -1388,6 +1413,36 @@ describe('stagedRun stage failure and compensation', () => {
     const outcome = await flow({});
     expect(outcome.status).toBe('error');
     expect(order).toEqual(['partial-start', 'undo-partial']);
+  });
+
+  test('a compensation method keeps the stage as its receiver', async () => {
+    let observedName = '';
+    const flow = stagedRun<Box>('compensate-receiver', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 7 }) }),
+      s.effect({
+        name: 'owned',
+        reads: ['value'],
+        writes: ['value'],
+        run() {
+          return 'won';
+        },
+        compensate() {
+          observedName = (this as { name: string }).name;
+        },
+      }),
+      s.effect({
+        name: 'trigger',
+        writes: ['value'],
+        run: () => {
+          throw new Error('boom');
+        },
+      }),
+      s.halt({ name: 'end', run: () => 'done' }),
+    ]);
+    const outcome = await flow({});
+    expect(outcome.status).toBe('error');
+    expect(outcome.unwind).toEqual([{ stage: 'owned', status: 'compensated' }]);
+    expect(observedName).toBe('owned');
   });
 
   test('compensations receive the registration view and the stage CAS result', async () => {

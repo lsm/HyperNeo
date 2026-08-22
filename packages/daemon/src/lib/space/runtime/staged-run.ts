@@ -384,10 +384,14 @@ function buildEffectAdapter(
     const deliver = deliverViaNext(view);
     const stack = compensationStack(view);
     const bodyView = stripUnwind(view);
-    const entry: RegisteredCompensation | null = stage.compensate
+    const compensateFn =
+      Object.hasOwn(stage, 'compensate') && typeof stage.compensate === 'function'
+        ? stage.compensate.bind(stage)
+        : null;
+    const entry: RegisteredCompensation | null = compensateFn
       ? {
           stage: stage.name,
-          compensate: stage.compensate,
+          compensate: compensateFn,
           view: { ...bodyView },
           result: undefined,
         }
@@ -496,7 +500,7 @@ function validateStageContract(
     if (!stage.name || names.has(stage.name)) {
       throw new StagedRunContractError(flow, `stage name "${stage.name}" is missing or duplicated`);
     }
-    if (typeof stage.run !== 'function') {
+    if (!Object.hasOwn(stage, 'run') || typeof stage.run !== 'function') {
       throw new StagedRunContractError(
         flow,
         `stage ${stage.name} must provide a callable run as an own property — class-instance defs with prototype methods are dropped by the copy`
@@ -504,7 +508,7 @@ function validateStageContract(
     }
     if (
       stage.kind === 'effect' &&
-      stage.compensate !== undefined &&
+      Object.hasOwn(stage, 'compensate') &&
       typeof stage.compensate !== 'function'
     ) {
       throw new StagedRunContractError(
