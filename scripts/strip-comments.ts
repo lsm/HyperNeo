@@ -17,6 +17,7 @@ const KEEP_PATTERNS: RegExp[] = [
 interface Range {
   start: number;
   end: number;
+  jsx?: boolean;
 }
 
 const COMMENT_RE = /\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
@@ -38,7 +39,7 @@ function collectCommentRanges(text: string, fileName: string, isTsx: boolean): R
       const inner = text.slice(start + 1, end - 1);
       const matches = [...inner.matchAll(new RegExp(COMMENT_RE.source, 'g'))];
       if (matches.length > 0 && matches.every((m) => !KEEP_PATTERNS.some((p) => p.test(m[0])))) {
-        ranges.push({ start, end });
+        ranges.push({ start, end, jsx: true });
         return;
       }
     }
@@ -59,7 +60,8 @@ function collectCommentRanges(text: string, fileName: string, isTsx: boolean): R
   return ranges;
 }
 
-function expandRange(text: string, { start, end }: Range): Range {
+function expandRange(text: string, range: Range): Range {
+  const { start, end } = range;
   let lineStart = 0;
   if (start > 0) {
     const nl = text.lastIndexOf('\n', start - 1);
@@ -70,11 +72,11 @@ function expandRange(text: string, { start, end }: Range): Range {
   const prefix = text.slice(lineStart, start);
   const suffix = text.slice(end, nlAfter);
   if (/^\s*$/.test(prefix) && /^\s*$/.test(suffix)) {
-    return { start: lineStart, end: Math.min(nlAfter + 1, text.length) };
+    return { ...range, start: lineStart, end: Math.min(nlAfter + 1, text.length) };
   }
   let e = end;
   while (e < text.length && (text[e] === ' ' || text[e] === '\t')) e++;
-  return { start, end: e };
+  return { ...range, end: e };
 }
 
 function mergeRanges(ranges: Range[]): Range[] {
@@ -84,6 +86,7 @@ function mergeRanges(ranges: Range[]): Range[] {
     const last = merged[merged.length - 1];
     if (last && r.start <= last.end) {
       last.end = Math.max(last.end, r.end);
+      last.jsx = last.jsx || r.jsx;
     } else {
       merged.push({ ...r });
     }
@@ -93,11 +96,15 @@ function mergeRanges(ranges: Range[]): Range[] {
 
 const IDENT_CONTINUE = /[\p{L}\p{N}_$]/u;
 
+const LINE_TERMINATOR = /[\n\r\u2028\u2029]/;
+
 const ASI_KEYWORDS = new Set(['return', 'throw', 'break', 'continue', 'yield']);
 
 function mergesTokens(text: string, before: number, after: number): boolean {
   if (before < 0 || after >= text.length) return false;
-  return IDENT_CONTINUE.test(text[before]) && IDENT_CONTINUE.test(text[after]);
+  const continuesIdentifier = IDENT_CONTINUE.test(text[before]);
+  const startsIdentifier = IDENT_CONTINUE.test(text[after]) || text[after] === '\\';
+  return continuesIdentifier && startsIdentifier;
 }
 
 function precedesAsiKeyword(text: string, before: number): boolean {
@@ -145,19 +152,25 @@ export function stripComments(text: string, fileName: string, isTsx: boolean): s
     }
     out += chunk;
   };
-  for (const { start, end } of removals) {
+  for (const { start, end, jsx } of removals) {
     appendUpTo(start);
-    const hadLineTerminator = text.slice(start, end).includes('\n');
+    const hadLineTerminator = LINE_TERMINATOR.test(text.slice(start, end));
     const retainsLineTerminator =
-      (start > 0 && text[start - 1] === '\n') || (end < text.length && text[end] === '\n');
+      (start > 0 && LINE_TERMINATOR.test(text[start - 1])) ||
+      (end < text.length && LINE_TERMINATOR.test(text[end]));
     const emitLineBreak = (): void => {
       out = out.replace(/[ \t]+$/, '');
       out += '\n';
     };
-    if (mergesTokens(text, start - 1, end)) {
+    if (!jsx && mergesTokens(text, start - 1, end)) {
       if (hadLineTerminator) emitLineBreak();
       else out += ' ';
-    } else if (hadLineTerminator && !retainsLineTerminator && precedesAsiKeyword(text, start - 1)) {
+    } else if (
+      !jsx &&
+      hadLineTerminator &&
+      !retainsLineTerminator &&
+      precedesAsiKeyword(text, start - 1)
+    ) {
       emitLineBreak();
     }
     cursor = end;

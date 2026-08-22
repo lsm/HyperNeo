@@ -176,6 +176,28 @@ describe('strip-comments', () => {
     const source = 'a();   \n\n\nb(); /* tail */\n';
     expect(stripComments(source, 'a.ts', false)).toBe('a();   \n\n\nb();\n');
   });
+
+  it('separates a word from an escape-started identifier after a comment', () => {
+    const source = 'const r = typeof/* note */\\u0076alue;\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('const r = typeof \\u0076alue;\n');
+  });
+
+  it('treats carriage return inside a removed comment as a line terminator', () => {
+    const source = 'function f() {\n  return/* note\r   */1;\n}\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('function f() {\n  return\n1;\n}\n');
+  });
+
+  it('treats unicode line separators inside a removed comment as line terminators', () => {
+    const source = 'function f() {\n  return/* note\u2028 */1;\n}\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('function f() {\n  return\n1;\n}\n');
+  });
+
+  it('does not insert separators between JSX text adjacent to a removed expression', () => {
+    const source = 'export const C = () => (<p>Hello{/* x */}World</p>);\n';
+    expect(stripComments(source, 'a.tsx', true)).toBe(
+      'export const C = () => (<p>HelloWorld</p>);\n'
+    );
+  });
 });
 
 describe('zero-comments wiring', () => {
