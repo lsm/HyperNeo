@@ -266,6 +266,13 @@ describe('AcpQueryRunner', () => {
     });
   });
 
+  test('parses ACP commands with shared parser semantics', () => {
+    expect(parseAcpCommand('"C:\\Program Files\\agent.exe" --value ""')).toEqual({
+      command: 'C:\\Program Files\\agent.exe',
+      args: ['--value', ''],
+    });
+  });
+
   test('converts process MCP servers and skips unproxied in-process SDK servers', () => {
     const warnings: string[] = [];
     const converted = convertMcpServersForAcp(
