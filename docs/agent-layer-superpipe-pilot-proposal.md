@@ -745,7 +745,15 @@ note.
   later awaited effect — e.g. `session.errorClear` (`:932–934`) — can reject;
   with cleanup started the runner's catch skips its drain (`:810–812`) and the
   fence leaks identically; the failure path cancels its owned fence
-  while retaining the pre/post-publication ordering; the
+  while retaining the pre/post-publication ordering — and all of this
+  presupposes **the dispatch itself is ownership-fenced**: `handleSDKMessage`
+  passes no `queryGeneration` and `SDKMessageHandlerContext` exposes no owner
+  token (query-runner.ts:1512–1515, :302), so after a `stop()` timeout a late
+  top-level result from the old iterator still reaches the shared handler and
+  `beginTerminalIdle()` synchronously fires every current waiter's `onEnd` —
+  including the replacement's — before any unwind can run; the runner
+  propagates and validates ownership before the handler begins its fence,
+  with a late old-generation result after replacement pinned; the
   core also returns the updated flag state, since the scoped machine mutates it:
   results set `lastResultWasSuccess`; suppressed **successful** results clear
   `suppressIdleOnNextResult` (:936–937 is success-gated at :765–766), so a
