@@ -237,6 +237,56 @@ describe('useSpaceTaskMessages', () => {
     expect(result.current.rows.map((r) => r.id)).toEqual(['msg-1', 'msg-2']);
   });
 
+  it('ignores a stale active-turn subscribe rejection after switching tasks', async () => {
+    let rejectStale: (reason: Error) => void = () => {};
+    const staleRejection = new Promise<void>((_, reject) => {
+      rejectStale = reject;
+    });
+    mockRequest.mockImplementation(
+      (method: string, payload: { queryName?: string; subscriptionId?: string }) => {
+        if (
+          method === 'liveQuery.subscribe' &&
+          payload.queryName === 'spaceTaskActiveTurn.byTask' &&
+          String(payload.subscriptionId).includes('task-1')
+        ) {
+          return staleRejection;
+        }
+        return Promise.resolve(undefined);
+      }
+    );
+
+    const { result, rerender } = renderHook(
+      ({ taskId }: { taskId: string }) => useSpaceTaskMessages(taskId),
+      { initialProps: { taskId: 'task-1' } }
+    );
+    rerender({ taskId: 'task-2' });
+    const messageSubId = lastMessageSubscribeSubId();
+    const activeTurnSubId = lastActiveTurnSubscribeSubId();
+    act(() => {
+      fireEvent('liveQuery.snapshot', { subscriptionId: messageSubId, rows: [], version: 1 });
+      fireEvent('liveQuery.snapshot', {
+        subscriptionId: activeTurnSubId,
+        rows: [
+          {
+            id: 'sess-1:1:row-1:0',
+            sessionId: 'sess-1',
+            turnIndex: 1,
+            ts: 10,
+            entry: { kind: 'text', text: 'Working', ts: 10, uuid: 'u1' },
+          },
+        ],
+        version: 1,
+      });
+    });
+    expect(result.current.activeTurnSummaries).toHaveLength(1);
+
+    await act(async () => {
+      rejectStale(new Error('stale rejection'));
+      await Promise.resolve();
+    });
+    expect(result.current.activeTurnSummaries).toHaveLength(1);
+  });
+
   describe('isLoading (empty-state flash prevention)', () => {
     it('reports isLoading=true on the very first render when a taskId is provided', () => {
       const { result } = renderHook(() => useSpaceTaskMessages('task-1'));

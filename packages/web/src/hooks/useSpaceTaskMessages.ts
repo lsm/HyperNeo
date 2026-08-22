@@ -213,7 +213,9 @@ export function useSpaceTaskMessages(
                 params: [taskId],
                 subscriptionId: activeTurnSubscriptionId,
               })
-              .catch(() => setActiveTurnRows([]));
+              .catch(() => {
+                if (lifecycle.status !== 'disposed') setActiveTurnRows([]);
+              });
           }
           continue;
         }
@@ -296,7 +298,9 @@ export function useSpaceTaskMessages(
               params: [taskId],
               subscriptionId: activeTurnSubscriptionId,
             })
-            .catch(() => setActiveTurnRows([]));
+            .catch(() => {
+              if (lifecycle.status !== 'disposed') setActiveTurnRows([]);
+            });
           return;
         }
         setActiveTurnError(event.message);
