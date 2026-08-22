@@ -124,7 +124,7 @@ mount/`providers.changed`), so the hide persists until reconnection, a
 | --- | --- | --- |
 | **C1-PR1 (pin)** | Daemon characterization tests | Pin current behavior: (a) cache built while GLM probe rejects → GLM models absent from `modelsCache`; (b) the stranded probe suite already pins the one-shot no-retry (`session-handlers.test.ts:322+`) — extend it with the missing transition: upstream recovers, yet later cached `models.list` calls perform no further probe until a global clear; (c) `providers.update` disable→enable → global cache clear + attempted-set clear → recovery. Files: extend D`tests/unit/1-core/core/model-service.test.ts` (retry tracking `:71-93`), D`tests/unit/2-handlers/rpc-handlers/session-handlers.test.ts` (`:278,322+`), and D`tests/unit/2-handlers/rpc-handlers/provider-handlers.test.ts`. Plus a codex pin: `getBridgeAuth` null (credentials absent at first call) → later file appearance is not re-read. |
 | **C1-PR2 (fix, model-service)** | Decouple listing from probing | In `loadModelsFromProviders` (model-service.ts:183-189): when `isAvailable()=true` but `getModels()` rejects, fall back in two steps — first `provider.getCachedModels?.()`, then the provider's static metadata (`STATIC_MODEL_METADATA` already exists, `:65-71`; Minimax missing from it — add). The cached-models step is the ACP fallback: ACP has no static entry by design (its list is per-command and dynamic), but its curated `config_json.models` is hydrated into `cachedModels` at startup sync (acp-provider.ts:137-173, 233-235), so a failed subprocess probe still lists the curated set; an empty configured `models: []` also maps to the synthetic default (acp-provider.ts:164-167). The command-only case — no `models` key, so `parseAcpConfig` yields `undefined` (provider-sync.ts:21-33) and `setAcpModels(undefined)` leaves `cachedModels` null (acp-provider.ts:169-172) — needs one extra step: `getCachedModels()` must synthesize the default entry when `cachedModels` is null but a command identity is configured, mirroring the healthy `getModels()` tail (acp-provider.ts:221-225) and the null branch of `updateAcpModelCache` (acp/acp-query-runner.ts:1112-1118), which already splices that same synthetic default into the global cache — so the synthesis is behavior-consistent with both existing consumers. Custom endpoints likewise have no static entry; a two-line `getCachedModels()` returning their configured `config.models` covers them, since the probe only verifies a list that is config, not discovery (custom-endpoint-provider.ts:183-186). Single seam, no provider-specific branches beyond that accessor. Tradeoff (flag in PR): an invalid key still lists models until first use fails upstream — acceptable; auth errors stay visible via `getAuthStatus`/health dot. |
-| **C1-PR3 (fix, retry + TTL)** | Make recovery self-healing | (a) Replace the `refreshedMissingProviders` Set with timestamped attempts + retry backoff (e.g. 60s) — do **not** clear markers on every refresh completion: a provider whose `isAvailable()` stays true while `getModels()` keeps failing would be re-detected as stranded on every cached `models.list`, re-probing and re-triggering an upstream refresh (hammering an already failing or rate-limited service); clearing a provider's marker is safe only when that provider actually recovered in the refresh; (b) codex `cachedBridgeAuth=null` gets a TTL (5 min, matching copilot's `tokenCache` pattern) or re-checks on auth.json mtime change. Re-run PR1 pins inverted: GLM present via fallback during probe failure; codex re-reads after credentials appear. |
+| **C1-PR3 (fix, retry + TTL)** | Make recovery self-healing | (a) Replace the `refreshedMissingProviders` Set with timestamped attempts + retry backoff (e.g. 60s) — do **not** clear markers on every refresh completion: a provider whose `isAvailable()` stays true while `getModels()` keeps failing would be re-detected as stranded on every cached `models.list`, re-probing and re-triggering an upstream refresh (hammering an already failing or rate-limited service); clearing a provider's marker is safe only when that provider actually recovered in the refresh; (b) codex `cachedBridgeAuth=null` gets a TTL (5 min, matching copilot's `tokenCache` pattern) or re-checks on auth.json mtime change; (c) once C1-PR2's fallbacks populate the cache with the failed provider's models, `detectStrandedProviders` considers that provider present and never creates a retry attempt for it — so the failure must be recorded by `loadModelsFromProviders` itself (return a per-provider failure set alongside the models, tracked with the same backoff timestamps and retried independently of cache presence), leaving the stranded-probe path only for providers absent from the cache entirely. Re-run PR1 pins inverted: GLM present via fallback during probe failure; codex re-reads after credentials appear. |
 
 **ADR classification:** C1-PR2 is a P3 guard + fallback at one seam; C1-PR3a is
 a small decision ("probe / skip / retry") that fits `decisionRun` but is too
@@ -212,18 +212,35 @@ fresh.
 Design (4 PRs):
 
 1. **C3-PR1 — contract + RPC seam (daemon).** Generalize
-   `providers.fetchAcpModels` into `providers.listRemoteModels {id}`: optional
-   `listRemoteModels()` on the Provider contract; move `normalizeModelList`
-   (handles `/v1/models` OpenAI+Anthropic and `/api/tags` Ollama shapes) from
-   custom-endpoint-handlers to shared; implement for GLM/Kimi/DeepSeek/MiniMax
-   (they share the `probeAnthropicCompatCredentials` shape, so a shared
-   `fetchAnthropicCompatModels(baseUrl, apiKey)` helper covers all four). Pin:
-   ACP fetch behavior parity.
+   `providers.fetchAcpModels` into `providers.listRemoteModels {id,
+   options?}`: the validated per-provider options field preserves the existing
+   RPC's optional `command` override (provider-handlers.ts:211-232) so the
+   curation editor can probe an edited command/baseUrl *before* persisting it;
+   optional `listRemoteModels()` on the Provider contract; move
+   `normalizeModelList` (handles `/v1/models` OpenAI+Anthropic and `/api/tags`
+   Ollama shapes) from custom-endpoint-handlers to shared; implement for
+   GLM/Kimi/DeepSeek/MiniMax (they share the `probeAnthropicCompatCredentials`
+   shape, so a shared `fetchAnthropicCompatModels(baseUrl, apiKey)` helper
+   covers all four). Routing acceptance is part of the contract: providers
+   accepting discovery must resolve discovered IDs end-to-end — today DeepSeek
+   silently substitutes `DEFAULT_MODEL` for unknown IDs in `buildSdkConfig`
+   (deepseek-provider.ts:146) and Kimi maps unknowns to `kimi-for-coding`
+   (kimi-provider.ts:377-414), so a discovered-but-unroutable ID would show in
+   the picker while requests run the default — `ownsModel`/`buildSdkConfig`/
+   `translateModelIdForSdk` must accept discovered IDs, or the merge must skip
+   IDs the provider cannot route. Pin: ACP fetch behavior parity, including the
+   command override.
 2. **C3-PR2 — discovery cache (daemon).** Per-provider discovered-list cache
-   (TTL 5 min, matching ollama/copilot) + explicit refresh RPC that writes it
-   and publishes `providers.changed`; `getModels()` merges discovered ⊕ static
-   when discovery is enabled per provider. Persist the last-good discovered
-   list in `providers.config_json` so restarts don't blank curated setups.
+   (TTL 5 min, matching ollama/copilot) + explicit refresh RPC that writes it,
+   **replaces the provider's slice in the global `modelsCache` before
+   publishing** (the `updateAcpModelCache` pattern,
+   acp/acp-query-runner.ts:1100-1119 — publishing alone is insufficient:
+   `providers.changed` subscribers re-fetch a *cached* `models.list`, which
+   returns the existing global cache, and stranded-provider detection will not
+   refresh a provider that is already present), then publishes
+   `providers.changed`; `getModels()` merges discovered ⊕ static when
+   discovery is enabled per provider. Persist the last-good discovered list in
+   `providers.config_json` so restarts don't blank curated setups.
    **ADR shape:** fetch+cache = `requestRun`-shaped staged flow (snapshot →
    fetch → cache → notify; P8 with conditions trivially met — single idempotent
    write); the cache-merge decision itself = P1 transform.
@@ -232,7 +249,13 @@ Design (4 PRs):
    (D`lib/providers/provider-sync.ts:61-66`, schema
    D`storage/schema/index.ts:299-316`) to every provider; per-provider
    "visible models" editor in the provider page (fetch remote → checkbox
-   subset → save). OpenRouter's env-allowlist (`providerModelAllowlists`)
+   subset → save). Define empty ≠ absent explicitly: the ACP precedent maps
+   `models: []` to the synthetic default (acp-provider.ts:164-167), so a fully
+   deselected editor would re-show defaults — in the generalized curation,
+   `[]` must mean "no visible models" (deliberately superseding ACP's legacy
+   mapping, with a migration note for existing empty-`models` ACP configs),
+   or the editor must prohibit saving an empty selection. OpenRouter's
+   env-allowlist (`providerModelAllowlists`)
    migrates onto it later — don't remove in this chain.
 4. **C3-PR4 — picker flow.** Curation applies inside the `model-service` merge
    (`mergeWithFallbackModels` seam, `:89-104`): a curated set filters
