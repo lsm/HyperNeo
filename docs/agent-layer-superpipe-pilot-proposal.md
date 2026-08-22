@@ -477,10 +477,15 @@ note.
   4. **PR 4 (dedup):** collapse the four teardown liturgies into one
      parameterized helper.
   5. **PR 5 (cleanup/ADR note).**
-- **Phase 0 primitives:** none — state is in-memory (generation counter,
-  recoveryState, timers). The startup gate is the in-memory analog of spawn
-  reservation; no DB primitive warranted (single process, children die with the
-  daemon).
+- **Phase 0 primitives:** none for the *routing* state (generation counter,
+  recoveryState, timers — all in-memory; the startup gate is the in-memory
+  analog of spawn reservation, no DB primitive warranted in a single process
+  whose children die with the daemon). **But if the backoff arm is staged, its
+  two external effects require Phase 0 primitives** (ADR :148–153), matching
+  the arm's own design above: a durable reservation with an idempotency key for
+  the persisted/published retry notice, and a conditional durable reservation
+  plus idempotence-or-exact-compensation for the prompt queue injection —
+  otherwise both effects stay outside the staged pass in the shell.
 - **Impact/risk:** three post-import fixes touch the file, two of them squarely
   inside Chain B's scope (#2572 futile startup-retry skip, #2579 startup-timeout
   failure hint; #2564 corrected deferred-permission application, adjacent to the
