@@ -22,13 +22,14 @@
 # installs them for its real-session shards too.
 #
 # Release is handled separately in release.yml (triggered by version tags).
-# Test coverage (unit, online, web) is uploaded to Coveralls. Each test job's
-# repo-root-normalized lcov.info is also uploaded as an lcov-* workflow
-# artifact (retention 7d). The coverage-gate job merges those artifacts locally
-# (union of line hits across flags) and enforces thresholds against the
-# baseline kept on the coverage-baseline ref — no Coveralls API on the critical
-# path. The Coveralls upload/finalize steps remain for side-by-side comparison
-# during the migration; badge removal is follow-up work.
+# Test coverage (unit, online, web): each test job's repo-root-normalized
+# lcov.info is uploaded as an lcov-* workflow artifact (retention 7d). The
+# coverage-gate job merges those artifacts locally (union of line hits across
+# suites), enforces thresholds against the baseline kept on the
+# coverage-baseline ref, and emits coverage-badge.json (shields endpoint
+# format). On push to dev, coverage-badge-update force-pushes that badge to
+# the orphan `badges` branch, which the README renders through
+# img.shields.io/endpoint — no external coverage service anywhere.
 
 name: CI
 
@@ -353,15 +354,6 @@ jobs:
           path: test-results/daemon-online-${{ matrix.module }}/
           retention-days: 7
 
-      - name: Upload to Coveralls (parallel)
-        uses: coverallsapp/github-action@v2
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: packages/daemon/coverage-online-${{ matrix.module }}/lcov.info
-          flag-name: daemon-online-${{ matrix.module }}
-          parallel: true
-          fail-on-error: false
-
       - name: Upload lcov artifact
         if: hashFiles(format('packages/daemon/coverage-online-{0}/lcov.info', matrix.module)) != ''
         uses: actions/upload-artifact@v7
@@ -427,27 +419,15 @@ jobs:
         if: always()
         working-directory: packages/${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}
         run: |
-          # Vitest writes SF: paths relative to the package dir (src/...); Coveralls
-          # needs repo-root paths (packages/<pkg>/src/...). Mirror the online/web jobs.
+          # Vitest writes SF: paths relative to the package dir (src/...); the
+          # local lcov merge needs repo-root paths (packages/<pkg>/src/...).
+          # Mirror the online/web jobs.
           PKG="${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}"
           LCOV=coverage/lcov.info
           [ -f "$LCOV" ] || exit 0
           sed -i "s|^SF:src/|SF:packages/${PKG}/src/|g" "$LCOV" || true
           sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' "$LCOV" || true
           sed -i 's|^SF:\.\./daemon/|SF:packages/daemon/|g' "$LCOV" || true
-
-      - name: Upload coverage (parallel)
-        if: always()
-        uses: coverallsapp/github-action@v2
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          # test-daemon.sh runs each shard from its package dir (packages/daemon
-          # or packages/shared) with --coverage.reportsDirectory=coverage, so the
-          # report lands at packages/<pkg>/coverage/lcov.info — not the repo root.
-          file: packages/${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}/coverage/lcov.info
-          flag-name: daemon-${{ matrix.shard }}
-          parallel: true
-          fail-on-error: false
 
       - name: Upload junit (balance report data)
         if: always()
@@ -527,19 +507,10 @@ jobs:
       - name: Fix coverage paths for monorepo
         run: |
           # Vitest generates paths relative to package dir (src/...)
-          # Coveralls needs paths relative to repo root (packages/web/src/...)
+          # the local lcov merge needs paths relative to repo root (packages/web/src/...)
           sed -i 's|^SF:src/|SF:packages/web/src/|g' packages/web/coverage-web-${{ matrix.shard }}/lcov.info
           # Fix cross-package paths (../shared/src/... -> packages/shared/src/...)
           sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' packages/web/coverage-web-${{ matrix.shard }}/lcov.info
-
-      - name: Upload to Coveralls (parallel)
-        uses: coverallsapp/github-action@v2
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: packages/web/coverage-web-${{ matrix.shard }}/lcov.info
-          flag-name: web-${{ matrix.shard }}
-          parallel: true
-          fail-on-error: false
 
       - name: Upload junit (balance report data)
         if: always()
@@ -604,35 +575,17 @@ jobs:
         run: bun run scripts/ci-balance-report.ts balance --top 25
 
   # ============================================
-  # COVERALLS FINALIZATION
-  # Merges all parallel coverage uploads
-  # Run on: PR to dev, push to dev, workflow_dispatch
-  # ============================================
-
-  coveralls-finalize:
-    name: Finalize Coveralls
-    runs-on: ubuntu-latest
-    needs: [test-daemon-shared-unit, test-web, test-daemon-online]
-    timeout-minutes: 1
-    if: github.event.inputs.run_e2e_only != 'true'
-
-    steps:
-      - name: Finalize Coveralls parallel build
-        uses: coverallsapp/github-action@v2
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          parallel-finished: true
-          fail-on-error: true
-
-  # ============================================
   # COVERAGE QUALITY GATE (local)
   # Downloads the per-job lcov-* artifacts, merges them locally (union of line
-  # hits per file across flags — daemon-unit and daemon-online overlap on
+  # hits per file across suites — daemon-unit and daemon-online overlap on
   # packages/daemon/src, so hits are max-merged, never averaged), and enforces:
   #   - overall coverage >= 30%
   #   - overall coverage no more than 2% below the baseline
-  # Only files under packages/*/src count (mirrors the Coveralls flag paths;
-  # tests/ helpers and unmapped cross-package paths are excluded).
+  # Only files under packages/*/src count (tests/ helpers and unmapped
+  # cross-package paths are excluded).
+  # Also writes coverage-badge.json (shields endpoint format, superpipe
+  # pattern) from the merged result and uploads it as the coverage-badge
+  # artifact; coverage-badge-update publishes it on dev pushes only.
   # The baseline lives on the coverage-baseline ref, not in the dev tree:
   # dev's ruleset requires squash-merged PRs with signed commits, so CI cannot
   # push baseline updates into dev itself. This job is strictly read-only.
@@ -690,6 +643,14 @@ jobs:
           --min-coverage 30
           --max-regression -2
           --verify-completeness
+          --write-badge coverage-badge.json
+
+      - name: Upload coverage badge artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-badge
+          path: coverage-badge.json
+          retention-days: 7
 
   # ============================================
   # COVERAGE BASELINE UPDATE
@@ -759,6 +720,46 @@ jobs:
           done
           echo "::error::could not update the coverage-baseline ref after 3 attempts"
           exit 1
+
+  # ============================================
+  # COVERAGE BADGE PUBLISH
+  # Force-pushes the badge JSON written by the coverage gate to the orphan
+  # `badges` branch (single file, no shared history — superpipe pattern). The
+  # README renders it via
+  # https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/lsm/HyperNeo/badges/coverage-badge.json.
+  # Last green dev run wins; no merge conflicts are possible, and pushes to
+  # `badges` trigger no workflow (on.push is dev-only) and match no ruleset
+  # (the dev ruleset pins refs/heads/dev only).
+  # Run on: push to dev only, after a green gate (needs contents: write).
+  # ============================================
+
+  coverage-badge-update:
+    name: Update Coverage Badge
+    runs-on: ubuntu-latest
+    needs: [coverage-gate]
+    timeout-minutes: 2
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.coverage-gate.result == 'success'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download coverage badge artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage-badge
+
+      - name: Publish badge to the badges branch
+        run: |
+          mkdir -p "$RUNNER_TEMP/badge"
+          cp coverage-badge.json "$RUNNER_TEMP/badge/"
+          cd "$RUNNER_TEMP/badge"
+          git init -q
+          git checkout -q --orphan badges
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add coverage-badge.json
+          git commit -q -m "coverage badge"
+          git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" badges
 
   # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
@@ -1041,6 +1042,7 @@ jobs:
       - test-web
       - coverage-gate
       - coverage-baseline-update
+      - coverage-badge-update
       - build
       - discover
       - e2e-no-llm
@@ -1086,6 +1088,12 @@ jobs:
             FAILED=1
           fi
 
+          # coverage-badge-update: push to dev only
+          if [[ "${{ needs.coverage-badge-update.result }}" == "failure" ]]; then
+            echo "❌ coverage-badge-update failed"
+            FAILED=1
+          fi
+
           # build: push to dev, workflow_dispatch
           if [[ "${{ needs.build.result }}" == "failure" ]]; then
             echo "❌ build failed"
@@ -1113,6 +1121,7 @@ jobs:
             echo "  test-web: ${{ needs.test-web.result }}"
             echo "  coverage-gate: ${{ needs.coverage-gate.result }}"
             echo "  coverage-baseline-update: ${{ needs.coverage-baseline-update.result }}"
+            echo "  coverage-badge-update: ${{ needs.coverage-badge-update.result }}"
             echo "  build: ${{ needs.build.result }}"
             echo "  discover: ${{ needs.discover.result }}"
             echo "  e2e-no-llm: ${{ needs.e2e-no-llm.result }}"

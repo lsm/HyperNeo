@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const BASELINE_SCHEMA_VERSION = 1;
@@ -47,6 +47,25 @@ export interface MergeInputStats {
 
 export function round2(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+export function badgeColor(percent: number): string {
+  if (percent >= 90) return 'brightgreen';
+  if (percent >= 80) return 'green';
+  if (percent >= 70) return 'yellowgreen';
+  if (percent >= 60) return 'yellow';
+  if (percent >= 50) return 'orange';
+  return 'red';
+}
+
+export function buildBadge(stats: CoverageStats): string {
+  const percent = round2(stats.percent);
+  return JSON.stringify({
+    schemaVersion: 1,
+    label: 'coverage',
+    message: `${percent}%`,
+    color: badgeColor(percent),
+  });
 }
 
 export function normalizeSfPath(sf: string): string | null {
@@ -388,6 +407,7 @@ interface CliOptions {
   maxRegression: number;
   writeBaseline: boolean;
   verifyCompleteness: boolean;
+  badgePath?: string;
   sourceCommit?: string;
 }
 
@@ -423,6 +443,9 @@ function parseArgs(argv: string[]): CliOptions {
       options.writeBaseline = true;
     } else if (arg === '--verify-completeness') {
       options.verifyCompleteness = true;
+    } else if (arg === '--write-badge') {
+      options.badgePath = value ?? '';
+      index += 1;
     } else {
       throw new Error(`unknown coverage-gate arg: ${arg}`);
     }
@@ -481,6 +504,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   console.log(
     `Merged ${lcovFiles.length} lcov artifacts: ${stats.files} files, ${stats.covered}/${stats.total} lines covered`
   );
+
+  if (options.badgePath) {
+    const badge = buildBadge(stats);
+    writeFileSync(options.badgePath, badge);
+    console.log(`Wrote coverage badge to ${options.badgePath}: ${badge}`);
+  }
 
   if (options.writeBaseline) {
     const baseline = buildBaseline(stats, options.sourceCommit, new Date().toISOString());

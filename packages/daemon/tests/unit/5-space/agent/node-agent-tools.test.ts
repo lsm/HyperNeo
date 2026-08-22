@@ -33,6 +33,13 @@ import type {
 import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
 import type { WorkflowArtifactProfile } from '../../../../src/lib/space/runtime/artifact-profile.ts';
 
+const REPLY_PROTOCOL =
+  'Messaging protocol: if this message requests work or information from you, reply to the sender with the outcome when done — or promptly if you cannot do it. Do not leave the sender waiting.';
+
+function nodeToNodeEnvelope(from: string, body: string): string {
+  return `─── Message from ${from} ───\n\n${body}\n\n─── Reply ───\n${REPLY_PROTOCOL}\nTo reply, use: send_message with target "${from}"`;
+}
+
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
@@ -418,7 +425,7 @@ describe('node-agent-tools: send_message', () => {
     expect(data.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
     expect(data.delivered[0].agentName).toBe('reviewer');
     expect(injected).toHaveLength(1);
-    expect(injected[0].message).toBe('─── Message from coder ───\n\nLGTM!');
+    expect(injected[0].message).toBe(nodeToNodeEnvelope('coder', 'LGTM!'));
   });
 
   test('point-to-point fails when channel not declared', async () => {
@@ -478,6 +485,8 @@ describe('node-agent-tools: send_message', () => {
           '─── Message from coder (task #42) ───\n\n' +
           'Need space-level judgment\n\n' +
           '─── Reply ───\n' +
+          REPLY_PROTOCOL +
+          '\n' +
           `To reply, use: send_message_to_task with task_id="${ctx.parentTaskId}" and target node "coder"`,
       },
     ]);
@@ -2500,7 +2509,7 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
     const pending = pendingMessageRepo.listPendingForTarget(isolatedRunId, 'reviewer');
     expect(pending).toHaveLength(1);
     expect(pending[0].sourceAgentName).toBe('coder');
-    expect(pending[0].message).toBe('─── Message from coder ───\n\ncode is ready for review');
+    expect(pending[0].message).toBe(nodeToNodeEnvelope('coder', 'code is ready for review'));
     expect(pending[0].targetKind).toBe('node_agent');
   });
 

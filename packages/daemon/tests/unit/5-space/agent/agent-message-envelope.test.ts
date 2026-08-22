@@ -5,6 +5,9 @@ import {
 } from '../../../../src/lib/space/agent-message-envelope.ts';
 import { hasAgentMessageEnvelopeForTest } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 
+const REPLY_PROTOCOL =
+  'Messaging protocol: if this message requests work or information from you, reply to the sender with the outcome when done — or promptly if you cannot do it. Do not leave the sender waiting.';
+
 describe('formatAgentMessage', () => {
   test('formats node to space-agent messages with task context and reply instructions', () => {
     expect(
@@ -21,6 +24,8 @@ describe('formatAgentMessage', () => {
       '─── Message from coder (task #236) ───\n\n' +
         'Need a decision\n\n' +
         '─── Reply ───\n' +
+        REPLY_PROTOCOL +
+        '\n' +
         'To reply, use: send_message_to_task with task_id="task-123" and target node "coder"'
     );
   });
@@ -38,6 +43,8 @@ describe('formatAgentMessage', () => {
       '─── Message from coordinator ───\n\n' +
         'Proceed with option A\n\n' +
         '─── Reply ───\n' +
+        REPLY_PROTOCOL +
+        '\n' +
         'To reply, use: send_message with target "@coordinator"'
     );
   });
@@ -54,6 +61,8 @@ describe('formatAgentMessage', () => {
       '─── Message from space-agent ───\n\n' +
         'Legacy queued follow-up\n\n' +
         '─── Reply ───\n' +
+        REPLY_PROTOCOL +
+        '\n' +
         'To reply, use: send_message with target "@coordinator"'
     );
   });
@@ -73,11 +82,13 @@ describe('formatAgentMessage', () => {
         'Ad-hoc follow-up\n\n' +
         '<reply-routing replyToSessionId="session-adhoc-42" />\n\n' +
         '─── Reply ───\n' +
+        REPLY_PROTOCOL +
+        '\n' +
         'To reply, use: send_message with target "@session:session-adhoc-42"'
     );
   });
 
-  test('formats horizontal node messages without reply boilerplate', () => {
+  test('formats horizontal node messages with reply protocol and sender target', () => {
     expect(
       formatAgentMessage({
         fromLevel: 'node-agent',
@@ -85,7 +96,28 @@ describe('formatAgentMessage', () => {
         toLevel: 'node-agent',
         body: 'Review is ready',
       })
-    ).toBe('─── Message from coder ───\n\nReview is ready');
+    ).toBe(
+      '─── Message from coder ───\n\n' +
+        'Review is ready\n\n' +
+        '─── Reply ───\n' +
+        REPLY_PROTOCOL +
+        '\n' +
+        'To reply, use: send_message with target "coder"'
+    );
+  });
+
+  test('keeps reply-routing footer trailing after the reply block on horizontal node messages', () => {
+    const message = formatAgentMessage({
+      fromLevel: 'node-agent',
+      fromAgentName: 'coder',
+      toLevel: 'node-agent',
+      body: 'Please re-review the new head',
+      replyToSessionId: 'session-post-approval-7',
+    });
+    expect(message.endsWith('<reply-routing replyToSessionId="session-post-approval-7" />')).toBe(
+      true
+    );
+    expect(extractReplyToSessionId(message)).toBe('session-post-approval-7');
   });
 
   test('appends reply-routing XML footer when replyToSessionId is set (space-agent → node-agent)', () => {

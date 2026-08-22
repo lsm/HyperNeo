@@ -315,6 +315,7 @@ export interface SessionMetadata {
   resolvedQuestions?: Record<string, ResolvedQuestion>;
   lastSdkCost?: number;
   costBaseline?: number;
+  refusalRewindTargetUuid?: string | null;
   acpInstructionsSent?: boolean;
   pastSdkSessionIds?: string[];
   acpContextUsageEstimate?: number;
