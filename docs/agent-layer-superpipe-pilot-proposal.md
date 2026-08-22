@@ -82,9 +82,15 @@ startup-gate admission (:641–661 vs :686–701), and the gate permits multiple
 concurrent sessions by default, so two overlapping sessions corrupt each other
 regardless of generations (A applies, B snapshots A while applying B, A
 restores the daemon baseline, B then restores "A" — leaving provider A's
-credentials in `process.env`); the remedy is daemon-wide serialization or
-stack ownership across *all* sessions, or eliminating the shared mutation
-(e.g. per-session env passed to the spawn rather than `process.env`) — and
+credentials in `process.env`); the remedy is **daemon-wide serialization of
+the entire environment-dependent window — apply through spawn/use — or
+eliminating the shared mutation** (per-session env passed to the spawn rather
+than `process.env`). Stack/restore ownership alone is *not* an acceptable
+alternative: a session applies its environment at :641–661 but spawns only
+after gate admission at :686–713, so another session can interpose its
+environment in between and the first session launches with the wrong
+credentials even when every restore later unwinds perfectly — which is
+serialization across the whole apply-to-use span by another name. — and
 **the coordinator must live at the shared `ProviderService` boundary, not in
 QueryRunner**: the same global environment has other concurrent owners —
 `acp-query-runner.ts:456` (`applyEnvVarsToProcessForSession`) and
