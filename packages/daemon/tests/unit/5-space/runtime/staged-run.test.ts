@@ -171,6 +171,71 @@ describe('stagedRun composition contract', () => {
     ]);
     expect(flow({})).resolves.toEqual({ status: 'completed', result: 'done' });
   });
+
+  test('a when-guarded re-gather does not clear a dirty key', () => {
+    expect(() =>
+      stagedRun<Box>('guarded-regather', (s) => [
+        s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+        s.decide({
+          name: 'route',
+          reads: ['value'],
+          branches: ['regather'],
+          run: ({ value }) => ({ decision: value, regather: { live: true } }),
+        }),
+        s.effect({ name: 'mutate', writes: ['value'], run: () => {} }),
+        s.resnapshot({
+          name: 'reload',
+          when: 'regather',
+          provides: ['value'],
+          run: () => ({ value: 2 }),
+        }),
+        s.halt({ name: 'end', reads: ['value'], run: ({ value }) => value }),
+      ])
+    ).toThrow(/reads "value" after an effect wrote it/);
+  });
+
+  test('an unconditional re-gather after a guarded one clears the dirty key', () => {
+    const flow = stagedRun<Box>('guarded-then-unconditional', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+      s.decide({
+        name: 'route',
+        reads: ['value'],
+        branches: ['regather'],
+        run: ({ value }) => ({ decision: value, regather: { live: true } }),
+      }),
+      s.effect({ name: 'mutate', writes: ['value'], run: () => {} }),
+      s.resnapshot({
+        name: 'reload',
+        when: 'regather',
+        provides: ['value'],
+        run: () => ({ value: 2 }),
+      }),
+      s.resnapshot({ name: 'reload-final', provides: ['value'], run: () => ({ value: 3 }) }),
+      s.halt({ name: 'end', reads: ['value'], run: ({ value }) => value }),
+    ]);
+    expect(flow({})).resolves.toEqual({ status: 'completed', result: 3 });
+  });
+
+  test('a when-guarded gather may still introduce a key for later reads', async () => {
+    type Pair = { value: number; extra: number };
+    const flow = stagedRun<Pair>('guarded-provide', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+      s.decide({
+        name: 'route',
+        reads: ['value'],
+        branches: ['loadExtra'],
+        run: ({ value }) => ({ decision: value, loadExtra: { want: true } }),
+      }),
+      s.resnapshot({
+        name: 'extra',
+        when: 'loadExtra',
+        provides: ['extra'],
+        run: () => ({ extra: 9 }),
+      }),
+      s.halt({ name: 'end', when: 'loadExtra', reads: ['extra'], run: ({ extra }) => extra }),
+    ]);
+    await expect(flow({})).resolves.toEqual({ status: 'completed', result: 9 });
+  });
 });
 
 describe('stagedRun declared-key access', () => {

@@ -512,7 +512,7 @@ function validateStageContract(
       if (dirty.has(key)) {
         throw new StagedRunContractError(
           flow,
-          `stage ${stage.name} reads "${key}" after an effect wrote it — add a snapshot/resnapshot that re-gathers it`
+          `stage ${stage.name} reads "${key}" after an effect wrote it — add an unconditional snapshot/resnapshot that re-gathers it (a when-guarded re-gather may be skipped)`
         );
       }
       if (!provided.has(key)) {
@@ -531,7 +531,9 @@ function validateStageContract(
     if (stage.kind === 'snapshot' || stage.kind === 'resnapshot') {
       for (const key of stage.provides) {
         provided.add(key);
-        dirty.delete(key);
+        if (stage.when === undefined) {
+          dirty.delete(key);
+        }
       }
     }
     if (stage.kind === 'decide') decisionSeen = true;
