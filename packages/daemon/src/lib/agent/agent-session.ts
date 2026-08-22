@@ -272,6 +272,8 @@ export class AgentSession
 
   onMissingMemberSpaceMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 
+  slotResetsContext?: () => boolean;
+
   get mcpEnablementRepo(): import('../../storage/repositories/mcp-enablement-repository').McpEnablementRepository {
     return this.db.mcpEnablement;
   }

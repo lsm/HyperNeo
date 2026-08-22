@@ -11,7 +11,8 @@ import {
   isMessageDeliveryV2Enabled,
   type MessageDeliveryOrigin,
 } from './message-delivery';
-import { decideTurnEndFlush } from './message-delivery-pipeline';
+import { decideTurnEndFlush, type TurnEndFlushPlan } from './message-delivery-pipeline';
+import type { FlushMessage } from './message-ownership-gates';
 import type { MessageQueue } from './message-queue';
 
 export interface QueryModeHandlerContext {
@@ -24,6 +25,8 @@ export interface QueryModeHandlerContext {
     setQueuedIfIdle(messageId: string): Promise<boolean>;
     getState(): { status: string };
   };
+  slotResetsContext?(): boolean;
+  clearConversationContext?(): Promise<void>;
 
   ensureQueryStarted(): Promise<void>;
 }
@@ -53,10 +56,11 @@ export class QueryModeHandler {
 
       const dbIds = deferredMessages.map((m) => m.dbId);
       db.updateMessageStatus(dbIds, 'enqueued');
+      const flushMessages = this.toFlushMessages(deferredMessages);
 
       if (isMessageDeliveryV2Enabled()) {
         try {
-          await this.deliverFlushUnderV2(deferredMessages, 'recovery', options);
+          await this.deliverFlushUnderV2(flushMessages, 'recovery', options);
         } catch (error) {
           await internalEventBus.publish('messages.statusChanged', {
             sessionId: session.id,
@@ -74,6 +78,7 @@ export class QueryModeHandler {
       });
 
       if (!isMessageDeliveryV2Enabled()) {
+        await this.clearContextAheadOfFlush(flushMessages);
         const v2Owned =
           db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
         await this.ctx.ensureQueryStarted();
@@ -95,13 +100,10 @@ export class QueryModeHandler {
     }
   }
 
-  private async deliverFlushUnderV2(
-    messages: Array<SDKMessage & { dbId: string; timestamp: number }>,
-    origin: MessageDeliveryOrigin,
-    options?: { deliverIndividually?: boolean }
-  ): Promise<void> {
-    const jobQueue = this.ctx.db.getJobQueueRepo();
-    const flushMessages = messages
+  private toFlushMessages(
+    messages: Array<SDKMessage & { dbId: string; timestamp: number }>
+  ): FlushMessage[] {
+    return messages
       .filter((msg) => typeof msg.uuid === 'string' && msg.uuid.length > 0)
       .map((msg) => {
         const isUserMessage = isSDKUserMessage(msg);
@@ -111,14 +113,38 @@ export class QueryModeHandler {
           flattenedText: isUserMessage ? flattenDeliveryText(msg.message.content ?? '') : null,
         };
       });
-    const plan = decideTurnEndFlush({
+  }
+
+  private planFlush(flushMessages: FlushMessage[]): TurnEndFlushPlan {
+    const jobQueue = this.ctx.db.getJobQueueRepo();
+    return decideTurnEndFlush({
       messages: flushMessages,
       activeInJobQueue: jobQueue.activeDeliveryMessageUuids(this.ctx.session.id),
       pendingInMemoryUuids: new Set<string>(),
       activeTurnInJobQueue: jobQueue.hasActiveTurnDeliveryJob(this.ctx.session.id),
-      slotResetsContext: false,
+      slotResetsContext: this.ctx.slotResetsContext?.() ?? false,
     });
+  }
+
+  private async clearContextAheadOfFlush(flushMessages: FlushMessage[]): Promise<void> {
+    if (!this.ctx.clearConversationContext) return;
+    const plan = this.planFlush(flushMessages);
     if (plan.action === 'noop') return;
+    if (plan.contextReset.action !== 'clear_then_flush') return;
+    await this.ctx.clearConversationContext();
+  }
+
+  private async deliverFlushUnderV2(
+    flushMessages: FlushMessage[],
+    origin: MessageDeliveryOrigin,
+    options?: { deliverIndividually?: boolean }
+  ): Promise<void> {
+    const jobQueue = this.ctx.db.getJobQueueRepo();
+    const plan = this.planFlush(flushMessages);
+    if (plan.action === 'noop') return;
+    if (plan.contextReset.action === 'clear_then_flush') {
+      await this.clearContextAheadOfFlush(flushMessages);
+    }
     const deliverables = plan.action === 'batch' ? plan.uuids : plan.deliver;
     if (plan.action === 'batch' && !options?.deliverIndividually) {
       const batched = await deliverBatchAndMarkQueued({
@@ -155,8 +181,9 @@ export class QueryModeHandler {
       }
 
       if (isMessageDeliveryV2Enabled()) {
-        await this.deliverFlushUnderV2(pendingMessages, 'recovery');
+        await this.deliverFlushUnderV2(this.toFlushMessages(pendingMessages), 'recovery');
       } else {
+        await this.clearContextAheadOfFlush(this.toFlushMessages(pendingMessages));
         const v2Owned =
           db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
         await this.ctx.ensureQueryStarted();

@@ -28,6 +28,7 @@ export interface InjectDeliveryCtx {
   hasPriorContext: boolean;
   slotResetsContext: boolean;
   hasActiveDeliveryJob: boolean;
+  hasUnconsumedDeliveredWork: boolean;
   reopenFailedDelivery: boolean;
   decision: InjectDeliveryDecision | null;
 }
@@ -66,6 +67,7 @@ export function applyInjectContextResetGate(ctx: InjectDeliveryCtx): InjectDeliv
       hasPriorContext: ctx.hasPriorContext,
       slotResetsContext: ctx.slotResetsContext,
       hasActiveDeliveryJob: ctx.hasActiveDeliveryJob,
+      hasUnconsumedDeliveredWork: ctx.hasUnconsumedDeliveredWork,
     })
   );
 }

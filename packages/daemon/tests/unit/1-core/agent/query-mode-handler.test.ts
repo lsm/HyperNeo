@@ -517,6 +517,126 @@ describe('QueryModeHandler', () => {
     });
   });
 
+  describe('turn-end flush context reset (resetContextPerTurn slots)', () => {
+    function deferredBatch(count: number): SDKMessage[] {
+      return Array.from({ length: count }, (_, i) => ({
+        dbId: `db-${i + 1}`,
+        uuid: `uuid-${i + 1}`,
+        type: 'user',
+        message: { role: 'user', content: `message ${i + 1}` },
+      })) as unknown as SDKMessage[];
+    }
+
+    function resetSlotContext(clearSpy: ReturnType<typeof mock>): QueryModeHandlerContext {
+      return {
+        ...createContext(),
+        slotResetsContext: () => true,
+        clearConversationContext: clearSpy,
+      };
+    }
+
+    it('clears exactly once before the first message of a deferred batch (v1)', async () => {
+      const order: string[] = [];
+      const clearSpy = mock(async () => {
+        order.push('clear');
+      });
+      enqueueWithIdSpy.mockImplementation(async (uuid: string) => {
+        order.push(uuid);
+      });
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(deferredBatch(3)));
+      mockDb = {
+        getUserMessagesByStatus: getUserMessagesByStatusSpy,
+        updateMessageStatus: updateMessageStatusSpy,
+        getJobQueueRepo: () => ({
+          activeDeliveryMessageUuids: () => new Set<string>(),
+          hasActiveTurnDeliveryJob: () => false,
+        }),
+      } as unknown as Database;
+
+      handler = new QueryModeHandler(resetSlotContext(clearSpy));
+      await handler.handleQueryTrigger();
+
+      expect(order).toEqual(['clear', 'uuid-1', 'uuid-2', 'uuid-3']);
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears exactly once before replaying enqueued messages on turn end (v1)', async () => {
+      const order: string[] = [];
+      const clearSpy = mock(async () => {
+        order.push('clear');
+      });
+      enqueueWithIdSpy.mockImplementation(async (uuid: string) => {
+        order.push(uuid);
+      });
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(deferredBatch(2)));
+      mockDb = {
+        getUserMessagesByStatus: getUserMessagesByStatusSpy,
+        updateMessageStatus: updateMessageStatusSpy,
+        getJobQueueRepo: () => ({
+          activeDeliveryMessageUuids: () => new Set<string>(),
+          hasActiveTurnDeliveryJob: () => false,
+        }),
+      } as unknown as Database;
+
+      handler = new QueryModeHandler(resetSlotContext(clearSpy));
+      await handler.sendEnqueuedMessagesOnTurnEnd();
+
+      expect(order).toEqual(['clear', 'uuid-1', 'uuid-2']);
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('never clears for a slot that does not reset context', async () => {
+      const clearSpy = mock(async () => {});
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(deferredBatch(3)));
+      mockDb = {
+        getUserMessagesByStatus: getUserMessagesByStatusSpy,
+        updateMessageStatus: updateMessageStatusSpy,
+        getJobQueueRepo: () => ({
+          activeDeliveryMessageUuids: () => new Set<string>(),
+          hasActiveTurnDeliveryJob: () => false,
+        }),
+      } as unknown as Database;
+
+      handler = new QueryModeHandler({
+        ...createContext(),
+        slotResetsContext: () => false,
+        clearConversationContext: clearSpy,
+      });
+      await handler.handleQueryTrigger();
+
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(3);
+    });
+
+    it('skips the clear when no message is deliverable', async () => {
+      const clearSpy = mock(async () => {});
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          {
+            dbId: 'db-owned',
+            uuid: 'uuid-owned',
+            type: 'user',
+            message: { role: 'user', content: 'owned by the durable queue' },
+          },
+        ] as unknown as SDKMessage[])
+      );
+      mockDb = {
+        getUserMessagesByStatus: getUserMessagesByStatusSpy,
+        updateMessageStatus: updateMessageStatusSpy,
+        getJobQueueRepo: () => ({
+          activeDeliveryMessageUuids: () => new Set<string>(['uuid-owned']),
+          hasActiveTurnDeliveryJob: () => false,
+        }),
+      } as unknown as Database;
+
+      handler = new QueryModeHandler(resetSlotContext(clearSpy));
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 1 });
+      expect(clearSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('durable delivery (v2 default) — task #861 item 3', () => {
     let jobQueue: JobQueueRepository;
     let jobsDb: Database;
@@ -886,6 +1006,43 @@ describe('QueryModeHandler', () => {
       expect(deliveryUuids()).toEqual([]);
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
       expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
+    });
+
+    it('handleQueryTrigger clears exactly once before the durable batch job is created (#1085)', async () => {
+      const order: string[] = [];
+      const clearSpy = mock(async () => {
+        order.push('clear');
+      });
+      const enqueue = jobQueue.enqueue.bind(jobQueue);
+      jobQueue.enqueue = mock((...args: Parameters<typeof enqueue>) => {
+        order.push('job');
+        return enqueue(...args);
+      });
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+          { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
+          {
+            dbId: 'db-3',
+            uuid: 'uuid-3',
+            type: 'user',
+            message: { role: 'user', content: 'three' },
+          },
+        ] as unknown as SDKMessage[])
+      );
+
+      handler = new QueryModeHandler({
+        ...createContext(),
+        slotResetsContext: () => true,
+        clearConversationContext: clearSpy,
+      });
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 3 });
+      expect(order).toEqual(['clear', 'job']);
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      expect(deliveryUuids()).toHaveLength(1);
+      jobQueue.enqueue = enqueue;
     });
   });
 });

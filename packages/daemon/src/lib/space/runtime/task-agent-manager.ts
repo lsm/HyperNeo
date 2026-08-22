@@ -1057,6 +1057,8 @@ export class TaskAgentManager {
       subSession.mergeRuntimeMcpServers(subSessionInit.mcpServers);
     }
 
+    this.attachSlotContextReset(subSession);
+
     if (!this.subSessions.has(taskId)) {
       this.subSessions.set(taskId, new Map());
     }
@@ -1848,6 +1850,7 @@ export class TaskAgentManager {
     agentSession.onMissingWorkflowMcpServers = async (target: AgentSession, missing: string[]) => {
       await this.mcpSelfHeal(target, missing);
     };
+    this.attachSlotContextReset(agentSession);
 
     if (!this.subSessions.has(taskId)) {
       this.subSessions.set(taskId, new Map());
@@ -2738,6 +2741,11 @@ export class TaskAgentManager {
     return slot?.resetContextPerTurn === true;
   }
 
+  private attachSlotContextReset(agentSession: AgentSession): void {
+    const sessionId = agentSession.session.id;
+    agentSession.slotResetsContext = () => this.slotResetsContextForSession(sessionId);
+  }
+
   private buildAgentNameAliasesForExecution(
     workflow: SpaceWorkflow | null,
     execution: NodeExecution
@@ -3042,6 +3050,7 @@ export class TaskAgentManager {
     agentSession.onMissingWorkflowMcpServers = async (target: AgentSession, missing: string[]) => {
       await this.mcpSelfHeal(target, missing);
     };
+    this.attachSlotContextReset(agentSession);
 
     const pendingToolContinuations =
       this.config.toolContinuationRepo?.listPendingInboxForSession(subSessionId) ?? [];
@@ -3204,6 +3213,13 @@ export class TaskAgentManager {
     return this.config.db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).size > 0;
   }
 
+  private hasUnconsumedDeliveredWork(sessionId: string): boolean {
+    return (
+      this.config.db.getMessageCountByStatus(sessionId, 'enqueued') > 0 ||
+      this.config.db.getMessageCountByStatus(sessionId, 'deferred') > 0
+    );
+  }
+
   private async injectMessageIntoSession(
     session: AgentSession,
     message: string,
@@ -3272,6 +3288,7 @@ export class TaskAgentManager {
       hasPriorContext: !!session.session.sdkSessionId,
       slotResetsContext: this.slotResetsContextForSession(sessionId),
       hasActiveDeliveryJob: this.hasActiveDeliveryJob(sessionId),
+      hasUnconsumedDeliveredWork: this.hasUnconsumedDeliveredWork(sessionId),
     });
 
     if (outcome.decision.action === 'noop') {

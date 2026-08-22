@@ -31,6 +31,7 @@ function makeManager(opts: {
   reopenDbId?: string;
   failedDbId?: string;
   enqueueThrows?: boolean;
+  unconsumedCounts?: Record<string, number>;
 }): {
   manager: TaskAgentManager;
   session: Record<string, ReturnType<typeof mock>>;
@@ -52,6 +53,9 @@ function makeManager(opts: {
   const reopenDeliveryByUuid = mock(() => opts.reopenDbId ?? null);
   const markDeliveryDeferredByUuid = mock(() => null);
   const markDeliveryFailedByUuid = mock(() => opts.failedDbId ?? null);
+  const getMessageCountByStatus = mock(
+    (_sessionId: string, status: string) => opts.unconsumedCounts?.[status] ?? 0
+  );
   const publishStatusChanged = mock(async () => {});
 
   function makeSession(o: MockSessionOptions) {
@@ -80,6 +84,7 @@ function makeManager(opts: {
     db: {
       getDatabase: () => ({}),
       saveUserMessage,
+      getMessageCountByStatus,
       getSDKMessageRepo: () => ({
         getDeliveryContent: () => opts.deliveryContent ?? null,
         reopenDeliveryByUuid,
@@ -137,6 +142,7 @@ function makeManager(opts: {
       reopenDeliveryByUuid,
       markDeliveryDeferredByUuid,
       markDeliveryFailedByUuid,
+      getMessageCountByStatus,
       publishStatusChanged,
     },
   };
@@ -600,7 +606,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(locks.size).toBe(0);
   });
 
-  it('KNOWN-BUG turn-end delivers handoff then later idle clear wipes that handoff', async () => {
+  it('turn-end flush clears before the deferred handoff and a later inject never clears over it (#1085)', async () => {
     const { manager, session } = makeManager({ slotResets: true });
     let status = 'processing';
     const context: string[] = [];
@@ -633,24 +639,55 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
           total: 1,
         })),
         updateMessageStatus: mock(() => {}),
-        getJobQueueRepo: mock(() => ({ activeDeliveryMessageUuids: () => new Set<string>() })),
+        getJobQueueRepo: mock(() => ({
+          activeDeliveryMessageUuids: () => new Set<string>(),
+          hasActiveTurnDeliveryJob: () => false,
+        })),
       },
       internalEventBus: { publish: mock(async () => {}) },
       messageQueue: live.messageQueue,
       logger: { error: mock(() => {}) },
       ensureQueryStarted: session.ensureStartedMock,
+      slotResetsContext: () => true,
+      clearConversationContext: session.clearMock,
     } as unknown as QueryModeHandlerContext);
 
     await flush.handleQueryTrigger();
 
-    expect(session.clearMock).not.toHaveBeenCalled();
+    expect(session.clearMock).toHaveBeenCalledTimes(1);
     expect(context).toEqual(['handoff']);
 
     status = 'idle';
+    session.getMessageCountByStatus.mockImplementation((_sessionId: string, sendStatus: string) =>
+      sendStatus === 'enqueued' ? 1 : 0
+    );
     await manager.injectSubSessionMessage(SESSION_ID, 'later task', true);
 
-    expect(order).toEqual(['handoff', '/clear', 'later task']);
-    expect(context).toEqual(['later task']);
+    expect(order).toEqual(['/clear', 'handoff', 'later task']);
+    expect(context).toEqual(['handoff', 'later task']);
+    expect(session.clearMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT clear on inject while unconsumed delivered work is pending (#1085)', async () => {
+    const { manager, session } = makeManager({
+      slotResets: true,
+      unconsumedCounts: { enqueued: 2 },
+    });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    expect(session.clearMock).not.toHaveBeenCalled();
+    expect(session.saveUserMessage).toHaveBeenCalled();
+    expect(session.enqueueMock).toHaveBeenCalled();
   });
 
   it('replays the deferred backlog as individual messages when injecting into an idle session', async () => {
