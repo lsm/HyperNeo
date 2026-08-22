@@ -36,6 +36,10 @@ describe('strip-comments', () => {
       writeFileSync(join(dir, 'fresh.ts'), 'const b = 2; // back\n');
       const check = spawnSync('bun', [scriptPath, '--check'], { cwd: dir, encoding: 'utf8' });
       expect(check.status).toBe(0);
+
+      rmSync(join(dir, 'tracked.ts'));
+      const afterDelete = spawnSync('bun', [scriptPath], { cwd: dir, encoding: 'utf8' });
+      expect(afterDelete.status).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -195,8 +199,45 @@ describe('strip-comments', () => {
   it('does not insert separators between JSX text adjacent to a removed expression', () => {
     const source = 'export const C = () => (<p>Hello{/* x */}World</p>);\n';
     expect(stripComments(source, 'a.tsx', true)).toBe(
-      'export const C = () => (<p>HelloWorld</p>);\n'
+      'export const C = () => (<p>Hello{}World</p>);\n'
     );
+  });
+
+  it('separates adjacent punctuators that would combine into a longer operator', () => {
+    const source = 'const y = +/* note */+x;\nconst z = -/* note */-x;\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('const y = + +x;\nconst z = - -x;\n');
+  });
+
+  it('keeps a regex literal separate from an assignment operator', () => {
+    const source = 'const ok = /* pattern *//ABC/.test(s);\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('const ok = /ABC/.test(s);\n');
+  });
+
+  it('does not add separators between non-combining delimiters', () => {
+    const source = 'const a = [/* empty */];\nconst b = f(/* args */);\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('const a = [];\nconst b = f();\n');
+  });
+
+  it('preserves restricted-production ASI before a postfix operator', () => {
+    const source = 'x/* note\n */++\ny;\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('x\n++\ny;\n');
+  });
+
+  it('retains empty JSX expression containers so child structure survives', () => {
+    const source = 'export const W = () => (<W>Hello{/* note */}World</W>);\n';
+    expect(stripComments(source, 'a.tsx', true)).toBe(
+      'export const W = () => (<W>Hello{}World</W>);\n'
+    );
+  });
+
+  it('keeps exempt directives after CR-delimited line comments', () => {
+    const source = '// prose\r// @ts-expect-error\rconst x = nope;\r';
+    expect(stripComments(source, 'a.ts', false)).toBe('// @ts-expect-error\rconst x = nope;\r');
+  });
+
+  it('ends line comments at CR so following statements survive stripping', () => {
+    const source = 'const a = 1; // note\rconst b = 2;\r';
+    expect(stripComments(source, 'a.ts', false)).toBe('const a = 1;\rconst b = 2;\r');
   });
 });
 

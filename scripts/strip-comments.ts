@@ -20,7 +20,7 @@ interface Range {
   jsx?: boolean;
 }
 
-const COMMENT_RE = /\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
+const COMMENT_RE = /\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\//g;
 
 function collectCommentRanges(text: string, fileName: string, isTsx: boolean): Range[] {
   const sourceFile = ts.createSourceFile(
@@ -39,7 +39,13 @@ function collectCommentRanges(text: string, fileName: string, isTsx: boolean): R
       const inner = text.slice(start + 1, end - 1);
       const matches = [...inner.matchAll(new RegExp(COMMENT_RE.source, 'g'))];
       if (matches.length > 0 && matches.every((m) => !KEEP_PATTERNS.some((p) => p.test(m[0])))) {
-        ranges.push({ start, end, jsx: true });
+        for (const m of matches) {
+          ranges.push({
+            start: start + 1 + m.index,
+            end: start + 1 + m.index + m[0].length,
+            jsx: true,
+          });
+        }
         return;
       }
     }
@@ -63,16 +69,25 @@ function collectCommentRanges(text: string, fileName: string, isTsx: boolean): R
 function expandRange(text: string, range: Range): Range {
   const { start, end } = range;
   let lineStart = 0;
-  if (start > 0) {
-    const nl = text.lastIndexOf('\n', start - 1);
-    lineStart = nl === -1 ? 0 : nl + 1;
+  for (let i = start - 1; i >= 0; i--) {
+    if (LINE_TERMINATOR.test(text[i])) {
+      lineStart = i + 1;
+      break;
+    }
   }
-  let nlAfter = text.indexOf('\n', end);
-  if (nlAfter === -1) nlAfter = text.length;
+  let nlAfter = -1;
+  for (let i = end; i < text.length; i++) {
+    if (LINE_TERMINATOR.test(text[i])) {
+      nlAfter = i;
+      break;
+    }
+  }
+  const lineEnd = nlAfter === -1 ? text.length : nlAfter;
   const prefix = text.slice(lineStart, start);
-  const suffix = text.slice(end, nlAfter);
-  if (/^\s*$/.test(prefix) && /^\s*$/.test(suffix)) {
-    return { ...range, start: lineStart, end: Math.min(nlAfter + 1, text.length) };
+  const suffix = text.slice(end, lineEnd);
+  if (!range.jsx && /^\s*$/.test(prefix) && /^\s*$/.test(suffix)) {
+    const ltLen = nlAfter === -1 ? 0 : text[nlAfter] === '\r' && text[nlAfter + 1] === '\n' ? 2 : 1;
+    return { ...range, start: lineStart, end: Math.min(nlAfter + ltLen, text.length) };
   }
   let e = end;
   while (e < text.length && (text[e] === ' ' || text[e] === '\t')) e++;
@@ -100,11 +115,23 @@ const LINE_TERMINATOR = /[\n\r\u2028\u2029]/;
 
 const ASI_KEYWORDS = new Set(['return', 'throw', 'break', 'continue', 'yield']);
 
+const PUNCTUATOR = /[{}()[\];,<>=!+\-*/%&|^?:~.@#'"`]/;
+
+const EXTENDABLE_PUNCTUATOR = /[+\-<>=!&|?*%^.]/;
+
 function mergesTokens(text: string, before: number, after: number): boolean {
   if (before < 0 || after >= text.length) return false;
   const continuesIdentifier = IDENT_CONTINUE.test(text[before]);
   const startsIdentifier = IDENT_CONTINUE.test(text[after]) || text[after] === '\\';
-  return continuesIdentifier && startsIdentifier;
+  if (continuesIdentifier && startsIdentifier) return true;
+  return EXTENDABLE_PUNCTUATOR.test(text[before]) && PUNCTUATOR.test(text[after]);
+}
+
+function followsPostfixOperand(text: string, before: number, after: number): boolean {
+  if (before < 0 || after + 1 >= text.length) return false;
+  const endsOperand = IDENT_CONTINUE.test(text[before]) || /[)\]'"`]/.test(text[before]);
+  const op = text.slice(after, after + 2);
+  return endsOperand && (op === '++' || op === '--');
 }
 
 function precedesAsiKeyword(text: string, before: number): boolean {
@@ -138,7 +165,7 @@ export function stripComments(text: string, fileName: string, isTsx: boolean): s
   const appendUpTo = (upTo: number): void => {
     let chunk = text.slice(cursor, upTo);
     if (afterRemoval) {
-      if (cursor >= text.length || text[cursor] === '\n') {
+      if (cursor >= text.length || LINE_TERMINATOR.test(text[cursor])) {
         out = out.replace(/[ \t]+$/, '');
       }
       const trail = trailingNewlines(out);
@@ -169,7 +196,7 @@ export function stripComments(text: string, fileName: string, isTsx: boolean): s
       !jsx &&
       hadLineTerminator &&
       !retainsLineTerminator &&
-      precedesAsiKeyword(text, start - 1)
+      (precedesAsiKeyword(text, start - 1) || followsPostfixOperand(text, start - 1, end))
     ) {
       emitLineBreak();
     }
@@ -204,7 +231,9 @@ async function main(): Promise<void> {
   let dirty = 0;
   let removed = 0;
   for (const file of files) {
-    const text = await Bun.file(file).text();
+    const entry = Bun.file(file);
+    if (!(await entry.exists())) continue;
+    const text = await entry.text();
     const isTsx = file.endsWith('.tsx');
     const stripped = stripComments(text, file, isTsx);
     if (stripped === text) continue;
