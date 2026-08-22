@@ -289,9 +289,15 @@ polling sources.
   rollback ride inside the queued operation — **but never inside the admission
   section** (review finding, PR #2723): `stop()` awaits `activePollCycle`
   (`:337`), and a poll cycle can be blocked in `publishEvent` waiting to enter
-  that section, so holding it across `stopExtension` self-deadlocks; the disable
-  writes config and bumps the admission epoch inside the queue, then awaits the
-  lifecycle stop outside it.
+  that section, so holding the **admission section** across `stopExtension`
+  self-deadlocks. The **source-config queue is a different lock and stays held
+  through the entire operation including the `stop()` await** (review finding,
+  PR #2723) — exiting it before the await would let an overlapping enable's
+  `startExtension` observe the extension as still running
+  (`extension-manager.ts:49` returns early) and then let the stop finish,
+  leaving enabled persisted config with a stopped extension. Only the admission
+  section is released before the lifecycle await; publishers coordinate via the
+  epoch bump, not the config queue, so no deadlock.
 - **PR A3 (surface):** expose the toggle through the `space.github.*` config RPCs and
   `SpaceExternalEventsSettings` UI, plus a suppression counter with its own gate-side
   storage (review finding, PR #2723): the existing health `eventTypes` machinery
@@ -470,7 +476,10 @@ polling sources.
    not a shared section with lifecycle (review finding, PR #2723): disablement
    writes the disabled config inside the queue and bumps an admission
    epoch/generation that in-flight publishers re-verify immediately before the
-   insert, then exits the queue and only then awaits `stop()`; a literal shared
+   insert, and holds the source-config queue through the `stop()` await —
+   releasing only the admission section (which it never holds across a
+   lifecycle await; see the A2 bullet for why both locks must be split this
+   way); a literal shared
    critical section held across `stopExtension` self-deadlocks — disable would
    hold the section while awaiting `stop()`, which awaits `activePollCycle`
    (`:337`), and the poll cycle can be blocked in `publishEvent` waiting to enter
