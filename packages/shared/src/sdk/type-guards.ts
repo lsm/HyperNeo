@@ -191,6 +191,18 @@ export function isSDKAuthStatusMessage(
   return msg.type === "auth_status";
 }
 
+export function isSDKPromptSuggestionMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "prompt_suggestion" }> {
+  return msg.type === "prompt_suggestion";
+}
+
+export function isSDKToolUseSummaryMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "tool_use_summary" }> {
+  return msg.type === "tool_use_summary";
+}
+
 export function isSDKRateLimitEvent(
   msg: SDKMessage,
 ): msg is Extract<SDKMessage, { type: "rate_limit_event" }> {

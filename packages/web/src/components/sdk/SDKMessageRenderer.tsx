@@ -23,7 +23,9 @@ import {
   isSDKSystemInit,
   isSDKToolProgressMessage,
   isSDKAuthStatusMessage,
+  isSDKPromptSuggestionMessage,
   isSDKRateLimitEvent,
+  isSDKToolUseSummaryMessage,
   isSDKUserMessage,
   isSDKUserMessageReplay,
   isUserVisibleMessage,
@@ -32,10 +34,12 @@ import {
 } from '@hyperneo/shared/sdk/type-guards';
 
 import { SDKAssistantMessage } from './SDKAssistantMessage.tsx';
+import { SDKPromptSuggestionMessage } from './SDKPromptSuggestionMessage.tsx';
 import { SDKRateLimitEvent } from './SDKRateLimitEvent.tsx';
 import { SDKResultMessage } from './SDKResultMessage.tsx';
 import { SDKSystemMessage } from './SDKSystemMessage.tsx';
 import { SDKToolProgressMessage } from './SDKToolProgressMessage.tsx';
+import { SDKToolUseSummaryMessage } from './SDKToolUseSummaryMessage.tsx';
 import { SDKUserMessage } from './SDKUserMessage.tsx';
 import { AuthStatusCard } from './tools/index.ts';
 import { SDKResumeChoiceMessage } from './SDKResumeChoiceMessage.tsx';
@@ -345,6 +349,10 @@ function SDKMessageRendererImpl({
     );
   } else if (isSDKRateLimitEvent(sdkMessage)) {
     renderedMessage = <SDKRateLimitEvent message={sdkMessage as SDKRateLimitEventType} />;
+  } else if (isSDKPromptSuggestionMessage(sdkMessage)) {
+    renderedMessage = <SDKPromptSuggestionMessage message={sdkMessage} />;
+  } else if (isSDKToolUseSummaryMessage(sdkMessage)) {
+    renderedMessage = <SDKToolUseSummaryMessage message={sdkMessage} />;
   } else {
     renderedMessage = (
       <div class="p-3 bg-gray-100 dark:bg-gray-800 rounded">
