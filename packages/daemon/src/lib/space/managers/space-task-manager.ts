@@ -36,6 +36,15 @@ export function isValidSpaceTaskTransition(from: SpaceTaskStatus, to: SpaceTaskS
   return VALID_SPACE_TASK_TRANSITIONS[from]?.includes(to) ?? false;
 }
 
+export function assertValidSpaceTaskTransition(from: SpaceTaskStatus, to: SpaceTaskStatus): void {
+  if (!isValidSpaceTaskTransition(from, to)) {
+    throw new Error(
+      `Invalid status transition from '${from}' to '${to}'. ` +
+        `Allowed: ${VALID_SPACE_TASK_TRANSITIONS[from]?.join(', ') || 'none'}`
+    );
+  }
+}
+
 export class SpaceTaskManager {
   private taskRepo: SpaceTaskRepository;
 
@@ -114,12 +123,7 @@ export class SpaceTaskManager {
       throw new Error(`Task not found: ${taskId}`);
     }
 
-    if (!isValidSpaceTaskTransition(task.status, newStatus)) {
-      throw new Error(
-        `Invalid status transition from '${task.status}' to '${newStatus}'. ` +
-          `Allowed: ${VALID_SPACE_TASK_TRANSITIONS[task.status].join(', ') || 'none'}`
-      );
-    }
+    assertValidSpaceTaskTransition(task.status, newStatus);
 
     const updates: Parameters<SpaceTaskRepository['updateTask']>[1] = { status: newStatus };
 

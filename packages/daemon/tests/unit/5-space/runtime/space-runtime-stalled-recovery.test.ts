@@ -2407,8 +2407,8 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
     });
   });
 
-  describe('KNOWN-BUG phase-0: park-during-recovery overwrite (task #1190, stagedRun ADR 0004)', () => {
-    test('KNOWN-BUG phase-0: task parked stopped while handleAliveStuckExecutions blocks is overwritten to blocked', async () => {
+  describe('park-during-recovery overwrite rejected (tasks #1190/#1194, stagedRun ADR 0004)', () => {
+    test('task parked stopped while handleAliveStuckExecutions blocks stays stopped; the stale blocked write is rejected', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
       ]);
@@ -2478,21 +2478,23 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         pendingRestartNotice: null,
       });
 
-      await rt.executeTick();
+      await expect(rt.executeTick()).rejects.toThrow(
+        "Invalid status transition from 'stopped' to 'blocked'."
+      );
 
       expect(parkedStatuses).toEqual(['stopped']);
       expect(taskStatusesAfterPark).toEqual(['stopped']);
 
       const taskAfter = taskRepo.getTask(task.id)!;
-      expect(taskAfter.status).toBe('blocked');
-      expect(taskAfter.blockReason).toBe('execution_failed');
-      expect(taskAfter.result).toContain(
+      expect(taskAfter.status).toBe('stopped');
+      expect(taskAfter.blockReason).toBeNull();
+      expect(taskAfter.result ?? '').not.toContain(
         'Agent stuck without observable progress after runtime nag/restart recovery'
       );
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
       expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
-      expect(notifications.some((n) => n.kind === 'task_blocked')).toBe(true);
-      expect(notifications.some((n) => n.kind === 'workflow_run_blocked')).toBe(true);
+      expect(notifications.some((n) => n.kind === 'task_blocked')).toBe(false);
+      expect(notifications.some((n) => n.kind === 'workflow_run_blocked')).toBe(false);
     });
   });
 });
