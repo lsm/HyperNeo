@@ -791,7 +791,11 @@ note.
   `setIdle()` (`:746–750`) is skipped entirely, after which the stale result
   still mutates shared flags (`:752–755`) and runs `handleResultMessage`,
   updating session accounting and acknowledging queued work (`:891–934`);
-  revalidate-and-stop is the requirement, with a
+  revalidate-and-stop is the requirement — and the stop **cancels the
+  handler-owned fence first**: `beginTerminalIdle()` has already incremented
+  the counters, so merely stopping leaves them live and delivery reclaim
+  returns `live` until some later idle transition; cancellation precedes the
+  stale return (assigned to PR 5 with the interleaving pin), with a
   replacement-during-`sdk.message`-publication pin; the
   core also returns the updated flag state, since the scoped machine mutates it:
   results set `lastResultWasSuccess`; suppressed **successful** results clear
