@@ -82,6 +82,49 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     expect(task?.restrictions?.type).toBe('rate_limit');
   });
 
+  it('flips an already rate_limited task to usage_limited when a usage-capped session pauses', async () => {
+    taskRepo.updateTask(taskId, {
+      status: 'rate_limited',
+      restrictions: {
+        type: 'rate_limit',
+        limit: 'backoff-ladder',
+        resetAt: Date.now() + 60000,
+        sessionRole: 'worker',
+      },
+    });
+    const resetAt = Date.now() + 2 * 60 * 60 * 1000;
+    bus.publish('session.rate_limit_pause', {
+      sessionId: subSessionId,
+      kind: 'usage_limit',
+      resetAt,
+      reason: 'parsed-reset',
+    });
+    await flush();
+
+    const task = taskRepo.getTask(taskId);
+    expect(task?.status).toBe('usage_limited');
+    expect(task?.restrictions?.type).toBe('usage_limit');
+    expect(task?.restrictions?.resetAt).toBe(resetAt);
+  });
+
+  it('restores a seeded limited task on resume without in-memory pause state', async () => {
+    taskRepo.updateTask(taskId, {
+      status: 'usage_limited',
+      restrictions: {
+        type: 'usage_limit',
+        limit: 'parsed-reset',
+        resetAt: Date.now() + 60000,
+        sessionRole: 'worker',
+      },
+    });
+    bus.publish('session.rate_limit_resume', { sessionId: subSessionId });
+    await flush();
+
+    const task = taskRepo.getTask(taskId);
+    expect(task?.status).toBe('in_progress');
+    expect(task?.restrictions).toBeNull();
+  });
+
   it('restores the task to in_progress and clears restrictions on resume', async () => {
     const resetAt = Date.now() + 60 * 60 * 1000;
     bus.publish('session.rate_limit_pause', {
@@ -154,6 +197,35 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     await flush();
     expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
     expect(taskRepo.getTask(taskId)?.restrictions).toBeNull();
+  });
+
+  it('a superseded resume emits no task-updated event and leaves the row untouched', async () => {
+    let events = 0;
+    const unsub = bus.subscribe(
+      'space.task.updated',
+      () => {
+        events += 1;
+      },
+      { subscriberName: 'test.supersededResume' }
+    );
+    taskRepo.updateTask(taskId, {
+      status: 'usage_limited',
+      restrictions: {
+        type: 'usage_limit',
+        limit: 'parsed-reset',
+        resetAt: Date.now() + 60000,
+        sessionRole: 'worker',
+      },
+    });
+    taskRepo.updateTask(taskId, { status: 'stopped' });
+    const before = taskRepo.getTask(taskId);
+
+    bus.publish('session.rate_limit_resume', { sessionId: subSessionId });
+    await flush();
+
+    expect(taskRepo.getTask(taskId)).toEqual(before);
+    expect(events).toBe(0);
+    unsub();
   });
 
   it('does not restore until every limited sub-session for the task resumes', async () => {

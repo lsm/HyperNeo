@@ -589,6 +589,35 @@ export class SpaceTaskRepository {
     return result.changes > 0 ? 'won' : 'superseded';
   }
 
+  casStatusWithPayload(
+    taskId: string,
+    expected: SpaceTaskStatus | readonly SpaceTaskStatus[],
+    next: SpaceTaskStatus,
+    payload: { restrictions: TaskRestriction | null }
+  ): 'won' | 'superseded' {
+    const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
+    if (expectedStatuses.length === 0) return 'superseded';
+    const placeholders = expectedStatuses.map(() => '?').join(', ');
+    const result = this.db
+      .prepare(
+        `UPDATE space_tasks
+         SET status = ?, restrictions = ?, updated_at = ?
+         WHERE id = ? AND status IN (${placeholders})`
+      )
+      .run(
+        next,
+        payload.restrictions ? JSON.stringify(payload.restrictions) : null,
+        Date.now(),
+        taskId,
+        ...expectedStatuses
+      );
+    if (result.changes === 0) return 'superseded';
+    this.upsertTaskSearchRow(taskId);
+    this.deleteExpiredTerminalTaskMessageRows(taskId);
+    this.reactiveDb?.notifyChange('space_tasks');
+    return 'won';
+  }
+
   reserveSpawnForTick(
     taskId: string,
     allowedStatuses: readonly SpaceTaskStatus[]

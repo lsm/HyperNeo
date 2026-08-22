@@ -264,18 +264,56 @@ describe('VALID_SPACE_TASK_TRANSITIONS — matrix gap closures (task #849)', () 
     const EXPECTED = {
       draft: ['open', 'archived'],
       open: ['in_progress', 'blocked', 'review', 'done', 'cancelled', 'archived'],
-      in_progress: ['open', 'review', 'approved', 'done', 'blocked', 'cancelled', 'stopped'],
+      in_progress: [
+        'open',
+        'review',
+        'approved',
+        'done',
+        'blocked',
+        'cancelled',
+        'stopped',
+        'rate_limited',
+        'usage_limited',
+      ],
       review: ['done', 'approved', 'in_progress', 'cancelled', 'archived', 'stopped'],
       approved: ['done', 'in_progress', 'archived', 'cancelled'],
       done: ['in_progress', 'archived'],
       blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived', 'stopped'],
       cancelled: ['open', 'in_progress', 'done', 'archived'],
-      rate_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived', 'stopped'],
-      usage_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived', 'stopped'],
+      rate_limited: [
+        'in_progress',
+        'usage_limited',
+        'open',
+        'blocked',
+        'cancelled',
+        'archived',
+        'stopped',
+      ],
+      usage_limited: [
+        'in_progress',
+        'rate_limited',
+        'open',
+        'blocked',
+        'cancelled',
+        'archived',
+        'stopped',
+      ],
       archived: [],
       stopped: ['in_progress', 'open', 'review', 'cancelled', 'archived'],
     };
     expect(VALID_SPACE_TASK_TRANSITIONS).toEqual(EXPECTED);
+  });
+});
+
+describe('VALID_SPACE_TASK_TRANSITIONS — limited-status edges (task #1223)', () => {
+  test.each([
+    ['in_progress', 'rate_limited'],
+    ['in_progress', 'usage_limited'],
+    ['rate_limited', 'usage_limited'],
+    ['usage_limited', 'rate_limited'],
+  ] as const)('%s → %s is a valid transition', (from, to) => {
+    expect(VALID_SPACE_TASK_TRANSITIONS[from]).toContain(to);
+    expect(isValidSpaceTaskTransition(from, to)).toBe(true);
   });
 });
 

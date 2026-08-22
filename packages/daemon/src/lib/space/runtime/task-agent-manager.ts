@@ -563,16 +563,27 @@ export class TaskAgentManager {
     ) {
       return;
     }
-    this.config.taskRepo.updateTask(taskId, { status, restrictions });
-    this.emitTaskUpdatedEvent(taskId);
+    const outcome = this.config.taskRepo.casStatusWithPayload(
+      taskId,
+      ['in_progress', 'rate_limited', 'usage_limited'],
+      status,
+      { restrictions }
+    );
+    if (outcome === 'won') {
+      this.emitTaskUpdatedEvent(taskId);
+    }
   }
 
   private async restoreTaskFromRateLimit(taskId: string): Promise<void> {
-    const task = this.config.taskRepo.getTask(taskId);
-    if (!task) return;
-    if (!isRateOrUsageLimited(task.status)) return;
-    this.config.taskRepo.updateTask(taskId, { status: 'in_progress', restrictions: null });
-    this.emitTaskUpdatedEvent(taskId);
+    const outcome = this.config.taskRepo.casStatusWithPayload(
+      taskId,
+      ['rate_limited', 'usage_limited'],
+      'in_progress',
+      { restrictions: null }
+    );
+    if (outcome === 'won') {
+      this.emitTaskUpdatedEvent(taskId);
+    }
   }
 
   private emitTaskUpdatedEvent(taskId: string): void {
