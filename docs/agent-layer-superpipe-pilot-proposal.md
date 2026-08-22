@@ -329,7 +329,10 @@ note.
   api_validation(text) — a parseable API validation failure (e.g.
   `400 prompt is too long`) is displayed verbatim with `markAsError` via
   `parseApiValidationError`/`displayErrorAsAssistantMessage` (:1568–1617,
-  :1159–1165) and deliberately skips `errorManager`, with no terminal category;
+  :1159–1165), deliberately skips `errorManager`, with no terminal category —
+  **and still performs the idle transitions**: `beginTerminalIdle()` before the
+  display and the common `setIdle()` afterward (:1287–1289), so an interpreter
+  following only display-and-skip would strand the session in processing;
   folding it into `terminal(category)` would replace the actionable validation
   text with generic category handling |
   terminal(category, message_hint) — the category alone does not determine the
@@ -618,7 +621,12 @@ note.
   unconditional status update with no claim token or expected status, so a
   superseded claim can mark the replacement's members `submitted` and halt
   before admitting them, leaving rows the handler treats as already submitted.
-  A claim/expected-state-guarded transition or compensation covers both. And
+  A claim/expected-state-guarded transition or compensation covers both —
+  and the compensation must cover the **publication**, not just the row:
+  `markDeliveryBatchSubmitted` fire-and-forgets a `messages.statusChanged`
+  event (:1883–1896), so an unwind that restores rows to `enqueued` without an
+  inverse notification (or a transactional-outbox/deferred publication) leaves
+  subscribers believing the members remain submitted. And
   if `ensureQueryStarted` stays inside the staged pass, a query-startup
   reservation/compensation (or durable dedup) is required after all — the
   in-memory startup permit neither compensates an already-spawned query after a
