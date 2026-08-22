@@ -105,6 +105,7 @@ export class QueryModeHandler {
         : await withSessionResetCoordination(session.id, runFlush);
       return { success: true, messageCount };
     } catch (error) {
+      if (error instanceof ClearConversationCancelledError) throw error;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.error('Failed to trigger query:', error);
       return { success: false, messageCount: 0, error: errorMessage };
@@ -142,12 +143,12 @@ export class QueryModeHandler {
   private async clearContextAheadOfFlush(
     flushMessages: FlushMessage[],
     options?: { skipContextReset?: boolean }
-  ): Promise<void> {
-    if (options?.skipContextReset) return;
-    if (!this.ctx.clearConversationContext) return;
+  ): Promise<boolean> {
+    if (options?.skipContextReset) return false;
+    if (!this.ctx.clearConversationContext) return false;
     const plan = this.planFlush(flushMessages);
-    if (plan.action === 'noop') return;
-    if (plan.contextReset.action !== 'clear_then_flush') return;
+    if (plan.action === 'noop') return false;
+    if (plan.contextReset.action !== 'clear_then_flush') return false;
     try {
       await this.ctx.clearConversationContext();
     } catch (error) {
@@ -156,19 +157,22 @@ export class QueryModeHandler {
         `turn-end flush clear failed for session ${this.ctx.session.id}: ` +
           `${error instanceof Error ? error.message : String(error)} — flushing without clear`
       );
+      return false;
     }
+    return true;
   }
 
   private async deliverFlushUnderV2(
     flushMessages: FlushMessage[],
     origin: MessageDeliveryOrigin,
     options?: { deliverIndividually?: boolean; skipContextReset?: boolean }
-  ): Promise<void> {
+  ): Promise<boolean> {
     const jobQueue = this.ctx.db.getJobQueueRepo();
     const plan = this.planFlush(flushMessages);
-    if (plan.action === 'noop') return;
+    if (plan.action === 'noop') return false;
+    let clearedContext = false;
     if (plan.contextReset.action === 'clear_then_flush') {
-      await this.clearContextAheadOfFlush(flushMessages, options);
+      clearedContext = await this.clearContextAheadOfFlush(flushMessages, options);
     }
     const deliverables = plan.action === 'batch' ? plan.uuids : plan.deliver;
     if (plan.action === 'batch' && !options?.deliverIndividually) {
@@ -179,7 +183,7 @@ export class QueryModeHandler {
         messageUuids: deliverables,
         origin,
       });
-      if (batched) return;
+      if (batched) return clearedContext;
     }
     for (const uuid of deliverables) {
       await deliverAndMarkQueued({
@@ -190,11 +194,16 @@ export class QueryModeHandler {
         origin,
       });
     }
+    return clearedContext;
   }
 
-  async sendEnqueuedMessagesOnTurnEnd(): Promise<boolean> {
+  async sendEnqueuedMessagesOnTurnEnd(): Promise<{
+    replayedWork: boolean;
+    clearedContext: boolean;
+  }> {
     const { session, db, messageQueue, logger } = this.ctx;
     let replayedWork = false;
+    let clearedContext = false;
 
     const runReplay = async (): Promise<void> => {
       const { messages: queuedMessages } = db.getUserMessagesByStatus(session.id, 'enqueued');
@@ -208,9 +217,12 @@ export class QueryModeHandler {
       replayedWork = true;
 
       if (isMessageDeliveryV2Enabled()) {
-        await this.deliverFlushUnderV2(this.toFlushMessages(pendingMessages), 'recovery');
+        clearedContext = await this.deliverFlushUnderV2(
+          this.toFlushMessages(pendingMessages),
+          'recovery'
+        );
       } else {
-        await this.clearContextAheadOfFlush(this.toFlushMessages(pendingMessages));
+        clearedContext = await this.clearContextAheadOfFlush(this.toFlushMessages(pendingMessages));
         const v2Owned =
           db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
         await this.ctx.ensureQueryStarted();
@@ -227,14 +239,15 @@ export class QueryModeHandler {
     try {
       await withSessionResetCoordination(session.id, runReplay);
     } catch (error) {
+      if (error instanceof ClearConversationCancelledError) throw error;
       logger.error('Failed to send enqueued messages on turn end:', error);
     }
-    return replayedWork;
+    return { replayedWork, clearedContext };
   }
 
   async replayPendingMessagesForImmediateMode(): Promise<void> {
-    const replayedWork = await this.sendEnqueuedMessagesOnTurnEnd();
-    await this.handleQueryTrigger({ skipContextReset: replayedWork });
+    const { clearedContext } = await this.sendEnqueuedMessagesOnTurnEnd();
+    await this.handleQueryTrigger({ skipContextReset: clearedContext });
   }
 
   private toReplayContent(

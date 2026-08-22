@@ -736,11 +736,68 @@ describe('QueryModeHandler', () => {
       resetSlotDb();
 
       handler = new QueryModeHandler(resetSlotContext(clearSpy));
-      const result = await handler.handleQueryTrigger();
+      await expect(handler.handleQueryTrigger()).rejects.toThrow('cancelled by query teardown');
 
-      expect(result.success).toBe(false);
       expect(clearSpy).toHaveBeenCalledTimes(1);
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+    });
+
+    it('propagates a cancelled clear out of the enqueued-row turn-end replay', async () => {
+      const clearSpy = mock(async () => {
+        throw new ClearConversationCancelledError();
+      });
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(deferredBatch(2)));
+      resetSlotDb();
+
+      handler = new QueryModeHandler(resetSlotContext(clearSpy));
+      await expect(handler.sendEnqueuedMessagesOnTurnEnd()).rejects.toThrow(
+        'cancelled by query teardown'
+      );
+
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+    });
+
+    it('clears before the deferred task when the enqueued replay carried only human rows', async () => {
+      const order: string[] = [];
+      const clearSpy = mock(async () => {
+        order.push('clear');
+      });
+      enqueueWithIdSpy.mockImplementation(async (uuid: string) => {
+        order.push(uuid);
+      });
+      getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
+        byStatusResult(
+          status === 'enqueued'
+            ? [
+                {
+                  dbId: 'db-human',
+                  uuid: 'uuid-human',
+                  type: 'user',
+                  isSynthetic: false,
+                  inputKind: 'human',
+                  message: { role: 'user', content: 'a human follow-up' },
+                },
+              ]
+            : [
+                {
+                  dbId: 'db-task',
+                  uuid: 'uuid-task',
+                  type: 'user',
+                  isSynthetic: true,
+                  inputKind: 'task',
+                  message: { role: 'user', content: 'the deferred task' },
+                },
+              ]
+        )
+      );
+      resetSlotDb();
+
+      handler = new QueryModeHandler(resetSlotContext(clearSpy));
+      await handler.replayPendingMessagesForImmediateMode();
+
+      expect(order).toEqual(['uuid-human', 'clear', 'uuid-task']);
+      expect(clearSpy).toHaveBeenCalledTimes(1);
     });
   });
 

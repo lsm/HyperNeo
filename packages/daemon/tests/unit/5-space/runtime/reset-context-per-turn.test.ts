@@ -799,6 +799,31 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(session.enqueueMock).toHaveBeenCalledWith(expect.any(String), '/compact');
   });
 
+  it('aborts the injection when the backlog replay clear is cancelled by teardown (#1085)', async () => {
+    const { manager, session } = makeManager({
+      slotResets: true,
+      unconsumedCounts: { enqueued: 1 },
+    });
+    session.replayMock.mockRejectedValue(new ClearConversationCancelledError());
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow('cancelled by query teardown');
+
+    expect(session.clearMock).not.toHaveBeenCalled();
+    expect(session.saveUserMessage).toHaveBeenCalledTimes(0);
+    expect(session.enqueueMock).not.toHaveBeenCalled();
+  });
+
   it('does NOT clear on inject while unconsumed delivered work is pending (#1085)', async () => {
     const { manager, session } = makeManager({
       slotResets: true,
