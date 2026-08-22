@@ -50,7 +50,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           echo "Checking package versions match tag version: $VERSION"
           MISMATCHES=()
-          for pkg in npm/hyperneo packages/cli packages/daemon packages/e2e packages/shared packages/web packages/desktop; do
+          for pkg in npm/hyperneo packages/cli packages/daemon packages/e2e packages/prompts packages/shared packages/web packages/desktop; do
             PKG_VERSION=$(node -p "require('./$pkg/package.json').version")
             if [ "$PKG_VERSION" != "$VERSION" ]; then
               MISMATCHES+=("$pkg/package.json: $PKG_VERSION (expected $VERSION)")

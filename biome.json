@@ -61,6 +61,7 @@
       "!**/coverage",
       "!**/settings.local.json",
       "!packages/shared/src/sdk",
+      "!packages/prompts/src/generated",
       "!.claude",
       "!.worktrees",
       "!**/.worktrees",
