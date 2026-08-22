@@ -9,6 +9,9 @@ import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-mess
 import type { AgentMessageRouterConfig } from '../../../../src/lib/space/runtime/agent-message-router.ts';
 import type { WorkflowChannel } from '@hyperneo/shared';
 
+const REPLY_PROTOCOL =
+  'Messaging protocol: if this message requests work or information from you, reply to the sender with the outcome when done — or promptly if you cannot do it. Do not leave the sender waiting.';
+
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
@@ -180,7 +183,11 @@ describe('AgentMessageRouter: agent name (role) target → DM', () => {
     expect(result.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
     expect(result.delivered[0].agentName).toBe('reviewer');
     expect(injected).toHaveLength(1);
-    expect(injected[0].message).toBe('─── Message from coder ───\n\nLGTM!');
+    expect(injected[0].message).toBe(
+      '─── Message from coder ───\n\nLGTM!\n\n─── Reply ───\n' +
+        REPLY_PROTOCOL +
+        '\nTo reply, use: send_message with target "coder"'
+    );
   });
 });
 
@@ -328,6 +335,8 @@ describe('AgentMessageRouter: built-in inter-level targets', () => {
           '─── Message from coder (task #236) ───\n\n' +
           'Blocked on product decision\n\n' +
           '─── Reply ───\n' +
+          REPLY_PROTOCOL +
+          '\n' +
           'To reply, use: send_message_to_task with task_id="task-123" and target node "coder"',
       },
     ]);
@@ -368,6 +377,8 @@ describe('AgentMessageRouter: built-in inter-level targets', () => {
           '─── Message from coder (task #236) ───\n\n' +
           'Array escalation\n\n' +
           '─── Reply ───\n' +
+          REPLY_PROTOCOL +
+          '\n' +
           'To reply, use: send_message_to_task with task_id="task-123" and target node "coder"',
       },
     ]);
@@ -901,7 +912,11 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
     const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
     expect(pending).toHaveLength(1);
     expect(pending[0].sourceAgentName).toBe('coder');
-    expect(pending[0].message).toBe('─── Message from coder ───\n\ncode ready');
+    expect(pending[0].message).toBe(
+      '─── Message from coder ───\n\ncode ready\n\n─── Reply ───\n' +
+        REPLY_PROTOCOL +
+        '\nTo reply, use: send_message with target "coder"'
+    );
     expect(pending[0].targetKind).toBe('node_agent');
   });
 
@@ -2162,7 +2177,13 @@ describe('AgentMessageRouter: onMessageQueued callback fires for non-deduped enq
     expect(pending).toHaveLength(1);
     expect(pending[0].maxAttempts).toBe(3);
     expect(pending[0].idempotencyKey).toBe(
-      JSON.stringify([ctx.coderSessionId, 'reviewer', '─── Message from coder ───\n\nsame handoff'])
+      JSON.stringify([
+        ctx.coderSessionId,
+        'reviewer',
+        '─── Message from coder ───\n\nsame handoff\n\n─── Reply ───\n' +
+          REPLY_PROTOCOL +
+          '\nTo reply, use: send_message with target "coder"',
+      ])
     );
     expect(pending[0].expiresAt - pending[0].createdAt).toBeLessThanOrEqual(60_000);
     expect(resumedAgents).toEqual(['reviewer']);

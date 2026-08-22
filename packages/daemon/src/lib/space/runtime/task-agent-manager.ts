@@ -104,6 +104,7 @@ import { Logger } from '../../logger';
 import {
   formatAgentMessage,
   extractReplyToSessionId,
+  REPLY_PROTOCOL,
   type AgentMessageLevel,
 } from '../agent-message-envelope';
 
@@ -111,7 +112,8 @@ const log = new Logger('task-agent-manager');
 const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
 
 const WORKFLOW_ESCALATION_TARGET = 'space-agent';
-const AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = '\n\n─── Reply ───\nTo reply, use: ';
+const AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = `\n\n─── Reply ───\n${REPLY_PROTOCOL}\nTo reply, use: `;
+const LEGACY_AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = '\n\n─── Reply ───\nTo reply, use: ';
 
 function pendingSourceLevel(sourceAgentName: string): AgentMessageLevel {
   if (sourceAgentName === 'task-agent') return 'task-agent';
@@ -193,7 +195,10 @@ export function hasAgentMessageEnvelopeForTest(
   }
 
   if (fromLevel === 'node-agent' && toLevel === 'node-agent') return true;
-  return message.includes(AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK);
+  return (
+    message.includes(AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK) ||
+    message.includes(LEGACY_AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK)
+  );
 }
 
 export interface TaskAgentManagerConfig {
