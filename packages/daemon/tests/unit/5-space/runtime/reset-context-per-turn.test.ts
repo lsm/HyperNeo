@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { ClearConversationCancelledError } from '../../../../src/lib/agent/agent-session.ts';
 import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import {
   QueryModeHandler,
@@ -404,6 +405,27 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     releaseClear();
     await Promise.all([p1, p2]);
     expect(session.saveUserMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('aborts the injection when the clear is cancelled by teardown', async () => {
+    const { manager, session } = makeManager({ slotResets: true });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: mock(async () => {
+        throw new ClearConversationCancelledError();
+      }),
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow('cancelled by query teardown');
+    expect(session.saveUserMessage).not.toHaveBeenCalled();
+    expect(session.enqueueMock).not.toHaveBeenCalled();
   });
 
   it('serializes the spawnPostApprovalSubSession reuse inject with ordinary injects', async () => {

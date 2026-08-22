@@ -790,7 +790,7 @@ export class SDKMessageHandler {
     const settlesArmedClearError =
       this.matchesArmedClearResult(message) && !isSDKResultSuccess(message);
     if (settlesArmedClearError) {
-      this.cancelSuppressedResultTimer();
+      this.rearmSuppressedResultTimer();
     }
 
     const processingState = stateManager.getState();
@@ -825,7 +825,7 @@ export class SDKMessageHandler {
     }
 
     if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
-      if (!this.suppressIdleOnNextResult) {
+      if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
         await stateManager.setIdle();
       }
     }
@@ -927,17 +927,34 @@ export class SDKMessageHandler {
     message: SDKMessage,
     activeMessageId: string | null
   ): Promise<void> {
-    const { session, db, internalEventBus } = this.ctx;
-
     if (!isSDKResultSuccess(message)) return;
 
-    if (this.matchesArmedClearResult(message)) {
+    const confirmsArmedClear = this.matchesArmedClearResult(message);
+    if (confirmsArmedClear) {
       if (this.usesSessionStateChangedTurnEnd && this.expectsSessionStateIdleAfterResult) {
         this.rearmSuppressedResultTimer();
       } else {
         this.cancelSuppressedResultTimer();
       }
     }
+
+    try {
+      await this.processResultMessage(message, activeMessageId, confirmsArmedClear);
+    } catch (error) {
+      if (confirmsArmedClear) {
+        this.clearIdleSuppression();
+      }
+      throw error;
+    }
+  }
+
+  private async processResultMessage(
+    message: SDKMessage,
+    activeMessageId: string | null,
+    confirmsArmedClear: boolean
+  ): Promise<void> {
+    if (!isSDKResultSuccess(message)) return;
+    const { session, db, internalEventBus } = this.ctx;
 
     const usage = message.usage ?? {
       input_tokens: 0,
@@ -998,7 +1015,6 @@ export class SDKMessageHandler {
       sessionId: session.id,
     });
 
-    const confirmsArmedClear = this.matchesArmedClearResult(message);
     if (confirmsArmedClear) {
       this.suppressIdleOnNextResult = false;
     } else if (

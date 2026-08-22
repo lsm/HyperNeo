@@ -20,7 +20,7 @@ import type { AppMcpServerRepository } from '../../../storage/repositories/app-m
 import type { UUID } from 'crypto';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
-import { AgentSession } from '../../../lib/agent/agent-session';
+import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session';
 import {
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
@@ -3269,6 +3269,9 @@ export class TaskAgentManager {
       try {
         await session.clearConversationContext();
       } catch (err) {
+        if (err instanceof ClearConversationCancelledError) {
+          throw err;
+        }
         log.warn(
           `TaskAgentManager: resetContextPerTurn clear failed for session ${sessionId}: ` +
             `${err instanceof Error ? err.message : String(err)} — delivering without clear`

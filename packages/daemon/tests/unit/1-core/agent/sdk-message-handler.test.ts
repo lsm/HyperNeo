@@ -950,6 +950,38 @@ describe('SDKMessageHandler', () => {
       expect(await wait).toBe('cancelled');
     });
 
+    it('a bookkeeping failure settles the clear wait as reset instead of dangling', async () => {
+      let publishes = 0;
+      emitSpy.mockImplementation(async () => {
+        publishes += 1;
+        if (publishes === 2) {
+          throw new Error('session.updated subscriber failed');
+        }
+      });
+
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+
+      await expect(
+        handler.handleMessage({
+          type: 'result',
+          subtype: 'success',
+          uuid: 'clear-result',
+          user_message_uuid: 'clear-msg-id',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage)
+      ).rejects.toThrow('session.updated subscriber failed');
+
+      expect(await wait).toBe('reset');
+    });
+
     it('the confirmation timeout stops once the correlated result enters processing', async () => {
       let releaseBookkeeping!: () => void;
       const gate = new Promise<void>((resolve) => {

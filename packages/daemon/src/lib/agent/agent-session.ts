@@ -39,6 +39,13 @@ const SESSION_RECONCILE_INTERVAL_MS = 60_000;
 
 const CLEAR_CONFIRM_TIMEOUT_MS = 45_000;
 
+export class ClearConversationCancelledError extends Error {
+  constructor() {
+    super('clearConversationContext cancelled by query teardown');
+    this.name = 'ClearConversationCancelledError';
+  }
+}
+
 const DELIVERY_TURN_NO_ACTIVITY_MS = (() => {
   const env = Number(process.env.HYPERNEO_DELIVERY_NO_ACTIVITY_MS);
   return Number.isFinite(env) && env >= 30_000 ? env : 3 * 60 * 1000;
@@ -788,11 +795,7 @@ export class AgentSession
     }
     this.messageHandler.clearIdleSuppression();
     if (clearOutcome === 'cancelled') {
-      this.logger.warn(
-        `clearConversationContext: /clear wait cancelled by query teardown — proceeding ` +
-          `without confirmed clear`
-      );
-      return;
+      throw new ClearConversationCancelledError();
     }
     this.logger.warn(
       `clearConversationContext: /clear not confirmed within ${this.clearConfirmTimeoutMs / 1000}s ` +

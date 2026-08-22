@@ -317,19 +317,14 @@ describe('AgentSession.clearConversationContext', () => {
     session.messageQueue.start();
     const messages = session.messageQueue.messageGenerator(session.session.id);
 
-    let resolved = false;
-    const clear = session.clearConversationContext().then(() => {
-      resolved = true;
-    });
+    const clear = session.clearConversationContext();
     const yielded = await messages.next();
     yielded.value?.onSent();
 
     await session.handleInterrupt();
-    await clear;
 
-    expect(resolved).toBe(true);
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0][0]).toContain('cancelled by query teardown');
+    await expect(clear).rejects.toThrow('cancelled by query teardown');
+    expect(warnSpy).not.toHaveBeenCalled();
     expect(resetSpy).not.toHaveBeenCalled();
     expect(stopSpy).not.toHaveBeenCalled();
 
