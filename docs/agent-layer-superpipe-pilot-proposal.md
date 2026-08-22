@@ -411,7 +411,12 @@ note.
   (`displayErrorAsAssistantMessage`, :1091–1096 → :1619–1643, a fresh UUID per
   call): if staged, that write/publication is a reserved-and-compensable effect
   with an idempotency key, or it stays in the shell, since a retried pass can
-  otherwise duplicate the notice — and the **prompt re-enqueue** at
+  otherwise duplicate the notice — and its **failure is deliberately
+  non-fatal**: production wraps the call in try/catch (:1090–1096), so a DB or
+  publish failure still lets teardown, backoff, re-enqueue, and recursion
+  proceed; the staged effect must normalize that failure internally (or stay in
+  the shell) rather than fail the pass under the stage-failure contract —
+  and the **prompt re-enqueue** at
   `messageQueue.enqueueWithId` (:1145) is likewise an external session
   injection with unconditional insertion: it needs a conditional durable
   reservation plus idempotence or exact compensation, or it too stays in the
@@ -430,7 +435,12 @@ note.
   and **queue-running state** joins the resnapshot: the queue is stopped at
   :188 before any generation bump, and the provider-backoff revalidation
   itself cancels when `messageQueue.isRunning()` is false (:1127–1133), so a
-  backoff sleep can finish mid-teardown with every other field still current)
+  backoff sleep can finish mid-teardown with every other field still current —
+  but the predicates are **route-specific, not a blanket gate**: a legitimate
+  startup timeout has already aborted its own controller (:766–768) and stopped
+  its own queue (:833–835), and its arm deliberately restarts that queue
+  (:936–942), so abort/queue-running values that are *expected* for the route
+  must not cancel it; each arm validates the fields it does not itself set)
   **immediately after each awaited `setIdle` — before reading or re-enqueueing
   the consumed message** (the transient arm's `:1027–1034` re-enqueue sits
   between its awaited `setIdle` and the `:1060` guard, so a stale arm could
@@ -611,7 +621,11 @@ note.
   bypasses the whole `!alreadyConsumed` block and never reaches a
   pre-`admitWithId` check, so without a post-startup resnapshot a stale pass
   can bind the observer/waiter and return `driving` against the replacement
-  query — or a stale attempt
+  query — and the **existing-entry path needs the same revalidation**:
+  the `existing` branch (:1479–1483) never calls `admitWithId`, so a guard
+  placed only there is bypassed; revalidate and rebuild the waiter/observer
+  immediately before returning `driving` on both fresh-admission and
+  existing-entry paths — or a stale attempt
   can enqueue a duplicate or canceled delivery — and since `admitWithId`
   unconditionally appends, the staged effect additionally needs UUID/claim-keyed
   idempotence or an exact-entry compensation, because a retried pass under the
