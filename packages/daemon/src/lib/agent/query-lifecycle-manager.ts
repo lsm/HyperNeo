@@ -192,11 +192,11 @@ export class QueryLifecycleManager {
     const noPidProcessSnapshot = this.ctx.snapshotNoPidTrackedProcesses?.() ?? [];
     const queryAbortController = this.ctx.queryAbortController;
     const queryPromise = this.ctx.queryPromise;
+    const queryObject = this.ctx.queryObject;
 
     messageQueue.stop();
     queryAbortController?.abort();
 
-    const queryObject = this.ctx.queryObject;
     if (queryObject && typeof queryObject.interrupt === 'function') {
       if (this.ctx.firstMessageReceived) {
         try {
@@ -249,12 +249,13 @@ export class QueryLifecycleManager {
     ) {
       staleAbort.abort();
     }
-    if (staleAbort) {
+    if (this.ctx.queryPromise === queryPromise) {
       this.ctx.queryAbortController = null;
+      this.ctx.queryPromise = null;
     }
-
-    this.ctx.queryObject = null;
-    this.ctx.queryPromise = null;
+    if (this.ctx.queryObject === queryObject) {
+      this.ctx.queryObject = null;
+    }
   }
 
   async restart(): Promise<void> {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { parseAcpCommand } from '@hyperneo/shared/acp';
+import { parseAcpCommandWithSpans } from '@hyperneo/shared/acp';
 
 export { getAcpCommandIdentity, parseAcpCommand } from '@hyperneo/shared/acp';
 
@@ -63,57 +63,33 @@ function redactUrlUserinfo(value: string): string {
   return match ? `${match[1]}[redacted]${match[3]}` : value;
 }
 
-function findValueSpanAfter(text: string, anchor: string, value: string, from: number): number {
-  let anchorSpan = text.indexOf(anchor, from);
-  while (anchorSpan !== -1) {
-    let index = anchorSpan + anchor.length;
-    while (index < text.length && /\s/.test(text[index])) index++;
-    if (text[index] === "'" || text[index] === '"') index++;
-    if (text.startsWith(value, index)) return index;
-    anchorSpan = text.indexOf(anchor, anchorSpan + 1);
-  }
-  return -1;
-}
-
 function redactShellCommand(script: string, depth: number): string {
   if (depth <= 0) return script;
   try {
-    const { command, args } = parseAcpCommand(script);
-    const redactedArgs = redactCommandSecrets(command, args, depth - 1, { shellScript: true });
-    const redactedCommand = isSecretEnvAssignment(command)
-      ? `${command.slice(0, command.indexOf('='))}=[redacted]`
-      : command;
-    const replacements: Array<{ from: string; to: string; anchor?: string }> = [];
-    if (redactedCommand !== command) replacements.push({ from: command, to: redactedCommand });
-    for (let index = 0; index < redactedArgs.length; index++) {
-      if (redactedArgs[index] === args[index]) continue;
-      const anchored =
-        redactedArgs[index] === '[redacted]' &&
-        index > 0 &&
-        args[index - 1] === redactedArgs[index - 1];
-      replacements.push({
-        from: args[index],
-        to: redactedArgs[index],
-        anchor: anchored ? args[index - 1] : undefined,
-      });
-    }
+    const parsed = parseAcpCommandWithSpans(script);
+    const tokens = [parsed.command, ...parsed.args];
+    const redactedArgs = redactCommandSecrets(parsed.command, parsed.args, depth - 1, {
+      shellScript: true,
+    });
+    const redactedCommand = isSecretEnvAssignment(parsed.command)
+      ? `${parsed.command.slice(0, parsed.command.indexOf('='))}=[redacted]`
+      : parsed.command;
+    const redactedTokens = [redactedCommand, ...redactedArgs];
     let result = script;
-    let cursor = 0;
-    let missed = false;
-    for (const { from, to, anchor } of replacements) {
-      const span = anchor
-        ? findValueSpanAfter(result, anchor, from, cursor)
-        : result.indexOf(from, cursor);
-      if (span === -1) {
-        missed = true;
+    let changed = false;
+    for (let index = redactedTokens.length - 1; index >= 0; index--) {
+      if (redactedTokens[index] === tokens[index]) continue;
+      const span = parsed.rawSpans[index];
+      if (!span) {
+        changed = false;
         break;
       }
-      result = result.slice(0, span) + to + result.slice(span + from.length);
-      cursor = span + to.length;
+      result = result.slice(0, span.start) + redactedTokens[index] + result.slice(span.end);
+      changed = true;
     }
-    if (replacements.length > 0 && !missed) return result;
-    if (replacements.length > 0) {
-      return [redactedCommand, ...redactedArgs].map(displayQuote).join(' ');
+    if (changed) return result;
+    if (redactedTokens.some((token, index) => token !== tokens[index])) {
+      return redactedTokens.map(displayQuote).join(' ');
     }
     return script;
   } catch {
@@ -132,13 +108,19 @@ export function redactCommandSecrets(
   const isCurl = CURL_COMMAND_NAMES.has(commandName);
   const isEnv = ENV_COMMAND_NAMES.has(commandName);
   const isHeaderContext = isCurl || options.shellScript === true;
+  const assignmentsAllowed = isEnv || options.shellScript === true;
+  const commandIsAssignment = command.indexOf('=') > 0;
+  let inLeadingAssignments = options.shellScript === true ? commandIsAssignment || isEnv : true;
   const redacted: string[] = [];
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (!arg.startsWith('-')) {
-      if ((isEnv || options.shellScript === true) && isSecretEnvAssignment(arg)) {
+      if (inLeadingAssignments && assignmentsAllowed && isSecretEnvAssignment(arg)) {
         redacted.push(`${arg.slice(0, arg.indexOf('='))}=[redacted]`);
       } else {
+        if (!isSecretEnvAssignment(arg)) {
+          inLeadingAssignments = false;
+        }
         redacted.push(redactUrlUserinfo(arg));
       }
       continue;
@@ -210,7 +192,7 @@ export function redactCommandSecrets(
 }
 
 export function getAcpCommandIdentityDigest(commandLine: string): string {
-  const { command, args } = parseAcpCommand(commandLine);
+  const { command, args } = parseAcpCommandWithSpans(commandLine);
   const identity = JSON.stringify([command, ...redactCommandSecrets(command, args)]);
   return createHash('sha256').update(identity).digest('hex');
 }

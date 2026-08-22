@@ -205,6 +205,30 @@ describe('QueryLifecycleManager', () => {
       expect(newerController.signal.aborted).toBe(false);
     });
 
+    test('preserves replacement query references installed during stop', async () => {
+      const entryController = new AbortController();
+      const newerController = new AbortController();
+      const newerQueryObject = { interrupt: mock(async () => {}) };
+      const newerPromise = Promise.resolve();
+      mockContext.queryAbortController = entryController;
+      mockContext.queryPromise = new Promise(() => {});
+      const originalStop = messageQueue.stop.bind(messageQueue);
+      spyOn(messageQueue, 'stop').mockImplementation(() => {
+        mockContext.queryAbortController = newerController;
+        mockContext.queryObject = newerQueryObject as never;
+        mockContext.queryPromise = newerPromise;
+        originalStop();
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.stop();
+
+      expect(newerController.signal.aborted).toBe(false);
+      expect(mockContext.queryAbortController).toBe(newerController);
+      expect(mockContext.queryObject).toBe(newerQueryObject);
+      expect(mockContext.queryPromise).toBe(newerPromise);
+    });
+
     test('aborts a controller installed by the stopped query during the stop window', async () => {
       const lateController = new AbortController();
       mockContext.queryPromise = new Promise(() => {});

@@ -220,7 +220,7 @@ describe('redactCommandSecrets', () => {
     ]);
     expect(
       redactCommandSecrets('sh', ['-c', `curl -H 'Authorization: Bearer topsecret' https://a`])
-    ).toEqual(['-c', `curl -H '[redacted]' https://a`]);
+    ).toEqual(['-c', `curl -H [redacted] https://a`]);
     expect(
       redactCommandSecrets('sh', ['-c', `echo "safe; rm -rf /" && curl --token topsecret`])
     ).toEqual(['-c', `echo "safe; rm -rf /" && curl --token [redacted]`]);
@@ -238,7 +238,27 @@ describe('redactCommandSecrets', () => {
     ]);
     expect(
       redactCommandSecrets('sh', ['-c', `echo 'Bearer x' && curl -H 'Authorization: Bearer x'`])
-    ).toEqual(['-c', `echo 'Bearer x' && curl -H '[redacted]'`]);
+    ).toEqual(['-c', `echo 'Bearer x' && curl -H [redacted]`]);
+    expect(
+      redactCommandSecrets('sh', ['-c', `echo "--token topsecret" && curl --token topsecret`])
+    ).toEqual(['-c', `echo "--token topsecret" && curl --token [redacted]`]);
+  });
+
+  test('stops treating assignments as environment after the command word', () => {
+    expect(getAcpCommandIdentityDigest(`sh -c "rm -- 'API_TOKEN=one'"`)).not.toBe(
+      getAcpCommandIdentityDigest(`sh -c "rm -- 'API_TOKEN=two'"`)
+    );
+    expect(redactCommandSecrets('sh', ['-c', `rm -- 'API_TOKEN=one'`])).toEqual([
+      '-c',
+      `rm -- 'API_TOKEN=one'`,
+    ]);
+    expect(redactCommandSecrets('sh', ['-c', `MODE=prod rm -- 'API_TOKEN=one'`])).toEqual([
+      '-c',
+      `MODE=prod rm -- 'API_TOKEN=one'`,
+    ]);
+    expect(getAcpCommandIdentityDigest('env FOO=1 cmd data=one')).not.toBe(
+      getAcpCommandIdentityDigest('env FOO=1 cmd data=two')
+    );
   });
 
   test('redacts leading assignments inside shell scripts', () => {
