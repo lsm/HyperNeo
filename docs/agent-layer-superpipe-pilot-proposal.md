@@ -494,12 +494,15 @@ runtime calls `replayPendingMessagesAfterRuntimeProvisioning` →
 servers (space-runtime-service.ts:787–805, :1473–1483, :1656–1658) — setting
 `reconcilerProvisioned` there is the intended gate release, not a bypass.)
 
-**State machines:** (M1) orphan records hardcode
-`cancelReason:'agent_session_terminated'` while the event carries the real
-reason (ask-user-question-handler.ts:454–477 — pinned by test). (M5)
+**State machines:** (M5)
 model-switch TOCTOU: switch racing interrupt can resurrect a stopped query
 (model-switch-handler.ts:177–237). (M6) rollback never restarts the query;
-thinking-block strip not reverted (:258–300). (Retractions: the earlier M2
+thinking-block strip not reverted (:258–300). (Retractions: the earlier M1
+orphan-reason report is withdrawn — `rehydrate_failed` is telemetry-only and not
+a persisted `QuestionCancelReason` (shared/state-types.ts:85 permits only
+`user_cancelled` | `agent_session_terminated`), and the sole production caller
+(space-runtime.ts:6161) passes `agent_session_terminated`, so no production
+record disagrees with its event. The earlier M2
 double-recording report is withdrawn — `resolvedQuestions` is keyed by
 toolUseId, so the later `cancelled` write patches the `submitted` entry in place
 (ask-user-question-handler.ts:594), exactly what the supersession test pins.
