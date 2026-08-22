@@ -435,7 +435,13 @@ note.
   never reaches either stale branch, and if the guarded finalizer then skips
   its `setIdle()` both fence counters stay leaked with reclaim still reporting
   the turn live; fence cleanup is required in the thrown-effect/`finally`
-  route, not only on successful stale results;
+  route, not only on successful stale results — and the **ACP runner shares
+  the leak**: `acp-query-runner.ts:906` calls `beginTerminalIdle()`, awaits
+  `errorManager.handleError()` through `:920`, and its finalizer calls
+  `setIdle()` only under the non-stale guard (`:736–767`), so a replacement
+  during that await (or an error-manager rejection) leaves the ACP-owned fence
+  live identically; the ACP terminal path uses the same owned-fence
+  cancellation primitive, covering its thrown/replacement interleavings;
   folding it into `terminal(category)` would replace the actionable validation
   text with generic category handling |
   terminal(category, message_hint) — the category alone does not determine the
