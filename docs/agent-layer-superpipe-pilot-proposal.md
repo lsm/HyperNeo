@@ -376,7 +376,11 @@ note.
   first guard; the message-not-found pointer consumption at :970 is *not* one —
   the stale-generation return at :849–851 reaches it with no intervening await)
   as characterization — **and closing the reachable ones is an explicit
-  apply-PR requirement**: the apply arms add a generation resnapshot
+  apply-PR requirement**: the apply arms add a **full lifecycle resnapshot**
+  (generation **and** cleaning-up/processing-status/abort-signal —
+  `QueryLifecycleManager.cleanup()` sets the cleanup flag and enters `stop()`
+  *without* incrementing the query generation, query-lifecycle-manager.ts:652–663,
+  :180–243, so a generation-only check can pass while teardown is in progress)
   **immediately after each awaited `setIdle` — before reading or re-enqueueing
   the consumed message** (the transient arm's `:1027–1034` re-enqueue sits
   between its awaited `setIdle` and the `:1060` guard, so a stale arm could
@@ -530,7 +534,13 @@ note.
   it needs the new primitive below before staging; and queue admission itself —
   `MessageQueue.admitWithId` unconditionally pushes even for an existing UUID,
   so while today's claimGuard→admit span is synchronous, staged async boundaries
-  require a claim resnapshot immediately before `admitWithId` or a stale attempt
+  require a claim resnapshot **plus query-identity revalidation** (generation
+  and `queryPromise` identity) immediately before `admitWithId` — a restart or
+  replacement changes the query without changing the delivery claim, and
+  admitting into the replacement queue while returning the old promise/generation
+  makes the outer turn race treat the old query's completion as the admitted
+  delivery's completion (:1378–1393, :1481–1493; rebuild waiter/observer
+  bindings when identity changed) — or a stale attempt
   can enqueue a duplicate or canceled delivery — and since `admitWithId`
   unconditionally appends, the staged effect additionally needs UUID/claim-keyed
   idempotence or an exact-entry compensation, because a retried pass under the
@@ -628,9 +638,13 @@ note.
   A claim/expected-state-guarded transition or compensation covers both —
   and the compensation must cover the **publication**, not just the row:
   `markDeliveryBatchSubmitted` fire-and-forgets a `messages.statusChanged`
-  event (:1883–1896), so an unwind that restores rows to `enqueued` without an
-  inverse notification (or a transactional-outbox/deferred publication) leaves
-  subscribers believing the members remain submitted. And
+  event (:1883–1896), so an unwind that restores rows to `enqueued` without a
+  **deferred/transactional-outbox publication or idempotent versioned
+  ordering** leaves subscribers believing the members remain submitted — a bare
+  inverse notification is *not* sufficient, since the bus runs each publish's
+  handlers via `Promise.all` with no ordering between concurrent publishes
+  (internal-event-bus.ts:105–150) and a compensation can deliver `enqueued`
+  before a slow subscriber finishes the earlier `submitted`. And
   if `ensureQueryStarted` stays inside the staged pass, a query-startup
   reservation/compensation (or durable dedup) is required after all — the
   in-memory startup permit neither compensates an already-spawned query after a
