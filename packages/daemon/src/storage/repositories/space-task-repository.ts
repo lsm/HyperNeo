@@ -598,19 +598,22 @@ export class SpaceTaskRepository {
     const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
     if (expectedStatuses.length === 0) return 'superseded';
     const placeholders = expectedStatuses.map(() => '?').join(', ');
+    const now = Date.now();
+    const sets = ['status = ?', 'restrictions = ?', 'updated_at = ?'];
+    const values: SQLiteValue[] = [
+      next,
+      payload.restrictions ? JSON.stringify(payload.restrictions) : null,
+      now,
+    ];
+    if (next === 'in_progress') {
+      sets.push('started_at = ?', 'completed_at = ?');
+      values.push(now, null);
+    }
     const result = this.db
       .prepare(
-        `UPDATE space_tasks
-         SET status = ?, restrictions = ?, updated_at = ?
-         WHERE id = ? AND status IN (${placeholders})`
+        `UPDATE space_tasks SET ${sets.join(', ')} WHERE id = ? AND status IN (${placeholders})`
       )
-      .run(
-        next,
-        payload.restrictions ? JSON.stringify(payload.restrictions) : null,
-        Date.now(),
-        taskId,
-        ...expectedStatuses
-      );
+      .run(...values, taskId, ...expectedStatuses);
     if (result.changes === 0) return 'superseded';
     this.upsertTaskSearchRow(taskId);
     this.deleteExpiredTerminalTaskMessageRows(taskId);

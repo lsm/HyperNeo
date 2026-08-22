@@ -136,12 +136,14 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     await flush();
     expect(taskRepo.getTask(taskId)?.status).toBe('usage_limited');
 
+    const beforeResume = Date.now();
     bus.publish('session.rate_limit_resume', { sessionId: subSessionId });
     await flush();
 
     const task = taskRepo.getTask(taskId);
     expect(task?.status).toBe('in_progress');
     expect(task?.restrictions).toBeNull();
+    expect(task?.startedAt).toBeGreaterThanOrEqual(beforeResume);
   });
 
   it('ignores pause events for an unknown session (no parent task)', async () => {

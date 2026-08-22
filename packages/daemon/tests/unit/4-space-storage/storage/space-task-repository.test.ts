@@ -648,6 +648,7 @@ describe('SpaceTaskRepository', () => {
     it("returns 'won' and writes status plus restrictions payload on a matching source", () => {
       const task = repo.createTask({ spaceId, title: 'T', description: '' });
       repo.updateTask(task.id, { status: 'in_progress' });
+      const startedAtBefore = repo.getTask(task.id)?.startedAt;
       const before = Date.now();
       const resetAt = Date.now() + 60_000;
       const outcome = repo.casStatusWithPayload(task.id, limitableSources, 'rate_limited', {
@@ -663,6 +664,7 @@ describe('SpaceTaskRepository', () => {
         sessionRole: 'worker',
       });
       expect(updated?.updatedAt).toBeGreaterThanOrEqual(before);
+      expect(updated?.startedAt).toBe(startedAtBefore);
     });
 
     it("returns 'won' flipping between limited kinds via the expected set", () => {
@@ -691,8 +693,10 @@ describe('SpaceTaskRepository', () => {
       expect(repo.getTask(taskId)?.restrictions?.resetAt).toBe(laterReset);
     });
 
-    it('clears restrictions when the payload is null (resume shape)', () => {
+    it('clears restrictions, refreshes started_at, and clears completed_at on resume (in_progress)', () => {
       const taskId = seedLimitedTask('usage_limited', Date.now() + 60_000);
+      repo.updateTask(taskId, { startedAt: 1000, completedAt: 2000 });
+      const before = Date.now();
       const outcome = repo.casStatusWithPayload(taskId, resumeSources, 'in_progress', {
         restrictions: null,
       });
@@ -700,6 +704,8 @@ describe('SpaceTaskRepository', () => {
       const restored = repo.getTask(taskId);
       expect(restored?.status).toBe('in_progress');
       expect(restored?.restrictions).toBeNull();
+      expect(restored?.startedAt).toBeGreaterThanOrEqual(before);
+      expect(restored?.completedAt).toBeNull();
     });
 
     it("returns 'superseded' and leaves the row unchanged when the status moved first", () => {
