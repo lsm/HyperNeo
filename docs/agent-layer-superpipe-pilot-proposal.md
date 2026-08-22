@@ -254,8 +254,11 @@ note.
   :1018–1058, :1078–1114); supporting pure islands `looksLikeRateLimit429` :92
   and `parseApiValidationError` :1568 stay as-is.
 - **ADR pattern:** `decisionRun` core —
-  `classifyRetryRoute(error class, subtype, retryAttempt, recoveryState,
-  generation flags, prompt redeliverable — at attempt 0 a startup timeout with
+  `classifyRetryRoute(error class, subtype, retryAttempt, retry cap exhausted —
+  production gates the backoff arm with retryAttempt < getMaxProviderRetries()
+  and separately detects exhaustion, so the runtime setting must be an input,
+  :1066–1151 + getMaxProviderRetries; recoveryState, generation flags, prompt
+  redeliverable — at attempt 0 a startup timeout with
   an empty consumed set and empty queue is futile and falls through to the
   terminal cascade via `canRedeliverPromptOnStartupRetry`, :887–905) →
   startup_timeout_retry | message_not_found_retry |
@@ -265,10 +268,15 @@ note.
   not enter the provider-backoff arm: `isRetryableProviderError` excludes all
   `\b4\d{2}\b` matches, and text-only "rate limit" errors fail it too because
   `RETRYABLE_PROVIDER_ERROR_TEXT` is built from taxonomy entries that supply
-  `looseTextSubstrings`, which the generic rate-limit entry does not (only the
-  GLM `[1305]` case does). Both route to the terminal cascade where
-  `looksLikeRateLimit429` (:92) hands off to the watchdog (:1234–1245); the
-  backoff arm is effectively 5xx-plus-GLM-`[1305]`. The backoff arm's
+  `looseTextSubstrings`, which the generic rate-limit entry does not. Both route
+  to the terminal cascade's RATE_LIMIT category check, whose
+  `category === RATE_LIMIT`/`is429Error` predicate hands off to the watchdog
+  (:1234–1245) — note `looksLikeRateLimit429` (:92) is *not* that predicate: it
+  rejects text-only forms and is called only from `parseApiValidationError`
+  (:1571). The backoff arm is 5xx **plus** retryable loose text (`overloaded`,
+  "internal server error", "service unavailable", "bad gateway", "gateway
+  timeout" — taxonomy overloaded entry, error-taxonomy.ts:79–92) plus GLM
+  `[1305]`. The backoff arm's
   sleep→revalidate→re-enqueue→recurse (:1066–1151) is a `stagedRun` candidate
   (async stages: sleep, re-check, re-enqueue) but sync-core-first per Decision
   item 5; the existing generation guards inform the resnapshot stage but must not
@@ -432,8 +440,9 @@ note.
 - **Impact/risk:** highest ceiling — this is the repo's recurring fix area
   (delivery duplication, deferred-backlog gaps, park-vs-cancel), and ~500 lines
   of cascade become tables. Highest risk: session lock + job queue + four
-  writers; **sequence after PR #2543 merges and after chain C lands** (coupling
-  §4.2). Partially outside the layer (job-handlers) — flag for orchestrator
+  writers; **sequence after PR #2543 merges** (no Chain C artifact is a
+  prerequisite — §4.2 — but avoid two chains editing the facade simultaneously).
+  Partially outside the layer (job-handlers) — flag for orchestrator
   scoping.
 
 **Deferred (not proposed now):** model-switch-handler (collides with ACP 8/10
