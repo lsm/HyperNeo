@@ -155,7 +155,13 @@ polling sources.
   (webhook `sender`, or the artifact author only where the artifact *is* the action —
   comments, reviews, review comments, reactions), never on `actor` alone, and only
   for event kinds where the causal identity is reliable; polling `pulls` rows are
-  excluded (initiator indeterminable). **Fail-open:** an event with no resolvable
+  excluded (initiator indeterminable), and polling comment rows are reliable **only
+  for unedited rows** (`created_at === updated_at` — review finding, PR #2723): the
+  poller requests the comment endpoints with `since` (`:2270-2274`, `:2317-2325`),
+  so edits are emitted too, versioned by `updated_at` while `obj.user` remains the
+  original author (`github-normalizer.ts:385`, `:397-403`) — another user's edit of
+  a token-owner-authored comment would otherwise be dropped as self-originated.
+  Edited rows carry initiator unknown. **Fail-open:** an event with no resolvable
   initiator is always admitted. Per the pilot precedent, a single gate is a **pure
   function** — adopt `decisionRun` composition only when chain B adds more gates and
   order becomes contract. Shell: `publishEvent` (`:1731`) reads the cached identity
