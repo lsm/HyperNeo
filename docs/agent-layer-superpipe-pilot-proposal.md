@@ -478,7 +478,14 @@ note.
   emitted when the row saves, staging it additionally demands a commit-time
   outbox or an ordered inverse update event in its compensation (unwinding
   only the row leaves connected clients displaying a notice the DB no longer
-  has); keeping the non-fatal notice entirely outside the staged pass avoids
+  has) — and the inverse-event option is **not implementable against the
+  current channel contract**: `SDKMessagesUpdate` defines only `added`
+  (shared/state-types.ts:173–176) and `mergeSDKMessagesDelta` merges only
+  `typedDelta.added` (web/src/lib/state.ts:48–54), so a removal/update
+  published on `state.sdkMessages.delta` is silently dropped by clients;
+  choosing that option requires extending and testing the channel contract
+  and client merge for removal first, otherwise the valid implementation is
+  the commit-time outbox; keeping the non-fatal notice entirely outside the staged pass avoids
   both obligations and is the preferred shape — but **publication must also be
   gated on the save result**: `saveSDKMessage` catches database errors and
   returns `false` (sdk-message-repository.ts:594–597) while
