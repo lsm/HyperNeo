@@ -281,7 +281,12 @@ polling sources.
   enable write `true`, wait out an in-flight stop, resume starting, and lose to
   the disable's later `false` — leaving the extension running (possibly with
   polling active) under disabled persisted config. Lifecycle effects and
-  rollback ride inside the queued operation.
+  rollback ride inside the queued operation — **but never inside the admission
+  section** (review finding, PR #2723): `stop()` awaits `activePollCycle`
+  (`:337`), and a poll cycle can be blocked in `publishEvent` waiting to enter
+  that section, so holding it across `stopExtension` self-deadlocks; the disable
+  writes config and bumps the admission epoch inside the queue, then awaits the
+  lifecycle stop outside it.
 - **PR A3 (surface):** expose the toggle through the `space.github.*` config RPCs and
   `SpaceExternalEventsSettings` UI, plus a suppression counter with its own gate-side
   storage (review finding, PR #2723): the existing health `eventTypes` machinery
@@ -440,9 +445,16 @@ polling sources.
    disablement** (review finding, PR #2723): a bare final read narrows but does
    not close the window (the webhook can observe both configs enabled, then the
    disable commits and returns before the insert executes; the settings queues
-   serialize writers, not ingestion). Put the final check and admission in the
-   same per-source/per-space critical section as disablement, or have disablement
-   invalidate and await in-flight publishers.
+   serialize writers, not ingestion). The mechanism is **invalidate-and-await**,
+   not a shared section with lifecycle (review finding, PR #2723): disablement
+   writes the disabled config inside the queue and bumps an admission
+   epoch/generation that in-flight publishers re-verify immediately before the
+   insert, then exits the queue and only then awaits `stop()`; a literal shared
+   critical section held across `stopExtension` self-deadlocks — disable would
+   hold the section while awaiting `stop()`, which awaits `activePollCycle`
+   (`:337`), and the poll cycle can be blocked in `publishEvent` waiting to enter
+   the section disablement holds. The admission section covers only the
+   synchronous check-and-insert, never a lifecycle await.
 5. `normalizeGitHubWebhook` falls back to `Date.now()` for `occurredAt` (`:205`) —
    nondeterministic timestamps for malformed payloads (pre-existing).
 6. ADR-0004 Pilot 5's gather-layer asymmetry applies here too: don't repeat the
