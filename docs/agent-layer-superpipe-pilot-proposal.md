@@ -260,7 +260,11 @@ note.
   `classifyRetryRoute(error class, subtype, retryAttempt, retry cap exhausted —
   production gates the backoff arm with retryAttempt < getMaxProviderRetries()
   and separately detects exhaustion, so the runtime setting must be an input,
-  :1066–1151 + getMaxProviderRetries; recoveryState, generation flags, prompt
+  :1066–1151 + getMaxProviderRetries; recoveryState, generation flags, lifecycle
+  state — interrupted/cleaning-up gates every arm: processing status gates
+  startup/transient (:898–904, :1010–1015) and `isQueryInterrupted` folds in the
+  abort-controller signal (:853–858, :1066–1070) — distinct from generation
+  supersession; prompt
   redeliverable — at attempt 0 a startup timeout with
   an empty consumed set and empty queue is futile and falls through to the
   terminal cascade via `canRedeliverPromptOnStartupRetry`, :887–905) →
