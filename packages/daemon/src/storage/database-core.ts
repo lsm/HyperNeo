@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { Logger } from '../lib/logger';
+import { runMessageSearchMerge } from '../lib/message-search-merge';
 import { DatabaseLock } from './database-lock';
 import { configureMessageSearchFts, createTables, runMigrations } from './schema';
 import { Database as BunDatabase } from './sqlite-compat';
@@ -22,6 +23,8 @@ export class DatabaseCore {
   private logger = new Logger('Database');
   private lock: DatabaseLock;
   private messageSearchMergeTimer: Timer | null = null;
+  private messageSearchMergeInFlight = false;
+  private messageSearchMergeClosed = false;
 
   constructor(private dbPath: string) {
     this.db = null as unknown as BunDatabase;
@@ -57,18 +60,19 @@ export class DatabaseCore {
   }
 
   private startMessageSearchMergeTimer(): void {
-    if (this.messageSearchMergeTimer) return;
-    this.messageSearchMergeTimer = setInterval(() => {
-      try {
-        this.db.exec(
-          `INSERT INTO message_search_fts(message_search_fts, rank) VALUES('merge', 4096)`
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!/no such table/i.test(message)) {
-          this.logger.warn('message_search_fts background merge failed:', err);
-        }
-      }
+    if (this.messageSearchMergeTimer || this.messageSearchMergeInFlight) return;
+    this.scheduleMessageSearchMerge();
+  }
+
+  private scheduleMessageSearchMerge(): void {
+    if (this.messageSearchMergeClosed) return;
+    this.messageSearchMergeTimer = setTimeout(() => {
+      this.messageSearchMergeTimer = null;
+      this.messageSearchMergeInFlight = true;
+      void runMessageSearchMerge(this.dbPath).finally(() => {
+        this.messageSearchMergeInFlight = false;
+        this.scheduleMessageSearchMerge();
+      });
     }, 30_000);
   }
 
@@ -81,8 +85,9 @@ export class DatabaseCore {
   }
 
   close(): void {
+    this.messageSearchMergeClosed = true;
     if (this.messageSearchMergeTimer) {
-      clearInterval(this.messageSearchMergeTimer);
+      clearTimeout(this.messageSearchMergeTimer);
       this.messageSearchMergeTimer = null;
     }
     try {
