@@ -13,6 +13,9 @@ export function runMessageSearchMerge(
   dbPath: string,
   timeoutMs: number = DEFAULT_MESSAGE_SEARCH_MERGE_TIMEOUT_MS
 ): Promise<void> {
+  if (typeof Worker === 'undefined') {
+    return Promise.resolve();
+  }
   return new Promise((resolve) => {
     const worker = new Worker(new URL('./message-search-merge-worker.ts', import.meta.url).href, {
       type: 'module',

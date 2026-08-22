@@ -33,6 +33,39 @@ function createFtsDb(): string {
   return path;
 }
 
+describe('runMessageSearchMerge without a worker runtime', () => {
+  afterEach(() => {
+    for (const dir of dbDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('resolves instead of throwing when Worker is unavailable', async () => {
+    const dir = join(
+      tmpdir(),
+      `message-search-merge-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    mkdirSync(dir, { recursive: true });
+    dbDirs.push(dir);
+
+    const originalWorker = (globalThis as { Worker?: unknown }).Worker;
+    Object.defineProperty(globalThis, 'Worker', {
+      configurable: true,
+      value: undefined,
+      writable: true,
+    });
+    try {
+      await expect(runMessageSearchMerge(join(dir, 'test.db'))).resolves.toBeUndefined();
+    } finally {
+      Object.defineProperty(globalThis, 'Worker', {
+        configurable: true,
+        value: originalWorker,
+        writable: true,
+      });
+    }
+  });
+});
+
 describe.skipIf(!isBun)('runMessageSearchMerge', () => {
   afterEach(() => {
     for (const dir of dbDirs.splice(0)) {
