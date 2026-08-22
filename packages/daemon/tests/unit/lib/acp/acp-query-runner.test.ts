@@ -1274,6 +1274,62 @@ describe('AcpQueryRunner', () => {
     }
   });
 
+  test('redacts secret arguments in terminal approval prompts', async () => {
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    let approvalQuestion = '';
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      client,
+      canUseTool: async (_toolName, input) => {
+        approvalQuestion = (input.questions as Array<{ question: string }>)[0].question;
+        const question = (input.questions as Array<{ question: string }>)[0].question;
+        return { behavior: 'allow', updatedInput: { answers: { [question]: 'Allow once' } } };
+      },
+    });
+
+    try {
+      await runner.start();
+      await promptStarted;
+
+      const created = await constructorOptions[0].onTerminalCreate?.({
+        sessionId: 'acp-session-1',
+        command: process.execPath,
+        args: [
+          '-e',
+          'process.stdout.write(process.argv.slice(1).join(" "))',
+          '--',
+          '--token',
+          'topsecret',
+        ],
+      });
+      if (!created) throw new Error('ACP terminal was not created');
+      await constructorOptions[0].onTerminalWaitForExit?.({
+        sessionId: 'acp-session-1',
+        terminalId: created.terminalId,
+      });
+
+      expect(approvalQuestion).toContain("--token '[redacted]'");
+      expect(approvalQuestion).not.toContain('topsecret');
+
+      let output = '';
+      const outputDeadline = Date.now() + 5000;
+      while (!output) {
+        const result = await constructorOptions[0].onTerminalOutput?.({
+          sessionId: 'acp-session-1',
+          terminalId: created.terminalId,
+        });
+        output = result?.output.trim() ?? '';
+        if (!output && Date.now() > outputDeadline)
+          throw new Error('ACP terminal produced no output');
+        if (!output) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(output).toContain('--token topsecret');
+      releasePrompt();
+      await ctx.queryPromise;
+    } finally {
+      releasePrompt();
+    }
+  }, 10000);
+
   test('rejects terminal cwd and environment overrides before permission checks', async () => {
     const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture();
 
@@ -2036,6 +2092,53 @@ describe('AcpQueryRunner', () => {
           (message as SDKUserMessage).parent_tool_use_id === 'tc-interrupted'
       )
     ).toBe(true);
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  }, 1000);
+
+  test('does not duplicate tool results completed during abort', async () => {
+    const client = createMockClient();
+    let releasePrompt: (() => void) | undefined;
+    let promptBlockedResolve: (() => void) | undefined;
+    const promptBlocked = new Promise<void>((resolve) => {
+      promptBlockedResolve = resolve;
+    });
+    client.sendPrompt.mockImplementation(async function* () {
+      yield {
+        sessionId: 'acp-session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-interrupted',
+          title: 'Long tool',
+          rawInput: {},
+        },
+      };
+      await new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+        promptBlockedResolve?.();
+      });
+      yield {
+        sessionId: 'acp-session-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tc-interrupted',
+          status: 'completed',
+        },
+      };
+    });
+    const { runner, ctx, onSDKMessage } = createRunnerFixture({ client });
+
+    await runner.start();
+    await promptBlocked;
+    ctx.queryAbortController?.abort();
+    releasePrompt?.();
+    await ctx.queryPromise;
+
+    const toolResults = onSDKMessage.mock.calls.filter(
+      ([message]) =>
+        message.type === 'user' &&
+        (message as SDKUserMessage).parent_tool_use_id === 'tc-interrupted'
+    );
+    expect(toolResults.length).toBe(1);
     expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
   }, 1000);
 

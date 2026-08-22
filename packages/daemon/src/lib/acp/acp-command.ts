@@ -10,7 +10,7 @@ function isSecretArgName(name: string): boolean {
   return SECRET_ARG_NAME_PATTERN.test(name.replace(/^-+/, ''));
 }
 
-function redactSecretArgs(args: string[]): string[] {
+export function redactSecretArgs(args: string[]): string[] {
   const redacted: string[] = [];
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];

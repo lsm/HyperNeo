@@ -44,7 +44,12 @@ import {
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy';
 import { AcpClient, type AcpClientOptions } from './acp-client';
-import { buildAcpSafeEnv, getAcpCommandIdentityDigest, parseAcpCommand } from './acp-command';
+import {
+  buildAcpSafeEnv,
+  getAcpCommandIdentityDigest,
+  parseAcpCommand,
+  redactSecretArgs,
+} from './acp-command';
 import { getAcpProcessTreeOwner } from './acp-process-tree';
 import { AcpQueryAdapter } from './acp-query-adapter';
 import { AcpTerminalManager } from './acp-terminal-manager';
@@ -348,13 +353,15 @@ async function authorizeAcpTerminalCreate(
     params.args === undefined
       ? parseAcpCommand(params.command)
       : { command: params.command, args: params.args };
-  const command = [parsed.command, ...parsed.args].map(shellQuote).join(' ');
+  const displayCommand = [parsed.command, ...redactSecretArgs(parsed.args)]
+    .map(shellQuote)
+    .join(' ');
   const permission = await handleAcpPermissionRequest(
     {
       sessionId: params.sessionId,
       toolCall: {
         toolCallId: generateUUID(),
-        title: `terminal command ${command}`,
+        title: `terminal command ${displayCommand}`,
         kind: 'execute',
       },
       options: [
@@ -1465,9 +1472,6 @@ export class AcpQueryRunner {
     } finally {
       signal.removeEventListener('abort', onAbort);
       if (signal.aborted && messageDelivered) {
-        for (const msg of queryObj.flushPendingMessages()) {
-          yield msg;
-        }
         if (pendingNext) {
           try {
             const result = await pendingNext;
@@ -1476,6 +1480,9 @@ export class AcpQueryRunner {
             }
           } catch {}
           pendingNext = null;
+        }
+        for (const msg of queryObj.flushPendingMessages()) {
+          yield msg;
         }
         const drainDeadline = { expired: true } as const;
         let clearDrainTimer: (() => void) | undefined;
