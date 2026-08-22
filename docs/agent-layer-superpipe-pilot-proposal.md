@@ -115,7 +115,14 @@ pre-apply snapshot**: `preCleanupAuth` captures `ANTHROPIC_AUTH_TOKEN` and
 `:456`, then injects them into the subprocess environment at `:532–536`, so
 the ACP process can launch with another session's credentials despite a
 serialized apply/restore; the ACP lease begins before `:451` or stops reading
-ambient auth there. The coordinator must also be **reentrancy-safe**: the
+ambient auth there — and **before `optionsBuilder.build()` at `:440`**: the
+non-Anthropic branch copies ambient provider credentials and routing values
+(query-options-builder.ts:785–809), and the later
+`refreshQueryEnvFromProcess(... omitProviderManagedPreserveAuth: true)` at
+`:522–526` preserves the captured auth, so a lease starting at `:451` still
+captures another owner's values during options building; ACP ownership
+precedes `build()` or that build stops reading ambient credentials.
+The coordinator must also be **reentrancy-safe**: the
 startup-timeout, message-not-found, and transient arms recurse at `:967`,
 `:1007`, and `:1063` *without* restoring the environment — the outer attempt's
 `finally` cannot release the daemon-wide lease while the nested attempt must
