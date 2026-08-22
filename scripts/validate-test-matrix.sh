@@ -890,7 +890,7 @@ unit_matrix=$(awk '
 # test-daemon-shared-unit's matrix must have ONLY the `shard:` axis (+ include/
 # exclude). A sibling axis (e.g. replica: [a,b]) makes GitHub take the Cartesian
 # product, running every unit test once per value (duplicate runs + duplicate
-# Coveralls uploads) while this guard reports each file covered once.
+# lcov artifact uploads) while this guard reports each file covered once.
 _unit_sibling_axes=$(awk '
 	$0 ~ "^  test-daemon-shared-unit:" { injob=1; next }
 	injob && /^  [a-z]/ { injob=0; inmatrix=0; next }
@@ -947,7 +947,7 @@ done
 # shard in every matrix job while this guard reported all as covered.)
 _unit_run=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}' 'test-daemon-shared-unit')
 if [ "$(count_enabled_run_cmds "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}' 'test-daemon-shared-unit')" -gt 1 ]; then
-	err "test-daemon-shared-unit has more than one enabled runner step forwarding \${{ matrix.shard }} — each runs the shard (duplicate runs + duplicate Coveralls uploads) while this guard reports each file covered once"
+	err "test-daemon-shared-unit has more than one enabled runner step forwarding \${{ matrix.shard }} — each runs the shard (duplicate runs + duplicate lcov artifact uploads) while this guard reports each file covered once"
 	echo "     → keep exactly one enabled './scripts/test-daemon.sh ...' step" >&2
 fi
 if [ -z "$_unit_run" ]; then
@@ -993,11 +993,11 @@ else
 		| tr -d "[:space:]'")
 	# REQUIRE one affirmative --coverage: without it the shard produces no
 	# coverage/lcov.info, the lcov-fix step exits success on a missing file, and
-	# the Coveralls upload has fail-on-error:false — so the shard can vanish from
-	# combined coverage without failing CI. Bare --coverage (space/EOL-terminated)
+	# the lcov artifact upload skips missing files — so the shard can vanish
+	# from combined coverage. Bare --coverage (space/EOL-terminated)
 	# is the affirmative form; --coverage=false does not satisfy it.
 	if ! printf '%s' "$_unit_run" | grep -qE -- '--coverage([[:space:]]|$)'; then
-		err "test-daemon-shared-unit runner lacks --coverage — no lcov.info is produced, so the shard disappears from combined coverage without failing CI"
+		err "test-daemon-shared-unit runner lacks --coverage — no lcov.info is produced, so the shard contributes no coverage"
 		echo "     → keep '--coverage' on the test-daemon.sh invocation" >&2
 	elif [ -n "$_extra" ]; then
 		err "test-daemon-shared-unit runner has a non-allowlisted arg after \${{ matrix.shard }} (only --coverage is permitted) — a mode flag (--rerun/--verify/--show-failures) would run zero tests, or a bare shard would override matrix.shard"
@@ -1171,7 +1171,7 @@ while IFS= read -r _we; do
 done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "exclude" { print $2 }')
 while IFS= read -r _ax; do
 	[ -n "$_ax" ] || continue
-	err "test-web matrix has an extra axis '$_ax' — GitHub takes the Cartesian product, so every web shard runs once per value (duplicate runs + duplicate Coveralls uploads) while this guard reports each file covered once"
+	err "test-web matrix has an extra axis '$_ax' — GitHub takes the Cartesian product, so every web shard runs once per value (duplicate runs + duplicate lcov artifact uploads) while this guard reports each file covered once"
 	echo "     → remove the '$_ax' axis, or model its combinations in this validator" >&2
 done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "sibling" { print $2 }')
 
@@ -1194,7 +1194,7 @@ _web_shard_tok=$(printf '%s' "$_web_cmd" | sed 's/.*bunx vitest run//' \
 	| sed -E 's/[$][{][{][[:space:]]*matrix[.]shard[[:space:]]*[}][}]/MSHARD/g' \
 	| grep -oE "(^|[[:space:]])--shard=[^[:space:]']+" | sed 's/^[[:space:]]*//' || true)
 if [ "$(count_enabled_run_cmds "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web')" -gt 1 ]; then
-	err "test-web has more than one enabled 'cd packages/web && bunx vitest run' step — each runs the web suite (duplicate runs + duplicate Coveralls uploads) while this guard reports each file covered once"
+	err "test-web has more than one enabled 'cd packages/web && bunx vitest run' step — each runs the web suite (duplicate runs + duplicate lcov artifact uploads) while this guard reports each file covered once"
 	echo "     → keep exactly one enabled web runner step" >&2
 fi
 if [ -z "$_web_cmd" ]; then
@@ -1467,10 +1467,10 @@ else
 		         -e 's/--color//g' -e 's/--no-color//g' \
 		| tr -d "[:space:]")
 	# Coverage disabling: --coverage.enabled=false silently produces no LCOV report,
-	# and the Coveralls upload has fail-on-error:false, so the shard disappears from
-	# coverage results without failing CI.
+	# and the lcov artifact upload skips missing files, so the shard disappears
+	# from the merged coverage results.
 	if printf '%s' "$_online_main" | grep -qF 'coverage.enabled=false'; then
-		err "main.yml online runner disables coverage (coverage.enabled=false) — no LCOV report, shard disappears from coverage results without failing CI"
+		err "main.yml online runner disables coverage (coverage.enabled=false) — no LCOV report, so the shard contributes no coverage"
 		echo "     → remove coverage.enabled=false" >&2
 	elif ! printf '%s' "$_online_main" | grep -qE -- '--coverage([[:space:]]|$)'; then
 		err "main.yml online runner lacks a bare --coverage — no lcov.info is produced, so the shard disappears from combined coverage without failing CI (the --coverage.* sub-options alone do not enable it)"
@@ -1722,7 +1722,7 @@ fi
 # test-daemon-online's matrix must have ONLY the `module:` axis (+ include/
 # exclude). A sibling axis (e.g. replica: [a,b]) takes the Cartesian product,
 # running every mocked-online shard once per value (duplicate runs + concurrent
-# duplicate Coveralls uploads).
+# duplicate lcov artifact uploads).
 _online_sibling_axes=$(awk '
 	$0 ~ "^  test-daemon-online:" { injob=1; next }
 	injob && /^  [a-z]/ { injob=0; inmatrix=0; next }
