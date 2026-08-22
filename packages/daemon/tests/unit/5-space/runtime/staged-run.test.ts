@@ -297,6 +297,47 @@ describe('stagedRun composition contract', () => {
     ).toThrow(/provides no keys/);
   });
 
+  test('refuses sparse key declarations whose holes coerce past the pattern', () => {
+    expect(() =>
+      stagedRun<Record<string, unknown>>(
+        'sparse-input',
+        (s) => [
+          s.snapshot({
+            name: 'load',
+            provides: ['a' as string],
+            run: () => ({ a: 1 }) as Record<string, unknown>,
+          }),
+          s.halt({ name: 'end', run: () => 'done' }),
+        ],
+        { input: new Array<string>(1) as unknown as readonly ('a' | string)[] }
+      )
+    ).toThrow(StagedRunContractError);
+    expect(() =>
+      stagedRun<Record<string, unknown>>('sparse-provides', (s) => [
+        s.snapshot({
+          name: 'load',
+          provides: new Array<'a'>(1) as unknown as readonly ('a' | string)[],
+          run: () => ({}) as Record<string, unknown>,
+        }),
+        s.halt({ name: 'end', run: () => 'done' }),
+      ])
+    ).toThrow(StagedRunContractError);
+  });
+
+  test('a def-supplied kind cannot override the builder discriminator', async () => {
+    const sneaky = {
+      name: 'load',
+      provides: ['value'],
+      kind: 'halt',
+      run: () => ({ value: 1 }),
+    };
+    const flow = stagedRun<Box>('kind-override', (s) => [
+      s.snapshot(sneaky as unknown as Parameters<typeof s.snapshot>[0]),
+      s.halt({ name: 'end', reads: ['value'], run: ({ value }) => `done-${value}` }),
+    ]);
+    await expect(flow({})).resolves.toEqual({ status: 'completed', result: 'done-1' });
+  });
+
   test('refuses a stage def whose run lives on the prototype', () => {
     class ProtoSnapshot {
       name = 'load';

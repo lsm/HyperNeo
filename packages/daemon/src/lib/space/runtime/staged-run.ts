@@ -464,8 +464,11 @@ function buildHaltAdapter(
 }
 
 function validateKeyShape(flow: string, key: string, label: string): void {
-  if (!KEY_PATTERN.test(key) || RESERVED_KEYS.has(key)) {
-    throw new StagedRunContractError(flow, `${label} key "${key}" is reserved or ill-formed`);
+  if (typeof key !== 'string' || !KEY_PATTERN.test(key) || RESERVED_KEYS.has(key)) {
+    throw new StagedRunContractError(
+      flow,
+      `${label} key "${String(key)}" is reserved or ill-formed`
+    );
   }
 }
 
@@ -661,11 +664,11 @@ export function stagedRun<S extends object>(
   const inputKeys = [...new Set(options.input ?? [])];
   const log = options.log;
   const builders: StageBuilders<S> = {
-    snapshot: (def) => ({ kind: 'snapshot', ...def }) as AnyStage,
-    resnapshot: (def) => ({ kind: 'resnapshot', ...def }) as AnyStage,
-    decide: (def) => ({ kind: 'decide', ...def }) as AnyStage,
-    effect: (def) => ({ kind: 'effect', ...def }) as AnyStage,
-    halt: (def) => ({ kind: 'halt', ...def }) as AnyStage,
+    snapshot: (def) => ({ ...def, kind: 'snapshot' }) as AnyStage,
+    resnapshot: (def) => ({ ...def, kind: 'resnapshot' }) as AnyStage,
+    decide: (def) => ({ ...def, kind: 'decide' }) as AnyStage,
+    effect: (def) => ({ ...def, kind: 'effect' }) as AnyStage,
+    halt: (def) => ({ ...def, kind: 'halt' }) as AnyStage,
   };
   const stages = [...build(builders)].map(materializeStageMetadata);
   validateStageContract(name, inputKeys, stages);
