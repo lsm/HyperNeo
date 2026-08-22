@@ -127,7 +127,14 @@ stable, low-churn seam.
    (`event-essence.ts:24-128`) that excludes `rawPayload`. So the biggest per-delivery
    token lever is event *selection* (gaps 1+2), not the essence shape.
 3. **Every event for a watched repo is persisted even with zero matching
-   subscriptions** (store → later `ignored`/`ttl_expired`). By-design pub/sub, but it
+   subscriptions**, and such events are never transitioned to `ignored` (review
+   finding, PR #2723): `handleExternalEventImpl` returns with the row still
+   `published` (`space-runtime.ts:1613-1627`, failing only already-expired events
+   as `ttl_expired`), `markEventIgnored` has no callers anywhere in the repository
+   (`external-event-store.ts:251` — dead method), and the normal cleanup path is
+   the TTL sweep marking them `failed` (`markPublishedEventsFailedBefore :235`).
+   Retention/parity pins must expect unmatched events to remain `published` until
+   TTL failure. By-design pub/sub, but it
    means ingestion is the only place where unwanted events cost nothing.
 4. **Self-echo**: events whose actor is the authenticated account flow the entire
    path (persist → topic match → inject) and consume agent context — the owner's
