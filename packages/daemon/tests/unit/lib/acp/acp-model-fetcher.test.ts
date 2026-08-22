@@ -209,4 +209,21 @@ describe('fetchAcpModels', () => {
 
     expect(calls).toEqual([]);
   });
+
+  test('bounds total discovery time and cancels the client when exceeded', async () => {
+    let releaseInitialize: () => void;
+    initializeGate = new Promise<void>((resolve) => {
+      releaseInitialize = resolve;
+    });
+
+    const pending = fetchAcpModels(new AcpProvider(), {
+      command: 'devin acp',
+      cwd: '/tmp',
+      overallTimeoutMs: 40,
+    });
+    await expect(pending).rejects.toThrow('ACP model discovery timed out after 40ms');
+    releaseInitialize!();
+
+    expect(calls).toContain('close');
+  });
 });

@@ -8,6 +8,7 @@ import {
 } from '../providers/acp-provider';
 
 const FETCH_REQUEST_TIMEOUT_MS = 20000;
+const FETCH_OVERALL_TIMEOUT_MS = 9000;
 
 export const buildAcpDiscoveryEnv = buildAcpSafeEnv;
 
@@ -46,7 +47,7 @@ export async function disposeAcpSessions(
 
 export async function fetchAcpModels(
   provider: AcpProvider,
-  options: { command?: string; cwd?: string } = {}
+  options: { command?: string; cwd?: string; overallTimeoutMs?: number } = {}
 ): Promise<AcpConfiguredModel[]> {
   const commandLine = options.command ?? provider.getAcpCommand();
   if (!commandLine) {
@@ -54,6 +55,7 @@ export async function fetchAcpModels(
   }
   const { command, args } = parseAcpCommand(commandLine);
   const workspace = options.cwd ?? process.cwd();
+  const overallTimeoutMs = options.overallTimeoutMs ?? FETCH_OVERALL_TIMEOUT_MS;
   const processTreeOwner = await getAcpProcessTreeOwner();
   const client = new AcpClient({
     command,
@@ -64,6 +66,26 @@ export async function fetchAcpModels(
     requestTimeoutMs: FETCH_REQUEST_TIMEOUT_MS,
     processTreeOwner,
   });
+  let timeoutReject: ((reason: Error) => void) | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutReject = reject;
+  });
+  const overallTimer = setTimeout(() => {
+    timeoutReject?.(new Error(`ACP model discovery timed out after ${overallTimeoutMs}ms`));
+    void client.close();
+  }, overallTimeoutMs);
+  overallTimer.unref();
+  try {
+    return await Promise.race([discoverAcpModels(client, workspace), timeoutPromise]);
+  } finally {
+    clearTimeout(overallTimer);
+  }
+}
+
+async function discoverAcpModels(
+  client: AcpClient,
+  workspace: string
+): Promise<AcpConfiguredModel[]> {
   try {
     await client.initialize();
     await client.authenticate();
