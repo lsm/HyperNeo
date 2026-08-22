@@ -788,7 +788,16 @@ note.
      `stop()`'s tracked-process snapshot so the stale-gated finalizer never
      closes it, leaving an unowned ACP process; ownership is revalidated
      after each setup await and immediately before spawn, unwinding the
-     bridge/lease when stale. And the **outer prompt generator is fenced at
+     bridge/lease when stale. The **ACP finalizer is revalidated after its
+     awaited idle transition**: owner-scoping `setIdle` itself does not
+     fence the caller, and an old finalizer passing its one-time generation
+     check before a replacement starts during the `session.updated` publish
+     resumes at `:780` clearing the replacement's `ctx.queryPromise` — its
+     detached `processExitSnapshot.then(...)` continuation also lacks the
+     owner and can later publish `query.trigger` for the successor; the
+     finalizer revalidates after the idle await before clearing shared
+     fields, and the detached continuation binds to the old run owner. And
+     the **outer prompt generator is fenced at
      its own boundary**: a stale continuation awaiting `onModelsFetched()`
      can still enter `messageQueue.messageGenerator` (`:603–606`), and
      because the generator snapshots its generation only when iteration
@@ -838,7 +847,11 @@ note.
      `allow` at the old process, which may then execute the stale tool;
      lifecycle and turn ownership are revalidated when the question promise
      settles, the stale process is denied, and only the old question state
-     unwinds before returning. The
+     unwinds before returning — **and after `setWaitingForInput()` before the
+     `question.asked` publication** (`:197–201`): a replacement starting
+     during that await would otherwise have the old tool-use ID published
+     over its own pending question, queueing the response for the wrong
+     request while the replacement stays waiting. The
      stale stop
      **returns a distinct outcome that propagates to the runner**: both
      wrappers unconditionally call `onMarkApiSuccess` after `onSDKMessage`
@@ -973,7 +986,17 @@ note.
   publish `context.updated`, and may enqueue `/compact` into the
   replacement queue (`:1106–1140`); every detached refresh continuation
   captures and revalidates the query/turn owner before updating or
-  enqueueing. Model discovery is fenced at its cache write too:
+  enqueueing — and the **guardrail recovery enqueue and circuit-breaker trip
+  join them**: `routeRecoveryMessage` detaches `messageQueue.enqueue`
+  (sdk-message-handler.ts:155–158) whose synchronous admission delivers the
+  old turn's recovery prompt to the replacement before any outer check, so
+  the invoking owner is captured and validated immediately before routing;
+  and the trip callback (`handleCircuitBreakerTrip`) resuming after its
+  `session.errorClear` await inspects the shared `ctx.queryObject/
+  queryPromise`, calls `lifecycleManager.stop()`, then idles and publishes
+  errors — able to stop and reset the replacement — so the query/turn owner
+  is propagated into the callback and revalidated after each of its awaits
+  before every remaining shared effect. Model discovery is fenced at its cache write too:
   `getSupportedModelsFromQuery` sets `modelsCache` immediately after the
   `supportedModels()` await (model-service.ts:120–127) — before any
   post-fetch generator check, detached at query-runner.ts:773–775, and
