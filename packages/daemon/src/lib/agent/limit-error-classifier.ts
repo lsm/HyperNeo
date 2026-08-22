@@ -50,23 +50,16 @@ export function normalizeEpochMs(value: number): number {
   return value > 0 && value < 1e12 ? value * 1000 : value;
 }
 
-function isRejectedRateLimitEvent(rateLimitInfo: SDKRateLimitInfo, now: number): boolean {
-  if (rateLimitInfo.status === 'rejected') {
-    if (typeof rateLimitInfo.resetsAt !== 'number' || !Number.isFinite(rateLimitInfo.resetsAt)) {
-      return true;
-    }
-    return normalizeEpochMs(rateLimitInfo.resetsAt) > now;
-  }
-  if (rateLimitInfo.overageStatus === 'rejected') {
-    if (
-      typeof rateLimitInfo.overageResetsAt !== 'number' ||
-      !Number.isFinite(rateLimitInfo.overageResetsAt)
-    ) {
-      return true;
-    }
-    return normalizeEpochMs(rateLimitInfo.overageResetsAt) > now;
-  }
-  return false;
+function isRejectedRateLimitEvent(rateLimitInfo: SDKRateLimitInfo): boolean {
+  return rateLimitInfo.status === 'rejected' || rateLimitInfo.overageStatus === 'rejected';
+}
+
+function isStructuredBillingTerminal(rateLimitInfo: SDKRateLimitInfo | undefined): boolean {
+  if (!rateLimitInfo) return false;
+  return (
+    rateLimitInfo.errorCode === 'credits_required' ||
+    rateLimitInfo.overageDisabledReason === 'out_of_credits'
+  );
 }
 
 function structuredResetAtMs(rateLimitInfo: SDKRateLimitInfo, now: number): number | null {
@@ -122,11 +115,14 @@ export function assessLimitError(
     ? structuredResetAtMs(signal.rateLimitInfo, now)
     : null;
   const structuredRejected = signal.rateLimitInfo
-    ? isRejectedRateLimitEvent(signal.rateLimitInfo, now)
+    ? isRejectedRateLimitEvent(signal.rateLimitInfo)
     : false;
   const parsed = rawText !== '' ? extractResetTimestamp(rawText, now) : null;
   const resetAtMs = structuredReset ?? parsed?.resetAtMs ?? null;
-  const billingTerminal = rawText !== '' && resetAtMs === null && isBillingTerminal(rawText, now);
+  const billingTerminal =
+    resetAtMs === null &&
+    (isStructuredBillingTerminal(signal.rateLimitInfo) ||
+      (rawText !== '' && isBillingTerminal(rawText, now)));
   const textLimit = rawText !== '' && looksLikeLimitText(rawText);
   const statusLimit = signal.httpStatus === 429;
   const tagLimit = signal.sdkErrorTag === 'rate_limit';

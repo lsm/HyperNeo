@@ -174,6 +174,12 @@ describe('extractResetTimestamp', () => {
     expect(r?.resetAtMs).toBe(NOW + 2 * 60 * 60 * 1000);
   });
 
+  test('relative delay with retry-after phrasing', () => {
+    const r = extractResetTimestamp('429 rate limit exceeded — retry after 2 hours', NOW);
+    expect(r?.strategy).toBe('relative-delay');
+    expect(r?.resetAtMs).toBe(NOW + 2 * 60 * 60 * 1000);
+  });
+
   test('relative delay across a sentence with try-again phrasing', () => {
     const r = extractResetTimestamp(
       'Reached overall message rate limit. Please try again later. Your limit will reset in 3 minutes. (trace ID: 01a4b19cff4f3d160109fe9fae2e4b32)',

@@ -684,7 +684,11 @@ export class SDKMessageHandler {
         info.status === 'rejected' || info.overageStatus === 'rejected' ? info : null;
     }
 
-    if (isSDKAssistantMessage(message) && message.error) {
+    if (
+      isSDKAssistantMessage(message) &&
+      message.error &&
+      (message.parent_tool_use_id === null || message.parent_tool_use_id === undefined)
+    ) {
       this.lastSdkErrorTag = message.error;
     }
 

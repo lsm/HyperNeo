@@ -3122,6 +3122,28 @@ describe('SDKMessageHandler', () => {
       expect(onResultLimitError).toHaveBeenCalledTimes(1);
     });
 
+    it('ignores rate_limit tags from nested subagent assistant messages', async () => {
+      const onResultLimitError = mock(async () => true);
+      mockContext.onResultLimitError = onResultLimitError;
+
+      await handler.handleMessage({
+        type: 'assistant',
+        message: { content: [] },
+        parent_tool_use_id: 'toolu_123',
+        error: 'rate_limit',
+        uuid: 'nested-assistant-uuid',
+        session_id: 'test-session-id',
+      } as unknown as SDKMessage);
+      await handler.handleMessage(
+        makeApiErrorResult({
+          api_error_status: undefined,
+          result: 'The request could not be completed',
+        })
+      );
+
+      expect(onResultLimitError).not.toHaveBeenCalled();
+    });
+
     it('records usage metadata before returning from limit interception', async () => {
       const onResultLimitError = mock(async () => true);
       mockContext.onResultLimitError = onResultLimitError;

@@ -97,7 +97,7 @@ const EPOCH_MILLIS_RE = /\b\d{13}\b/g;
 const EPOCH_SECONDS_RE = /\b\d{10}\b/g;
 
 const RELATIVE_RESET_RE =
-  /\b(?:reset|retry|try again|lifted|available)[^.]{0,60}?\bin\s+(\d{1,4})\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)\b/gi;
+  /\b(?:reset|retry|try again|lifted|available)[^.]{0,60}?\b(?:in|after)\s+(\d{1,4})\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)\b/gi;
 
 const RELATIVE_UNIT_MS: Record<string, number> = {
   second: 1000,

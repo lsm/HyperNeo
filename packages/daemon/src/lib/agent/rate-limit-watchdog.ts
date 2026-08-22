@@ -420,6 +420,12 @@ export class RateLimitWatchdog {
               maxRetries: this.config.maxAutoRetries,
               retryAt: Date.now(),
             });
+            if (episodeGeneration !== this.generation) {
+              this.logger.info(
+                'Episode superseded during billing pause state write; not publishing pause.'
+              );
+              return;
+            }
             this.notifyPause({ kind: this.limitKind, reason: 'billing-terminal' });
           } else {
             this.logger.warn(

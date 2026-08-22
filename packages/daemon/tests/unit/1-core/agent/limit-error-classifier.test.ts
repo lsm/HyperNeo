@@ -134,7 +134,7 @@ describe('assessLimitError', () => {
     expect(assessment.kind).toBe('usage_limit');
   });
 
-  it('ignores a structured reset in the past and falls back to text signals', () => {
+  it('keeps a rejected event as limit evidence even when its reset timestamp is stale', () => {
     const assessment = assessLimitError(
       {
         rawText: 'no markers here',
@@ -142,7 +142,33 @@ describe('assessLimitError', () => {
       },
       NOW
     );
-    expect(assessment.isLimit).toBe(false);
+    expect(assessment.isLimit).toBe(true);
+    expect(assessment.resetAtMs).toBeNull();
+  });
+
+  it('honors structured credits-required billing evidence over generic result text', () => {
+    const assessment = assessLimitError(
+      {
+        rawText: 'Error: upstream rejected the request',
+        rateLimitInfo: { status: 'rejected', errorCode: 'credits_required' },
+      },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(true);
+    expect(assessment.billingTerminal).toBe(true);
+    expect(assessment.kind).toBe('usage_limit');
+  });
+
+  it('honors structured out-of-credits overage evidence', () => {
+    const assessment = assessLimitError(
+      {
+        rawText: 'Error: upstream rejected the request',
+        rateLimitInfo: { status: 'rejected', overageDisabledReason: 'out_of_credits' },
+      },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(true);
+    expect(assessment.billingTerminal).toBe(true);
   });
 
   it('does not classify generic server errors as limits', () => {

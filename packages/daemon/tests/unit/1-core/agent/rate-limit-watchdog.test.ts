@@ -342,6 +342,31 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.getState().retryAt).toBeNull();
       expect(watchdog.retryNow()).toBe(true);
     });
+
+    it('does not publish a stale billing pause when the episode is cancelled mid-write', async () => {
+      const A: FallbackModelEntry = { provider: 'minimax', model: 'abab6.5' };
+      let releaseWrite: (() => void) | undefined;
+      const writeGate = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+      });
+      stateManager.setRateLimitCooldown = mock(async () => {
+        await writeGate;
+      });
+      const { deps, notifyPause } = createMockDeps({ chain: [A], switchSucceeds: false });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      await watchdog.scheduleRetry(
+        "403 You've reached your usage limit for this billing cycle",
+        { uuid: 'm1', content: 'x' },
+        { billingTerminal: true, kind: 'usage_limit' }
+      );
+      await flush();
+      await flush();
+      watchdog.cancel(false);
+      releaseWrite?.();
+      await flush();
+      await flush();
+      expect(notifyPause).not.toHaveBeenCalled();
+    });
   });
 
   describe('Phase A — immediate fallback switch', () => {
