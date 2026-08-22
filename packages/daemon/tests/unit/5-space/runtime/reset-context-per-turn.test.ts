@@ -712,6 +712,31 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(session.jobQueueEnqueue).toHaveBeenCalled();
   });
 
+  it('a cancelled clear during a FAILED-row retry rolls the row back and aborts the injection', async () => {
+    const { manager, session } = makeManager({
+      slotResets: true,
+      deliveryContent: { sendStatus: 'failed' },
+      reopenDbId: 'db-reopened',
+      failedDbId: 'db-reopened',
+    });
+    session.clearMock.mockRejectedValue(new ClearConversationCancelledError());
+    indexSession(manager, liveSession(session));
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow('cancelled by query teardown');
+
+    expect(session.reopenDeliveryByUuid).toHaveBeenCalledTimes(1);
+    expect(session.markDeliveryFailedByUuid).toHaveBeenCalledWith(SESSION_ID, expect.any(String));
+    expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
+      sessionId: SESSION_ID,
+      messageIds: ['db-reopened'],
+      status: 'failed',
+    });
+    expect(session.saveUserMessage).not.toHaveBeenCalled();
+    expect(session.enqueueMock).not.toHaveBeenCalled();
+  });
+
   it('a retry finding an existing CONSUMED row skips resetContextPerTurn (no /clear of the just-delivered handoff)', async () => {
     const { manager, session } = makeManager({
       slotResets: true,

@@ -950,6 +950,38 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage({ ...errorMessage, uuid: 'clear-error' } as SDKMessage);
 
       expect(settled).toBe('reset');
+
+      const successResult = {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'clear-result',
+        user_message_uuid: 'clear-msg-id',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+      handler.suppressIdleForNextResult();
+      const confirmedWait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      handler.markClearMessageSent();
+      await handler.handleMessage(successResult);
+      expect(await confirmedWait).toBe('confirmed');
+
+      handler.suppressIdleForNextResult();
+      let settled2: string | null = null;
+      void handler.waitForSuppressedResult(5_000, 'clear-msg-id-2').then((outcome) => {
+        settled2 = outcome;
+      });
+
+      await handler.handleMessage({ ...errorMessage, uuid: 'compact-error-2' } as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(settled2).toBe(null);
+
+      handler.clearIdleSuppression();
     });
 
     it('an error result releases the clear wait only after its bookkeeping completes', async () => {

@@ -3249,12 +3249,13 @@ export class TaskAgentManager {
     if (outcome.decision.action === 'noop') {
       return messageId;
     }
+    let reopenedDeliveryDbId: string | null = null;
     if (outcome.reopenFailedDelivery) {
-      const reopenedDbId = this.config.db
+      reopenedDeliveryDbId = this.config.db
         .getSDKMessageRepo()
         .reopenDeliveryByUuid(sessionId, messageId);
-      if (reopenedDbId) {
-        await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
+      if (reopenedDeliveryDbId) {
+        await this.publishMessageStatusChanged(sessionId, reopenedDeliveryDbId, 'enqueued');
       }
     }
     if (outcome.decision.action === 'defer') {
@@ -3275,6 +3276,14 @@ export class TaskAgentManager {
         await session.clearConversationContext();
       } catch (err) {
         if (err instanceof ClearConversationCancelledError) {
+          if (reopenedDeliveryDbId) {
+            const failedDbId = this.config.db
+              .getSDKMessageRepo()
+              .markDeliveryFailedByUuid(sessionId, messageId);
+            if (failedDbId) {
+              await this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+            }
+          }
           throw err;
         }
         log.warn(
