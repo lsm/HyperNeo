@@ -223,7 +223,7 @@ export function buildTripMessage(tripReason: string | null): string {
 
 **What to do:**
 - Resize the image to under 3.75 MB before uploading
-- Use image compression tools to reduce the size
+- Use image compression tools to reduce file size
 - Consider using a lower resolution or cropping the image`;
   }
 

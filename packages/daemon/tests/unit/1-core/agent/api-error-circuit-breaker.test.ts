@@ -897,6 +897,7 @@ describe('ApiErrorCircuitBreaker', () => {
         const cb = new ApiErrorCircuitBreaker('s', { errorThreshold: 1 });
         await cb.checkMessage(userMessage('ImageSizeError: file too large'));
         expect(cb.getTripMessage()).toContain('Image size exceeds API limit');
+        expect(cb.getTripMessage()).toContain('- Use image compression tools to reduce file size');
       });
 
       it('renders the bare prompt_too_long message without a token count', async () => {
