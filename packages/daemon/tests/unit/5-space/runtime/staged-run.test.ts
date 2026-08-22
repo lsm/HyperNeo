@@ -642,6 +642,25 @@ describe('stagedRun decide contract', () => {
     expect(String(outcome.error)).toContain('synchronous');
   });
 
+  test('a rejected async decide still yields the contract outcome without an unhandled rejection', async () => {
+    const flow = stagedRun<Box>('async-decide-rejects', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+      s.decide({
+        name: 'bad',
+        reads: ['value'],
+        run: (() => Promise.reject(new Error('late boom'))) as unknown as () => {
+          decision: unknown;
+        },
+      }),
+      s.halt({ name: 'end', run: () => 'done' }),
+    ]);
+    const outcome = await flow({});
+    expect(outcome.status).toBe('error');
+    expect(outcome.stage).toBe('bad');
+    expect(String(outcome.error)).toContain('synchronous');
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+
   test('stamping an undeclared branch key is a contract violation', async () => {
     const flow = stagedRun<Box>('rogue-branch', (s) => [
       s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),

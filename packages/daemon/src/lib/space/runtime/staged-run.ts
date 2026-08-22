@@ -324,6 +324,7 @@ function buildDecideAdapter(
       stamped: unknown
     ): Record<string, unknown> | Promise<Record<string, unknown>> => {
       if (isThenable(stamped)) {
+        stamped.then(undefined, () => {});
         return fail(
           new StagedRunContractError(flow, `decide stage ${stage.name} must stay synchronous`)
         );
