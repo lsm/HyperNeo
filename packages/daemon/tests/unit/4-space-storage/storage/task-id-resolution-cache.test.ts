@@ -363,7 +363,13 @@ describe('saveUserMessageCore / runPostSaveSideEffects composition contract', ()
     let inTransactionAtNotify: boolean | null = null;
     reactiveDb.on('change', (event) => {
       if (inTransactionAtNotify === null && event.tables.includes('sdk_messages')) {
-        inTransactionAtNotify = bunDb.inTransaction;
+        try {
+          bunDb.exec('BEGIN');
+          bunDb.exec('ROLLBACK');
+          inTransactionAtNotify = false;
+        } catch {
+          inTransactionAtNotify = true;
+        }
       }
     });
 
