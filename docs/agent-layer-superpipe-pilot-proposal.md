@@ -875,7 +875,16 @@ note.
      `allow` at the old process, which may then execute the stale tool;
      lifecycle and turn ownership are revalidated when the question promise
      settles, the stale process is denied, and only the old question state
-     unwinds before returning — **and after `setWaitingForInput()` before the
+     unwinds before returning — **and the response/cancel handlers validate
+     before their shared mutations, not only at resolution**:
+     `handleQuestionResponse` records the answer and awaits
+     `setProcessing()` (`:303–307`) before resolving the promise
+     (`:341–348`), and the cancel path performs the same transition
+     (`:384–390`), so a stale card submitted after a replacement marks the
+     replacement processing and persists stale question history before the
+     post-answer check ever runs; the pending resolver is bound to its
+     query/turn owner and both handlers validate before mutating — **and
+     after `setWaitingForInput()` before the
      `question.asked` publication** (`:197–201`): a replacement starting
      during that await would otherwise have the old tool-use ID published
      over its own pending question, queueing the response for the wrong
