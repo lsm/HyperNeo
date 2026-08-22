@@ -1507,7 +1507,9 @@ export class QueryRunner {
   async *createMessageGeneratorWrapper(queryGeneration: number) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
 
-    for await (const { message, onSent } of messageQueue.messageGenerator(session.id)) {
+    for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
+      suppressPreYieldCallback: true,
+    })) {
       if (this.ctx.isLimitRecoveryPending?.()) {
         logger.info('Prompt feed: limit recovery engaged; requeueing prompt until the retry.');
         const yieldedUuid = message.uuid;
@@ -1516,6 +1518,7 @@ export class QueryRunner {
         }
         break;
       }
+      messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
       const isInternal = queuedMessage.internal || false;
 

@@ -238,6 +238,17 @@ describe('assessLimitError', () => {
     expect(assessment.kind).toBe('usage_limit');
   });
 
+  it('keeps a resettable billing_error tag in the limit pipeline', () => {
+    const assessment = assessLimitError(
+      { rawText: 'billing limit reached; retry after 2 hours', sdkErrorTag: 'billing_error' },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(true);
+    expect(assessment.billingTerminal).toBe(false);
+    expect(assessment.kind).toBe('usage_limit');
+    expect(assessment.resetAtMs).toBe(NOW + 2 * 60 * 60 * 1000);
+  });
+
   it('does not treat a bare 402 token without billing context as billing-terminal', () => {
     const assessment = assessLimitError(
       { rawText: 'request failed after 402 ms (req-402-abcdef)' },

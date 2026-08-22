@@ -333,6 +333,35 @@ describe('QueryRunner', () => {
       expect(requeueYieldedSpy).toHaveBeenCalledWith('queued-uuid');
       expect(runner.lastConsumedUserMessage).toBeNull();
     });
+
+    it('marks the prompt consumed through the pre-yield callback only after the gate passes', async () => {
+      async function* generator() {
+        yield {
+          message: { uuid: 'normal-uuid', message: { content: 'normal prompt' } },
+          onSent: () => {},
+        };
+      }
+      const onMessageYieldedSpy = mock(() => {});
+      runner = createRunner({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: generator,
+          onMessageYielded: onMessageYieldedSpy,
+        } as unknown as MessageQueue,
+        isLimitRecoveryPending: () => false,
+      });
+
+      const wrapper = runner.createMessageGeneratorWrapper(1);
+      let yieldedCount = 0;
+      for await (const item of wrapper) {
+        void item;
+        yieldedCount++;
+      }
+
+      expect(yieldedCount).toBe(1);
+      expect(onMessageYieldedSpy).toHaveBeenCalledWith('normal-uuid', expect.any(Number));
+      expect(runner.lastConsumedUserMessage?.uuid).toBe('normal-uuid');
+    });
   });
 
   describe('start', () => {

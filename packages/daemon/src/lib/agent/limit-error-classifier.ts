@@ -125,11 +125,11 @@ export function assessLimitError(
     : false;
   const parsed = rawText !== '' ? extractResetTimestamp(rawText, now) : null;
   const resetAtMs = structuredReset ?? parsed?.resetAtMs ?? null;
-  const tagBillingTerminal = signal.sdkErrorTag === 'billing_error';
+  const tagBilling = signal.sdkErrorTag === 'billing_error';
   const billingTerminal =
     resetAtMs === null &&
     (signal.httpStatus === 402 ||
-      tagBillingTerminal ||
+      tagBilling ||
       isStructuredBillingTerminal(signal.rateLimitInfo) ||
       (rawText !== '' && isBillingTerminal(rawText, now)));
   const textLimit = rawText !== '' && looksLikeLimitText(rawText);
@@ -146,6 +146,7 @@ export function assessLimitError(
     textLimit ||
     statusLimit ||
     tagLimit ||
+    tagBilling ||
     terminalLimit ||
     billingTerminal;
   if (!isLimit) {

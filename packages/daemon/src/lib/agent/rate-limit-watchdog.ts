@@ -557,7 +557,8 @@ export class RateLimitWatchdog {
       this.cooldownTimer !== null ||
       this.fallbackPending ||
       this.billingPauseSurfaced ||
-      this.retryCallbackInFlight
+      this.retryCallbackInFlight ||
+      this.startupExhausted
     );
   }
 
