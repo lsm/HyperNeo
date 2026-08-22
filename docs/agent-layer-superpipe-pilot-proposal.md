@@ -83,14 +83,23 @@ concurrent sessions by default, so two overlapping sessions corrupt each other
 regardless of generations (A applies, B snapshots A while applying B, A
 restores the daemon baseline, B then restores "A" — leaving provider A's
 credentials in `process.env`); the remedy is **daemon-wide serialization of
-the entire environment-dependent window — apply through spawn/use — or
+the entire environment-dependent window — **credential reads through**
+apply through spawn/use — or
 eliminating the shared mutation** (per-session env passed to the spawn rather
 than `process.env`). Stack/restore ownership alone is *not* an acceptable
 alternative: a session applies its environment at :641–661 but spawns only
 after gate admission at :686–713, so another session can interpose its
 environment in between and the first session launches with the wrong
 credentials even when every restore later unwinds perfectly — which is
-serialization across the whole apply-to-use span by another name. — and
+serialization across the whole apply-to-use span by another name. The window
+moreover **begins before the apply**: the auth gate reads ambient credentials
+at :492 and `optionsBuilder.build()` copies `CLAUDE_CODE_OAUTH_TOKEN` at
+query-options-builder.ts:781–783, both ahead of the mutation at :660 where a
+lease would naturally start — so a runner starting under another owner's
+applied environment copies that owner's token, and
+`refreshQueryEnvFromProcess(... preserveAnthropicOAuthToken: true)` retains it
+after the owner restores; ownership is acquired before the auth/options reads
+or those reads stop being ambient. — and
 **the coordinator must live at the shared `ProviderService` boundary, not in
 QueryRunner**: the same global environment has other concurrent owners —
 `acp-query-runner.ts:456` (`applyEnvVarsToProcessForSession`) and
