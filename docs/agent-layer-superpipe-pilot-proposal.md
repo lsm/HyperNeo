@@ -708,7 +708,21 @@ note.
      `ctx.startupTimeoutTimer` and sets `ctx.firstMessageReceived` at
      `:790–801` ahead of the handler, and a stale first message doing so
      cancels the replacement's startup timeout, hanging it indefinitely even
-     though the handler guard later drops the message. The stale stop
+     though the handler guard later drops the message — **and the ACP runner
+     has the same pre-handler bookkeeping** (`:662–671` sets
+     `firstMessageReceived`/`receivedAcpMessageDuringRun`, persists
+     `acpInstructionsSent`, and its timer-clear path at `:1124`), so its
+     generation check also runs immediately after its iterator yields, with
+     the ACP late-first-message interleaving pinned. **Permission callbacks
+     are fenced too**: both runs install a generationless
+     `createCanUseToolCallback` (`:517–519`, acp `:438`), and ACP permission
+     notifications invoke it out-of-band (`:547` → `:281–298`) — a late
+     permission request from a stopped process reaches
+     `interceptAskUserQuestion` and can supersede the replacement's pending
+     question (`:164–185`) without ever passing the SDK-message guard; the
+     callbacks bind to the run generation and reject stale permission
+     requests in both runners, with a late-callback replacement pin. The
+     stale stop
      **returns a distinct outcome that propagates to the runner**: both
      wrappers unconditionally call `onMarkApiSuccess` after `onSDKMessage`
      (`:1512–1515`, acp `:926–929`), so a stale successful result would
