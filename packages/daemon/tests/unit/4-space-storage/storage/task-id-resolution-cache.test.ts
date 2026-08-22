@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { Database } from '../../../../src/storage/index';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import type { ReactiveDatabase, TableChangeEvent } from '../../../../src/storage/reactive-database';
 import type {
   Session,
@@ -280,5 +281,107 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
     reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
     expect(taskResolutions).toBe(2);
     expect(taskIdsOf('s-task')).toEqual([{ task_id: 'task-1' }, { task_id: 'task-1' }]);
+  });
+});
+
+describe('saveUserMessageCore / runPostSaveSideEffects composition contract', () => {
+  let dbPath: string;
+  let db: Database;
+  let reactiveDb: ReactiveDatabase;
+  let bunDb: ReturnType<Database['getDatabase']>;
+  let repo: SDKMessageRepository;
+  let events: TableChangeEvent[];
+
+  beforeEach(async () => {
+    dbPath = makeTempDbPath();
+    db = new Database(dbPath);
+    reactiveDb = createReactiveDatabase(db);
+    await db.initialize(reactiveDb);
+    bunDb = db.getDatabase();
+    repo = new SDKMessageRepository(bunDb, reactiveDb);
+    events = [];
+    reactiveDb.on('change', (data) => events.push(data));
+  });
+
+  afterEach(() => {
+    try {
+      db.close();
+    } catch {}
+    try {
+      rmSync(dbPath, { force: true });
+      rmSync(dbPath + '-wal', { force: true });
+      rmSync(dbPath + '-shm', { force: true });
+    } catch {}
+  });
+
+  function messageCount(): number {
+    return (bunDb.prepare('SELECT COUNT(*) AS n FROM sdk_messages').get() as { n: number }).n;
+  }
+
+  function badgeOf(sessionId: string): number {
+    return (
+      bunDb
+        .prepare(`SELECT visible_message_count AS n FROM sessions WHERE id = ?`)
+        .get(sessionId) as { n: number }
+    ).n;
+  }
+
+  test('core writes the row and bumps the badge but emits no reactive notifications', () => {
+    reactiveDb.db.createSession(makeSession('s-comp', 'worker', { taskId: 'task-comp' }));
+    events.length = 0;
+
+    const core = repo.saveUserMessageCore('s-comp', userMessage('sent', 'u-core'), 'consumed');
+
+    expect(core.countsTowardsBadge).toBe(true);
+    expect(events).toEqual([]);
+    expect(messageCount()).toBe(1);
+    expect(badgeOf('s-comp')).toBe(1);
+  });
+
+  test('runPostSaveSideEffects notifies sdk_messages always, sessions only for badge rows', () => {
+    reactiveDb.db.createSession(makeSession('s-comp', 'worker', { taskId: 'task-comp' }));
+    events.length = 0;
+
+    const visible = repo.saveUserMessageCore('s-comp', userMessage('sent', 'u-vis'), 'consumed');
+    repo.runPostSaveSideEffects('s-comp', visible.id, visible.countsTowardsBadge);
+    const pending = repo.saveUserMessageCore('s-comp', userMessage('queued', 'u-pend'), 'deferred');
+    repo.runPostSaveSideEffects('s-comp', pending.id, pending.countsTowardsBadge);
+
+    expect(events.map((event) => event.tables)).toEqual([
+      ['sdk_messages'],
+      ['sessions'],
+      ['sdk_messages'],
+    ]);
+    expect(events[0].scope).toEqual({ sessionId: 's-comp' });
+    expect(events[1].scope).toEqual({ sessionId: 's-comp' });
+  });
+
+  test('saveUserMessage composes transaction(core) then post-commit side effects', () => {
+    reactiveDb.db.createSession(makeSession('s-comp', 'worker', { taskId: 'task-comp' }));
+    events.length = 0;
+
+    const id = repo.saveUserMessage('s-comp', userMessage('hello', 'u-wrap'), 'consumed');
+
+    expect(
+      (bunDb.prepare('SELECT id FROM sdk_messages WHERE id = ?').get(id) as { id: string }).id
+    ).toBe(id);
+    expect(badgeOf('s-comp')).toBe(1);
+    expect(events.map((event) => event.tables)).toEqual([['sdk_messages'], ['sessions']]);
+  });
+
+  test('a composed transaction that throws rolls back the row and the badge bump', () => {
+    reactiveDb.db.createSession(makeSession('s-comp', 'worker', { taskId: 'task-comp' }));
+    events.length = 0;
+
+    expect(() =>
+      bunDb.transaction(() => {
+        repo.saveUserMessageCore('s-comp', userMessage('doomed', 'u-abort'), 'consumed');
+        throw new Error('compose-abort');
+      })()
+    ).toThrow('compose-abort');
+
+    expect(messageCount()).toBe(0);
+    expect(badgeOf('s-comp')).toBe(0);
+    expect(events).toEqual([]);
   });
 });
