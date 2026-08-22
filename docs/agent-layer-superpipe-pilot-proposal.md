@@ -589,7 +589,14 @@ note.
   either idles too early or delays the fence and changes the partial state
   left when publication rejects; the core models pre-publication and
   post-publication phases separately (or both actions stay at their shell
-  positions); the
+  positions) — and a **publication rejection unwinds the handler-owned
+  fence**: `InternalEventBus.publish` rejects on subscriber failure
+  (internal-event-bus.ts:145–157) after `beginTerminalIdle()` incremented both
+  counters but before the direct `setIdle()` (:746–749), and if a replacement
+  lands while the subscriber is awaited, the QueryRunner stale paths skip
+  their idles and this handler-owned fence stays live, misleading
+  `reclaimTurnAlreadySucceeded`; the failure path cancels its owned fence
+  while retaining the pre/post-publication ordering; the
   core also returns the updated flag state, since the scoped machine mutates it:
   results set `lastResultWasSuccess`; suppressed **successful** results clear
   `suppressIdleOnNextResult` (:936–937 is success-gated at :765–766), so a
