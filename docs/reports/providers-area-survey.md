@@ -64,7 +64,7 @@ Each defect below is stuck until one of those three things happens.
   4-hour TTL background refresh (`:27`, `:200-204`) — "never" to a user sitting
   at the picker.
 
-### Cause C (why models go missing at build time): five providers throw out of `getModels()` on transient upstream failure
+### Cause C (why models go missing at build time): seven providers throw out of `getModels()` on transient upstream failure
 
 `getModels()` doubles as a **live credential probe** and throws on any non-ok
 response (incl. **429** — exactly GLM's documented concurrency-limit case, ADR
@@ -78,6 +78,8 @@ Roadmap Phase 2):
 - ACP: subprocess probe throws — D`lib/providers/acp-provider.ts:205-226`
   (`verifyCommandAvailable` `:188-203`)
 - Codex bridge: D`lib/providers/anthropic-to-codex-bridge-provider.ts:491-496`
+- Custom endpoints: `probeEndpoint()` throws with no catch —
+  D`lib/providers/custom-endpoint-provider.ts:183-186`
 
 So: the daemon restarts (or any provider is edited) while Z.ai is 429ing → the
 cache is rebuilt without GLM → the one-shot stranded retry is consumed while
@@ -98,7 +100,7 @@ until the next poll.
 | PR | Scope | Pins / changes |
 | --- | --- | --- |
 | **C1-PR1 (pin)** | Daemon characterization tests | Pin current behavior: (a) cache built while GLM probe rejects → GLM models absent from `modelsCache`; (b) second `models.list` after failed stranded recovery performs **no** further probe (`refreshedMissingProviders` one-shot); (c) `providers.update` disable→enable → global cache clear + attempted-set clear → recovery. Files: extend D`tests/unit/1-core/core/model-service.test.ts` (already covers retry tracking `:71-93`) + D`tests/unit/2-handlers/rpc-handlers/provider-handlers.test.ts`. Plus a codex pin: `getBridgeAuth` null → later file appearance is not re-read. |
-| **C1-PR2 (fix, model-service)** | Decouple listing from probing | In `loadModelsFromProviders` (model-service.ts:183-189): when `isAvailable()=true` but `getModels()` rejects, fall back to the provider's static metadata (`STATIC_MODEL_METADATA` already exists, `:65-71`; Minimax missing from it — add). Single-site fix, no per-provider edits. Tradeoff (flag in PR): an invalid key still lists models until first use fails upstream — acceptable; auth errors stay visible via `getAuthStatus`/health dot. |
+| **C1-PR2 (fix, model-service)** | Decouple listing from probing | In `loadModelsFromProviders` (model-service.ts:183-189): when `isAvailable()=true` but `getModels()` rejects, fall back in two steps — first `provider.getCachedModels?.()`, then the provider's static metadata (`STATIC_MODEL_METADATA` already exists, `:65-71`; Minimax missing from it — add). The cached-models step is the ACP fallback: ACP has no static entry by design (its list is per-command and dynamic), but its curated `config_json.models` is hydrated into `cachedModels` at startup sync (acp-provider.ts:137-173, 233-235), so a failed subprocess probe still lists the curated set — or the synthetic `acp-default` (acp-provider.ts:71-84) when nothing is curated. Custom endpoints likewise have no static entry; a two-line `getCachedModels()` returning their configured `config.models` covers them, since the probe only verifies a list that is config, not discovery (custom-endpoint-provider.ts:183-186). Single seam, no provider-specific branches beyond that accessor. Tradeoff (flag in PR): an invalid key still lists models until first use fails upstream — acceptable; auth errors stay visible via `getAuthStatus`/health dot. |
 | **C1-PR3 (fix, retry + TTL)** | Make recovery self-healing | (a) Replace the `refreshedMissingProviders` Set with timestamped attempts + retry backoff (e.g. 60s), or clear the set whenever a refresh completes; (b) codex `cachedBridgeAuth=null` gets a TTL (5 min, matching copilot's `tokenCache` pattern) or re-checks on auth.json mtime change. Re-run PR1 pins inverted: GLM present via fallback during probe failure; codex re-reads after credentials appear. |
 
 **ADR classification:** C1-PR2 is a P3 guard + fallback at one seam; C1-PR3a is
