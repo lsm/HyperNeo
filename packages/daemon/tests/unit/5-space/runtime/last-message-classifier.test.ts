@@ -24,6 +24,45 @@ describe('classifyLastMessageForIdleAgent', () => {
     );
   });
 
+  it('classifies a hollow task-notification-origin result as non-terminal', () => {
+    const message = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: '',
+      usage: { input_tokens: 0, output_tokens: 0 },
+      origin: { kind: 'task-notification' },
+    } as unknown as SDKMessage;
+    expect(classifyLastMessageForIdleAgent(message)).toEqual({
+      terminal: false,
+      reason: 'task-notification result awaits follow-up turn',
+    });
+  });
+
+  it('classifies an error-flagged task-notification-origin result as terminal (part-3 territory)', () => {
+    const message = {
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      origin: { kind: 'task-notification' },
+    } as unknown as SDKMessage;
+    expect(classifyLastMessageForIdleAgent(message)).toEqual(
+      expect.objectContaining({ terminal: true })
+    );
+  });
+
+  it('classifies an api-error result (subtype success, is_error true) as terminal', () => {
+    const message = {
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      result: 'API Error: Connection refused (ConnectionRefused)',
+    } as unknown as SDKMessage;
+    expect(classifyLastMessageForIdleAgent(message)).toEqual(
+      expect.objectContaining({ terminal: true })
+    );
+  });
+
   it('classifies a system task-progress signal as non-terminal (active work)', () => {
     for (const subtype of ['task_started', 'task_progress', 'task_updated']) {
       const message = {

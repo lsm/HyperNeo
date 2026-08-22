@@ -1,4 +1,4 @@
-import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { getSdkResultOriginKind, type SDKMessage } from '@hyperneo/shared/sdk';
 
 export type LastMessageClassification =
   | { terminal: true; reason: string }
@@ -10,6 +10,10 @@ export function classifyLastMessageForIdleAgent(
   if (!message) return { terminal: false, reason: 'no SDK messages were recorded' };
 
   if (message.type === 'result') {
+    const isError = (message as { is_error?: unknown }).is_error === true;
+    if (!isError && getSdkResultOriginKind(message) === 'task-notification') {
+      return { terminal: false, reason: 'task-notification result awaits follow-up turn' };
+    }
     const subtype =
       typeof (message as { subtype?: unknown }).subtype === 'string'
         ? (message as { subtype: string }).subtype
