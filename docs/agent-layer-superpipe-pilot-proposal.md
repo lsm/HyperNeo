@@ -702,7 +702,23 @@ note.
      generationless dispatch (`acp-query-runner.ts:925–929` calls the shared
      `ctx.onSDKMessage` without its local `queryGeneration`), so fencing only
      the QueryRunner would leave ACP able to fire the replacement's terminal
-     callbacks; the ACP late-result case is pinned too. The requirement is
+     callbacks; the ACP late-result case is pinned too. The generation check
+     also runs **immediately after the iterator yields, before any shared
+     startup/message bookkeeping** — the old loop clears
+     `ctx.startupTimeoutTimer` and sets `ctx.firstMessageReceived` at
+     `:790–801` ahead of the handler, and a stale first message doing so
+     cancels the replacement's startup timeout, hanging it indefinitely even
+     though the handler guard later drops the message. The stale stop
+     **returns a distinct outcome that propagates to the runner**: both
+     wrappers unconditionally call `onMarkApiSuccess` after `onSDKMessage`
+     (`:1512–1515`, acp `:926–929`), so a stale successful result would
+     otherwise run `rateLimitWatchdog.reset()` and cancel the replacement's
+     active cooldown — the wrappers skip all post-handler success bookkeeping
+     on the stale outcome — and the runner's catch carries the same outcome
+     past `drainDeliveryWaitersOnTerminalSDKMessage` (`:804–812`), whose bare
+     `setIdle()` would otherwise mark the replacement idle, skipping or
+     owner-scoping that drain when the emitting generation no longer owns the
+     session. The requirement is
      assigned here because no other step touches the runner/context boundary.
      Because it edits `acp-query-runner.ts` and `sdk-message-handler.ts`,
      **PR 5 sequences after — or
@@ -1238,7 +1254,21 @@ runners, the four ProviderService services, the Anthropic model loader, the
 GitHub security/router spawns, and the ambient availability readers — handles
 ACP's pre-apply snapshot and the recursive arms' release-before-recursion, and
 ships concurrency pins for each interleaving named above (cross-session
-overlap, replacement-during-apply, reader-during-window). It lands before or
+overlap, replacement-during-apply, reader-during-window) — plus
+**post-acquisition revalidation and service lease boundaries**: a stale run
+blocked awaiting the lease can acquire it *after* a replacement bumped the
+generation (`runQuery` has no setup-time check), then proceed through reads,
+apply, copy, and spawn overwriting the replacement — both runners take a full
+lifecycle resnapshot immediately after every awaited lease acquisition and
+before any apply/copy/spawn work; and the four ProviderService services (title
+generation, conversation analysis, episode judging, workflow selection) all
+build a complete immutable `options.env` via `mergeProviderEnvVars` before
+iterating their query (session-lifecycle.ts:952–984,
+evolution-episode-service.ts:752–782, and the analogous paths), so each
+restores and releases **immediately after constructing its SDK environment**,
+not in the post-inference finalizer — a full-response lease would block every
+session startup and credential reader for the model's entire latency. It lands
+before or
 with Chain B's apply PRs — and **after (or explicitly coordinating with) ACP
 split 8/10 and open PR #2661**: the split owns `acp-query-runner.ts` around
 the same `:451–456` snapshot/apply region PR 0's ACP handling edits, and #2661
