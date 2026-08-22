@@ -291,6 +291,7 @@ export class RateLimitWatchdog {
           );
           if (!armed) {
             this.lastHint = previousHint;
+            this.limitKind = previousLimitKind;
           } else if (refund) {
             this.retryCount--;
           }

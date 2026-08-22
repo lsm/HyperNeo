@@ -736,6 +736,7 @@ describe('RateLimitWatchdog', () => {
       expect(lastPayload.retryAt).toBe(ownerRetryAt);
       expect(lastPayload.retryAt).not.toBe(stalePayload.retryAt);
       expect((watchdog as unknown as { cooldownTimer: unknown }).cooldownTimer).not.toBeNull();
+      expect(watchdog.getState().limitKind).not.toBe('usage_limit');
       watchdog.cancel();
     });
 
