@@ -183,7 +183,13 @@ export class InterruptHandler {
     if (typeof queryObject.cancelAsyncMessage !== 'function') return false;
     try {
       for (const messageUuid of survivors) {
-        await queryObject.cancelAsyncMessage(messageUuid);
+        const cancelled = await queryObject.cancelAsyncMessage(messageUuid);
+        if (!cancelled) {
+          this.ctx.logger.warn(
+            `SDK cancel_async_message did not confirm cancellation of ${messageUuid}; falling back to subprocess close`
+          );
+          return false;
+        }
       }
       return true;
     } catch (error) {

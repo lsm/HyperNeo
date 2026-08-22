@@ -346,6 +346,27 @@ describe('InterruptHandler', () => {
         expect(sdkCloseSpy).toHaveBeenCalled();
       });
 
+      it('falls back to closing when cancel_async_message does not confirm the cancellation', async () => {
+        sdkInterruptSpy.mockImplementation(async () => ({
+          still_queued: ['uuid-a', 'uuid-b'],
+        }));
+        sdkCancelAsyncMessageSpy.mockImplementation(async (uuid: string) => uuid !== 'uuid-a');
+        getSdkCapabilitiesSpy.mockImplementation(() => new Set(['interrupt_cancel_queued_v1']));
+        handler = createHandler();
+
+        await handler.handleInterrupt();
+
+        expect(sdkCancelAsyncMessageSpy).toHaveBeenCalledTimes(1);
+        expect(sdkCancelAsyncMessageSpy).toHaveBeenCalledWith('uuid-a');
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('did not confirm cancellation of uuid-a')
+        );
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('closing immediately')
+        );
+        expect(sdkCloseSpy).toHaveBeenCalled();
+      });
+
       it('falls back to closing immediately when cancel_async_message fails', async () => {
         sdkInterruptSpy.mockImplementation(async () => ({ still_queued: ['uuid-a'] }));
         sdkCancelAsyncMessageSpy.mockRejectedValue(new Error('Cancel rejected'));
