@@ -160,9 +160,17 @@ polling sources.
   function** — adopt `decisionRun` composition only when chain B adds more gates and
   order becomes contract. Shell: `publishEvent` (`:1731`) reads the cached identity
   and calls the gate **before** `publisher.publish` — before persistence, dedupe,
-  and both bus subscribers (SpaceRuntime *and* goal-automation both save). Default
-  **ON**, override via `suppressSelfEvents: false` in global then per-space
-  `settings_json`. Case-insensitive login compare; Bot actors (e.g.
+  and both bus subscribers (SpaceRuntime *and* goal-automation both save). The
+  ingestion step returns `admitted | dropped{reason}` so callers report honestly
+  (review finding, PR #2723): the three webhook paths increment `published` after
+  every resolved call (`:732`, `:843`, `:933`) and would otherwise count suppressed
+  deliveries as published (`spaces: 1` with nothing persisted); polling advances its
+  watermarks for intentional drops so suppressed rows cannot wedge the cursor
+  (bug 1). Default **ON**, override via `suppressSelfEvents: false` in global then
+  per-space `settings_json` — and the minimal write RPC for that flag ships **in
+  A2**, not A3 (review finding, PR #2723): `space.github.*` has no generic settings
+  writer today (`listConfig` is read-only), so a default-on flip without a supported
+  opt-out is not shippable. Case-insensitive login compare; Bot actors (e.g.
   `github-actions[bot]`) never match a user token identity.
 - **Identity-resolution failure policy (review finding, PR #2723):** do NOT reuse
   `resolveTokenStatus` semantics on the publish path — it caches only
@@ -181,7 +189,14 @@ polling sources.
   silently wiped by any of the 8 RPC call sites that persist space config
   (`:354`, `:368`, `:443`, `:455`, `:486`, `:506`, `:535`, `:653`). Fix:
   read-merge-write — fetch the current space config and spread its `settings` under
-  the two owned keys, so unknown keys survive. (Global config is already safe: all
+  the two owned keys, so unknown keys survive — **and serialize per-space writes**
+  (review finding, PR #2723): MessageHub handlers are async, so two concurrent RPCs
+  (e.g. a toggle overlapping a watch) can read the same `settings_json`, merge
+  independently, and the later full-document replace in `setSpaceConfig` still
+  erases the other's key. Route per-space config writes through a per-space promise
+  queue — the extension's existing `webhookConfigQueues` idiom (`:289`); a
+  store-level `json_patch`-style partial settings update is the alternative if the
+  queue proves insufficient. (Global config is already safe: all
   four global writers spread — `app.ts:153`, `rpc-handlers/index.ts:252`,
   `github-event-extension.ts:1636`/`:1649`.)
 - **PR A3 (surface):** expose the toggle through the `space.github.*` config RPCs and
@@ -202,9 +217,21 @@ polling sources.
   `eventTypeAllowed(config, event)` — per-space allow/deny lists over `eventType`
   (and optionally `action`), config resolved from the `settings_json` the webhook
   path already loads (`:728`); polling resolves once per space via
-  `listEnabledSpaces`. Default config = allow-all (current behavior). Sequenced
-  after chain A PR A2's settings-preservation fix, and its filter writes use the
-  same merge-preserved `settings` mechanism — never a from-scratch settings object.
+  `listEnabledSpaces`. Default config = allow-all (current behavior). Action
+  filters are **webhook-only** (review finding, PR #2723): polling rows all carry
+  the synthetic action `polled` (`normalizeGitHubPollingRow :411`), so an
+  `issue_comment.created` allowlist on a polling-only space would drop every
+  comment while allowing `polled` cannot distinguish creation from edit — a
+  canonical cross-source action vocabulary is a future item, not B2. Also a coarse
+  header-level pre-gate for enrichment-heavy types (review finding, PR #2723):
+  `status`/`deployment`/`deployment_status` webhook handlers resolve associated PRs
+  via REST (up to five pages — `resolveDeploymentPrNumbers :851-862`,
+  `resolvePullRequestNumbersForCommit :951-985`) *before* normalization, so when
+  every matched space denies the header event type, short-circuit before those
+  calls; the per-space post-normalization gate is retained for finer filters.
+  Sequenced after chain A PR A2's settings-preservation fix, and its filter writes
+  use the same merge-preserved `settings` mechanism — never a from-scratch settings
+  object.
 - **PR B3 (transform/mapping):** pure projection
   `projectExternalEventPayload(config, event)` applied between gate and publish in
   `publishEvent` — field allow/deny projection of the payload, with
