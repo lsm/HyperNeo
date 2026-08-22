@@ -741,7 +741,13 @@ note.
      (sdk-message-handler.ts:239 ignores the save and emits at `:241–245`;
      called from `handleCircuitBreakerTrip`), each with its returned-false
      pin — otherwise the shell-retained helpers
-     stay unchanged and clients keep receiving notices absent from the DB.
+     stay unchanged and clients keep receiving notices absent from the DB —
+     and suppression **still surfaces the failure**: the `api_validation`
+     route skips `errorManager` by design, so with the delta gated and the
+     save failing (SQLite full or transiently erroring) the session would
+     silently stop; the helper publishes a non-persisted `session.error`
+     fallback (or equivalent user-visible signal) on the returned-false
+     path, pinned alongside the suppression.
      PR 5 also implements the **ownership-fenced SDK dispatch — for BOTH
      runners**: each propagates its query generation through its
      `handleSDKMessage` (adding the
