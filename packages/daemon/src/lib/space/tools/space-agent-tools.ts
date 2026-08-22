@@ -3091,7 +3091,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }): Promise<ToolResult> {
       try {
         requireGoalInSpace(args.goal_id);
-        const page = taskRepo.listByGoal(args.goal_id, {
+        const page = taskRepo.listByGoal(spaceId, args.goal_id, {
           status: args.status,
           limit: args.limit,
           before: args.before,
@@ -4580,7 +4580,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'list_goal_tasks',
-        "List tasks linked to a goal in this space, optionally filtered by status. Returns a bounded page (default 20, max 100) ordered by most-recently-created; pass the last item's createdAt as `before` and its id as `before_id` to fetch the next page.",
+        "List tasks linked to a goal in this space, optionally filtered by status. Returns a bounded page (default 20, max 100) of compact task summaries (id, task_number, title, status, priority, createdAt, updatedAt) ordered by most-recently-created; results omit description and result. Pass the last item's createdAt as `before` and its id as `before_id` to fetch the next page. Use `get_task_detail` to retrieve the full record for any task whose outcome you need to inspect.",
         {
           goal_id: z.string().describe('Goal ID'),
           status: z

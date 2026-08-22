@@ -9527,4 +9527,6 @@ export function runMigration202(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_created
     ON space_tasks(goal_id, created_at DESC, id DESC)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_goal_status_created
+    ON space_tasks(goal_id, status, created_at DESC, id DESC)`);
 }

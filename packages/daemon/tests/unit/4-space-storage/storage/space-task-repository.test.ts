@@ -1380,6 +1380,28 @@ describe('SpaceTaskRepository', () => {
       return task.id;
     }
 
+    it('excludes tasks from other spaces even when the goal id matches', () => {
+      const inSpace = seedTask('in-space', 1000);
+      const otherSpace = spaceRepo.createSpace({
+        workspacePath: '/workspace/other',
+        slug: 'other',
+        name: 'Other',
+      });
+      const crossSpace = repo.createTask({
+        spaceId: otherSpace.id,
+        title: 'cross-space',
+        description: '',
+        goalId,
+      });
+      (db as any)
+        .prepare(`UPDATE space_tasks SET created_at = ? WHERE id = ?`)
+        .run(2000, crossSpace.id);
+
+      const { tasks, total } = repo.listByGoal(spaceId, goalId);
+      expect(tasks.map((t) => t.id)).toEqual([inSpace]);
+      expect(total).toBe(1);
+    });
+
     it('returns only tasks for the goal, ordered by created_at DESC, excluding archived by default', () => {
       const older = seedTask('older', 1000);
       const newer = seedTask('newer', 3000);
@@ -1392,7 +1414,7 @@ describe('SpaceTaskRepository', () => {
       });
       (db as any).prepare(`UPDATE space_tasks SET created_at = ? WHERE id = ?`).run(6000, other.id);
 
-      const { tasks, total, hasMore } = repo.listByGoal(goalId);
+      const { tasks, total, hasMore } = repo.listByGoal(spaceId, goalId);
       expect(tasks.map((t) => t.id)).toEqual([newer, older]);
       expect(total).toBe(2);
       expect(hasMore).toBe(false);
@@ -1403,7 +1425,7 @@ describe('SpaceTaskRepository', () => {
       const done = seedTask('done-b', 2000, 'done');
       seedTask('open-c', 3000, 'open');
 
-      const { tasks, total } = repo.listByGoal(goalId, { status: 'done' });
+      const { tasks, total } = repo.listByGoal(spaceId, goalId, { status: 'done' });
       expect(tasks.map((t) => t.id)).toEqual([done]);
       expect(total).toBe(1);
     });
@@ -1412,10 +1434,10 @@ describe('SpaceTaskRepository', () => {
       const archived = seedTask('archived-a', 1000, 'archived');
       const open = seedTask('open-b', 2000, 'open');
 
-      const defaultPage = repo.listByGoal(goalId);
+      const defaultPage = repo.listByGoal(spaceId, goalId);
       expect(defaultPage.tasks.map((t) => t.id)).toEqual([open]);
 
-      const archivedPage = repo.listByGoal(goalId, { status: 'archived' });
+      const archivedPage = repo.listByGoal(spaceId, goalId, { status: 'archived' });
       expect(archivedPage.tasks.map((t) => t.id)).toEqual([archived]);
     });
 
@@ -1430,7 +1452,7 @@ describe('SpaceTaskRepository', () => {
       let before: number | undefined;
       let beforeId: string | undefined;
       for (let guard = 0; guard < 10; guard++) {
-        const page = repo.listByGoal(goalId, {
+        const page = repo.listByGoal(spaceId, goalId, {
           limit: 2,
           before,
           beforeId,
@@ -1448,11 +1470,11 @@ describe('SpaceTaskRepository', () => {
     it('reports a stable total across pages (independent of the cursor)', () => {
       for (let i = 0; i < 5; i++) seedTask(`task-${i}`, 1000 + i * 100);
 
-      const first = repo.listByGoal(goalId, { limit: 2 });
+      const first = repo.listByGoal(spaceId, goalId, { limit: 2 });
       expect(first.total).toBe(5);
       expect(first.tasks.length).toBe(2);
 
-      const second = repo.listByGoal(goalId, {
+      const second = repo.listByGoal(spaceId, goalId, {
         limit: 2,
         before: first.tasks[first.tasks.length - 1].createdAt,
         beforeId: first.tasks[first.tasks.length - 1].id,
@@ -1465,7 +1487,7 @@ describe('SpaceTaskRepository', () => {
       const ids: string[] = [];
       for (let i = 0; i < 4; i++) ids.push(seedTask(`task-${i}`, 1000 + i * 100));
 
-      const first = repo.listByGoal(goalId, { limit: 2 });
+      const first = repo.listByGoal(spaceId, goalId, { limit: 2 });
       const lastUnseen = ids[1];
       (db as any)
         .prepare(`UPDATE space_tasks SET updated_at = ? WHERE id = ?`)
@@ -1475,7 +1497,7 @@ describe('SpaceTaskRepository', () => {
       let before = first.tasks[first.tasks.length - 1].createdAt;
       let beforeId = first.tasks[first.tasks.length - 1].id;
       for (let guard = 0; guard < 10; guard++) {
-        const page = repo.listByGoal(goalId, { limit: 10, before, beforeId });
+        const page = repo.listByGoal(spaceId, goalId, { limit: 10, before, beforeId });
         collected.push(...page.tasks.map((t) => t.id));
         if (!page.hasMore) break;
         const last = page.tasks[page.tasks.length - 1];
@@ -1490,11 +1512,11 @@ describe('SpaceTaskRepository', () => {
     it('clamps the page size to the bounded range', () => {
       for (let i = 0; i < 5; i++) seedTask(`task-${i}`, 1000 + i * 100);
 
-      const tiny = repo.listByGoal(goalId, { limit: -1 });
+      const tiny = repo.listByGoal(spaceId, goalId, { limit: -1 });
       expect(tiny.tasks.length).toBe(1);
       expect(tiny.hasMore).toBe(true);
 
-      const huge = repo.listByGoal(goalId, { limit: 1000 });
+      const huge = repo.listByGoal(spaceId, goalId, { limit: 1000 });
       expect(huge.tasks.length).toBe(5);
       expect(huge.hasMore).toBe(false);
     });
@@ -1503,7 +1525,7 @@ describe('SpaceTaskRepository', () => {
       const ids: string[] = [];
       for (let i = 0; i < 3; i++) ids.push(seedTask(`task-${i}`, 1000 + i * 100));
 
-      const first = repo.listByGoal(goalId, { limit: 1 });
+      const first = repo.listByGoal(spaceId, goalId, { limit: 1 });
       expect(first.tasks.length).toBe(1);
 
       seedTask('late-insert', 9000);
@@ -1512,7 +1534,7 @@ describe('SpaceTaskRepository', () => {
       let before = first.tasks[0].createdAt;
       let beforeId = first.tasks[0].id;
       for (let guard = 0; guard < 10; guard++) {
-        const page = repo.listByGoal(goalId, { limit: 1, before, beforeId });
+        const page = repo.listByGoal(spaceId, goalId, { limit: 1, before, beforeId });
         if (page.tasks.length === 0) break;
         collected.push(page.tasks[0].id);
         before = page.tasks[0].createdAt;

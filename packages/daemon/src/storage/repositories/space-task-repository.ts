@@ -238,6 +238,7 @@ export class SpaceTaskRepository {
   }
 
   listByGoal(
+    spaceId: string,
     goalId: string,
     params: {
       status?: SpaceTaskStatus;
@@ -249,8 +250,8 @@ export class SpaceTaskRepository {
     const limit = Math.max(1, Math.min(100, Math.trunc(params.limit ?? 20)));
     const cursorId =
       typeof params.beforeId === 'string' && params.beforeId.length > 0 ? params.beforeId : null;
-    const scopeWhere: string[] = [`goal_id = ?`];
-    const scopeBind: SQLiteValue[] = [goalId];
+    const scopeWhere: string[] = [`goal_id = ?`, `space_id = ?`];
+    const scopeBind: SQLiteValue[] = [goalId, spaceId];
     if (params.status) {
       scopeWhere.push(`status = ?`);
       scopeBind.push(params.status);
