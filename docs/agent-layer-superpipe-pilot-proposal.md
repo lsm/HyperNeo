@@ -447,12 +447,17 @@ note.
   the leak**: `acp-query-runner.ts:906` calls `beginTerminalIdle()`, awaits
   `errorManager.handleError()` through `:920`, and its finalizer calls
   `setIdle()` only under the non-stale guard (`:736–767`), so a replacement
-  during that await does **not** leak — `handleRunError` awaits
+  during that await does **not leak the fence** — `handleRunError` awaits
   `handleError` (:907–920) and then calls `setIdle()` unconditionally
-  (:921), so a non-throwing error manager consumes the fence even under
-  replacement; the leak is the **rejection interleaving**: a `handleError`
+  (:921) — **but a stale unconditional consume is itself harmful**: it writes
+  the shared state to idle and drains the *replacement's* current idle
+  waiters (processing-state-manager.ts:143–175), so the successor can be
+  reported complete while still running. The ACP terminal path therefore
+  takes a **post-effect generation/lifecycle resnapshot** before `:921`:
+  when ownership changed it cancels the owned fence instead of idling;
+  the **rejection interleaving** remains the leak case — a `handleError`
   throw propagates past `:921` to the stale-gated finalizer backstop
-  (:736, :766–767), which skips — only that path leaves the ACP-owned fence
+  (:736, :766–767), which skips, leaving the ACP-owned fence
   live; the ACP terminal path uses the same owned-fence
   cancellation primitive for its rejection interleaving;
   folding it into `terminal(category)` would replace the actionable validation
