@@ -84,7 +84,16 @@ regardless of generations (A applies, B snapshots A while applying B, A
 restores the daemon baseline, B then restores "A" — leaving provider A's
 credentials in `process.env`); the remedy is daemon-wide serialization or
 stack ownership across *all* sessions, or eliminating the shared mutation
-(e.g. per-session env passed to the spawn rather than `process.env`). The common finalizer shares the flaw at the
+(e.g. per-session env passed to the spawn rather than `process.env`) — and
+**the coordinator must live at the shared `ProviderService` boundary, not in
+QueryRunner**: the same global environment has other concurrent owners —
+`acp-query-runner.ts:456` (`applyEnvVarsToProcessForSession`) and
+`evolution-conversation-analysis-service.ts:287`,
+`evolution-episode-service.ts:752`, `llm-workflow-selector.ts:48`,
+`session-lifecycle.ts:934` (`applyEnvVarsToProcessForProvider`) — so a
+QueryRunner-scoped coordinator still lets any of these snapshot or restore
+another owner's values; the mechanism is enforced in `ProviderService` itself
+(or every caller is explicitly migrated). The common finalizer shares the flaw at the
 largest scale: it snapshots staleness once at :1295, then can await the
 provider-service import and `setIdle` before clearing shared environment state,
 consumed-message state, and `ctx.queryPromise` at :1321–1338 — a replacement
