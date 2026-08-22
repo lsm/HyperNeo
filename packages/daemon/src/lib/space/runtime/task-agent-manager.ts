@@ -85,6 +85,13 @@ import {
   resolveSpawnWorkspace,
   resolveWorkflowNodeSlot,
 } from './spawn-slot-resolution';
+import {
+  assembleVerifiedStopResult,
+  decideStopVerification,
+  isStopDownProcessingStatus,
+  type StopVerificationDecision,
+  type StopVerificationSnapshot,
+} from './stop-verification-gates';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
@@ -2252,32 +2259,42 @@ export class TaskAgentManager {
       }
 
       const notes: string[] = [];
+      let interruptAttemptsSoFar = 0;
+      let escalationDone = false;
 
-      try {
-        await this.stopSessionPreserveDb(sessionId, session, { strict: true });
-      } catch (err) {
-        notes.push(`interrupt failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-
-      let verdict = await this.inspectSessionDown(session);
-      if (!verdict.down) {
-        log.warn(
-          `TaskAgentManager.stopSessionsVerified: session ${sessionId} still alive after interrupt (${verdict.reason}); retrying once`
-        );
+      const attemptInterrupt = async (failureNote: string): Promise<void> => {
         try {
           await this.stopSessionPreserveDb(sessionId, session, { strict: true });
         } catch (err) {
-          notes.push(`retry interrupt failed: ${err instanceof Error ? err.message : String(err)}`);
+          notes.push(`${failureNote}: ${err instanceof Error ? err.message : String(err)}`);
         }
-        verdict = await this.inspectSessionDown(session);
-        if (verdict.down) notes.push('first interrupt did not land; stopped on retry');
-      }
+        interruptAttemptsSoFar += 1;
+      };
 
-      if (!verdict.down) {
-        log.warn(
-          `TaskAgentManager.stopSessionsVerified: session ${sessionId} survived interrupt retry (${verdict.reason}); escalating to tracked process termination`
+      const decideNextStopAction = async (): Promise<StopVerificationDecision> =>
+        decideStopVerification(
+          await this.gatherStopVerificationSnapshot(session, interruptAttemptsSoFar, escalationDone)
         );
-        notes.push(`escalated after verification failure (${verdict.reason})`);
+
+      await attemptInterrupt('interrupt failed');
+
+      let decision = await decideNextStopAction();
+      while (decision.action === 'retry_interrupt' || decision.action === 'escalate_terminate') {
+        if (decision.action === 'retry_interrupt') {
+          log.warn(
+            `TaskAgentManager.stopSessionsVerified: session ${sessionId} still alive after interrupt (${decision.reason}); retrying once`
+          );
+          await attemptInterrupt('retry interrupt failed');
+          decision = await decideNextStopAction();
+          if (decision.action === 'down') {
+            notes.push('first interrupt did not land; stopped on retry');
+          }
+          continue;
+        }
+        log.warn(
+          `TaskAgentManager.stopSessionsVerified: session ${sessionId} survived interrupt retry (${decision.reason}); escalating to tracked process termination`
+        );
+        notes.push(`escalated after verification failure (${decision.reason})`);
         try {
           session.terminateTrackedAgentProcesses({
             forceDelayMs: VERIFIED_STOP_ESCALATION_FORCE_KILL_MS,
@@ -2285,7 +2302,8 @@ export class TaskAgentManager {
         } catch (err) {
           notes.push(`escalation failed: ${err instanceof Error ? err.message : String(err)}`);
         }
-        verdict = await this.inspectSessionDown(session);
+        escalationDone = true;
+        decision = await decideNextStopAction();
       }
 
       this.detachSessionBookkeeping(sessionId);
@@ -2296,37 +2314,37 @@ export class TaskAgentManager {
         notes.push(`unregister failed: ${err instanceof Error ? err.message : String(err)}`);
       }
 
-      if (verdict.down) {
-        return notes.length > 0
-          ? { sessionId, stopped: true, detail: notes.join('; ') }
-          : { sessionId, stopped: true };
-      }
-      return {
-        sessionId,
-        stopped: false,
-        detail: [...notes, `still alive: ${verdict.reason}`].join('; '),
-      };
+      return assembleVerifiedStopResult({ sessionId, notes, decision });
     } finally {
       this.cancellingSessions.delete(sessionId);
     }
   }
 
-  private async inspectSessionDown(
-    session: AgentSession
-  ): Promise<{ down: boolean; reason?: string }> {
-    const status = session.getProcessingState().status;
-    if (status !== 'idle' && status !== 'interrupted') {
-      return { down: false, reason: `processing state '${status}'` };
-    }
-    if (session.isInterruptInProgress()) {
-      return { down: false, reason: 'interrupt still in progress' };
-    }
+  private async gatherStopVerificationSnapshot(
+    session: AgentSession,
+    interruptAttemptsSoFar: number,
+    escalationDone: boolean
+  ): Promise<StopVerificationSnapshot> {
+    const processingStatus = session.getProcessingState().status;
+    const interruptInProgress =
+      isStopDownProcessingStatus(processingStatus) && session.isInterruptInProgress();
+    const livePids =
+      isStopDownProcessingStatus(processingStatus) && !interruptInProgress
+        ? await this.readLivePidsAfterSettle(session)
+        : [];
+    return {
+      sessionPresent: true,
+      processingStatus,
+      interruptInProgress,
+      livePids,
+      interruptAttemptsSoFar,
+      escalationDone,
+    };
+  }
+
+  private async readLivePidsAfterSettle(session: AgentSession): Promise<number[]> {
     await this.awaitSessionProcessExit(session, VERIFIED_STOP_PROCESS_EXIT_SETTLE_MS);
-    const livePids = session.getTrackedAgentRootPidsSplit().live;
-    if (livePids.length > 0) {
-      return { down: false, reason: `live SDK process pid(s) ${livePids.join(', ')}` };
-    }
-    return { down: true };
+    return session.getTrackedAgentRootPidsSplit().live;
   }
 
   private async awaitSessionProcessExit(session: AgentSession, timeoutMs: number): Promise<void> {
