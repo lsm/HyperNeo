@@ -536,7 +536,13 @@ note.
   startup timeout and an ordinary timeout are both `TIMEOUT`, but only the
   former gets startup-specific guidance), so the route carries the hint/subtype
   and the decision table asserts it instead of the interpreter re-deriving it —
-  **with a post-effect lifecycle resnapshot**: `errorManager.handleError` is
+  **with a post-effect lifecycle resnapshot — and the owner propagates into
+  the helper**: `broadcastError()` awaits `updateApiConnectionStatus()`
+  before publishing `session.error` (error-manager.ts:436–450), so the old
+  terminal route publishes its reset/error state after the replacement has
+  taken over but before the caller's post-effect check runs; the owner is
+  passed into `errorManager` and revalidated before its post-await
+  publication. `errorManager.handleError` is
   awaited (:1271–1285) before the common `setIdle` (:1289), so a replacement or
   cleanup can take ownership during that effect, and a stale result routes to
   no-op before the trailing idle, symmetric with the api-validation and
@@ -1127,7 +1133,15 @@ note.
   *before* the await and the path bypasses the later `!alreadyConsumed`
   checks, so without them a superseded handler still installs the
   waiter/observer and returns `driving` for the replacement query — claim
-  supersession joins the interleaving pin — pinned by a
+  supersession joins the interleaving pin — and **ownership is revalidated
+  after the SDK acknowledgement too**: `driveDeliveryTurn` awaits
+  `started.acknowledgment` (`:1517–1523`) after every earlier check has
+  passed, and a claim superseded during that await resumes into
+  `markDeliveryBatchConsumed()` and consumption signaling even when
+  replacement teardown resolved the yielded durable entry via
+  `MessageQueue.clear()` — cleared, not consumed; delivery ownership is
+  revalidated after the acknowledgement and before the durable
+  status/signaling effects — pinned by a
   **deterministic interleaving test** (deferred `ensureQueryStarted` promise;
   start cleanup before resolving it; assert the resnapshot disarms the
   preinstalled observer, creates no idle waiter, and returns without
