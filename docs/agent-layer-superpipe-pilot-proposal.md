@@ -668,8 +668,13 @@ note.
      (processing-state-manager.ts:156, :168–175). This PR also carries the
      **notice-publication fix**: `displayErrorAsAssistantMessage` gates its
      `state.sdkMessages.delta` emission on `saveSDKMessage`'s boolean with
-     the returned-false path pinned — otherwise the shell-retained helper
-     stays unchanged and clients keep receiving notices absent from the DB.
+     the returned-false path pinned — and gates **both** same-named helpers:
+     the QueryRunner's (`query-runner.ts:1619–1643`) and
+     `SDKMessageHandler.displayErrorAsAssistantMessage`
+     (sdk-message-handler.ts:239 ignores the save and emits at `:241–245`;
+     called from `handleCircuitBreakerTrip`), each with its returned-false
+     pin — otherwise the shell-retained helpers
+     stay unchanged and clients keep receiving notices absent from the DB.
      Because it edits `acp-query-runner.ts`, **PR 5 sequences after — or
      explicitly coordinates with — ACP split 8/10** (the collision exemption
      in §3 covers Chain B's query-runner scope only, and this PR steps
@@ -1170,8 +1175,12 @@ refresh can publish after teardown (:794).
 **Prerequisite PR 0 — provider-environment coordinator.** The daemon-wide
 credential isolation this proposal requires (§1(a)) is delivered by no chain
 PR and must not ride along implicitly: one dedicated PR implements the
-ProviderService-boundary coordinator (credential-reads → apply → spawn/use
-serialization), enrolls every owner and reader in the inventory — both
+ProviderService-boundary coordinator (credential-reads → apply →
+**copy-and-restore** serialization for the QueryRunner path — the lease
+releases at the immutable `queryOptions.env` copy, before startup-gate
+admission, per the bounded critical section in §1(a); bounded use-time leases
+apply only to direct SDK paths that do not snapshot an environment), enrolls
+every owner and reader in the inventory — both
 runners, the four ProviderService services, the Anthropic model loader, the
 GitHub security/router spawns, and the ambient availability readers — handles
 ACP's pre-apply snapshot and the recursive arms' release-before-recursion, and
