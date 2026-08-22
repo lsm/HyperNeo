@@ -18,6 +18,7 @@ HyperNeo is a browser UI for the Claude Agent SDK: multi-session chat, provider/
 - `packages/daemon` — backend, sessions, providers, persistence, Space orchestration
 - `packages/shared` — shared types and MessageHub protocol
 - `packages/messaging` — transport-independent messaging contracts
+- `packages/prompts` — agent-facing prompts authored as markdown; `bun run prompts:generate` emits the committed TS registry (`check:prompts-sync` guards freshness)
 - `packages/web` — Preact frontend
 - `packages/ui` — component library
 - `packages/skills` — bundled skill plugins

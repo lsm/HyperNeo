@@ -37,7 +37,6 @@ export * from './validation/workspace-path.ts';
 export * from './lib/workflow-graph.ts';
 export * from './lib/workflow-handoff.ts';
 export * from './acp/index.ts';
-export * from './prompts/index.ts';
 
 export {
   Logger,

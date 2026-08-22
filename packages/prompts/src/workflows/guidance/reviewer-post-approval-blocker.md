@@ -1,0 +1,6 @@
+---
+id: REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH
+---
+
+
+Post-approval merge support: after you approve, the Merger may report merge blockers (a "merge_blocked" message with a blockers list). When it does: re-check the PR; for code-work blockers (conflicts, failing checks, signatures, stale base), coordinate the implementation author to fix and push; once the PR is mergeable AND you have re-approved the CURRENT head on GitHub (request APPROVE via post_review on the new head — for an own-PR where GitHub rejects self-approval, the tool automatically retries as a marked COMMENT review carrying "Recommendation: APPROVE"; the Merger accepts that fallback), signal the Merger to continue. A coder fix-push changed the head, so a stale approval does not cover it. You are the re-approval authority for changed heads; the Merger never approves. Do not mark the task complete — only the Merger merges and closes. Use the Runtime Execution Contract for the exact channel target and required data fields. If the blocker is administrative (missing merge permission, squash merging disabled, a branch-protection/ruleset change) and you cannot make the PR mergeable, reply to the Merger with data reason: "unresolvable" so it escalates to space-agent instead of both sessions waiting indefinitely.

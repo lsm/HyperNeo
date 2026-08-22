@@ -11,10 +11,18 @@
     "types": ["bun"],
     "paths": {
       "@/*": ["./src/*"],
+      "@hyperneo/prompts": ["../prompts/src/mod.ts"],
+      "@hyperneo/prompts/*": ["../prompts/src/*"],
       "@hyperneo/shared": ["../shared/src/mod.ts"],
       "@hyperneo/shared/*": ["../shared/src/*"]
     }
   },
-  "include": ["src/**/*", "main.ts", "../shared/src/**/*", "research-context-info.ts"],
+  "include": [
+    "src/**/*",
+    "main.ts",
+    "../shared/src/**/*",
+    "../prompts/src/**/*",
+    "research-context-info.ts"
+  ],
   "exclude": ["node_modules", "dist", "tests/**/*", "test-*.ts"]
 }
