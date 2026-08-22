@@ -1,3 +1,4 @@
+import { POST_APPROVAL_COMPLETION_INSTRUCTIONS } from '@hyperneo/prompts';
 import type {
   SpaceTask,
   SpaceWorkflow,
@@ -71,16 +72,6 @@ export type PostApprovalRouteResult =
     }
   | { mode: 'already-routed'; postApprovalSessionId: string }
   | { mode: 'skipped'; reason: string };
-
-const POST_APPROVAL_COMPLETION_INSTRUCTIONS =
-  `When the post-approval work is finished, call mark_complete to transition the\n` +
-  `task from \`approved\` to \`done\`. If you are blocked and cannot complete the\n` +
-  `work, do NOT call mark_complete — the post-approval node-agent surface has no\n` +
-  `request-human tool, so surface the blocker via send_message(target="space-agent")\n` +
-  `and save a NON-result artifact describing the block (e.g. shape:"note", kind:"blocked"). A\n` +
-  `kindless \`decision\` would be picked up as the task result on a later mark_complete,\n` +
-  `poisoning completion. Then stop.\n\n` +
-  `Do NOT call approve_task; the task has already been approved upstream.`;
 
 export function appendPostApprovalCompletionInstructions(interpolatedInstructions: string): string {
   const trimmed = interpolatedInstructions.trim();

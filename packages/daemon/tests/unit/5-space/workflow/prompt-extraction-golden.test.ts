@@ -31,6 +31,16 @@ import {
 import { getLongHorizonAgentTemplates } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { LONG_HORIZON_SCHEDULING_GUARDRAIL } from '../../../../src/lib/space/agents/long-horizon-agent-tools.ts';
 import { NON_DELEGATING_GENERAL_AGENT } from '../../../../src/lib/space/agents/custom-agent.ts';
+import { COORDINATOR_AGENT } from '../../../../src/lib/agent/coordinator/coordinator.ts';
+import { coderAgent } from '../../../../src/lib/agent/coordinator/coder.ts';
+import { reviewerAgent } from '../../../../src/lib/agent/coordinator/reviewer.ts';
+import { debuggerAgent } from '../../../../src/lib/agent/coordinator/debugger.ts';
+import { testerAgent } from '../../../../src/lib/agent/coordinator/tester.ts';
+import { vcsAgent } from '../../../../src/lib/agent/coordinator/vcs.ts';
+import { verifierAgent } from '../../../../src/lib/agent/coordinator/verifier.ts';
+import { ROUTER_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/router-prompt.ts';
+import { SECURITY_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/security-prompt.ts';
+import { buildSpaceChatSystemPrompt } from '../../../../src/lib/space/agents/space-chat-agent.ts';
 
 const GOLDEN: Record<string, string> = {
   CODEX_REACTION_APPROVAL_GUIDANCE:
@@ -81,6 +91,15 @@ const GOLDEN: Record<string, string> = {
   PRESET_RESEARCH_PROMPT: 'acc05ba0296ae52784b5477f97bd7246446644510c8e8228540f6387bcd8495e',
   QA_SYSTEM_CONTRACT: '28c9d2cb8b39f3b422f651ae23c777214ec097e723943179e2a9166ef77a72b4',
   REVIEWER_SYSTEM_CONTRACT: '64facf6219d5e5edad45f1beaf475fe81b33bb0137dc755d99f9f07413b19490',
+  COORDINATOR_PROMPT: '28f30cf29ed5764a703a90029dc468c5e905dc8eb057abf1779e3e5ce9e25487',
+  GITHUB_ROUTER_SYSTEM_PROMPT: '39f3b5c43689366029c130b0aa0d1a83c185ef527671cae1d858ed6213e322a6',
+  GITHUB_SECURITY_SYSTEM_PROMPT: '486aff88bf9a9c66ac69abe074270c5c538a1433c81dc126228f97de5f65c9bd',
+  SUBAGENT_CODER_PROMPT: '5f01cfb2266c6f8a2d154da7aea4162e2297236545bcad2248447a974d6a1dac',
+  SUBAGENT_DEBUGGER_PROMPT: '844cd806780d789b9d24466d7157be365e87a55064fa1108681ec7510b12aed1',
+  SUBAGENT_REVIEWER_PROMPT: '3d62ec5b500028f9513df1c9d4cd6dad24a8e956026a12969fc59c7117c76d8d',
+  SUBAGENT_TESTER_PROMPT: '9197c4c373bd99d8b3fb88dd7ed98788cd30521ca710c8adc8be139983a40bad',
+  SUBAGENT_VCS_PROMPT: 'ea28eae3d3fb3291df5324077b0f7d602ff9abe8222ffb2eec71c69fedbdb2b1',
+  SUBAGENT_VERIFIER_PROMPT: 'b5c24ec4a2b90c6ddc5b851e33e14da2fad554c528fa93027a9bc5a08dbfbfe0',
 };
 
 const byPreset = new Map(getPresetAgentTemplates().map((p) => [p.handle, p.customPrompt]));
@@ -129,6 +148,15 @@ const VALUES: Record<string, string> = {
   PRESET_GENERAL_PROMPT: byPreset.get('general')!,
   PRESET_PLANNER_PROMPT: byPreset.get('planner')!,
   PRESET_RESEARCH_PROMPT: byPreset.get('research')!,
+  COORDINATOR_PROMPT: COORDINATOR_AGENT.prompt,
+  SUBAGENT_CODER_PROMPT: coderAgent.prompt,
+  SUBAGENT_REVIEWER_PROMPT: reviewerAgent.prompt,
+  SUBAGENT_DEBUGGER_PROMPT: debuggerAgent.prompt,
+  SUBAGENT_TESTER_PROMPT: testerAgent.prompt,
+  SUBAGENT_VCS_PROMPT: vcsAgent.prompt,
+  SUBAGENT_VERIFIER_PROMPT: verifierAgent.prompt,
+  GITHUB_ROUTER_SYSTEM_PROMPT: ROUTER_AGENT_SYSTEM_PROMPT,
+  GITHUB_SECURITY_SYSTEM_PROMPT: SECURITY_AGENT_SYSTEM_PROMPT,
 };
 
 describe('prompt extraction golden hashes', () => {
@@ -141,5 +169,36 @@ describe('prompt extraction golden hashes', () => {
       const actual = createHash('sha256').update(VALUES[id]!).digest('hex');
       expect(actual, id).toBe(expected);
     }
+  });
+});
+
+const SPACE_CHAT_FIXTURE = {
+  background: 'FIXTURE_BACKGROUND',
+  instructions: 'FIXTURE_INSTRUCTIONS',
+  workflows: [{ name: 'FIX WF', id: 'fix-wf', nodeCount: 2, tags: ['coding'] }],
+  agents: [{ name: 'FIX AG', description: 'fixture agent' }],
+};
+
+const ASSEMBLED_GOLDEN: Record<string, string> = {
+  SPACE_CHAT_ASSEMBLED_EMPTY: '28b742050181d4753fccdb58e95c9ee0ae7a1ef74ac7c6edd4a9729ed8391a90',
+  SPACE_CHAT_ASSEMBLED_L1: '7bdb8a79b1e3d7e952a0cbc965b73924e99d0769845f5967ef62b31410ee5889',
+  SPACE_CHAT_ASSEMBLED_L2: 'f5535c3e96398bc540a0101a7cf0cb8cf706923b3952535ac16bd1526eb7b9bc',
+  SPACE_CHAT_ASSEMBLED_L3: '1a06198e884adcb39b5ff1b1ebebe8cad717f02999f93d80d3abde8a8f5a6e2a',
+  SPACE_CHAT_ASSEMBLED_L4: '9df690346f5f16741542eee4e10b0df2c28434dc52ca7e37bd449db92c7e6e5d',
+  SPACE_CHAT_ASSEMBLED_L5: 'd1d6a4df85083dac8ad17aefc5203fe9f7d383468d65fa5a535244b83b4f1868',
+};
+
+describe('space-chat system prompt assembly', () => {
+  test('assembled prompts are byte-identical across all autonomy levels', () => {
+    for (const level of [1, 2, 3, 4, 5]) {
+      const actual = createHash('sha256')
+        .update(
+          buildSpaceChatSystemPrompt({ ...SPACE_CHAT_FIXTURE, autonomyLevel: level } as never)
+        )
+        .digest('hex');
+      expect(actual, `level ${level}`).toBe(ASSEMBLED_GOLDEN[`SPACE_CHAT_ASSEMBLED_L${level}`]!);
+    }
+    const empty = createHash('sha256').update(buildSpaceChatSystemPrompt({})).digest('hex');
+    expect(empty).toBe(ASSEMBLED_GOLDEN['SPACE_CHAT_ASSEMBLED_EMPTY']!);
   });
 });
