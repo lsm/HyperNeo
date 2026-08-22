@@ -176,8 +176,11 @@ promoted). New module `sdk-message-projections.ts` beside the repo.
   may return either the NULL or non-NULL `consumed_seq` row as indexes or
   plans change, so a test asserting one outcome would encode the race and
   flake; assert only that both duplicate layouts expose the either/or outcome
-  (the bug-#2 ambiguity) and that `getUserMessageByUuid` :1554–1557 stays
-  deterministic earliest-wins.
+  (the bug-#2 ambiguity) — and note `getUserMessageByUuid` :1554–1557 is
+  earliest-wins *only under distinct timestamps*: its SELECT has no ORDER BY,
+  so duplicate rows tied at the same millisecond keep whichever row SQLite
+  returned first; treat the tie as another characterized ambiguity, or define
+  the `(timestamp, rowid)` tie-break in the fix before pinning an outcome.
 - **PR A2:** extract parse/inflate layer (`parseSdkMessageRow`, row-metadata
   attach used by :764–787, :821–839, :955–970, :1268–1284).
 - **PR A3:** extract content/text projections (`extractVisibleText`,
@@ -293,7 +296,11 @@ ADR sanctions pure-function admission gates from pilots 1/5).
   before inspecting any delivery status (:1742–1751), and when it exists,
   every consumed delivery reuses that exact sequence (:1769–1772) — so C3
   cannot drop the prerequisite or allocate unrelated sequences without a
-  failing pin; and the FTS malformed-shape pins, which cover two *distinct*
+  failing pin; and the dbId-keyed `deferEnqueuedUserMessage` (:1430–1452,
+  called directly at `agent-session.ts:696`) — the same
+  `enqueued → deferred` transition as its uuid-keyed sibling, so C3 routes it
+  through the shared rule while preserving its distinct lookup and return
+  shape; and the FTS malformed-shape pins, which cover two *distinct*
   outcomes — body extraction runs first (`extractVisibleSearchText` at
   :297–303, before the DELETE at :304–306 and all gates at :307–313), so a
   JSON-valid but invalid SDK payload (e.g. `null`) throws inside the flush
@@ -318,8 +325,14 @@ ADR sanctions pure-function admission gates from pilots 1/5).
   (:231–295) is the second production FTS admission implementation; parity-test
   its bulk SQL's admission outcomes against the extracted gates on identical
   inputs, then either route its WHERE policy through the shared predicates or
-  record the residual duplication as deliberate. Without this step the
-  extracted gates keep drifting against the second implementation.
+  record the residual duplication as deliberate. One clock for TTL parity:
+  the rebuild evaluates retention with SQLite's `strftime('now')` /
+  `unixepoch('now')` (:242, :285) while the extracted core receives an
+  injected `now` — parameterize the rebuild cutoff from that same injected
+  time before asserting parity, or clock advance/precision differences
+  between JS and SQLite produce false parity failures (or miss real boundary
+  mismatches). Without this step the extracted gates keep drifting against
+  the second implementation.
 - **PR C5 (cleanup + ADR note).**
 
 ## 5. Hot-path rule assessment
@@ -418,9 +431,12 @@ per-test FTS/policy-table helpers, badge COUNT-oracle :1274–1298, EXPLAIN pins
 PR 1s are gap-fills per chain, not from-scratch harnesses. Gaps confirmed: the
 members named in A1/C1, plus the
 `saveUserMessageCore`/`runPostSaveSideEffects` contract (only stubbed in
-`message-delivery-outbox.test.ts:181`). The reactiveDb path is exercised only
-by `sdk-message-repository-live-query.test.ts` (132 lines) — B1 extends that
-bootstrap.
+`message-delivery-outbox.test.ts:181`). The reactiveDb path is exercised by
+`sdk-message-repository-live-query.test.ts` (132 lines) and by
+`task-id-resolution-cache.test.ts:107–228` (saves through `reactiveDb.db`,
+asserts scoped `'sdk_messages'` notifications, and covers taskId-cache
+invalidation across session update, deletion, and transaction abort) — B1
+extends the appropriate harness rather than duplicating setup.
 
 ## 9. Recommendation
 
