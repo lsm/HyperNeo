@@ -253,13 +253,20 @@ apply PRs):
    enqueue failure after `deferred→enqueued` still strands an owner-less row. The
    fix shape is transactional ownership creation (status change + job insert in
    one transaction, as `persistAndEnqueueDelivery` already does) or an explicit
-   compensating transition. An expected-status CAS is explicitly *not* part of
-   this groundwork: the ack/consume paths run check→write synchronously in the
+   compensating transition. An expected-status CAS is *not* blanket groundwork:
+   the ack/consume paths run check→write synchronously in the
    single-process daemon (`consumePersistedUserMessage` commits its
    `updateMessageStatus` before its first await, sdk-message-handler.ts:302–306;
-   `handleMessageYielded` is synchronous through its update, :520–526), so a CAS
-   would close no reachable race — it was retracted on the same
-   run-to-completion grounds as the other withdrawn reports.
+   `handleMessageYielded` is synchronous through its update, :520–526) — but the
+   turn-end fallback-ack **loop** has inter-row awaits:
+   `acknowledgeOldestQueuedUserOnTurnEnd` snapshots all eligible rows
+   (:338–345), then awaits `messages.statusChanged` between consuming
+   successive rows (:370–374), so a later selected UUID can acquire new durable
+   or in-memory ownership during that await and still be marked consumed,
+   letting the new delivery be skipped without reaching the SDK. Chain C's
+   groundwork therefore requires eligibility/ownership revalidation (ideally an
+   atomic guarded transition) immediately before each acknowledgement in the
+   loop.
 4. **MessageQueue is shared by B and A**: the runner's generator consumes it
    (:1478–1510); the delivery machine admits into it (agent-session.ts:1481–1483).
    Extraction must not reorder enqueue vs generation-fence semantics
@@ -533,13 +540,15 @@ note.
      modules + pipeline composition, unwired.
   3. **PR 3 (apply):** interpret at :720–755/:936–973, :333–392, :872–889.
   4. **PR 4 (cleanup/ADR note).**
-- **Phase 0 primitives:** none for race-closing — the ack/consume flips
+- **Phase 0 primitives:** no blanket CAS — the single-row ack/consume flips
   (`acknowledgePersistedUserMessage` :265–296 → `consumePersistedUserMessage`
-  :298–331, `handleMessageYielded` :512–595) run check→write synchronously in
-  the single-process daemon, so an expected-status CAS on `sdk_messages` would
-  close no reachable race (retracted on the same run-to-completion grounds as
-  the other withdrawn reports). Transactional ownership creation (§4.3) remains
-  the Q4 fix where a job insert must accompany a status change.
+  :298–331, `handleMessageYielded` :512–595) run check→write synchronously —
+  but the turn-end fallback-ack loop does not: its snapshot-then-await-consume
+  shape (`:338–345` snapshot, `:370–374` awaited publish between rows) lets a
+  later selected UUID acquire new ownership mid-loop, so the loop requires
+  per-row eligibility/ownership revalidation before each acknowledgement
+  (ideally an atomic guarded transition). Transactional ownership creation
+  (§4.3) remains the Q4 fix where a job insert must accompany a status change.
 - **Impact/risk:** targets the recurring ack/idle/duplicate-delivery bug class
   (pre-import ancestors show it since Dec 2025; #2598 in-window). All targets
   are per-turn-boundary (cold) — hot-path rule respected. Risk moderate: the
