@@ -833,13 +833,20 @@ describe('activateTargetSessionsForMessage — admission', () => {
 
   test('spawn timeout returns [] while the background spawn continues', async () => {
     const spawnOutcome = deferred<string>();
-    const h = makeActivateHarness({
-      executions: [makeExecution()],
-      spawn: () => {
-        h.order.push('spawn');
-        return spawnOutcome.promise;
-      },
-    });
+    const h = makeActivateHarness({ executions: [makeExecution()] });
+    (
+      h.tam as unknown as {
+        spawnWorkflowNodeAgentForExecution: (...args: unknown[]) => Promise<string>;
+      }
+    ).spawnWorkflowNodeAgentForExecution = async () => {
+      h.order.push('spawn');
+      const sessionId = await spawnOutcome.promise;
+      h.updates.push({
+        id: 'exec-1',
+        patch: { agentSessionId: sessionId, lateSpawnBound: true },
+      });
+      return sessionId;
+    };
     let observedDelay: number | undefined;
     const restoreTimers = fireActivationTimeoutImmediately((delay) => {
       observedDelay = delay;
@@ -852,8 +859,13 @@ describe('activateTargetSessionsForMessage — admission', () => {
       expect(observedDelay).toBe(30_000);
       expect(h.order).toEqual(['activation', 'spawn']);
 
+      expect(h.updates.some((u) => u.patch.lateSpawnBound)).toBe(false);
       spawnOutcome.resolve('late-session');
-      await expect(spawnOutcome.promise).resolves.toBe('late-session');
+      await spawnOutcome.promise;
+      expect(h.updates.some((u) => u.patch.lateSpawnBound)).toBe(true);
+      expect(h.updates.every((u) => u.patch.lateSpawnBound || u.patch.status === 'pending')).toBe(
+        true
+      );
     } finally {
       restoreTimers();
     }
