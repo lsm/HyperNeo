@@ -115,7 +115,15 @@ pre-apply snapshot**: `preCleanupAuth` captures `ANTHROPIC_AUTH_TOKEN` and
 `:456`, then injects them into the subprocess environment at `:532–536`, so
 the ACP process can launch with another session's credentials despite a
 serialized apply/restore; the ACP lease begins before `:451` or stops reading
-ambient auth there — and **before `optionsBuilder.build()` at `:440`**: the
+ambient auth there — and **before the provider auth gate itself**: the
+availability/auth awaits at `:416–417` run before even the pre-`:440` lease,
+and a replacement starting during them has the stale run call
+`errorManager.handleError()` in the unavailable-provider branch
+(`:422–429`), publishing an authentication error/reset into the
+replacement — ACP ownership is acquired before the auth gate, or lifecycle
+is revalidated after every pre-lease await with the owner propagated
+through the error helper, with a replacement-during-auth-check pin — and
+**before `optionsBuilder.build()` at `:440`**: the
 non-Anthropic branch copies ambient provider credentials and routing values
 (query-options-builder.ts:785–809), and the later
 `refreshQueryEnvFromProcess(... omitProviderManagedPreserveAuth: true)` at
