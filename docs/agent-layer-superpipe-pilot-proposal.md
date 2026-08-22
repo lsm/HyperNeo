@@ -738,7 +738,27 @@ note.
      eventually close the replacement's shared `ctx.queryObject`
      (`:491–520`); both the enqueue and timer callbacks bind to the run
      generation, closing only the owned query object, with an
-     enqueue-during-stale-handshake pin. The
+     enqueue-during-stale-handshake pin. Three more ACP ownership gaps join
+     PR 5: the **retry arm** — its entry check (`:802–804`) is stale once a
+     replacement lands during the awaited `setIdle()`/process-exit, after
+     which the old arm re-enqueues, closes the replacement's shared
+     `ctx.queryObject` (`:839–843`), resets the process-exit promise, and
+     recurses (`:858`); lifecycle is revalidated after each retry await and
+     before those shared mutations/recursion, with a
+     replacement-during-ACP-retry pin. The **adapter's unconditional
+     `finally`** (`:701–704`) — a stopped adapter exiting after the
+     replacement re-enqueued the same UUID runs `markACPDeliveryFailed`,
+     transitioning the *current* `enqueued`/`deferred`/`submitted` row to
+     `failed` (sdk-message-repository.ts:1686–1697) even with every pre-yield
+     callback rejected; the finalizer is generation/claim-fenced, with an
+     adapter-exit-after-replacement pin. And **every await inside the leased
+     setup window** — `ensureRequiredMcpServersForAcp()` and
+     `proxyBridge.start()` block after lease acquisition, a replacement can
+     bump the generation there, and a stale spawn at `:539–548` lands *after*
+     `stop()`'s tracked-process snapshot so the stale-gated finalizer never
+     closes it, leaving an unowned ACP process; ownership is revalidated
+     after each setup await and immediately before spawn, unwinding the
+     bridge/lease when stale. The
      generation check
      also runs **immediately after the iterator yields, before any shared
      startup/message bookkeeping** — the old loop clears
