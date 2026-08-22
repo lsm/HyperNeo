@@ -199,8 +199,7 @@ export class SDKMessageHandler {
     if (expected === undefined) {
       return true;
     }
-    const userMessageUuid = (message as { user_message_uuid?: string }).user_message_uuid;
-    return userMessageUuid === undefined || userMessageUuid === expected;
+    return (message as { user_message_uuid?: string }).user_message_uuid === expected;
   }
 
   private settleSuppressedResultWaiter(confirmed: boolean): void {

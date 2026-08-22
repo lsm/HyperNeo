@@ -85,12 +85,13 @@ function makeClearResult(uuid: string, userMessageUuid?: string): SDKMessage {
   } as unknown as SDKMessage;
 }
 
-function makeClearErrorResult(uuid: string): SDKMessage {
+function makeClearErrorResult(uuid: string, userMessageUuid?: string): SDKMessage {
   return {
     type: 'result',
     subtype: 'error_max_turns',
     uuid,
     is_error: true,
+    ...(userMessageUuid ? { user_message_uuid: userMessageUuid } : {}),
     errors: ['max turns exceeded'],
     usage: {
       input_tokens: 10,
@@ -207,7 +208,9 @@ describe('AgentSession.clearConversationContext', () => {
     const yielded = await messages.next();
     yielded.value?.onSent();
 
-    await session.messageHandler.handleMessage(makeClearErrorResult('clear-error'));
+    await session.messageHandler.handleMessage(
+      makeClearErrorResult('clear-error', String(yielded.value?.message.uuid))
+    );
     await clear;
 
     expect(resolved).toBe(true);

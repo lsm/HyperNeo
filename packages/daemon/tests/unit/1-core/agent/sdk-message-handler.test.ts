@@ -774,6 +774,27 @@ describe('SDKMessageHandler', () => {
       expect(await wait).toBe(true);
     });
 
+    it('a result omitting user_message_uuid never confirms the correlated clear wait', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(20, 'clear-msg-id');
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'uuidless-result',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(await wait).toBe(false);
+    });
+
     it('an error result resolves the wait unconfirmed and releases idle suppression', async () => {
       const errorResult: SDKMessage = {
         type: 'result',
