@@ -411,6 +411,23 @@ describe('InterruptHandler', () => {
         expect(sdkCloseSpy).toHaveBeenCalled();
       });
 
+      it('delays the query abort until survivor cancellation has settled', async () => {
+        const abortController = new AbortController();
+        sdkInterruptSpy.mockImplementation(async () => ({ still_queued: ['uuid-a'] }));
+        const abortStatesDuringCancel: boolean[] = [];
+        sdkCancelAsyncMessageSpy.mockImplementation(async () => {
+          abortStatesDuringCancel.push(abortController.signal.aborted);
+          return true;
+        });
+        getSdkCapabilitiesSpy.mockImplementation(() => new Set(['interrupt_cancel_queued_v1']));
+        handler = createHandler({ queryAbortController: abortController });
+
+        await handler.handleInterrupt();
+
+        expect(abortStatesDuringCancel).toEqual([false]);
+        expect(abortController.signal.aborted).toBe(true);
+      });
+
       it('falls back to closing immediately when no capability provider is wired', async () => {
         sdkInterruptSpy.mockImplementation(async () => ({ still_queued: ['uuid-a'] }));
         handler = createHandler({ getSdkCapabilities: undefined });

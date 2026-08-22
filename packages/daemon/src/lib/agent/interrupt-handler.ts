@@ -99,11 +99,6 @@ export class InterruptHandler {
         messageQueue.clear();
       }
 
-      if (this.ctx.queryAbortController) {
-        this.ctx.queryAbortController.abort();
-        this.ctx.queryAbortController = null;
-      }
-
       const queryObjectSnapshot = this.ctx.queryObject;
 
       let hasInterruptSurvivors = false;
@@ -128,6 +123,11 @@ export class InterruptHandler {
           const errorMessage = error instanceof Error ? error.message : String(error);
           logger.warn('SDK interrupt() failed (may be expected):', errorMessage);
         }
+      }
+
+      if (this.ctx.queryAbortController) {
+        this.ctx.queryAbortController.abort();
+        this.ctx.queryAbortController = null;
       }
 
       if (this.ctx.queryPromise && !hasInterruptSurvivors) {
