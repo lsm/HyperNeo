@@ -93,7 +93,15 @@ QueryRunner**: the same global environment has other concurrent owners —
 `session-lifecycle.ts:934` (`applyEnvVarsToProcessForProvider`) — so a
 QueryRunner-scoped coordinator still lets any of these snapshot or restore
 another owner's values; the mechanism is enforced in `ProviderService` itself
-(or every caller is explicitly migrated). The common finalizer shares the flaw at the
+(or every caller is explicitly migrated) — and **one owner bypasses
+ProviderService entirely**: `AnthropicProvider.loadModelsFromSdk` mutates the
+same `process.env` directly (`applyEnvVarsForSdk`, anthropic-provider.ts:145)
+and holds the mutation across the awaited `supportedModels()` until
+restoration (:172), reached via `model-service.ts:187` and
+`provider-handlers.ts:435,476`; model enumeration concurrent with a session
+query can therefore snapshot/restore another owner's values despite a
+ProviderService coordinator — this direct owner joins the coordinator or
+eliminates its shared mutation too. The common finalizer shares the flaw at the
 largest scale: it snapshots staleness once at :1295, then can await the
 provider-service import and `setIdle` before clearing shared environment state,
 consumed-message state, and `ctx.queryPromise` at :1321–1338 — a replacement
