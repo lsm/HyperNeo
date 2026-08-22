@@ -12,7 +12,7 @@ export type InjectContextResetPlan =
 
 export type TurnEndFlushContextResetPlan =
   | { action: 'clear_then_flush' }
-  | { action: 'flush_without_clear' };
+  | { action: 'flush_without_clear'; reason?: 'active_delivery_job' };
 
 export function planInjectContextReset(args: {
   inputKind: string;
@@ -56,6 +56,9 @@ export function planTurnEndFlushContextReset(args: {
     args.taskDeliverableCount > 0
   ) {
     return { action: 'clear_then_flush' };
+  }
+  if (args.slotResetsContext && args.hasPriorContext && args.hasActiveDeliveryJob) {
+    return { action: 'flush_without_clear', reason: 'active_delivery_job' };
   }
   return { action: 'flush_without_clear' };
 }

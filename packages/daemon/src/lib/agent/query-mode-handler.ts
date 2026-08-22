@@ -120,6 +120,11 @@ export class QueryModeHandler {
     const taskUuids = new Set(
       flushMessages.filter((message) => message.isTaskInput).map((message) => message.uuid)
     );
+    const plan = this.planFlush(flushMessages, options);
+    const deferForActiveJob =
+      plan.action !== 'noop' &&
+      plan.contextReset.action === 'flush_without_clear' &&
+      plan.contextReset.reason === 'active_delivery_job';
     await this.ctx.ensureQueryStarted();
     let clearAttempted = false;
     let clearedContext = false;
@@ -133,7 +138,7 @@ export class QueryModeHandler {
       const replayContent = this.toReplayContent(msg.message.content);
       if (!replayContent) continue;
       if (!clearAttempted && taskUuids.has(msg.uuid)) {
-        if (this.flushClearBlockedByLiveWork()) {
+        if (this.flushClearBlockedByLiveWork() || deferForActiveJob) {
           await this.deferRemainingRows(messages, v2Owned, msg.uuid);
           return clearedContext;
         }
@@ -183,6 +188,7 @@ export class QueryModeHandler {
         const isUserMessage = isSDKUserMessage(msg);
         return {
           uuid: msg.uuid as string,
+          dbId: msg.dbId,
           isUserMessage,
           isTaskInput: isTaskFlushInput(msg as { isSynthetic?: boolean; inputKind?: string }),
           flattenedText: isUserMessage ? flattenDeliveryText(msg.message.content ?? '') : null,
@@ -198,9 +204,9 @@ export class QueryModeHandler {
     return decideTurnEndFlush({
       messages: flushMessages,
       activeInJobQueue:
-        jobQueue?.activeDeliveryMessageUuids(this.ctx.session.id) ?? new Set<string>(),
+        jobQueue?.activeDeliveryMessageUuids?.(this.ctx.session.id) ?? new Set<string>(),
       pendingInMemoryUuids: new Set<string>(),
-      activeTurnInJobQueue: jobQueue?.hasActiveTurnDeliveryJob(this.ctx.session.id) ?? false,
+      activeTurnInJobQueue: jobQueue?.hasActiveTurnDeliveryJob?.(this.ctx.session.id) ?? false,
       slotResetsContext: this.ctx.slotResetsContext?.() ?? false,
       hasPriorContext: !!this.ctx.session.sdkSessionId,
       pendingTaskInput: options?.pendingTaskInput === true,
@@ -229,6 +235,22 @@ export class QueryModeHandler {
     return true;
   }
 
+  private async deferTaskDeliverables(
+    flushMessages: FlushMessage[],
+    deliverables: ReadonlySet<string>
+  ): Promise<void> {
+    const dbIds = flushMessages
+      .filter((message) => message.isTaskInput && deliverables.has(message.uuid))
+      .map((message) => message.dbId);
+    if (dbIds.length === 0) return;
+    this.ctx.db.updateMessageStatus(dbIds, 'deferred');
+    await this.ctx.internalEventBus.publish('messages.statusChanged', {
+      sessionId: this.ctx.session.id,
+      messageIds: dbIds,
+      status: 'deferred',
+    });
+  }
+
   private async deliverFlushUnderV2(
     flushMessages: FlushMessage[],
     origin: MessageDeliveryOrigin,
@@ -242,10 +264,18 @@ export class QueryModeHandler {
     const plan = this.planFlush(flushMessages, options);
     if (plan.action === 'noop') return false;
     let clearedContext = false;
+    let deliverables = plan.action === 'batch' ? plan.uuids : plan.deliver;
     if (plan.contextReset.action === 'clear_then_flush') {
       clearedContext = await this.clearContextAheadOfFlush(flushMessages, options);
+    } else if (plan.contextReset.reason === 'active_delivery_job') {
+      const deliverableSet = new Set(deliverables);
+      await this.deferTaskDeliverables(flushMessages, deliverableSet);
+      deliverables = deliverables.filter((uuid) => {
+        const message = flushMessages.find((entry) => entry.uuid === uuid);
+        return message !== undefined && !message.isTaskInput;
+      });
+      if (deliverables.length === 0) return clearedContext;
     }
-    const deliverables = plan.action === 'batch' ? plan.uuids : plan.deliver;
     if (plan.action === 'batch' && !options?.deliverIndividually) {
       const batched = await deliverBatchAndMarkQueued({
         jobQueue,
@@ -325,7 +355,7 @@ export class QueryModeHandler {
     const { clearedContext } = await this.sendEnqueuedMessagesOnTurnEnd();
     if (!clearedContext) {
       const jobQueue = this.ctx.db.getJobQueueRepo?.();
-      if (jobQueue?.activeDeliveryMessageUuids(this.ctx.session.id).size) {
+      if (jobQueue?.activeDeliveryMessageUuids?.(this.ctx.session.id).size) {
         return;
       }
     }

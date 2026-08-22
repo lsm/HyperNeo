@@ -434,9 +434,13 @@ describe('message turn-end flush decision pipeline', () => {
       { action: 'batch', uuids: ['a', 'b'], contextReset: { action: 'flush_without_clear' } },
     ],
     [
-      'an active delivery job suppresses the flush clear',
+      'an active delivery job suppresses the flush clear and defers the reset',
       { activeInJobQueue: new Set(['uuid-active']) },
-      { action: 'batch', uuids: ['a', 'b'], contextReset: { action: 'flush_without_clear' } },
+      {
+        action: 'batch',
+        uuids: ['a', 'b'],
+        contextReset: { action: 'flush_without_clear', reason: 'active_delivery_job' },
+      },
     ],
     [
       'a pending task input behind a human-only backlog plans one clear ahead of the batch',

@@ -639,7 +639,8 @@ describe('QueryModeHandler', () => {
 
       expect(result).toEqual({ success: true, messageCount: 3 });
       expect(clearSpy).not.toHaveBeenCalled();
-      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(3);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(updateMessageStatusSpy).toHaveBeenLastCalledWith(['db-1', 'db-2', 'db-3'], 'deferred');
     });
 
     it('delivers a human-only backlog first and clears for the task input pending behind it', async () => {

@@ -13,6 +13,7 @@ export function resolveMessageOwnership(args: {
 
 export interface FlushMessage {
   uuid: string;
+  dbId: string;
   isUserMessage: boolean;
   isTaskInput: boolean;
   flattenedText: string | null;

@@ -152,7 +152,7 @@ describe('planTurnEndFlushContextReset', () => {
     ).toEqual({ action: 'flush_without_clear' });
   });
 
-  test('an active delivery job suppresses the flush clear', () => {
+  test('an active delivery job suppresses the flush clear and defers the reset', () => {
     expect(
       planTurnEndFlushContextReset({
         slotResetsContext: true,
@@ -160,6 +160,6 @@ describe('planTurnEndFlushContextReset', () => {
         hasActiveDeliveryJob: true,
         taskDeliverableCount: 3,
       })
-    ).toEqual({ action: 'flush_without_clear' });
+    ).toEqual({ action: 'flush_without_clear', reason: 'active_delivery_job' });
   });
 });

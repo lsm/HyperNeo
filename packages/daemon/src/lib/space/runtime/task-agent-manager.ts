@@ -3371,11 +3371,24 @@ export class TaskAgentManager {
       if (
         clearSuppressedByPendingWork &&
         !clearedUpstream &&
-        (backlogReplayFailed || this.clearStillBlocked(session))
+        (backlogReplayFailed || !replay.success || this.clearStillBlocked(session))
       ) {
-        const deferredDbId = existing
-          ? messageId
-          : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
+        if (existing) {
+          const flippedDbId = this.config.db
+            .getSDKMessageRepo()
+            .markDeliveryDeferredByUuid(sessionId, messageId);
+          if (flippedDbId) {
+            await this.publishMessageStatusChanged(sessionId, flippedDbId, 'deferred');
+            return flippedDbId;
+          }
+          return messageId;
+        }
+        const deferredDbId = this.config.db.saveUserMessage(
+          sessionId,
+          sdkUserMessage,
+          'deferred',
+          origin
+        );
         await this.publishMessageStatusChanged(sessionId, deferredDbId, 'deferred');
         return deferredDbId;
       }
