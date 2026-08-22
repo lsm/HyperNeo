@@ -110,7 +110,14 @@ export class AcpTransport {
       }
     });
 
-    this.processTree = (this.options.processTreeOwner ?? basicAcpProcessTreeOwner)(proc);
+    try {
+      this.processTree = (this.options.processTreeOwner ?? basicAcpProcessTreeOwner)(proc);
+    } catch (err) {
+      try {
+        basicAcpProcessTreeOwner(proc).terminate('SIGKILL');
+      } catch {}
+      throw err;
+    }
     this.options.onProcessSpawn?.(proc);
 
     proc.stdout?.on('data', (chunk: Buffer) => {

@@ -201,6 +201,7 @@ describe('AcpTransport', () => {
     expect(() => new AcpTransport({ command: 'missing', processTreeOwner })).toThrow(
       'missing process id'
     );
+    expect(lastMockProcess?.killed).toBe(true);
     expect(() => lastMockProcess?.emit('error', new Error('spawn ENOENT'))).not.toThrow();
   });
 
