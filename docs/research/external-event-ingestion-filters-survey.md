@@ -186,7 +186,13 @@ polling sources.
   and gates **first observations only** (review finding, PR #2723): a `getByDedupe`
   lookup precedes the gate, and an existing canonical row — retryable (`published`)
   or terminal — bypasses the gate entirely and flows through the normal duplicate
-  path. Without this, an event admitted and persisted while identity was unknown
+  path. The dedupe check, gate decision, and insertion execute **inside one per-key
+  critical section** (review finding, PR #2723 — the wave-13 admission section,
+  with the dedupe lookup riding *inside* it, not before it): two overlapping
+  same-key observations must not both classify as first, or the first can persist
+  and fail during bus delivery while the second — seeing a warmed identity or
+  changed filter — is dropped without invoking the publisher, stranding the
+  retryable canonical row. Without this, an event admitted and persisted while identity was unknown
   (fail-open) could be re-observed after the cache warms, classified as a
   self-event, returned as an intentional drop, and the polling cursor would advance
   without the retryable-duplicate republish (`_handleRetryableDuplicate`) —
