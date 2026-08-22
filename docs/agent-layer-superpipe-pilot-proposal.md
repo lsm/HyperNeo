@@ -665,7 +665,14 @@ note.
      `ProcessingStateManager.setIdle`
      gains the generation/owner-scoped state transition and waiter drain with
      the replacement-during-publish interleaving pinned
-     (processing-state-manager.ts:156, :168–175). This PR also carries the
+     (processing-state-manager.ts:156, :168–175) — using a **separate
+     query-owner token, not the existing `idleWaiters.gen`**: that field
+     stores the *rate-limit episode* generation
+     (agent-session.ts:1390–1392 → processing-state-manager.ts:44–45,
+     :79–83), and reinterpreting it as query ownership strands the current
+     delivery waiter or drains another query's when the numbers coincide;
+     each waiter carries both filters, with query-replacement and
+     rate-limit-episode filtering each pinned. This PR also carries the
      **notice-publication fix**: `displayErrorAsAssistantMessage` gates its
      `state.sdkMessages.delta` emission on `saveSDKMessage`'s boolean with
      the returned-false path pinned — and gates **both** same-named helpers:
@@ -1193,7 +1200,13 @@ PR and must not ride along implicitly: one dedicated PR implements the
 ProviderService-boundary coordinator (credential-reads → apply →
 **copy-and-restore** serialization for the QueryRunner path — the lease
 releases at the immutable `queryOptions.env` copy, before startup-gate
-admission, per the bounded critical section in §1(a); bounded use-time leases
+admission, per the bounded critical section in §1(a) — and **ACP gets its own
+bounded section**: it applies at `:456`, builds `acpEnv` at `:522–536`, and
+synchronously spawns `AcpClient` at `:539–548`, but restores only in the
+finalizer (`:760–764`), so a full-lifetime lease would block every other
+session indefinitely; the ACP lease spans only through the transport's
+process-environment snapshot/spawn, then restores and releases before the
+handshake/message loop, with a concurrent-session pin. Bounded use-time leases
 apply only to direct SDK paths that do not snapshot an environment), enrolls
 every owner and reader in the inventory — both
 runners, the four ProviderService services, the Anthropic model loader, the
