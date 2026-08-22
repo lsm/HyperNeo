@@ -51,8 +51,7 @@ repeat one teardown liturgy four times (:912–934, :972–1002, :1018–1058,
 arm before it recurses, but they do **not** fence every async window: state
 mutations precede the arm's guard in several places — the transient arm awaits
 `setIdle` (:1024) and re-enqueues the consumed message (:1027–1034) before its
-first check (:1060); the message-not-found arm consumes the one-shot resume
-pointer (:970) before any check; and every arm's awaited `setIdle`
+first check (:1060); and every arm's awaited `setIdle`
 (:906, :1024) precedes its first guard (:908, :1060) — so a replacement landing
 inside those windows can have its state mutated by the stale arm. The 5xx arm is
 the fenced one: its revalidation gate (:1127–1138) sits immediately before the
@@ -264,8 +263,10 @@ note.
   (async stages: sleep, re-check, re-enqueue) but sync-core-first per Decision
   item 5; the existing generation guards inform the resnapshot stage but must not
   be presented as complete fencing — PR 1 pins the unfenced windows (transient
-  arm :1024–1034 ahead of :1060; message-not-found :970; every arm's awaited
-  `setIdle` ahead of its first guard) as characterization, and tightening them is
+  arm :1024–1034 ahead of :1060; every arm's awaited `setIdle` ahead of its
+  first guard; the message-not-found pointer consumption at :970 is *not* one —
+  the stale-generation return at :849–851 reaches it with no intervening await)
+  as characterization, and tightening them is
   a behavior change deliberately left out of the refactor. Teardown dedup is
   plain helper extraction, not a pipeline.
 - **PR sketch:**
@@ -515,8 +516,11 @@ into `deliverQueuedAnswer` (idle → production `ensureQueryStarted` →
 `tool_result` injection), cancellation uses the same recovery path, and the
 orphan sweep covers session teardown.)
 
-**Dispatch:** (S1) `handleResultMessage` success-only — error results skip
-fallback ack + errorClear + accounting (sdk-message-handler.ts:765, :927–930).
+**Dispatch:** (S1, accounting-only) top-level error results skip usage/cost
+accounting and session metadata accumulation (sdk-message-handler.ts:765 vs
+:872–912); the fallback-ack and `errorClear` skips on error are intentional —
+`classifyTurnCompletion` owns error-result retry/terminal handling, and
+acking/clearing there could consume retriable work or erase the failure.
 (S2) `lastResultWasSuccess` readable stale across turns (reset only on idle
 event, :957–973). (S3) a legacy-mode top-level success result fires the
 terminal-idle fence (:720–722) and then two `setIdle` transitions for one result
