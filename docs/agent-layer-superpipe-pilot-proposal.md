@@ -65,7 +65,11 @@ revalidation gate (:1127–1138) sits immediately before the re-enqueue (:1140),
 but the arm is not fully fenced either: it awaits `displayErrorAsAssistantMessage`
 (:1091–1096), then closes the live query object and restores shared provider env
 before reaching :1127, so a replacement installed during those awaits can be
-closed or mutated by the stale attempt — this window joins PR 1's pins. The
+closed or mutated by the stale attempt — this window joins PR 1's pins, and the
+env restore-and-clear specifically (which can arrive even later, after the
+process-exit await or dynamic import at :1105–1122) needs a further generation
+check or an identity-guarded snapshot so a stale attempt cannot clear a
+replacement-installed environment. The
 startup-timeout arm has the same shape after its last guard: it awaits
 `displayErrorAsAssistantMessage` (:959–965) and recurses at :967 with no
 entry-generation guard on `runQuery`, so a replacement landing during that await
@@ -275,9 +279,14 @@ note.
   production gates the backoff arm with retryAttempt < getMaxProviderRetries()
   and separately detects exhaustion, so the runtime setting must be an input,
   :1066–1151 + getMaxProviderRetries; recoveryState, generation flags, lifecycle
-  state — **route-specific**, not a blanket gate: processing status gates
-  startup/transient (:898–904, :1010–1015) and `isQueryInterrupted` (which folds
-  in the abort-controller signal, :853–858, :1066–1070) gates transient/provider,
+  state as **two separate dimensions** — processing status and abort-controller
+  signal — not one merged value, and **route-specific** rather than a blanket
+  gate: processing status gates
+  startup/transient (:898–904, :1010–1015) — note a redeliverable attempt-zero
+  startup timeout is blocked when the status is `interrupted` but still taken
+  when the status is `processing` and only `queryAbortController.signal.aborted`
+  is true, since the signal reaches startup only via `isQueryInterrupted` in the
+  transient/provider arms —
   but the message-not-found arm checks only attempt and cleanup state (:969) and
   deliberately still consumes the resume pointer and retries while interrupted —
   pin that asymmetry explicitly so the classifier does not suppress the route;
@@ -304,7 +313,11 @@ note.
   outcome decides the post-effect route: `scheduled` suppresses terminal
   handling, while `declined` (no consumed prompt, exhausted watchdog budget)
   falls back to `beginTerminalIdle` + `errorManager` + `setIdle`
-  (:1240–1289); the handoff interpreter carries this post-effect decision as a
+  (:1240–1289) — **after a generation resnapshot**: the handoff effect awaits
+  (e.g. its no-prompt path awaits `setIdle`), so a replacement may have taken
+  the session by the time `declined` returns, and a stale result must route to
+  superseded/no-op before applying the declined terminal actions; the handoff
+  interpreter carries this post-effect decision as a
   pinned branch rather than nested routing |
   api_validation(text) — a parseable API validation failure (e.g.
   `400 prompt is too long`) is displayed verbatim with `markAsError` via
@@ -487,7 +500,10 @@ note.
   `deliverMessage`/outbox role arbitration (message-delivery.ts:97–139, outbox
   :52–72) — **wire the already-extracted but dead `resolveDeliveryRole` core**;
   `driveDeliveryTurn` admission cascade (:1338–1497) as `stagedRun` flows
-  (effects: `ensureQueryStarted`, DB reloads,
+  (effects: `ensureQueryStarted` — a spawned query is an external effect the
+  startup gate's in-memory permit cannot unwind or durably deduplicate, so per
+  the stagedRun failure contract it needs a reservation/compensation or stays
+  outside the staged pass as a shell-preceding step; DB reloads,
   queue admit — idempotent or UNIQUE-guarded, **except** batch narrowing:
   `narrowActiveDeliveryBatchUuids` reads the active batch and updates matching
   queue admit — idempotent or UNIQUE-guarded, **except** batch narrowing:
