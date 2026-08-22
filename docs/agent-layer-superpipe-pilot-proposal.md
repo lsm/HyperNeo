@@ -766,7 +766,14 @@ note.
   `beginTerminalIdle()` synchronously fires every current waiter's `onEnd` —
   including the replacement's — before any unwind can run; the runner
   propagates and validates ownership before the handler begins its fence,
-  with a late old-generation result after replacement pinned; the
+  with a late old-generation result after replacement pinned — and the token
+  is **retained through the handler, not checked only at entry**: a
+  replacement starting while `internalEventBus.publish('sdk.message')` is
+  awaited lets the stale handler resume into the unscoped `setIdle()` at
+  `:746–748`, marking the replacement idle and draining its waiters; the
+  owner token is revalidated after each awaited effect (or passed to every
+  idle transition so the owner-scoped manager rejects the stale call), with a
+  replacement-during-`sdk.message`-publication pin; the
   core also returns the updated flag state, since the scoped machine mutates it:
   results set `lastResultWasSuccess`; suppressed **successful** results clear
   `suppressIdleOnNextResult` (:936–937 is success-gated at :765–766), so a
