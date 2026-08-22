@@ -191,7 +191,7 @@ function transitionErrorRetry(
 function resubscribe(state: LiveQueryLifecycleState): LiveQueryLifecycleTransition {
   const generation = state.generation + 1;
   return {
-    state: { ...state, status: 'subscribing', generation },
+    state: { ...state, status: 'subscribing', generation, error: null },
     effects: [{ kind: 're-snapshot', generation }],
   };
 }

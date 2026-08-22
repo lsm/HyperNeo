@@ -402,6 +402,25 @@ describe('live-query-lifecycle', () => {
         { kind: 'retry-with-backoff', generation: 4, delayMs: 2000 },
       ]);
     });
+
+    it('clears a stale error when a fresh generation starts', () => {
+      const errored = fixtureState('error-retry', { error: 'query failed' });
+      const retry = transitionLiveQueryLifecycle(errored, {
+        type: 'transport-error',
+        generation: 3,
+      });
+      expect(retry.state).toEqual(
+        fixtureState('subscribing', { generation: 4, snapshotRetries: 0 })
+      );
+      expect(retry.state.error).toBeNull();
+      const revived = transitionLiveQueryLifecycle(retry.state, {
+        type: 'snapshot-arrived',
+        generation: 4,
+      });
+      expect(revived.state).toEqual(fixtureState('live', { generation: 4, snapshotRetries: 0 }));
+      expect(revived.state.error).toBeNull();
+      expect(revived.effects).toEqual([{ kind: 'emit-to-store', emission: { type: 'snapshot' } }]);
+    });
   });
 
   describe('disposed', () => {
