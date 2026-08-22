@@ -185,13 +185,9 @@ describe('SpaceRuntime', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     try {
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   describe('recoverWorkflowBackedTask()', () => {
@@ -3295,7 +3291,7 @@ describe('SpaceRuntime', () => {
       ).not.toThrow();
 
       const workflows = workflowManager.listWorkflows(newSpaceId);
-      expect(workflows).toHaveLength(4);
+      expect(workflows).toHaveLength(5);
     });
 
     test('seedBuiltInWorkflows is idempotent (calling twice is a no-op)', async () => {
@@ -3316,7 +3312,7 @@ describe('SpaceRuntime', () => {
       seedBuiltInWorkflows(newSpaceId, workflowManager, resolver);
 
       const workflows = workflowManager.listWorkflows(newSpaceId);
-      expect(workflows).toHaveLength(4);
+      expect(workflows).toHaveLength(5);
     });
   });
 

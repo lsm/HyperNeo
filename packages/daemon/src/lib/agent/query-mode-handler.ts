@@ -11,6 +11,7 @@ import {
   isMessageDeliveryV2Enabled,
   type MessageDeliveryOrigin,
 } from './message-delivery';
+import { decideTurnEndFlush } from './message-delivery-pipeline';
 import type { MessageQueue } from './message-queue';
 
 export interface QueryModeHandlerContext {
@@ -30,7 +31,10 @@ export interface QueryModeHandlerContext {
 export class QueryModeHandler {
   constructor(private ctx: QueryModeHandlerContext) {}
 
-  async handleQueryTrigger(): Promise<{
+  async handleQueryTrigger(options?: {
+    deliverIndividually?: boolean;
+    excludeMessageUuid?: string;
+  }): Promise<{
     success: boolean;
     messageCount: number;
     error?: string;
@@ -38,10 +42,10 @@ export class QueryModeHandler {
     const { session, db, internalEventBus, messageQueue, logger } = this.ctx;
 
     try {
-      const { messages: deferredMessages, total } = db.getUserMessagesByStatus(
-        session.id,
-        'deferred'
-      );
+      const { messages: allDeferred } = db.getUserMessagesByStatus(session.id, 'deferred');
+      const deferredMessages = options?.excludeMessageUuid
+        ? allDeferred.filter((m) => m.uuid !== options.excludeMessageUuid)
+        : allDeferred;
 
       if (deferredMessages.length === 0) {
         return { success: true, messageCount: 0 };
@@ -52,7 +56,7 @@ export class QueryModeHandler {
 
       if (isMessageDeliveryV2Enabled()) {
         try {
-          await this.deliverFlushUnderV2(deferredMessages, 'recovery');
+          await this.deliverFlushUnderV2(deferredMessages, 'recovery', options);
         } catch (error) {
           await internalEventBus.publish('messages.statusChanged', {
             sessionId: session.id,
@@ -74,15 +78,16 @@ export class QueryModeHandler {
           db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
         await this.ctx.ensureQueryStarted();
         for (const msg of deferredMessages) {
-          if (v2Owned.has((msg.uuid ?? '') as string)) continue;
+          if (typeof msg.uuid !== 'string' || msg.uuid.length === 0) continue;
+          if (v2Owned.has(msg.uuid)) continue;
           const replayContent = this.toReplayContent(msg.message.content);
           if (replayContent) {
-            await messageQueue.enqueueWithId(msg.uuid as string, replayContent);
+            await messageQueue.enqueueWithId(msg.uuid, replayContent);
           }
         }
       }
 
-      return { success: true, messageCount: total };
+      return { success: true, messageCount: deferredMessages.length };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.error('Failed to trigger query:', error);
@@ -92,40 +97,40 @@ export class QueryModeHandler {
 
   private async deliverFlushUnderV2(
     messages: Array<SDKMessage & { dbId: string; timestamp: number }>,
-    origin: MessageDeliveryOrigin
+    origin: MessageDeliveryOrigin,
+    options?: { deliverIndividually?: boolean }
   ): Promise<void> {
     const jobQueue = this.ctx.db.getJobQueueRepo();
-    const pending = messages.filter(
-      (msg) => isSDKUserMessage(msg) && typeof msg.uuid === 'string' && msg.uuid.length > 0
-    );
-    const allBatchable = pending.every((msg) => {
-      if (!isSDKUserMessage(msg)) return false;
-      const text = flattenDeliveryText(msg.message.content ?? '');
-      return text !== null && !text.startsWith('/');
+    const flushMessages = messages
+      .filter((msg) => typeof msg.uuid === 'string' && msg.uuid.length > 0)
+      .map((msg) => {
+        const isUserMessage = isSDKUserMessage(msg);
+        return {
+          uuid: msg.uuid as string,
+          isUserMessage,
+          flattenedText: isUserMessage ? flattenDeliveryText(msg.message.content ?? '') : null,
+        };
+      });
+    const plan = decideTurnEndFlush({
+      messages: flushMessages,
+      activeInJobQueue: jobQueue.activeDeliveryMessageUuids(this.ctx.session.id),
+      pendingInMemoryUuids: new Set<string>(),
+      activeTurnInJobQueue: jobQueue.hasActiveTurnDeliveryJob(this.ctx.session.id),
+      slotResetsContext: false,
     });
-
-    if (allBatchable && pending.length >= 2) {
+    if (plan.action === 'noop') return;
+    const deliverables = plan.action === 'batch' ? plan.uuids : plan.deliver;
+    if (plan.action === 'batch' && !options?.deliverIndividually) {
       const batched = await deliverBatchAndMarkQueued({
         jobQueue,
         stateManager: this.ctx.stateManager,
         sessionId: this.ctx.session.id,
-        messageUuids: pending.map((m) => m.uuid as string),
+        messageUuids: deliverables,
         origin,
       });
       if (batched) return;
     }
-    await this.deliverEachUnderV2(pending, origin);
-  }
-
-  private async deliverEachUnderV2(
-    messages: Array<SDKMessage & { dbId: string; timestamp: number }>,
-    origin: MessageDeliveryOrigin
-  ): Promise<void> {
-    const jobQueue = this.ctx.db.getJobQueueRepo();
-    const active = jobQueue.activeDeliveryMessageUuids(this.ctx.session.id);
-    for (const msg of messages) {
-      const uuid = msg.uuid as string;
-      if (active.has(uuid)) continue;
+    for (const uuid of deliverables) {
       await deliverAndMarkQueued({
         jobQueue,
         stateManager: this.ctx.stateManager,

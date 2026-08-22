@@ -33,6 +33,7 @@ import {
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy';
 import { AcpClient, type AcpClientOptions } from './acp-client';
+import { parseAcpCommand } from './acp-command';
 import { AcpQueryAdapter } from './acp-query-adapter';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
@@ -106,56 +107,7 @@ function parseThoughtTokenValue(choice: { name: string; value: string }): number
   return undefined;
 }
 
-export function parseAcpCommand(commandLine: string): { command: string; args: string[] } {
-  const tokens: string[] = [];
-  let current = '';
-  let quote: 'single' | 'double' | null = null;
-  let escaping = false;
-
-  for (const char of commandLine.trim()) {
-    if (escaping) {
-      current += char;
-      escaping = false;
-      continue;
-    }
-
-    if (char === '\\') {
-      escaping = true;
-      continue;
-    }
-
-    if (char === "'" && quote !== 'double') {
-      quote = quote === 'single' ? null : 'single';
-      continue;
-    }
-
-    if (char === '"' && quote !== 'single') {
-      quote = quote === 'double' ? null : 'double';
-      continue;
-    }
-
-    if (/\s/.test(char) && !quote) {
-      if (current) {
-        tokens.push(current);
-        current = '';
-      }
-      continue;
-    }
-
-    current += char;
-  }
-
-  if (escaping) current += '\\';
-  if (quote) {
-    throw new Error('Invalid HYPERNEO_ACP_COMMAND: unmatched quote');
-  }
-  if (current) tokens.push(current);
-  if (tokens.length === 0) {
-    throw new Error('Invalid HYPERNEO_ACP_COMMAND: command is empty');
-  }
-
-  return { command: tokens[0], args: tokens.slice(1) };
-}
+export { parseAcpCommand } from './acp-command';
 
 function toAcpPromptContent(message: SDKUserMessage): AcpContentBlock[] {
   const content = message.message.content;
@@ -495,7 +447,10 @@ export class AcpQueryRunner {
       let queryOptions = await optionsBuilder.build();
       queryOptions = await this.ensureRequiredMcpServersForAcp(queryOptions);
 
-      const acpCommand = process.env.HYPERNEO_ACP_COMMAND;
+      const acpCommand =
+        provider instanceof AcpProvider
+          ? provider.getAcpCommand()
+          : process.env.HYPERNEO_ACP_COMMAND;
       if (!acpCommand) {
         throw new Error('Set HYPERNEO_ACP_COMMAND to enable ACP agents.');
       }
@@ -813,9 +768,7 @@ export class AcpQueryRunner {
         if (this.ctx.queryObject) {
           try {
             this.ctx.queryObject.close();
-          } catch {
-            // Ignore close errors — subprocess may already be terminated
-          }
+          } catch {}
           this.ctx.queryObject = null;
         } else {
           client?.close();
@@ -908,9 +861,7 @@ export class AcpQueryRunner {
       if (this.ctx.queryObject) {
         try {
           this.ctx.queryObject.close();
-        } catch {
-          // Ignore close errors
-        }
+        } catch {}
         this.ctx.queryObject = null;
       } else {
         client?.close();
@@ -1239,9 +1190,7 @@ export class AcpQueryRunner {
       signal.removeEventListener('abort', onAbort);
       try {
         await iterator.return?.();
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
   }
 

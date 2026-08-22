@@ -249,9 +249,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             inputDraft: flushContent || null,
           },
         })
-        .catch(() => {
-          /* ignore flush errors */
-        });
+        .catch(() => {});
       return;
     }
     prevSessionIdRef.current = sessionId;
@@ -277,9 +275,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               },
             })
             .then(settleCleared)
-            .catch(() => {
-              /* ignore clear errors */
-            });
+            .catch(() => {});
         };
         const prior = lastNonEmptyContentRef.current;
         if (prior && prior.sessionId === sessionId && prior.content.trim() !== '') {
@@ -324,9 +320,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             inputDraft: trimmedContent,
           },
         });
-      } catch {
-        // Ignore draft save errors
-      }
+      } catch {}
     }, debounceMs);
 
     return () => {

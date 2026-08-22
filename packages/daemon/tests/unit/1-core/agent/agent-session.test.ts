@@ -284,7 +284,6 @@ describe('AgentSession', () => {
         deleteMessagesAtAndAfter: mock(() => 0),
         getUserMessageByUuid: mock(() => undefined),
         countMessagesAfter: mock(() => 0),
-        getMessagesByStatus: mock(() => []),
         updateMessage: mock(() => {}),
         getSDKMessageCount: mock(() => 0),
       } as unknown as Database;
@@ -523,7 +522,6 @@ describe('AgentSession', () => {
         deleteMessagesAtAndAfter: mock(() => 0),
         getUserMessageByUuid: mock(() => undefined),
         countMessagesAfter: mock(() => 0),
-        getMessagesByStatus: mock(() => []),
         updateMessage: mock(() => {}),
         getSDKMessageCount: mock(() => 0),
       } as unknown as Database;
@@ -702,7 +700,6 @@ describe('AgentSession', () => {
         deleteMessagesAtAndAfter: mock(() => 0),
         getUserMessageByUuid: mock(() => undefined),
         countMessagesAfter: mock(() => 0),
-        getMessagesByStatus: mock(() => []),
         updateMessage: mock(() => {}),
         getSDKMessageCount: mock(() => 0),
       } as unknown as Database;
@@ -956,7 +953,6 @@ describe('AgentSession', () => {
         deleteMessagesAtAndAfter: mock(() => 0),
         getUserMessageByUuid: mock(() => undefined),
         countMessagesAfter: mock(() => 0),
-        getMessagesByStatus: mock(() => []),
         updateMessage: mock(() => {}),
       } as unknown as Database;
 
@@ -2144,6 +2140,48 @@ describe('AgentSession', () => {
       expect(cancelSpy).not.toHaveBeenCalled();
     });
 
+    it('deliverChatMessage publishes failed status when the session is archived', async () => {
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        ...mockSession,
+        status: 'archived',
+      });
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markDeliveryFailedByUuid: mock(() => 'db-1'),
+      }));
+
+      await expect(agentSession.deliverChatMessage('archived-msg')).rejects.toThrow(
+        'Session test-session-id is archived'
+      );
+
+      expect(mockInternalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'test-session-id',
+        messageIds: ['db-1'],
+        status: 'failed',
+      });
+    });
+
+    it('deliverChatMessage publishes failed status when durable enqueue fails', async () => {
+      mockDb.getJobQueueRepo = mock(() => ({
+        getActiveDeliveryRole: mock(() => null),
+        enqueue: mock(() => {
+          throw new Error('delivery enqueue failure');
+        }),
+      }));
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markDeliveryFailedByUuid: mock(() => 'db-2'),
+      }));
+
+      await expect(agentSession.deliverChatMessage('enqueue-fail')).rejects.toThrow(
+        'delivery enqueue failure'
+      );
+
+      expect(mockInternalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'test-session-id',
+        messageIds: ['db-2'],
+        status: 'failed',
+      });
+    });
+
     it('resetQuery should delegate to lifecycleManager', async () => {
       const resetSpy = mock(async () => ({ success: true }));
       // biome-ignore lint: test mock access
@@ -2522,7 +2560,6 @@ describe('AgentSession', () => {
         deleteMessagesAtAndAfter: mock(() => 0),
         getUserMessageByUuid: mock(() => undefined),
         countMessagesAfter: mock(() => 0),
-        getMessagesByStatus: mock(() => []),
         updateMessage: mock(() => {}),
       } as unknown as Database;
 
@@ -3669,7 +3706,6 @@ describe('AgentSession', () => {
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
-        getMessagesByStatus: mock(() => []),
       } as unknown as Database;
 
       const mockMessageHub = {} as MessageHub;
@@ -3729,7 +3765,6 @@ describe('AgentSession', () => {
         getSession: mock(() => existingSession),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
-        getMessagesByStatus: mock(() => []),
       } as unknown as Database;
       const mockInternalEventBus = {
         publish: mock(async () => {}),
@@ -3798,7 +3833,6 @@ describe('AgentSession', () => {
         getSession: mock(() => existingSession),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
-        getMessagesByStatus: mock(() => []),
       } as unknown as Database;
 
       const mockMessageHub = {} as MessageHub;
@@ -3861,7 +3895,6 @@ describe('AgentSession', () => {
         getSession: mock(() => existingSession),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
-        getMessagesByStatus: mock(() => []),
       } as unknown as Database;
 
       const mockMessageHub = {} as MessageHub;
@@ -3935,7 +3968,6 @@ describe('AgentSession', () => {
         getSession: mock(() => existingSession),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
-        getMessagesByStatus: mock(() => []),
       } as unknown as Database;
 
       const mockMessageHub = {} as MessageHub;
@@ -4010,7 +4042,6 @@ describe('AgentSession', () => {
         getSession: mock(() => session),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
-        getMessagesByStatus: mock(() => []),
       } as unknown as Database;
 
       let captured: ReturnType<typeof onListener> | null = null;
@@ -4124,7 +4155,6 @@ describe('AgentSession', () => {
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
-        getMessagesByStatus: mock(() => []),
       } as unknown as Database;
 
       const mockMessageHub = {} as MessageHub;
@@ -4183,7 +4213,6 @@ describe('AgentSession', () => {
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
-        getMessagesByStatus: mock(() => []),
       } as unknown as Database;
 
       const mockMessageHub = {} as MessageHub;
@@ -4238,7 +4267,6 @@ describe('AgentSession', () => {
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
-        getMessagesByStatus: mock(() => []),
       } as unknown as Database;
       const mockMessageHub = {} as MessageHub;
       const mockInternalEventBus = {
@@ -4450,7 +4478,6 @@ describe('AgentSession', () => {
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
-        getMessagesByStatus: mock(() => []),
       } as unknown as Database;
       const mockMessageHub = {} as MessageHub;
       const mockInternalEventBus = {
@@ -4673,7 +4700,6 @@ describe('AgentSession', () => {
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
-        getMessagesByStatus: mock(() => []),
       } as unknown as Database;
       const mockMessageHub = {} as MessageHub;
       const mockInternalEventBus = {
@@ -4697,9 +4723,7 @@ describe('AgentSession', () => {
           const tail = first.slice('mcp.attach '.length);
           try {
             entries.push(JSON.parse(tail));
-          } catch {
-            // ignore
-          }
+          } catch {}
         }
         original(...(args as [unknown]));
       };
@@ -4896,7 +4920,6 @@ describe('AgentSession', () => {
         deleteMessagesAtAndAfter: mock(() => 0),
         getUserMessageByUuid: mock(() => undefined),
         countMessagesAfter: mock(() => 0),
-        getMessagesByStatus: mock(() => []),
         updateMessage: mock(() => {}),
       } as unknown as Database;
 
@@ -4950,7 +4973,6 @@ describe('AgentSession', () => {
         deleteMessagesAtAndAfter: mock(() => 0),
         getUserMessageByUuid: mock(() => undefined),
         countMessagesAfter: mock(() => 0),
-        getMessagesByStatus: mock(() => []),
         updateMessage: mock(() => {}),
       } as unknown as Database;
 
@@ -5004,7 +5026,6 @@ describe('AgentSession', () => {
         updateSession: mock(() => {}),
         getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
         getSDKMessageCount: mock(() => 0),
-        getMessagesByStatus: mock(() => []),
       } as unknown as Database;
 
       mockMessageHub = { sendMessage: mock(() => {}) } as unknown as MessageHub;
@@ -5176,9 +5197,7 @@ describe('AgentSession', () => {
     afterEach(() => {
       try {
         db?.close();
-      } catch {
-        // ignore
-      }
+      } catch {}
     });
 
     it('a bare marker (no success result) is cleared and NOT silently completed', async () => {

@@ -19,7 +19,8 @@ export interface MessageDeliveryHandlerDeps {
   getSession(sessionId: string): MessageDeliverySession | null;
   getMessageContent(sessionId: string, messageUuid: string): DeliveryLoadResult | null;
   isSessionArchived?(sessionId: string): boolean;
-  markDeliveryFailed?(sessionId: string, messageUuid: string): void;
+  markDeliveryFailed?(sessionId: string, messageUuid: string): string | null;
+  publishStatusChanged?(sessionId: string, messageIds: string[]): Promise<unknown>;
   metrics?: DeliveryMetrics;
 }
 
@@ -39,8 +40,13 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     if (!claimCurrent()) return { outcome: 'stale_attempt' };
 
     if (deps.isSessionArchived?.(payload.sessionId)) {
+      const flippedIds: string[] = [];
       for (const uuid of new Set([payload.messageUuid, ...(payload.batchUuids ?? [])])) {
-        deps.markDeliveryFailed?.(payload.sessionId, uuid);
+        const dbId = deps.markDeliveryFailed?.(payload.sessionId, uuid) ?? null;
+        if (dbId) flippedIds.push(dbId);
+      }
+      if (flippedIds.length > 0 && deps.publishStatusChanged) {
+        void deps.publishStatusChanged(payload.sessionId, flippedIds).catch(() => {});
       }
       await deps.getSession(payload.sessionId)?.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'archived' };

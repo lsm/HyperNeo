@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   DeclarativeToolGuard,
   EventInterest,
@@ -6,7 +7,6 @@ import type {
   WorkflowNodeAgentOverride,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
-import { createHash } from 'node:crypto';
 import { Logger } from '../../logger';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -195,6 +195,124 @@ const CODER_OWNED_QA_REVIEW_PROMPT =
   'post-approval merge blocker, re-check the current head, coordinate any fix, post a fresh approval, ' +
   'and signal them to continue.' +
   REVIEWER_ZERO_FINDINGS_GATE;
+
+export const CODER_ONLY_PROMPT =
+  'You are the Coder in a single-node workflow with no internal reviewer. ' +
+  'Implement the task, add focused tests, and keep one pull request updated. ' +
+  CODER_OWNED_PR_SUBSCRIBE_GUIDANCE +
+  'This workflow runs no pr-ready hook, so nothing else records the PR for the run: immediately ' +
+  'after `gh pr create`, also persist the primary link with ' +
+  '`save_artifact({ shape: "link", kind: "pr", data: { url: "<PR URL>" } })` — the post-approval ' +
+  'merge procedure interpolates `{{pr_url}}` from that artifact, and without it the merge session ' +
+  'receives an empty placeholder and cannot operate on the PR. Verify the recorded value right ' +
+  'after saving it: `gh pr view "<PR URL>" --json headRefName,isCrossRepository,headRepository,url` ' +
+  "must succeed and name THIS task's branch, AND the PR must belong to this workspace: the " +
+  'owner/repository parsed from the PR URL must match the origin remote (`git remote get-url ' +
+  'origin`), OR — for a cross-repository PR — the PR head repository must match the origin remote ' +
+  "(the fork case, where the PR URL names the upstream base repository). A typo'd, stale, or " +
+  'unrelated-repository URL would otherwise make you review and merge the wrong PR; if either ' +
+  'check fails, fix the artifact before proceeding. ' +
+  'Review is delegated to two external GitHub reviewers: Codex and Devon. ' +
+  'Before you may request approval, BOTH must pass on the CURRENT PR head. ' +
+  'Do not hand off to any internal Review node — there is none. ' +
+  'If the task requires no code changes (validation-only, diagnostic, or already complete), do ' +
+  'NOT fabricate an empty commit or PR — escalate via send_message to the escalation target in ' +
+  'your Runtime Execution Contract, explain that the task produced no code changes and needs ' +
+  're-routing, and stop and wait for guidance. ' +
+  'Codex gate: wait for the codex review bot thumbs-up reaction on the current head. ' +
+  'Use the run-scoped GraphQL reaction lookup (the Coder contract permits the run-scoped ' +
+  '`gh api graphql` lookup; direct `gh api repos/...` REST reads against other repos are ' +
+  'forbidden by contract), resolving the PR number and host from your PR URL and reading `reactions` ' +
+  '(parse the host and pass `--hostname` so GitHub Enterprise PRs are queried on the enterprise host, not the default github.com): ' +
+  '`PR_URL=<pr_url>; HOST=${PR_URL#https://}; HOST=${HOST%%/*}; gh api graphql --hostname "$HOST" ' +
+  "-f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){issueOrPullRequest(number:$number){... on PullRequest {headRefOid reactions(first:100,after:$cursor){nodes{content createdAt user{login}} pageInfo{hasNextPage endCursor}}}}}}}' -f owner=<owner> -f name=<repo> -F number=<number>` " +
+  'Paginate the reactions while their `pageInfo.hasNextPage` is true using `endCursor` until you ' +
+  'have seen every reaction. Count a reaction only from the Codex BOT account: a login equal to ' +
+  '`codex` or containing `codex` (case-insensitive) AND ending with the GitHub-managed `[bot]` ' +
+  'suffix (e.g. `codex[bot]`, `chatgpt-codex-connector[bot]`) — a human account whose name merely ' +
+  'contains `codex` must NOT satisfy the gate. GraphQL serializes reactions as enum names, not ' +
+  'REST-style strings: content `THUMBS_UP` (the GraphQL form of +1) means Codex passed, content ' +
+  '`EYES` means Codex is still reviewing, and no such reaction means it has not started or has ' +
+  'not reported yet. If no codex bot login has reacted at all, comment `@codex review` on the PR ' +
+  'to trigger its review, then wait for an `EYES` or `THUMBS_UP` reaction. Serialize review ' +
+  'cycles — this is what makes the freshness predicates sound: NEVER push while a Codex cycle is ' +
+  'in flight. An `EYES` reaction present means a cycle is live; wait until it disappears AND the ' +
+  "cycle's terminal outcome has appeared before you push a new head. A cycle's terminal outcome " +
+  'is exactly one of: a review comment (suggestions found), or a `THUMBS_UP` (clean pass) — per ' +
+  "the bot's documented behavior it never produces both — so once a comment appears that cycle " +
+  'can never yield a pass; treat it as closed. With the previous cycle terminal before the push, ' +
+  'no stale cycle can land a late `THUMBS_UP` after your next trigger. Bind every pass to the ' +
+  'review CYCLE, not just to timestamps: after each push that changes the head, post a fresh ' +
+  '`@codex review` trigger comment yourself, find your own latest such comment via ' +
+  '`gh pr view <pr_url> --json comments`, and accept a `THUMBS_UP` ONLY when its `createdAt` is ' +
+  'later than that trigger comment AND the headRefOid has not changed since the trigger — the ' +
+  'trigger comment is the push-to-pass anchor (PullRequest exposes no pushed-time field, and the ' +
+  'commit authored date can predate the push). ' +
+  'Devon gate: wait for a Devon-authored PR review on the current head that does NOT request changes ' +
+  'and does NOT flag a major or blocking issue. Inspect the reviews with the paginated GraphQL ' +
+  'lookup (`gh pr view --json reviews` can silently truncate past 100 reviews, hiding a newer ' +
+  'blocking review). Re-derive the host in the same command — shell state does not carry across ' +
+  'Bash calls: ' +
+  '`PR_URL=<pr_url>; HOST=${PR_URL#https://}; HOST=${HOST%%/*}; gh api graphql --hostname "$HOST" ' +
+  "-f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviews(first:100,after:$cursor){nodes{author{login} state submittedAt commit{oid} url body} pageInfo{hasNextPage endCursor}}}}}' -f owner=<owner> -f name=<repo> -F number=<number>` " +
+  'Paginate while `pageInfo.hasNextPage` using `endCursor`. Count a review only from the Devon ' +
+  'BOT/APP account: a login ending with `[bot]` or the known integration account (e.g. ' +
+  '`devin-ai-integration`, `devin-ai-integration[bot]`, `devon[bot]`) whose name contains `devon` ' +
+  'or `devin` — a human account whose name merely contains `devon` or `devin` must NOT satisfy ' +
+  'the gate. A review covers the current head ONLY when its `commit.oid` equals the CURRENT ' +
+  'headRefOid (from `gh pr view <pr_url> --json headRefOid` or the Codex-gate query); never ' +
+  'substitute a `submittedAt` comparison — a review started on an old head and submitted after a ' +
+  'push still names the old commit and must not count. Reject `DISMISSED` and `PENDING` reviews ' +
+  'outright: a dismissed review was deliberately withdrawn and its retained body must not count. ' +
+  'The pass requires an EXPLICIT zero-findings verdict on a current-head `APPROVED` or `COMMENTED` ' +
+  'review: either state `APPROVED`, or a body containing an unambiguous no-findings statement ' +
+  'such as "No Issues Found". A hedged verdict — "no major issues" paired with any reported ' +
+  'defect, caveat, or severity language — is NOT a pass: minor findings are still findings, so ' +
+  'address them, push, and re-trigger. A `COMMENTED` review that merely lacks blocking words is ' +
+  'NOT a pass — informational or progress reviews do not count, so keep waiting or re-trigger. ' +
+  'A `CHANGES_REQUESTED` review or a body flagging a major, blocking, or similarly severe issue ' +
+  '(any severity language, not just those two words) from Devon is a blocker — address it, push, ' +
+  'and re-trigger Devon. If Devon has no passing review on the current head, trigger it ' +
+  '(e.g. `@devon review`) and wait. ' +
+  'Poll both gates every 60 seconds in a bounded loop. If either external reviewer has not passed ' +
+  'within the timeout window (~2 hours), escalate via send_message to the escalation target in your ' +
+  'Runtime Execution Contract, record a note artifact (kind "external-review-timeout"), and STOP — ' +
+  'do NOT proceed to approval without both signals; there is no internal backstop. ' +
+  'Address any valid review comments from ANY reviewer (human or bot): reply on the thread, make the ' +
+  'fix, resolve the thread, rerun tests, and re-push. A push changes the head, so re-run both external ' +
+  'gates against the new head. ' +
+  'After BOTH external gates pass on the current head, run your informal review: re-read the diff for ' +
+  'obvious defects, run the focused tests, confirm the PR required checks are green ' +
+  '(`gh pr checks <pr_url> --required` — check names vary per repository, so never gate on a ' +
+  'hard-coded check name; if the base defines no required checks the command reports exactly ' +
+  'that, which counts as green — only a failing or pending required check is a blocker), confirm ' +
+  'zero unresolved review threads, confirm the PR is mergeable, and confirm Codex and Devon both ' +
+  'cover the CURRENT head. Capture the baseRefName when you START the external gate (before ' +
+  'triggering either reviewer), and confirm it is still unchanged when you finish — a retarget ' +
+  'between the reviewer responses and the artifact write would otherwise record evidence for a ' +
+  'diff neither reviewer saw; if the base changed mid-gate, re-run BOTH gates under the new base. ' +
+  'Record the gate with an explicit key so later notes cannot overwrite ' +
+  'it (an unkeyed note is stored under a shared rolling key): ' +
+  '`save_artifact({ shape: "note", kind: "external-review-gate", key: "gate", summary: "...", ' +
+  'data: { pr_url: "<url>", codex_reaction: { login, content: "THUMBS_UP", created_at }, ' +
+  'devon_review_url: "<url>", head_oid: "<oid>", base_ref: "<baseRefName>" } })` — reactions ' +
+  'have no permalink, so record the reaction fields inline from the gate query, and record the ' +
+  'base branch so a later retarget of the PR visibly invalidates the gate. ' +
+  'Then request human sign-off: call submit_for_approval({ reason: "Codex +1: <bot login> ' +
+  'THUMBS_UP at <reaction createdAt> on <pr_url>; Devon: <review url>; informal review: <result>" ' +
+  '}) — the Codex evidence is the recorded reaction login/timestamp plus the PR URL, since ' +
+  'reactions have no permalink. ' +
+  'Human sign-off is required — never call approve_task for this ' +
+  'workflow, even when space autonomy level 5 makes the tool available to you: ' +
+  'completionAutonomyLevel 5 is the strongest threshold the autonomy system offers and still ' +
+  'auto-closes in a level-5 space, but this workflow always routes completion through ' +
+  'submit_for_approval, and you must not use approve_task regardless. Do NOT merge or call ' +
+  'task-completion tools during implementation. ' +
+  'After the task is approved, the runtime may send you the post-approval merge procedure. In that phase ' +
+  'only, merge the PR with the `gh pr merge` steps in that procedure, complete its cleanup and ' +
+  'workspace-sync steps, and call mark_complete. Your merge authority is the external gate plus the ' +
+  'recorded gate artifact; follow the Runtime Execution Contract and the post-approval merge procedure ' +
+  'exactly, and never assume a different approval authority.';
 
 const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
   'Coding|coder': [
@@ -727,6 +845,136 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
   ],
 };
 
+export const CODER_ONLY_MERGE_INSTRUCTIONS: string = [
+  'The task has been approved. You are the agent who implemented PR {{pr_url}}; now finish it by merging that PR.',
+  '',
+  'Approval source: {{approval_source}}. Approval was granted by a human after the external reviewers Codex and Devon both passed the current head and your informal review recorded a clean gate. The gate artifacts (Codex reaction URL, Devon review URL, head OID) were recorded before approval.',
+  '',
+  '## Verify before you merge (do NOT skip)',
+  '',
+  "The merge must satisfy ALL of the following against the PR's CURRENT head before you run `gh pr merge`. Run them in order, in this worktree:",
+  '  - the PR is open;',
+  '  - required CI / checks are passing (every required check green under `gh pr checks {{pr_url}} --required`; check names vary per repository, so do not gate on a hard-coded check name; a base that defines no required checks reports exactly that and counts as green);',
+  '  - there are zero unresolved review conversations;',
+  '  - there is NO effective outstanding `CHANGES_REQUESTED` review — even one on an OLDER head that no other reviewer superseded. A `CHANGES_REQUESTED` from Devon or from a human reviewer blocks the merge until that reviewer dismisses it or approves;',
+  '  - if the base repository requires approving GitHub reviews (`reviewDecision` is `REVIEW_REQUIRED`), that is an ADMINISTRATIVE blocker — this gate does not supply GitHub approvals, so escalate per step 4 and never bypass it with `--admin`;',
+  '  - the Codex `THUMBS_UP` (+1) reaction belongs to a review cycle started on the CURRENT head — posted after a `@codex review` trigger that itself postdates the last push, with the head unchanged since that trigger (a late `THUMBS_UP` from a cycle begun on an older head does not count);',
+  '  - a Devon-authored review covers the CURRENT head, carries an EXPLICIT zero-findings verdict (APPROVED state or an unambiguous no-findings body), and does NOT request changes or flag any issue;',
+  '  - your informal-review gate artifact (`external-review-gate`) was recorded for the CURRENT head (or an earlier head with no intervening push) AND for the CURRENT base branch — retargeting the PR to a different base changes the reviewed diff without changing the head, so a base change also stales the gate and the human approval;',
+  '',
+  'Derive the GitHub-approval requirement from the PR itself, not from any repository-specific assumption: an empty or APPROVED `reviewDecision` means the base requires no approving GitHub review beyond this gate, while REVIEW_REQUIRED is the administrative blocker above.',
+  '',
+  '## Steps',
+  '',
+  '1. Confirm the PR is open and CI is green, and capture the base branch:',
+  '     gh pr view {{pr_url}} --json state,mergeStateStatus,headRefOid',
+  '     gh pr checks {{pr_url}} --required',
+  '     BASE=$(gh pr view {{pr_url}} --json baseRefName --jq .baseRefName)',
+  '   If state is not OPEN, or a required check is failing or pending, treat it as a blocker per step 4. A report that the base has no required checks counts as green. If state is MERGED, the merge already happened (possibly in a prior session that died before cleanup); first confirm your gate artifact `head_oid` still equals the PR headRefOid AND its `base_ref` equals the final baseRefName — if either does not, a different, unverified head or base was merged by another actor, so do NOT record a success audit: escalate to space-agent with the mismatch and stop. Otherwise recover idempotently — run step 5 (branch deletion is a no-op if the branch is already gone), run step 6 (fast-forward the root checkout — a restart after merge must still sync it), record the step-7 audit artifact if it is absent, and call mark_complete to close the task.',
+  '2. Verify all GitHub review conversations are resolved before merging:',
+  '   Extract <host>, <owner>, <repo>, and <number> from {{pr_url}} (format: https://<host>/<owner>/<repo>/pull/<number>).',
+  "     gh api graphql --hostname <host> -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:20){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}' -f owner=<owner> -f name=<repo> -F number=<number>",
+  '   If pageInfo.hasNextPage is true, paginate using the endCursor until all pages have been fetched. If any reviewThread has isResolved=false, do NOT merge. Resolve the threads you own by replying on the PR (see the review-thread resolution guidance from the coding phase), and report any remaining threads you cannot resolve per step 4. Auto-resolving conversations is NOT allowed.',
+  '3. Verify the external gate covers the CURRENT head, then merge bound to it:',
+  '     HEAD_OID=$(gh pr view {{pr_url}} --json headRefOid --jq .headRefOid)',
+  '     REVIEW_DECISION=$(gh pr view {{pr_url}} --json reviewDecision --jq .reviewDecision)',
+  '     case "$REVIEW_DECISION" in CHANGES_REQUESTED) echo "GitHub reviewDecision is CHANGES_REQUESTED — an outstanding change request stands; do NOT merge." >&2; exit 1;; REVIEW_REQUIRED) echo "GitHub reviewDecision is REVIEW_REQUIRED — the base repository requires an approving GitHub review this gate cannot supply; treat it as an ADMINISTRATIVE blocker per step 4 and never use --admin." >&2; exit 1;; esac',
+  '   Re-run the external gate from the coding phase against the CURRENT head: the Codex `THUMBS_UP` (+1) reaction must come from a cycle triggered after the last push with the head unchanged since (see the coding-phase gate), and a Devon-authored review must cover the current head (commit.oid equality) with an explicit clean verdict and no changes-requested. Also scan the paginated reviews lookup for any outstanding `CHANGES_REQUESTED` review by ANY author (human or Devon) that has not been superseded by a later `APPROVED` from that same author — `reviewDecision` can miss reviews from reviewers outside branch protection, and such a review blocks the merge even when it opened no inline thread. If any of these is stale or missing, re-trigger the reviewer (`@codex review` / `@devon review`), re-wait for both to pass, and do NOT merge until both are fresh on the CURRENT head.',
+  '   Confirm your keyed `external-review-gate` note artifact (key "gate") exists, its head OID equals $HEAD_OID, and its recorded base_ref equals the current baseRefName; if the head OR the base changed after approval, BOTH the gate AND the human approval are stale — re-run the FULL external gate and your informal review against the CURRENT head, re-record the artifact, and obtain fresh human sign-off on the new head via space-agent (as in step 4b) BEFORE merging.',
+  '   Otherwise merge, bound to the verified head:',
+  '     gh pr merge {{pr_url}} --squash --match-head-commit "$HEAD_OID"',
+  '   A zero exit does NOT always mean merged — on a merge-queue-required base it only ENQUEUES the PR. Re-query until the PR `state` is MERGED (about once a minute, up to ~10 attempts). If the queue entry is removed or its merge-group check fails (PR open, never MERGED), treat it as a blocker per step 4.',
+  '4. On any blocker (merge failed, CI not passing, unresolved threads, stale or missing external gate, DIRTY conflict, BEHIND rebase, BLOCKED ruleset, permissions, merge queue):',
+  '   a. Capture WHY — the failure output plus a fresh state snapshot:',
+  '        gh pr view {{pr_url}} --json state,mergeable,mergeStateStatus,headRefOid,reviewDecision',
+  '        gh pr checks {{pr_url}}',
+  '   b. Then EITHER fix it yourself OR escalate:',
+  '      - FIXABLE blocker (DIRTY conflict, BEHIND rebase, UNSTABLE because the code fails a required check, an unresolved review thread you can resolve, or a stale external gate): fix it in this PR and push the new head. A push changes the head, so neither the external gate nor the human approval covers it — re-run the FULL gate against the new head (re-trigger Codex and Devon, re-wait for both to pass, re-run your informal review, re-record the `external-review-gate` artifact), then obtain fresh human sign-off on the new head before merging:',
+  '          send_message(target="space-agent",',
+  '            message="Post-approval fix on {{pr_url}}: <one-line summary of the fix>. New head <headRefOid> passed the external gate; please re-review and re-approve the CURRENT head, then reply to continue the merge.",',
+  '            data: { pr_url: "{{pr_url}}", headRefOid: "<new headRefOid>", reason: "merge_fix_pushed" })',
+  '        Then WAIT. When space-agent replies to continue, go to step 3 again and merge bound to the re-verified head. The prior human approval never carries over to a head it was not given.',
+  '      - ADMINISTRATIVE blocker (mergeStateStatus BLOCKED or CLEAN = permissions, ruleset, merge queue, or a check failing for reasons outside this PR): you cannot fix these by editing the PR. There is no internal reviewer to re-approve; escalate to space-agent and WAIT:',
+  '          send_message(target="space-agent",',
+  '            message="Merge blocked on {{pr_url}}: <one-line summary>. The external gate passed but the merge requires something outside the PR (permissions / ruleset / queue). Please resolve or dismiss.",',
+  '            data: { pr_url: "{{pr_url}}", blockers: ["<kind: detail>"], headRefOid: "<headRefOid>", reason: "merge_blocked" })',
+  '        Then STOP. Do NOT run `gh pr merge` again until space-agent tells you to continue.',
+  '   c. When space-agent replies to continue: the head may have changed, so re-run step 1 (state/CI), step 2 (unresolved threads), and step 3 (the external gate covering the CURRENT head). A stale gate on the old head does NOT cover the new one. Only then re-attempt the merge bound to the head you just verified.',
+  '5. Delete the PR remote branch — ONLY after a successful merge, and as a SEPARATE command. Do NOT pass a delete flag to the merge command:',
+  '     HEAD_REF=$(gh pr view {{pr_url}} --json headRefName --jq .headRefName)',
+  '     IS_FORK=$(gh pr view {{pr_url}} --json isCrossRepository --jq .isCrossRepository)',
+  '   If IS_FORK is true, SKIP deletion — forked PRs keep their branch in the fork. Otherwise lease-bind the deletion so a REUSED branch is never destroyed: compare the remote ref to the merged head first,',
+  '     MERGED_OID=$(gh pr view {{pr_url}} --json headRefOid --jq .headRefOid)',
+  '     REMOTE_OID=$(git ls-remote origin "refs/heads/$HEAD_REF" | cut -f1)',
+  '   If REMOTE_OID is empty the branch is already gone (no-op). If REMOTE_OID differs from MERGED_OID, the branch name was recreated or advanced after the merge — record a NON-result `note` cleanup_warning artifact (key "branch-delete") and do NOT delete it. Only when they match, delete under the observed lease (so a branch advanced between the check and the push is still not destroyed):',
+  '     git push origin --force-with-lease="refs/heads/$HEAD_REF:$REMOTE_OID" --delete "$HEAD_REF"',
+  '   Branch cleanup is BEST-EFFORT: on any failure (protected branch, missing delete permission, already gone), record a NON-result `note` cleanup_warning artifact (key "branch-delete") and continue — the PR is already merged.',
+  '6. Sync so both this isolated worktree AND the Space checkout track the freshly-merged base branch:',
+  '   Resolve the base remote first — the squash merge lands in the BASE repository, which is not necessarily this `origin`:',
+  '     BASE=$(gh pr view {{pr_url}} --json baseRefName --jq .baseRefName)',
+  '     if [ "$(gh pr view {{pr_url}} --json isCrossRepository --jq .isCrossRepository)" = "true" ]; then',
+  "       BASE_REMOTE=$(gh pr view {{pr_url}} --json url --jq .url | sed 's|/pull/[0-9]*$||')",
+  '     else',
+  '       BASE_REMOTE=origin',
+  '     fi',
+  '   a. In this isolated worktree, do NOT switch branches — just fetch:',
+  '        git fetch "$BASE_REMOTE" "$BASE"',
+  '   b. ALSO fast-forward the separate Space checkout that future task worktrees branch from — do NOT skip this, or every later task worktree inherits the stale base:',
+  '        SPACE_WS={{workspace_path_sh}}',
+  '        if [ "$(git -C "$SPACE_WS" rev-parse --abbrev-ref HEAD)" != "$BASE" ]; then',
+  '          # Checkout is on a DIFFERENT branch — pulling $BASE here would move the wrong branch.',
+  '          record a NON-result `note` cleanup_warning artifact (key "space-checkout-base") and skip the rest of step b.',
+  '        else',
+  '          git -C "$SPACE_WS" fetch "$BASE_REMOTE" "$BASE"',
+  '          if ! git -C "$SPACE_WS" pull --ff-only "$BASE_REMOTE" "$BASE"; then',
+  '            # Pull failed (divergence, permissions) — the PR is already merged; do not block on this.',
+  '            record a NON-result `note` cleanup_warning artifact (key "space-checkout-pull") and skip the ahead-check.',
+  '          elif [ "$(git -C "$SPACE_WS" rev-parse HEAD)" != "$(git -C "$SPACE_WS" rev-parse FETCH_HEAD)" ]; then',
+  '            # pull said "Already up to date" but local $BASE is AHEAD of the fetched base. Compare against FETCH_HEAD — fetching a URL remote records the commit in FETCH_HEAD, not in a <URL>/<branch> ref.',
+  '            record a NON-result `note` cleanup_warning artifact (key "space-checkout-ahead") — do NOT claim the checkout is synchronized.',
+  '          fi',
+  '        fi',
+  '7. Save an audit artifact:',
+  '     save_artifact({ shape: "link", kind: "merge",',
+  '                     data: { url: <merged_pr_url>, merged_at, approval_source: "{{approval_source}}" } })',
+].join('\n');
+
+const CODER_ONLY_NODE = 'tpl-coder-only-code';
+
+export const CODER_ONLY_WORKFLOW: SpaceWorkflow = {
+  id: '',
+  spaceId: '',
+  name: 'Coder-Only Workflow',
+  handle: 'coder-only-workflow',
+  description:
+    'Single-coder workflow with no internal reviewer. Review is delegated to the external GitHub reviewers Codex and Devon; the coder waits for both to pass on the current head, runs a final informal review, then requests human approval and merges post-approval.',
+  nodes: [
+    {
+      id: CODER_ONLY_NODE,
+      name: 'Coding',
+      agents: [
+        {
+          agentId: 'Coder',
+          name: 'coder',
+          customPrompt: { value: CODER_ONLY_PROMPT },
+          eventInterests: [IMPLEMENTER_PR_EVENT_INTEREST],
+        },
+      ],
+      postApproval: {
+        targetAgent: 'coder',
+        instructions: CODER_ONLY_MERGE_INSTRUCTIONS,
+        requirePrMerge: true,
+      },
+    },
+  ],
+  startNodeId: CODER_ONLY_NODE,
+  endNodeId: CODER_ONLY_NODE,
+  tags: ['coding', 'external-review'],
+  createdAt: 0,
+  updatedAt: 0,
+  completionAutonomyLevel: 5,
+};
+
 export const LEGACY_CODING_TEMPLATE_IDENTITIES = [
   {
     legacyName: 'Coding Workflow',
@@ -757,7 +1005,8 @@ export function builtInWorkflowRequiresPrMerge(templateName: string | null | und
   return (template?.nodes ?? []).some(
     (node) =>
       node.postApproval?.targetAgent !== undefined &&
-      node.postApproval.instructions === CODER_OWNED_MERGE_INSTRUCTIONS
+      (node.postApproval.instructions === CODER_OWNED_MERGE_INSTRUCTIONS ||
+        node.postApproval.instructions === CODER_ONLY_MERGE_INSTRUCTIONS)
   );
 }
 
@@ -767,6 +1016,7 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
     CODING_WITH_QA_WORKFLOW,
     RESEARCH_WORKFLOW,
     REVIEW_ONLY_WORKFLOW,
+    CODER_ONLY_WORKFLOW,
   ];
   return workflows;
 }
@@ -1608,9 +1858,7 @@ export function seedBuiltInWorkflows(
             row.id,
             migrated.tags!.filter((tag) => tag !== 'default')
           );
-        } catch {
-          // Non-fatal: tag normalization does not block the migration.
-        }
+        } catch {}
       }
     }
   }

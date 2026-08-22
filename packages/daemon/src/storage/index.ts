@@ -274,13 +274,6 @@ export class Database {
     return this.sdkMessageRepo.saveUserMessage(sessionId, message, sendStatus, origin);
   }
 
-  getMessagesByStatus(
-    sessionId: string,
-    status: SendStatus
-  ): Array<SDKMessage & { dbId: string; timestamp: number }> {
-    return this.sdkMessageRepo.getMessagesByStatus(sessionId, status);
-  }
-
   getUserMessagesByStatus(
     sessionId: string,
     status: SendStatus,

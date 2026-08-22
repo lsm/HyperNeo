@@ -159,9 +159,7 @@ async function mirrorDirectory(src: string, dest: string): Promise<void> {
       try {
         const content = await readFile(srcPath);
         await writeFile(destPath, content);
-      } catch {
-        // Ignore broken links in the source tree.
-      }
+      } catch {}
     }
   }
 }

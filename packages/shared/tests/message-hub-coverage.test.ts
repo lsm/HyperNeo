@@ -16,9 +16,7 @@ class MockTransport implements IMessageTransport {
   private _state: ConnectionState = 'connected';
   public sentMessages: HubMessage[] = [];
 
-  async initialize(): Promise<void> {
-    // Mock implementation - transport is immediately ready
-  }
+  async initialize(): Promise<void> {}
 
   async close(): Promise<void> {
     this._state = 'disconnected';

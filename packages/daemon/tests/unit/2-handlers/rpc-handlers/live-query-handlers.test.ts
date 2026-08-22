@@ -2718,6 +2718,99 @@ describe('NAMED_QUERY_REGISTRY', () => {
         real.close();
       });
 
+      test('task_sdk_messages CTE selects an explicit narrow column list without the sdk_message BLOB (#2660)', () => {
+        const sql = NAMED_QUERY_REGISTRY.get('taskMilestones.byTask')!.sql;
+        const start = sql.indexOf('task_sdk_messages AS MATERIALIZED (');
+        const end = sql.indexOf('task_sessions AS MATERIALIZED');
+        expect(start).toBeGreaterThan(-1);
+        expect(end).toBeGreaterThan(start);
+        const cte = sql.slice(start, end);
+        expect(cte).not.toMatch(/\bsm\.\*/);
+        expect(cte).not.toMatch(/sm\.sdk_message/);
+        expect(cte).not.toMatch(/json_extract\(/);
+        expect(cte).not.toContain('LEFT JOIN sessions');
+        for (const col of [
+          'sm.id AS id',
+          'sm.session_id AS session_id',
+          'sm.task_id AS task_id',
+          'sm.message_type AS message_type',
+          'sm.message_subtype AS message_subtype',
+          'sm.timestamp AS timestamp',
+          'sm.send_status AS send_status',
+          'sm.origin AS origin',
+          'sm.parent_tool_use_id AS parent_tool_use_id',
+          'COALESCE(sm.sdk_uuid, sm.id) AS resolved_sdk_uuid',
+        ]) {
+          expect(cte).toContain(col);
+        }
+      });
+
+      test('promptProvenance is extracted once per session side lookup, never per message (#2660)', () => {
+        const sql = NAMED_QUERY_REGISTRY.get('taskMilestones.byTask')!.sql;
+        const provStart = sql.indexOf('session_provenance AS MATERIALIZED (');
+        const provEnd = sql.indexOf('replacement_edges AS MATERIALIZED');
+        expect(provStart).toBeGreaterThan(-1);
+        expect(provEnd).toBeGreaterThan(provStart);
+        const prov = sql.slice(provStart, provEnd);
+        expect(prov).toContain('FROM task_sessions ts');
+        expect(prov).toContain("json_extract(s.metadata, '$.promptProvenance.agentName')");
+        expect(prov).toContain("json_extract(s.metadata, '$.promptProvenance.agentId')");
+        expect(sql.match(/json_extract\(s(_meta)?\.metadata/g)).toHaveLength(2);
+      });
+
+      test('sdk_message BLOB is re-fetched by primary key only in the final row candidates (#2660)', () => {
+        const sql = NAMED_QUERY_REGISTRY.get('taskMilestones.byTask')!.sql;
+        expect(sql.match(/JOIN sdk_messages msg ON msg\.id = tsm\.id/g)).toHaveLength(3);
+      });
+
+      test('attributes execution-less worker milestones via per-session promptProvenance', () => {
+        const workflowRunId = 'wr-ms-provenance';
+        const mergerSessionId = 'space:space-1:task:ms-prov:merge';
+        const taskId = insertSpaceTask({ id: 'ms-prov', workflowRunId, status: 'in_progress' });
+        db.prepare(
+          `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, processing_state, type, session_context)
+           VALUES (?, 'Merger', '/tmp', ?, ?, 'active', '{}', ?, 0, '{}', 'worker', '{}')`
+        ).run(
+          mergerSessionId,
+          nowIso,
+          nowIso,
+          JSON.stringify({
+            promptProvenance: {
+              source: 'space_agent_custom_prompt',
+              hash: 'h',
+              agentId: 'agent-merger',
+              agentName: 'merger',
+              workflowRunId,
+              nodeId: 'merge',
+              nodeName: 'Merge',
+            },
+          })
+        );
+        db.prepare(
+          `INSERT INTO space_agents (id, space_id, name) VALUES ('agent-merger', ?, 'PR Merger')`
+        ).run(spaceId);
+        sessionTaskIds.set(mergerSessionId, taskId);
+        insertSdkMessageAt(
+          'sdk-ms-prov-1',
+          mergerSessionId,
+          now + 1000,
+          'assistant',
+          'consumed',
+          'system',
+          null,
+          {
+            type: 'assistant',
+            message: { role: 'assistant', content: [{ type: 'text', text: 'merging' }] },
+          }
+        );
+
+        const rows = queryMilestones(taskId);
+        const answer = rows.find((r) => r.id === 'answer:sdk-ms-prov-1');
+        expect(answer).toBeDefined();
+        expect(answer?.sourceLabel).toBe('PR Merger');
+        expect(answer?.sourceId).toBe(mergerSessionId);
+      });
+
       test('emits GitHub CI milestones from the live external-event tables', () => {
         const taskId = insertSpaceTask({ id: 'ms-github', status: 'in_progress' });
         insertGithubEvent(
@@ -5485,6 +5578,56 @@ describe('NAMED_QUERY_REGISTRY', () => {
     test('ORDER BY is createdAt ASC, id ASC (deterministic tiebreaker)', () => {
       const sql = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.sql;
       expect(sql).toContain('ORDER BY createdAt ASC, id ASC');
+    });
+
+    test('turn anchor uses a window forward-fill, not a per-row correlated subquery (#2660)', () => {
+      const sql = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.sql;
+      expect(sql).not.toMatch(/\(\s*SELECT urs\.userMessageId/);
+      expect(sql).toContain("MAX(CASE WHEN n.messageType = 'user' THEN n.rowPos END) OVER");
+    });
+
+    test('turn-position window passes project narrow columns, keeping payloads out of window sorts', () => {
+      const sql = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.sql;
+      const start = sql.indexOf('sdk_rows_numbered AS (');
+      const end = sql.indexOf('sdk_rows AS (');
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      const windowCtes = sql
+        .slice(start, end)
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('--'))
+        .join('\n');
+      expect(windowCtes).not.toMatch(/\br\.\*/);
+      expect(windowCtes).not.toMatch(/\bn\.\*/);
+      expect(windowCtes).not.toContain('content');
+    });
+
+    test('turnUserMessageId forwards the latest settled user row per session', () => {
+      insertTask();
+      insertGroup();
+      const insertUser = (id: string, ts: number): void => {
+        db.exec(`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status)
+				 VALUES ('${id}', '${workerSessionId}', 'user',
+				 '${JSON.stringify({ type: 'user', message: { role: 'user', content: 'q' } })}',
+				 '${new Date(ts).toISOString()}', 'consumed')`);
+      };
+      insertSdkMessage(workerSessionId, 'a0', 500);
+      insertUser('u1', 1000);
+      insertSdkMessage(workerSessionId, 'a1', 1500);
+      insertUser('u2', 2000);
+      insertSdkMessage(workerSessionId, 'a2', 2500);
+
+      const sql = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.sql;
+      const rows = db.prepare(sql).all(groupId) as Array<{
+        id: string;
+        turnUserMessageId: string | null;
+      }>;
+      const byId = new Map(rows.map((r) => [r.id, r.turnUserMessageId]));
+      expect(byId.get('a0')).toBeNull();
+      expect(byId.get('u1')).toBe('u1');
+      expect(byId.get('a1')).toBe('u1');
+      expect(byId.get('u2')).toBe('u2');
+      expect(byId.get('a2')).toBe('u2');
     });
   });
 

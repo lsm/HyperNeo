@@ -42,6 +42,7 @@
     "packages/daemon/src/lib/acp/acp-client.ts",
     "packages/daemon/src/lib/acp/acp-message-translator.ts",
     "packages/daemon/src/lib/acp/acp-query-adapter.ts",
+    "packages/daemon/src/lib/acp/acp-model-fetcher.ts",
     "packages/daemon/src/lib/providers/acp-provider.ts"
   ],
   "ignoreIssues": {
@@ -75,6 +76,7 @@
     "@floating-ui/dom",
     "@vitest/coverage-v8",
     "use-sync-external-store",
-    "lucide-preact"
+    "lucide-preact",
+    "superpipe"
   ]
 }

@@ -72,10 +72,7 @@ export const DEFAULT_WORKER_FEATURES: SessionFeatures = {
   sessionInfo: true,
 };
 
-/**
- * Default features for lobby sessions (all disabled).
- * @public
- */
+/** @public */
 export const DEFAULT_LOBBY_FEATURES: SessionFeatures = {
   rewind: false,
   worktree: false,
@@ -318,6 +315,7 @@ export interface SessionMetadata {
   resolvedQuestions?: Record<string, ResolvedQuestion>;
   lastSdkCost?: number;
   costBaseline?: number;
+  refusalRewindTargetUuid?: string | null;
   acpInstructionsSent?: boolean;
   pastSdkSessionIds?: string[];
   acpContextUsageEstimate?: number;

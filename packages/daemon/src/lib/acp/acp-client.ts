@@ -4,6 +4,7 @@ import type {
   AcpAuthenticateParams,
   AcpSessionNewParams,
   AcpSessionNewResult,
+  AcpSessionCloseParams,
   AcpSessionPromptParams,
   AcpSessionPromptResult,
   AcpSessionCancelParams,
@@ -36,6 +37,7 @@ import type {
   AcpContentBlock,
   AcpStopReason,
 } from '@hyperneo/shared';
+import type { AcpProcessTreeOwner } from './acp-process-tree';
 import { AcpTransport } from './acp-transport';
 import type { AcpTransportCallbacks } from './acp-transport';
 
@@ -58,8 +60,10 @@ export interface AcpClientOptions
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  replaceEnv?: boolean;
   cwd?: string;
   requestTimeoutMs?: number;
+  processTreeOwner?: AcpProcessTreeOwner;
 }
 
 export class AcpClient {
@@ -247,6 +251,22 @@ export class AcpClient {
     return !!sessionCapabilities && 'resume' in sessionCapabilities;
   }
 
+  canCloseSession(): boolean {
+    const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
+    return !!sessionCapabilities && 'close' in sessionCapabilities;
+  }
+
+  async closeSession(sessionId?: string): Promise<void> {
+    const target = sessionId ?? this.sessionId;
+    if (!target) return;
+    const response = await this.transport.sendRequest('session/close', {
+      sessionId: target,
+    } as AcpSessionCloseParams);
+    if ('error' in response) {
+      throw new Error(`session/close failed: ${response.error.message}`);
+    }
+  }
+
   async *sendPrompt(
     prompt: AcpContentBlock[],
     callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
@@ -273,10 +293,7 @@ export class AcpClient {
       if (params.sessionId !== this.sessionId) return;
       try {
         accept();
-      } catch {
-        // Acceptance callback failed — retryable on the next session/update or
-        // the prompt-response fallback; the update itself is still delivered.
-      }
+      } catch {}
       queue.push(params);
       if (resolveNext) {
         resolveNext();
@@ -304,11 +321,7 @@ export class AcpClient {
             this.lastPromptStopReason = result.stopReason;
             try {
               accept();
-            } catch {
-              // Acceptance callback failed — the row stays retryable and the
-              // runner's end-of-run settle terminalizes it; never leave
-              // `done` unset or sendPrompt waits forever on a settled request.
-            }
+            } catch {}
           }
           done = true;
         },
@@ -349,10 +362,10 @@ export class AcpClient {
     } as AcpSessionCancelParams);
   }
 
-  close(): void {
-    if (this.closed) return;
+  close(): Promise<void> {
+    if (this.closed) return Promise.resolve();
     this.closed = true;
-    this.transport.close().catch(() => {});
+    return this.transport.close().catch(() => {});
   }
 
   getSessionId(): string | undefined {
@@ -441,6 +454,7 @@ export class AcpClient {
           ? async (params) => this.callbacks.onTerminalOutput!(params as AcpTerminalOutputParams)
           : undefined;
       case 'terminal/waitForExit':
+      case 'terminal/wait_for_exit':
         return this.callbacks.onTerminalWaitForExit
           ? async (params) =>
               this.callbacks.onTerminalWaitForExit!(params as AcpTerminalWaitForExitParams)
@@ -466,9 +480,7 @@ export class AcpClient {
     for (const subscriber of this.notificationSubscribers) {
       try {
         subscriber(notification);
-      } catch {
-        // Isolated subscriber errors
-      }
+      } catch {}
     }
   }
 }

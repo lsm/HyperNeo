@@ -27,6 +27,7 @@ import {
   deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
 } from '../../../lib/agent/message-delivery';
+import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline';
 import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
@@ -73,7 +74,6 @@ import {
   PermanentSpawnError,
   validateTaskAllowsSpawn,
 } from './workflow-node-execution-validation';
-import type { DbQueryMcpServer } from '../../db-query/tools';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
@@ -103,6 +103,7 @@ import { Logger } from '../../logger';
 import {
   formatAgentMessage,
   extractReplyToSessionId,
+  REPLY_PROTOCOL,
   type AgentMessageLevel,
 } from '../agent-message-envelope';
 
@@ -110,7 +111,8 @@ const log = new Logger('task-agent-manager');
 const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
 
 const WORKFLOW_ESCALATION_TARGET = 'space-agent';
-const AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = '\n\n─── Reply ───\nTo reply, use: ';
+const AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = `\n\n─── Reply ───\n${REPLY_PROTOCOL}\nTo reply, use: `;
+const LEGACY_AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = '\n\n─── Reply ───\nTo reply, use: ';
 
 function pendingSourceLevel(sourceAgentName: string): AgentMessageLevel {
   if (sourceAgentName === 'task-agent') return 'task-agent';
@@ -192,7 +194,10 @@ export function hasAgentMessageEnvelopeForTest(
   }
 
   if (fromLevel === 'node-agent' && toLevel === 'node-agent') return true;
-  return message.includes(AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK);
+  return (
+    message.includes(AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK) ||
+    message.includes(LEGACY_AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK)
+  );
 }
 
 export interface TaskAgentManagerConfig {
@@ -358,10 +363,7 @@ export class TaskAgentManager {
 
   private taskWorktreePaths = new Map<string, string>();
 
-  private taskDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly auditLogRepo: McpAuditLogRepository;
-
-  private eagerSubSessionIds = new Map<string, Map<string, string>>();
 
   private taskArchiveListenerUnsub: (() => void) | null = null;
   private rateLimitListenerUnsubs: Array<() => void> = [];
@@ -567,16 +569,27 @@ export class TaskAgentManager {
     ) {
       return;
     }
-    this.config.taskRepo.updateTask(taskId, { status, restrictions });
-    this.emitTaskUpdatedEvent(taskId);
+    const outcome = this.config.taskRepo.casStatusWithPayload(
+      taskId,
+      ['in_progress', 'rate_limited', 'usage_limited'],
+      status,
+      { restrictions }
+    );
+    if (outcome === 'won') {
+      this.emitTaskUpdatedEvent(taskId);
+    }
   }
 
   private async restoreTaskFromRateLimit(taskId: string): Promise<void> {
-    const task = this.config.taskRepo.getTask(taskId);
-    if (!task) return;
-    if (!isRateOrUsageLimited(task.status)) return;
-    this.config.taskRepo.updateTask(taskId, { status: 'in_progress', restrictions: null });
-    this.emitTaskUpdatedEvent(taskId);
+    const outcome = this.config.taskRepo.casStatusWithPayload(
+      taskId,
+      ['rate_limited', 'usage_limited'],
+      'in_progress',
+      { restrictions: null }
+    );
+    if (outcome === 'won') {
+      this.emitTaskUpdatedEvent(taskId);
+    }
   }
 
   private emitTaskUpdatedEvent(taskId: string): void {
@@ -904,29 +917,10 @@ export class TaskAgentManager {
     if (memberInfo?.agentName) {
       const parentTask = this.config.taskRepo.getTask(taskId);
       if (parentTask?.workflowRunId) {
-        const eagerSessionId = this.eagerSubSessionIds.get(taskId)?.get(memberInfo.agentName);
-        let prevExec = this.config.nodeExecutionRepo
+        const prevExec = this.config.nodeExecutionRepo
           .listByWorkflowRun(parentTask.workflowRunId)
           .filter((e) => e.agentName === memberInfo.agentName && e.agentSessionId)
           .at(-1);
-        if (!prevExec && eagerSessionId) {
-          prevExec = {
-            id: '',
-            workflowRunId: parentTask.workflowRunId,
-            workflowNodeId: memberInfo.nodeId ?? '',
-            agentName: memberInfo.agentName,
-            agentId: memberInfo.agentId ?? null,
-            agentSessionId: eagerSessionId,
-            status: 'pending',
-            result: null,
-            data: null,
-            createdAt: 0,
-            startedAt: null,
-            completedAt: null,
-            updatedAt: 0,
-            lastActivityAt: null,
-          };
-        }
         if (prevExec?.agentSessionId) {
           const existing =
             this.agentSessionIndex.get(prevExec.agentSessionId) ??
@@ -1591,7 +1585,7 @@ export class TaskAgentManager {
              FROM sessions s
             WHERE s.id = ?
               AND s.type = 'worker'
-              AND json_extract(s.session_context, '$.taskId') = ?
+              AND s.task_id = ?
               AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)`
         )
         .get(sessionId, taskId) as { ok?: number } | undefined;
@@ -1672,7 +1666,7 @@ export class TaskAgentManager {
           `SELECT s.id AS id
              FROM sessions s
             WHERE s.type = 'worker'
-              AND json_extract(s.session_context, '$.taskId') = ?
+              AND s.task_id = ?
               AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)
             ORDER BY s.last_active_at DESC
             LIMIT 1`
@@ -1938,10 +1932,22 @@ export class TaskAgentManager {
       execution
     );
     const timeoutMs = 30_000;
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<null>((resolve) => {
-      setTimeout(() => resolve(null), timeoutMs);
+      timeoutTimer = setTimeout(() => resolve(null), timeoutMs);
+      timeoutTimer.unref();
     });
-    const sessionId = await Promise.race([spawnPromise, timeoutPromise]);
+    spawnPromise.catch((err) => {
+      log.warn(
+        `TaskAgentManager.activateTargetSessionsForMessage: spawn of agent "${agentName}" for run ${workflowRunId} failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    });
+    let sessionId: string | null;
+    try {
+      sessionId = await Promise.race([spawnPromise, timeoutPromise]);
+    } finally {
+      clearTimeout(timeoutTimer);
+    }
     if (!sessionId) {
       log.warn(
         `TaskAgentManager.activateTargetSessionsForMessage: timed out after ${timeoutMs}ms activating agent "${agentName}" for run ${workflowRunId}`
@@ -2011,10 +2017,6 @@ export class TaskAgentManager {
     }
   }
 
-  isSpawning(_taskId: string): boolean {
-    return false;
-  }
-
   isExecutionSpawning(executionId: string): boolean {
     return this.spawningExecutionIds.has(executionId);
   }
@@ -2055,10 +2057,6 @@ export class TaskAgentManager {
       this.taskWorktreePaths.set(taskId, stored);
       return stored;
     }
-    return undefined;
-  }
-
-  getTaskAgent(_taskId: string): AgentSession | undefined {
     return undefined;
   }
 
@@ -2423,18 +2421,6 @@ export class TaskAgentManager {
 
     this.taskWorktreePaths.delete(taskId);
 
-    this.eagerSubSessionIds.delete(taskId);
-
-    const dbQueryServer = this.taskDbQueryServers.get(taskId);
-    if (dbQueryServer) {
-      try {
-        dbQueryServer.close();
-      } catch (err) {
-        log.warn(`TaskAgentManager: failed to close db-query server for task ${taskId}:`, err);
-      }
-      this.taskDbQueryServers.delete(taskId);
-    }
-
     log.info(`TaskAgentManager: shutdown complete for task ${taskId} (DB state preserved)`);
   }
 
@@ -2477,18 +2463,6 @@ export class TaskAgentManager {
     }
 
     this.taskWorktreePaths.delete(taskId);
-
-    this.eagerSubSessionIds.delete(taskId);
-
-    const dbQueryServer = this.taskDbQueryServers.get(taskId);
-    if (dbQueryServer) {
-      try {
-        dbQueryServer.close();
-      } catch (err) {
-        log.warn(`TaskAgentManager: failed to close db-query server for task ${taskId}:`, err);
-      }
-      this.taskDbQueryServers.delete(taskId);
-    }
 
     log.info(
       `TaskAgentManager: cleaned up in-memory state for task ${taskId} (reason: ${reason}, DB + worktree preserved)`
@@ -3227,35 +3201,47 @@ export class TaskAgentManager {
     const existing = v2Enabled
       ? this.config.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)
       : null;
-    if (existing?.sendStatus === 'consumed') {
-      return messageId;
-    }
-    if (existing?.sendStatus === 'failed') {
-      this.config.db.getSDKMessageRepo().reopenDeliveryByUuid(sessionId, messageId);
-    }
-
     const inRateLimitCooldown = state.status === 'rate_limit_cooldown';
     const parentTaskId = this.findParentTaskIdForSubSession(sessionId);
     const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
     const parentLimited = parentTask ? isRateOrUsageLimited(parentTask.status) : false;
-    if ((deliveryMode === 'defer' && isBusy) || inRateLimitCooldown || parentLimited) {
+    const outcome = decideInjectDelivery({
+      existingSendStatus: existing?.sendStatus ?? null,
+      deliveryMode,
+      isBusy,
+      inRateLimitCooldown,
+      parentTaskLimited: parentLimited,
+      inputKind,
+      hasPriorContext: !!session.session.sdkSessionId,
+      slotResetsContext: this.slotResetsContextForSession(sessionId),
+      hasActiveDeliveryJob: this.hasActiveDeliveryJob(sessionId),
+    });
+
+    if (outcome.decision.action === 'noop') {
+      return messageId;
+    }
+    if (outcome.reopenFailedDelivery) {
+      const reopenedDbId = this.config.db
+        .getSDKMessageRepo()
+        .reopenDeliveryByUuid(sessionId, messageId);
+      if (reopenedDbId) {
+        await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
+      }
+    }
+    if (outcome.decision.action === 'defer') {
       if (v2Enabled && existing && existing.sendStatus !== 'deferred') {
         this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
       }
       const dbId = existing
         ? messageId
         : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
+      await this.publishMessageStatusChanged(sessionId, dbId, 'deferred');
       return dbId;
     }
-
-    const hasPriorContext = !!session.session.sdkSessionId;
-    const shouldClearContext =
-      inputKind === 'task' &&
-      !isBusy &&
-      hasPriorContext &&
-      this.slotResetsContextForSession(sessionId) &&
-      !this.hasActiveDeliveryJob(sessionId);
-    if (shouldClearContext) {
+    if (
+      outcome.decision.action === 'clear_before_deliver' &&
+      !this.hasActiveDeliveryJob(sessionId)
+    ) {
       try {
         await session.clearConversationContext();
       } catch (err) {
@@ -3266,10 +3252,24 @@ export class TaskAgentManager {
       }
     }
 
+    if (!isBusy) {
+      const replay = await session.handleQueryTrigger({
+        deliverIndividually: true,
+        excludeMessageUuid: messageId,
+      });
+      if (!replay.success) {
+        log.warn(
+          `TaskAgentManager: deferred backlog replay for session ${sessionId} failed: ` +
+            `${replay.error ?? 'unknown error'} — delivering current message only`
+        );
+      }
+    }
+
     if (v2Enabled) {
       const dbId = existing
         ? messageId
         : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
+      await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
       const sdkMessageRepo = this.config.db.getSDKMessageRepo();
       await awaitDeliveryConsumption({
         sessionId,
@@ -3282,12 +3282,21 @@ export class TaskAgentManager {
             sessionId,
             messageUuid: messageId,
             origin: 'space_inject',
-            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+            onEnqueueFailure: () => {
+              const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
+              if (failedDbId) {
+                void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+              }
+            },
           }),
         ...(!existing
           ? {
-              terminalizeOnTimeout: () =>
-                sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+              terminalizeOnTimeout: () => {
+                const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
+                if (failedDbId) {
+                  void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+                }
+              },
             }
           : {}),
       });
@@ -3295,8 +3304,23 @@ export class TaskAgentManager {
     }
     await session.ensureQueryStarted();
     const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
+    await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
     await session.messageQueue.enqueueWithId(messageId, hasImages ? sdkContent : message);
     return dbId;
+  }
+
+  private async publishMessageStatusChanged(
+    sessionId: string,
+    dbId: string,
+    status: 'enqueued' | 'deferred' | 'failed'
+  ): Promise<void> {
+    await this.config.internalEventBus
+      .publish('messages.statusChanged', {
+        sessionId,
+        messageIds: [dbId],
+        status,
+      })
+      .catch(() => {});
   }
 
   private async stopSessionPreserveDb(

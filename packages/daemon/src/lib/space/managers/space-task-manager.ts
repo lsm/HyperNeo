@@ -20,20 +20,55 @@ const log = new Logger('space-task-manager');
 export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
   draft: ['open', 'archived'],
   open: ['in_progress', 'blocked', 'review', 'done', 'cancelled', 'archived'],
-  in_progress: ['open', 'review', 'approved', 'done', 'blocked', 'cancelled', 'stopped'],
+  in_progress: [
+    'open',
+    'review',
+    'approved',
+    'done',
+    'blocked',
+    'cancelled',
+    'stopped',
+    'rate_limited',
+    'usage_limited',
+  ],
   review: ['done', 'approved', 'in_progress', 'cancelled', 'archived', 'stopped'],
   approved: ['done', 'in_progress', 'archived', 'cancelled'],
   done: ['in_progress', 'archived'],
   blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived', 'stopped'],
   cancelled: ['open', 'in_progress', 'done', 'archived'],
-  rate_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived', 'stopped'],
-  usage_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived', 'stopped'],
+  rate_limited: [
+    'in_progress',
+    'usage_limited',
+    'open',
+    'blocked',
+    'cancelled',
+    'archived',
+    'stopped',
+  ],
+  usage_limited: [
+    'in_progress',
+    'rate_limited',
+    'open',
+    'blocked',
+    'cancelled',
+    'archived',
+    'stopped',
+  ],
   archived: [],
   stopped: ['in_progress', 'open', 'review', 'cancelled', 'archived'],
 };
 
 export function isValidSpaceTaskTransition(from: SpaceTaskStatus, to: SpaceTaskStatus): boolean {
   return VALID_SPACE_TASK_TRANSITIONS[from]?.includes(to) ?? false;
+}
+
+export function assertValidSpaceTaskTransition(from: SpaceTaskStatus, to: SpaceTaskStatus): void {
+  if (!isValidSpaceTaskTransition(from, to)) {
+    throw new Error(
+      `Invalid status transition from '${from}' to '${to}'. ` +
+        `Allowed: ${VALID_SPACE_TASK_TRANSITIONS[from]?.join(', ') || 'none'}`
+    );
+  }
 }
 
 export class SpaceTaskManager {
@@ -114,10 +149,12 @@ export class SpaceTaskManager {
       throw new Error(`Task not found: ${taskId}`);
     }
 
-    if (!isValidSpaceTaskTransition(task.status, newStatus)) {
+    assertValidSpaceTaskTransition(task.status, newStatus);
+
+    if (isRateOrUsageLimited(newStatus)) {
       throw new Error(
-        `Invalid status transition from '${task.status}' to '${newStatus}'. ` +
-          `Allowed: ${VALID_SPACE_TASK_TRANSITIONS[task.status].join(', ') || 'none'}`
+        `Status '${newStatus}' is runtime-owned: it is set only by the rate-limit pause path ` +
+          `and cannot be written through generic status updates.`
       );
     }
 
@@ -233,11 +270,7 @@ export class SpaceTaskManager {
         if (unblocked.length > 0 && options?.onCascadedTasks) {
           await options.onCascadedTasks(unblocked);
         }
-      } catch {
-        // Best-effort: unblock failures must not roll back the
-        // already-committed done transition. The tick loop will
-        // re-evaluate blocked dependents on the next cycle.
-      }
+      } catch {}
     }
 
     if (newStatus === 'archived' && updated.workflowRunId) {
@@ -541,11 +574,7 @@ export class SpaceTaskManager {
         try {
           const reopened = await this.setTaskStatus(t.id, 'open');
           unblocked.push(reopened);
-        } catch {
-          // Per-dependent: a concurrent status change (e.g. archive)
-          // can make blocked→open invalid. Skip this dependent and
-          // continue with the rest rather than aborting the cascade.
-        }
+        } catch {}
       }
     }
     return unblocked;

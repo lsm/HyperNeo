@@ -462,9 +462,7 @@ export class AskUserQuestionHandler {
     if (this.pendingResolver) {
       try {
         this.pendingResolver.reject(new Error('Question orphaned: agent session ended'));
-      } catch {
-        // Ignore — best-effort cleanup
-      }
+      } catch {}
       this.pendingResolver = null;
     }
     this.queuedAnswers.delete(pendingQuestion.toolUseId);
@@ -575,9 +573,7 @@ export class AskUserQuestionHandler {
       );
       try {
         await stateManager.setIdle();
-      } catch {
-        /* non-fatal — the turn is abandoned either way */
-      }
+      } catch {}
     }
 
     this.logger.info(

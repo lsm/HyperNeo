@@ -76,14 +76,10 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, 10_000);
 
   describe('fresh DB (all migrations applied)', () => {

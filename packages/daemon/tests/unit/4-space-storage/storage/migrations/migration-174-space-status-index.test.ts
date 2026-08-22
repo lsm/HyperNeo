@@ -66,14 +66,10 @@ describe('Migration 174: space_tasks (space_id, status, updated_at, id) index', 
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   describe('fresh DB (all migrations applied)', () => {

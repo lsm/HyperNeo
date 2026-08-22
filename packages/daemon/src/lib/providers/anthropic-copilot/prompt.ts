@@ -45,9 +45,6 @@ function formatBlocks(blocks: ContentBlock[], role: 'user' | 'assistant', parts:
       if (!block.text) continue;
       parts.push(role === 'user' ? `[User]: ${block.text}` : `[Assistant]: ${block.text}`);
     } else if (block.type === 'thinking') {
-      // Skip thinking blocks — they are internal reasoning, not conversation turns.
-      // The Copilot SDK does not support extended thinking, so these blocks are
-      // never emitted by the model and should not be forwarded to the prompt.
     } else if (block.type === 'tool_use') {
       parts.push(`[Assistant called tool ${block.name} with args: ${JSON.stringify(block.input)}]`);
     } else if (block.type === 'tool_result') {

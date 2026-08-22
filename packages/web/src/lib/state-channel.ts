@@ -67,9 +67,7 @@ export class StateChannel<T> {
       if (this.options.useOptimisticSubscriptions) {
         this.setupOptimisticSubscriptions();
       } else if (this.options.nonBlocking) {
-        this.setupSubscriptions().catch(() => {
-          /* ignore background subscription errors */
-        });
+        this.setupSubscriptions().catch(() => {});
       } else {
         await this.setupSubscriptions();
       }
@@ -362,7 +360,6 @@ export class StateChannel<T> {
             this.error.value = null;
           });
         } else {
-          // Cannot apply delta - state or mergeDelta missing
         }
       });
 
@@ -378,9 +375,7 @@ export class StateChannel<T> {
     this.refreshTimer = setInterval(() => {
       if (this.isStale(this.options.refreshInterval!)) {
         this.log(`Auto-refreshing stale channel: ${this.channelName}`);
-        this.refresh().catch(() => {
-          /* ignore refresh errors */
-        });
+        this.refresh().catch(() => {});
       }
     }, this.options.refreshInterval);
   }
@@ -389,9 +384,7 @@ export class StateChannel<T> {
     const reconnectSub = this.hub.onConnection((state) => {
       if (state === 'connected') {
         this.log(`Reconnected, performing hybrid refresh: ${this.channelName}`);
-        this.hybridRefresh().catch(() => {
-          /* ignore refresh errors */
-        });
+        this.hybridRefresh().catch(() => {});
       } else if (state === 'disconnected' || state === 'error') {
         this.error.value = new Error(`Connection ${state}`);
       }
@@ -412,9 +405,7 @@ export class StateChannel<T> {
     }
   }
 
-  private log(_message: string, ..._args: unknown[]): void {
-    // Debug logging removed as non-critical
-  }
+  private log(_message: string, ..._args: unknown[]): void {}
 }
 
 export const DeltaMergers = {

@@ -41,7 +41,9 @@ source "$REPO_ROOT/scripts/lib/shard-split.sh"
 #
 # ONLINE_HASH_SPLIT_SPECS splits oversized directories the same way
 # scripts/test-daemon.sh does (stableHash(repo-root-relative path) % N).
-# Format:  <prefix>|<split_count>|<globs>   — see HASH_SPLIT_SPECS there.
+# Format:  <prefix>|<split_count>|<globs>[|<weights>]   — see HASH_SPLIT_SPECS
+# there; the optional <weights> field opts the split into duration-aware bucket
+# packing via a generated weights manifest (scripts/shard-weights.tsv).
 # A split module's buckets are <prefix>-a, <prefix>-b, … (a→0, b→1, … ≤ z→25).
 #
 # Rebalancing a split is a one-number edit here PLUS adding/removing the
@@ -49,30 +51,36 @@ source "$REPO_ROOT/scripts/lib/shard-split.sh"
 # .github/workflows/main.yml — never editing individual files.
 # Validate any change with: scripts/test-online.sh --verify
 #
-# Split sizing (CI test-step medians, Aug 2026 — see task #912; each job adds
-# ~50s fixed setup/coverage overhead):
-#   space    4 files  ~178s → 4-way (kills the old 212s space-2 job)
-#   rpc     19 files  ~309s → 6-way
-#   rewind   2 files  ~159s → 2-way
-#   features 4 files  ~119s → 3-way
-# The hash balances FILE COUNT, not per-file duration — a bucket holding one
-# heavy file (e.g. space-a's task-agent-lifecycle) stays slow. The per-shard
-# numbers above are the arithmetic mean; actual buckets ranged ~7–69s test
-# time at these counts. Re-check with the next CI balance report.
+# Split sizing (duration-weighted since task #1183 — every split opts into
+# scripts/shard-weights.tsv, regenerated from CI junit via
+# scripts/generate-shard-weights.ts --suite daemon-online; each job adds ~50s
+# fixed setup/coverage overhead, so the max-file duration floors each split):
+#   space    4 files  ~174s → 3-way (max file 77s floors it; a 4th bucket
+#                         would hold the 10s file alone — same max, worse
+#                         spread, one more runner)
+#   rpc     19 files  ~265s → 6-way (max file 49s floors it; packed buckets
+#                         land 40–49s, spread ~1.2×)
+#   rewind   2 files  ~159s → 2-way (max file 95s floors it)
+#   features 4 files  ~111s → 3-way (packed 41/36/35s)
+# Weights pack by measured duration, so a bucket holding one heavy file (e.g.
+# space's task-agent-lifecycle at 77s) is a file-granularity floor, not a
+# packing failure — splitting that FILE is the only fix. Re-check with the
+# next CI balance report + manifest regen.
 # Small dirs (agent-sdk/components/convo/coordinator/git/lifecycle/mcp/sdk/
 # websocket) stay whole — a split's fixed overhead dominates below ~120s of
-# test time. convo is the one dir that CANNOT split: both of its files hash to
-# bucket 0 mod 2 (a 2-way split would leave bucket 1 empty), so it stays whole.
+# test time. convo is the one dir that CANNOT hash-split: both of its files
+# hash to bucket 0 mod 2 (a 2-way split would leave bucket 1 empty), so it
+# stays whole.
 ONLINE_HASH_SPLIT_SPECS=(
-	"features|3|features/*.test.ts"
-	"rewind|2|rewind/*.test.ts"
-	"space|4|space/*.test.ts"
-	"rpc|6|rpc/*.test.ts"
+	"features|3|features/*.test.ts|scripts/shard-weights.tsv"
+	"rewind|2|rewind/*.test.ts|scripts/shard-weights.tsv"
+	"space|3|space/*.test.ts|scripts/shard-weights.tsv"
+	"rpc|6|rpc/*.test.ts|scripts/shard-weights.tsv"
 )
 
 ONLINE_MODULES=(
-	# Hash-split modules (resolved via ONLINE_HASH_SPLIT_SPECS — do not list
-	# here): features-a…features-c, rewind-a/b, space-a…space-d, rpc-a…rpc-f.
+	# Split modules (resolved via ONLINE_HASH_SPLIT_SPECS — do not list
+	# here): features-a…features-c, rewind-a/b, space-a…space-c, rpc-a…rpc-f.
 	"agent-sdk|agent/*.test.ts"
 	"components|components/*.test.ts"
 	"convo|convo/*.test.ts"
@@ -119,11 +127,14 @@ online_rel_path() {
 
 # Resolve a hash-split module name (e.g. rpc-b) to its bucket's files.
 # Prints daemon-package-relative test paths, 0 on a match, 1 if $1 is not a split.
+# A spec with a 4th <weights> field resolves its bucket by duration-aware packing
+# (see ONLINE_HASH_SPLIT_SPECS above); the union of buckets is the full glob set
+# either way.
 online_hash_split_resolve() {
 	local module="$1"
-	local spec prefix count globs suffix bucket
+	local spec prefix count globs weights suffix bucket
 	for spec in "${ONLINE_HASH_SPLIT_SPECS[@]}"; do
-		IFS='|' read -r prefix count globs <<<"$spec"
+		IFS='|' read -r prefix count globs weights <<<"$spec"
 		case "$module" in
 			"$prefix"-*)
 				suffix="${module#"$prefix"-}"
@@ -131,9 +142,15 @@ online_hash_split_resolve() {
 				local abs=() g f
 				local IFS=';'
 				for g in $globs; do abs+=("$ONLINE_TEST_ROOT/$g"); done
-				while IFS= read -r f; do
-					online_rel_path "$f"
-				done < <(shard_split_bucket "$REPO_ROOT" "$count" "$bucket" "${abs[@]}")
+				if [ -n "$weights" ]; then
+					while IFS= read -r f; do
+						online_rel_path "$f"
+					done < <(shard_split_bucket_weighted "$REPO_ROOT" "$REPO_ROOT/$weights" "$count" "$bucket" "${abs[@]}")
+				else
+					while IFS= read -r f; do
+						online_rel_path "$f"
+					done < <(shard_split_bucket "$REPO_ROOT" "$count" "$bucket" "${abs[@]}")
+				fi
 				return $?
 				;;
 		esac
@@ -206,7 +223,9 @@ online_all_modules() {
 #     matrix module with no config row runs zero files; a configured module
 #     missing from the matrix never runs);
 #   - buckets partition their directory's complete test set (find cross-check
-#     over both daemon suffixes, so a glob missing a *_test.ts fails);
+#     over both daemon suffixes, so a glob missing a *_test.ts fails); weighted
+#     specs partition by their PACKED assignment and get a manifest audit plus
+#     per-bucket TIME balance in the report;
 #   - exempt dirs (intentionally disabled modules) are documented here.
 # Exits non-zero on any error.
 verify_online_modules() {
@@ -235,9 +254,13 @@ verify_online_modules() {
 
 	# 2. Hash-split specs: bucket names ↔ split_count, and glob coverage of the
 	#    directory tree (union == find, no overlap).
-	local spec prefix count globs
+	local spec prefix count globs weights manifest
 	for spec in "${ONLINE_HASH_SPLIT_SPECS[@]}"; do
-		IFS='|' read -r prefix count globs <<<"$spec"
+		IFS='|' read -r prefix count globs weights <<<"$spec"
+		manifest=""
+		if [ -n "$weights" ]; then
+			manifest="$REPO_ROOT/$weights"
+		fi
 
 		local abs=() g dirs=()
 		local IFS=';'
@@ -245,6 +268,14 @@ verify_online_modules() {
 			abs+=("$ONLINE_TEST_ROOT/$g")
 			dirs+=("$ONLINE_TEST_ROOT/$(dirname "$g")")
 		done
+
+		# A spec that opts into a weights manifest gets the manifest audit:
+		# present on disk, well-formed lines, no stale paths, coverage summary.
+		if [ -n "$manifest" ]; then
+			if ! shard_split_weights_check "$REPO_ROOT" "$manifest" "$count" "${abs[@]}"; then
+				errors=$((errors + 1))
+			fi
+		fi
 
 		local total find_count
 		total=$(shard_split_count "$REPO_ROOT" "${abs[@]}")
@@ -256,7 +287,11 @@ verify_online_modules() {
 
 		local i=0 union=""
 		while [ "$i" -lt "$count" ]; do
-			union+=$(shard_split_bucket "$REPO_ROOT" "$count" "$i" "${abs[@]}")$'\n'
+			if [ -n "$manifest" ]; then
+				union+=$(shard_split_bucket_weighted "$REPO_ROOT" "$manifest" "$count" "$i" "${abs[@]}")$'\n'
+			else
+				union+=$(shard_split_bucket "$REPO_ROOT" "$count" "$i" "${abs[@]}")$'\n'
+			fi
 			i=$((i + 1))
 		done
 		local union_unique
@@ -267,9 +302,15 @@ verify_online_modules() {
 		fi
 
 		local rep zero z
-		rep=$(shard_split_report "$REPO_ROOT" "$count" "${abs[@]}")
-		printf '  %-12s %d-way split, %d files:\n' "$prefix" "$count" "$total"
-		printf '%s\n' "$rep" | awk -F'\t' '{printf "      bucket %s: %s file(s)\n", $1, $2}'
+		if [ -n "$manifest" ]; then
+			rep=$(shard_split_report_weighted "$REPO_ROOT" "$manifest" "$count" "${abs[@]}")
+			printf '  %-12s %d-way split, %d files (duration-weighted via %s):\n' "$prefix" "$count" "$total" "$weights"
+			printf '%s\n' "$rep" | awk -F'\t' '{printf "      bucket %s: %s file(s), %.1fs weighted\n", $1, $2, $3 / 1000}'
+		else
+			rep=$(shard_split_report "$REPO_ROOT" "$count" "${abs[@]}")
+			printf '  %-12s %d-way split, %d files:\n' "$prefix" "$count" "$total"
+			printf '%s\n' "$rep" | awk -F'\t' '{printf "      bucket %s: %s file(s)\n", $1, $2}'
+		fi
 		zero=$(printf '%s\n' "$rep" | awk -F'\t' '$2 == 0 {print $1}')
 		for z in $zero; do
 			echo "  ERROR: '$prefix' bucket $z resolved to 0 files — a CI job would run nothing" >&2

@@ -34,14 +34,10 @@ describe('Migration 43: drop session_group_messages', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('fresh DB: table is absent after migrations + createTables', () => {

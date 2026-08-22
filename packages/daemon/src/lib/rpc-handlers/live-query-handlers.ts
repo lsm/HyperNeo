@@ -19,7 +19,7 @@ import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
 import type { TableChangeScope } from '../../storage/reactive-database';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat';
-import { humanSessionPredicate } from '../../storage/schema/session-counters';
+import { humanSessionColumnsPredicate } from '../../storage/schema/session-counters';
 import { Logger } from '../logger';
 import { mapActiveTurnEntryRow } from './activity-preview';
 
@@ -86,9 +86,7 @@ function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string,
         },
       };
       content = JSON.stringify(enriched);
-    } catch {
-      // Keep original content if parsing fails.
-    }
+    } catch {}
   }
 
   return {
@@ -185,9 +183,7 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
         turnId,
       },
     });
-  } catch {
-    // Keep original content when sdk_message is not valid JSON.
-  }
+  } catch {}
 
   const mapped: Record<string, unknown> = {
     id,
@@ -920,28 +916,40 @@ session_node_exec AS (
 ),
 task_sdk_messages AS MATERIALIZED (
   SELECT
-    sm.*,
-    COALESCE(sm.sdk_uuid, sm.id) AS resolved_sdk_uuid,
-    -- Post-approval worker sessions (e.g. the merger) carry no
-    -- node_executions row, so the session_node_exec LEFT JOIN downstream
-    -- yields NULL and the row would otherwise collapse to the display
-    -- placeholder 'agent'. Their identity is persisted on the session row
-    -- under metadata.promptProvenance (agent slot name, node id/name,
-    -- agent id) — the canonical runtime identity stamped at spawn — so
-    -- extract it here as a fallback for agent name / label / nodeId. NULL
-    -- for sessions without provenance (e.g. the Task Agent), which keep
-    -- their existing attribution.
-    json_extract(s_meta.metadata, '$.promptProvenance.agentName') AS provenance_agent_name,
-    json_extract(s_meta.metadata, '$.promptProvenance.agentId') AS provenance_agent_id,
-    json_extract(s_meta.metadata, '$.promptProvenance.nodeId') AS provenance_node_id,
-    json_extract(s_meta.metadata, '$.promptProvenance.nodeName') AS provenance_node_name
+    sm.id AS id,
+    sm.session_id AS session_id,
+    sm.task_id AS task_id,
+    sm.message_type AS message_type,
+    sm.message_subtype AS message_subtype,
+    sm.timestamp AS timestamp,
+    sm.send_status AS send_status,
+    sm.origin AS origin,
+    sm.parent_tool_use_id AS parent_tool_use_id,
+    COALESCE(sm.sdk_uuid, sm.id) AS resolved_sdk_uuid
   FROM target_task tt
   JOIN sdk_messages sm ON sm.task_id = tt.id
-  LEFT JOIN sessions s_meta ON s_meta.id = sm.session_id
 ),
 task_sessions AS MATERIALIZED (
   SELECT DISTINCT session_id
   FROM task_sdk_messages
+),
+-- Post-approval worker sessions (e.g. the merger) carry no node_executions
+-- row, so the session_node_exec LEFT JOIN downstream yields NULL and the row
+-- would otherwise collapse to the display placeholder 'agent'. Their identity
+-- is persisted on the session row under metadata.promptProvenance (agent slot
+-- name, agent id) — the canonical runtime identity stamped at spawn — so it
+-- serves as a fallback for agent name / label. Extracted once per distinct
+-- session of the task (a handful of rows), never per message: the former
+-- per-message json_extract pinned the main thread inside sqlite3_step on
+-- large tasks (#2660). NULL for sessions without provenance (e.g. the Task
+-- Agent), which keep their existing attribution.
+session_provenance AS MATERIALIZED (
+  SELECT
+    ts.session_id AS session_id,
+    json_extract(s.metadata, '$.promptProvenance.agentName') AS provenance_agent_name,
+    json_extract(s.metadata, '$.promptProvenance.agentId') AS provenance_agent_id
+  FROM task_sessions ts
+  LEFT JOIN sessions s ON s.id = ts.session_id
 ),
 replacement_edges AS MATERIALIZED (
   SELECT
@@ -1033,18 +1041,18 @@ lifecycle AS (
 ),
 instruction_candidates AS (
   SELECT
-    'instruction:' || sm.id AS id,
+    'instruction:' || tsm.id AS id,
     tt.id AS taskId,
     'instruction' AS category,
-    CASE WHEN sm.send_status = 'failed' THEN 'danger' ELSE 'info' END AS tone,
-    CASE WHEN sm.send_status = 'failed' THEN 'Instruction failed to send' ELSE 'Instruction' END AS title,
+    CASE WHEN tsm.send_status = 'failed' THEN 'danger' ELSE 'info' END AS tone,
+    CASE WHEN tsm.send_status = 'failed' THEN 'Instruction failed to send' ELSE 'Instruction' END AS title,
     SUBSTR(
       CASE
-        WHEN json_valid(sm.sdk_message) AND json_type(sm.sdk_message, '$.message.content') = 'text'
-          THEN json_extract(sm.sdk_message, '$.message.content')
-        WHEN json_valid(sm.sdk_message) AND json_type(sm.sdk_message, '$.message.content') = 'array' THEN (
+        WHEN json_valid(msg.sdk_message) AND json_type(msg.sdk_message, '$.message.content') = 'text'
+          THEN json_extract(msg.sdk_message, '$.message.content')
+        WHEN json_valid(msg.sdk_message) AND json_type(msg.sdk_message, '$.message.content') = 'array' THEN (
           SELECT GROUP_CONCAT(json_extract(je.value, '$.text'), ' ')
-          FROM json_each(json_extract(sm.sdk_message, '$.message.content')) je
+          FROM json_each(json_extract(msg.sdk_message, '$.message.content')) je
           WHERE json_extract(je.value, '$.type') = 'text'
             AND COALESCE(json_extract(je.value, '$.text'), '') != ''
         )
@@ -1054,25 +1062,29 @@ instruction_candidates AS (
     'Human' AS sourceLabel,
     'human' AS sourceKind,
     NULL AS sourceId,
-    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
+    CAST((julianday(tsm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
   FROM target_task tt
-  JOIN task_sdk_messages sm ON sm.task_id = tt.id
-  LEFT JOIN sdk_replacement_status srs ON srs.id = sm.id
-  WHERE sm.message_type = 'user'
+  JOIN task_sdk_messages tsm ON tsm.task_id = tt.id
+  -- The sdk_message BLOB is re-fetched by primary key only for rows that
+  -- reach this candidate stage; task_sdk_messages deliberately excludes it
+  -- so materialization never reads every message's overflow pages (#2660).
+  JOIN sdk_messages msg ON msg.id = tsm.id
+  LEFT JOIN sdk_replacement_status srs ON srs.id = tsm.id
+  WHERE tsm.message_type = 'user'
     -- A human instruction is any non-synthetic user message. The task-panel
     -- send path persists with origin=NULL (not 'human'), so origin alone can't
     -- identify human input; the message's isSynthetic flag is the reliable
     -- discriminator (space.task.sendMessage passes false; agent send_message
     -- and runtime injects pass true). origin != 'system' is a legacy-data
     -- fallback for older synthetic rows that may predate isSynthetic.
-    AND COALESCE(sm.origin, '') != 'system'
+    AND COALESCE(tsm.origin, '') != 'system'
     -- Guard json_extract: one malformed sdk_message row would otherwise raise
     -- "malformed JSON" and abort the entire query. json_valid short-circuits AND,
     -- so corrupt rows are simply excluded rather than blanking the whole timeline.
-    AND json_valid(sm.sdk_message)
-    AND COALESCE(CAST(json_extract(sm.sdk_message, '$.isSynthetic') AS INTEGER), 0) = 0
+    AND json_valid(msg.sdk_message)
+    AND COALESCE(CAST(json_extract(msg.sdk_message, '$.isSynthetic') AS INTEGER), 0) = 0
     AND srs.replacementStatus IS NULL
-    AND (sm.send_status IS NULL OR sm.send_status IN ('consumed', 'failed'))
+    AND (tsm.send_status IS NULL OR tsm.send_status IN ('consumed', 'failed'))
 ),
 instruction_rows AS (
   SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt
@@ -1081,36 +1093,38 @@ instruction_rows AS (
 ),
 answer_candidates AS (
   SELECT
-    'answer:' || sm.id AS id,
+    'answer:' || tsm.id AS id,
     tt.id AS taskId,
     'answer' AS category,
     'neutral' AS tone,
     'Answer' AS title,
     SUBSTR((
       SELECT GROUP_CONCAT(json_extract(je.value, '$.text'), ' ')
-      FROM json_each(json_extract(sm.sdk_message, '$.message.content')) je
+      FROM json_each(json_extract(msg.sdk_message, '$.message.content')) je
       WHERE json_extract(je.value, '$.type') = 'text'
         AND COALESCE(json_extract(je.value, '$.text'), '') != ''
     ), 1, 500) AS body,
-    COALESCE(sa.name, ne.agent_name, sm.provenance_agent_name, 'Agent') AS sourceLabel,
+    COALESCE(sa.name, ne.agent_name, sp.provenance_agent_name, 'Agent') AS sourceLabel,
     'agent' AS sourceKind,
-    sm.session_id AS sourceId,
-    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
+    tsm.session_id AS sourceId,
+    CAST((julianday(tsm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
   FROM target_task tt
-  JOIN task_sdk_messages sm ON sm.task_id = tt.id
+  JOIN task_sdk_messages tsm ON tsm.task_id = tt.id
+  JOIN sdk_messages msg ON msg.id = tsm.id
+  LEFT JOIN session_provenance sp ON sp.session_id = tsm.session_id
   LEFT JOIN session_node_exec ne
     ON ne.workflow_run_id = tt.workflow_run_id
-   AND ne.agent_session_id = sm.session_id
+   AND ne.agent_session_id = tsm.session_id
    AND ne.rn = 1
   LEFT JOIN space_agents sa
-    ON sa.id = COALESCE(ne.agent_id, sm.provenance_agent_id)
-  LEFT JOIN sdk_replacement_status srs ON srs.id = sm.id
-  WHERE sm.message_type = 'assistant'
-    AND json_valid(sm.sdk_message)
-    AND json_type(sm.sdk_message, '$.message.content') = 'array'
+    ON sa.id = COALESCE(ne.agent_id, sp.provenance_agent_id)
+  LEFT JOIN sdk_replacement_status srs ON srs.id = tsm.id
+  WHERE tsm.message_type = 'assistant'
+    AND json_valid(msg.sdk_message)
+    AND json_type(msg.sdk_message, '$.message.content') = 'array'
     -- Top-level answers only: nested subagent (Task/Agent tool) assistant
     -- messages carry a parent_tool_use_id and would flood/misattribute the feed.
-    AND sm.parent_tool_use_id IS NULL
+    AND tsm.parent_tool_use_id IS NULL
     AND srs.replacementStatus IS NULL
 ),
 answer_rows AS (
@@ -1120,33 +1134,35 @@ answer_rows AS (
 ),
 retry_rows AS (
   SELECT
-    'retry:' || sm.id AS id,
+    'retry:' || tsm.id AS id,
     tt.id AS taskId,
     'retry' AS category,
     'warning' AS tone,
     'API retry' AS title,
-    CASE WHEN json_valid(sm.sdk_message) THEN
+    CASE WHEN json_valid(msg.sdk_message) THEN
       printf('Attempt %s/%s · status %s',
-        COALESCE(json_extract(sm.sdk_message, '$.attempt'), 1),
-        COALESCE(json_extract(sm.sdk_message, '$.max_retries'), '?'),
-        COALESCE(json_extract(sm.sdk_message, '$.error_status'), 'unknown'))
+        COALESCE(json_extract(msg.sdk_message, '$.attempt'), 1),
+        COALESCE(json_extract(msg.sdk_message, '$.max_retries'), '?'),
+        COALESCE(json_extract(msg.sdk_message, '$.error_status'), 'unknown'))
     ELSE 'API retry' END AS body,
     -- Carry the owning agent so the renderer can scope a retry burst to one
     -- worker instead of folding retries from different sessions together.
-    COALESCE(sa.name, ne.agent_name, sm.provenance_agent_name, 'Agent') AS sourceLabel,
+    COALESCE(sa.name, ne.agent_name, sp.provenance_agent_name, 'Agent') AS sourceLabel,
     'agent' AS sourceKind,
-    sm.session_id AS sourceId,
-    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
+    tsm.session_id AS sourceId,
+    CAST((julianday(tsm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
   FROM target_task tt
-  JOIN task_sdk_messages sm ON sm.task_id = tt.id
+  JOIN task_sdk_messages tsm ON tsm.task_id = tt.id
+  JOIN sdk_messages msg ON msg.id = tsm.id
+  LEFT JOIN session_provenance sp ON sp.session_id = tsm.session_id
   LEFT JOIN session_node_exec ne
     ON ne.workflow_run_id = tt.workflow_run_id
-   AND ne.agent_session_id = sm.session_id
+   AND ne.agent_session_id = tsm.session_id
    AND ne.rn = 1
   LEFT JOIN space_agents sa
-    ON sa.id = COALESCE(ne.agent_id, sm.provenance_agent_id)
-  WHERE sm.message_type = 'system'
-    AND sm.message_subtype = 'api_retry'
+    ON sa.id = COALESCE(ne.agent_id, sp.provenance_agent_id)
+  WHERE tsm.message_type = 'system'
+    AND tsm.message_subtype = 'api_retry'
 ),
 artifact_rows AS (
   SELECT
@@ -1406,42 +1422,62 @@ sdk_rows_raw AS (
   JOIN sdk_messages sm ON sm.session_id = gm.session_id
   WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),
-sdk_rows_with_pos AS (
+sdk_rows_numbered AS (
   SELECT
-    r.*,
+    r.id AS id,
+    r.sessionId AS sessionId,
+    r.messageType AS messageType,
     ROW_NUMBER() OVER (
       PARTITION BY r.sessionId
       ORDER BY r.createdAt ASC, r.id ASC
     ) AS rowPos
   FROM sdk_rows_raw r
 ),
+-- Forward-fill the latest user-row position seen in each session up to and
+-- including the current row. SQLite ignores NULLs in MAX(), so this carries
+-- the most recent user message through subsequent rows. The base WHERE above
+-- already restricts user rows to settled ones, so every user row present can
+-- anchor a turn. Replaces the former per-row correlated subquery over
+-- user_row_starts, which ran an ORDER BY / LIMIT probe for every message of
+-- every session in the group and blocked the main thread inside sqlite3_step
+-- on large groups (#2660). Both window passes deliberately run over this
+-- narrow projection — never r.* — so message payloads stay out of the window
+-- sorts; wide columns are joined back only in the final sdk_rows pass.
+sdk_row_turns AS (
+  SELECT
+    n.id AS id,
+    MAX(CASE WHEN n.messageType = 'user' THEN n.rowPos END) OVER (
+      PARTITION BY n.sessionId
+      ORDER BY n.rowPos
+      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS turnUserRowPos
+  FROM sdk_rows_numbered n
+),
 user_row_starts AS (
+  -- Maps the forwarded rowPos back to the user message id with a single join.
   SELECT
     sessionId,
     rowPos AS userRowPos,
     id AS userMessageId
-  FROM sdk_rows_with_pos
+  FROM sdk_rows_numbered
   WHERE messageType = 'user'
 ),
 sdk_rows AS (
   SELECT
-    p.id,
-    p.groupId,
-    p.sessionId,
-    p.role,
-    p.messageType,
-    p.content,
-    p.createdAt,
-    p.parentToolUseId,
-    (
-      SELECT urs.userMessageId
-      FROM user_row_starts urs
-      WHERE urs.sessionId = p.sessionId
-        AND urs.userRowPos <= p.rowPos
-      ORDER BY urs.userRowPos DESC
-      LIMIT 1
-    ) AS turnUserMessageId
-  FROM sdk_rows_with_pos p
+    r.id,
+    r.groupId,
+    r.sessionId,
+    r.role,
+    r.messageType,
+    r.content,
+    r.createdAt,
+    r.parentToolUseId,
+    urs.userMessageId AS turnUserMessageId
+  FROM sdk_rows_raw r
+  JOIN sdk_row_turns t ON t.id = r.id
+  LEFT JOIN user_row_starts urs
+    ON urs.sessionId = r.sessionId
+   AND urs.userRowPos = t.turnUserRowPos
 )
 SELECT
   'sdk' AS sourceType,
@@ -2769,7 +2805,7 @@ SELECT
   s.type as type,
   s.session_context as session_context
 FROM sessions s
-WHERE ${humanSessionPredicate('s')}
+WHERE ${humanSessionColumnsPredicate('s')}
   AND (s.status != 'archived' OR ?1 = 1)
 ORDER BY s.last_active_at DESC, s.id DESC
 `.trim();
@@ -2871,25 +2907,35 @@ function toSqlStringList(subtypes: Iterable<string>): string {
   return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
 }
 
-const BACKGROUND_TASK_METADATA_SQL_LIST = toSqlStringList(BACKGROUND_TASK_METADATA_SUBTYPES);
+const BACKGROUND_TASK_METADATA_ARMS_SQL = BACKGROUND_TASK_METADATA_SUBTYPES.map(
+  (subtype) => `SELECT * FROM (
+    SELECT
+      id,
+      sdk_message,
+      timestamp,
+      send_status,
+      origin,
+      rowid,
+      COALESCE(
+        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+        task_id
+      ) AS task_id
+    FROM sdk_messages
+    WHERE session_id = ?
+      AND parent_tool_use_id IS NULL
+      AND message_subtype_norm = '${subtype.replace(/'/g, "''")}'
+    ORDER BY timestamp DESC, rowid DESC
+    LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
+  )`
+).join(`
+  UNION ALL
+`);
 
 export const BACKGROUND_TASK_METADATA_SQL = `
 WITH recent_metadata AS (
-  SELECT
-    id,
-    sdk_message,
-    timestamp,
-    send_status,
-    origin,
-    rowid,
-    COALESCE(
-      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-      task_id
-    ) AS task_id
-  FROM sdk_messages
-  WHERE session_id = ?
-    AND parent_tool_use_id IS NULL
-    AND message_subtype_norm IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
+  SELECT * FROM (
+    ${BACKGROUND_TASK_METADATA_ARMS_SQL}
+  )
   ORDER BY timestamp DESC, rowid DESC
   LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
 ),
@@ -3169,9 +3215,7 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
       try {
         retryInfo = JSON.parse(raw) as { count?: number; runAt?: number; max?: number };
         retryCount = Number(retryInfo?.count ?? 0);
-      } catch {
-        // malformed blob — treat as no active job
-      }
+      } catch {}
     }
     const deliveryStatus = sendStatusToDeliveryStatus(row.sendStatus as string | null, {
       retrying: retryCount > 0,
@@ -3203,9 +3247,7 @@ function buildTaskScopeFilter(
     if (taskAgent?.task_agent_session_id) {
       linkedSessions.add(taskAgent.task_agent_session_id);
     }
-  } catch {
-    // space_tasks may not exist in minimal test schemas
-  }
+  } catch {}
   try {
     const nodeAgents = db
       .prepare(
@@ -3219,9 +3261,7 @@ function buildTaskScopeFilter(
     for (const row of nodeAgents) {
       if (row.agent_session_id) linkedSessions.add(row.agent_session_id);
     }
-  } catch {
-    // node_executions may not exist in minimal test schemas
-  }
+  } catch {}
   try {
     const messageSessions = db
       .prepare('SELECT DISTINCT session_id FROM sdk_messages WHERE task_id = ?')
@@ -3229,9 +3269,7 @@ function buildTaskScopeFilter(
     for (const row of messageSessions) {
       if (row.session_id) linkedSessions.add(row.session_id);
     }
-  } catch {
-    // sdk_messages may not exist in minimal test schemas
-  }
+  } catch {}
 
   const messageStmt = db.prepare(
     `SELECT 1 FROM sdk_messages WHERE task_id = ? AND session_id = ? LIMIT 1`
@@ -3275,9 +3313,7 @@ function buildWorkflowRunScopeFilter(
         taskIds.add(row.id);
         if (row.task_agent_session_id) sessionIds.add(row.task_agent_session_id);
       }
-    } catch {
-      // space_tasks may not exist in minimal test schemas
-    }
+    } catch {}
     try {
       const executions = db
         .prepare('SELECT agent_session_id FROM node_executions WHERE workflow_run_id = ?')
@@ -3285,9 +3321,7 @@ function buildWorkflowRunScopeFilter(
       for (const row of executions) {
         if (row.agent_session_id) sessionIds.add(row.agent_session_id);
       }
-    } catch {
-      // node_executions may not exist in minimal test schemas
-    }
+    } catch {}
     try {
       const messages = db
         .prepare(
@@ -3297,9 +3331,7 @@ function buildWorkflowRunScopeFilter(
       for (const row of messages) {
         if (row.session_id) sessionIds.add(row.session_id);
       }
-    } catch {
-      // sdk_messages may not exist in minimal test schemas
-    }
+    } catch {}
   };
   loadScope();
   return (scope) => {
@@ -3518,12 +3550,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
       debounceMs: DEBOUNCE_SESSION_LIST_MS,
       mapRow: mapSessionRow,
       buildScopeFilter: (_params, db) => {
-        const stmt = db.prepare(
-          `SELECT type,
-             json_extract(session_context, '$.roomId') AS room_id,
-             json_extract(session_context, '$.spaceId') AS space_id
-           FROM sessions WHERE id = ?`
-        );
+        const stmt = db.prepare(`SELECT type, room_id, space_id FROM sessions WHERE id = ?`);
         return (scope) => {
           if (scope.sessionType && SESSION_LIST_EXCLUDED_TYPES.has(scope.sessionType)) {
             return false;
@@ -3567,6 +3594,8 @@ export function setupLiveQueryHandlers(
       const sessionId = params[0];
       if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined;
       const rows = stmtBackgroundTaskMetadata.all(
+        sessionId,
+        sessionId,
         sessionId,
         sessionId,
         sessionId,

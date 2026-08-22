@@ -127,9 +127,7 @@ export async function getSupportedModelsFromQuery(
         return models;
       }
       /* v8 ignore next 2 */
-    } catch {
-      // Failed to load models from SDK
-    }
+    } catch {}
   }
 
   return [];
@@ -157,7 +155,6 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
       }
       /* v8 ignore next 2 */
     } catch {
-      // Background refresh failed
     } finally {
       refreshInProgress.delete(cacheKey);
       if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
@@ -214,9 +211,7 @@ export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
   }
 
   if (isCacheStale(cacheKey)) {
-    triggerBackgroundRefresh(cacheKey).catch(() => {
-      // Ignore errors - we already have cached data
-    });
+    triggerBackgroundRefresh(cacheKey).catch(() => {});
   }
 
   return cachedModels;
@@ -347,22 +342,12 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
   await refreshPromise;
 }
 
-/**
- * Get current models cache (for testing)
- * @returns Map of cached models
- *
- * @public Exported for testing purposes
- */
+/** @public */
 export function getModelsCache(): Map<string, ModelInfo[]> {
   return new Map(modelsCache);
 }
 
-/**
- * Set models cache (for testing - allows reusing cached models)
- * @param cache Map of cached models to restore
- *
- * @public Exported for testing purposes
- */
+/** @public */
 export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: number): void {
   modelsCache.clear();
   cacheTimestamps.clear();

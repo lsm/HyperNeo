@@ -48,14 +48,10 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, HOOK_TIMEOUT_MS);
 
   test('fresh DB has short_id column on tasks', () => {

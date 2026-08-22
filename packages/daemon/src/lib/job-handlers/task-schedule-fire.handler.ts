@@ -245,9 +245,7 @@ export async function handleTaskScheduleFire(
               taskId,
               task: emittedTask,
             })
-            .catch(() => {
-              // Swallow — event emission is best-effort.
-            });
+            .catch(() => {});
         }
       }
       const emittedSchedule = scheduleRepo.getById(scheduleId);
@@ -259,9 +257,7 @@ export async function handleTaskScheduleFire(
             scheduleId,
             schedule: emittedSchedule,
           })
-          .catch(() => {
-            // Swallow — event emission is best-effort.
-          });
+          .catch(() => {});
       }
     }
   } catch (err) {
@@ -387,9 +383,7 @@ function fireGoalAutomationSchedule(params: {
         scheduleId: schedule.id,
         schedule: emittedSchedule,
       })
-      .catch(() => {
-        // Swallow — event emission is best-effort.
-      });
+      .catch(() => {});
   }
   return { scheduleId: schedule.id, taskId: null, skipped: false, nextRunAt: computedNextRunAt };
 }

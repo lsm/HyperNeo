@@ -141,6 +141,14 @@ export function isSDKModelRefusalFallbackMessage(
   return msg.type === "system" && (msg as { subtype?: string }).subtype === "model_refusal_fallback";
 }
 
+export function isSDKModelRefusalNoFallbackMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "system"; subtype: "model_refusal_no_fallback" }> {
+  return (
+    msg.type === "system" && (msg as { subtype?: string }).subtype === "model_refusal_no_fallback"
+  );
+}
+
 export function isSDKSessionStateChangedMessage(
   msg: SDKMessage,
 ): msg is Extract<SDKMessage, { type: "system"; subtype: "session_state_changed" }> {
@@ -189,6 +197,18 @@ export function isSDKAuthStatusMessage(
   msg: SDKMessage,
 ): msg is Extract<SDKMessage, { type: "auth_status" }> {
   return msg.type === "auth_status";
+}
+
+export function isSDKPromptSuggestionMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "prompt_suggestion" }> {
+  return msg.type === "prompt_suggestion";
+}
+
+export function isSDKToolUseSummaryMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "tool_use_summary" }> {
+  return msg.type === "tool_use_summary";
 }
 
 export function isSDKRateLimitEvent(
@@ -274,10 +294,7 @@ export function extractAskUserQuestion(msg: SDKMessage): {
   return null;
 }
 
-/**
- * Check if an assistant message contains an AskUserQuestion tool call.
- * @public
- */
+/** @public */
 export function hasAskUserQuestion(msg: SDKMessage): boolean {
   return extractAskUserQuestion(msg) !== null;
 }
@@ -319,10 +336,7 @@ export function hasRenderableThinking(
   return typeof block.thinking === "string" && block.thinking.trim().length > 0;
 }
 
-/**
- * Get a human-readable description of a message type.
- * @public
- */
+/** @public */
 export function getMessageTypeDescription(msg: SDKMessage): string {
   if (isSDKAssistantMessage(msg)) {
     return "Assistant Response";

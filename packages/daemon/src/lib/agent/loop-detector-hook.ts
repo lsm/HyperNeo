@@ -4,8 +4,20 @@ import type {
   PostToolUseHookInput,
   PreToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
-import { resolve as resolvePath } from 'node:path';
 import { Logger } from '../logger';
+import {
+  advanceLoopStreak,
+  bashFingerprintKey,
+  buildArgKey,
+  decideBashDeadLoop,
+  decideIdenticalArgsLoop,
+  evaluateBashFailureRing,
+  recordBashRingOutcome,
+  scopeKey,
+  summariseArgs,
+  type BashFailureRing,
+  type LoopStreakState,
+} from './loop-detector-gates';
 
 export interface LoopDetectorConfig {
   enabled: boolean;
@@ -35,90 +47,9 @@ export const DEFAULT_LOOP_DETECTOR_CONFIG: Required<LoopDetectorConfig> = {
   },
 };
 
-interface LedgerEntry {
-  count: number;
-  firstSeenMs: number;
-  lastSeenMs: number;
-}
-
-interface AgentState {
-  lastKey: string;
-  entry: LedgerEntry;
-}
-
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== 'object') {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(',')}]`;
-  }
-  const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(',')}}`;
-}
-
-function buildArgKey(toolName: string, input: Record<string, unknown>, cwd?: string): string {
-  if (toolName === 'Read' && typeof input.file_path === 'string') {
-    const normalisedPath = cwd ? resolvePath(cwd, input.file_path) : input.file_path;
-    const normalised = { ...input, file_path: normalisedPath };
-    return stableStringify(normalised);
-  }
-  if (toolName === 'Bash') {
-    const { description: _description, ...rest } = input;
-    const normalised = {
-      ...rest,
-      run_in_background: rest.run_in_background ?? false,
-    };
-    const withCwd = cwd ? { ...normalised, __cwd: cwd } : normalised;
-    return stableStringify(withCwd);
-  }
-  return stableStringify(input);
-}
-
-function summariseArgs(toolName: string, input: Record<string, unknown>): string {
-  const candidates: string[] = [];
-  if (typeof input.file_path === 'string') candidates.push(`file_path=${input.file_path}`);
-  if (typeof input.pattern === 'string') candidates.push(`pattern=${input.pattern}`);
-  if (typeof input.path === 'string' && toolName !== 'Read') {
-    candidates.push(`path=${input.path}`);
-  }
-  if (typeof input.glob === 'string') candidates.push(`glob=${input.glob}`);
-  if (toolName === 'Bash' && typeof input.command === 'string') {
-    candidates.push(`command=${(input.command as string).slice(0, 160)}`);
-  }
-  if (candidates.length === 0) return JSON.stringify(input).slice(0, 120);
-  return candidates.join(', ').slice(0, 240);
-}
-
-function buildRecoveryMessage(toolName: string, count: number, argSummary: string): string {
-  return [
-    `Loop detected: ${toolName} was called ${count} times in a row with identical arguments (${argSummary}).`,
-    'The result has not changed since the previous call. STOP re-running this tool — move on to the next step in your task.',
-    'If you have a TodoWrite list, mark progress and proceed to the next item.',
-    'If you genuinely need fresh data, perform a *different* action (edit a file, run a command, ask a question) before retrying.',
-  ].join(' ');
-}
-
-function buildBashRecoveryMessage(count: number, argSummary: string, failures: number): string {
-  return [
-    `Bash dead-loop detected: the same command was run ${count} times in a row and the last ${failures} attempts all failed (${argSummary}).`,
-    'Re-running the same failing command will not change the outcome. STOP and reconsider:',
-    '(1) read the previous error output carefully,',
-    '(2) inspect the relevant files or run a *different* diagnostic command,',
-    '(3) only retry after you have changed something that could plausibly affect the outcome.',
-    'If you are checking for a file or path, run a different probe (e.g. `ls` on the parent directory) instead of re-running the failing command.',
-  ].join(' ');
-}
-
 interface LoopDetectorState {
-  ledger: Map<string, AgentState>;
+  ledger: Map<string, LoopStreakState>;
   bashFailures: Map<string, BashFailureRing>;
-}
-
-interface BashFailureRing {
-  outcomes: boolean[];
-  lastSeenMs: number;
 }
 
 function createState(): LoopDetectorState {
@@ -128,12 +59,12 @@ function createState(): LoopDetectorState {
   };
 }
 
-function scopeKey(input: { session_id: string; agent_id?: string }): string {
-  return `${input.session_id}::${input.agent_id ?? 'main'}`;
-}
-
-function bashFingerprintKey(scope: string, fingerprint: string): string {
-  return `${scope}::${fingerprint}`;
+function sweepLedger(state: LoopDetectorState, now: number, windowMs: number): void {
+  if (state.ledger.size > 256) {
+    for (const [k, v] of state.ledger) {
+      if (now - v.entry.lastSeenMs > windowMs) state.ledger.delete(k);
+    }
+  }
 }
 
 function recordBashOutcome(
@@ -141,46 +72,25 @@ function recordBashOutcome(
   scope: string,
   fingerprint: string,
   failed: boolean,
-  failuresRequired: number,
-  now: number,
-  windowMs: number
+  finalConfig: Required<LoopDetectorConfig>,
+  now: number
 ): void {
   const key = bashFingerprintKey(scope, fingerprint);
-  const existing = state.bashFailures.get(key);
-  const isStale = existing != null && now - existing.lastSeenMs > windowMs;
-  const outcomes = !existing || isStale ? [] : existing.outcomes;
-  outcomes.push(failed);
-  while (outcomes.length > failuresRequired) outcomes.shift();
-  state.bashFailures.set(key, { outcomes, lastSeenMs: now });
-
+  state.bashFailures.set(
+    key,
+    recordBashRingOutcome({
+      prev: state.bashFailures.get(key),
+      failed,
+      failuresRequired: finalConfig.bash.failuresRequired,
+      now,
+      windowMs: finalConfig.windowMs,
+    })
+  );
   if (state.bashFailures.size > 256) {
     for (const [k, v] of state.bashFailures) {
-      if (now - v.lastSeenMs > windowMs) state.bashFailures.delete(k);
+      if (now - v.lastSeenMs > finalConfig.windowMs) state.bashFailures.delete(k);
     }
   }
-}
-
-function lastNAllFailures(
-  state: LoopDetectorState,
-  scope: string,
-  fingerprint: string,
-  now: number,
-  windowMs: number
-): {
-  allFailures: boolean;
-  length: number;
-} {
-  const key = bashFingerprintKey(scope, fingerprint);
-  const ring = state.bashFailures.get(key);
-  if (!ring || ring.outcomes.length === 0) return { allFailures: false, length: 0 };
-  if (now - ring.lastSeenMs > windowMs) {
-    state.bashFailures.delete(key);
-    return { allFailures: false, length: 0 };
-  }
-  for (const failed of ring.outcomes) {
-    if (!failed) return { allFailures: false, length: ring.outcomes.length };
-  }
-  return { allFailures: true, length: ring.outcomes.length };
 }
 
 function resolveConfig(config: Partial<LoopDetectorConfig>): Required<LoopDetectorConfig> {
@@ -225,46 +135,41 @@ function buildPreToolUseCallback(
     const args = (tool_input ?? {}) as Record<string, unknown>;
     const key = `${tool_name}:${buildArgKey(tool_name, args, cwd)}`;
 
-    const agentState = state.ledger.get(scope);
-    const sameKey = agentState?.lastKey === key;
-    const withinWindow = agentState && now - agentState.entry.firstSeenMs <= finalConfig.windowMs;
-
-    const continueStreak = sameKey && withinWindow;
-    const nextCount = continueStreak ? agentState!.entry.count + 1 : 1;
-    const firstSeenMs = continueStreak ? agentState!.entry.firstSeenMs : now;
-    state.ledger.set(scope, {
-      lastKey: key,
-      entry: { count: nextCount, firstSeenMs, lastSeenMs: now },
+    const streak = advanceLoopStreak({
+      prev: state.ledger.get(scope),
+      key,
+      now,
+      windowMs: finalConfig.windowMs,
     });
-
-    if (state.ledger.size > 256) {
-      for (const [k, v] of state.ledger) {
-        if (now - v.entry.lastSeenMs > finalConfig.windowMs) state.ledger.delete(k);
-      }
-    }
+    state.ledger.set(scope, streak);
+    sweepLedger(state, now, finalConfig.windowMs);
 
     if (isBash) {
-      const bashThreshold = finalConfig.bash.threshold;
-      if (nextCount >= bashThreshold) {
+      if (streak.entry.count >= finalConfig.bash.threshold) {
         const fingerprint = buildArgKey('Bash', args, cwd);
-        const { allFailures, length } = lastNAllFailures(
-          state,
-          scope,
-          fingerprint,
+        const ringKey = bashFingerprintKey(scope, fingerprint);
+        const ring = evaluateBashFailureRing({
+          ring: state.bashFailures.get(ringKey),
           now,
-          finalConfig.windowMs
-        );
-        if (allFailures && length >= finalConfig.bash.failuresRequired) {
-          const argSummary = summariseArgs('Bash', args);
-          const reason = buildBashRecoveryMessage(nextCount, argSummary, length);
+          windowMs: finalConfig.windowMs,
+        });
+        if (ring.expired) state.bashFailures.delete(ringKey);
+        const decision = decideBashDeadLoop({
+          count: streak.entry.count,
+          threshold: finalConfig.bash.threshold,
+          failuresRequired: finalConfig.bash.failuresRequired,
+          ring,
+          input: args,
+        });
+        if (decision.action === 'deny') {
           logger.warn(
-            `Bash dead-loop detected (scope=${scope}): same command ${nextCount}x in a row, last ${length} all failed (${argSummary}); denying.`
+            `Bash dead-loop detected (scope=${scope}): same command ${streak.entry.count}x in a row, last ${ring.length} all failed (${summariseArgs('Bash', args)}); denying.`
           );
           return {
             hookSpecificOutput: {
               hookEventName: 'PreToolUse' as const,
               permissionDecision: 'deny' as const,
-              permissionDecisionReason: reason,
+              permissionDecisionReason: decision.reason,
             },
           };
         }
@@ -272,17 +177,21 @@ function buildPreToolUseCallback(
       return {};
     }
 
-    if (typeof threshold === 'number' && nextCount >= threshold) {
-      const argSummary = summariseArgs(tool_name, args);
-      const reason = buildRecoveryMessage(tool_name, nextCount, argSummary);
+    const decision = decideIdenticalArgsLoop({
+      toolName: tool_name,
+      count: streak.entry.count,
+      threshold,
+      input: args,
+    });
+    if (decision.action === 'deny') {
       logger.warn(
-        `Dead-loop detected (scope=${scope}): ${tool_name} called ${nextCount}x in a row with identical args (${argSummary}); denying.`
+        `Dead-loop detected (scope=${scope}): ${tool_name} called ${streak.entry.count}x in a row with identical args (${summariseArgs(tool_name, args)}); denying.`
       );
       return {
         hookSpecificOutput: {
           hookEventName: 'PreToolUse' as const,
           permissionDecision: 'deny' as const,
-          permissionDecisionReason: reason,
+          permissionDecisionReason: decision.reason,
         },
       };
     }
@@ -305,16 +214,7 @@ function buildPostToolUseCallback(
 
     const args = (postInput.tool_input ?? {}) as Record<string, unknown>;
     const fingerprint = buildArgKey('Bash', args, postInput.cwd);
-    const scope = scopeKey(postInput);
-    recordBashOutcome(
-      state,
-      scope,
-      fingerprint,
-      false,
-      finalConfig.bash.failuresRequired,
-      Date.now(),
-      finalConfig.windowMs
-    );
+    recordBashOutcome(state, scopeKey(postInput), fingerprint, false, finalConfig, Date.now());
     return {};
   };
 }
@@ -334,16 +234,7 @@ function buildPostToolUseFailureCallback(
 
     const args = (postInput.tool_input ?? {}) as Record<string, unknown>;
     const fingerprint = buildArgKey('Bash', args, postInput.cwd);
-    const scope = scopeKey(postInput);
-    recordBashOutcome(
-      state,
-      scope,
-      fingerprint,
-      true,
-      finalConfig.bash.failuresRequired,
-      Date.now(),
-      finalConfig.windowMs
-    );
+    recordBashOutcome(state, scopeKey(postInput), fingerprint, true, finalConfig, Date.now());
     return {};
   };
 }

@@ -10,18 +10,24 @@ import {
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { Logger } from '../lib/logger';
+import { runMessageSearchMerge } from '../lib/message-search-merge';
 import { DatabaseLock } from './database-lock';
 import { configureMessageSearchFts, createTables, runMigrations } from './schema';
 import { Database as BunDatabase } from './sqlite-compat';
 
 const MIGRATION_BACKUP_RETENTION = 3;
 const MIGRATION_BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
+const MAX_MESSAGE_SEARCH_MERGE_WORKER_FAILURES = 3;
 
 export class DatabaseCore {
   private db: BunDatabase;
   private logger = new Logger('Database');
   private lock: DatabaseLock;
   private messageSearchMergeTimer: Timer | null = null;
+  private messageSearchMergeInFlight = false;
+  private messageSearchMergeClosed = false;
+  private messageSearchMergeCancel: (() => void) | null = null;
+  private messageSearchMergeWorkerFailures = 0;
 
   constructor(private dbPath: string) {
     this.db = null as unknown as BunDatabase;
@@ -57,18 +63,33 @@ export class DatabaseCore {
   }
 
   private startMessageSearchMergeTimer(): void {
-    if (this.messageSearchMergeTimer) return;
-    this.messageSearchMergeTimer = setInterval(() => {
-      try {
-        this.db.exec(
-          `INSERT INTO message_search_fts(message_search_fts, rank) VALUES('merge', 4096)`
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!/no such table/i.test(message)) {
-          this.logger.warn('message_search_fts background merge failed:', err);
+    if (this.messageSearchMergeTimer || this.messageSearchMergeInFlight) return;
+    this.scheduleMessageSearchMerge();
+  }
+
+  private scheduleMessageSearchMerge(): void {
+    if (this.messageSearchMergeClosed) return;
+    this.messageSearchMergeTimer = setTimeout(() => {
+      this.messageSearchMergeTimer = null;
+      this.messageSearchMergeInFlight = true;
+      const merge = runMessageSearchMerge(this.dbPath);
+      this.messageSearchMergeCancel = merge.cancel;
+      void merge.promise.then((status) => {
+        this.messageSearchMergeCancel = null;
+        this.messageSearchMergeInFlight = false;
+        if (status === 'worker-unavailable') {
+          this.messageSearchMergeWorkerFailures++;
+          if (this.messageSearchMergeWorkerFailures >= MAX_MESSAGE_SEARCH_MERGE_WORKER_FAILURES) {
+            this.logger.error(
+              'message_search_fts merge worker unavailable after repeated attempts; background merges stopped'
+            );
+            return;
+          }
+        } else {
+          this.messageSearchMergeWorkerFailures = 0;
         }
-      }
+        this.scheduleMessageSearchMerge();
+      });
     }, 30_000);
   }
 
@@ -81,18 +102,19 @@ export class DatabaseCore {
   }
 
   close(): void {
+    this.messageSearchMergeClosed = true;
     if (this.messageSearchMergeTimer) {
-      clearInterval(this.messageSearchMergeTimer);
+      clearTimeout(this.messageSearchMergeTimer);
       this.messageSearchMergeTimer = null;
     }
+    this.messageSearchMergeCancel?.();
+    this.messageSearchMergeCancel = null;
     try {
       this.db.exec('PRAGMA optimize');
     } catch {}
     try {
       this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      // Ignore checkpoint errors — the DB may already be closed or in an error state
-    }
+    } catch {}
     this.db.close();
     this.lock.release();
   }

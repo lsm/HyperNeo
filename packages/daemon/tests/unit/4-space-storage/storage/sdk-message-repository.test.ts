@@ -158,7 +158,10 @@ describe('SDKMessageRepository', () => {
 				status TEXT NOT NULL,
 				type TEXT,
 				last_active_at TEXT NOT NULL,
-				session_context TEXT
+				session_context TEXT,
+          room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+          space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+          task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL
 			);
 			CREATE TABLE space_tasks (
 				id TEXT PRIMARY KEY,
@@ -1317,6 +1320,9 @@ describe('SDKMessageRepository', () => {
           config TEXT NOT NULL,
           metadata TEXT NOT NULL,
           session_context TEXT,
+          room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+          space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+          task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL,
           type TEXT DEFAULT 'worker',
           visible_message_count INTEGER NOT NULL DEFAULT 0
         );
@@ -1495,7 +1501,7 @@ describe('SDKMessageRepository', () => {
       const id = repository.saveUserMessage('session-1', message);
 
       expect(id).toBeDefined();
-      const deferredMessages = repository.getMessagesByStatus('session-1', 'consumed');
+      const deferredMessages = repository.getUserMessageIdsByStatus('session-1', 'consumed');
       expect(deferredMessages.length).toBe(1);
     });
 
@@ -1504,7 +1510,7 @@ describe('SDKMessageRepository', () => {
 
       repository.saveUserMessage('session-1', message, 'deferred');
 
-      const deferredMessages = repository.getMessagesByStatus('session-1', 'deferred');
+      const deferredMessages = repository.getUserMessageIdsByStatus('session-1', 'deferred');
       expect(deferredMessages.length).toBe(1);
     });
 
@@ -1513,7 +1519,7 @@ describe('SDKMessageRepository', () => {
 
       repository.saveUserMessage('session-1', message, 'enqueued');
 
-      const enqueuedMessages = repository.getMessagesByStatus('session-1', 'enqueued');
+      const enqueuedMessages = repository.getUserMessageIdsByStatus('session-1', 'enqueued');
       expect(enqueuedMessages.length).toBe(1);
     });
 
@@ -1525,66 +1531,6 @@ describe('SDKMessageRepository', () => {
       const id2 = repository.saveUserMessage('session-1', message2);
 
       expect(id1).not.toBe(id2);
-    });
-  });
-
-  describe('getMessagesByStatus', () => {
-    it('should return messages with specified status', () => {
-      const msg1 = createUserMessage('Saved message');
-      const msg2 = createUserMessage('Sent message');
-      repository.saveUserMessage('session-1', msg1, 'deferred');
-      repository.saveUserMessage('session-1', msg2, 'consumed');
-
-      const deferredMessages = repository.getMessagesByStatus('session-1', 'deferred');
-      const consumedMessages = repository.getMessagesByStatus('session-1', 'consumed');
-
-      expect(deferredMessages.length).toBe(1);
-      expect(consumedMessages.length).toBe(1);
-    });
-
-    it('should return messages in chronological order', async () => {
-      repository.saveUserMessage('session-1', createUserMessage('First'), 'deferred');
-      await new Promise((r) => setTimeout(r, 5));
-      repository.saveUserMessage('session-1', createUserMessage('Second'), 'deferred');
-      await new Promise((r) => setTimeout(r, 5));
-      repository.saveUserMessage('session-1', createUserMessage('Third'), 'deferred');
-
-      const messages = repository.getMessagesByStatus('session-1', 'deferred');
-
-      expect(messages.length).toBe(3);
-      const text0 = (
-        (messages[0] as { message?: { content?: Array<{ type: string; text?: string }> } }).message
-          ?.content?.[0] as { text?: string }
-      )?.text;
-      const text1 = (
-        (messages[1] as { message?: { content?: Array<{ type: string; text?: string }> } }).message
-          ?.content?.[0] as { text?: string }
-      )?.text;
-      const text2 = (
-        (messages[2] as { message?: { content?: Array<{ type: string; text?: string }> } }).message
-          ?.content?.[0] as { text?: string }
-      )?.text;
-      expect(text0).toBe('First');
-      expect(text1).toBe('Second');
-      expect(text2).toBe('Third');
-    });
-
-    it('should include dbId and timestamp in returned messages', () => {
-      repository.saveUserMessage('session-1', createUserMessage('Test'), 'deferred');
-
-      const messages = repository.getMessagesByStatus('session-1', 'deferred');
-
-      expect(messages.length).toBe(1);
-      expect(messages[0].dbId).toBeDefined();
-      expect(messages[0].timestamp).toBeDefined();
-    });
-
-    it('should return empty array for non-matching status', () => {
-      repository.saveUserMessage('session-1', createUserMessage('Test'), 'deferred');
-
-      const enqueuedMessages = repository.getMessagesByStatus('session-1', 'enqueued');
-
-      expect(enqueuedMessages).toEqual([]);
     });
   });
 
@@ -1713,6 +1659,23 @@ describe('SDKMessageRepository', () => {
 
       expect(messageTexts(result.messages)).toEqual(['First', 'Second', 'Third']);
       expect(result.total).toBe(3);
+    });
+
+    it('returns an empty window and zero total for a non-matching status', () => {
+      const timestamp = '2026-01-01T00:00:00.000Z';
+      insertStatusMessage(
+        'user',
+        'session-1',
+        'user',
+        JSON.stringify(createUserMessage('Held back')),
+        timestamp,
+        'deferred'
+      );
+
+      const result = repository.getUserMessagesByStatus('session-1', 'enqueued');
+
+      expect(result.messages).toEqual([]);
+      expect(result.total).toBe(0);
     });
   });
 
@@ -1884,7 +1847,7 @@ describe('SDKMessageRepository', () => {
 
       repository.updateMessageStatus([id1, id2], 'enqueued');
 
-      const enqueuedMessages = repository.getMessagesByStatus('session-1', 'enqueued');
+      const enqueuedMessages = repository.getUserMessageIdsByStatus('session-1', 'enqueued');
       expect(enqueuedMessages.length).toBe(2);
     });
 
@@ -1896,11 +1859,11 @@ describe('SDKMessageRepository', () => {
       const id = repository.saveUserMessage('session-1', createUserMessage('Test'), 'deferred');
 
       repository.updateMessageStatus([id], 'enqueued');
-      expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(1);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'enqueued').length).toBe(1);
 
       repository.updateMessageStatus([id], 'consumed');
-      expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(1);
-      expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(0);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'consumed').length).toBe(1);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'enqueued').length).toBe(0);
     });
   });
 
@@ -1915,8 +1878,8 @@ describe('SDKMessageRepository', () => {
       const flipped = repository.markDeliveryConsumedByUuid('session-1', 'uuid-consume');
 
       expect(flipped).toBe(id);
-      expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(0);
-      expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(1);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'enqueued').length).toBe(0);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'consumed').length).toBe(1);
     });
 
     it('is idempotent: a second call returns null (already consumed, no double-flip)', () => {
@@ -1937,7 +1900,7 @@ describe('SDKMessageRepository', () => {
         'deferred'
       );
       expect(repository.markDeliveryConsumedByUuid('session-1', 'uuid-def')).toBeNull();
-      expect(repository.getMessagesByStatus('session-1', 'deferred').length).toBe(1);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'deferred').length).toBe(1);
     });
 
     it('returns null when the uuid is unknown', () => {
@@ -1949,6 +1912,9 @@ describe('SDKMessageRepository', () => {
         CREATE TABLE sessions (
           id TEXT PRIMARY KEY,
           session_context TEXT,
+          room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+          space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+          task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL,
           type TEXT
         );
         INSERT INTO sessions (id, session_context, type)
@@ -1978,9 +1944,9 @@ describe('SDKMessageRepository', () => {
       ]);
 
       expect(flipped.sort()).toEqual([kickoffId, memberId].sort());
-      expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(0);
-      expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(2);
-      expect(repository.getMessagesByStatus('session-1', 'deferred').length).toBe(1);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'enqueued').length).toBe(0);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'consumed').length).toBe(2);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'deferred').length).toBe(1);
       const turns = db
         .prepare(
           'SELECT DISTINCT conversation_turn_index AS turn FROM sdk_messages WHERE id IN (?, ?)'
@@ -1997,7 +1963,7 @@ describe('SDKMessageRepository', () => {
         'deferred'
       );
       expect(repository.markDeliveryFailedByUuidInclusive('session-1', 'uuid-excl')).toBeNull();
-      expect(repository.getMessagesByStatus('session-1', 'deferred').length).toBe(1);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'deferred').length).toBe(1);
     });
   });
 
@@ -2013,8 +1979,8 @@ describe('SDKMessageRepository', () => {
       const reopened = repository.markDeliveryRetryableByUuid('session-1', 'uuid-retry');
 
       expect(reopened).toBe(id);
-      expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(1);
-      expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(0);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'enqueued').length).toBe(1);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'consumed').length).toBe(0);
     });
 
     it('leaves submitted (ACP, pending acceptance) and failed rows alone', () => {
@@ -2031,8 +1997,8 @@ describe('SDKMessageRepository', () => {
 
       expect(repository.markDeliveryRetryableByUuid('session-1', 'uuid-submitted')).toBeNull();
       expect(repository.markDeliveryRetryableByUuid('session-1', 'uuid-failed')).toBeNull();
-      expect(repository.getMessagesByStatus('session-1', 'submitted').length).toBe(1);
-      expect(repository.getMessagesByStatus('session-1', 'failed').length).toBe(1);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'submitted').length).toBe(1);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'failed').length).toBe(1);
     });
 
     it('returns null when the uuid is unknown', () => {
@@ -2492,6 +2458,9 @@ describe('SDKMessageRepository', () => {
         CREATE TABLE sessions (
           id TEXT PRIMARY KEY,
           session_context TEXT,
+          room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+          space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+          task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL,
           type TEXT
         );
         INSERT INTO sessions (id, session_context, type)
@@ -2589,7 +2558,7 @@ describe('SDKMessageRepository', () => {
       expect(
         repository.markDeliveryConsumedAtTurnEnd('session-1', 'yielded-msg', 'error-result-uuid')
       ).toBeNull();
-      expect(repository.getMessagesByStatus('session-1', 'enqueued')).toHaveLength(1);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'enqueued')).toHaveLength(1);
     });
 
     it('is false when the terminal result belongs to another session', () => {
@@ -2842,7 +2811,7 @@ describe('SDKMessageRepository', () => {
         uuid: 'uuid-remove-me',
         status: 'deferred',
       });
-      expect(repository.getMessagesByStatus('session-1', 'deferred')).toEqual([]);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'deferred')).toEqual([]);
     });
 
     it('should delete an enqueued user message', () => {
@@ -2855,7 +2824,7 @@ describe('SDKMessageRepository', () => {
       const removed = repository.deletePendingUserMessage('session-1', id);
 
       expect(removed?.status).toBe('enqueued');
-      expect(repository.getMessagesByStatus('session-1', 'enqueued')).toEqual([]);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'enqueued')).toEqual([]);
     });
 
     it('should not delete consumed messages', () => {
@@ -2864,7 +2833,7 @@ describe('SDKMessageRepository', () => {
       const removed = repository.deletePendingUserMessage('session-1', id);
 
       expect(removed).toBeNull();
-      expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(1);
+      expect(repository.getUserMessageIdsByStatus('session-1', 'consumed').length).toBe(1);
     });
 
     it('should not delete another session pending message', () => {
@@ -2873,7 +2842,7 @@ describe('SDKMessageRepository', () => {
       const removed = repository.deletePendingUserMessage('session-1', id);
 
       expect(removed).toBeNull();
-      expect(repository.getMessagesByStatus('session-2', 'deferred').length).toBe(1);
+      expect(repository.getUserMessageIdsByStatus('session-2', 'deferred').length).toBe(1);
     });
   });
 
@@ -3721,7 +3690,10 @@ describe('SDKMessageRepository', () => {
         CREATE TABLE IF NOT EXISTS sessions (
           id TEXT PRIMARY KEY,
           type TEXT,
-          session_context TEXT
+          session_context TEXT,
+          room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+          space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+          task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL
         )
       `);
       db.prepare(

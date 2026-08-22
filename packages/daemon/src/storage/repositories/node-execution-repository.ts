@@ -199,6 +199,20 @@ export class NodeExecutionRepository {
     return this.update(id, { status });
   }
 
+  casExecutionStatus(
+    id: string,
+    expected: NodeExecutionStatus | readonly NodeExecutionStatus[],
+    next: NodeExecutionStatus
+  ): 'won' | 'superseded' {
+    const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
+    if (expectedStatuses.length === 0) return 'superseded';
+    const placeholders = expectedStatuses.map(() => '?').join(', ');
+    const result = this.db
+      .prepare(`UPDATE node_executions SET status = ? WHERE id = ? AND status IN (${placeholders})`)
+      .run(next, id, ...expectedStatuses);
+    return result.changes > 0 ? 'won' : 'superseded';
+  }
+
   updateSessionId(id: string, agentSessionId: string | null): NodeExecution | null {
     return this.update(id, { agentSessionId });
   }

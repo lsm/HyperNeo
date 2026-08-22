@@ -59,9 +59,7 @@ async function deleteSessionViaRpc(
       if (!hub?.request) return;
       await hub.request('session.delete', { sessionId: id });
     }, sessionId);
-  } catch {
-    // Best-effort cleanup
-  }
+  } catch {}
 }
 
 async function openOverlay(
@@ -113,9 +111,7 @@ test.describe('Agent Overlay Chat', () => {
     if (wsPath && existsSync(wsPath)) {
       try {
         rmSync(wsPath, { recursive: true, force: true });
-      } catch {
-        // Best-effort cleanup
-      }
+      } catch {}
       wsPath = '';
     }
   });

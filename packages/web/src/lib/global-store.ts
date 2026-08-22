@@ -91,9 +91,7 @@ export class GlobalStore {
         this.systemState.value = snapshot.system || null;
         this.settings.value = snapshot.settings?.settings || null;
       }
-    } catch {
-      // Initialization failed - state will be empty
-    }
+    } catch {}
   }
 
   private subscribeSessions(hub: Awaited<ReturnType<typeof connectionManager.getHub>>): void {
@@ -143,9 +141,7 @@ export class GlobalStore {
     this.cleanupFunctions.push(unsubReconnect);
 
     let prevShowArchived = this.settings.value?.showArchived ?? false;
-    this.cleanupFunctions.push(() => {
-      // no-op cleanup needed (the effect below uses settings signal directly)
-    });
+    this.cleanupFunctions.push(() => {});
     const checkSetting = (): void => {
       const current = this.settings.value?.showArchived ?? false;
       if (current !== prevShowArchived) {
@@ -212,9 +208,7 @@ export class GlobalStore {
     for (const cleanup of this.cleanupFunctions) {
       try {
         cleanup();
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
     this.cleanupFunctions = [];
     this.initialized = false;

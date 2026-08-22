@@ -683,6 +683,19 @@ describe('inferProviderForModel', () => {
     expect(inferProviderForModel('gpt-5.4')).toBe('anthropic-codex');
   });
 
+  it('suppresses gpt-* only when an AVAILABLE provider also claims the ID', async () => {
+    try {
+      const registry = initializeProviders();
+      await waitForOptionalProviderRegistration(registry);
+
+      expect(inferProviderForModel('gpt-5.4')).toBe('anthropic-codex');
+      expect(inferProviderForModel('gpt-5.6-sol')).toBe('anthropic-codex');
+    } finally {
+      resetProviderRegistry();
+      resetProviderFactory();
+    }
+  });
+
   it('defaults claude- models to anthropic', () => {
     expect(inferProviderForModel('claude-opus-4-6')).toBe('anthropic');
     expect(inferProviderForModel('claude-sonnet-4.6/preview')).toBe('anthropic');
@@ -717,19 +730,6 @@ describe('inferPersistableProviderForModel', () => {
     expect(await inferPersistableProviderForModel('acp-default')).toBe('acp');
     expect(await inferPersistableProviderForModel('gpt-oss:20b')).toBe('ollama');
     expect(await inferPersistableProviderForModel('openai/gpt-5.4')).toBe('openrouter');
-  });
-
-  it('suppresses gpt-* only when an AVAILABLE provider also claims the ID', async () => {
-    try {
-      const registry = initializeProviders();
-      await waitForOptionalProviderRegistration(registry);
-
-      expect(inferProviderForModel('gpt-5.4')).toBe('anthropic-codex');
-      expect(inferProviderForModel('gpt-5.6-sol')).toBe('anthropic-codex');
-    } finally {
-      resetProviderRegistry();
-      resetProviderFactory();
-    }
   });
 
   it('suppresses gpt-* when an available second owner claims the ID', async () => {

@@ -45,14 +45,10 @@ describe('Migration 102: strip legacy MCP keys from global_settings JSON blob', 
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('strips all four legacy MCP keys when present', () => {

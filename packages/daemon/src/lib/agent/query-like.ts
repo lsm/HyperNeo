@@ -11,6 +11,7 @@ import type {
 
 export type QueryLike = AsyncIterable<SDKMessage> & {
   interrupt(): Promise<SDKControlInterruptResponse | undefined>;
+  cancelAsyncMessage?(messageUuid: string): Promise<boolean>;
   close(): void;
   setMcpServers?(servers: Record<string, McpServerConfig>): Promise<McpSetServersResult>;
   sessionId?: string;

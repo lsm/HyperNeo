@@ -459,10 +459,7 @@ export class RateLimitWatchdog {
             computeCooldown(this.lastErrorMessage, this.retryCount),
             episodeGeneration
           );
-        } catch {
-          // Nothing more we can do; the caller (query-runner) will surface the
-          // original 429 via its normal error path on the next message.
-        }
+        } catch {}
       }
     }
   }

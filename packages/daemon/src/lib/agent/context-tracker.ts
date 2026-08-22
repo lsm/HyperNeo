@@ -37,9 +37,7 @@ export class ContextTracker {
     this.persistContext(contextInfo);
   }
 
-  setModel(_model: string): void {
-    // Model is extracted from SDK getContextUsage() output, not tracked here.
-  }
+  setModel(_model: string): void {}
 
   shouldCompact(actualContextWindow: number, cooldownMs = DEFAULT_COMPACTION_COOLDOWN_MS): boolean {
     const info = this.currentContextInfo;

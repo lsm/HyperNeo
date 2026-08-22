@@ -44,7 +44,6 @@ function createAgentSession(
     deleteMessagesAtAndAfter: mock(() => 0),
     getUserMessageByUuid: mock(() => undefined),
     countMessagesAfter: mock(() => 0),
-    getMessagesByStatus: mock(() => []),
     updateMessage: mock(() => {}),
     getSDKMessageCount: mock(() => 0),
     getConsumedUserMessagesAfterLatestInit: mock(() => []),

@@ -870,9 +870,7 @@ function parseTags(tags: string): string[] {
     if (Array.isArray(parsed)) {
       return parsed.filter((tag): tag is string => typeof tag === 'string');
     }
-  } catch {
-    // Pre-JSON rows used whitespace-delimited tags.
-  }
+  } catch {}
   return tags.split(/\s+/).filter(Boolean);
 }
 

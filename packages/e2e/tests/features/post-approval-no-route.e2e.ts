@@ -53,9 +53,7 @@ async function deleteSpace(page: Page, spaceId: string): Promise<void> {
       if (!hub?.request) return;
       await hub.request('space.delete', { id });
     }, spaceId);
-  } catch {
-    // Best-effort cleanup.
-  }
+  } catch {}
 }
 
 test.describe('Post-approval routing: no-route branch', () => {

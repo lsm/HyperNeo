@@ -1786,9 +1786,7 @@ describe('GitHubEventExtension', () => {
             try {
               const body = JSON.parse(String(init.body)) as { config?: { secret?: string } };
               if (body.config?.secret) lastPatchedSecret = body.config.secret;
-            } catch {
-              /* ignore non-JSON bodies */
-            }
+            } catch {}
           }
         }
         return new Response(

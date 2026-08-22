@@ -268,15 +268,7 @@ async function handleMessages(
           res,
           conv.registry,
           toolResults,
-          () => {
-            // Intentionally empty: no extra action is needed when the
-            // resumed session finishes.  If the model emits another
-            // tool_use, setOnPendingToolCall already registered the new
-            // tool call ID in the registry before onDone fires, so the
-            // next HTTP request will route correctly without any help here.
-            // Cleanup (cleanupConversation / releaseConversation) is handled
-            // below based on the StreamingOutcome kind.
-          },
+          () => {},
           (extractSystemText(body.system) ?? '') + formatAnthropicPrompt(body.messages),
           {
             store: contextUsageStore,

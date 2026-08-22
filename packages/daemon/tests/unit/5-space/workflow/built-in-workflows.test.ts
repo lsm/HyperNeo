@@ -1,4 +1,3 @@
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,30 +13,34 @@ import {
   exportWorkflow,
   validateExportedWorkflow,
 } from '../../../../src/lib/space/export-format.ts';
-import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
-import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './fixtures/retired-post-approval-merge-template.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { isWorkflowTerminalNode } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import {
-  CODING_WORKFLOW,
-  CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
-  CODING_WITH_QA_WORKFLOW,
-  CODER_OWNED_PR_SUBSCRIBE_GUIDANCE,
-  REVIEWER_ZERO_FINDINGS_GATE,
   builtInWorkflowRequiresPrMerge,
+  CODER_ONLY_MERGE_INSTRUCTIONS,
+  CODER_ONLY_PROMPT,
+  CODER_ONLY_WORKFLOW,
+  CODER_OWNED_PR_SUBSCRIBE_GUIDANCE,
+  CODING_WITH_QA_WORKFLOW,
+  CODING_WORKFLOW,
+  getBuiltInWorkflows,
   LEGACY_CODING_TEMPLATE_IDENTITIES,
   mergeChannelsFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
-  getBuiltInWorkflows,
   RESEARCH_WORKFLOW,
-  REVIEW_ONLY_WORKFLOW,
-  RETIRED_PR_MERGER_SLOT_PROMPT,
   RETIRED_MERGER_RAW_MERGE_GUARD,
+  RETIRED_PR_MERGER_SLOT_PROMPT,
+  REVIEW_ONLY_WORKFLOW,
+  REVIEWER_ZERO_FINDINGS_GATE,
+  CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
   seedBuiltInWorkflows,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
+import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
 import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
-import { isWorkflowTerminalNode } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './fixtures/retired-post-approval-merge-template.ts';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -249,6 +252,166 @@ describe('stable coding workflow templates', () => {
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).not.toMatch(/--json [^\n]*autoMergeRequest/);
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).not.toMatch(/--json state --jq \.state/);
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toMatch(/~10 attempts|up to ~10/);
+  });
+});
+
+describe('coder-only workflow template', () => {
+  test('is a single Coding node that starts and ends itself', () => {
+    expect(CODER_ONLY_WORKFLOW.nodes).toHaveLength(1);
+    expect(CODER_ONLY_WORKFLOW.nodes[0]!.name).toBe('Coding');
+    expect(CODER_ONLY_WORKFLOW.startNodeId).toBe(CODER_ONLY_WORKFLOW.endNodeId);
+    expect(CODER_ONLY_WORKFLOW.channels ?? []).toHaveLength(0);
+    expect(CODER_ONLY_WORKFLOW.tags).not.toContain('default');
+  });
+
+  test('coder owns the post-approval merge via the node-level route', () => {
+    const codingNode = CODER_ONLY_WORKFLOW.nodes[0]!;
+    expect(codingNode.postApproval?.targetAgent).toBe('coder');
+    expect(codingNode.postApproval?.requirePrMerge).toBe(true);
+    expect(codingNode.postApproval?.instructions).toBe(CODER_ONLY_MERGE_INSTRUCTIONS);
+    const coder = codingNode.agents.find((agent) => agent.name === 'coder')!;
+    expect(coder.eventInterests).toEqual([
+      {
+        topicFrom: {
+          source: 'primaryLink',
+          pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+        },
+        label: 'My PR events',
+      },
+    ]);
+  });
+
+  test('coder prompt gates on Codex and Devon, runs an informal review, and requests human sign-off', () => {
+    expect(CODER_ONLY_PROMPT).toContain(CODER_OWNED_PR_SUBSCRIBE_GUIDANCE);
+    expect(CODER_ONLY_PROMPT).toContain('Codex');
+    expect(CODER_ONLY_PROMPT).toContain('Devon');
+    expect(CODER_ONLY_PROMPT).toContain('informal review');
+    expect(CODER_ONLY_PROMPT).toContain('submit_for_approval');
+    expect(CODER_ONLY_PROMPT).toContain('Runtime Execution Contract');
+    expect(CODER_ONLY_PROMPT).not.toContain('approve_task(');
+    expect(CODER_ONLY_PROMPT).not.toContain('Do NOT merge PRs');
+  });
+
+  test('gate evidence uses GraphQL enum names, cycle binding, and paginated reviews', () => {
+    expect(CODER_ONLY_PROMPT).toContain('THUMBS_UP');
+    expect(CODER_ONLY_PROMPT).toContain('EYES');
+    expect(CODER_ONLY_PROMPT).toContain('createdAt');
+    expect(CODER_ONLY_PROMPT).toContain('reactions(first:100,after:$cursor)');
+    expect(CODER_ONLY_PROMPT).toContain('reviews(first:100,after:$cursor)');
+    expect(CODER_ONLY_PROMPT).toContain('commit{oid} url body');
+    expect(CODER_ONLY_PROMPT).toContain('pageInfo.hasNextPage');
+    expect(CODER_ONLY_PROMPT).toContain('`devin`');
+    expect(CODER_ONLY_PROMPT).toContain('`[bot]`');
+    expect(CODER_ONLY_PROMPT).toContain('ONLY when its `commit.oid` equals');
+    expect(CODER_ONLY_PROMPT).toContain('is NOT a pass');
+    expect(CODER_ONLY_PROMPT).toContain('Reject `DISMISSED` and `PENDING`');
+    expect(CODER_ONLY_PROMPT).toContain('review CYCLE');
+    expect(CODER_ONLY_PROMPT).toContain('Serialize review cycles');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('cycle triggered after the last push');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('recover idempotently');
+    expect(CODER_ONLY_PROMPT).not.toContain('content `+1` means');
+    expect(CODER_ONLY_PROMPT).not.toContain('or its `submittedAt` is on or after');
+    expect(CODER_ONLY_PROMPT).not.toContain('committedDate');
+    expect(CODER_ONLY_PROMPT).not.toContain('pushedAt');
+  });
+
+  test('coder prompt persists the PR link and gates CI on required checks, not a fixed name', () => {
+    expect(CODER_ONLY_PROMPT).toContain('shape: "link", kind: "pr"');
+    expect(CODER_ONLY_PROMPT).toContain('--required');
+    expect(CODER_ONLY_PROMPT).toContain('no required checks');
+    expect(CODER_ONLY_PROMPT).not.toContain('All Tests Pass');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('--required');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('no required checks');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).not.toContain('All Tests Pass');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).not.toContain('`dev` branch ruleset');
+  });
+
+  test('coder prompt reroutes no-change tasks instead of fabricating a PR', () => {
+    expect(CODER_ONLY_PROMPT).toContain('no code changes');
+    expect(CODER_ONLY_PROMPT).toContain('needs');
+    expect(CODER_ONLY_PROMPT).toContain('re-routing');
+  });
+
+  test('gate note artifact carries an explicit key and inline reaction evidence', () => {
+    expect(CODER_ONLY_PROMPT).toContain('kind: "external-review-gate", key: "gate"');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'codex_reaction: { login, content: "THUMBS_UP", created_at }'
+    );
+    expect(CODER_ONLY_PROMPT).toContain('base_ref: "<baseRefName>"');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('key "gate"');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'its recorded base_ref equals the current baseRefName'
+    );
+  });
+
+  test('merge instructions sync fork PRs from the base repository remote', () => {
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('BASE_REMOTE');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('git fetch "$BASE_REMOTE" "$BASE"');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'git -C "$SPACE_WS" pull --ff-only "$BASE_REMOTE" "$BASE"'
+    );
+  });
+
+  test('merge instructions require fresh human sign-off after a post-approval push', () => {
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('merge_fix_pushed');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'The prior human approval never carries over to a head it was not given.'
+    );
+  });
+
+  test('merge instructions block on required approvals and give branch cleanup commands', () => {
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('REVIEW_REQUIRED');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('never bypass it with `--admin`');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('IS_FORK');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('git ls-remote origin "refs/heads/$HEAD_REF"');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('git push origin --force-with-lease');
+  });
+
+  test('gate captures the base before reviewers run and verifies the recorded PR link', () => {
+    expect(CODER_ONLY_PROMPT).toContain('Capture the baseRefName when you START the external gate');
+    expect(CODER_ONLY_PROMPT).toContain('re-run BOTH gates under the new base');
+    expect(CODER_ONLY_PROMPT).toContain('headRefName,isCrossRepository,headRepository,url');
+    expect(CODER_ONLY_PROMPT).toContain('must match the origin remote');
+    expect(CODER_ONLY_PROMPT).toContain('the fork case');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('`base_ref` equals the final baseRefName');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      '--force-with-lease="refs/heads/$HEAD_REF:$REMOTE_OID"'
+    );
+  });
+
+  test('merge instructions give executable guarded commands for the Space checkout sync', () => {
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'git -C "$SPACE_WS" fetch "$BASE_REMOTE" "$BASE"'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('rev-parse FETCH_HEAD');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('space-checkout-base');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('space-checkout-pull');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('space-checkout-ahead');
+  });
+
+  test('merge instructions scan all reviews and verify merged-state recovery', () => {
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('by ANY author (human or Devon)');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('a later `APPROVED` from that same author');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'gate artifact `head_oid` still equals the PR headRefOid'
+    );
+  });
+
+  test('Devon pass requires an unambiguous zero-findings verdict', () => {
+    expect(CODER_ONLY_PROMPT).toContain('EXPLICIT zero-findings verdict');
+    expect(CODER_ONLY_PROMPT).toContain('"No Issues Found"');
+    expect(CODER_ONLY_PROMPT).toContain('minor findings are still findings');
+  });
+
+  test('requires human sign-off structurally', () => {
+    expect(CODER_ONLY_WORKFLOW.completionAutonomyLevel).toBeGreaterThanOrEqual(3);
+  });
+
+  test('merge instructions verify the external gate and the Space checkout sync', () => {
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('mergeStateStatus');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('space-checkout-ahead');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).not.toContain('Recommendation: APPROVE');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).not.toContain('{{approval_authority}}');
   });
 });
 
@@ -563,8 +726,8 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 });
 
 describe('getBuiltInWorkflows()', () => {
-  test('returns exactly four templates', () => {
-    expect(getBuiltInWorkflows()).toHaveLength(4);
+  test('returns exactly five templates', () => {
+    expect(getBuiltInWorkflows()).toHaveLength(5);
   });
 
   test('includes CODING_WORKFLOW', () => {
@@ -592,12 +755,18 @@ describe('getBuiltInWorkflows()', () => {
     expect(names).toContain(REVIEW_ONLY_WORKFLOW.name);
   });
 
+  test('includes CODER_ONLY_WORKFLOW', () => {
+    const names = getBuiltInWorkflows().map((w) => w.name);
+    expect(names).toContain(CODER_ONLY_WORKFLOW.name);
+  });
+
   test('identifies merge-required workflows by durable template identity', () => {
     expect(builtInWorkflowRequiresPrMerge('Coding')).toBe(true);
     expect(builtInWorkflowRequiresPrMerge('Coding Workflow')).toBe(true);
     expect(builtInWorkflowRequiresPrMerge('Coding with QA')).toBe(true);
     expect(builtInWorkflowRequiresPrMerge('Research Workflow')).toBe(true);
     expect(builtInWorkflowRequiresPrMerge('Review-Only')).toBe(false);
+    expect(builtInWorkflowRequiresPrMerge('Coder-Only Workflow')).toBe(true);
     expect(builtInWorkflowRequiresPrMerge('custom workflow')).toBe(false);
     expect(builtInWorkflowRequiresPrMerge(null)).toBe(false);
   });
@@ -703,9 +872,7 @@ describe('seedBuiltInWorkflows()', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   test('create rejects duplicate hook ids before migration', () => {
@@ -789,7 +956,7 @@ describe('seedBuiltInWorkflows()', () => {
   test('seeds all built-in templates for an empty space', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(4);
+    expect(workflows).toHaveLength(5);
   });
 
   test('seeded workflow names match all templates', async () => {
@@ -972,7 +1139,7 @@ describe('seedBuiltInWorkflows()', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(4);
+    expect(workflows).toHaveLength(5);
   });
 
   test('threads node-level postApproval through to Coding, Research, QA seeded rows', () => {
@@ -1006,7 +1173,7 @@ describe('seedBuiltInWorkflows()', () => {
   test('result exposes restamped=[] on a fresh seed', () => {
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     expect(result.skipped).toBe(false);
-    expect(result.seeded).toHaveLength(4);
+    expect(result.seeded).toHaveLength(5);
     expect(result.restamped).toEqual([]);
   });
 
@@ -1868,9 +2035,9 @@ describe('seedBuiltInWorkflows()', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(5);
+    expect(workflows).toHaveLength(6);
     expect(workflows.some((workflow) => workflow.name === 'My Custom Workflow')).toBe(true);
-    expect(workflows.filter((workflow) => workflow.templateName)).toHaveLength(4);
+    expect(workflows.filter((workflow) => workflow.templateName)).toHaveLength(5);
   });
 
   function revertToLegacyIdentity(workflowId: string, legacyName: string, legacyHandle: string) {
@@ -2147,12 +2314,12 @@ describe('seedBuiltInWorkflows()', () => {
 
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
-    expect(result.seeded).toHaveLength(3);
+    expect(result.seeded).toHaveLength(4);
     expect(result.seeded).not.toContain(STABLE_CODING_WORKFLOW.name);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].name).toBe(STABLE_CODING_WORKFLOW.name);
     expect(result.errors[0].error).toContain('coding');
-    expect(manager.listWorkflows(SPACE_ID)).toHaveLength(4);
+    expect(manager.listWorkflows(SPACE_ID)).toHaveLength(5);
   });
 
   test('partial legacy migration: a rename collision stamps templateName so the row still groups for cleanup', () => {
@@ -2306,9 +2473,7 @@ describe('seedBuiltInWorkflows()', () => {
 
     try {
       seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver);
-    } catch {
-      // expected
-    }
+    } catch {}
     expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
   });
 
@@ -2318,9 +2483,7 @@ describe('seedBuiltInWorkflows()', () => {
 
     try {
       seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver);
-    } catch {
-      // expected
-    }
+    } catch {}
     expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
   });
 
@@ -2329,11 +2492,12 @@ describe('seedBuiltInWorkflows()', () => {
 
     expect(result.skipped).toBe(false);
     expect(result.errors).toHaveLength(0);
-    expect(result.seeded).toHaveLength(4);
+    expect(result.seeded).toHaveLength(5);
     expect(result.seeded).toContain('Coding');
     expect(result.seeded).toContain('Coding with QA');
     expect(result.seeded).toContain('Research Workflow');
     expect(result.seeded).toContain('Review-Only Workflow');
+    expect(result.seeded).toContain('Coder-Only Workflow');
   });
 
   test('returns skipped=true when workflows already exist', () => {
@@ -2358,13 +2522,13 @@ describe('seedBuiltInWorkflows()', () => {
 
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
-    expect(result.seeded).toHaveLength(3);
+    expect(result.seeded).toHaveLength(4);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].error).toContain('Simulated DB constraint error');
     expect(result.skipped).toBe(false);
 
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(3);
+    expect(workflows).toHaveLength(4);
   });
 
   test('per-workflow error isolation — captures error name correctly', () => {
@@ -2394,7 +2558,7 @@ describe('seedBuiltInWorkflows()', () => {
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
     expect(result.seeded).toHaveLength(0);
-    expect(result.errors).toHaveLength(4);
+    expect(result.errors).toHaveLength(5);
     expect(result.skipped).toBe(false);
     for (const err of result.errors) {
       expect(err.error).toContain('DB is read-only');
@@ -2688,9 +2852,7 @@ describe('Coding Workflow export/import round-trip', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   test('exported Coding Workflow passes Zod validation', () => {

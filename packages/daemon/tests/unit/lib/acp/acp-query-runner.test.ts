@@ -18,7 +18,8 @@ import {
 } from '../../../../src/lib/acp/acp-query-runner';
 import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
-import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
 
 function createMockClient() {
   return {
@@ -263,6 +264,13 @@ describe('AcpQueryRunner', () => {
     expect(parseAcpCommand('claude --acp --name "My Agent"')).toEqual({
       command: 'claude',
       args: ['--acp', '--name', 'My Agent'],
+    });
+  });
+
+  test('parses ACP commands with shared parser semantics', () => {
+    expect(parseAcpCommand('"C:\\Program Files\\agent.exe" --value ""')).toEqual({
+      command: 'C:\\Program Files\\agent.exe',
+      args: ['--value', ''],
     });
   });
 
@@ -755,6 +763,20 @@ describe('AcpQueryRunner', () => {
 
     expect(constructorOptions[0].env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-acp-token');
     expect(constructorOptions[0].env?.CLAUDE_CODE_OAUTH_TOKEN).toBe('acp-oauth-token');
+  });
+
+  test('launches sessions with the provider-configured command over the env command', async () => {
+    const provider = new AcpProvider({}, async () => {});
+    provider.setAcpCommand('configured-agent --stdio');
+    getProviderRegistry().register(provider);
+    const { runner, ctx, constructorOptions } = createRunnerFixture();
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(process.env.HYPERNEO_ACP_COMMAND).toBe('mock-acp --stdio');
+    expect(constructorOptions[0].command).toBe('configured-agent');
+    expect(constructorOptions[0].args).toEqual(['--stdio']);
   });
 
   test('maps ACP permission requests through AskUserQuestion approval callback', async () => {

@@ -104,7 +104,7 @@ export class SpaceTaskRepository {
          WHERE s.status != 'archived'
            AND COALESCE(s.type, 'worker') NOT IN ('room_chat', 'space_chat', 'spaces_global')
            AND (
-             (json_valid(s.session_context) AND json_extract(s.session_context, '$.taskId') = ?)
+             s.task_id = ?
              OR s.id = t.task_agent_session_id
              OR s.id LIKE ('space:%:task:' || ? || ':%')
            )`
@@ -573,6 +573,76 @@ export class SpaceTaskRepository {
     }
 
     return this.getTask(id);
+  }
+
+  casStatus(
+    taskId: string,
+    expected: SpaceTaskStatus | readonly SpaceTaskStatus[],
+    next: SpaceTaskStatus
+  ): 'won' | 'superseded' {
+    const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
+    if (expectedStatuses.length === 0) return 'superseded';
+    const placeholders = expectedStatuses.map(() => '?').join(', ');
+    const result = this.db
+      .prepare(`UPDATE space_tasks SET status = ? WHERE id = ? AND status IN (${placeholders})`)
+      .run(next, taskId, ...expectedStatuses);
+    return result.changes > 0 ? 'won' : 'superseded';
+  }
+
+  casStatusWithPayload(
+    taskId: string,
+    expected: SpaceTaskStatus | readonly SpaceTaskStatus[],
+    next: SpaceTaskStatus,
+    payload: { restrictions: TaskRestriction | null }
+  ): 'won' | 'superseded' {
+    const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
+    if (expectedStatuses.length === 0) return 'superseded';
+    const placeholders = expectedStatuses.map(() => '?').join(', ');
+    const now = Date.now();
+    const sets = ['status = ?', 'restrictions = ?', 'updated_at = ?'];
+    const values: SQLiteValue[] = [
+      next,
+      payload.restrictions ? JSON.stringify(payload.restrictions) : null,
+      now,
+    ];
+    if (next === 'in_progress') {
+      sets.push('started_at = ?', 'completed_at = ?');
+      values.push(now, null);
+    }
+    const result = this.db
+      .prepare(
+        `UPDATE space_tasks SET ${sets.join(', ')} WHERE id = ? AND status IN (${placeholders})`
+      )
+      .run(...values, taskId, ...expectedStatuses);
+    if (result.changes === 0) return 'superseded';
+    this.upsertTaskSearchRow(taskId);
+    this.deleteExpiredTerminalTaskMessageRows(taskId);
+    this.reactiveDb?.notifyChange('space_tasks');
+    return 'won';
+  }
+
+  reserveSpawnForTick(
+    taskId: string,
+    allowedStatuses: readonly SpaceTaskStatus[]
+  ): 'won' | 'superseded' {
+    if (allowedStatuses.length === 0) return 'superseded';
+    const placeholders = allowedStatuses.map(() => '?').join(', ');
+    const result = this.db
+      .prepare(
+        `UPDATE space_tasks
+         SET spawn_reservation_token = ?
+         WHERE id = ?
+           AND status IN (${placeholders})
+           AND spawn_reservation_token IS NULL`
+      )
+      .run(generateUUID(), taskId, ...allowedStatuses);
+    return result.changes > 0 ? 'won' : 'superseded';
+  }
+
+  releaseSpawnReservation(taskId: string): void {
+    this.db
+      .prepare(`UPDATE space_tasks SET spawn_reservation_token = NULL WHERE id = ?`)
+      .run(taskId);
   }
 
   archiveTask(id: string): SpaceTask | null {

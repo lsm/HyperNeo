@@ -343,9 +343,7 @@ export async function executeHookScript(
         if (proc.pid) {
           process.kill(-proc.pid, 'SIGKILL');
         }
-      } catch {
-        // process group already gone
-      }
+      } catch {}
 
       return { code, timedOut: killed };
     })(),

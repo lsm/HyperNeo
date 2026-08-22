@@ -5,21 +5,22 @@ import * as ts from 'typescript';
 const KEEP_PATTERNS: RegExp[] = [
   /^#!/,
   /^\/\/\/\s*</,
-  /@ts-(ignore|expect-error|nocheck|check)\b/,
-  /biome-ignore/,
-  /\beslint\b/,
-  /oxlint-(disable|enable)/,
-  /@public\b/,
-  /(v8|istanbul|c8) ignore/,
-  /knip-ignore/,
+  /^(?:\/\/|\/\*+)\s*@ts-(ignore|expect-error|nocheck|check)\b/,
+  /^(?:\/\/|\/\*+)\s*biome-ignore\b/,
+  /^(?:\/\/|\/\*+)\s*eslint-/,
+  /^(?:\/\/|\/\*+)\s*oxlint-(disable|enable)\b/,
+  /^(?:\/\/|\/\*+)[\s*]*@public\b/,
+  /^(?:\/\/|\/\*+)\s*(?:v8|istanbul|c8) ignore\b/,
+  /^(?:\/\/|\/\*+)\s*knip-ignore\b/,
 ];
 
 interface Range {
   start: number;
   end: number;
+  jsx?: boolean;
 }
 
-const COMMENT_RE = /\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
+const COMMENT_RE = /\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\//g;
 
 function collectCommentRanges(text: string, fileName: string, isTsx: boolean): Range[] {
   const sourceFile = ts.createSourceFile(
@@ -38,14 +39,21 @@ function collectCommentRanges(text: string, fileName: string, isTsx: boolean): R
       const inner = text.slice(start + 1, end - 1);
       const matches = [...inner.matchAll(new RegExp(COMMENT_RE.source, 'g'))];
       if (matches.length > 0 && matches.every((m) => !KEEP_PATTERNS.some((p) => p.test(m[0])))) {
-        ranges.push({ start, end });
+        for (const m of matches) {
+          ranges.push({
+            start: start + 1 + m.index,
+            end: start + 1 + m.index + m[0].length,
+            jsx: true,
+          });
+        }
         return;
       }
     }
     const fullStart = node.getFullStart();
-    if (!seenWindows.has(fullStart)) {
+    const start = node.getStart(sourceFile);
+    if (fullStart < start && !seenWindows.has(fullStart)) {
       seenWindows.add(fullStart);
-      const trivia = text.slice(fullStart, node.getStart(sourceFile));
+      const trivia = text.slice(fullStart, start);
       COMMENT_RE.lastIndex = 0;
       for (let m = COMMENT_RE.exec(trivia); m !== null; m = COMMENT_RE.exec(trivia)) {
         if (KEEP_PATTERNS.some((p) => p.test(m[0]))) continue;
@@ -58,22 +66,32 @@ function collectCommentRanges(text: string, fileName: string, isTsx: boolean): R
   return ranges;
 }
 
-function expandRange(text: string, { start, end }: Range): Range {
+function expandRange(text: string, range: Range): Range {
+  const { start, end } = range;
   let lineStart = 0;
-  if (start > 0) {
-    const nl = text.lastIndexOf('\n', start - 1);
-    lineStart = nl === -1 ? 0 : nl + 1;
+  for (let i = start - 1; i >= 0; i--) {
+    if (LINE_TERMINATOR.test(text[i])) {
+      lineStart = i + 1;
+      break;
+    }
   }
-  let nlAfter = text.indexOf('\n', end);
-  if (nlAfter === -1) nlAfter = text.length;
+  let nlAfter = -1;
+  for (let i = end; i < text.length; i++) {
+    if (LINE_TERMINATOR.test(text[i])) {
+      nlAfter = i;
+      break;
+    }
+  }
+  const lineEnd = nlAfter === -1 ? text.length : nlAfter;
   const prefix = text.slice(lineStart, start);
-  const suffix = text.slice(end, nlAfter);
-  if (/^\s*$/.test(prefix) && /^\s*$/.test(suffix)) {
-    return { start: lineStart, end: Math.min(nlAfter + 1, text.length) };
+  const suffix = text.slice(end, lineEnd);
+  if (!range.jsx && /^\s*$/.test(prefix) && /^\s*$/.test(suffix)) {
+    const ltLen = nlAfter === -1 ? 0 : text[nlAfter] === '\r' && text[nlAfter + 1] === '\n' ? 2 : 1;
+    return { ...range, start: lineStart, end: Math.min(nlAfter + ltLen, text.length) };
   }
   let e = end;
   while (e < text.length && (text[e] === ' ' || text[e] === '\t')) e++;
-  return { start, end: e };
+  return { ...range, end: e };
 }
 
 function mergeRanges(ranges: Range[]): Range[] {
@@ -83,11 +101,61 @@ function mergeRanges(ranges: Range[]): Range[] {
     const last = merged[merged.length - 1];
     if (last && r.start <= last.end) {
       last.end = Math.max(last.end, r.end);
+      last.jsx = last.jsx || r.jsx;
     } else {
       merged.push({ ...r });
     }
   }
   return merged;
+}
+
+const IDENT_CONTINUE = /[$\u200C\u200D\p{ID_Continue}]/u;
+
+const LINE_TERMINATOR = /[\n\r\u2028\u2029]/;
+
+const ASI_KEYWORDS = new Set(['return', 'throw', 'break', 'continue', 'yield']);
+
+const PUNCTUATOR = /[{}()[\];,<>=!+\-*/%&|^?:~.@#'"`]/;
+
+const EXTENDABLE_PUNCTUATOR = /[+\-<>=!&|?*%^.]/;
+
+function mergesTokens(text: string, before: number, after: number): boolean {
+  if (before < 0 || after >= text.length) return false;
+  const continuesIdentifier = IDENT_CONTINUE.test(text[before]);
+  const startsIdentifier = IDENT_CONTINUE.test(text[after]) || text[after] === '\\';
+  if (continuesIdentifier && startsIdentifier) return true;
+  return EXTENDABLE_PUNCTUATOR.test(text[before]) && PUNCTUATOR.test(text[after]);
+}
+
+function followsPostfixOperand(text: string, before: number, after: number): boolean {
+  if (after + 1 >= text.length) return false;
+  let b = before;
+  while (b >= 0 && /\s/.test(text[b])) b--;
+  if (b < 0) return false;
+  const endsOperand = IDENT_CONTINUE.test(text[b]) || /[)\]'"`]/.test(text[b]);
+  const op = text.slice(after, after + 2);
+  return endsOperand && (op === '++' || op === '--');
+}
+
+function precedesAsiKeyword(text: string, before: number): boolean {
+  let end = before;
+  while (end >= 0 && /\s/.test(text[end])) end--;
+  if (end < 0 || !IDENT_CONTINUE.test(text[end])) return false;
+  let start = end;
+  while (start >= 0 && IDENT_CONTINUE.test(text[start])) start--;
+  return ASI_KEYWORDS.has(text.slice(start + 1, end + 1));
+}
+
+function trailingNewlines(s: string): number {
+  let n = 0;
+  while (s[s.length - 1 - n] === '\n') n++;
+  return n;
+}
+
+function leadingNewlines(s: string): number {
+  let n = 0;
+  while (s[n] === '\n') n++;
+  return n;
 }
 
 export function stripComments(text: string, fileName: string, isTsx: boolean): string {
@@ -96,12 +164,50 @@ export function stripComments(text: string, fileName: string, isTsx: boolean): s
   const removals = mergeRanges(comments.map((r) => expandRange(text, r)));
   let out = '';
   let cursor = 0;
-  for (const { start, end } of removals) {
-    out += text.slice(cursor, start);
+  let afterRemoval = false;
+  const appendUpTo = (upTo: number): void => {
+    let chunk = text.slice(cursor, upTo);
+    if (afterRemoval) {
+      if (cursor >= text.length || LINE_TERMINATOR.test(text[cursor])) {
+        out = out.replace(/[ \t]+$/, '');
+      }
+      const trail = trailingNewlines(out);
+      const lead = leadingNewlines(chunk);
+      const excess = trail + lead - 2;
+      if (excess > 0) {
+        const fromOut = Math.min(trail, excess);
+        out = out.slice(0, out.length - fromOut);
+        chunk = chunk.slice(Math.min(lead, excess - fromOut));
+      }
+    }
+    out += chunk;
+  };
+  for (const { start, end, jsx } of removals) {
+    appendUpTo(start);
+    const hadLineTerminator = LINE_TERMINATOR.test(text.slice(start, end));
+    const retainsLineTerminator =
+      (start > 0 && LINE_TERMINATOR.test(text[start - 1])) ||
+      (end < text.length && LINE_TERMINATOR.test(text[end]));
+    const emitLineBreak = (): void => {
+      out = out.replace(/[ \t]+$/, '');
+      out += '\n';
+    };
+    if (!jsx && mergesTokens(text, start - 1, end)) {
+      if (hadLineTerminator) emitLineBreak();
+      else out += ' ';
+    } else if (
+      !jsx &&
+      hadLineTerminator &&
+      !retainsLineTerminator &&
+      (precedesAsiKeyword(text, start - 1) || followsPostfixOperand(text, start - 1, end))
+    ) {
+      emitLineBreak();
+    }
     cursor = end;
+    afterRemoval = true;
   }
-  out += text.slice(cursor);
-  return out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n');
+  appendUpTo(text.length);
+  return out;
 }
 
 async function main(): Promise<void> {
@@ -114,7 +220,10 @@ async function main(): Promise<void> {
   if (filesIdx !== -1) {
     files = args.slice(filesIdx + 1).filter((a) => !a.startsWith('--'));
   } else {
-    const proc = Bun.spawnSync(['git', 'ls-files', '*.ts', '*.tsx']);
+    const lsArgs = check
+      ? ['git', 'ls-files', '*.ts', '*.tsx']
+      : ['git', 'ls-files', '--cached', '--others', '--exclude-standard', '*.ts', '*.tsx'];
+    const proc = Bun.spawnSync(lsArgs);
     files = proc.stdout
       .toString()
       .split('\n')
@@ -125,7 +234,9 @@ async function main(): Promise<void> {
   let dirty = 0;
   let removed = 0;
   for (const file of files) {
-    const text = await Bun.file(file).text();
+    const entry = Bun.file(file);
+    if (!(await entry.exists())) continue;
+    const text = await entry.text();
     const isTsx = file.endsWith('.tsx');
     const stripped = stripComments(text, file, isTsx);
     if (stripped === text) continue;

@@ -24,14 +24,10 @@ describe('Migration 30: layout column on space_workflows', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       rmSync(testDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   test('space_workflows has layout column after migration', () => {

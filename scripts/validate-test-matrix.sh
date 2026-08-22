@@ -305,7 +305,7 @@ runner_continue_on_error() {
 
 # Print every value for `key:` (e.g. shard / module) that appears under a
 # `matrix.exclude:` block in job $1 of main.yml. Handles BOTH YAML forms:
-#   block:  exclude:        flow:  exclude: [{ shard: shared }, { shard: 1-core }]
+#   block:  exclude:        flow:  exclude: [{ shard: shared }, { shard: 1-core-a }]
 #             - shard: shared
 # Excludes drop GitHub combinations, so a shard/module present in the raw axis
 # but excluded never runs — the callers treat these as absent from CI rather than
@@ -313,26 +313,65 @@ runner_continue_on_error() {
 matrix_excludes() {
 	local job="$1" key="$2"
 	awk -v job="$1" -v key="$2" '
+		BEGIN {
+			quotes = sprintf("[%c%c]", 39, 34)
+			excl = sprintf("[%c%c]?exclude[%c%c]?", 39, 34, 39, 34)
+		}
+		function scan_keys(text,   v) {
+			while (match(text, key ":[[:space:]]*[^][,}[:space:]]+")) {
+				v=substr(text, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); gsub(/[^a-z0-9-]/, "", v); if (v != "") print v
+				text=substr(text, RSTART + RLENGTH)
+			}
+		}
+		# Strip an inline YAML comment (whitespace + #) before any key matching:
+		# "exclude: # note" is a valid block header GitHub still applies, and the
+		# end-anchored parent patterns would otherwise miss it. Values in these
+		# blocks never legitimately contain # (banned as a shell metachar).
+		{ c=$0; sub(/[[:space:]]+#.*$/, "", c); $0=c }
 		$0 ~ "^  " job ":" { injob=1; next }
 		injob && /^  [a-z]/ { injob=0 }
 		# Flow form: exclude: [ ... ] on one line — pull every "key: <token>" out.
 		# The token runs up to a delimiter (], ,, }, whitespace) so optional YAML
-		# quotes (single/double) are captured and then stripped (gsub non-token).
-		injob && $0 ~ "^[[:space:]]*exclude:[[:space:]]*\\[" {
+		# quotes (single/double) are captured and then stripped (gsub non-token);
+		# the KEY may also be quoted, and so may the parent exclude: property
+		# itself, so quote characters are stripped from the line before matching.
+		injob && $0 ~ "^[[:space:]]*" excl ":[[:space:]]*\\[" {
 			s=$0
-			while (match(s, key ":[[:space:]]*[^][,}[:space:]]+")) {
-				v=substr(s, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); gsub(/[^a-z0-9-]/, "", v); if (v != "") print v
-				s=substr(s, RSTART + RLENGTH)
+			# A flow collection may span lines: "exclude: [" then "{ shard: 2 },"
+			# rows until the closing bracket. Consume continuation lines so the
+			# token scan sees the whole collection, not just the opening line.
+			if (s !~ /\]/) {
+				while ((getline more) > 0) {
+					cm=more; sub(/[[:space:]]+#.*$/, "", cm)
+					s=s " " cm
+					if (cm ~ /\]/) break
+				}
 			}
+			gsub(quotes, "", s)
+			scan_keys(s)
+			next
+		}
+		# Flow-form matrix mapping with exclude embedded mid-line:
+		# matrix: { shard: [1, 2], exclude: [{ shard: 2 }] } — scan only the
+		# exclude part onward so the axis entry itself is not misread.
+		injob && $0 ~ /[{,][[:space:]]*exclude[[:space:]]*:/ {
+			s=$0; gsub(quotes, "", s)
+			if (match(s, /exclude[[:space:]]*:/)) s=substr(s, RSTART)
+			scan_keys(s)
 			next
 		}
 		# Block form: "exclude:" alone, then indented "- key: value" lines.
-		injob && $0 ~ "^[[:space:]]*exclude:[[:space:]]*$" { inblock=1; next }
+		# Quoted keys and a quoted parent property normalize the same way.
+		injob && $0 ~ "^[[:space:]]*" excl ":[[:space:]]*$" { inblock=1; next }
 		injob && inblock && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
 			n=0; while (substr($0,n+1,1)==" ") n++
-			if (n <= 8) { inblock=0; next }
-			if (match($0, key ":[[:space:]]*[^][,}[:space:]]+")) {
-				v=substr($0, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); gsub(/[^a-z0-9-]/, "", v); if (v != "") print v
+			# n <= 8 ends the block EXCEPT YAML indentationless-sequence form,
+			# where items sit at the SAME indent as the exclude key ("exclude:"
+			# then "- shard: 2", both at 8) — those dash lines are still items.
+			if (n <= 8 && !(n == 8 && $0 ~ /^[[:space:]]*- /)) { inblock=0; next }
+			line=$0; gsub(quotes, "", line)
+			if (match(line, key ":[[:space:]]*[^][,}[:space:]]+")) {
+				v=substr(line, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); gsub(/[^a-z0-9-]/, "", v); if (v != "") print v
 			}
 		}
 	' "$REPO_ROOT/.github/workflows/main.yml"
@@ -851,7 +890,7 @@ unit_matrix=$(awk '
 # test-daemon-shared-unit's matrix must have ONLY the `shard:` axis (+ include/
 # exclude). A sibling axis (e.g. replica: [a,b]) makes GitHub take the Cartesian
 # product, running every unit test once per value (duplicate runs + duplicate
-# Coveralls uploads) while this guard reports each file covered once.
+# lcov artifact uploads) while this guard reports each file covered once.
 _unit_sibling_axes=$(awk '
 	$0 ~ "^  test-daemon-shared-unit:" { injob=1; next }
 	injob && /^  [a-z]/ { injob=0; inmatrix=0; next }
@@ -908,7 +947,7 @@ done
 # shard in every matrix job while this guard reported all as covered.)
 _unit_run=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}' 'test-daemon-shared-unit')
 if [ "$(count_enabled_run_cmds "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}' 'test-daemon-shared-unit')" -gt 1 ]; then
-	err "test-daemon-shared-unit has more than one enabled runner step forwarding \${{ matrix.shard }} — each runs the shard (duplicate runs + duplicate Coveralls uploads) while this guard reports each file covered once"
+	err "test-daemon-shared-unit has more than one enabled runner step forwarding \${{ matrix.shard }} — each runs the shard (duplicate runs + duplicate lcov artifact uploads) while this guard reports each file covered once"
 	echo "     → keep exactly one enabled './scripts/test-daemon.sh ...' step" >&2
 fi
 if [ -z "$_unit_run" ]; then
@@ -954,11 +993,11 @@ else
 		| tr -d "[:space:]'")
 	# REQUIRE one affirmative --coverage: without it the shard produces no
 	# coverage/lcov.info, the lcov-fix step exits success on a missing file, and
-	# the Coveralls upload has fail-on-error:false — so the shard can vanish from
-	# combined coverage without failing CI. Bare --coverage (space/EOL-terminated)
+	# the lcov artifact upload skips missing files — so the shard can vanish
+	# from combined coverage. Bare --coverage (space/EOL-terminated)
 	# is the affirmative form; --coverage=false does not satisfy it.
 	if ! printf '%s' "$_unit_run" | grep -qE -- '--coverage([[:space:]]|$)'; then
-		err "test-daemon-shared-unit runner lacks --coverage — no lcov.info is produced, so the shard disappears from combined coverage without failing CI"
+		err "test-daemon-shared-unit runner lacks --coverage — no lcov.info is produced, so the shard contributes no coverage"
 		echo "     → keep '--coverage' on the test-daemon.sh invocation" >&2
 	elif [ -n "$_extra" ]; then
 		err "test-daemon-shared-unit runner has a non-allowlisted arg after \${{ matrix.shard }} (only --coverage is permitted) — a mode flag (--rerun/--verify/--show-failures) would run zero tests, or a bare shard would override matrix.shard"
@@ -1009,18 +1048,18 @@ done < <(find "$UNIT_ROOT" "$SHARED_ROOT" -type f \( -name '*.test.tsx' -o -name
 	-not -path '*/node_modules/*' -not -path '*/dist/*' | sort)
 
 # ===========================================================================
-# 2. WEB TESTS  (packages/web/src/** — single directory glob, one CI job)
+# 2. WEB TESTS  (packages/web/src/** — single directory glob, one CI matrix)
 # ===========================================================================
-# The web suite is a single `bunx vitest run` job whose `include` glob roots at
-# `src/`. Assert the config still does so — a future shard split or narrowed
-# include would orphan src test files with no other signal.
+# The web suite is a `bunx vitest run --shard=i/N` matrix whose `include` glob
+# roots at `src/`. Assert the config still does so — a narrowed include would
+# orphan src test files with no other signal.
 WEB_SRC="$REPO_ROOT/packages/web/src"
 WEB_CFG="$REPO_ROOT/packages/web/vitest.config.ts"
-# The web suite is a single `bunx vitest run` job. Require its `include` to be
-# the full src/**/*.{test,spec}.{ts,tsx} glob, so ANY narrowing (dropping .tsx,
-# inserting .unit., restricting the suffix, …) is caught rather than silently
-# dropping files while this guard reports full coverage. A substring/fragment
-# check is not enough — only the exact glob is.
+# The web suite is a `bunx vitest run --shard=i/N` matrix. Require its `include`
+# to be the full src/**/*.{test,spec}.{ts,tsx} glob, so ANY narrowing (dropping
+# .tsx, inserting .unit., restricting the suffix, …) is caught rather than
+# silently dropping files while this guard reports full coverage. A
+# substring/fragment check is not enough — only the exact glob is.
 # Scope the glob to `test.include` specifically (4-space indent, directly under
 # test:) — NOT a nested coverage.include. A whole-file search can mask a
 # so a glob placed in coverage.include would mask a narrowed test.include and
@@ -1047,15 +1086,115 @@ cfg_reject_root "$WEB_CFG" "packages/web"
 reject_config_spread "$WEB_CFG" "packages/web"
 reject_effective_config_drift "$WEB_CFG" "packages/web" \
 	'["src/**/*.{test,spec}.{ts,tsx}"]' '["node_modules","dist"]'
-# The web coverage assumes the test-web CI job runs a bare `vitest run` (no
-# positional target) in an ENABLED step, so the config include/exclude fully
-# determine execution. enabled_run_cmd folds the runner command (a `>-` scalar)
-# and skips disabled/commented steps; we then require `vitest run` to be followed
-# by a flag (or the closing quote), not a positional path — a target on a folded
-# continuation line would otherwise evade an end-of-physical-line check.
+# The web suite is split across the test-web matrix via vitest --shard=<i>/<N>:
+# vitest distributes test FILES deterministically, so the union of legs 1..N
+# runs the whole suite. Pin that wiring — the shard axis must hold exactly the
+# values 1..N (each once) with no matrix.exclude, no sibling axes, and no
+# include rows adding shard legs, and the runner (checked below) must forward
+# --shard=${{ matrix.shard }}/N with N the axis size. A dropped or duplicated
+# axis value, or a fixed --shard that ignores the matrix token, leaves part of
+# the suite unrun (or run twice) while this guard reports every file covered.
+#
+# The matrix block is read with Bun.YAML — a real YAML parser — instead of
+# textual patterns: quoted keys, flow or block style, inline comments, spacing
+# before colons, and multiline collections are all simply YAML, so no
+# hand-rolled pattern can silently miss a leg-dropping (exclude) or
+# leg-adding (sibling axis / include row) form. Fail-closed: any parse failure
+# surfaces as the missing-axis error below. Emits "<kind><TAB><value>" lines.
+_web_matrix_lines=$(WEB_YML="$REPO_ROOT/.github/workflows/main.yml" bun -e '
+	const fs = await import("node:fs");
+	const doc = Bun.YAML.parse(fs.readFileSync(process.env.WEB_YML, "utf8"));
+	const m = doc?.jobs?.["test-web"]?.strategy?.matrix ?? {};
+	const esc = (s) => s.replace(/[\x00-\x1f\x7f]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+	const tag = (v) => (typeof v === "number" || typeof v === "string" ? typeof v : "other") + ":" + esc(String(v));
+	const axis = m.shard;
+	const vals = Array.isArray(axis) ? axis : axis === undefined || axis === null ? [] : Object.keys(axis);
+	for (const v of vals) console.log("axis\t" + tag(v));
+	for (const row of m.include ?? []) {
+		if (row === null || typeof row !== "object" || Array.isArray(row)) continue;
+		if ("shard" in row) console.log("include\t" + tag(row.shard));
+		for (const k of Object.keys(row)) if (k !== "shard") console.log("include-key\t" + esc(k));
+	}
+	const excl = m.exclude ?? [];
+	for (const row of Array.isArray(excl) ? excl : [excl]) {
+		if (row !== null && typeof row === "object" && !Array.isArray(row)) {
+			console.log("exclude\t" + ("shard" in row ? tag(row.shard) : "*"));
+		} else if (row !== undefined && row !== null) {
+			console.log("exclude\t" + tag(row));
+		}
+	}
+	for (const k of Object.keys(m)) if (k !== "shard" && k !== "include" && k !== "exclude") console.log("sibling\t" + esc(k));
+' 2>/dev/null) || _web_matrix_lines=""
+# Axis values are tagged with their YAML scalar type so the include check can
+# compare typed values (GitHub keeps number/string distinct; a string include
+# value does not merge into a numeric axis and adds a duplicate leg), and any
+# control character in a scalar is escaped so a value can never inject extra
+# lines into this line-based protocol. The numeric checks below run on the
+# untagged value.
+web_matrix_tagged=$(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "axis" { print $2 }')
+web_matrix=$(printf '%s\n' "$web_matrix_tagged" | sed 's/^[a-z]*://')
+web_shard_n=$(printf '%s\n' "$web_matrix" | grep -c .)
+if [ "$web_shard_n" -eq 0 ]; then
+	err "test-web has no 'shard: [ ... ]' matrix axis — the web suite is modeled here as a vitest --shard matrix, so a missing axis means the runner's --shard forwarding no longer matches a scheduled leg set"
+	echo "     → restore 'shard: [1, 2]' under test-web's strategy.matrix (and the runner's --shard forwarding), or revert this validator to the single-job model" >&2
+fi
+while IFS= read -r _bad; do
+	[ -n "$_bad" ] || _bad="(empty)"
+	err "test-web shard axis value '$_bad' is not a positive integer — vitest --shard needs numeric <index>/<total> legs, and an empty value still creates a GitHub leg that fails"
+	echo "     → use plain integers 1..N in the shard axis" >&2
+done < <(printf '%s\n' "$web_matrix_tagged" | sed 's/^[a-z]*://' | grep -vE '^[0-9]+$' | sort -u)
+if [ "$web_shard_n" -ge 1 ]; then
+	for _i in $(seq 1 "$web_shard_n"); do
+		_count=$(printf '%s\n' "$web_matrix" | grep -xF "$_i" | wc -l | tr -d ' ')
+		if [ "$_count" -ne 1 ]; then
+			err "test-web shard axis must list every value 1..$web_shard_n exactly once — value '$_i' appears $_count time(s); a missing value leaves vitest's shard-$_i files unrun while this guard reports them covered, and a duplicate runs its slice twice"
+			echo "     → list each of 1..$web_shard_n exactly once in the shard axis" >&2
+		fi
+	done
+fi
+while IFS= read -r _wiv; do
+	[ -n "$_wiv" ] || continue
+	if ! printf '%s\n' "$web_matrix_tagged" | grep -qxF "$_wiv"; then
+		err "test-web matrix include row adds shard value '$_wiv' (tagged with its YAML type) that matches no axis value — GitHub schedules it as an extra or out-of-range combination (duplicate flag upload, or a vitest --shard beyond the denominator) while this guard reports the axis consistent"
+		echo "     → keep include values identical to an axis value (same YAML type), or extend the axis and the runner denominator together" >&2
+	fi
+done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "include" { print $2 }')
+while IFS= read -r _wik; do
+	[ -n "$_wik" ] || continue
+	err "test-web matrix include row carries a non-shard key '$_wik' — GitHub applies it as combination config this validator does not model"
+	echo "     → include rows may only override shard; anything else needs validator support here first" >&2
+done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "include-key" && !seen[$2]++ { print $2 }')
+while IFS= read -r _we; do
+	[ -n "$_we" ] || continue
+	err "test-web combination(s) matching '$_we' are removed by matrix.exclude — GitHub drops those legs ('*' matches EVERY combination, emptying the matrix), so their files never run while this guard reports them covered"
+	echo "     → remove the exclude entry, or drop the shard from the axis AND shrink the runner's --shard denominator" >&2
+done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "exclude" { print $2 }')
+while IFS= read -r _ax; do
+	[ -n "$_ax" ] || continue
+	err "test-web matrix has an extra axis '$_ax' — GitHub takes the Cartesian product, so every web shard runs once per value (duplicate runs + duplicate lcov artifact uploads) while this guard reports each file covered once"
+	echo "     → remove the '$_ax' axis, or model its combinations in this validator" >&2
+done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "sibling" { print $2 }')
+
+# The web coverage assumes the test-web CI job runs `vitest run` (no positional
+# target) in an ENABLED step, so the config include/exclude — plus the matrix
+# --shard split — fully determine execution. enabled_run_cmd folds the runner
+# command (a `>-` scalar) and skips disabled/commented steps; we then require
+# `vitest run` to be followed by a flag (or the closing quote), not a positional
+# path — a target on a folded continuation line would otherwise evade an
+# end-of-physical-line check.
 _web_cmd=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web')
+# Normalize the matrix expression to a placeholder so the --shard flag can be
+# compared as ONE whitespace-delimited token (the expression itself contains
+# spaces); exact-token equality then also rejects a stale LONGER denominator
+# (e.g. --shard=${{ matrix.shard }}/20 with a 2-entry axis), which a substring
+# match would accept. The token must also START a command-line word — the same
+# text embedded inside another flag value (e.g. a --coverage.* argument) is not
+# a real --shard option and must not satisfy the check.
+_web_shard_tok=$(printf '%s' "$_web_cmd" | sed 's/.*bunx vitest run//' \
+	| sed -E 's/[$][{][{][[:space:]]*matrix[.]shard[[:space:]]*[}][}]/MSHARD/g' \
+	| grep -oE "(^|[[:space:]])--shard=[^[:space:]']+" | sed 's/^[[:space:]]*//' || true)
 if [ "$(count_enabled_run_cmds "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web')" -gt 1 ]; then
-	err "test-web has more than one enabled 'cd packages/web && bunx vitest run' step — each runs the web suite (duplicate runs + duplicate Coveralls uploads) while this guard reports each file covered once"
+	err "test-web has more than one enabled 'cd packages/web && bunx vitest run' step — each runs the web suite (duplicate runs + duplicate lcov artifact uploads) while this guard reports each file covered once"
 	echo "     → keep exactly one enabled web runner step" >&2
 fi
 if [ -z "$_web_cmd" ]; then
@@ -1085,26 +1224,35 @@ elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'cd packag
 elif runner_shell_override "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web'; then
 	err "test-web runner step (or its job) sets a non-default shell — a no-exec shell (e.g. bash -n {0}) would make the step succeed having run ZERO web tests while this guard reports them covered"
 	echo "     → remove the shell: override (use the default shell)" >&2
+elif [ -z "$_web_shard_tok" ] ||
+     [ "$(printf '%s\n' "$_web_shard_tok" | wc -l | tr -d ' ')" -ne 1 ] ||
+     [ "$_web_shard_tok" != "--shard=MSHARD/$web_shard_n" ]; then
+	err "test-web runner does not pass exactly one '--shard=\${{ matrix.shard }}/$web_shard_n' — a fixed --shard, a stale denominator, or a missing/duplicated flag makes every leg run the same slice (or a narrower/unsharded set) while this guard reports all files covered"
+	echo "     → keep '--shard=\${{ matrix.shard }}/$web_shard_n' as the only --shard flag after 'bunx vitest run'" >&2
 elif [ -n "$(printf '%s' "$_web_cmd" \
 		| sed 's/.*bunx vitest run//' \
-		| sed -E -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
+		| sed -E -e 's/[$][{][{][[:space:]]*matrix[.]shard[[:space:]]*[}][}]//g' \
+		         -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
 		         -e 's/--reporter=[^[:space:]]+//g' \
 		         -e 's/--outputFile\.[[:alnum:]_-]+(=[^[:space:]]+)?//g' \
-		         -e 's/--coverage(=[[:space:]]*true)?//g' \
+		         -e 's/--shard=[^[:space:]]+//g' \
 		         -e 's/--coverage\.[[:alnum:]_.-]+(=[^[:space:]]+)?//g' \
+		         -e 's/--coverage(=[[:space:]]*true)?//g' \
 		         -e 's/--color//g' -e 's/--no-color//g' \
 		| tr -d "[:space:]'\"")" ]; then
-	# Allowlist ONLY coverage-neutral flags (--reporter, --coverage*, --color);
-	# do NOT blanket-strip every --flag. Selection-changing flags like --changed,
-	# --testNamePattern, or --dir narrow which files run while this guard reports
-	# all covered, so anything left after the allowlist (a positional OR an
-	# unknown flag) fails.
+	# Allowlist ONLY coverage-neutral flags (--reporter, --coverage*, --color)
+	# plus the matrix-forwarded --shard (validated by the dedicated branch
+	# above, so blanket-stripping every --shard token here cannot hide a second,
+	# overriding one); do NOT blanket-strip every --flag. Selection-changing
+	# flags like --changed, --testNamePattern, or --dir narrow which files run
+	# while this guard reports all covered, so anything left after the allowlist
+	# (a positional OR an unknown flag) fails.
 	err "test-web runner passes a positional filter or non-allowlisted flag to 'vitest run' — web coverage assumption broken (e.g. --changed/--testNamePattern would narrow discovery while this guard reports all files covered)"
-	echo "     → keep 'vitest run' bare (only --reporter/--coverage*/--color flags, no positional or selection-changing flag)" >&2
+	echo "     → keep 'vitest run' bare (only --reporter/--coverage*/--color/--shard flags, no positional or selection-changing flag)" >&2
 elif [ "$(printf '%s' "$_web_cmd" | grep -oF 'bunx vitest run' | wc -l | tr -d ' ')" -gt 1 ]; then
 	err "test-web runner has multiple 'bunx vitest run' invocations — the first could exit 0 (e.g. --testNamePattern __never__), so the fallback via || never executes"
 	echo "     → use exactly one 'bunx vitest run' invocation" >&2
-	echo "     → keep 'vitest run' bare (only --reporter/--coverage*/--color flags, no positional or selection-changing flag)" >&2
+	echo "     → keep 'vitest run' bare (only --reporter/--coverage*/--color/--shard flags, no positional or selection-changing flag)" >&2
 fi
 
 # Web test files outside the src/** include are not run by web CI. Each must be
@@ -1319,10 +1467,10 @@ else
 		         -e 's/--color//g' -e 's/--no-color//g' \
 		| tr -d "[:space:]")
 	# Coverage disabling: --coverage.enabled=false silently produces no LCOV report,
-	# and the Coveralls upload has fail-on-error:false, so the shard disappears from
-	# coverage results without failing CI.
+	# and the lcov artifact upload skips missing files, so the shard disappears
+	# from the merged coverage results.
 	if printf '%s' "$_online_main" | grep -qF 'coverage.enabled=false'; then
-		err "main.yml online runner disables coverage (coverage.enabled=false) — no LCOV report, shard disappears from coverage results without failing CI"
+		err "main.yml online runner disables coverage (coverage.enabled=false) — no LCOV report, so the shard contributes no coverage"
 		echo "     → remove coverage.enabled=false" >&2
 	elif ! printf '%s' "$_online_main" | grep -qE -- '--coverage([[:space:]]|$)'; then
 		err "main.yml online runner lacks a bare --coverage — no lcov.info is produced, so the shard disappears from combined coverage without failing CI (the --coverage.* sub-options alone do not enable it)"
@@ -1574,7 +1722,7 @@ fi
 # test-daemon-online's matrix must have ONLY the `module:` axis (+ include/
 # exclude). A sibling axis (e.g. replica: [a,b]) takes the Cartesian product,
 # running every mocked-online shard once per value (duplicate runs + concurrent
-# duplicate Coveralls uploads).
+# duplicate lcov artifact uploads).
 _online_sibling_axes=$(awk '
 	$0 ~ "^  test-daemon-online:" { injob=1; next }
 	injob && /^  [a-z]/ { injob=0; inmatrix=0; next }

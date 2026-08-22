@@ -20,9 +20,7 @@ test.describe('Tools Modal - Redesigned', () => {
     if (sessionId) {
       try {
         await cleanupTestSession(page, sessionId);
-      } catch {
-        // ignore cleanup errors
-      }
+      } catch {}
       sessionId = null;
     }
   });

@@ -22,7 +22,14 @@
 # installs them for its real-session shards too.
 #
 # Release is handled separately in release.yml (triggered by version tags).
-# Test coverage (unit, online, web) is uploaded to Coveralls.
+# Test coverage (unit, online, web): each test job's repo-root-normalized
+# lcov.info is uploaded as an lcov-* workflow artifact (retention 7d). The
+# coverage-gate job merges those artifacts locally (union of line hits across
+# suites), enforces thresholds against the baseline kept on the
+# coverage-baseline ref, and emits coverage-badge.json (shields endpoint
+# format). On push to dev, coverage-badge-update force-pushes that badge to
+# the orphan `badges` branch, which the README renders through
+# img.shields.io/endpoint — no external coverage service anywhere.
 
 name: CI
 
@@ -56,13 +63,24 @@ jobs:
   check:
     name: Lint, Knip, Format & Type Check
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     if: github.event.inputs.run_e2e_only != 'true'
 
     steps:
+      # Shallow checkout: nothing in this job walks history except the
+      # space-task handler gate, which diffs HEAD against a fetched base tip
+      # (tree diff — no merge-base walk), so depth 1 suffices.
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+
+      # Give the handler gate its comparison tip. On pull_request the checkout
+      # only fetches refs/pull/N/merge; on workflow_dispatch it only fetches the
+      # dispatched branch. Push-to-dev needs no extra fetch (origin/dev == HEAD,
+      # so the gate diff is empty and it no-ops).
+      - name: Fetch base branch for the space-task handler gate
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -87,17 +105,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Validate test matrix coverage (unit + web + online)
-        run: bash scripts/validate-test-matrix.sh
-
       - name: Validate daemon shard configuration
         run: |
           bash scripts/lib/shard-split.sh --self-test
           ./scripts/test-daemon.sh --verify
-          scripts/test-online.sh --verify
-
-      - name: Validate space task RPC handler tests
-        run: bun run check:space-task-handler-tests
 
       - name: Test space task RPC handler gate
         run: bun run test:space-task-handler-gate
@@ -105,50 +116,41 @@ jobs:
       - name: Test strip-comments argument handling
         run: bun run test:strip-comments
 
-      - name: Run linter
-        id: lint
-        run: bun run lint
-        continue-on-error: true
+      - name: Test coverage gate script
+        run: bun run test:coverage-gate
 
-      - name: Check formatting
-        id: format
-        run: bun run format:check
-        continue-on-error: true
+      - name: Test CI balance report parser
+        run: bun run test:ci-balance-report
 
-      - name: Run Knip
-        id: knip
-        run: bun run knip
+      - name: Test shard-weights generator
+        run: bun run test:generate-shard-weights
 
-      - name: Run type check
-        id: typecheck
-        run: bun run typecheck
-        continue-on-error: true
+      # Folded in from the former test-cli job: ~2s of tests that used to occupy
+      # a whole runner. Gated to the same events test-cli ran on (push to dev,
+      # workflow_dispatch) — skipped on PRs, exactly as before.
+      - name: Run CLI tests
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch'
+        working-directory: packages/cli
+        run: bunx vitest run
 
-      - name: Check DB schema parity
-        id: db-schema-parity
-        run: bun run check:db-schema-parity
-        continue-on-error: true
+      # Single source of truth: run the same mega-target local devs run
+      # (`make check` → `bun run check`). Fail-fast && chain; the
+      # zero-comments gate runs first so nothing can mask it. This replaces
+      # the former per-step lint/format/knip/typecheck/db-schema-parity
+      # steps (which used continue-on-error + an aggregate step) and the
+      # standalone check:no-comments / check:space-task-handler-tests /
+      # check:test-matrix / check:online-shards steps, all now inside the
+      # chain. strip-comments.ts enumerates files via `git ls-files`
+      # (index-only), so the shallow checkout is fine.
+      - name: Run make check
+        run: make check
 
       - name: Verify exact version pins
-        id: exact-pins
         run: |
           if grep -rn '"[~^][0-9]' packages/*/package.json package.json; then
             echo "ERROR: Non-exact version pins found. Use exact versions only (no ^ or ~)."
             exit 1
           fi
-        continue-on-error: true
-
-      - name: Check for failures
-        if: steps.lint.outcome == 'failure' || steps.format.outcome == 'failure' || steps.knip.outcome == 'failure' || steps.typecheck.outcome == 'failure' || steps.db-schema-parity.outcome == 'failure' || steps.exact-pins.outcome == 'failure'
-        run: |
-          echo "One or more checks failed:"
-          echo "  Lint: ${{ steps.lint.outcome }}"
-          echo "  Format: ${{ steps.format.outcome }}"
-          echo "  Knip: ${{ steps.knip.outcome }}"
-          echo "  Typecheck: ${{ steps.typecheck.outcome }}"
-          echo "  DB schema parity: ${{ steps.db-schema-parity.outcome }}"
-          echo "  Exact pins: ${{ steps.exact-pins.outcome }}"
-          exit 1
 
   # ============================================
   # DAEMON ONLINE TESTS (Mocked credentials only)
@@ -170,7 +172,7 @@ jobs:
           - components
           - convo
           - coordinator
-          # features/ is hash-split 3-way by scripts/test-online.sh (features-a/b/c).
+          # features/ is split 3-way (duration-weighted) by scripts/test-online.sh (features-a/b/c).
           - features-a
           - features-b
           - features-c
@@ -181,10 +183,10 @@ jobs:
           # - providers-anthropic-to-codex-bridge
           # Copilot bridge tests disabled — COPILOT_GITHUB_TOKEN credential issue causing hard-fail
           # - providers-anthropic-copilot
-          # rewind/ is hash-split 2-way by scripts/test-online.sh (rewind-a/b).
+          # rewind/ is split 2-way (duration-weighted) by scripts/test-online.sh (rewind-a/b).
           - rewind-a
           - rewind-b
-          # rpc/ is hash-split 6-way by scripts/test-online.sh (rpc-a…rpc-f).
+          # rpc/ is split 6-way (duration-weighted) by scripts/test-online.sh (rpc-a…rpc-f).
           - rpc-a
           - rpc-b
           - rpc-c
@@ -192,11 +194,10 @@ jobs:
           - rpc-e
           - rpc-f
           - sdk
-          # space/ is hash-split 4-way by scripts/test-online.sh (space-a…space-d).
+          # space/ is split 3-way (duration-weighted) by scripts/test-online.sh (space-a…space-c).
           - space-a
           - space-b
           - space-c
-          - space-d
           - websocket
         include:
           # mock_sdk: true → uses Dev Proxy (HYPERNEO_USE_DEV_PROXY) for mocking instead of real API calls.
@@ -261,8 +262,6 @@ jobs:
             mock_sdk: true
           - module: space-c
             mock_sdk: true
-          - module: space-d
-            mock_sdk: true
           - module: websocket
             mock_sdk: true
           # Real-key cross-provider shards are manual-only in real-api-tests.yml.
@@ -309,7 +308,7 @@ jobs:
           --coverage.reporter=lcov
           --coverage.reportsDirectory=coverage-online-${{ matrix.module }}
           --reporter=junit
-          --outputFile.junit=../../test-results/daemon-online-${{ matrix.module }}/junit.xml'
+          --outputFile.junit=../../test-results/daemon-online-${{ matrix.module }}/junit-${{ matrix.module }}.xml'
         env:
           # Use Dev Proxy for mock_sdk tests by setting ANTHROPIC_BASE_URL
           # This avoids proxy env var issues and TLS interception problems
@@ -347,22 +346,21 @@ jobs:
           # Strip test utility coverage (helpers, fixtures, mocks)
           awk '/^SF:(packages\/daemon\/)?tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' $LCOV > ${LCOV}.clean && mv ${LCOV}.clean $LCOV || true
 
-      - name: Upload junit on failure (diagnostics)
-        if: failure()
+      - name: Upload junit + diagnostics
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: daemon-online-junit-${{ matrix.module }}-${{ github.run_number }}
           path: test-results/daemon-online-${{ matrix.module }}/
           retention-days: 7
 
-      - name: Upload to Coveralls (parallel)
-        uses: coverallsapp/github-action@v2
+      - name: Upload lcov artifact
+        if: hashFiles(format('packages/daemon/coverage-online-{0}/lcov.info', matrix.module)) != ''
+        uses: actions/upload-artifact@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: packages/daemon/coverage-online-${{ matrix.module }}/lcov.info
-          flag-name: daemon-online-${{ matrix.module }}
-          parallel: true
-          fail-on-error: false
+          name: lcov-daemon-online-${{ matrix.module }}
+          path: packages/daemon/coverage-online-${{ matrix.module }}/lcov.info
+          retention-days: 7
 
   # ============================================
   # DAEMON + SHARED UNIT TESTS (For coverage measurement)
@@ -377,7 +375,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [shared, 2-handlers-github, 2-handlers-other, 1-core, 4-space-storage, 4-space-migrations-a, 4-space-migrations-b, 5-space-agent-other, 5-space-runtime-a, 5-space-runtime-b]
+        shard: [shared, 2-handlers-github, 2-handlers-other, 1-core-a, 1-core-b, 4-space-storage, 4-space-migrations-a, 4-space-migrations-b, 5-space-agent-other, 5-space-runtime-a, 5-space-runtime-b, 5-space-runtime-c, 5-space-runtime-d, 5-space-runtime-e, 5-space-runtime-f, 5-space-runtime-g]
 
     steps:
       - uses: actions/checkout@v6
@@ -421,8 +419,9 @@ jobs:
         if: always()
         working-directory: packages/${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}
         run: |
-          # Vitest writes SF: paths relative to the package dir (src/...); Coveralls
-          # needs repo-root paths (packages/<pkg>/src/...). Mirror the online/web jobs.
+          # Vitest writes SF: paths relative to the package dir (src/...); the
+          # local lcov merge needs repo-root paths (packages/<pkg>/src/...).
+          # Mirror the online/web jobs.
           PKG="${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}"
           LCOV=coverage/lcov.info
           [ -f "$LCOV" ] || exit 0
@@ -430,18 +429,21 @@ jobs:
           sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' "$LCOV" || true
           sed -i 's|^SF:\.\./daemon/|SF:packages/daemon/|g' "$LCOV" || true
 
-      - name: Upload coverage (parallel)
+      - name: Upload junit (balance report data)
         if: always()
-        uses: coverallsapp/github-action@v2
+        uses: actions/upload-artifact@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          # test-daemon.sh runs each shard from its package dir (packages/daemon
-          # or packages/shared) with --coverage.reportsDirectory=coverage, so the
-          # report lands at packages/<pkg>/coverage/lcov.info — not the repo root.
-          file: packages/${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}/coverage/lcov.info
-          flag-name: daemon-${{ matrix.shard }}
-          parallel: true
-          fail-on-error: false
+          name: daemon-unit-junit-${{ matrix.shard }}
+          path: test-results/daemon/junit-${{ matrix.shard }}.xml
+          retention-days: 7
+
+      - name: Upload lcov artifact
+        if: always() && hashFiles(format('packages/{0}/coverage/lcov.info', matrix.shard == 'shared' && 'shared' || 'daemon')) != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: lcov-daemon-${{ matrix.shard }}
+          path: packages/${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}/coverage/lcov.info
+          retention-days: 7
 
   # ============================================
   # WEB TESTS
@@ -449,10 +451,17 @@ jobs:
   # ============================================
 
   test-web:
-    name: Web Tests
+    name: Web Tests (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
     timeout-minutes: 9
     if: (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # vitest --shard distributes test FILES across legs; the union of
+        # shards 1..N runs the whole suite. scripts/validate-test-matrix.sh
+        # pins the axis against the runner's --shard denominator.
+        shard: [1, 2]
 
     steps:
       - uses: actions/checkout@v6
@@ -485,41 +494,56 @@ jobs:
           bun run scripts/flaky-test-runner.ts
           --suite web
           --results-dir test-results/web
-          --report test-results/flaky-quarantine-web.json
+          --report test-results/flaky-quarantine-web-${{ matrix.shard }}.json
           --
           bash -lc 'cd packages/web && bunx vitest run
           --reporter dot
           --reporter junit
-          --outputFile.junit=../../test-results/web/junit.xml
-          --coverage'
+          --outputFile.junit=../../test-results/web/junit-web-${{ matrix.shard }}.xml
+          --shard=${{ matrix.shard }}/2
+          --coverage
+          --coverage.reportsDirectory=coverage-web-${{ matrix.shard }}'
 
       - name: Fix coverage paths for monorepo
         run: |
           # Vitest generates paths relative to package dir (src/...)
-          # Coveralls needs paths relative to repo root (packages/web/src/...)
-          sed -i 's|^SF:src/|SF:packages/web/src/|g' packages/web/coverage/lcov.info
+          # the local lcov merge needs paths relative to repo root (packages/web/src/...)
+          sed -i 's|^SF:src/|SF:packages/web/src/|g' packages/web/coverage-web-${{ matrix.shard }}/lcov.info
           # Fix cross-package paths (../shared/src/... -> packages/shared/src/...)
-          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' packages/web/coverage/lcov.info
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' packages/web/coverage-web-${{ matrix.shard }}/lcov.info
 
-      - name: Upload to Coveralls (parallel)
-        uses: coverallsapp/github-action@v2
+      - name: Upload junit (balance report data)
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: packages/web/coverage/lcov.info
-          flag-name: web
-          parallel: true
-          fail-on-error: false
+          name: web-junit-${{ matrix.shard }}
+          path: test-results/web/junit-web-${{ matrix.shard }}.xml
+          retention-days: 7
+
+      - name: Upload lcov artifact
+        if: hashFiles(format('packages/web/coverage-web-{0}/lcov.info', matrix.shard)) != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: lcov-web-${{ matrix.shard }}
+          path: packages/web/coverage-web-${{ matrix.shard }}/lcov.info
+          retention-days: 7
 
   # ============================================
-  # CLI TESTS
-  # Run on: push to dev, workflow_dispatch (skip on PR to dev)
+  # TEST DURATION BALANCE REPORT
+  # Downloads the junit XML every test job uploads and renders per-file
+  # durations + per-shard totals into the run summary (see
+  # scripts/ci-balance-report.ts). This is the measurement behind shard
+  # rebalance decisions. Read-only reporting: intentionally NOT part of
+  # all-tests-pass gating.
+  # Run on: PR to dev, push to dev, workflow_dispatch (whenever tests ran)
   # ============================================
 
-  test-cli:
-    name: CLI Tests
+  test-balance-report:
+    name: Test Duration Balance Report
     runs-on: ubuntu-latest
-    timeout-minutes: 2
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
+    needs: [test-daemon-shared-unit, test-daemon-online, test-web]
+    if: ${{ !cancelled() && github.event.inputs.run_e2e_only != 'true' }}
+    timeout-minutes: 3
 
     steps:
       - uses: actions/checkout@v6
@@ -529,135 +553,211 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - name: Download daemon unit junit
+        uses: actions/download-artifact@v8
         with:
-          node-version: '24'
+          path: balance/unit
+          pattern: daemon-unit-junit-*
 
-      - name: Cache node_modules
-        uses: actions/cache@v5
+      - name: Download daemon online junit
+        uses: actions/download-artifact@v8
         with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
+          path: balance/online
+          pattern: daemon-online-junit-*
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - name: Download web junit
+        uses: actions/download-artifact@v8
+        with:
+          path: balance/web
+          pattern: web-junit-*
 
-      - name: Run CLI tests
-        working-directory: packages/cli
-        run: bunx vitest run
+      - name: Build balance report
+        run: bun run scripts/ci-balance-report.ts balance --top 25
 
   # ============================================
-  # COVERALLS FINALIZATION
-  # Merges all parallel coverage uploads
-  # Run on: PR to dev, push to dev, workflow_dispatch
-  # ============================================
-
-  coveralls-finalize:
-    name: Finalize Coveralls
-    runs-on: ubuntu-latest
-    needs: [test-daemon-shared-unit, test-web, test-daemon-online]
-    timeout-minutes: 1
-    if: github.event.inputs.run_e2e_only != 'true'
-
-    steps:
-      - name: Finalize Coveralls parallel build
-        uses: coverallsapp/github-action@v2
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          parallel-finished: true
-          fail-on-error: true
-
-  # ============================================
-  # COVERAGE QUALITY GATE
-  # Verifies minimum coverage and regression thresholds via Coveralls API.
+  # COVERAGE QUALITY GATE (local)
+  # Downloads the per-job lcov-* artifacts, merges them locally (union of line
+  # hits per file across suites — daemon-unit and daemon-online overlap on
+  # packages/daemon/src, so hits are max-merged, never averaged), and enforces:
+  #   - overall coverage >= 30%
+  #   - overall coverage no more than 2% below the baseline
+  # Only files under packages/*/src count (tests/ helpers and unmapped
+  # cross-package paths are excluded).
+  # Also writes coverage-badge.json (shields endpoint format, superpipe
+  # pattern) from the merged result and uploads it as the coverage-badge
+  # artifact; coverage-badge-update publishes it on dev pushes only.
+  # The baseline lives on the coverage-baseline ref, not in the dev tree:
+  # dev's ruleset requires squash-merged PRs with signed commits, so CI cannot
+  # push baseline updates into dev itself. This job is strictly read-only.
   # Run on: PR to dev, push to dev, workflow_dispatch
   # ============================================
 
   coverage-gate:
     name: Coverage Quality Gate
     runs-on: ubuntu-latest
-    needs: [coveralls-finalize]
+    needs: [test-daemon-shared-unit, test-web, test-daemon-online]
     timeout-minutes: 3
     if: github.event.inputs.run_e2e_only != 'true'
+    permissions:
+      contents: read
+      actions: read
 
     steps:
-      - name: Check coverage thresholds via Coveralls API
+      - uses: actions/checkout@v6
+
+      - name: Fetch coverage baseline
         run: |
-          echo "Querying Coveralls for commit ${{ github.sha }}..."
-
-          # Retry logic — Coveralls may take time to process the finalized build
-          MAX_RETRIES=6
-          RETRY_DELAY=15
-          RESPONSE=""
-
-          for attempt in $(seq 1 $MAX_RETRIES); do
-            HTTP_CODE=$(curl -s -o /tmp/coveralls.json -w "%{http_code}" \
-              "https://coveralls.io/builds/${{ github.sha }}.json" 2>/dev/null) || true
-
-            if [ "$HTTP_CODE" = "200" ]; then
-              RESPONSE=$(cat /tmp/coveralls.json)
-              break
-            fi
-
-            echo "Attempt $attempt/$MAX_RETRIES: Coveralls API returned HTTP $HTTP_CODE, retrying in ${RETRY_DELAY}s..."
-            sleep $RETRY_DELAY
-          done
-
-          if [ -z "$RESPONSE" ]; then
-            echo "⚠️ Could not fetch coverage from Coveralls API after $MAX_RETRIES attempts"
-            echo "Skipping coverage gate (API unavailable)"
-            exit 0
-          fi
-
-          COVERED_PERCENT=$(echo "$RESPONSE" | jq -r '.covered_percent // empty')
-          COVERAGE_CHANGE=$(echo "$RESPONSE" | jq -r '.coverage_change // "0"')
-
-          if [ -z "$COVERED_PERCENT" ]; then
-            echo "⚠️ Coveralls response missing coverage data"
-            echo "Skipping coverage gate"
-            exit 0
-          fi
-
-          echo "==============================="
-          echo "📊 Project Coverage: ${COVERED_PERCENT}%"
-          echo "📈 Coverage Change:  ${COVERAGE_CHANGE}%"
-          echo "==============================="
-
-          FAILED=0
-
-          # --- Project gate: minimum overall coverage ---
-          MIN_COVERAGE=30
-          if (( $(echo "$COVERED_PERCENT < $MIN_COVERAGE" | bc -l) )); then
-            echo "❌ FAIL: Project coverage ${COVERED_PERCENT}% is below minimum ${MIN_COVERAGE}%"
-            FAILED=1
+          if git fetch --no-tags origin refs/heads/coverage-baseline; then
+            git show FETCH_HEAD:coverage-baseline.json > coverage-baseline.json
           else
-            echo "✅ Project coverage meets minimum threshold (>= ${MIN_COVERAGE}%)"
-          fi
-
-          # --- Regression gate: coverage must not drop more than threshold ---
-          MAX_REGRESSION=-2
-          if [ "$COVERAGE_CHANGE" != "null" ] && [ -n "$COVERAGE_CHANGE" ]; then
-            if (( $(echo "$COVERAGE_CHANGE < $MAX_REGRESSION" | bc -l) )); then
-              echo "❌ FAIL: Coverage regressed by ${COVERAGE_CHANGE}% (max allowed: ${MAX_REGRESSION}%)"
-              FAILED=1
-            else
-              echo "✅ Coverage regression within acceptable range (change: ${COVERAGE_CHANGE}%)"
-            fi
-          fi
-
-          if [ "$FAILED" -eq 1 ]; then
-            echo ""
-            echo "Coverage quality gate FAILED"
+            echo "::error::coverage-baseline ref not found on origin — push it (see coverage-baseline-update job) before the gate can run"
             exit 1
           fi
 
-          echo ""
-          echo "✅ Coverage quality gate passed!"
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.14
+
+      - name: Download lcov artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: lcov-*
+          path: lcov-artifacts
+
+      # --verify-completeness lists this run's successful test-matrix jobs via the
+      # actions API and fails when any of them produced no lcov artifact, so a
+      # shard whose coverage report silently failed to generate cannot be quietly
+      # averaged out of the merge. The job-name -> artifact-name mapping lives in
+      # jobNameToArtifactName (scripts/coverage-gate.ts) and must follow the
+      # display names and artifact names in this file.
+      - name: Merge lcov and enforce coverage thresholds
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          bun run scripts/coverage-gate.ts
+          --artifacts lcov-artifacts
+          --baseline coverage-baseline.json
+          --min-coverage 30
+          --max-regression -2
+          --verify-completeness
+          --write-badge coverage-badge.json
+
+      - name: Upload coverage badge artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-badge
+          path: coverage-badge.json
+          retention-days: 7
+
+  # ============================================
+  # COVERAGE BASELINE UPDATE
+  # Replays the same local merge and rewrites coverage-baseline.json on the
+  # coverage-baseline ref (a single-file ref) so PR gates compare against the
+  # latest dev numbers. Pushes to that ref do not trigger any workflow.
+  # Run on: push to dev only, after a green gate (needs contents: write).
+  # ============================================
+
+  coverage-baseline-update:
+    name: Update Coverage Baseline
+    runs-on: ubuntu-latest
+    needs: [coverage-gate]
+    timeout-minutes: 3
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.coverage-gate.result == 'success'
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.14
+
+      - name: Download lcov artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: lcov-*
+          path: lcov-artifacts
+
+      - name: Write updated baseline
+        run: >-
+          bun run scripts/coverage-gate.ts
+          --artifacts lcov-artifacts
+          --baseline coverage-baseline.json
+          --write-baseline
+          --source-commit ${{ github.sha }}
+
+      - name: Push baseline to the coverage-baseline ref
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          push_baseline() {
+            local parent=""
+            if git fetch --no-tags origin refs/heads/coverage-baseline 2>/dev/null; then
+              parent="-p $(git rev-parse FETCH_HEAD)"
+            fi
+            local blob tree commit
+            blob=$(git hash-object -w coverage-baseline.json)
+            tree=$(printf '100644 blob %s\tcoverage-baseline.json\n' "$blob" | git mktree)
+            commit=$(git commit-tree "$tree" $parent \
+              -m "chore(coverage): update baseline for $(git rev-parse --short HEAD)")
+            git push origin "$commit:refs/heads/coverage-baseline"
+          }
+
+          for attempt in 1 2 3; do
+            if push_baseline; then
+              echo "Baseline ref updated"
+              exit 0
+            fi
+            echo "Push attempt $attempt failed (likely raced another dev run); retrying after re-fetch"
+            sleep 5
+          done
+          echo "::error::could not update the coverage-baseline ref after 3 attempts"
+          exit 1
+
+  # ============================================
+  # COVERAGE BADGE PUBLISH
+  # Force-pushes the badge JSON written by the coverage gate to the orphan
+  # `badges` branch (single file, no shared history — superpipe pattern). The
+  # README renders it via
+  # https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/lsm/HyperNeo/badges/coverage-badge.json.
+  # Last green dev run wins; no merge conflicts are possible, and pushes to
+  # `badges` trigger no workflow (on.push is dev-only) and match no ruleset
+  # (the dev ruleset pins refs/heads/dev only).
+  # Run on: push to dev only, after a green gate (needs contents: write).
+  # ============================================
+
+  coverage-badge-update:
+    name: Update Coverage Badge
+    runs-on: ubuntu-latest
+    needs: [coverage-gate]
+    timeout-minutes: 2
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.coverage-gate.result == 'success'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download coverage badge artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage-badge
+
+      - name: Publish badge to the badges branch
+        run: |
+          mkdir -p "$RUNNER_TEMP/badge"
+          cp coverage-badge.json "$RUNNER_TEMP/badge/"
+          cd "$RUNNER_TEMP/badge"
+          git init -q
+          git checkout -q --orphan badges
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add coverage-badge.json
+          git commit -q -m "coverage badge"
+          git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" badges
 
   # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
@@ -669,7 +769,7 @@ jobs:
   build:
     name: Build Binary (linux-x64)
     runs-on: ubuntu-latest
-    needs: [check, test-daemon-online, test-daemon-shared-unit, test-web, test-cli, discover]
+    needs: [check, test-daemon-online, test-daemon-shared-unit, test-web, discover]
     if: >-
       always() &&
       (github.event_name == 'push' && github.ref == 'refs/heads/dev' ||
@@ -679,8 +779,7 @@ jobs:
         contains(fromJSON('["success", "skipped"]'), needs.check.result) &&
         contains(fromJSON('["success", "skipped"]'), needs.test-daemon-online.result) &&
         contains(fromJSON('["success", "skipped"]'), needs.test-daemon-shared-unit.result) &&
-        contains(fromJSON('["success", "skipped"]'), needs.test-web.result) &&
-        contains(fromJSON('["success", "skipped"]'), needs.test-cli.result)))
+        contains(fromJSON('["success", "skipped"]'), needs.test-web.result)))
     timeout-minutes: 10
 
     steps:
@@ -939,8 +1038,9 @@ jobs:
       - test-daemon-online
       - test-daemon-shared-unit
       - test-web
-      - test-cli
       - coverage-gate
+      - coverage-baseline-update
+      - coverage-badge-update
       - build
       - discover
       - e2e-no-llm
@@ -974,15 +1074,21 @@ jobs:
             FAILED=1
           fi
 
-          # test-cli: push to dev, workflow_dispatch
-          if [[ "${{ needs.test-cli.result }}" == "failure" ]]; then
-            echo "❌ test-cli failed"
-            FAILED=1
-          fi
-
           # coverage-gate: PR to dev, push to dev
           if [[ "${{ needs.coverage-gate.result }}" == "failure" ]]; then
             echo "❌ coverage-gate failed"
+            FAILED=1
+          fi
+
+          # coverage-baseline-update: push to dev only
+          if [[ "${{ needs.coverage-baseline-update.result }}" == "failure" ]]; then
+            echo "❌ coverage-baseline-update failed"
+            FAILED=1
+          fi
+
+          # coverage-badge-update: push to dev only
+          if [[ "${{ needs.coverage-badge-update.result }}" == "failure" ]]; then
+            echo "❌ coverage-badge-update failed"
             FAILED=1
           fi
 
@@ -1011,8 +1117,9 @@ jobs:
             echo "  test-daemon-online: ${{ needs.test-daemon-online.result }}"
             echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
             echo "  test-web: ${{ needs.test-web.result }}"
-            echo "  test-cli: ${{ needs.test-cli.result }}"
             echo "  coverage-gate: ${{ needs.coverage-gate.result }}"
+            echo "  coverage-baseline-update: ${{ needs.coverage-baseline-update.result }}"
+            echo "  coverage-badge-update: ${{ needs.coverage-badge-update.result }}"
             echo "  build: ${{ needs.build.result }}"
             echo "  discover: ${{ needs.discover.result }}"
             echo "  e2e-no-llm: ${{ needs.e2e-no-llm.result }}"

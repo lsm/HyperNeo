@@ -47,9 +47,7 @@ export function OAuthModal({
         await navigator.clipboard.writeText(userCode);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-      } catch {
-        // Failed to copy to clipboard
-      }
+      } catch {}
     }
   };
 

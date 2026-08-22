@@ -187,9 +187,7 @@ describe('JobQueueProcessor', () => {
     });
 
     it('marks job completed when handler returns void', async () => {
-      processor.register('test-queue', async () => {
-        // returns undefined
-      });
+      processor.register('test-queue', async () => {});
 
       const job = repo.enqueue({ queue: 'test-queue', payload: {} });
       await processor.tick();

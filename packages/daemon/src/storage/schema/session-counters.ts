@@ -22,6 +22,14 @@ export function humanSessionPredicate(rowPrefix: string): string {
   );
 }
 
+export function humanSessionColumnsPredicate(rowPrefix: string): string {
+  const p = rowPrefix ? `${rowPrefix}.` : '';
+  return (
+    `${p}type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')` +
+    ` AND ${p}room_id IS NULL AND ${p}space_id IS NULL`
+  );
+}
+
 function isHuman(rowPrefix: string): string {
   return `CASE WHEN ${humanSessionPredicate(rowPrefix)} THEN 1 ELSE 0 END`;
 }

@@ -10,9 +10,7 @@ export class AuthManager {
     this.envManager = new EnvManager(envPath);
   }
 
-  async initialize(): Promise<void> {
-    // Nothing to initialize - all auth comes from env vars
-  }
+  async initialize(): Promise<void> {}
 
   async getAuthStatus(): Promise<AuthStatus> {
     const oauthToken = this.envManager.getOAuthToken();
@@ -21,9 +19,7 @@ export class AuthManager {
         method: 'oauth_token',
         isAuthenticated: true,
         source: 'env',
-        user: {
-          // Long-lived token from env (valid for 1 year)
-        },
+        user: {},
       };
     }
 

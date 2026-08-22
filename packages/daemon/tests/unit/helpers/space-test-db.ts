@@ -302,6 +302,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			created_by_task_schedule_id TEXT DEFAULT NULL,
 			archived_at INTEGER,
 			restrictions TEXT,
+			spawn_reservation_token TEXT,
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,
 			completed_at INTEGER,
@@ -505,11 +506,16 @@ export function createSpaceTables(db: BunDatabase): void {
 			parent_id TEXT,
 			type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat')),
 			session_context TEXT,
+			room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+			space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+			task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL,
 			visible_message_count INTEGER NOT NULL DEFAULT 0
 		)
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_space_agent_provenance
-		ON sessions(json_extract(session_context, '$.spaceId'), json_extract(metadata, '$.promptProvenance.agentId'))`);
+		ON sessions(space_id, json_extract(metadata, '$.promptProvenance.agentId'))`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_room_id
+		ON sessions(room_id) WHERE room_id IS NOT NULL`);
   createSessionCounters(db);
 
   db.exec(`

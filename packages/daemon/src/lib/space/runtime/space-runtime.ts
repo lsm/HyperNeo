@@ -5,6 +5,7 @@ import type {
   SpaceApprovalSource,
   SpaceTask,
   SpaceTaskPriority,
+  SpaceTaskStatus,
   SpaceWorkflow,
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
@@ -68,7 +69,12 @@ import type { SpaceActorRegistryAdapter } from '../actor-registry';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
-import { isValidSpaceTaskTransition, SpaceTaskManager } from '../managers/space-task-manager';
+import {
+  assertValidSpaceTaskTransition,
+  isValidSpaceTaskTransition,
+  SpaceTaskManager,
+  VALID_SPACE_TASK_TRANSITIONS,
+} from '../managers/space-task-manager';
 import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
@@ -159,6 +165,9 @@ const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {
   normal: 2,
   low: 3,
 };
+const TASK_BLOCKABLE_FROM_STATUSES: readonly SpaceTaskStatus[] = (
+  Object.keys(VALID_SPACE_TASK_TRANSITIONS) as SpaceTaskStatus[]
+).filter((status) => VALID_SPACE_TASK_TRANSITIONS[status].includes('blocked'));
 
 export interface SpaceRuntimeConfig {
   db: BunDatabase;
@@ -1422,7 +1431,9 @@ export class SpaceRuntime {
     }
 
     if (dispatchable.length > 1) {
-      dispatchable.sort((a, b) => a.createdAt - b.createdAt);
+      dispatchable.sort(
+        (a, b) => a.createdAt - b.createdAt || a.event.occurredAt - b.event.occurredAt
+      );
     }
 
     let dispatched = 0;
@@ -1496,7 +1507,9 @@ export class SpaceRuntime {
 
     if (dispatchable.length === 0) return { targetWithExecution, dispatchable };
 
-    dispatchable.sort((a, b) => a.createdAt - b.createdAt);
+    dispatchable.sort(
+      (a, b) => a.createdAt - b.createdAt || a.event.occurredAt - b.event.occurredAt
+    );
 
     return { targetWithExecution, dispatchable };
   }
@@ -3193,10 +3206,7 @@ export class SpaceRuntime {
           for (const dep of unblocked) {
             await this.safeOnTaskUpdated(spaceId, dep);
           }
-        } catch {
-          // Best-effort: unblock failures must not abort
-          // the post-approval flow.
-        }
+        } catch {}
       }
     }
     return routeResult;
@@ -3548,6 +3558,9 @@ export class SpaceRuntime {
     opts?: { archiveSource?: 'user' | 'system_reconcile' }
   ): Promise<SpaceTask | null> {
     const previous = this.config.taskRepo.getTask(taskId);
+    if (previous && params.status !== undefined && params.status !== previous.status) {
+      assertValidSpaceTaskTransition(previous.status, params.status);
+    }
     let updated = this.config.taskRepo.updateTask(taskId, params);
     if (updated) {
       let emitUpdated = true;
@@ -3656,6 +3669,21 @@ export class SpaceRuntime {
 
       this.clearTaskInterests(duplicate.id);
 
+      const live = this.config.taskRepo.getTask(duplicate.id);
+      if (
+        live &&
+        live.status !== 'archived' &&
+        !isValidSpaceTaskTransition(live.status, 'archived') &&
+        isValidSpaceTaskTransition(live.status, 'stopped')
+      ) {
+        await this.updateTaskAndEmit(
+          spaceId,
+          duplicate.id,
+          { status: 'stopped' },
+          { archiveSource: 'system_reconcile' }
+        );
+      }
+
       await this.updateTaskAndEmit(
         spaceId,
         duplicate.id,
@@ -3741,7 +3769,11 @@ export class SpaceRuntime {
       return;
     }
 
-    if (run.status === 'cancelled' && canonicalTask.status !== 'cancelled') {
+    if (
+      run.status === 'cancelled' &&
+      canonicalTask.status !== 'cancelled' &&
+      isValidSpaceTaskTransition(canonicalTask.status, 'cancelled')
+    ) {
       await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, {
         status: 'cancelled',
         completedAt: canonicalTask.completedAt ?? run.completedAt ?? Date.now(),
@@ -5870,6 +5902,19 @@ export class SpaceRuntime {
         result: reason,
       });
       await this.transitionRunStatusAndEmit(runId, 'blocked');
+      if (
+        this.config.taskRepo.casStatus(
+          canonicalTask.id,
+          TASK_BLOCKABLE_FROM_STATUSES,
+          'blocked'
+        ) === 'superseded'
+      ) {
+        log.warn(
+          `SpaceRuntime: skipped blocking task ${canonicalTask.id} for execution ${execution.id} ` +
+            `in run ${runId}; task status changed concurrently — keeping the concurrent status`
+        );
+        return 'blocked';
+      }
       await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
         status: 'blocked',
         result: reason,

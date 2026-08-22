@@ -313,13 +313,9 @@ describe('SpaceRuntime — tick loop correctness', () => {
   afterEach(() => {
     try {
       db.close();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     try {
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   });
 
   function buildConfig(
@@ -2541,6 +2537,117 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const still = taskRepo.getTask(task.id)!;
       expect(still.status).toBe('rate_limited');
       expect(still.restrictions?.resetAt).toBe(futureReset);
+    });
+  });
+
+  describe('KNOWN-BUG phase-0: park-during-spawn (task #1190, stagedRun ADR 0004)', () => {
+    test('KNOWN-BUG phase-0: task parked stopped between spawn-loop iterations still spawns the next agent', async () => {
+      const events: string[] = [];
+      const liveSessions = new Set<string>();
+      let releaseFirstSpawn!: () => void;
+      let signalFirstSpawnStarted!: () => void;
+      const firstSpawnStarted = new Promise<void>((resolve) => {
+        signalFirstSpawnStarted = resolve;
+      });
+      const firstSpawnGate = new Promise<void>((resolve) => {
+        releaseFirstSpawn = resolve;
+      });
+      const tam = {
+        rehydrate: async () => {},
+        isExecutionSpawning: () => false,
+        isSessionAlive: (sessionId: string) => liveSessions.has(sessionId),
+        getAgentSessionById: () => null,
+        restartStuckSubSession: async () => {},
+        injectRuntimeRecoveryMessage: async (sessionId: string) => `runtime-nag:${sessionId}`,
+        cancelBySessionId: () => {},
+        interruptBySessionId: async () => {},
+        getSubSessionIdsForTasks: () => [],
+        stopSessionsVerified: async (sessionIds: string[]) => {
+          for (const sessionId of sessionIds) liveSessions.delete(sessionId);
+          return sessionIds.map((sessionId) => ({ sessionId, stopped: true }));
+        },
+        cleanup: async () => {},
+        spawnWorkflowNodeAgentForExecution: async (
+          _task: unknown,
+          _space: unknown,
+          _workflow: unknown,
+          _run: unknown,
+          execution: unknown
+        ) => {
+          const exec = execution as { id: string };
+          events.push(`spawn:${exec.id}`);
+          const sessionId = `session:${exec.id}`;
+          liveSessions.add(sessionId);
+          nodeExecutionRepo.update(exec.id, {
+            status: 'in_progress',
+            agentSessionId: sessionId,
+            startedAt: Date.now(),
+            completedAt: null,
+          });
+          if (events.length === 1) {
+            signalFirstSpawnStarted();
+            await firstSpawnGate;
+          }
+          return sessionId;
+        },
+      };
+
+      const rt = new SpaceRuntime({
+        ...buildConfig(),
+        taskAgentManager: tam as never,
+      });
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Park During Spawn ${Date.now()}-${Math.random()}`,
+        description: 'Test',
+        nodes: [
+          {
+            id: STEP_A,
+            name: 'Build',
+            agents: [
+              { agentId: AGENT_PLANNER, name: 'Planner' },
+              { agentId: AGENT_CODER, name: 'Coder' },
+            ],
+          },
+          {
+            id: STEP_B,
+            name: 'Finish',
+            agents: [{ agentId: AGENT_PLANNER, name: 'Finisher' }],
+          },
+        ],
+        transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+        startNodeId: STEP_A,
+        endNodeId: STEP_B,
+        rules: [],
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      expect(nodeExecutionRepo.listByWorkflowRun(run.id)).toHaveLength(2);
+
+      const tickPromise = rt.executeTick();
+      await firstSpawnStarted;
+      const parked = await rt.parkStoppedWorkflowTask(SPACE_ID, task.id);
+      expect(parked?.status).toBe('stopped');
+      events.push('park');
+      releaseFirstSpawn();
+      await tickPromise;
+
+      expect(events).toHaveLength(3);
+      expect(events[1]).toBe('park');
+      const firstSpawnedExecutionId = events[0]!.slice('spawn:'.length);
+      const secondSpawnedExecutionId = events[2]!.slice('spawn:'.length);
+      expect(secondSpawnedExecutionId).not.toBe(firstSpawnedExecutionId);
+
+      expect(taskRepo.getTask(task.id)?.status).toBe('stopped');
+      const parkedExecution = nodeExecutionRepo.getById(firstSpawnedExecutionId)!;
+      expect(parkedExecution.status).toBe('pending');
+      expect(parkedExecution.agentSessionId).toBeNull();
+      const spawnedDespitePark = nodeExecutionRepo.getById(secondSpawnedExecutionId)!;
+      expect(spawnedDespitePark.status).toBe('in_progress');
+      expect(spawnedDespitePark.agentSessionId).toBe(`session:${secondSpawnedExecutionId}`);
     });
   });
 });

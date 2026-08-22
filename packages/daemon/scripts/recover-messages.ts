@@ -63,9 +63,7 @@ while (pos < raw.length) {
           raw: jsonStr,
         });
       }
-    } catch {
-      // Invalid JSON, skip
-    }
+    } catch {}
   }
 
   pos = idx + 1;
@@ -153,9 +151,7 @@ for (const [kaiSessionId, msgs] of messagesByKaiSession.entries()) {
         new Date().toISOString()
       );
       if (result.changes > 0) messagesInserted++;
-    } catch {
-      // Skip insert errors
-    }
+    } catch {}
   }
 }
 
@@ -214,9 +210,7 @@ for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
           if (text.length > 50) title += '...';
         }
       }
-    } catch {
-      // Skip parse errors
-    }
+    } catch {}
   }
 
   const newSessionId = crypto.randomUUID();
@@ -268,9 +262,7 @@ for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
           new Date().toISOString()
         );
         if (result.changes > 0) orphanMessagesInserted++;
-      } catch {
-        // Skip insert errors
-      }
+      } catch {}
     }
   } catch (e) {
     console.error(`   Failed to create orphan session:`, e);
@@ -287,9 +279,7 @@ for (const sid of touchedSessions) {
   try {
     recoverRepo.recomputeVisibleMessageCount(sid);
     recomputed++;
-  } catch {
-    // Skip recompute errors
-  }
+  } catch {}
 }
 console.log(`   Recomputed ${recomputed} session(s)`);
 

@@ -4,6 +4,12 @@ import { render, waitFor } from '@testing-library/preact';
 import { beforeEach, expect, vi } from 'vitest';
 import MarkdownRenderer, { renderPlainText } from '../MarkdownRenderer';
 
+vi.mock('../../../lib/utils.ts', () => ({
+  copyToClipboard: vi.fn(),
+}));
+
+import { copyToClipboard } from '../../../lib/utils.ts';
+
 const { mermaidParseMock, mermaidRunMock } = vi.hoisted(() => ({
   mermaidParseMock: vi.fn(),
   mermaidRunMock: vi.fn(),
@@ -39,15 +45,163 @@ describe('MarkdownRenderer', () => {
 
     it('should merge custom className', () => {
       const { container } = render(<MarkdownRenderer content="Test" class="custom-class" />);
-      const div = container.querySelector('div');
+      const div = container.querySelector('.prose');
       expect(div?.className).toContain('prose');
       expect(div?.className).toContain('custom-class');
     });
 
     it('should handle empty className', () => {
       const { container } = render(<MarkdownRenderer content="Test" class="" />);
-      const div = container.querySelector('div');
+      const div = container.querySelector('.prose');
       expect(div?.className).toContain('prose');
+    });
+  });
+
+  describe('Copy Button', () => {
+    beforeEach(() => {
+      (copyToClipboard as ReturnType<typeof vi.fn>).mockReset();
+      (copyToClipboard as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    });
+
+    it('should render a copy button for markdown content', async () => {
+      const { container } = render(<MarkdownRenderer content="**bold** text" />);
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('bold');
+      });
+      const button = container.querySelector('button');
+      expect(button).toBeTruthy();
+      expect(button?.getAttribute('title')).toBe('Copy markdown');
+    });
+
+    it('should not render a copy button before the first render commits', () => {
+      const { container } = render(<MarkdownRenderer content="**bold** text" />);
+      expect(container.querySelector('.prose')?.textContent).not.toContain('bold');
+      expect(container.querySelector('button')).toBeFalsy();
+    });
+
+    it('should not render a copy button for empty content', async () => {
+      const { container, rerender } = render(<MarkdownRenderer content="   " />);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(container.querySelector('button')).toBeFalsy();
+
+      rerender(<MarkdownRenderer content="streamed text" />);
+      expect(container.querySelector('button')).toBeFalsy();
+
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('streamed');
+      });
+      expect(container.querySelector('button')).toBeTruthy();
+    });
+
+    it('should copy the raw markdown source on click', async () => {
+      const { container } = render(<MarkdownRenderer content="**bold** text" />);
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('bold');
+      });
+      const button = container.querySelector('button');
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      await waitFor(() => {
+        expect(copyToClipboard).toHaveBeenCalledWith('**bold** text');
+      });
+    });
+
+    it('should copy the source matching the rendered html during streaming updates', async () => {
+      const { container, rerender } = render(<MarkdownRenderer content="first" />);
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('first');
+      });
+
+      rerender(<MarkdownRenderer content="second" />);
+      const button = container.querySelector('button');
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      await waitFor(() => {
+        expect(copyToClipboard).toHaveBeenCalledTimes(1);
+      });
+      expect(copyToClipboard).toHaveBeenCalledWith('first');
+
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('second');
+      });
+
+      (copyToClipboard as ReturnType<typeof vi.fn>).mockClear();
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      await waitFor(() => {
+        expect(copyToClipboard).toHaveBeenCalledWith('second');
+      });
+    });
+
+    it('should not affect rendered markdown content placement', async () => {
+      const { container } = render(<MarkdownRenderer content="Hello World" />);
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('Hello World');
+      });
+      expect(container.querySelector('.prose button')).toBeFalsy();
+    });
+
+    it('should show copied confirmation then revert', async () => {
+      const { container } = render(<MarkdownRenderer content="**bold** text" />);
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('bold');
+      });
+
+      vi.useFakeTimers();
+
+      try {
+        const button = container.querySelector('button');
+        button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(button?.getAttribute('title')).toBe('Copied!');
+        expect(button?.classList.contains('text-green-400')).toBe(true);
+
+        await vi.advanceTimersByTimeAsync(2000);
+
+        expect(button?.getAttribute('title')).toBe('Copy markdown');
+        expect(button?.classList.contains('text-green-400')).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('should reserve a right gutter for the copy button on touch devices', () => {
+      const { container } = render(<MarkdownRenderer content="Test" />);
+      const prose = container.querySelector('.prose');
+      expect(prose?.className).toContain('[@media(hover:none)]:pr-7');
+    });
+
+    it('should stay visible when focused on hover-capable devices', async () => {
+      const { container } = render(<MarkdownRenderer content="Test" />);
+      await waitFor(() => {
+        expect(container.querySelector('button')).toBeTruthy();
+      });
+      const wrapper = container.querySelector('button')?.parentElement;
+      expect(wrapper?.className).toContain('[@media(hover:hover)]:focus-within:opacity-100');
+    });
+
+    it('should reset the copied confirmation when content changes', async () => {
+      const { container, rerender } = render(<MarkdownRenderer content="first" />);
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('first');
+      });
+
+      const button = container.querySelector('button');
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      await waitFor(() => {
+        expect(button?.getAttribute('title')).toBe('Copied!');
+      });
+
+      rerender(<MarkdownRenderer content="second **streamed**" />);
+
+      await waitFor(() => {
+        expect(container.querySelector('.prose')?.textContent).toContain('streamed');
+        expect(button?.getAttribute('title')).toBe('Copy markdown');
+      });
     });
   });
 

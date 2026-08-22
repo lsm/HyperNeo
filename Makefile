@@ -1,4 +1,4 @@
-.PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-daemon-shard test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release release-prepare sync-sdk-types setup-hooks setup test-proxy-start test-proxy-stop test-proxy-status test-proxy-restart desktop-dev desktop-build desktop-build-sidecar
+.PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-daemon-shard test-web test-shared e2e e2e-ui lint lint-fix format strip-comments typecheck check compile compile-all package-npm release release-prepare sync-sdk-types setup-hooks setup test-proxy-start test-proxy-stop test-proxy-status test-proxy-restart desktop-dev desktop-build desktop-build-sidecar
 
 # Development server - uses random available port by default
 # Usage: make dev
@@ -95,7 +95,10 @@ lint-fix:
 	@bun run lint:fix
 
 format:
-	@bun run format
+	@bun run strip-comments && bun run format
+
+strip-comments:
+	@bun run strip-comments
 
 typecheck:
 	@bun run typecheck

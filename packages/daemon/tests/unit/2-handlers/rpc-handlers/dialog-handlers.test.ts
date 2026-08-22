@@ -40,9 +40,7 @@ function createHangingMockProcess() {
   });
   const createOpenStream = () =>
     new ReadableStream<Uint8Array>({
-      start() {
-        // Keep the stream open until the process is killed.
-      },
+      start() {},
     });
   const kill = mock(() => resolveExit(143));
 

@@ -3,6 +3,7 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('SpaceTaskRepository', () => {
@@ -583,6 +584,248 @@ describe('SpaceTaskRepository', () => {
       expect(cleared!.pendingCompletionSubmittedByNodeId).toBeNull();
       expect(cleared!.pendingCompletionSubmittedAt).toBeNull();
       expect(cleared!.pendingCompletionReason).toBeNull();
+    });
+  });
+
+  describe('casStatus', () => {
+    it("returns 'won' and flips the status on an exact match", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      expect(repo.casStatus(task.id, 'open', 'in_progress')).toBe('won');
+      expect(repo.getTask(task.id)?.status).toBe('in_progress');
+    });
+
+    it("returns 'won' when the current status is in the expected set", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      expect(repo.casStatus(task.id, ['draft', 'open'], 'review')).toBe('won');
+      expect(repo.getTask(task.id)?.status).toBe('review');
+    });
+
+    it("returns 'superseded' and leaves the row unchanged when the status moved first", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      expect(repo.casStatus(task.id, 'open', 'done')).toBe('superseded');
+      expect(repo.getTask(task.id)?.status).toBe('in_progress');
+    });
+
+    it("returns 'superseded' for an unknown task id", () => {
+      expect(repo.casStatus('nonexistent', 'open', 'done')).toBe('superseded');
+    });
+
+    it("returns 'superseded' for an empty expected set without writing", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      expect(repo.casStatus(task.id, [], 'done')).toBe('superseded');
+      expect(repo.getTask(task.id)?.status).toBe('open');
+    });
+
+    it('touches no other rows', () => {
+      const target = repo.createTask({ spaceId, title: 'Target', description: '' });
+      const other = repo.createTask({ spaceId, title: 'Other', description: '' });
+      const otherBefore = repo.getTask(other.id);
+      expect(repo.casStatus(target.id, 'open', 'in_progress')).toBe('won');
+      expect(repo.getTask(other.id)).toEqual(otherBefore);
+    });
+  });
+
+  describe('casStatusWithPayload', () => {
+    const limitableSources = ['in_progress', 'rate_limited', 'usage_limited'] as const;
+    const resumeSources = ['rate_limited', 'usage_limited'] as const;
+
+    function seedLimitedTask(status: 'rate_limited' | 'usage_limited', resetAt: number): string {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      repo.updateTask(task.id, {
+        status,
+        restrictions: {
+          type: status === 'usage_limited' ? 'usage_limit' : 'rate_limit',
+          limit: 'seed',
+          resetAt,
+          sessionRole: 'worker',
+        },
+      });
+      return task.id;
+    }
+
+    it("returns 'won' and writes status plus restrictions payload on a matching source", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      const startedAtBefore = repo.getTask(task.id)?.startedAt;
+      const before = Date.now();
+      const resetAt = Date.now() + 60_000;
+      const outcome = repo.casStatusWithPayload(task.id, limitableSources, 'rate_limited', {
+        restrictions: { type: 'rate_limit', limit: 'backoff', resetAt, sessionRole: 'worker' },
+      });
+      expect(outcome).toBe('won');
+      const updated = repo.getTask(task.id);
+      expect(updated?.status).toBe('rate_limited');
+      expect(updated?.restrictions).toMatchObject({
+        type: 'rate_limit',
+        limit: 'backoff',
+        resetAt,
+        sessionRole: 'worker',
+      });
+      expect(updated?.updatedAt).toBeGreaterThanOrEqual(before);
+      expect(updated?.startedAt).toBe(startedAtBefore);
+    });
+
+    it("returns 'won' flipping between limited kinds via the expected set", () => {
+      const taskId = seedLimitedTask('rate_limited', Date.now() + 60_000);
+      const resetAt = Date.now() + 120_000;
+      const outcome = repo.casStatusWithPayload(taskId, limitableSources, 'usage_limited', {
+        restrictions: { type: 'usage_limit', limit: 'parsed', resetAt, sessionRole: 'worker' },
+      });
+      expect(outcome).toBe('won');
+      expect(repo.getTask(taskId)?.status).toBe('usage_limited');
+      expect(repo.getTask(taskId)?.restrictions?.resetAt).toBe(resetAt);
+    });
+
+    it("returns 'won' refreshing a same-status row with a new payload", () => {
+      const taskId = seedLimitedTask('rate_limited', Date.now() + 60_000);
+      const laterReset = Date.now() + 300_000;
+      const outcome = repo.casStatusWithPayload(taskId, limitableSources, 'rate_limited', {
+        restrictions: {
+          type: 'rate_limit',
+          limit: 'backoff',
+          resetAt: laterReset,
+          sessionRole: 'worker',
+        },
+      });
+      expect(outcome).toBe('won');
+      expect(repo.getTask(taskId)?.restrictions?.resetAt).toBe(laterReset);
+    });
+
+    it('clears restrictions, refreshes started_at, and clears completed_at on resume (in_progress)', () => {
+      const taskId = seedLimitedTask('usage_limited', Date.now() + 60_000);
+      repo.updateTask(taskId, { startedAt: 1000, completedAt: 2000 });
+      const before = Date.now();
+      const outcome = repo.casStatusWithPayload(taskId, resumeSources, 'in_progress', {
+        restrictions: null,
+      });
+      expect(outcome).toBe('won');
+      const restored = repo.getTask(taskId);
+      expect(restored?.status).toBe('in_progress');
+      expect(restored?.restrictions).toBeNull();
+      expect(restored?.startedAt).toBeGreaterThanOrEqual(before);
+      expect(restored?.completedAt).toBeNull();
+    });
+
+    it("returns 'superseded' and leaves the row unchanged when the status moved first", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      repo.updateTask(task.id, { status: 'done', result: 'shipped' });
+      const before = repo.getTask(task.id);
+      const outcome = repo.casStatusWithPayload(task.id, limitableSources, 'rate_limited', {
+        restrictions: { type: 'rate_limit', limit: 'backoff', resetAt: 1, sessionRole: 'worker' },
+      });
+      expect(outcome).toBe('superseded');
+      expect(repo.getTask(task.id)).toEqual(before);
+    });
+
+    it("returns 'superseded' when resuming a task that is no longer limited", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      repo.updateTask(task.id, { status: 'blocked', blockReason: 'dependency_failed' });
+      expect(
+        repo.casStatusWithPayload(task.id, resumeSources, 'in_progress', { restrictions: null })
+      ).toBe('superseded');
+      expect(repo.getTask(task.id)?.status).toBe('blocked');
+    });
+
+    it("returns 'superseded' for an unknown task id", () => {
+      expect(
+        repo.casStatusWithPayload('nonexistent', resumeSources, 'in_progress', {
+          restrictions: null,
+        })
+      ).toBe('superseded');
+    });
+
+    it("returns 'superseded' for an empty expected set without writing", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      expect(
+        repo.casStatusWithPayload(task.id, [], 'rate_limited', {
+          restrictions: { type: 'rate_limit', limit: 'x', resetAt: 1, sessionRole: 'worker' },
+        })
+      ).toBe('superseded');
+      expect(repo.getTask(task.id)?.status).toBe('in_progress');
+      expect(repo.getTask(task.id)?.restrictions).toBeNull();
+    });
+  });
+
+  describe('reserveSpawnForTick / releaseSpawnReservation', () => {
+    const runningStatuses = ['in_progress', 'review'] as const;
+
+    it('wins the reservation while the task is in a running status', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      expect(repo.reserveSpawnForTick(task.id, runningStatuses)).toBe('won');
+    });
+
+    it('park between two sequential spawn attempts: first wins while running, second is superseded and spawns nothing', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      const spawns: string[] = [];
+
+      const first = repo.reserveSpawnForTick(task.id, runningStatuses);
+      if (first === 'won') spawns.push('agent-1');
+
+      repo.updateTask(task.id, { status: 'stopped' });
+
+      const second = repo.reserveSpawnForTick(task.id, runningStatuses);
+      if (second === 'won') spawns.push('agent-2');
+
+      expect(first).toBe('won');
+      expect(second).toBe('superseded');
+      expect(spawns).toEqual(['agent-1']);
+    });
+
+    it('holds the reservation: a second reserve while running is superseded until release', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      expect(repo.reserveSpawnForTick(task.id, runningStatuses)).toBe('won');
+      expect(repo.reserveSpawnForTick(task.id, runningStatuses)).toBe('superseded');
+      repo.releaseSpawnReservation(task.id);
+      expect(repo.reserveSpawnForTick(task.id, runningStatuses)).toBe('won');
+    });
+
+    it("returns 'superseded' when the status is outside the allowed set", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      expect(repo.reserveSpawnForTick(task.id, runningStatuses)).toBe('superseded');
+    });
+
+    it("returns 'superseded' for an unknown task id", () => {
+      expect(repo.reserveSpawnForTick('nonexistent', runningStatuses)).toBe('superseded');
+    });
+
+    it("returns 'superseded' for an empty allowed set without claiming", () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      expect(repo.reserveSpawnForTick(task.id, [])).toBe('superseded');
+      expect(repo.reserveSpawnForTick(task.id, runningStatuses)).toBe('won');
+    });
+
+    it('release on an unknown task id does not throw', () => {
+      expect(() => repo.releaseSpawnReservation('nonexistent')).not.toThrow();
+    });
+
+    it('does not churn updated_at or notify reactive watchers', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      repo.updateTask(task.id, { status: 'in_progress' });
+      const before = repo.getTask(task.id);
+      const notifiedTables: string[] = [];
+      const observingRepo = new SpaceTaskRepository(
+        db as any,
+        {
+          notifyChange: (table: string) => notifiedTables.push(table),
+        } as unknown as ReactiveDatabase
+      );
+
+      expect(observingRepo.reserveSpawnForTick(task.id, runningStatuses)).toBe('won');
+      repo.releaseSpawnReservation(task.id);
+
+      const after = repo.getTask(task.id);
+      expect(after?.updatedAt).toBe(before?.updatedAt);
+      expect(after?.status).toBe('in_progress');
+      expect(notifiedTables).toEqual([]);
     });
   });
 

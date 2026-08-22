@@ -69,6 +69,222 @@ describe('AcpProvider', () => {
     });
   });
 
+  describe('setAcpCommand', () => {
+    it('should override the env command', () => {
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
+      provider.setAcpCommand('devin acp');
+
+      expect(provider.getAcpCommand()).toBe('devin acp');
+    });
+
+    it('should fall back to env when override is cleared', () => {
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
+      provider.setAcpCommand('devin acp');
+      provider.setAcpCommand(undefined);
+
+      expect(provider.getAcpCommand()).toBe('claude --acp');
+    });
+
+    it('should make the provider available without env', () => {
+      provider.setAcpCommand('devin acp');
+
+      expect(provider.isAvailable()).toBe(true);
+    });
+
+    it('should clear cached models so getModels reflects the new command', async () => {
+      provider.setAcpCommand('old acp');
+      provider.setCachedModels([
+        {
+          id: 'acp-cached',
+          name: 'ACP Cached',
+          family: 'acp',
+          provider: 'acp',
+          contextWindow: 100000,
+          available: true,
+        },
+      ]);
+      provider.setAcpCommand('devin acp');
+
+      const models = await provider.getModels();
+
+      expect(models[0].id).toBe('acp-default');
+    });
+
+    it('should preserve cached models for equivalent command formatting', async () => {
+      provider.setAcpCommand('devin acp "model one"');
+      provider.setCachedModels([
+        {
+          id: 'acp-cached',
+          name: 'ACP Cached',
+          family: 'acp',
+          provider: 'acp',
+          contextWindow: 100000,
+          available: true,
+        },
+      ]);
+      provider.setAcpCommand("devin   acp 'model one'");
+
+      expect((await provider.getModels())[0].id).toBe('acp-cached');
+    });
+
+    it('should preserve the current command when a malformed override is rejected', () => {
+      provider.setAcpCommand('devin acp');
+
+      expect(() => provider.setAcpCommand("devin 'acp")).toThrow(
+        'Invalid ACP command: unmatched quote'
+      );
+      expect(provider.getAcpCommand()).toBe('devin acp');
+
+      provider.setAcpCommand('fixed acp');
+      expect(provider.getAcpCommand()).toBe('fixed acp');
+    });
+
+    it('should replace a malformed ambient command with a valid override', () => {
+      process.env.HYPERNEO_ACP_COMMAND = "devin 'acp";
+
+      provider.setAcpCommand('fixed acp');
+
+      expect(provider.getAcpCommand()).toBe('fixed acp');
+    });
+
+    it('should clear the override even when the ambient env command is malformed', () => {
+      provider.setAcpCommand('fixed acp');
+      process.env.HYPERNEO_ACP_COMMAND = "devin 'acp";
+
+      provider.setAcpCommand(undefined);
+
+      expect(provider.getAcpCommand()).toBe("devin 'acp");
+    });
+  });
+
+  describe('verifyCommandAvailable', () => {
+    it('should reuse a successful probe within the TTL window', async () => {
+      let probes = 0;
+      const probed = new AcpProvider(process.env, async () => {
+        probes++;
+      });
+      probed.setAcpCommand('devin acp');
+
+      await probed.verifyCommandAvailable();
+      await probed.verifyCommandAvailable();
+
+      expect(probes).toBe(1);
+    });
+
+    it('should bypass the probe TTL when forced', async () => {
+      let probes = 0;
+      const probed = new AcpProvider(process.env, async () => {
+        probes++;
+      });
+      probed.setAcpCommand('devin acp');
+
+      await probed.verifyCommandAvailable();
+      await probed.verifyCommandAvailable({ force: true });
+
+      expect(probes).toBe(2);
+    });
+  });
+
+  describe('setAcpModels', () => {
+    it('should expose curated models from getModels', async () => {
+      provider.setAcpCommand('devin acp');
+      provider.setAcpModels([{ id: 'devin-model-a', name: 'Model A' }, { id: 'devin-model-b' }]);
+
+      const models = await provider.getModels();
+
+      expect(models.map((m) => m.id)).toEqual(['devin-model-a', 'devin-model-b']);
+      expect(models[0].name).toBe('Model A');
+      expect(models[1].name).toBe('devin-model-b');
+      expect(models[0].provider).toBe('acp');
+    });
+
+    it('should probe the command during explicit health checks', async () => {
+      let calls = 0;
+      const probed = new AcpProvider(process.env, async () => {
+        calls++;
+      });
+      probed.setAcpCommand('devin acp');
+      probed.setAcpModels([{ id: 'devin-model-a' }]);
+
+      await probed.verifyCommandAvailable();
+
+      expect(calls).toBe(1);
+    });
+
+    it('should surface command probe failures despite curated models', async () => {
+      const probed = new AcpProvider(process.env, async () => {
+        throw new Error('probe failed');
+      });
+      probed.setAcpCommand('broken acp');
+      probed.setAcpModels([{ id: 'devin-model-a' }]);
+
+      await expect(probed.verifyCommandAvailable()).rejects.toThrow('probe failed');
+      await expect(probed.getModels()).rejects.toThrow('probe failed');
+    });
+
+    it('should fall back to defaults when curated list is cleared', async () => {
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
+      provider.setAcpModels([{ id: 'devin-model-a' }]);
+      provider.setAcpModels(undefined);
+
+      const models = await provider.getModels();
+
+      expect(models[0].id).toBe('acp-default');
+    });
+
+    it('should not be overwritten by live config negotiation', () => {
+      provider.setAcpCommand('devin acp');
+      provider.setAcpModels([{ id: 'devin-model-a' }]);
+      provider.setConfigOptions([
+        {
+          id: 'model',
+          name: 'Model',
+          type: 'select',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [{ name: 'Sonnet', value: 'sonnet' }],
+        },
+      ]);
+
+      expect(provider.getCachedModels()?.map((m) => m.id)).toEqual(['devin-model-a']);
+    });
+
+    it('should preserve default-only curation during live config negotiation', () => {
+      provider.setAcpCommand('devin acp');
+      provider.setAcpModels([]);
+      provider.setConfigOptions([
+        {
+          id: 'model',
+          name: 'Model',
+          type: 'select',
+          category: 'model',
+          currentValue: 'sonnet',
+          options: [{ name: 'Sonnet', value: 'sonnet' }],
+        },
+      ]);
+
+      expect(provider.getCachedModels()?.map((m) => m.id)).toEqual(['acp-default']);
+    });
+
+    it('should own curated model ids', () => {
+      provider.setAcpCommand('devin acp');
+      provider.setAcpModels([{ id: 'devin-model-a' }]);
+
+      expect(provider.ownsModel('devin-model-a')).toBe(true);
+      expect(provider.ownsModel('acp-default')).toBe(true);
+    });
+
+    it('should survive clearModelCache (e.g. model refresh)', async () => {
+      provider.setAcpCommand('devin acp');
+      provider.setAcpModels([{ id: 'devin-model-a' }]);
+      provider.clearModelCache();
+
+      const models = await provider.getModels();
+
+      expect(models.map((m) => m.id)).toEqual(['devin-model-a']);
+    });
+  });
+
   describe('getContextWindow', () => {
     it('should return default context window when env is not set', () => {
       expect(provider.getContextWindow()).toBe(200000);
@@ -163,6 +379,24 @@ describe('AcpProvider', () => {
       const models = await provider.getModels();
 
       expect(models[0].id).toBe('acp-default');
+    });
+
+    it('should reject cached models when the command becomes unavailable', async () => {
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
+      provider.setCachedModels([
+        {
+          id: 'acp-cached',
+          name: 'ACP Cached',
+          family: 'acp',
+          provider: 'acp',
+          contextWindow: 100000,
+          available: true,
+        },
+      ]);
+      delete process.env.HYPERNEO_ACP_COMMAND;
+
+      expect(await provider.getModels()).toEqual([]);
+      expect(provider.getCachedModels()).toBeNull();
     });
 
     it('should return cached models when set', async () => {

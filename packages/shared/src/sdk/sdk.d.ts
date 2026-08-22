@@ -951,6 +951,7 @@ export declare type ProvenanceEntry = {
 
 export declare interface Query extends AsyncGenerator<SDKMessage, void> {
     interrupt(): Promise<SDKControlInterruptResponse | undefined>;
+    cancelAsyncMessage(messageUuid: string): Promise<boolean>;
     setPermissionMode(mode: PermissionMode): Promise<void>;
     setMcpPermissionModeOverride(serverName: string, mode: 'default' | 'auto' | null): Promise<{
         warning?: string;

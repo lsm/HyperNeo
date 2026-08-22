@@ -248,19 +248,6 @@ describe('getConfig', () => {
     expect(config.structuredLogRetainedFiles).toBe(1_000);
   });
 
-  test('parsePositiveInt rejects negative, fractional, and partial-numeric values', () => {
-    expect(parsePositiveInt('-5', 64)).toBe(64);
-    expect(parsePositiveInt('1.5', 64)).toBe(64);
-    expect(parsePositiveInt('0', 64)).toBe(64);
-    expect(parsePositiveInt('abc', 64)).toBe(64);
-    expect(parsePositiveInt('1000000oops', 64)).toBe(64);
-    expect(parsePositiveInt(undefined, 64)).toBe(64);
-    expect(parsePositiveInt('64', 64)).toBe(64);
-    expect(parsePositiveInt(' 8 ', 8)).toBe(8);
-    expect(parsePositiveInt('9'.repeat(400), 64)).toBe(64);
-    expect(parsePositiveInt('100000000000000000000', 64)).toBe(64);
-  });
-
   test('default database path is ~/.hyperneo/data/daemon.db', () => {
     delete process.env.DB_PATH;
     process.env.NODE_ENV = 'production';
@@ -292,5 +279,20 @@ describe('getConfig', () => {
     const config = getConfig();
 
     expect(config.anthropicAuthToken).toBe('auth-token-456');
+  });
+});
+
+describe('parsePositiveInt', () => {
+  test('rejects negative, fractional, and partial-numeric values', () => {
+    expect(parsePositiveInt('-5', 64)).toBe(64);
+    expect(parsePositiveInt('1.5', 64)).toBe(64);
+    expect(parsePositiveInt('0', 64)).toBe(64);
+    expect(parsePositiveInt('abc', 64)).toBe(64);
+    expect(parsePositiveInt('1000000oops', 64)).toBe(64);
+    expect(parsePositiveInt(undefined, 64)).toBe(64);
+    expect(parsePositiveInt('64', 64)).toBe(64);
+    expect(parsePositiveInt(' 8 ', 8)).toBe(8);
+    expect(parsePositiveInt('9'.repeat(400), 64)).toBe(64);
+    expect(parsePositiveInt('100000000000000000000', 64)).toBe(64);
   });
 });

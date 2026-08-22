@@ -97,9 +97,7 @@ export function looksLikeRateLimit429(errorMessage: string): boolean {
     const parsed = JSON.parse(jsonMessage) as { error?: { message?: string } };
     const inner = parsed?.error?.message;
     if (typeof inner === 'string' && /^429\b/.test(inner)) return true;
-  } catch {
-    // not JSON
-  }
+  } catch {}
   return false;
 }
 
@@ -938,9 +936,7 @@ export class QueryRunner {
         if (this.ctx.queryObject) {
           try {
             this.ctx.queryObject.close();
-          } catch {
-            // Ignore close errors — transport may already be in a broken state
-          }
+          } catch {}
           this.ctx.queryObject = null;
         }
 
@@ -988,9 +984,7 @@ export class QueryRunner {
               `${Math.round(STARTUP_TIMEOUT_MS / 1000)}s. Retrying once…`,
             { markAsError: false }
           );
-        } catch {
-          // Best-effort — don't let message emission block the retry
-        }
+        } catch {}
 
         return await this.runQuery(queryGeneration, 1, recoveryState);
       }
@@ -1014,9 +1008,7 @@ export class QueryRunner {
         if (this.ctx.queryObject) {
           try {
             this.ctx.queryObject.close();
-          } catch {
-            // Ignore close errors — transport may already be in a broken state
-          }
+          } catch {}
           this.ctx.queryObject = null;
         }
 
@@ -1067,16 +1059,12 @@ export class QueryRunner {
           await this.displayErrorAsAssistantMessage('⚠️ The connection was interrupted. Retrying…', {
             markAsError: false,
           });
-        } catch {
-          // Best-effort — don't let message emission block the retry
-        }
+        } catch {}
 
         if (this.ctx.queryObject) {
           try {
             this.ctx.queryObject.close();
-          } catch {
-            // Ignore close errors
-          }
+          } catch {}
           this.ctx.queryObject = null;
         }
 
@@ -1127,16 +1115,12 @@ export class QueryRunner {
               `(attempt ${retryAttempt + 1}/${maxProviderRetries})…`,
             { markAsError: false }
           );
-        } catch {
-          // Best-effort — don't let message emission block the retry
-        }
+        } catch {}
 
         if (this.ctx.queryObject) {
           try {
             this.ctx.queryObject.close();
-          } catch {
-            // Ignore close errors — transport may already be in a broken state
-          }
+          } catch {}
           this.ctx.queryObject = null;
         }
 
@@ -1351,9 +1335,7 @@ export class QueryRunner {
         if (this.ctx.queryObject) {
           try {
             this.ctx.queryObject.close();
-          } catch {
-            // Ignore close errors — subprocess may already be terminated
-          }
+          } catch {}
           this.ctx.queryObject = null;
         }
 
@@ -1613,9 +1595,7 @@ export class QueryRunner {
             await cleanup;
           }
         }
-      } catch {
-        // Ignore cleanup errors
-      }
+      } catch {}
     }
   }
 
@@ -1665,9 +1645,7 @@ export class QueryRunner {
           };
         }
       }
-    } catch {
-      // not JSON
-    }
+    } catch {}
 
     return null;
   }
