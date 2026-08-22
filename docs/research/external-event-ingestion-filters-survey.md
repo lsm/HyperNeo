@@ -350,12 +350,19 @@ polling sources.
   `eventTypeAllowed(config, event)` — per-space allow/deny lists over `eventType`
   (and optionally `action`), config resolved from the `settings_json` the webhook
   path already loads (`:728`); polling resolves once per space via
-  `listEnabledSpaces`. Default config = allow-all (current behavior). Action
-  filters are **webhook-only** (review finding, PR #2723): polling rows all carry
-  the synthetic action `polled` (`normalizeGitHubPollingRow :411`), so an
-  `issue_comment.created` allowlist on a polling-only space would drop every
-  comment while allowing `polled` cannot distinguish creation from edit — a
-  canonical cross-source action vocabulary is a future item, not B2. Also a coarse
+  `listEnabledSpaces`. Default config = allow-all (current behavior). The
+  synthetic-action restriction is **webhook-only and limited to the generic
+  list-endpoint kinds** (review findings, PR #2723): `normalizeGitHubPollingRow`
+  assigns every row action `polled` (`:411`), so an `issue_comment.created`
+  allowlist on a polling-only space would drop every comment and `polled` cannot
+  distinguish creation from edit — action filters do not apply to those polling
+  kinds (`issue_comment`, `pull_request_review_comment`, `pull_request`). But
+  other polling kinds carry real actions — polling check runs emit
+  `action: 'failed'` (`normalizeGitHubCheckRun :549`) and reactions `added`
+  (`normalizeGitHubReaction :1004`) — so action filters apply to them as
+  webhook-sourced events; a `reaction.added` denial must take effect on polling
+  too. A canonical cross-source action vocabulary remains a future item, not
+  B2. Also a coarse
   header-level pre-gate for enrichment-heavy types (review finding, PR #2723):
   `status`/`deployment`/`deployment_status` webhook handlers resolve associated PRs
   via REST (up to five pages — `resolveDeploymentPrNumbers :851-862`,
@@ -536,24 +543,30 @@ polling sources.
    potentially multi-page enrichment — and `stop()` does not cancel in-flight
    webhook handlers, so a handler that passed the initial read can still reach
    `publishEvent` after `externalEvents.extensions.setGlobalEnabled(false)` has
-   completed; the seam chains A/B open in `publishEvent` rechecks both
-   immediately before persistence — and the check must be **serialized with
+   completed; the seam chains A/B open in `publishEvent` rechecks **global
+   enablement, space enablement, and watched-repository eligibility** — repo row
+   still exists and the applicable `enabled`/`webhookEnabled`/`pollingEnabled`
+   flags (review finding, PR #2723): `unwatchRepo` and per-repo mode toggles do
+   not cancel in-flight handlers, which hold the pre-read `validForRepo` row and
+   can otherwise insert and inject after the RPC returns, because global/space
+   checks alone still pass. Repository mutations bump the admission epoch too,
+   riding the same recheck — and the check must be **serialized with
    disablement** (review finding, PR #2723): a bare final read narrows but does
    not close the window (the webhook can observe both configs enabled, then the
    disable commits and returns before the insert executes; the settings queues
    serialize writers, not ingestion). The mechanism is **invalidate-and-await**,
-   not a shared section with lifecycle (review finding, PR #2723): disablement
-   writes the disabled config inside the queue and bumps an admission
-   epoch/generation that in-flight publishers re-verify immediately before the
-   insert, and holds the source-config queue through the `stop()` await —
-   releasing only the admission section (which it never holds across a
-   lifecycle await; see the A2 bullet for why both locks must be split this
-   way); a literal shared
-   critical section held across `stopExtension` self-deadlocks — disable would
-   hold the section while awaiting `stop()`, which awaits `activePollCycle`
-   (`:337`), and the poll cycle can be blocked in `publishEvent` waiting to enter
-   the section disablement holds. The admission section covers only the
-   synchronous check-and-insert, never a lifecycle await.
+   not a shared section with lifecycle (review finding, PR #2723): there is no
+   cross-key "admission section" lock at all (review finding, PR #2723) —
+   disablement writes the disabled config inside the queue, bumps the admission
+   epoch/generation, and holds the source-config queue through the `stop()`
+   await; each publisher's final epoch re-verify plus synchronous insert is one
+   atomic event-loop step (synchronous JS between awaits), so no lock is needed
+   around it and none may be held across a lifecycle await — a literal shared
+   critical section held across `stopExtension` self-deadlocks (disable would
+   hold it while awaiting `stop()`, which awaits `activePollCycle`
+   (`:337`), and the poll cycle can be blocked in `publishEvent` waiting to
+   enter it), while the per-dedupe-key section cannot synchronize disablement
+   because a config mutation knows no dedupe keys.
 5. `normalizeGitHubWebhook` falls back to `Date.now()` for `occurredAt` (`:205`) —
    nondeterministic timestamps for malformed payloads (pre-existing).
 6. ADR-0004 Pilot 5's gather-layer asymmetry applies here too: don't repeat the
