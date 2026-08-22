@@ -139,24 +139,40 @@ credential-generation/fingerprint guards (`:295-297`, `credentialFingerprint`).
 polling sources.
 
 - **PR A1 (pin):** decision-table pin of current admission behavior at
-  `publishEvent` — per event type × source, which actor field feeds `actor` (e.g.
+  `publishEvent` — per event type × source, which user field feeds `actor` (e.g.
   webhook `check_run` actor = sender; polling check_run actor = app;
   `issue_comment` = `comment.user ?? sender`), and that today **everything normalized
-  for an enabled space is published**. No production change.
+  for an enabled space is published**. The pin must also record, per type, whether
+  `actor` is the *artifact owner* or the *event initiator* — they diverge (review
+  finding, PR #2723): webhook `pull_request` events take `pr.user ?? sender`
+  (`github-normalizer.ts:317-320`), so the actor is the PR author even when a
+  collaborator performed the close/merge/edit; polling `pulls` rows expose only the
+  PR author (`normalizeGitHubPollingRow :385`). No production change.
 - **PR A2 (gate → flip):** new pure module
   `external-events/github/github-ingestion-gates.ts`:
   `decideIngestion({ event, selfLogin, config }) → admit | drop{reason:'self_event'}`.
-  Per the pilot precedent, a single gate is a **pure function** — adopt `decisionRun`
-  composition only when chain B adds more gates and order becomes contract. Shell:
-  `publishEvent` (`:1731`) resolves the cached identity (lazy, keyed by credential
-  fingerprint; reuse the `/user` validation result when fresh, never the
-  error-carrying `lastTokenStatus`) and calls the gate **before**
-  `publisher.publish` — before persistence, dedupe, and both bus subscribers
-  (SpaceRuntime *and* goal-automation both save). Default **ON**, override via
-  `suppressSelfEvents: false` in global then per-space `settings_json`.
-  Case-insensitive login compare; document that polling-sourced self-activity is
-  suppressed too, and that Bot actors (e.g. `github-actions[bot]`) never match a user
-  token identity.
+  Suppression keys on a **new causal `initiator` field** on `NormalizedGitHubEvent`
+  (webhook `sender`, or the artifact author only where the artifact *is* the action —
+  comments, reviews, review comments, reactions), never on `actor` alone, and only
+  for event kinds where the causal identity is reliable; polling `pulls` rows are
+  excluded (initiator indeterminable). **Fail-open:** an event with no resolvable
+  initiator is always admitted. Per the pilot precedent, a single gate is a **pure
+  function** — adopt `decisionRun` composition only when chain B adds more gates and
+  order becomes contract. Shell: `publishEvent` (`:1731`) reads the cached identity
+  and calls the gate **before** `publisher.publish` — before persistence, dedupe,
+  and both bus subscribers (SpaceRuntime *and* goal-automation both save). Default
+  **ON**, override via `suppressSelfEvents: false` in global then per-space
+  `settings_json`. Case-insensitive login compare; Bot actors (e.g.
+  `github-actions[bot]`) never match a user token identity.
+- **Identity-resolution failure policy (review finding, PR #2723):** do NOT reuse
+  `resolveTokenStatus` semantics on the publish path — it caches only
+  success/auth-rejected/403 and clears on timeouts and network/5xx failures
+  (`github-event-extension.ts:1331-1359`), with `/user` allowed to wait 5 s; inline
+  reuse would serialize webhook fan-out and polling during a transient GitHub
+  outage. Instead the gate consults only an already-cached last-known-good `login`
+  (keyed by credential fingerprint, refreshed out-of-band by the existing health
+  validation), failures are negatively cached with a short TTL, and while identity
+  is unknown the gate admits (fail-open) — never a fresh `/user` await per event.
 - **PR A2 also carries the settings-preservation fix (review finding on PR #2723):**
   `persistSpaceConfig` (`:1739-1772`) rebuilds the per-space `settings` object from
   only `pollingIntent` + `watchedRepos`, and `setSpaceConfig`
@@ -169,8 +185,14 @@ polling sources.
   four global writers spread — `app.ts:153`, `rpc-handlers/index.ts:252`,
   `github-event-extension.ts:1636`/`:1649`.)
 - **PR A3 (surface):** expose the toggle through the `space.github.*` config RPCs and
-  `SpaceExternalEventsSettings` UI, plus a suppressed-count in the existing health
-  snapshot (`GitHubHealthSnapshot.eventTypes` machinery at `:163-270`).
+  `SpaceExternalEventsSettings` UI, plus a suppression counter with its own gate-side
+  storage (review finding, PR #2723): the existing health `eventTypes` machinery
+  derives from `ExternalEventStore.listEventCountsByTopic`
+  (`github-event-extension.ts:1533-1558`), which never sees gate-dropped events, and
+  its `TOPIC_SUFFIX_TO_HEALTH_TYPE` enum (`:172-194`) omits exactly the self-echo
+  kinds (comments, reviews, reactions, PRs). Use an in-memory counter incremented at
+  the gate — windowed retention, resets on restart (health display, not accounting) —
+  surfaced on `GitHubHealthSnapshot` alongside `eventTypes`.
 
 ### Chain B — config-driven filter/mapping pipeline (admission + P1 transform)
 
@@ -187,7 +209,14 @@ polling sources.
   `projectExternalEventPayload(config, event)` applied between gate and publish in
   `publishEvent` — field allow/deny projection of the payload, with
   `includeRawPayload: boolean` (default true for parity; the owner's "I only need
-  this one and this field" is the opt-in). This is the **P1 transform pipeline**
+  this one and this field" is the opt-in). Projection is constrained to optional
+  source-native data (review finding, PR #2723): a **mandatory reserved field set**
+  — everything `formatExternalEventEssence` reads (`event-essence.ts:3-24`:
+  `eventType`, `action`, `actor`, `repoOwner`, `repoName`, `prNumber`, `prUrl`,
+  `body`, plus the per-type extras it copies) and the `replyHandle`/`resolveHandle`
+  fields — can never be removed, so delivered messages keep basic context and agents
+  keep the handles they need to respond; `rawPayload` and other non-reserved extras
+  are freely projectable. This is the **P1 transform pipeline**
   pattern; it is also the moment the ADR's on-the-shelf `transformRun` idiom can earn
   extraction — but only if it is the ≈3rd real transform (github-normalizer
   composition, this projection, store delta application); otherwise a plain function,
@@ -241,9 +270,16 @@ polling sources.
 3. **`rawPayload` unbounded** in `payload_json` and `get_external_event` responses —
    no truncation (storage + token cost; B3's projection is the fix, but the
    unbounded default deserves its own flag).
-4. **Config TOCTOU in the webhook loop**: `getSpaceConfig` is awaited per repo inside
-   the publish loop (`:728`); a space disabled mid-loop still gets the event
-   published (benign — delivery-side gates catch it).
+4. **Config TOCTOU in the webhook loop** (review finding, PR #2723): `getSpaceConfig`
+   is awaited per repo inside the publish loop (`:728`); a space disabled after that
+   read but before `publishEvent` still gets the event persisted — and the
+   delivery-side gates do **not** catch it: `handleExternalEventImpl`
+   (`space-runtime.ts:1605-1611`) filters subscription matches by space ownership
+   only and never reads `SpaceExternalEventSourceConfig`, and the pilot-1 gates check
+   subscription/task/session/pause state, not source enablement. The event can
+   therefore be injected into a subscribed session of a just-disabled space.
+   Mitigation: recheck the space config at the ingestion choke point — the seam
+   chains A/B open in `publishEvent` anyway.
 5. `normalizeGitHubWebhook` falls back to `Date.now()` for `occurredAt` (`:205`) —
    nondeterministic timestamps for malformed payloads (pre-existing).
 6. ADR-0004 Pilot 5's gather-layer asymmetry applies here too: don't repeat the
