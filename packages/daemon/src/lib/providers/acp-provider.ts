@@ -7,43 +7,33 @@ import type {
   ModelTier,
 } from '@hyperneo/shared/provider';
 import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
-import { spawn } from 'node:child_process';
+import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command';
+import { AcpClient } from '../acp/acp-client';
 
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
 const ACP_CONTEXT_WINDOW_ENV_VAR = 'HYPERNEO_ACP_CONTEXT_WINDOW';
-const ACP_PROBE_TIMEOUT_MS = 5000;
+const ACP_PROBE_TIMEOUT_MS = 10_000;
 
 export type AcpCommandProbe = (command: string, timeoutMs?: number) => Promise<void>;
 
 export const defaultAcpCommandProbe: AcpCommandProbe = async (
-  command: string,
+  commandLine: string,
   timeoutMs: number = ACP_PROBE_TIMEOUT_MS
 ): Promise<void> => {
-  const parts = command.trim().split(/\s+/);
-  const binary = parts[0];
-  const args = parts.slice(1);
-  return new Promise<void>((resolve, reject) => {
-    const child = spawn(binary, [...args, '--help'], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM');
-      reject(new Error(`ACP command '${binary}' probe timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    child.on('error', (err: NodeJS.ErrnoException) => {
-      clearTimeout(timer);
-      if (err.code === 'ENOENT') {
-        reject(new Error(`ACP command '${binary}' not found in PATH`));
-        return;
-      }
-      reject(new Error(`ACP command '${binary}' probe failed: ${err.message}`));
-    });
-    child.on('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
+  const { command, args } = parseAcpCommand(commandLine);
+  const client = new AcpClient({
+    command,
+    args,
+    cwd: process.cwd(),
+    env: buildAcpSafeEnv(),
+    requestTimeoutMs: timeoutMs,
   });
+  try {
+    await client.initialize();
+    await client.authenticate();
+  } finally {
+    client.close();
+  }
 };
 
 function parseContextWindow(value: string | undefined): number {
@@ -94,6 +84,8 @@ export class AcpProvider implements Provider {
   private lastProbeKey: string | undefined;
   private static readonly PROBE_TTL_MS = 30_000;
 
+  private commandOverride: string | undefined;
+
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly commandProbe: AcpCommandProbe = defaultAcpCommandProbe
@@ -104,7 +96,29 @@ export class AcpProvider implements Provider {
   }
 
   getAcpCommand(): string | undefined {
-    return this.env.HYPERNEO_ACP_COMMAND;
+    return this.commandOverride ?? this.env.HYPERNEO_ACP_COMMAND;
+  }
+
+  setAcpCommand(command: string | undefined): void {
+    const nextCommand = command ?? this.env.HYPERNEO_ACP_COMMAND;
+    const nextIdentity = nextCommand ? getAcpCommandIdentity(nextCommand) : undefined;
+    let previousIdentity: string | undefined;
+    try {
+      previousIdentity = this.getCommandIdentity();
+    } catch {
+      previousIdentity = undefined;
+    }
+    this.commandOverride = command;
+    this.lastProbeKey = undefined;
+    this.lastProbeAt = 0;
+    if (nextIdentity !== previousIdentity) {
+      this.clearModelCache();
+    }
+  }
+
+  private getCommandIdentity(): string | undefined {
+    const command = this.getAcpCommand();
+    return command ? getAcpCommandIdentity(command) : undefined;
   }
 
   getContextWindow(): number {
@@ -120,7 +134,7 @@ export class AcpProvider implements Provider {
     };
   }
 
-  private async verifyCommandAvailable(): Promise<void> {
+  async verifyCommandAvailable(): Promise<void> {
     const command = this.getAcpCommand();
     if (!command) {
       throw new Error('HYPERNEO_ACP_COMMAND not set');
@@ -134,10 +148,13 @@ export class AcpProvider implements Provider {
   }
 
   async getModels(): Promise<ModelInfo[]> {
+    if (!this.isAvailable()) {
+      this.clearModelCache();
+      return [];
+    }
     if (this.cachedModels) {
       return this.cachedModels;
     }
-    if (!this.isAvailable()) return [];
 
     await this.verifyCommandAvailable();
 
