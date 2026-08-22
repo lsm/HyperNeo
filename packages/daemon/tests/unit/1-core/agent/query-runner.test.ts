@@ -1865,12 +1865,29 @@ describe('QueryRunner', () => {
       ]);
 
       runner.start();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      const deadline = Date.now() + 5000;
+      while (
+        !setIdleSpy.mock.calls.some(
+          (call) =>
+            (call[0] as { suppressDeliveryWaiters?: boolean } | undefined)
+              ?.suppressDeliveryWaiters === true
+        ) &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
       ctx.incrementQueryGeneration();
       resolveExit!();
       await ctx.queryPromise?.catch(() => {});
 
       expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(
+        setIdleSpy.mock.calls.some(
+          (call) =>
+            (call[0] as { suppressDeliveryWaiters?: boolean } | undefined)
+              ?.suppressDeliveryWaiters === true
+        )
+      ).toBe(true);
       expect(
         (
           runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
