@@ -23,7 +23,22 @@ function isHeaderArgName(name: string): boolean {
   return /^(?:H|header)$/i.test(stripped);
 }
 
-export function redactSecretArgs(args: string[]): string[] {
+function isShellCommandArgName(name: string): boolean {
+  const stripped = name.replace(/^-+/, '');
+  return /^c$/i.test(stripped);
+}
+
+function redactShellCommand(script: string, depth: number): string {
+  if (depth <= 0) return script;
+  try {
+    const { command, args } = parseAcpCommand(script);
+    return [command, ...redactSecretArgs(args, depth - 1)].join(' ');
+  } catch {
+    return script;
+  }
+}
+
+export function redactSecretArgs(args: string[], depth = 3): string[] {
   const redacted: string[] = [];
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
@@ -45,13 +60,18 @@ export function redactSecretArgs(args: string[]): string[] {
       continue;
     }
     const next = args[index + 1];
-    if (isSecretArgName(arg) && next !== undefined) {
+    if (isSecretArgName(arg) && next !== undefined && !next.startsWith('--')) {
       redacted.push(arg, '[redacted]');
       index++;
       continue;
     }
     if (isHeaderArgName(arg) && next !== undefined && isSecretHeaderValue(next)) {
       redacted.push(arg, '[redacted]');
+      index++;
+      continue;
+    }
+    if (isShellCommandArgName(arg) && next !== undefined) {
+      redacted.push(arg, redactShellCommand(next, depth));
       index++;
       continue;
     }

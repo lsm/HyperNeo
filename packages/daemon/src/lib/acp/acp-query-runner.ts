@@ -1511,7 +1511,11 @@ export class AcpQueryRunner {
           } catch {
             result = drainDeadline;
           }
-          if (!('expired' in result) && !result.done) {
+          if (
+            !('expired' in result) &&
+            !result.done &&
+            isAcpPostAbortRelevantMessage(result.value)
+          ) {
             yield result.value;
           }
           pendingNext = null;

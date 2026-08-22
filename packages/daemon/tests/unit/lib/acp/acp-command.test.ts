@@ -107,6 +107,11 @@ describe('getAcpCommandIdentityDigest', () => {
     expect(getAcpCommandIdentityDigest('curl -H "Cookie: session=topsecret" https://a')).toBe(
       getAcpCommandIdentityDigest('curl -H "Cookie: session=other" https://a')
     );
+    expect(
+      getAcpCommandIdentityDigest('sh -c "curl -H \'Authorization: Bearer topsecret\' https://a"')
+    ).toBe(
+      getAcpCommandIdentityDigest('sh -c "curl -H \'Authorization: Bearer othersafe\' https://a"')
+    );
   });
 
   test('keeps non-credential header values visible in the digest', () => {
@@ -115,6 +120,18 @@ describe('getAcpCommandIdentityDigest', () => {
     );
     expect(getAcpCommandIdentityDigest('curl -H "Accept: application/json" /a')).not.toBe(
       getAcpCommandIdentityDigest('curl -H "Accept: text/plain" /a')
+    );
+    expect(getAcpCommandIdentityDigest('sh -c "curl -H \'X-Method: DELETE\' /a"')).not.toBe(
+      getAcpCommandIdentityDigest('sh -c "curl -H \'X-Method: PUT\' /a"')
+    );
+  });
+
+  test('does not swallow the next flag after a valueless secret flag', () => {
+    expect(getAcpCommandIdentityDigest('agent --token --verbose one')).not.toBe(
+      getAcpCommandIdentityDigest('agent --token --verbose two')
+    );
+    expect(getAcpCommandIdentityDigest('agent --token --verbose')).not.toBe(
+      getAcpCommandIdentityDigest('agent --verbose --token')
     );
   });
 
