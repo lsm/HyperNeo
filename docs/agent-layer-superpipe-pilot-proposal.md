@@ -323,7 +323,12 @@ note.
      characterization (the legacy path's terminal-fence-plus-double-`setIdle`
      sequence, S3 below; stale
      `lastResultWasSuccess` window — pinned, not fixed); ack-selection table
-     over (sendStatus × durable ownership × yielded/claimed); cost-reset table;
+     over (sendStatus × durable ownership × yielded/claimed × active-message
+     equality — a durable yielded message is eligible only when its UUID equals
+     `activeMessageId`, sdk-message-handler.ts:338–345: the active yielded
+     kickoff is consumed while a yielded steer of another turn stays enqueued;
+     both outcomes are pinned by sdk-message-handler.test.ts:1327–1398 and
+     :1549–1585, so the extracted selector must carry that bit); cost-reset table;
      the explicit-429-vs-text-rate-limit routing split from Chain B's note
      (both route to the watchdog handoff; only GLM `[1305]` reaches the backoff
      arm).
