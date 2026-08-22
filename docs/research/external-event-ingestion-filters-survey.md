@@ -217,7 +217,12 @@ polling sources.
   polls when polling is disabled (`:329`), poll-cycle piggybacking alone never runs
   in webhook-only installs and a live token rotation would leave every subsequent
   webhook fail-open until a health request or restart. The refresh never blocks the
-  publish path and keeps the negative-cache/fail-open behavior during outages.
+  publish path and keeps the negative-cache/fail-open behavior during outages, and
+  the timer carries an explicit `stop()` lifecycle requirement (review finding,
+  PR #2723): `stop()` today clears only `pollTimer` and awaits polling/reconciliation
+  (`:333-339`), so A2's timer must itself be cleared there — and any in-flight
+  refresh settled or generation-invalidated — or shutdown leaves live `/user`
+  requests and a timer that survives test teardown/restart.
 - **PR A2 also carries the settings-preservation fix (review finding on PR #2723):**
   `persistSpaceConfig` (`:1739-1772`) rebuilds the per-space `settings` object from
   only `pollingIntent` + `watchedRepos`, and `setSpaceConfig`
