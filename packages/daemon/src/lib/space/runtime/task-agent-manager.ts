@@ -4069,9 +4069,9 @@ export class TaskAgentManager {
         );
       }
       await this.withSessionInjectLock(existing.session.id, async () => {
-        const currentTask = this.config.taskRepo.getTask(taskId);
+        const currentTask = this.config.taskRepo?.getTask?.(taskId) ?? null;
         const currentRun = task.workflowRunId
-          ? this.config.workflowRunRepo.getRun(task.workflowRunId)
+          ? (this.config.workflowRunRepo?.getRun?.(task.workflowRunId) ?? null)
           : null;
         if (
           currentTask?.status === 'cancelled' ||
