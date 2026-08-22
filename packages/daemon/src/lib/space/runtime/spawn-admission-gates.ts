@@ -1,12 +1,13 @@
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
 
-export type SpawnExecutionAdmissionRejectReason =
+export type SpawnExecutionPermanentRejectReason =
   | 'task_archived'
   | 'task_cancelled'
-  | 'task_rate_or_usage_limited'
   | 'workflow_invalid'
   | 'slot_unresolvable';
+
+export type SpawnExecutionTransientRejectReason = 'task_rate_or_usage_limited';
 
 export interface SpawnExecutionAdmissionInput {
   hasLiveIndexedSession: boolean;
@@ -20,8 +21,8 @@ export type SpawnExecutionAdmissionDecision =
   | { action: 'reuse_live' }
   | { action: 'wait_concurrent' }
   | { action: 'proceed_fresh' }
-  | { action: 'reject_permanent'; reason: SpawnExecutionAdmissionRejectReason }
-  | { action: 'reject_transient'; reason: 'task_rate_or_usage_limited' };
+  | { action: 'reject_permanent'; reason: SpawnExecutionPermanentRejectReason }
+  | { action: 'reject_transient'; reason: SpawnExecutionTransientRejectReason };
 
 export function decideSpawnExecutionAdmission(
   input: SpawnExecutionAdmissionInput
