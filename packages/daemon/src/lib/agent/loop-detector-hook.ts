@@ -145,32 +145,34 @@ function buildPreToolUseCallback(
     sweepLedger(state, now, finalConfig.windowMs);
 
     if (isBash) {
-      const fingerprint = buildArgKey('Bash', args, cwd);
-      const ringKey = bashFingerprintKey(scope, fingerprint);
-      const ring = evaluateBashFailureRing({
-        ring: state.bashFailures.get(ringKey),
-        now,
-        windowMs: finalConfig.windowMs,
-      });
-      if (ring.expired) state.bashFailures.delete(ringKey);
-      const decision = decideBashDeadLoop({
-        count: streak.entry.count,
-        threshold: finalConfig.bash.threshold,
-        failuresRequired: finalConfig.bash.failuresRequired,
-        ring,
-        input: args,
-      });
-      if (decision.action === 'deny') {
-        logger.warn(
-          `Bash dead-loop detected (scope=${scope}): same command ${streak.entry.count}x in a row, last ${ring.length} all failed (${summariseArgs('Bash', args)}); denying.`
-        );
-        return {
-          hookSpecificOutput: {
-            hookEventName: 'PreToolUse' as const,
-            permissionDecision: 'deny' as const,
-            permissionDecisionReason: decision.reason,
-          },
-        };
+      if (streak.entry.count >= finalConfig.bash.threshold) {
+        const fingerprint = buildArgKey('Bash', args, cwd);
+        const ringKey = bashFingerprintKey(scope, fingerprint);
+        const ring = evaluateBashFailureRing({
+          ring: state.bashFailures.get(ringKey),
+          now,
+          windowMs: finalConfig.windowMs,
+        });
+        if (ring.expired) state.bashFailures.delete(ringKey);
+        const decision = decideBashDeadLoop({
+          count: streak.entry.count,
+          threshold: finalConfig.bash.threshold,
+          failuresRequired: finalConfig.bash.failuresRequired,
+          ring,
+          input: args,
+        });
+        if (decision.action === 'deny') {
+          logger.warn(
+            `Bash dead-loop detected (scope=${scope}): same command ${streak.entry.count}x in a row, last ${ring.length} all failed (${summariseArgs('Bash', args)}); denying.`
+          );
+          return {
+            hookSpecificOutput: {
+              hookEventName: 'PreToolUse' as const,
+              permissionDecision: 'deny' as const,
+              permissionDecisionReason: decision.reason,
+            },
+          };
+        }
       }
       return {};
     }
