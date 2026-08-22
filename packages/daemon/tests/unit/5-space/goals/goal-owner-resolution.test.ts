@@ -104,7 +104,15 @@ describe('decideGoalOwnerResolution', () => {
 
   test('falls back to the coordinator when there is no owner row', () => {
     const result = decideGoalOwnerResolution(input({ candidates: [] }));
-    expect(result).toEqual({ action: 'coordinator_fallback' });
+    expect(result).toEqual({
+      action: 'coordinator_fallback',
+      coordinatorAgentId: 'coordinator-1',
+    });
+  });
+
+  test('reports no_recipient when there is no owner and no coordinator', () => {
+    const result = decideGoalOwnerResolution(input({ candidates: [], coordinatorAgentId: null }));
+    expect(result).toEqual({ action: 'no_recipient' });
   });
 
   test('falls back to the coordinator when only non-owner relationships exist', () => {
@@ -114,7 +122,10 @@ describe('decideGoalOwnerResolution', () => {
         agentStates: { 'agent-w': active },
       })
     );
-    expect(result).toEqual({ action: 'coordinator_fallback' });
+    expect(result).toEqual({
+      action: 'coordinator_fallback',
+      coordinatorAgentId: 'coordinator-1',
+    });
   });
 
   test('resolves duplicate owners deterministically to the earliest assignment', () => {
