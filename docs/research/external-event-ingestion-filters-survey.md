@@ -360,10 +360,17 @@ polling sources.
    (`:2931/:2933`); any `publishEvent` throw mid-page aborts the whole cycle
    (`:2226` → `recordPollFailure`) with no cursor advance, so a persistently-throwing
    event re-fails that repo's poll forever.
-2. **Stale-secret silent divergence**: two spaces watching the same repo with
-   different `webhookSecret` values — only rows whose secret matches the delivery
-   signature enter `signatureMatchedRepos` (`:677-685`, `:717-723`); the other space
-   silently misses events (no `lastWebhookAt` update, no error surfaced).
+2. **Stale-secret silent divergence — only for shared remote hooks**: two spaces
+   watching the same repo with different `webhookSecret` values miss events only
+   when their rows represent the **same remote hook** (`webhookRemoteId` — the
+   auto-registration path shares one remote hook and propagates one secret to all
+   references): of that hook's single delivery, only rows whose secret matches
+   enter `signatureMatchedRepos` (`:677-685`, `:717-723`), and the other space
+   silently misses events (no `lastWebhookAt` update, no error surfaced). Spaces
+   with distinct manually-configured hooks each receive their own signed delivery
+   and correctly match only their own (review finding, PR #2723) — so diagnose the
+   divergence on shared `webhookRemoteId` only, never suggest unifying secrets
+   across independent hooks.
 3. **`rawPayload` unbounded** in `payload_json` and `get_external_event` responses —
    no truncation (storage + token cost; B3's projection is the fix, but the
    unbounded default deserves its own flag).
