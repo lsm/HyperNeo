@@ -454,7 +454,10 @@ export class SpaceTaskRepository {
         values.push(Date.now());
       }
       if (isTerminalStatus(params.status)) {
-        fields.push('terminal_generation = terminal_generation + 1');
+        fields.push(
+          `terminal_generation = terminal_generation + CASE WHEN status = ? THEN 0 ELSE 1 END`
+        );
+        values.push(params.status);
       }
     }
     if (params.priority !== undefined) {
@@ -632,9 +635,19 @@ export class SpaceTaskRepository {
     const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
     if (expectedStatuses.length === 0) return 'superseded';
     const placeholders = expectedStatuses.map(() => '?').join(', ');
+    const sets = ['status = ?'];
+    const values: SQLiteValue[] = [next];
+    if (isTerminalStatus(next)) {
+      sets.push(
+        `terminal_generation = terminal_generation + CASE WHEN status = ? THEN 0 ELSE 1 END`
+      );
+      values.push(next);
+    }
     const result = this.db
-      .prepare(`UPDATE space_tasks SET status = ? WHERE id = ? AND status IN (${placeholders})`)
-      .run(next, taskId, ...expectedStatuses);
+      .prepare(
+        `UPDATE space_tasks SET ${sets.join(', ')} WHERE id = ? AND status IN (${placeholders})`
+      )
+      .run(...values, taskId, ...expectedStatuses);
     return result.changes > 0 ? 'won' : 'superseded';
   }
 
@@ -657,6 +670,12 @@ export class SpaceTaskRepository {
     if (next === 'in_progress') {
       sets.push('started_at = ?', 'completed_at = ?');
       values.push(now, null);
+    }
+    if (isTerminalStatus(next)) {
+      sets.push(
+        `terminal_generation = terminal_generation + CASE WHEN status = ? THEN 0 ELSE 1 END`
+      );
+      values.push(next);
     }
     const result = this.db
       .prepare(

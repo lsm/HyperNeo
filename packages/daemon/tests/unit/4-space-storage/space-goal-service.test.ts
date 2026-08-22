@@ -1002,5 +1002,23 @@ describe('SpaceGoalService', () => {
     taskRepo.updateTask(task.task!.id, { status: 'cancelled' });
     const reopened = taskRepo.getTask(task.task!.id);
     expect(reopened?.terminalGeneration).toBe(2);
+
+    taskRepo.updateTask(task.task!.id, { status: 'cancelled' });
+    expect(taskRepo.getTask(task.task!.id)?.terminalGeneration).toBe(2);
+  });
+
+  it('advances the terminal generation through the CAS writer', () => {
+    const goal = service.createGoal({ spaceId, title: 'CAS generation goal' });
+    const task = service.createImmediateTask(goal.id);
+    expect(task.task).not.toBeNull();
+
+    taskRepo.updateTask(task.task!.id, { status: 'in_progress' });
+    const won = taskRepo.casStatus(task.task!.id, 'in_progress', 'blocked');
+    expect(won).toBe('won');
+    expect(taskRepo.getTask(task.task!.id)?.terminalGeneration).toBe(1);
+
+    const superseded = taskRepo.casStatus(task.task!.id, 'in_progress', 'done');
+    expect(superseded).toBe('superseded');
+    expect(taskRepo.getTask(task.task!.id)?.terminalGeneration).toBe(1);
   });
 });
