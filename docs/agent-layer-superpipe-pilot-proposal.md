@@ -689,7 +689,13 @@ note.
      :79–83), and reinterpreting it as query ownership strands the current
      delivery waiter or drains another query's when the numbers coincide;
      each waiter carries both filters, with query-replacement and
-     rate-limit-episode filtering each pinned. This PR also carries the
+     rate-limit-episode filtering each pinned — **plus a turn/delivery
+     owner**: a successor delivery on the still-live query (`ensureQueryStarted`
+     reuses it) installs its waiter with the *same* query generation
+     (`:1390–1393`), so the previous turn's `setIdle()` finally-drain
+     (`:168–175`) accepts and prematurely completes it under a query-only
+     filter; each waiter scopes to its turn/delivery as a third owner, with
+     the same-query successor interleaving pinned. This PR also carries the
      **notice-publication fix**: `displayErrorAsAssistantMessage` gates its
      `state.sdkMessages.delta` emission on `saveSDKMessage`'s boolean with
      the returned-false path pinned — and gates **both** same-named helpers:
@@ -708,7 +714,16 @@ note.
      generationless dispatch (`acp-query-runner.ts:925–929` calls the shared
      `ctx.onSDKMessage` without its local `queryGeneration`), so fencing only
      the QueryRunner would leave ACP able to fire the replacement's terminal
-     callbacks; the ACP late-result case is pinned too. The generation check
+     callbacks; the ACP late-result case is pinned too — and **ACP adapter
+     callbacks fire before the yield**: `AcpQueryAdapter` invokes `onAccepted`
+     and `onConfigOptionsUpdate` ahead of iterating (`acp-query-adapter.ts:53–68`),
+     and the runner's callbacks (`acp-query-runner.ts:630–643`) consume
+     delivery state or update the model cache immediately — a stale late
+     acceptance can consume the replacement's re-enqueued UUID or overwrite
+     its model state even though the eventual SDK message is dropped; every
+     adapter callback binds to the run generation and validates before its
+     effect, with late-acceptance and pre-yield config-notification pins. The
+     generation check
      also runs **immediately after the iterator yields, before any shared
      startup/message bookkeeping** — the old loop clears
      `ctx.startupTimeoutTimer` and sets `ctx.firstMessageReceived` at
