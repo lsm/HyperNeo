@@ -1,13 +1,13 @@
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import { classifyReclaimTermination } from '../../../../src/lib/agent/message-delivery';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import type { HyperNeoActionMessage } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { classifyReclaimTermination } from '../../../../src/lib/agent/message-delivery';
 import type {
   MessageSearchParams,
   MessageSearchResponse,
 } from '../../../../src/storage/message-search';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 describe('SDKMessageRepository', () => {
   let db: Database;
@@ -1012,6 +1012,133 @@ describe('SDKMessageRepository', () => {
       ).message?.content?.[0]?.text;
       expect(userContent).toBe('Sent user message');
     });
+
+    describe('subagent page composition and hasMore (A1)', () => {
+      function insertAssistantRow(
+        sessionId: string,
+        id: string,
+        text: string,
+        timestamp: string,
+        parentToolUseId: string | null,
+        toolUse?: { id: string; name: string }
+      ): void {
+        const blocks: Array<Record<string, string>> = [{ type: 'text', text }];
+        if (toolUse) blocks.push({ type: 'tool_use', id: toolUse.id, name: toolUse.name });
+        db.prepare(
+          `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, parent_tool_use_id)
+           VALUES (?, ?, 'assistant', ?, ?, ?)`
+        ).run(
+          id,
+          sessionId,
+          JSON.stringify({
+            type: 'assistant',
+            message: { role: 'assistant', content: blocks },
+          }),
+          timestamp,
+          parentToolUseId
+        );
+      }
+
+      function firstText(message: unknown): string | undefined {
+        const content = (
+          message as { message?: { content?: Array<{ type: string; text?: string }> } }
+        ).message?.content;
+        return (content ?? []).find((block) => block.type === 'text')?.text;
+      }
+
+      it('appends subagent rows after the whole top-level page even when they predate it', () => {
+        const sessionId = 'session-compose';
+        insertAssistantRow(sessionId, 'top-a', 'Top A', '2026-08-11T10:00:01.000Z', null, {
+          id: 'tu-1',
+          name: 'Task',
+        });
+        insertAssistantRow(sessionId, 'sub-1', 'Sub one', '2026-08-11T10:00:02.000Z', 'tu-1');
+        insertAssistantRow(sessionId, 'sub-2', 'Sub two', '2026-08-11T10:00:03.000Z', 'tu-1');
+        insertAssistantRow(sessionId, 'top-b', 'Top B', '2026-08-11T10:00:04.000Z', null);
+
+        const { messages } = repository.getSDKMessages(sessionId);
+
+        expect(messages.map(firstText)).toEqual(['Top A', 'Top B', 'Sub one', 'Sub two']);
+      });
+
+      it('orders same-timestamp subagent rows by rowid ascending', () => {
+        const sessionId = 'session-compose-tie';
+        insertAssistantRow(sessionId, 'top', 'Top', '2026-08-11T10:01:00.000Z', null, {
+          id: 'tu-1',
+          name: 'Task',
+        });
+        insertAssistantRow(sessionId, 'sub-1', 'Sub first', '2026-08-11T10:01:01.000Z', 'tu-1');
+        insertAssistantRow(sessionId, 'sub-2', 'Sub second', '2026-08-11T10:01:01.000Z', 'tu-1');
+
+        const { messages } = repository.getSDKMessages(sessionId);
+
+        expect(messages.map(firstText)).toEqual(['Top', 'Sub first', 'Sub second']);
+      });
+
+      it('collects tool-use ids from the current page only — off-page tool uses fetch nothing', () => {
+        const sessionId = 'session-compose-page';
+        insertAssistantRow(sessionId, 'top-a', 'Top A', '2026-08-11T10:02:00.000Z', null, {
+          id: 'tu-a',
+          name: 'Task',
+        });
+        insertAssistantRow(sessionId, 'sub-a', 'Sub A', '2026-08-11T10:02:01.000Z', 'tu-a');
+        insertAssistantRow(sessionId, 'top-b', 'Top B', '2026-08-11T10:03:00.000Z', null, {
+          id: 'tu-b',
+          name: 'Task',
+        });
+        insertAssistantRow(sessionId, 'sub-b', 'Sub B', '2026-08-11T10:03:01.000Z', 'tu-b');
+
+        const { messages, hasMore } = repository.getSDKMessages(sessionId, 1);
+
+        expect(messages.map(firstText)).toEqual(['Top B', 'Sub B']);
+        expect(hasMore).toBe(true);
+      });
+
+      it('never reports hasMore from subagent fan-out alone', () => {
+        const sessionId = 'session-compose-fanout';
+        insertAssistantRow(sessionId, 'top', 'Top', '2026-08-11T10:04:00.000Z', null, {
+          id: 'tu-1',
+          name: 'Task',
+        });
+        for (let i = 1; i <= 5; i++) {
+          insertAssistantRow(
+            sessionId,
+            `sub-${i}`,
+            `Sub ${i}`,
+            `2026-08-11T10:04:0${i}.000Z`,
+            'tu-1'
+          );
+        }
+
+        const { messages, hasMore } = repository.getSDKMessages(sessionId);
+
+        expect(messages).toHaveLength(6);
+        expect(hasMore).toBe(false);
+      });
+
+      it('keeps hasMore page-full semantics with subagent fan-out present', () => {
+        const sessionId = 'session-compose-pagefull';
+        insertAssistantRow(sessionId, 'top-a', 'Top A', '2026-08-11T10:05:00.000Z', null, {
+          id: 'tu-1',
+          name: 'Task',
+        });
+        for (let i = 1; i <= 3; i++) {
+          insertAssistantRow(
+            sessionId,
+            `sub-${i}`,
+            `Sub ${i}`,
+            `2026-08-11T10:05:0${i}.000Z`,
+            'tu-1'
+          );
+        }
+        insertAssistantRow(sessionId, 'top-b', 'Top B', '2026-08-11T10:05:10.000Z', null);
+
+        const { messages, hasMore } = repository.getSDKMessages(sessionId, 2);
+
+        expect(messages).toHaveLength(5);
+        expect(hasMore).toBe(true);
+      });
+    });
   });
 
   describe('getLastSDKMessage', () => {
@@ -1967,6 +2094,73 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('markDeliveryFailedByUuid — exclusive dead-letter window (A1)', () => {
+    function sendStatusOf(dbId: string): string | null {
+      return (
+        db.prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`).get(dbId) as {
+          send_status: string | null;
+        }
+      ).send_status;
+    }
+
+    it('fails enqueued, deferred, and submitted rows — the exclusive window includes deferred', () => {
+      for (const status of ['enqueued', 'deferred', 'submitted'] as const) {
+        const sessionId = `session-fail-${status}`;
+        const dbId = repository.saveUserMessage(
+          sessionId,
+          createUserMessage(`held ${status}`, `uuid-fail-${status}`),
+          status
+        );
+
+        expect(repository.markDeliveryFailedByUuid(sessionId, `uuid-fail-${status}`)).toBe(dbId);
+        expect(sendStatusOf(dbId)).toBe('failed');
+      }
+    });
+
+    it('leaves consumed and failed rows untouched — consumed is the excluded status', () => {
+      for (const status of ['consumed', 'failed'] as const) {
+        const sessionId = `session-keep-${status}`;
+        const dbId = repository.saveUserMessage(
+          sessionId,
+          createUserMessage(`settled ${status}`, `uuid-keep-${status}`),
+          status
+        );
+
+        expect(repository.markDeliveryFailedByUuid(sessionId, `uuid-keep-${status}`)).toBeNull();
+        expect(sendStatusOf(dbId)).toBe(status);
+      }
+    });
+
+    it('is a one-shot flip: a second call on the failed row returns null', () => {
+      const dbId = repository.saveUserMessage(
+        'session-oneshot',
+        createUserMessage('flip me', 'uuid-oneshot'),
+        'enqueued'
+      );
+
+      expect(repository.markDeliveryFailedByUuid('session-oneshot', 'uuid-oneshot')).toBe(dbId);
+      expect(repository.markDeliveryFailedByUuid('session-oneshot', 'uuid-oneshot')).toBeNull();
+      expect(sendStatusOf(dbId)).toBe('failed');
+    });
+
+    it('returns null for unknown uuids, other sessions, and non-user rows', () => {
+      repository.saveUserMessage(
+        'session-scope',
+        createUserMessage('scoped', 'uuid-scoped'),
+        'enqueued'
+      );
+      repository.saveSDKMessage('session-scope', {
+        type: 'assistant',
+        uuid: 'uuid-assistant-row',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'assistant row' }] },
+      } as unknown as SDKMessage);
+
+      expect(repository.markDeliveryFailedByUuid('session-scope', 'no-such-uuid')).toBeNull();
+      expect(repository.markDeliveryFailedByUuid('session-other', 'uuid-scoped')).toBeNull();
+      expect(repository.markDeliveryFailedByUuid('session-scope', 'uuid-assistant-row')).toBeNull();
+    });
+  });
+
   describe('markDeliveryRetryableByUuid (recoverable no-result turn → retry re-feed)', () => {
     it('flips a consumed row back to enqueued and returns its db id', () => {
       const id = repository.saveUserMessage(
@@ -2542,6 +2736,98 @@ describe('SDKMessageRepository', () => {
       expect(searchRow!.timestamp).toBeLessThanOrEqual(after);
     });
 
+    describe('duplicate-uuid watermark ambiguity — unordered LIMIT 1 probes (A1)', () => {
+      function unorderedWatermarkPick(sessionId: string, uuid: string): number | null {
+        const row = db
+          .prepare(
+            `SELECT m.consumed_seq AS seq FROM sdk_messages m
+              WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1`
+          )
+          .get(sessionId, uuid) as { seq: number | null } | undefined;
+        return row?.seq ?? null;
+      }
+
+      function expectDuplicateWatermarkRows(sessionId: string, uuid: string): void {
+        const duplicates = db
+          .prepare(`SELECT consumed_seq FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
+          .all(sessionId, uuid) as Array<{ consumed_seq: number | null }>;
+        expect(duplicates).toHaveLength(2);
+        expect(duplicates.some((row) => row.consumed_seq === null)).toBe(true);
+        expect(duplicates.some((row) => row.consumed_seq !== null)).toBe(true);
+      }
+
+      it('hasTerminalResultAfter tracks the unordered pick either way — unsequenced duplicate first', () => {
+        const sessionId = 'session-dup-null-first';
+        insertMessage(sessionId, 'user', {
+          uuid: 'dup-watermark',
+          timestamp: '2026-08-11T15:30:00.000Z',
+          sendStatus: 'enqueued',
+        });
+        insertMessage(sessionId, 'user', {
+          uuid: 'dup-watermark',
+          timestamp: '2026-08-11T15:30:01.000Z',
+        });
+        insertMessage(sessionId, 'result', {
+          timestamp: '2026-08-11T15:30:53.000Z',
+          terminal: true,
+          subtype: 'success',
+        });
+        expectDuplicateWatermarkRows(sessionId, 'dup-watermark');
+
+        const picked = unorderedWatermarkPick(sessionId, 'dup-watermark');
+
+        expect(repository.hasTerminalResultAfter(sessionId, 'dup-watermark')).toBe(picked !== null);
+      });
+
+      it('hasTerminalResultAfter tracks the unordered pick either way — sequenced duplicate first', () => {
+        const sessionId = 'session-dup-seq-first';
+        insertMessage(sessionId, 'user', {
+          uuid: 'dup-watermark',
+          timestamp: '2026-08-11T15:31:00.000Z',
+        });
+        insertMessage(sessionId, 'user', {
+          uuid: 'dup-watermark',
+          timestamp: '2026-08-11T15:31:01.000Z',
+          sendStatus: 'enqueued',
+        });
+        insertMessage(sessionId, 'result', {
+          timestamp: '2026-08-11T15:31:53.000Z',
+          terminal: true,
+          subtype: 'success',
+        });
+        expectDuplicateWatermarkRows(sessionId, 'dup-watermark');
+
+        const picked = unorderedWatermarkPick(sessionId, 'dup-watermark');
+
+        expect(repository.hasTerminalResultAfter(sessionId, 'dup-watermark')).toBe(picked !== null);
+      });
+
+      it('getErrorTerminalResultSubtypeAfter shares the unordered pick: subtype or null, never a third outcome', () => {
+        const sessionId = 'session-dup-error';
+        insertMessage(sessionId, 'user', {
+          uuid: 'dup-watermark',
+          timestamp: '2026-08-11T15:32:00.000Z',
+          sendStatus: 'enqueued',
+        });
+        insertMessage(sessionId, 'user', {
+          uuid: 'dup-watermark',
+          timestamp: '2026-08-11T15:32:01.000Z',
+        });
+        insertMessage(sessionId, 'result', {
+          timestamp: '2026-08-11T15:32:53.000Z',
+          terminal: true,
+          subtype: 'error_max_budget_usd',
+        });
+        expectDuplicateWatermarkRows(sessionId, 'dup-watermark');
+
+        const picked = unorderedWatermarkPick(sessionId, 'dup-watermark');
+
+        expect(repository.getErrorTerminalResultSubtypeAfter(sessionId, 'dup-watermark')).toBe(
+          picked !== null ? 'error_max_budget_usd' : null
+        );
+      });
+    });
+
     describe('delivery_turn_end markers (result-less terminal paths, P2)', () => {
       it('recordDeliveryTurnEnd then hasDeliveryTurnEnd round-trips', () => {
         expect(repository.hasDeliveryTurnEnd('session-1', 'm1')).toBe(false);
@@ -3031,6 +3317,269 @@ describe('SDKMessageRepository', () => {
       expect(message).toBeDefined();
       expect(message?.content).toBe('Earliest failed copy');
     });
+
+    it('resolves a same-millisecond uuid tie to whichever row the unordered scan returns first (A1)', () => {
+      const sessionId = 'session-ms-tie';
+      const tiedTimestamp = '2026-08-11T15:40:00.000Z';
+      const insertTied = db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+         VALUES (?, ?, 'user', ?, ?, 'consumed', ?)`
+      );
+      insertTied.run(
+        'tie-a',
+        sessionId,
+        JSON.stringify(createUserMessage('Tied copy A', 'uuid-ms-tie')),
+        tiedTimestamp,
+        'uuid-ms-tie'
+      );
+      insertTied.run(
+        'tie-b',
+        sessionId,
+        JSON.stringify(createUserMessage('Tied copy B', 'uuid-ms-tie')),
+        tiedTimestamp,
+        'uuid-ms-tie'
+      );
+
+      const firstReturned = (
+        db
+          .prepare(
+            `SELECT sdk_message, timestamp FROM sdk_messages
+              WHERE session_id = ?
+                AND message_type = 'user'
+                AND sdk_uuid = ?`
+          )
+          .all(sessionId, 'uuid-ms-tie') as Array<{ sdk_message: string; timestamp: string }>
+      )[0];
+      const expected = (
+        JSON.parse(firstReturned.sdk_message) as {
+          message?: { content?: Array<{ type: string; text?: string }> };
+        }
+      ).message?.content?.[0]?.text;
+
+      expect(['Tied copy A', 'Tied copy B']).toContain(expected);
+      expect(repository.getUserMessageByUuid(sessionId, 'uuid-ms-tie')?.content).toBe(expected);
+    });
+
+    it('earliest-wins under distinct timestamps regardless of insertion order (A1)', () => {
+      const sessionId = 'session-earliest';
+      const insert = db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+         VALUES (?, ?, 'user', ?, ?, 'consumed', 'uuid-earliest')`
+      );
+      insert.run(
+        'later-row',
+        sessionId,
+        JSON.stringify(createUserMessage('Later copy', 'uuid-earliest')),
+        '2026-08-11T15:41:01.000Z'
+      );
+      insert.run(
+        'earlier-row',
+        sessionId,
+        JSON.stringify(createUserMessage('Earlier copy', 'uuid-earliest')),
+        '2026-08-11T15:41:00.000Z'
+      );
+
+      expect(repository.getUserMessageByUuid(sessionId, 'uuid-earliest')?.content).toBe(
+        'Earlier copy'
+      );
+    });
+  });
+
+  describe('getUserMessageContentByUuid (A1)', () => {
+    function insertUserContentRow(
+      sessionId: string,
+      uuid: string,
+      content: string | Array<Record<string, string>>,
+      timestamp: string
+    ): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+         VALUES (?, ?, 'user', ?, ?, 'consumed', ?)`
+      ).run(
+        crypto.randomUUID(),
+        sessionId,
+        JSON.stringify({ type: 'user', uuid, message: { role: 'user', content } }),
+        timestamp,
+        uuid
+      );
+    }
+
+    it('returns string content verbatim', () => {
+      insertUserContentRow(
+        'session-content',
+        'uuid-string',
+        'Plain string',
+        '2026-08-11T12:00:00.000Z'
+      );
+
+      expect(repository.getUserMessageContentByUuid('session-content', 'uuid-string')).toBe(
+        'Plain string'
+      );
+    });
+
+    it('returns block-array content verbatim, not a flattened first block', () => {
+      const blocks = [
+        { type: 'text', text: 'Block one' },
+        { type: 'text', text: 'Block two' },
+      ];
+      insertUserContentRow('session-content', 'uuid-blocks', blocks, '2026-08-11T12:01:00.000Z');
+
+      expect(repository.getUserMessageContentByUuid('session-content', 'uuid-blocks')).toEqual(
+        blocks
+      );
+    });
+
+    it('returns the earliest row when a uuid repeats under distinct timestamps', () => {
+      insertUserContentRow(
+        'session-content',
+        'uuid-repeat',
+        [{ type: 'text', text: 'Earlier copy' }],
+        '2026-08-11T12:02:00.000Z'
+      );
+      insertUserContentRow(
+        'session-content',
+        'uuid-repeat',
+        [{ type: 'text', text: 'Later copy' }],
+        '2026-08-11T12:03:00.000Z'
+      );
+
+      expect(repository.getUserMessageContentByUuid('session-content', 'uuid-repeat')).toEqual([
+        { type: 'text', text: 'Earlier copy' },
+      ]);
+    });
+
+    it('returns null for unknown uuids and wrong sessions', () => {
+      insertUserContentRow('session-content', 'uuid-known', 'Known', '2026-08-11T12:04:00.000Z');
+
+      expect(repository.getUserMessageContentByUuid('session-content', 'no-such-uuid')).toBeNull();
+      expect(repository.getUserMessageContentByUuid('session-other', 'uuid-known')).toBeNull();
+    });
+
+    it('returns null when the stored payload has no message.content field', () => {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, sdk_uuid)
+         VALUES ('bare-user', 'session-content', 'user', ?, '2026-08-11T12:05:00.000Z', 'uuid-bare')`
+      ).run(JSON.stringify({ type: 'user', uuid: 'uuid-bare' }));
+
+      expect(repository.getUserMessageContentByUuid('session-content', 'uuid-bare')).toBeNull();
+    });
+  });
+
+  describe('getAssistantMessagesSince (A1)', () => {
+    function insertAssistantProjectionRow(
+      sessionId: string,
+      id: string,
+      timestamp: string,
+      blocks: Array<Record<string, string>>,
+      parentToolUseId: string | null = null
+    ): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, parent_tool_use_id)
+         VALUES (?, ?, 'assistant', ?, ?, ?)`
+      ).run(
+        id,
+        sessionId,
+        JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: blocks } }),
+        timestamp,
+        parentToolUseId
+      );
+    }
+
+    it('returns every assistant row ascending with joined text and tool-call names', () => {
+      const sessionId = 'session-since-all';
+      insertAssistantProjectionRow(sessionId, 'a1', '2026-08-11T11:00:00.000Z', [
+        { type: 'text', text: ' Alpha' },
+        { type: 'tool_use', id: 'tu-1', name: 'Read' },
+        { type: 'text', text: 'Beta ' },
+      ]);
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+         VALUES ('u1', ?, 'user', ?, '2026-08-11T11:00:01.000Z')`
+      ).run(sessionId, JSON.stringify(createUserMessage('Not an assistant')));
+      insertAssistantProjectionRow(sessionId, 'a2', '2026-08-11T11:00:02.000Z', [
+        { type: 'text', text: 'Second' },
+      ]);
+
+      const rows = repository.getAssistantMessagesSince(sessionId, null);
+
+      expect(rows.map((row) => row.id)).toEqual(['a1', 'a2']);
+      expect(rows[0].text).toBe('Alpha\n\nBeta');
+      expect(rows[0].toolCallNames).toEqual(['Read']);
+      expect(rows[1].text).toBe('Second');
+      expect(rows[1].toolCallNames).toEqual([]);
+    });
+
+    it('returns only rows strictly after the anchor timestamp — same-millisecond rows are excluded', () => {
+      const sessionId = 'session-since-anchor';
+      insertAssistantProjectionRow(sessionId, 'anchor', '2026-08-11T11:01:00.000Z', [
+        { type: 'text', text: 'Anchor' },
+      ]);
+      insertAssistantProjectionRow(sessionId, 'same-ms', '2026-08-11T11:01:00.000Z', [
+        { type: 'text', text: 'Same ms' },
+      ]);
+      insertAssistantProjectionRow(sessionId, 'later', '2026-08-11T11:01:01.000Z', [
+        { type: 'text', text: 'Later' },
+      ]);
+
+      expect(
+        repository.getAssistantMessagesSince(sessionId, 'anchor').map((row) => row.id)
+      ).toEqual(['later']);
+    });
+
+    it('anchors on the stored timestamp, not insertion order', () => {
+      const sessionId = 'session-since-order';
+      insertAssistantProjectionRow(sessionId, 'mid-anchor', '2026-08-11T11:02:01.000Z', [
+        { type: 'text', text: 'Mid' },
+      ]);
+      insertAssistantProjectionRow(sessionId, 'older-inserted-late', '2026-08-11T11:02:00.000Z', [
+        { type: 'text', text: 'Older' },
+      ]);
+      insertAssistantProjectionRow(sessionId, 'newer', '2026-08-11T11:02:02.000Z', [
+        { type: 'text', text: 'Newer' },
+      ]);
+
+      expect(
+        repository.getAssistantMessagesSince(sessionId, 'mid-anchor').map((row) => row.id)
+      ).toEqual(['newer']);
+    });
+
+    it('includes subagent rows — there is no parent_tool_use_id filter', () => {
+      const sessionId = 'session-since-sub';
+      insertAssistantProjectionRow(sessionId, 'top', '2026-08-11T11:03:00.000Z', [
+        { type: 'text', text: 'Top' },
+      ]);
+      insertAssistantProjectionRow(
+        sessionId,
+        'nested',
+        '2026-08-11T11:03:01.000Z',
+        [{ type: 'text', text: 'Nested' }],
+        'tu-9'
+      );
+
+      expect(repository.getAssistantMessagesSince(sessionId, null).map((row) => row.id)).toEqual([
+        'top',
+        'nested',
+      ]);
+    });
+
+    it('returns an empty array when the anchor id does not exist', () => {
+      const sessionId = 'session-since-missing';
+      insertAssistantProjectionRow(sessionId, 'a1', '2026-08-11T11:04:00.000Z', [
+        { type: 'text', text: 'Only' },
+      ]);
+
+      expect(repository.getAssistantMessagesSince(sessionId, 'no-such-id')).toEqual([]);
+    });
+
+    it('throws on a malformed assistant row — the parse is unguarded here', () => {
+      const sessionId = 'session-since-malformed';
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+         VALUES ('bad-assistant', ?, 'assistant', '{not-json', '2026-08-11T11:05:00.000Z')`
+      ).run(sessionId);
+
+      expect(() => repository.getAssistantMessagesSince(sessionId, null)).toThrow();
+    });
   });
 
   describe('uuid lookups use the sdk_uuid column index', () => {
@@ -3113,6 +3662,246 @@ describe('SDKMessageRepository', () => {
       );
       expect(plan).toContain('idx_sdk_messages_session_uuid');
       expect(plan).not.toContain('SCAN sdk_messages');
+    });
+  });
+
+  describe('updateHyperNeoActionMessageByUuid — behavior (A1)', () => {
+    function actionMessage(uuid: string, resolved: boolean): HyperNeoActionMessage {
+      return {
+        type: 'hyperneo_action',
+        uuid,
+        session_id: 'session-action',
+        action: 'sdk_resume_choice',
+        resolved,
+        timestamp: Date.now(),
+      };
+    }
+
+    it('rewrites the stored payload for the matching session and uuid', () => {
+      const rowId = repository.saveHyperNeoActionMessage(
+        'session-action',
+        actionMessage('action-a', false)
+      );
+      expect(repository.hasUnresolvedHyperNeoAction('session-action', 'sdk_resume_choice')).toBe(
+        true
+      );
+
+      repository.updateHyperNeoActionMessageByUuid('session-action', 'action-a', {
+        ...actionMessage('action-a', true),
+        chosenOption: 'start_fresh',
+      });
+
+      expect(repository.hasUnresolvedHyperNeoAction('session-action', 'sdk_resume_choice')).toBe(
+        false
+      );
+      const stored = JSON.parse(
+        (
+          db.prepare(`SELECT sdk_message FROM sdk_messages WHERE id = ?`).get(rowId) as {
+            sdk_message: string;
+          }
+        ).sdk_message
+      ) as HyperNeoActionMessage;
+      expect(stored.resolved).toBe(true);
+      expect(stored.chosenOption).toBe('start_fresh');
+    });
+
+    it('is a quiet no-op when the uuid or session does not match', () => {
+      const rowId = repository.saveHyperNeoActionMessage(
+        'session-action',
+        actionMessage('action-b', false)
+      );
+
+      repository.updateHyperNeoActionMessageByUuid(
+        'session-action',
+        'missing-uuid',
+        actionMessage('missing-uuid', true)
+      );
+      repository.updateHyperNeoActionMessageByUuid(
+        'session-other',
+        'action-b',
+        actionMessage('action-b', true)
+      );
+
+      const stored = JSON.parse(
+        (
+          db.prepare(`SELECT sdk_message FROM sdk_messages WHERE id = ?`).get(rowId) as {
+            sdk_message: string;
+          }
+        ).sdk_message
+      ) as HyperNeoActionMessage;
+      expect(stored.resolved).toBe(false);
+    });
+
+    it('reschedules the search index for a matched row and not for a miss', () => {
+      createSearchIndex();
+      const rowId = repository.saveHyperNeoActionMessage(
+        'session-action',
+        actionMessage('action-c', false)
+      );
+      repository.flushMessageSearchIndex();
+      const pendingCount = () =>
+        (
+          db
+            .prepare(`SELECT COUNT(*) AS n FROM message_search_pending WHERE message_id = ?`)
+            .get(rowId) as { n: number }
+        ).n;
+      expect(pendingCount()).toBe(0);
+
+      repository.updateHyperNeoActionMessageByUuid(
+        'session-action',
+        'action-c',
+        actionMessage('action-c', true)
+      );
+      expect(pendingCount()).toBe(1);
+
+      repository.flushMessageSearchIndex();
+      repository.updateHyperNeoActionMessageByUuid(
+        'session-action',
+        'missing-uuid',
+        actionMessage('missing-uuid', true)
+      );
+      expect(pendingCount()).toBe(0);
+    });
+  });
+
+  describe('malformed sdk_message rows — per-reader policy table (A1)', () => {
+    function insertMalformedRow(opts: {
+      sessionId: string;
+      id: string;
+      type: string;
+      subtype?: string | null;
+      timestamp: string;
+      sdkUuid?: string | null;
+      parentToolUseId?: string | null;
+    }): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, sdk_uuid, parent_tool_use_id)
+         VALUES (?, ?, ?, ?, '{not-json', ?, ?, ?)`
+      ).run(
+        opts.id,
+        opts.sessionId,
+        opts.type,
+        opts.subtype ?? null,
+        opts.timestamp,
+        opts.sdkUuid ?? null,
+        opts.parentToolUseId ?? null
+      );
+    }
+
+    function insertWellFormedRow(
+      sessionId: string,
+      id: string,
+      type: string,
+      sdkMessage: SDKMessage,
+      timestamp: string
+    ): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+         VALUES (?, ?, ?, ?, ?)`
+      ).run(id, sessionId, type, JSON.stringify(sdkMessage), timestamp);
+    }
+
+    it('synthesizes type=unknown: pagination top-level and subagent fan-out, background task metadata, and the inflate paths', () => {
+      insertMalformedRow({
+        sessionId: 's-synth-top',
+        id: 'bad-top',
+        type: 'assistant',
+        timestamp: '2026-08-11T12:00:00.000Z',
+      });
+      const paginated = repository.getSDKMessages('s-synth-top');
+      expect(paginated.messages).toHaveLength(1);
+      expect(paginated.messages[0].type).toBe('unknown');
+      expect((paginated.messages[0] as { rawContent?: string }).rawContent).toBe('{not-json');
+
+      repository.saveSDKMessage('s-synth-sub', createAssistantMessage('Top', 'tu-bad'));
+      insertMalformedRow({
+        sessionId: 's-synth-sub',
+        id: 'bad-sub',
+        type: 'assistant',
+        timestamp: '2026-08-11T12:01:00.000Z',
+        parentToolUseId: 'tu-bad',
+      });
+      const fanned = repository.getSDKMessages('s-synth-sub');
+      expect(fanned.messages).toHaveLength(2);
+      expect(fanned.messages[1].type).toBe('unknown');
+      expect((fanned.messages[1] as { rawContent?: string }).rawContent).toBe('{not-json');
+
+      insertMalformedRow({
+        sessionId: 's-synth-bg',
+        id: 'bad-meta',
+        type: 'system',
+        subtype: 'task_started',
+        timestamp: '2026-08-11T12:02:00.000Z',
+      });
+      const background = repository.getBackgroundTaskMessages('s-synth-bg');
+      expect(background).toHaveLength(1);
+      expect(background[0].type).toBe('unknown');
+      expect((background[0] as { rawContent?: string }).rawContent).toBe('{not-json');
+
+      insertMalformedRow({
+        sessionId: 's-synth-last',
+        id: 'bad-last',
+        type: 'system',
+        subtype: 'task_progress',
+        timestamp: '2026-08-11T12:03:00.000Z',
+      });
+      const last = repository.getLastSDKMessage('s-synth-last');
+      expect(last?.type).toBe('unknown');
+      expect((last as { rawContent?: string } | null)?.rawContent).toBe('{not-json');
+      expect((last as { dbId?: string } | null)?.dbId).toBe('bad-last');
+    });
+
+    it('skips the row: getRenderableTextMessages omits malformed rows and keeps filling from later rows', () => {
+      insertWellFormedRow(
+        's-skip',
+        'good-old',
+        'user',
+        createUserMessage('Older good'),
+        '2026-08-11T12:04:00.000Z'
+      );
+      insertMalformedRow({
+        sessionId: 's-skip',
+        id: 'bad-middle',
+        type: 'assistant',
+        timestamp: '2026-08-11T12:04:01.000Z',
+      });
+      insertWellFormedRow(
+        's-skip',
+        'good-new',
+        'assistant',
+        createAssistantMessage('Newer good'),
+        '2026-08-11T12:04:02.000Z'
+      );
+
+      const texts = repository.getRenderableTextMessages('s-skip', 2);
+
+      expect(texts.map((row) => row.text)).toEqual(['Older good', 'Newer good']);
+    });
+
+    it('throws: getSDKMessagesByType and getUserMessages parse unguarded', () => {
+      insertMalformedRow({
+        sessionId: 's-throw',
+        id: 'bad-user',
+        type: 'user',
+        timestamp: '2026-08-11T12:05:00.000Z',
+        sdkUuid: 'bad-user-uuid',
+      });
+
+      expect(() => repository.getSDKMessagesByType('s-throw', 'user')).toThrow();
+      expect(() => repository.getUserMessages('s-throw')).toThrow();
+    });
+
+    it('returns null: getUserMessageContentByUuid and getDeliveryContent swallow the parse failure', () => {
+      insertMalformedRow({
+        sessionId: 's-null',
+        id: 'bad-content',
+        type: 'user',
+        timestamp: '2026-08-11T12:06:00.000Z',
+        sdkUuid: 'bad-content-uuid',
+      });
+
+      expect(repository.getUserMessageContentByUuid('s-null', 'bad-content-uuid')).toBeNull();
+      expect(repository.getDeliveryContent('s-null', 'bad-content-uuid')).toBeNull();
     });
   });
 
