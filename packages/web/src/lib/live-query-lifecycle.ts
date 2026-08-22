@@ -8,6 +8,7 @@ export type LiveQueryLifecycleStatus =
 export interface LiveQueryLifecycleConfig {
   snapshotRetryDelayMs: number;
   maxSnapshotRetries: number;
+  snapshotRetryEnabled?: boolean;
 }
 
 export const DEFAULT_LIVE_QUERY_LIFECYCLE_CONFIG: LiveQueryLifecycleConfig = {
@@ -57,6 +58,9 @@ export function createLiveQueryLifecycleState(
   }
   if (config.maxSnapshotRetries !== undefined) {
     merged.maxSnapshotRetries = config.maxSnapshotRetries;
+  }
+  if (config.snapshotRetryEnabled !== undefined) {
+    merged.snapshotRetryEnabled = config.snapshotRetryEnabled;
   }
   return {
     state: {
@@ -108,6 +112,12 @@ function transitionSubscribing(
   event: LiveQueryLifecycleEvent
 ): LiveQueryLifecycleTransition {
   if (event.type === 'subscribed') {
+    if (state.config.snapshotRetryEnabled === false) {
+      return {
+        state: { ...state, status: 'awaiting-snapshot' },
+        effects: [],
+      };
+    }
     if (state.snapshotRetries >= state.config.maxSnapshotRetries) {
       return {
         state: { ...state, status: 'error-retry' },
