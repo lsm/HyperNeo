@@ -315,9 +315,20 @@ polling sources.
   (`extension-manager.ts:49` returns early) and then let the stop finish,
   leaving enabled persisted config with a stopped extension. Only the admission
   section is released before the lifecycle await; publishers coordinate via the
-  epoch bump, not the config queue, so no deadlock.
-- **PR A3 (surface):** expose the toggle through the `space.github.*` config RPCs and
-  `SpaceExternalEventsSettings` UI, plus a suppression counter with its own gate-side
+  epoch bump, not the config queue, so no deadlock — and **every
+  admission/projection config mutation bumps and rechecks the epoch, not just
+  disablement** (review finding, PR #2723): the B3 mutation queue serializes
+  config writes with each other but not with publisher ingestion, so a stale
+  publisher could project away key K, then a projection update restore K for a
+  just-validated subscription on K, and the stale publisher then insert and
+  broadcast a payload without K — the newly valid automation silently fails to
+  match and the stored event stays incompatible on replay. Each such mutation
+  bumps the epoch inside its queue operation; every publisher re-verifies it
+  immediately before the synchronous insert, reprojecting from fresh config when
+  it changed.
+- **PR A3 (surface):** UI and counters only — the `SpaceExternalEventsSettings`
+  toggle UI reusing the write RPC A2 already delivered (review finding, PR #2723;
+  A3 adds no RPC surface), plus a suppression counter with its own gate-side
   storage (review finding, PR #2723): the existing health `eventTypes` machinery
   derives from `ExternalEventStore.listEventCountsByTopic`
   (`github-event-extension.ts:1533-1558`), which never sees gate-dropped events, and
@@ -328,8 +339,13 @@ polling sources.
 
 ### Chain B — config-driven filter/mapping pipeline (admission + P1 transform)
 
-- **PR B1 (pin):** pin `toExternalEvent` payload key sets per event type (incl.
-  `rawPayload` presence) — the transform's parity baseline.
+- **PR B1 (pin):** pin `toExternalEvent` payload key sets per **event type ×
+  source** (incl. `rawPayload` presence) — the transform's parity baseline.
+  Event type alone is insufficient (review finding, PR #2723): webhook
+  `check_run` emits only `checkName`/`conclusion`/`runUrl`
+  (`github-normalizer.ts:541`) while polling `check_run` additionally emits
+  `checkRunId`/`name`/`status`/`headSha` (`:565-573`), so a per-type table would
+  let projection drop source-only fields while parity passes.
 - **PR B2 (admission):** extend the ingestion gates with
   `eventTypeAllowed(config, event)` — per-space allow/deny lists over `eventType`
   (and optionally `action`), config resolved from the `settings_json` the webhook
@@ -351,16 +367,18 @@ polling sources.
   `getByDedupe` check before PR resolution; short-circuiting unconditionally
   would drop a GitHub redelivery whose canonical row is retryable `published`,
   stranding its republish — the same behavior A2's dedupe bypass forbids, one
-  return point earlier. The pre-gate first queries the store for any retryable
-  `published` row of the matched space whose topic matches the event type's
-  suffix family for that repo — and B2 includes a supporting index, because the
-  current schema's indexes (`(space_id, source, dedupe_key)`, `(state,
-  updated_at)`, `(space_id, source, ingested_at)` — `migrations.ts:6597-6604`,
-  `:9101-9102`) do not cover that predicate and the lookup would otherwise scan
-  retained rows on every denied enrichment webhook (review finding, PR #2723);
-  a composite `(space_id, source, state)` index plus topic-prefix correlation
-  (or a stored topic-family column) keeps the precheck cheap against the REST
-  call it guards. If any retryable row exists, fall through to the normal
+  return point earlier. The pre-gate correlates on **this delivery**, not the
+  topic family (review finding, PR #2723): a family-wide "any retryable
+  `published` row in this repo/topic family" lookup degenerates — unmatched
+  events stay `published` until TTL even after successful handling (§2 item 3),
+  so one stale row would disable the short-circuit for every later denied
+  delivery. GitHub redeliveries carry the same `X-GitHub-Delivery` ID, so the
+  check is an exact `source_event_id`/delivery-ID lookup (`sourceEventId` is
+  persisted per event), with B2 adding a supporting `(space_id, source,
+  source_event_id)`-style index — the current schema's indexes (`(space_id,
+  source, dedupe_key)`, `(state, updated_at)`, `(space_id, source,
+  ingested_at)` — `migrations.ts:6597-6604`, `:9101-9102`) cover none of these
+  predicates; only a matching retryable row falls through to the normal
   resolution+dedupe path.
   Short-circuits also **`markWebhookReceived` on all matched targets first** (review
   finding, PR #2723): the enrichment handlers otherwise mark only after PR
