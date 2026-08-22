@@ -261,10 +261,13 @@ note.
   production gates the backoff arm with retryAttempt < getMaxProviderRetries()
   and separately detects exhaustion, so the runtime setting must be an input,
   :1066–1151 + getMaxProviderRetries; recoveryState, generation flags, lifecycle
-  state — interrupted/cleaning-up gates every arm: processing status gates
-  startup/transient (:898–904, :1010–1015) and `isQueryInterrupted` folds in the
-  abort-controller signal (:853–858, :1066–1070) — distinct from generation
-  supersession; prompt
+  state — **route-specific**, not a blanket gate: processing status gates
+  startup/transient (:898–904, :1010–1015) and `isQueryInterrupted` (which folds
+  in the abort-controller signal, :853–858, :1066–1070) gates transient/provider,
+  but the message-not-found arm checks only attempt and cleanup state (:969) and
+  deliberately still consumes the resume pointer and retries while interrupted —
+  pin that asymmetry explicitly so the classifier does not suppress the route;
+  prompt
   redeliverable — at attempt 0 a startup timeout with
   an empty consumed set and empty queue is futile and falls through to the
   terminal cascade via `canRedeliverPromptOnStartupRetry`, :887–905) →
