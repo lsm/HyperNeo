@@ -21,7 +21,20 @@ export type StopVerificationDecision =
   | { action: 'report_leak'; reason: string };
 
 export function isStopDownProcessingStatus(status: AgentProcessingState['status']): boolean {
-  return status === 'idle' || status === 'interrupted';
+  switch (status) {
+    case 'idle':
+    case 'interrupted':
+      return true;
+    case 'queued':
+    case 'processing':
+    case 'waiting_for_input':
+    case 'rate_limit_cooldown':
+      return false;
+    default: {
+      const _exhaustive: never = status;
+      return Boolean(_exhaustive);
+    }
+  }
 }
 
 export interface SessionLivenessSnapshot {

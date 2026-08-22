@@ -10,21 +10,22 @@ import {
   VERIFIED_STOP_MAX_INTERRUPT_ATTEMPTS,
 } from '../../../../src/lib/space/runtime/stop-verification-gates';
 
-const ALL_PROCESSING_STATUSES: AgentProcessingState['status'][] = [
-  'idle',
-  'queued',
-  'processing',
-  'waiting_for_input',
-  'rate_limit_cooldown',
-  'interrupted',
-];
+const STATUS_DOWN_ELIGIBILITY: Record<AgentProcessingState['status'], boolean> = {
+  idle: true,
+  interrupted: true,
+  queued: false,
+  processing: false,
+  waiting_for_input: false,
+  rate_limit_cooldown: false,
+};
 
-const NOT_DOWN_PROCESSING_STATUSES: AgentProcessingState['status'][] = [
-  'queued',
-  'processing',
-  'waiting_for_input',
-  'rate_limit_cooldown',
-];
+const ALL_PROCESSING_STATUSES = Object.keys(
+  STATUS_DOWN_ELIGIBILITY
+) as AgentProcessingState['status'][];
+
+const NOT_DOWN_PROCESSING_STATUSES = ALL_PROCESSING_STATUSES.filter(
+  (status) => !STATUS_DOWN_ELIGIBILITY[status]
+);
 
 function makeSnapshot(overrides: Partial<StopVerificationSnapshot> = {}): StopVerificationSnapshot {
   return {
@@ -47,6 +48,12 @@ describe('isStopDownProcessingStatus', () => {
   test('rejects every other processing status', () => {
     for (const status of NOT_DOWN_PROCESSING_STATUSES) {
       expect(isStopDownProcessingStatus(status)).toBe(false);
+    }
+  });
+
+  test('agrees with the exhaustive eligibility table for every status', () => {
+    for (const status of ALL_PROCESSING_STATUSES) {
+      expect(isStopDownProcessingStatus(status)).toBe(STATUS_DOWN_ELIGIBILITY[status]);
     }
   });
 });
