@@ -567,7 +567,13 @@ note.
   stage would block on a consumer that has not started and time out every
   retry. The admission effect is synchronous insertion with a detached/stored
   acknowledgement (or shell-retained), and pins record that recursion begins
-  without awaiting consumption; the existing generation guards inform the resnapshot stage but must not
+  without awaiting consumption — **with the detached acknowledgement owned**:
+  the promise rejects when the entry is cleared, times out, or rejected before
+  consumption (message-queue.ts:95–128, :141–155), and production attaches
+  `.catch(() => {})` at `:1145`; the admission stage attaches a rejection
+  handler or transfers the promise to a defined owner, and the rejection path
+  is pinned alongside the non-await ordering — discarding the detached promise
+  is an unhandled rejection; the existing generation guards inform the resnapshot stage but must not
   be presented as complete fencing — PR 1 pins the unfenced windows (transient
   arm :1024–1034 ahead of :1060; every arm's awaited `setIdle` ahead of its
   first guard; the message-not-found pointer consumption at :970 is *not* one —
@@ -622,7 +628,17 @@ note.
      route; arms become interpreters.
   4. **PR 4 (dedup):** collapse the four teardown liturgies into one
      parameterized helper.
-  5. **PR 5 (cleanup/ADR note).**
+  5. **PR 5 (fence & idle-transition ownership):** implements the
+     owned-terminal-fence cancellation and owner-scoped idle machinery this
+     proposal requires but no earlier PR touches — the stale-route fence
+     cancels (query-runner terminal/validation/handoff routes), the ACP
+     terminal path takes its post-effect resnapshot and fence-cancel before
+     `setIdle` (acp-query-runner.ts:921), and `ProcessingStateManager.setIdle`
+     gains the generation/owner-scoped state transition and waiter drain with
+     the replacement-during-publish interleaving pinned
+     (processing-state-manager.ts:156, :168–175). Without this PR the plan
+     would characterize the leaks and leave them in production.
+  6. **PR 6 (cleanup/ADR note).**
 - **Phase 0 primitives:** none for the *routing* state (generation counter,
   recoveryState, timers — all in-memory; the startup gate is the in-memory
   analog of spawn reservation, no DB primitive warranted in a single process
