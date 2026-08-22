@@ -244,6 +244,15 @@ describe('redactCommandSecrets', () => {
     ).toEqual(['-c', `echo "--token topsecret" && curl --token [redacted]`]);
   });
 
+  test('limits nested header redaction to header-taking commands', () => {
+    expect(getAcpCommandIdentityDigest(`bash -c "tool -H x file-a"`)).not.toBe(
+      getAcpCommandIdentityDigest(`bash -c "tool -H x file-b"`)
+    );
+    expect(
+      getAcpCommandIdentityDigest(`bash -c "curl -H 'Authorization: Bearer topsecret' /a"`)
+    ).toBe(getAcpCommandIdentityDigest(`bash -c "curl -H 'Authorization: Bearer othersafe' /a"`));
+  });
+
   test('stops treating assignments as environment after the command word', () => {
     expect(getAcpCommandIdentityDigest(`sh -c "rm -- 'API_TOKEN=one'"`)).not.toBe(
       getAcpCommandIdentityDigest(`sh -c "rm -- 'API_TOKEN=two'"`)
@@ -270,15 +279,6 @@ describe('redactCommandSecrets', () => {
     ).toBe(
       getAcpCommandIdentityDigest(`sh -c 'curl https://a && API_TOKEN=othersafe curl https://b'`)
     );
-  });
-
-  test('limits nested header redaction to header-taking commands', () => {
-    expect(getAcpCommandIdentityDigest(`bash -c "tool -H x file-a"`)).not.toBe(
-      getAcpCommandIdentityDigest(`bash -c "tool -H x file-b"`)
-    );
-    expect(
-      getAcpCommandIdentityDigest(`bash -c "curl -H 'Authorization: Bearer topsecret' /a"`)
-    ).toBe(getAcpCommandIdentityDigest(`bash -c "curl -H 'Authorization: Bearer othersafe' /a"`));
   });
 
   test('keeps the quote wrapper around redacted url tokens', () => {
