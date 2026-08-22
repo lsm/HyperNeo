@@ -351,8 +351,8 @@ polling sources.
   (and optionally `action`), config resolved from the `settings_json` the webhook
   path already loads (`:728`); polling resolves once per space via
   `listEnabledSpaces`. Default config = allow-all (current behavior). The
-  synthetic-action restriction is **webhook-only and limited to the generic
-  list-endpoint kinds** (review findings, PR #2723): `normalizeGitHubPollingRow`
+  synthetic-action restriction is **polling-only** and limited to the generic
+  list-endpoint kinds (review findings, PR #2723): `normalizeGitHubPollingRow`
   assigns every row action `polled` (`:411`), so an `issue_comment.created`
   allowlist on a polling-only space would drop every comment and `polled` cannot
   distinguish creation from edit — action filters do not apply to those polling
