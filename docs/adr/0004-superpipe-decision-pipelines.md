@@ -178,10 +178,13 @@ repository primitives, which effect stages must call.
 2. **Declared read/write sets, enforced.** The interpreter refuses to run a flow
    in which a stage reads a key that an earlier effect stage wrote unless an
    intervening `snapshot`/`resnapshot` re-gathers it — staleness prevention made
-   structural, the same way `!hasDecided` made precedence structural. Only an
-   *unconditional* re-gather clears the write: a `when`-guarded re-gather may be
-   skipped on a path, so validation treats the key as still dirty until an
-   unguarded stage re-gathers it (review round 1 of the combinator PR). The
+   structural, the same way `!hasDecided` made precedence structural.
+   Re-gathers are guard-aware (review rounds 1–2 of the combinator PR): an
+   *unconditional* re-gather clears the write for every reader; a `when`-guarded
+   re-gather re-enables reads only for stages sharing its guard, because the
+   guarded pair always fires together (branch presence is monotone within a
+   run). Symmetrically, a key introduced only by a guarded gather is readable
+   only under that guard until an unconditional gather provides it. The
    declaration is load-bearing by construction: stages access state through the
    declared keys' accessors, not the raw context, so an undeclared read is not
    expressible.

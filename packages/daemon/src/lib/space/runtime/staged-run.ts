@@ -510,7 +510,13 @@ function validateStageContract(
   }
   for (const key of inputKeys) validateKeyShape(flow, key, 'input');
   const provided = new Set<string>(inputKeys);
-  const dirty = new Set<string>();
+  const conditional = new Map<string, Set<string>>();
+  const availableAt = (key: string, when: string | undefined): boolean => {
+    if (provided.has(key)) return true;
+    const guards = conditional.get(key);
+    return guards !== undefined && when !== undefined && guards.has(when);
+  };
+  const dirty = new Map<string, Set<string> | null>();
   let decisionSeen = false;
   let halted = false;
   for (const stage of stages) {
@@ -530,13 +536,24 @@ function validateStageContract(
         }
         continue;
       }
-      if (dirty.has(key)) {
-        throw new StagedRunContractError(
-          flow,
-          `stage ${stage.name} reads "${key}" after an effect wrote it — add an unconditional snapshot/resnapshot that re-gathers it (a when-guarded re-gather may be skipped)`
-        );
+      const stale = dirty.get(key);
+      if (stale !== undefined) {
+        const freshUnderGuard = stale !== null && stage.when !== undefined && stale.has(stage.when);
+        if (!freshUnderGuard) {
+          throw new StagedRunContractError(
+            flow,
+            `stage ${stage.name} reads "${key}" after an effect wrote it — re-gather it with an unconditional snapshot/resnapshot, or one sharing this stage's guard`
+          );
+        }
       }
-      if (!provided.has(key)) {
+      if (!availableAt(key, stage.when)) {
+        const guards = conditional.get(key);
+        if (guards) {
+          throw new StagedRunContractError(
+            flow,
+            `stage ${stage.name} reads "${key}" that is only provided under guard [${[...guards].join(', ')}] — read it from a stage with the same guard or re-gather it unconditionally`
+          );
+        }
         throw new StagedRunContractError(
           flow,
           `stage ${stage.name} reads "${key}" that no input or earlier stage provides`
@@ -551,9 +568,22 @@ function validateStageContract(
     }
     if (stage.kind === 'snapshot' || stage.kind === 'resnapshot') {
       for (const key of stage.provides) {
-        provided.add(key);
         if (stage.when === undefined) {
+          provided.add(key);
+          conditional.delete(key);
           dirty.delete(key);
+        } else {
+          if (!provided.has(key)) {
+            const guards = conditional.get(key) ?? new Set<string>();
+            guards.add(stage.when);
+            conditional.set(key, guards);
+          }
+          const stale = dirty.get(key);
+          if (stale === null) {
+            dirty.set(key, new Set([stage.when]));
+          } else if (stale !== undefined) {
+            stale.add(stage.when);
+          }
         }
       }
     }
@@ -563,13 +593,13 @@ function validateStageContract(
     }
     if (stage.kind === 'effect') {
       for (const key of stage.writes) {
-        if (!provided.has(key)) {
+        if (!availableAt(key, stage.when)) {
           throw new StagedRunContractError(
             flow,
             `effect stage ${stage.name} writes "${key}" before any stage provides it`
           );
         }
-        dirty.add(key);
+        dirty.set(key, null);
       }
     }
     if (stage.kind === 'halt' && stage.when === undefined) halted = true;

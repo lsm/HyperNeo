@@ -254,7 +254,33 @@ describe('stagedRun composition contract', () => {
     expect(flow({})).resolves.toEqual({ status: 'completed', result: 3 });
   });
 
-  test('a when-guarded gather may still introduce a key for later reads', async () => {
+  test('a guarded re-gather re-enables reads for stages sharing its guard', async () => {
+    const flow = stagedRun<Box>('same-guard-regather', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+      s.decide({
+        name: 'route',
+        reads: ['value'],
+        branches: ['regather'],
+        run: ({ value }) => ({ decision: value, regather: { live: true } }),
+      }),
+      s.effect({ name: 'mutate', writes: ['value'], run: () => {} }),
+      s.resnapshot({
+        name: 'reload',
+        when: 'regather',
+        provides: ['value'],
+        run: () => ({ value: 2 }),
+      }),
+      s.halt({
+        name: 'end',
+        when: 'regather',
+        reads: ['value'],
+        run: ({ value }) => value,
+      }),
+    ]);
+    await expect(flow({})).resolves.toEqual({ status: 'completed', result: 2 });
+  });
+
+  test('a when-guarded gather may introduce a key for reads under the same guard', async () => {
     type Pair = { value: number; extra: number };
     const flow = stagedRun<Pair>('guarded-provide', (s) => [
       s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
@@ -273,6 +299,115 @@ describe('stagedRun composition contract', () => {
       s.halt({ name: 'end', when: 'loadExtra', reads: ['extra'], run: ({ extra }) => extra }),
     ]);
     await expect(flow({})).resolves.toEqual({ status: 'completed', result: 9 });
+  });
+
+  test('refuses an unguarded read of a key only a guarded gather provides', () => {
+    type Pair = { value: number; extra: number };
+    expect(() =>
+      stagedRun<Pair>('guarded-read', (s) => [
+        s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+        s.decide({
+          name: 'route',
+          reads: ['value'],
+          branches: ['loadExtra'],
+          run: ({ value }) => ({ decision: value, loadExtra: { want: true } }),
+        }),
+        s.resnapshot({
+          name: 'extra',
+          when: 'loadExtra',
+          provides: ['extra'],
+          run: () => ({ extra: 5 }),
+        }),
+        s.halt({ name: 'end', reads: ['extra'], run: ({ extra }) => extra }),
+      ])
+    ).toThrow(/only provided under guard/);
+  });
+
+  test('refuses a read of a guarded-provided key under a different guard', () => {
+    type Pair = { value: number; extra: number };
+    expect(() =>
+      stagedRun<Pair>('wrong-guard-read', (s) => [
+        s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+        s.decide({
+          name: 'route',
+          reads: ['value'],
+          branches: ['loadExtra', 'otherPath'],
+          run: ({ value }) => ({ decision: value, loadExtra: { want: true } }),
+        }),
+        s.resnapshot({
+          name: 'extra',
+          when: 'loadExtra',
+          provides: ['extra'],
+          run: () => ({ extra: 5 }),
+        }),
+        s.halt({
+          name: 'end',
+          when: 'otherPath',
+          reads: ['extra'],
+          run: ({ extra }) => extra,
+        }),
+      ])
+    ).toThrow(/only provided under guard/);
+  });
+
+  test('an unconditional re-gather makes a guarded-provided key unconditionally readable', async () => {
+    type Pair = { value: number; extra: number };
+    const flow = stagedRun<Pair>('guarded-then-open', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+      s.decide({
+        name: 'route',
+        reads: ['value'],
+        branches: ['loadExtra'],
+        run: ({ value }) => ({ decision: value, loadExtra: { want: true } }),
+      }),
+      s.resnapshot({
+        name: 'extra',
+        when: 'loadExtra',
+        provides: ['extra'],
+        run: () => ({ extra: 5 }),
+      }),
+      s.resnapshot({ name: 'extra-final', provides: ['extra'], run: () => ({ extra: 6 }) }),
+      s.halt({ name: 'end', reads: ['extra'], run: ({ extra }) => extra }),
+    ]);
+    await expect(flow({})).resolves.toEqual({ status: 'completed', result: 6 });
+  });
+
+  test('an effect may write a guarded-provided key under the same guard', async () => {
+    type Pair = { value: number; extra: number };
+    const flow = stagedRun<Pair>('guarded-write', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+      s.decide({
+        name: 'route',
+        reads: ['value'],
+        branches: ['loadExtra'],
+        run: ({ value }) => ({ decision: value, loadExtra: { want: true } }),
+      }),
+      s.resnapshot({
+        name: 'extra',
+        when: 'loadExtra',
+        provides: ['extra'],
+        run: () => ({ extra: 5 }),
+      }),
+      s.effect({
+        name: 'mutate-extra',
+        when: 'loadExtra',
+        writes: ['extra'],
+        run: () => {},
+      }),
+      s.resnapshot({
+        name: 'reload-extra',
+        when: 'loadExtra',
+        provides: ['extra'],
+        run: () => ({ extra: 7 }),
+      }),
+      s.halt({
+        name: 'end',
+        when: 'loadExtra',
+        reads: ['extra'],
+        run: ({ extra }) => extra,
+      }),
+    ]);
+    await expect(flow({})).resolves.toEqual({ status: 'completed', result: 7 });
   });
 });
 
