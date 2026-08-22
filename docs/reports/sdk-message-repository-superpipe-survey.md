@@ -21,9 +21,13 @@ product flows through it in both directions.
 | Mutators | :1370–1375, :1377–1428, :1430–1452, :1462–1502, :2020–2049 | Timestamp update, pending-message delete/defer, rewind deletes, hyperneo-action updates. |
 
 Admission-seam fact: the module-top pure helpers — `isVisibleBadgeRow` :65,
-`isOlderThanMessageSearchTtl` :80, `computeIsRenderable` :87, `computeIsTerminal`
+`computeIsRenderable` :87, `computeIsTerminal`
 :125, `extractParentToolUseId` :129, `extractSdkUuid` :134,
-`extractReplacementEdges` :144 — are the started extraction. The three save
+`extractReplacementEdges` :144 — are the started extraction. One near-miss:
+`isOlderThanMessageSearchTtl` :80–85 reads `Date.now()` internally (:84), so it
+is time-dependent, not referentially pure — any core consuming it (C2) must
+take `now` as an injected input (the shell gathers it once per flush pass) so
+the retention cutoff is deterministically testable. The three save
 variants each re-derive subsets inline with one deliberate divergence:
 `saveUserMessageCore` gates the conversation anchor on `sendStatus ∈
 {consumed, failed}` (:1094–1097) while `saveSDKMessage` does not (:542). Pin,
@@ -142,8 +146,14 @@ promoted). New module `sdk-message-projections.ts` beside the repo.
 - **PR A1 (test-only):** fill characterization gaps —
   `getAssistantMessagesSince` (zero coverage), `getUserMessageContentByUuid`
   (zero), `updateHyperNeoActionMessageByUuid` behavior (only EXPLAIN-pinned
-  today), `markDeliveryFailedByUuid` exclusive variant (zero), the
-  `type:'unknown'` parse-fallback table across every parsing reader, subagent
+  today), `markDeliveryFailedByUuid` exclusive variant (zero), a per-reader
+  malformed-row policy table — the policies differ observably:
+  `_getSDKMessagesImpl` :770, `getBackgroundTaskMessages` :961, and
+  `inflatePersistedMessage` :1277 synthesize `type:'unknown'`;
+  `getRenderableTextMessages` :666–668 skips the row; `getSDKMessagesByType`
+  :993 and `getUserMessages` :1513 throw; `getUserMessageContentByUuid` :1575
+  and `getDeliveryContent` :1600 return null — pin each outcome explicitly so
+  the A2 parse layer preserves rather than normalizes them, subagent
   page-composition order + `hasMore`-with-filtering semantics,
   duplicate-uuid-across-buckets reads (pin current arbitrary-pick in both
   consumed-seq probes — `hasTerminalResultAfter` :1616–1619 and
@@ -157,9 +167,15 @@ promoted). New module `sdk-message-projections.ts` beside the repo.
   and scan-budget accounting (loop shell stays in the repo).
 - **PR A4:** extract page composition (`collectToolUseIds` :793–803,
   `composeMessagePage` :842–851, `getUserMessagesByStatus` batch math).
-- **PR A5 (cleanup + ADR note):** fold the three user-content shapers into one;
-  delete the dead `extractAssistantText` alias (:1922–1924); ADR 0004 pilot
-  note.
+- **PR A5 (cleanup + ADR note):** share the user-content shapers' *identical*
+  block-extraction primitive with an explicit policy parameter — do not fold
+  them into one unparameterized shaper: `getUserMessages` :1512–1537 and
+  `parseUserMessageRow` :1858–1882 return only the first text block with its
+  whitespace preserved, while `extractVisibleText` :1926–1942 joins every text
+  block with blank lines and trims — a direct fold changes output for
+  multi-block or whitespace-padded messages; A1 characterizes the distinction
+  first; delete the dead `extractAssistantText` alias (:1922–1924); ADR 0004
+  pilot note.
 
 ### Chain B — save-admission core (rank 2: highest impact, medium risk)
 
@@ -192,10 +208,13 @@ ADR sanctions pure-function admission gates from pilots 1/5).
   `HyperNeoActionMessage` shape — consume one core is introduced here, not in
   B1; divergences become explicit parameters pinned by B1.
 - **PR B3:** badge plan unification — pure `badgeDelta` derivation over
-  admission records + the mutation paths (:589, :1136, :1362–1364, and *both*
-  rewind operators — `deleteMessagesAfter` :1472–1477 and
-  `deleteMessagesAtAndAfter` :1492–1499 — so neither badge-recompute path
-  stays outside the unified plan); interpreter applies.
+  admission records + the mutation paths (:589, :1136, :1362–1364,
+  `saveHyperNeoActionMessage`'s bump+notify :1997–2001 — B2 routes this third
+  save variant through the shared admission record, so its badge effect
+  belongs in the unified interpreter too — and *both* rewind operators —
+  `deleteMessagesAfter` :1472–1477 and `deleteMessagesAtAndAfter`
+  :1492–1499 — so no badge-recompute path stays outside the plan);
+  interpreter applies.
 - **PR B4 (apply):** `updateMessageStatus` as plan/interpret — the pure
   planner over the pending-row snapshot produces the ordered instruction list
   (turn promotion, timestamp, and a `consumed_seq` *allocation instruction* —
@@ -211,7 +230,15 @@ ADR sanctions pure-function admission gates from pilots 1/5).
 - **PR C1 (test-only):** direct unit pins for `extractSdkUuid`/
   `extractReplacementEdges` (helpers test covers 3 of 5 exports);
   flush-boundary characterization incl. delete-then-decide ordering
-  (:304–313 — ineligible rows are deleted even when not re-inserted).
+  (:304–313 — ineligible rows are deleted even when not re-inserted); and the
+  delivery-transition window matrix C3 depends on — the status-by-action
+  accepted windows for all ten wrappers (direct repo coverage is missing for
+  `reopenDeliveryByUuid` and `markDeliveryDeferredByUuid`, and the
+  `markDeliveryFailedByUuidInclusive` pin checks only that `deferred` is
+  excluded, not its full window) plus the batch-semantics split — the
+  turn-end variants' first-uuid all-or-nothing rule (:1763) vs the per-uuid
+  skip of the bulk variants (:1788, :1808) — so a mistyped window or a
+  flattened batch rule cannot change delivery behavior unnoticed in C3.
 - **PR C2:** extract `message-search-admission.ts` as a real `decisionRun`
   (legitimate first-skip-wins precedence as implemented at :307–313:
   superseded → searchable-type → eligibility → body → user-status; runs ≤500
@@ -237,12 +264,17 @@ below ~10 µs/decision against dominated neighbor costs.
 - **Read-projection row loops — NO GATES.** `getRenderableTextMessages`' scan
   budget is `max(limit, 250)` (:649) — 250 is the floor, and a caller-supplied
   limit above it raises the budget 1:1 (the sole production caller passes 24,
-  so 250 is today's effective ceiling); `_getSDKMessagesImpl` inflates ≤limit
-  rows. `JSON.parse` of a full `sdk_message` blob (~5–50 µs/row) dominates,
-  and the ADR names tight loops as inline territory — per-row pipeline
-  overhead (~2 µs/row ≈ 0.5 ms at the 250-row floor, scaling linearly with
-  limit) is the case it excludes. Per-row work stays plain function calls;
-  pipeline composition, if ever, is per call, not per row.
+  so 250 is today's effective ceiling). `_getSDKMessagesImpl`'s top-level
+  query inflates ≤limit rows, but its subagent second query (:810–839) has no
+  LIMIT and parses every row matching the page's tool-use ids — one top-level
+  assistant message can fan out to thousands of subagent rows even at
+  `limit = 1`, so the inflation bound is `limit + unbounded subagent
+  fan-out`, not `limit`. `JSON.parse` of a full `sdk_message` blob (~5–50
+  µs/row) dominates, and the ADR names tight loops as inline territory —
+  per-row pipeline overhead (~2 µs/row ≈ 0.5 ms at the 250-row floor, scaling
+  linearly with rows actually scanned) is the case it excludes. Per-row work
+  stays plain function calls; pipeline composition, if ever, is per call, not
+  per row.
 
 ## 6. Do-not-extract zones
 
