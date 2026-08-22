@@ -247,6 +247,26 @@ describe('LimitErrorLlmClassifier', () => {
     expect(seenThinking).toEqual([{ type: 'enabled', budgetTokens: 16000 }]);
   });
 
+  it('never selects the acp provider for the SDK classification query', async () => {
+    const seenProviders: string[] = [];
+    const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
+    const originalApply = deps.providerService.applyEnvVarsToProcessForProvider;
+    deps.providerService = {
+      ...deps.providerService,
+      getAvailableProviders: async () => [
+        { id: 'acp', name: 'ACP', models: [], available: true },
+        { id: 'glm', name: 'GLM', models: [], available: true },
+      ],
+      applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
+        seenProviders.push(providerId);
+        return originalApply(providerId, modelId);
+      },
+    };
+    const classifier = new LimitErrorLlmClassifier('s1', { ...deps, excludeProvider: 'anthropic' });
+    await classifier.classify('acp never classifies this wall');
+    expect(seenProviders).toEqual(['glm']);
+  });
+
   it('skips registry-unavailable providers and classifies via the next available one', async () => {
     const seenProviders: string[] = [];
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');

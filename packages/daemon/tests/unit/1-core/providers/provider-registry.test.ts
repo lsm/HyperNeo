@@ -172,6 +172,26 @@ describe('ProviderRegistry', () => {
     });
   });
 
+  describe('getProviderInfo', () => {
+    it('isolates per-provider probe failures instead of aborting discovery', async () => {
+      const healthy = makeAnthropicProvider();
+      const broken = new (class extends MockProvider {
+        readonly id = 'broken' as const;
+        override async getModels(): Promise<ModelInfo[]> {
+          throw new Error('probe failed');
+        }
+      })();
+      registry.register(healthy);
+      registry.register(broken);
+
+      const infos = await registry.getProviderInfo();
+
+      expect(infos.map((i) => i.id)).toEqual(['anthropic', 'broken']);
+      expect(infos.find((i) => i.id === 'broken')?.models).toEqual([]);
+      expect(infos.find((i) => i.id === 'anthropic')?.models).toContain('mock-1');
+    });
+  });
+
   describe('getAll', () => {
     it('should return all registered providers', () => {
       const mock1 = new MockProvider();

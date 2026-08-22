@@ -278,13 +278,25 @@ export class RateLimitWatchdog {
           `LLM limit refinement: retry at ${new Date(resetMs).toISOString()} ` +
             `(was backoff ladder) for error: ${errorMessage}`
         );
+        const previousHint = this.lastHint;
         if (result.kind) {
           this.lastHint = { ...this.lastHint, kind: result.kind };
         }
-        if (chargedLadder && this.retryCount > 0) {
+        const refunded = chargedLadder && this.retryCount > 0;
+        if (refunded) {
           this.retryCount--;
         }
-        await this.scheduleCooldown(errorMessage, cooldownFromReset(resetMs, now), entryGeneration);
+        const armed = await this.scheduleCooldown(
+          errorMessage,
+          cooldownFromReset(resetMs, now),
+          entryGeneration
+        );
+        if (!armed) {
+          this.lastHint = previousHint;
+          if (refunded) {
+            this.retryCount++;
+          }
+        }
       })
       .catch(() => {})
       .finally(() => {
@@ -296,7 +308,7 @@ export class RateLimitWatchdog {
     errorMessage: string,
     decision: CooldownDecision,
     episodeGeneration: number
-  ): Promise<void> {
+  ): Promise<boolean> {
     const kind = this.lastHint?.kind ?? classifyLimitKind(errorMessage, decision);
     this.limitKind = kind;
 
@@ -318,7 +330,7 @@ export class RateLimitWatchdog {
         'Cooldown state write completed but a newer action owns the cooldown; ' +
           'not publishing pause or arming.'
       );
-      return;
+      return false;
     }
 
     this.notifyPause({
@@ -343,6 +355,7 @@ export class RateLimitWatchdog {
     ) {
       this.cooldownTimer.unref();
     }
+    return true;
   }
 
   private async fireCooldownRetry(errorMessage: string): Promise<void> {

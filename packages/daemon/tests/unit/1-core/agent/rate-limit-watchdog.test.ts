@@ -653,6 +653,7 @@ describe('RateLimitWatchdog', () => {
 
       expect(notifyPause).toHaveBeenCalledTimes(1);
       expect((watchdog as unknown as { cooldownTimer: unknown }).cooldownTimer).toBeNull();
+      expect(watchdog.getState().retryCount).toBe(1);
     });
   });
 
