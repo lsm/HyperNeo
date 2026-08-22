@@ -7799,6 +7799,7 @@ export class SpaceRuntime {
     const now = Date.now();
     for (const space of spaces) {
       for (const task of this.config.taskRepo.listRateLimitedBySpace(space.id)) {
+        if (task.restrictions?.limit === 'billing-terminal') continue;
         const resetAt = task.restrictions?.resetAt;
         if (resetAt !== undefined && resetAt > now) continue;
         try {

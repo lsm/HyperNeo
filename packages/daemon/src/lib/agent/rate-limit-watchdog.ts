@@ -539,6 +539,10 @@ export class RateLimitWatchdog {
     return this.cooldownTimer !== null;
   }
 
+  isRecoveryPending(): boolean {
+    return this.cooldownTimer !== null || this.fallbackPending;
+  }
+
   isRateLimitBannerCancelled(): boolean {
     return this.bannerCancelled;
   }

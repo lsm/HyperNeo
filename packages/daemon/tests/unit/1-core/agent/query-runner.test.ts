@@ -278,6 +278,39 @@ describe('QueryRunner', () => {
       expect(runner.resolveRetryUserMessage(undefined)).toBe(runner.lastConsumedUserMessage);
       expect(runner.resolveRetryUserMessage('unknown-uuid')?.uuid).toBe('steer-uuid');
     });
+
+    it('retains uuid correlation after the first SDK response clears the startup map', async () => {
+      async function* generator() {
+        yield {
+          message: { uuid: 'init-uuid', message: { content: 'first prompt' } },
+          onSent: () => {},
+        };
+        yield {
+          message: { uuid: 'steer-uuid', message: { content: 'later steer' } },
+          onSent: () => {},
+        };
+      }
+      const ctx = createContext({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: generator,
+        } as unknown as MessageQueue,
+      });
+      runner = new QueryRunner(ctx);
+
+      const wrapper = runner.createMessageGeneratorWrapper(1);
+      let first = true;
+      for await (const yielded of wrapper) {
+        void yielded;
+        if (first) {
+          ctx.firstMessageReceived = true;
+          first = false;
+        }
+      }
+
+      expect(runner.resolveRetryUserMessage('init-uuid')?.uuid).toBe('init-uuid');
+      expect(runner.resolveRetryUserMessage('init-uuid')?.content).toBe('first prompt');
+    });
   });
 
   describe('start', () => {

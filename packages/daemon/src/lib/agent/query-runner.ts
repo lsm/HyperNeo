@@ -319,6 +319,8 @@ export interface QueryRunnerContext {
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
     hint?: LimitRetryHint
   ) => Promise<boolean>;
+
+  isLimitRecoveryPending?(): boolean;
 }
 
 export class QueryRunner {
@@ -332,6 +334,9 @@ export class QueryRunner {
     Array<{ uuid: string; content: string | MessageContent[] }>
   >();
 
+  private _turnConsumedUserMessages: Array<{ uuid: string; content: string | MessageContent[] }> =
+    [];
+
   get lastConsumedUserMessage() {
     return this._lastConsumedUserMessage;
   }
@@ -340,6 +345,10 @@ export class QueryRunner {
     userMessageUuid?: string
   ): { uuid: string; content: string | MessageContent[] } | null {
     if (userMessageUuid) {
+      for (let i = this._turnConsumedUserMessages.length - 1; i >= 0; i--) {
+        const entry = this._turnConsumedUserMessages[i];
+        if (entry.uuid === userMessageUuid) return entry;
+      }
       for (const messages of this._consumedUserMessages.values()) {
         const found = messages.find((entry) => entry.uuid === userMessageUuid);
         if (found) return found;
@@ -1361,12 +1370,14 @@ export class QueryRunner {
         if (
           !this.ctx.isCleaningUp() &&
           !recoveryState.rateLimitCooldownScheduled &&
+          !(this.ctx.isLimitRecoveryPending?.() ?? false) &&
           stateManager.getState().status !== 'rate_limit_cooldown'
         ) {
           await stateManager.setIdle();
         }
 
         this._lastConsumedUserMessage = null;
+        this._turnConsumedUserMessages = [];
         this._consumedUserMessages.delete(queryGeneration);
 
         this.ctx.queryPromise = null;
@@ -1522,6 +1533,13 @@ export class QueryRunner {
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
         };
+        this._turnConsumedUserMessages.push({
+          uuid: message.uuid ?? '',
+          content: (message.message?.content ?? '') as unknown as string | MessageContent[],
+        });
+        if (this._turnConsumedUserMessages.length > 32) {
+          this._turnConsumedUserMessages.shift();
+        }
         if (!this.ctx.firstMessageReceived) {
           const generationMessages = this._consumedUserMessages.get(queryGeneration) ?? [];
           generationMessages.push({

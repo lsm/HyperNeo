@@ -121,7 +121,8 @@ export function assessLimitError(
   const resetAtMs = structuredReset ?? parsed?.resetAtMs ?? null;
   const billingTerminal =
     resetAtMs === null &&
-    (isStructuredBillingTerminal(signal.rateLimitInfo) ||
+    (signal.httpStatus === 402 ||
+      isStructuredBillingTerminal(signal.rateLimitInfo) ||
       (rawText !== '' && isBillingTerminal(rawText, now)));
   const textLimit = rawText !== '' && looksLikeLimitText(rawText);
   const statusLimit = signal.httpStatus === 429;

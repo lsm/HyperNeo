@@ -211,6 +211,13 @@ describe('assessLimitError', () => {
     expect(assessment.billingTerminal).toBe(true);
   });
 
+  it('treats an HTTP 402 status as billing-terminal evidence with generic text', () => {
+    const assessment = assessLimitError({ rawText: 'Payment Required', httpStatus: 402 }, NOW);
+    expect(assessment.isLimit).toBe(true);
+    expect(assessment.billingTerminal).toBe(true);
+    expect(assessment.kind).toBe('usage_limit');
+  });
+
   it('ignores allowed rate-limit telemetry as limit evidence', () => {
     const resetsAtSeconds = Math.floor((NOW + 5 * HOUR) / 1000);
     for (const status of ['allowed', 'allowed_warning'] as const) {

@@ -82,6 +82,20 @@ describe('TaskAgentManager rate-limit pause/resume listener', () => {
     expect(task?.restrictions?.type).toBe('rate_limit');
   });
 
+  it('records a billing-terminal pause with its reason so recovery stays manual-only', async () => {
+    bus.publish('session.rate_limit_pause', {
+      sessionId: subSessionId,
+      kind: 'usage_limit',
+      reason: 'billing-terminal',
+    });
+    await flush();
+
+    const task = taskRepo.getTask(taskId);
+    expect(task?.status).toBe('usage_limited');
+    expect(task?.restrictions?.limit).toBe('billing-terminal');
+    expect(task?.restrictions?.resetAt).toBeDefined();
+  });
+
   it('restores the task to in_progress and clears restrictions on resume', async () => {
     const resetAt = Date.now() + 60 * 60 * 1000;
     bus.publish('session.rate_limit_pause', {

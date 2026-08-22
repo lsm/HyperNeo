@@ -820,6 +820,7 @@ export class AcpQueryRunner {
         if (
           !this.ctx.isCleaningUp() &&
           !recoveryState.rateLimitCooldownScheduled &&
+          !(this.ctx.isLimitRecoveryPending?.() ?? false) &&
           stateManager.getState().status !== 'rate_limit_cooldown'
         ) {
           await stateManager.setIdle();

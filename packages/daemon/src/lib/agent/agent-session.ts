@@ -1306,6 +1306,10 @@ export class AgentSession
     );
   }
 
+  isLimitRecoveryPending(): boolean {
+    return this.rateLimitWatchdog.isRecoveryPending();
+  }
+
   setCleaningUp(value: boolean): void {
     this._isCleaningUp = value;
   }
