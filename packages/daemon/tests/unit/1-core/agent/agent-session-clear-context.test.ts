@@ -150,9 +150,28 @@ describe('AgentSession.clearConversationContext', () => {
     spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
     spyOn(session.messageQueue, 'enqueueWithId').mockRejectedValue(new Error('queue closed'));
     const releaseSpy = spyOn(session.messageHandler, 'clearIdleSuppression');
+    const resetSpy = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
 
     await expect(session.clearConversationContext()).rejects.toThrow('queue closed');
     expect(releaseSpy).toHaveBeenCalledTimes(1);
+    expect(resetSpy).not.toHaveBeenCalled();
+  });
+
+  it('tears the query down before rethrowing when the yielded /clear times out in the queue', async () => {
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
+    const timeoutError = new Error('Message queue timeout: SDK did not consume the clear');
+    timeoutError.name = 'MessageQueueTimeoutError';
+    spyOn(session.messageQueue, 'enqueueWithId').mockRejectedValue(timeoutError);
+    const warnSpy = spyOn(session.logger, 'warn').mockImplementation(() => {});
+    const resetSpy = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
+    const stopSpy = spyOn(session['lifecycleManager'], 'stop').mockResolvedValue(undefined);
+
+    await expect(session.clearConversationContext()).rejects.toThrow('Message queue timeout');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain('resetting the query before rethrowing');
+    expect(resetSpy).toHaveBeenCalledTimes(1);
+    expect(stopSpy).not.toHaveBeenCalled();
   });
 
   it('clear resolves on the SDK result of the /clear turn, not on sent (confirmed clear)', async () => {

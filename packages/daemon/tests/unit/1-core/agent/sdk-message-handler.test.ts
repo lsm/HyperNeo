@@ -743,6 +743,48 @@ describe('SDKMessageHandler', () => {
       expect(await wait).toBe(false);
     });
 
+    it('on session_state_changed SDKs the clear wait settles on the trailing idle, not the result', async () => {
+      const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
+        ({
+          type: 'system',
+          subtype: 'session_state_changed',
+          state,
+          uuid: `state-${state}`,
+          session_id: 'sdk-session-123',
+        }) as unknown as SDKMessage;
+
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      let settled: boolean | null = null;
+      void wait.then((confirmed) => {
+        settled = confirmed;
+      });
+
+      await handler.handleMessage(sessionState('busy'));
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'clear-result',
+        user_message_uuid: 'clear-msg-id',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+      expect(settled).toBe(null);
+      expect(setIdleSpy).not.toHaveBeenCalled();
+
+      await handler.handleMessage(sessionState('idle'));
+
+      expect(await wait).toBe(true);
+      expect(settled).toBe(true);
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
+
     it('a result for another turn (e.g. /compact) does not confirm the correlated clear wait', async () => {
       const result = (uuid: string, userMessageUuid?: string): SDKMessage =>
         ({

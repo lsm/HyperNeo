@@ -80,6 +80,7 @@ export class SDKMessageHandler {
   private expectsSessionStateIdleAfterResult: boolean = false;
   private lastResultWasSuccess: boolean | null = null;
   private suppressIdleOnNextResult: boolean = false;
+  private clearAwaitingTrailingIdle: boolean = false;
   private suppressedResultWaiter: {
     resolve: (confirmed: boolean) => void;
     timer: ReturnType<typeof setTimeout>;
@@ -183,6 +184,7 @@ export class SDKMessageHandler {
 
   clearIdleSuppression(): void {
     this.suppressIdleOnNextResult = false;
+    this.clearAwaitingTrailingIdle = false;
     this.settleSuppressedResultWaiter(false);
   }
 
@@ -959,7 +961,11 @@ export class SDKMessageHandler {
       await this.finishTurn();
     }
     if (confirmsArmedClear) {
-      this.settleSuppressedResultWaiter(true);
+      if (this.usesSessionStateChangedTurnEnd && this.expectsSessionStateIdleAfterResult) {
+        this.clearAwaitingTrailingIdle = true;
+      } else {
+        this.settleSuppressedResultWaiter(true);
+      }
     }
   }
 
@@ -988,6 +994,10 @@ export class SDKMessageHandler {
       this.usesSessionStateChangedTurnEnd = false;
       this.expectsSessionStateIdleAfterResult = false;
       this.lastResultWasSuccess = null;
+      if (this.clearAwaitingTrailingIdle) {
+        this.clearAwaitingTrailingIdle = false;
+        this.settleSuppressedResultWaiter(true);
+      }
     }
   }
 

@@ -772,6 +772,13 @@ export class AgentSession
       await this.messageQueue.enqueueWithId(clearMessageId, '/clear', true);
     } catch (err) {
       this.messageHandler.clearIdleSuppression();
+      if (err instanceof Error && err.name === 'MessageQueueTimeoutError') {
+        this.logger.warn(
+          `clearConversationContext: /clear delivery to the SDK timed out — resetting the ` +
+            `query before rethrowing`
+        );
+        await this.resetQueryForcingTeardown();
+      }
       throw err;
     }
     if (!(await confirmedClear)) {
@@ -781,16 +788,20 @@ export class AgentSession
           `confirmed clear`
       );
       this.messageHandler.clearIdleSuppression();
-      const resetResult = await this.resetQuery();
-      if (!resetResult.success) {
-        this.logger.warn(
-          `clearConversationContext: query reset failed (${resetResult.error ?? 'unknown error'}) ` +
-            `— forcing query teardown before proceeding`
-        );
-        await this.lifecycleManager.stop({ catchQueryErrors: true }).catch((stopError) => {
-          this.logger.warn('clearConversationContext: forced teardown failed:', stopError);
-        });
-      }
+      await this.resetQueryForcingTeardown();
+    }
+  }
+
+  private async resetQueryForcingTeardown(): Promise<void> {
+    const resetResult = await this.resetQuery();
+    if (!resetResult.success) {
+      this.logger.warn(
+        `clearConversationContext: query reset failed (${resetResult.error ?? 'unknown error'}) ` +
+          `— forcing query teardown before proceeding`
+      );
+      await this.lifecycleManager.stop({ catchQueryErrors: true }).catch((stopError) => {
+        this.logger.warn('clearConversationContext: forced teardown failed:', stopError);
+      });
     }
   }
 
