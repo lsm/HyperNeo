@@ -282,8 +282,9 @@ async function openWorkspacePath(
             throw error;
           }
         } else if (created) {
-          symbols.fchmodat(directoryFd, cString(segment), DIRECTORY_MODE, 0);
-          nextFd = openDirectory(symbols, directoryFd, segment);
+          if (symbols.fchmodat(directoryFd, cString(segment), DIRECTORY_MODE, 0) === 0) {
+            nextFd = openDirectory(symbols, directoryFd, segment);
+          }
         }
       }
       if (nextFd < 0) throwFsError('open', segment);
