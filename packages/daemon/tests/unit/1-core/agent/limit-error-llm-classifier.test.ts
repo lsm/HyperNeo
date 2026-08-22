@@ -143,6 +143,45 @@ describe('LimitErrorLlmClassifier', () => {
     expect(prompts).toHaveLength(1);
   });
 
+  it('enforces its own deadline when provider discovery stalls, freeing the queue', async () => {
+    const hangGate = new Promise<never>(() => {});
+    const prompts: string[] = [];
+    const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
+    let discoveryCalls = 0;
+    deps.providerService = {
+      ...deps.providerService,
+      getAvailableProviders: async () => {
+        discoveryCalls += 1;
+        if (discoveryCalls === 1) {
+          await hangGate;
+        }
+        return [{ id: 'glm', name: 'GLM', models: [], available: true }];
+      },
+    };
+    deps.queryForTesting = ((params: { prompt: string }) => {
+      prompts.push(params.prompt);
+      return (async function* () {
+        yield {
+          type: 'assistant',
+          message: {
+            content: [
+              { type: 'text', text: '{"is_limit":true,"kind":"rate_limit","reset_at":null}' },
+            ],
+          },
+        };
+      })();
+    }) as LimitErrorLlmClassifierDeps['queryForTesting'];
+    const classifier = new LimitErrorLlmClassifier('s1', { ...deps, timeoutMs: 40 });
+
+    const stalled = classifier.classify('discovery stall wall');
+    const queued = classifier.classify('proceeds once the stalled task clears');
+
+    const [stalledResult, queuedResult] = await Promise.all([stalled, queued]);
+    expect(stalledResult).toBeNull();
+    expect(queuedResult?.kind).toBe('rate_limit');
+    expect(prompts).toHaveLength(1);
+  });
+
   it('unblocks the caller immediately when it aborts during provider setup', async () => {
     let releaseSetup: () => void = () => {};
     const setupGate = new Promise<void>((resolve) => {

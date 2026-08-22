@@ -58,6 +58,10 @@ function runSerialized<T>(task: () => Promise<T>): Promise<T> {
   return result;
 }
 
+function raceWithDeadline<T>(task: Promise<T>, deadline: Promise<null>): Promise<T | null> {
+  return Promise.race([task.catch(() => null), deadline]);
+}
+
 function normalizeErrorText(rawText: string): string {
   return rawText
     .trim()
@@ -182,30 +186,41 @@ export class LimitErrorLlmClassifier {
   }
 
   private async classifyUncached(rawText: string, now: number): Promise<LlmLimitAssessment | null> {
+    const abortController = new AbortController();
+    const abortTimer = setTimeout(
+      () => abortController.abort(),
+      this.deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    );
+    if (typeof abortTimer === 'object' && 'unref' in abortTimer) {
+      abortTimer.unref();
+    }
+    const deadline = new Promise<null>((resolve) => {
+      if (abortController.signal.aborted) {
+        resolve(null);
+        return;
+      }
+      abortController.signal.addEventListener('abort', () => resolve(null), { once: true });
+    });
     try {
-      const providerId = await this.resolveClassifierProvider();
+      const providerId = await raceWithDeadline(this.resolveClassifierProvider(), deadline);
       if (!providerId) return null;
 
-      const models = await this.deps.providerService.getTitleGenerationModels(providerId, 'haiku');
+      const models = await raceWithDeadline(
+        this.deps.providerService.getTitleGenerationModels(providerId, 'haiku'),
+        deadline
+      );
+      if (!models) return null;
       const providerService = this.deps.providerService;
       const originalEnv = await providerService.applyEnvVarsToProcessForProvider(
         providerId,
         models.providerModelId
       );
-      const abortController = new AbortController();
-      const abortTimer = setTimeout(
-        () => abortController.abort(),
-        this.deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
-      );
-      if (typeof abortTimer === 'object' && 'unref' in abortTimer) {
-        abortTimer.unref();
-      }
       try {
-        if (abortController.signal.aborted) return null;
-        const providerEnvVars = await providerService.getEnvVarsForModel(
-          models.providerModelId,
-          providerId
+        const providerEnvVars = await raceWithDeadline(
+          providerService.getEnvVarsForModel(models.providerModelId, providerId),
+          deadline
         );
+        if (!providerEnvVars) return null;
         const query =
           this.deps.queryForTesting ?? (await import('@anthropic-ai/claude-agent-sdk')).query;
         const agentQuery = query({
@@ -252,12 +267,13 @@ export class LimitErrorLlmClassifier {
         if (!payload) return null;
         return parseAssessment(payload);
       } finally {
-        clearTimeout(abortTimer);
         providerService.restoreEnvVars(originalEnv);
       }
     } catch (error) {
       this.logger.warn('LLM limit classification failed:', error);
       return null;
+    } finally {
+      clearTimeout(abortTimer);
     }
   }
 
