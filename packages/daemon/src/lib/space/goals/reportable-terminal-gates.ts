@@ -59,7 +59,7 @@ export function applySameOutcomeGate(ctx: ReportableTerminalCtx): ReportableTerm
 }
 
 export function applySupersedeGate(ctx: ReportableTerminalCtx): ReportableTerminalCtx {
-  return ctx.hasPriorTerminalGeneration
+  return ctx.hasPriorTerminalGeneration && isTerminalStatus(ctx.fromStatus)
     ? decided(ctx, {
         action: 'supersede_notify',
         predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION,

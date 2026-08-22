@@ -97,6 +97,19 @@ describe('decideReportableTerminal', () => {
         )
       ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
     });
+
+    test('archiving active work does not supersede a stale prior generation', () => {
+      expect(
+        decideReportableTerminal(
+          input({
+            fromStatus: 'review',
+            toStatus: 'archived',
+            hasStartGeneration: true,
+            hasPriorTerminalGeneration: true,
+          })
+        )
+      ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
+    });
   });
 
   describe('active-work completions notify', () => {
