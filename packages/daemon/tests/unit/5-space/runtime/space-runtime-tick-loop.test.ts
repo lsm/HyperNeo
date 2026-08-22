@@ -1678,6 +1678,49 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
       expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
     });
+
+    test('human-reopened task repairs blocked executions even after retries are exhausted', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: '[MCP invariant] Workflow sub-session still missing required MCP servers',
+        agentSessionId: 'session:ghost-after-restart',
+        completedAt: Date.now(),
+      });
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'blocked',
+        blockReason: 'execution_failed',
+        result: 'Workflow run stalled across daemon restart',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+      (rt as unknown as { blockedRetryCounts: Map<string, number> }).blockedRetryCounts.set(
+        run.id,
+        MAX_BLOCKED_RUN_RETRIES
+      );
+
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'in_progress',
+        blockReason: null,
+        result: null,
+      });
+
+      await rt.executeTick();
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      const repaired = nodeExecutionRepo.getById(execution.id);
+      expect(repaired?.status).toBe('in_progress');
+      expect(repaired?.agentSessionId).not.toBe('session:ghost-after-restart');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('in_progress');
+      expect(tam._spawned.length).toBeGreaterThanOrEqual(1);
+    });
   });
 
   describe('space stop parks work — stopped spaces stay parked and resume cleanly', () => {

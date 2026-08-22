@@ -355,6 +355,8 @@ export class TaskAgentManager {
 
   private readonly sessionRestoreLocks = new Map<string, Promise<void>>();
 
+  private readonly rehydrateInFlight = new Map<string, Promise<AgentSession | null>>();
+
   private spawningExecutionIds = new Set<string>();
 
   private completionCallbacks: CompletionCallbackMap = new Map();
@@ -1010,10 +1012,10 @@ export class TaskAgentManager {
             }
 
             existing.onMissingWorkflowMcpServers = async (
-              cbSessionId: string,
+              target: AgentSession,
               missing: string[]
             ) => {
-              await this.mcpSelfHeal(cbSessionId, missing);
+              await this.mcpSelfHeal(target, missing);
             };
 
             const runId = parentTask.workflowRunId;
@@ -1088,8 +1090,8 @@ export class TaskAgentManager {
       }
     }
 
-    subSession.onMissingWorkflowMcpServers = async (cbSessionId: string, missing: string[]) => {
-      await this.mcpSelfHeal(cbSessionId, missing);
+    subSession.onMissingWorkflowMcpServers = async (target: AgentSession, missing: string[]) => {
+      await this.mcpSelfHeal(target, missing);
     };
 
     await subSession.startStreamingQuery();
@@ -1821,8 +1823,8 @@ export class TaskAgentManager {
     agentSession.onMissingMemberSpaceMcpServers = async (sid: string) => {
       await this.config.spaceRuntimeService.reattachMemberSpaceTools(sid);
     };
-    agentSession.onMissingWorkflowMcpServers = async (cbSessionId: string, missing: string[]) => {
-      await this.mcpSelfHeal(cbSessionId, missing);
+    agentSession.onMissingWorkflowMcpServers = async (target: AgentSession, missing: string[]) => {
+      await this.mcpSelfHeal(target, missing);
     };
 
     if (!this.subSessions.has(taskId)) {
@@ -2091,7 +2093,7 @@ export class TaskAgentManager {
     if (!this.isSessionAlive(sessionId)) return false;
     const session = this.getAgentSessionById(sessionId);
     if (!session) return false;
-    await this.mcpSelfHeal(sessionId, ['node-agent']);
+    await this.mcpSelfHeal(session, ['node-agent']);
     return true;
   }
 
@@ -2857,6 +2859,29 @@ export class TaskAgentManager {
   }
 
   private async rehydrateSubSession(subSessionId: string): Promise<AgentSession | null> {
+    const indexed = this.agentSessionIndex.get(subSessionId);
+    if (indexed) return indexed;
+
+    const inFlight = this.rehydrateInFlight.get(subSessionId);
+    if (inFlight) return inFlight;
+
+    const rehydrateTask = this.withSessionRestoreLock(subSessionId, () =>
+      this.performSubSessionRehydrate(subSessionId)
+    );
+    this.rehydrateInFlight.set(subSessionId, rehydrateTask);
+    try {
+      return await rehydrateTask;
+    } finally {
+      if (this.rehydrateInFlight.get(subSessionId) === rehydrateTask) {
+        this.rehydrateInFlight.delete(subSessionId);
+      }
+    }
+  }
+
+  private async performSubSessionRehydrate(subSessionId: string): Promise<AgentSession | null> {
+    const alreadyIndexed = this.agentSessionIndex.get(subSessionId);
+    if (alreadyIndexed) return alreadyIndexed;
+
     log.warn(`TaskAgentManager: rehydrating ghost sub-session ${subSessionId} from DB...`);
 
     const execution = this.resolveNodeExecutionForSubSession(subSessionId);
@@ -2910,16 +2935,19 @@ export class TaskAgentManager {
       : null;
     const workflowRunId = execution.workflowRunId;
 
-    const agentSession = AgentSession.restore(
-      subSessionId,
-      this.config.db,
-      this.config.messageHub,
-      this.config.internalEventBus,
-      this.config.getApiKey,
-      this.config.skillsManager,
-      this.config.appMcpServerRepo,
-      { autoReplayPendingMessages: false }
-    );
+    const cached = this.config.sessionManager.getCachedSession(subSessionId);
+    const agentSession =
+      cached ??
+      AgentSession.restore(
+        subSessionId,
+        this.config.db,
+        this.config.messageHub,
+        this.config.internalEventBus,
+        this.config.getApiKey,
+        this.config.skillsManager,
+        this.config.appMcpServerRepo,
+        { autoReplayPendingMessages: false }
+      );
     if (!agentSession) {
       log.warn(
         `TaskAgentManager.rehydrateSubSession: AgentSession.restore() returned null for ${subSessionId} — session not in DB`
@@ -2986,8 +3014,8 @@ export class TaskAgentManager {
       await this.handleSubSessionComplete(taskId, execution.workflowNodeId, subSessionId);
     });
 
-    agentSession.onMissingWorkflowMcpServers = async (cbSessionId: string, missing: string[]) => {
-      await this.mcpSelfHeal(cbSessionId, missing);
+    agentSession.onMissingWorkflowMcpServers = async (target: AgentSession, missing: string[]) => {
+      await this.mcpSelfHeal(target, missing);
     };
 
     const pendingToolContinuations =
@@ -3002,8 +3030,17 @@ export class TaskAgentManager {
 
     this.sanitizeSDKSessionTranscriptForRehydration(agentSession, workspacePath);
 
-    await agentSession.startStreamingQuery();
-    await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+    try {
+      await agentSession.startStreamingQuery();
+      await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+    } catch (err) {
+      this.subSessions.get(taskId)?.delete(subSessionId);
+      this.agentSessionIndex.delete(subSessionId);
+      if (this.config.sessionManager.getCachedSession(subSessionId) === agentSession) {
+        await this.config.sessionManager.unregisterSession(subSessionId).catch(() => {});
+      }
+      throw err;
+    }
 
     void this.flushPendingMessagesForTarget(workflowRunId, execution.agentName, subSessionId).catch(
       (err) => {
@@ -3440,7 +3477,8 @@ export class TaskAgentManager {
     );
   }
 
-  async mcpSelfHeal(sessionId: string, missing: string[]): Promise<void> {
+  async mcpSelfHeal(target: AgentSession, missing: string[]): Promise<void> {
+    const sessionId = target.getSessionData().id;
     log.warn(
       `TaskAgentManager.mcpSelfHeal: triggered for session ${sessionId}, missing [${missing.join(', ')}]`
     );
@@ -3469,12 +3507,18 @@ export class TaskAgentManager {
       return;
     }
 
-    const agentSession = this.agentSessionIndex.get(sessionId);
-    if (!agentSession) {
-      log.error(
-        `TaskAgentManager.mcpSelfHeal: AgentSession ${sessionId} not in memory — cannot self-heal`
+    const agentSession = target;
+    if (this.agentSessionIndex.get(sessionId) !== agentSession) {
+      log.warn(
+        `TaskAgentManager.mcpSelfHeal: adopting the started session instance for ${sessionId} ` +
+          `as the canonical in-memory sub-session before healing`
       );
-      return;
+      if (!this.subSessions.has(parentTask.id)) {
+        this.subSessions.set(parentTask.id, new Map());
+      }
+      this.subSessions.get(parentTask.id)!.set(sessionId, agentSession);
+      this.agentSessionIndex.set(sessionId, agentSession);
+      this.config.sessionManager.registerSession(agentSession);
     }
 
     await this.ensureRequiredMcpServersAttached(agentSession, {

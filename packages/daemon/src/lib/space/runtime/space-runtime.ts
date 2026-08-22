@@ -7630,16 +7630,30 @@ export class SpaceRuntime {
 
     const blockedReason = blockedExecutions[0].result ?? 'Unknown blocked reason';
 
-    if (retryCount < MAX_BLOCKED_RUN_RETRIES) {
-      if (this.getAvailableTaskSlots(space) <= 0) return;
+    const taskReopenedOutsideRuntime =
+      canonicalTask.status === 'in_progress' || canonicalTask.status === 'open';
+    let effectiveRetryCount = retryCount;
+    if (taskReopenedOutsideRuntime && retryCount >= MAX_BLOCKED_RUN_RETRIES) {
+      effectiveRetryCount = 0;
+      this.blockedRetryCounts.set(runId, 0);
+      log.info(
+        `SpaceRuntime: canonical task ${canonicalTask.id} was reopened while run ${runId} ` +
+          `is blocked; resetting the blocked-run retry budget and repairing executions before resume`
+      );
+    }
+
+    if (effectiveRetryCount < MAX_BLOCKED_RUN_RETRIES) {
+      if (!taskReopenedOutsideRuntime && this.getAvailableTaskSlots(space) <= 0) return;
 
       for (const execution of blockedExecutions) {
         this.config.nodeExecutionRepo.update(execution.id, {
           status: 'pending',
           result: null,
+          startedAt: null,
+          completedAt: null,
         });
       }
-      this.blockedRetryCounts.set(runId, retryCount + 1);
+      this.blockedRetryCounts.set(runId, effectiveRetryCount + 1);
 
       await this.transitionRunStatusAndEmit(runId, 'in_progress');
       if (canonicalTask.status === 'blocked') {
@@ -7657,13 +7671,13 @@ export class SpaceRuntime {
         taskId: canonicalTask.id,
         runId,
         originalReason: blockedReason,
-        attemptNumber: retryCount + 1,
+        attemptNumber: effectiveRetryCount + 1,
         maxAttempts: MAX_BLOCKED_RUN_RETRIES,
         timestamp: new Date().toISOString(),
       });
       log.info(
         `SpaceRuntime: auto-retrying blocked run ${runId} ` +
-          `(attempt ${retryCount + 1}/${MAX_BLOCKED_RUN_RETRIES})`
+          `(attempt ${effectiveRetryCount + 1}/${MAX_BLOCKED_RUN_RETRIES})`
       );
     } else {
       await this.safeNotify({

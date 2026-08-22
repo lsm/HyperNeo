@@ -331,9 +331,10 @@ describe('QueryRunner', () => {
         runner.start();
         await ctx.queryPromise?.catch(() => {});
 
-        expect(onMissingWorkflowMcpServers).toHaveBeenCalledWith('space:s1:task:t1:exec:e1', [
-          'node-agent',
-        ]);
+        expect(onMissingWorkflowMcpServers).toHaveBeenCalledWith(ctx, ['node-agent']);
+        expect(onMissingWorkflowMcpServers.mock.calls[0][0].session.id).toBe(
+          'space:s1:task:t1:exec:e1'
+        );
         expect(buildSpy).toHaveBeenCalledTimes(2);
         expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
       });

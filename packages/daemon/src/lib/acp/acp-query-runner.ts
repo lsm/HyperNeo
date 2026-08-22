@@ -22,6 +22,7 @@ import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-s
 import { AcpProvider } from '../providers/acp-provider';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery';
+import type { AgentSession } from '../agent/agent-session';
 import {
   refreshQueryEnvFromProcess,
   type QueryRunnerContext,
@@ -996,7 +997,7 @@ export class AcpQueryRunner {
     missing: string[]
   ): Promise<void> {
     if (policy.isWorkflowWorker && this.ctx.onMissingWorkflowMcpServers) {
-      await this.ctx.onMissingWorkflowMcpServers(this.ctx.session.id, missing);
+      await this.ctx.onMissingWorkflowMcpServers(this.ctx as AgentSession, missing);
       return;
     }
     if (policy.attachCoordinatorTools && this.ctx.onMissingSpaceChatMcpServers) {
