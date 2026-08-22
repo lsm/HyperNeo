@@ -91,7 +91,17 @@ alternative: a session applies its environment at :641–661 but spawns only
 after gate admission at :686–713, so another session can interpose its
 environment in between and the first session launches with the wrong
 credentials even when every restore later unwinds perfectly — which is
-serialization across the whole apply-to-use span by another name. The window
+serialization across the whole apply-to-use span by another name — though for
+the QueryRunner path the critical section can **end at the env copy**: the
+runner copies provider values into `queryOptions.env` (`:664–671`) and
+`defaultSpawn` passes `opts.env` straight to `nodeSpawn` (`:41–47`), so once
+the copy is made later global mutations cannot change that subprocess — the
+lease covers ambient reads, apply, copy, and restore, then releases **before
+startup-gate waiting** rather than for the query's lifetime (holding through
+"use" would serialize every session and coordinated auth/model request
+indefinitely); direct SDK paths that do not snapshot an env (GitHub spawns,
+model loading) take a bounded lease around their call or an isolated
+environment. The window
 moreover **begins before the apply**: the auth gate reads ambient credentials
 at :492 and `optionsBuilder.build()` copies `CLAUDE_CODE_OAUTH_TOKEN` at
 query-options-builder.ts:781–783, both ahead of the mutation at :660 where a
@@ -298,8 +308,10 @@ apply PRs):
   `message-delivery.ts`, `sdk-message-handler.ts`,
   `job-handlers/message-delivery.handler.ts`. Collides with chains A and C
   — those are exactly Chain A's target files as well as C regions. No
-  query-runner code, so **Chain B is not blocked** by this PR (it sequences only
-  behind #2661, per its own impact line).
+  query-runner code, so **Chain B's PRs 1–4 are not blocked** by this PR (they
+  sequence only behind #2661) — but Chain B **PR 5 edits
+  `acp-query-runner.ts`** and therefore sequences after (or explicitly
+  coordinates with) ACP split 8/10, which owns that file.
 - **Landed since the survey basis:** #2696 (Issue #2548 part 2 — SDK interrupt
   receipt + refusal rewind target; `61e5f9b`) touched interrupt-handler.ts,
   sdk-message-handler.ts, agent-session.ts — no longer a collision, but it added
@@ -635,11 +647,27 @@ note.
      proposal requires but no earlier PR touches — the stale-route fence
      cancels (query-runner terminal/validation/handoff routes), the ACP
      terminal path takes its post-effect resnapshot and fence-cancel before
-     `setIdle` (acp-query-runner.ts:921), and `ProcessingStateManager.setIdle`
+     `setIdle` (acp-query-runner.ts:921) **and a full lifecycle resnapshot
+     before `beginTerminalIdle` at `:906`** — the fence immediately fires
+     every current waiter's `onEnd` and can persist a turn-end marker for the
+     replacement, which a later cancel cannot undo, so the resnapshot (or an
+     owner-scoped `beginTerminalIdle` that filters whose waiters it fires)
+     precedes the fence, with replacement/cleanup during the rate-limit
+     handoff await (`:893–895`) pinned — and
+     `ProcessingStateManager.setIdle`
      gains the generation/owner-scoped state transition and waiter drain with
      the replacement-during-publish interleaving pinned
-     (processing-state-manager.ts:156, :168–175). Without this PR the plan
-     would characterize the leaks and leave them in production.
+     (processing-state-manager.ts:156, :168–175). This PR also carries the
+     **notice-publication fix**: `displayErrorAsAssistantMessage` gates its
+     `state.sdkMessages.delta` emission on `saveSDKMessage`'s boolean with
+     the returned-false path pinned — otherwise the shell-retained helper
+     stays unchanged and clients keep receiving notices absent from the DB.
+     Because it edits `acp-query-runner.ts`, **PR 5 sequences after — or
+     explicitly coordinates with — ACP split 8/10** (the collision exemption
+     in §3 covers Chain B's query-runner scope only, and this PR steps
+     outside it), and **Chain C's apply PR sequences after this PR**, whose
+     fence primitive C's exceptional-exit contract consumes. Without this PR
+     the plan would characterize the leaks and leave them in production.
   6. **PR 6 (cleanup/ADR note).**
 - **Phase 0 primitives:** none for the *routing* state (generation counter,
   recoveryState, timers — all in-memory; the startup gate is the in-memory
