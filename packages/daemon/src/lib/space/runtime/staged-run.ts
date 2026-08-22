@@ -332,10 +332,11 @@ function buildDecideAdapter(
       if (!isPlainObject(stamped)) {
         return fail(new StagedRunContractError(flow, `stage ${stage.name} must return an object`));
       }
-      if (
-        stamped.decision === undefined ||
-        !Object.prototype.propertyIsEnumerable.call(stamped, 'decision')
-      ) {
+      const materialized: Record<string, unknown> = {};
+      for (const key of Object.keys(stamped)) {
+        materialized[key] = stamped[key];
+      }
+      if (materialized.decision === undefined) {
         return fail(
           new StagedRunContractError(
             flow,
@@ -344,7 +345,7 @@ function buildDecideAdapter(
         );
       }
       let activated = 0;
-      for (const key of Object.keys(stamped)) {
+      for (const key of Object.keys(materialized)) {
         if (key === 'decision') continue;
         if (!branches.has(key)) {
           return fail(
@@ -354,7 +355,7 @@ function buildDecideAdapter(
             )
           );
         }
-        if (stamped[key] !== undefined) activated += 1;
+        if (materialized[key] !== undefined) activated += 1;
       }
       if (activated > 1) {
         return fail(
@@ -364,7 +365,7 @@ function buildDecideAdapter(
           )
         );
       }
-      return { ...stamped };
+      return materialized;
     };
     try {
       deliver(apply(stage.run(bodyView)));

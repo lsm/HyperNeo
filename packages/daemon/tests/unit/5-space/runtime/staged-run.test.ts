@@ -841,6 +841,41 @@ describe('stagedRun decide contract', () => {
     expect(outcome.stage).toBe('greedy');
     expect(String(outcome.error)).toContain('at most one branch');
   });
+
+  test('accessor-backed decide stamps are materialized once before validation', async () => {
+    let payloadReads = 0;
+    const stamp: Record<string, unknown> = { decision: 'go' };
+    Object.defineProperty(stamp, 'act', {
+      enumerable: true,
+      get: () => {
+        payloadReads += 1;
+        return payloadReads === 1 ? undefined : { late: true };
+      },
+    });
+    const ran: string[] = [];
+    const flow = stagedRun<Box>('shifting-stamp', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+      s.decide({
+        name: 'route',
+        reads: ['value'],
+        branches: ['act'],
+        run: () => stamp as { decision: unknown },
+      }),
+      s.effect({
+        name: 'fx',
+        when: 'act',
+        writes: ['value'],
+        run: () => {
+          ran.push('fx');
+        },
+      }),
+      s.halt({ name: 'end', run: () => 'done' }),
+    ]);
+    const outcome = await flow({});
+    expect(outcome).toEqual({ status: 'completed', result: 'done' });
+    expect(ran).toEqual([]);
+    expect(payloadReads).toBe(1);
+  });
 });
 
 describe('stagedRun control flow', () => {
