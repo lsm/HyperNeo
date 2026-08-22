@@ -995,9 +995,9 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    const result = await agentSession.handleQueryTrigger();
+    await agentSession.replayPendingMessagesForImmediateMode();
 
-    return result;
+    return { success: true };
   });
 
   messageHub.onRequest('session.messages.countByStatus', async (data) => {

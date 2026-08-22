@@ -208,7 +208,7 @@ export class QueryModeHandler {
       pendingInMemoryUuids: new Set<string>(),
       activeTurnInJobQueue: jobQueue?.hasActiveTurnDeliveryJob?.(this.ctx.session.id) ?? false,
       slotResetsContext: this.ctx.slotResetsContext?.() ?? false,
-      hasPriorContext: !!this.ctx.session.sdkSessionId,
+      hasPriorContext: !!(this.ctx.session.sdkSessionId || this.ctx.session.acpSessionId),
       pendingTaskInput: options?.pendingTaskInput === true,
     });
   }
@@ -352,7 +352,8 @@ export class QueryModeHandler {
   }
 
   async replayPendingMessagesForImmediateMode(): Promise<void> {
-    const { clearedContext } = await this.sendEnqueuedMessagesOnTurnEnd();
+    const { clearedContext, replayFailed } = await this.sendEnqueuedMessagesOnTurnEnd();
+    if (replayFailed) return;
     if (!clearedContext) {
       const jobQueue = this.ctx.db.getJobQueueRepo?.();
       if (jobQueue?.activeDeliveryMessageUuids?.(this.ctx.session.id).size) {
