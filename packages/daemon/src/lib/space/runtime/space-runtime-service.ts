@@ -892,7 +892,8 @@ export class SpaceRuntimeService {
         this.config.db,
         space.id,
         this.config.reactiveDb,
-        this.config.evolutionScopeService
+        this.config.evolutionScopeService,
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -1393,7 +1394,8 @@ export class SpaceRuntimeService {
         this.config.db,
         space.id,
         this.config.reactiveDb,
-        this.config.evolutionScopeService
+        this.config.evolutionScopeService,
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,

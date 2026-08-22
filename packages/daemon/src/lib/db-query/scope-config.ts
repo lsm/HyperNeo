@@ -210,6 +210,13 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
       'Append-only history events for Space goals, including state diffs, source metadata, and linked task IDs.',
   },
   {
+    tableName: 'space_goal_outcome_notifications',
+    scopeColumn: 'space_id',
+    blacklistedColumns: [],
+    description:
+      'Per-terminal-generation outcome notifications for Space goals, with pending/superseded/acknowledged/rejected status and bounded payloads.',
+  },
+  {
     tableName: 'space_worktrees',
     scopeColumn: 'space_id',
     blacklistedColumns: [],

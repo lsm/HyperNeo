@@ -78,7 +78,8 @@ export class SpaceTaskManager {
     private db: BunDatabase,
     private spaceId: string,
     private reactiveDb?: ReactiveDatabase,
-    private evolutionScopeService?: EvolutionScopeService
+    private evolutionScopeService?: EvolutionScopeService,
+    private onTaskReopened?: (taskId: string) => void
   ) {
     this.taskRepo = new SpaceTaskRepository(db, reactiveDb);
   }
@@ -255,6 +256,10 @@ export class SpaceTaskManager {
     const updated = this.taskRepo.updateTask(taskId, updates);
     if (!updated) {
       throw new Error(`Failed to update task: ${taskId}`);
+    }
+
+    if (isTerminalTaskStatus(task.status) && !isTerminalTaskStatus(newStatus)) {
+      this.onTaskReopened?.(taskId);
     }
 
     if (newStatus === 'done') {
@@ -632,4 +637,10 @@ export class SpaceTaskManager {
     }
     return false;
   }
+}
+
+function isTerminalTaskStatus(status: SpaceTaskStatus): boolean {
+  return (
+    status === 'done' || status === 'blocked' || status === 'cancelled' || status === 'archived'
+  );
 }

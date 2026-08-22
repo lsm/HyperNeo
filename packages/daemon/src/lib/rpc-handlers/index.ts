@@ -120,6 +120,7 @@ import { EvolutionScopeService } from '../space/evolution-scope-service';
 import { EvolutionTraceEvidenceService } from '../space/evolution-trace-evidence-service';
 import { ScheduleService } from '../space/schedule/schedule-service';
 import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository';
+import { SpaceGoalOutcomeNotificationRepository } from '../../storage/repositories/space-goal-outcome-notification-repository';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import { SpaceGoalService } from '../space/goals/goal-service';
 import { ExternalEventExtensionConfigStore } from '../external-events/extension-config-store';
@@ -411,6 +412,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const spaceGoalRepo = new SpaceGoalRepository(deps.db.getDatabase(), deps.reactiveDb);
   const spaceGoalEventRepo = new SpaceGoalEventRepository(deps.db.getDatabase(), deps.reactiveDb);
   const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(deps.db.getDatabase());
+  const outcomeNotificationRepo = new SpaceGoalOutcomeNotificationRepository(deps.db.getDatabase());
   const spaceGoalService = new SpaceGoalService({
     goalRepo: spaceGoalRepo,
     goalEventRepo: spaceGoalEventRepo,
@@ -419,6 +421,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     scheduleService,
     db: deps.db.getDatabase(),
     longHorizonAgentRepo,
+    outcomeNotificationRepo,
     eventHub: {
       publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
     },

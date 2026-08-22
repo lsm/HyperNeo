@@ -78,6 +78,7 @@ export const HELPER_SCHEMA_TABLES = [
   'space_external_event_source_configs',
   'space_external_events',
   'space_goal_events',
+  'space_goal_outcome_notifications',
   'space_goals',
   'space_long_horizon_agent_event_subscriptions',
   'space_long_horizon_agent_forge_scopes',
