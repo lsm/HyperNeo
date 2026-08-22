@@ -719,6 +719,7 @@ export class AgentSession
     skipDeferredReplay?: boolean;
   }): Promise<void> {
     this.rateLimitWatchdog.cancel();
+    this.messageHandler.cancelSuppressedResultWait();
 
     await this.interruptHandler.handleInterrupt(opts);
   }
@@ -781,15 +782,23 @@ export class AgentSession
       }
       throw err;
     }
-    if (!(await confirmedClear)) {
-      this.logger.warn(
-        `clearConversationContext: /clear result not observed within ` +
-          `${this.clearConfirmTimeoutMs / 1000}s — resetting the query and proceeding without ` +
-          `confirmed clear`
-      );
-      this.messageHandler.clearIdleSuppression();
-      await this.resetQueryForcingTeardown();
+    const clearOutcome = await confirmedClear;
+    if (clearOutcome === 'confirmed') {
+      return;
     }
+    this.messageHandler.clearIdleSuppression();
+    if (clearOutcome === 'cancelled') {
+      this.logger.warn(
+        `clearConversationContext: /clear wait cancelled by query teardown — proceeding ` +
+          `without confirmed clear`
+      );
+      return;
+    }
+    this.logger.warn(
+      `clearConversationContext: /clear not confirmed within ${this.clearConfirmTimeoutMs / 1000}s ` +
+        `— resetting the query and proceeding without confirmed clear`
+    );
+    await this.resetQueryForcingTeardown();
   }
 
   private async resetQueryForcingTeardown(): Promise<void> {
@@ -2251,6 +2260,7 @@ export class AgentSession
       clearInterval(this.reconcileTimer);
       this.reconcileTimer = null;
     }
+    this.messageHandler.cancelSuppressedResultWait();
     this.clearDeliveryTurnStall();
     for (const unsub of this.deliveryErrorSubs) {
       try {

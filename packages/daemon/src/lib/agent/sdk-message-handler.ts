@@ -45,6 +45,8 @@ import { reserveBasedThreshold } from './context-tracker.js';
 
 const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
 
+export type SuppressedResultOutcome = 'confirmed' | 'reset' | 'cancelled';
+
 export interface SDKMessageHandlerContext {
   readonly session: Session;
   readonly db: Database;
@@ -82,7 +84,7 @@ export class SDKMessageHandler {
   private suppressIdleOnNextResult: boolean = false;
   private clearAwaitingTrailingIdle: boolean = false;
   private suppressedResultWaiter: {
-    resolve: (confirmed: boolean) => void;
+    resolve: (outcome: SuppressedResultOutcome) => void;
     timer: ReturnType<typeof setTimeout>;
     expectedUserMessageUuid?: string;
   } | null = null;
@@ -171,10 +173,13 @@ export class SDKMessageHandler {
     this.suppressIdleOnNextResult = true;
   }
 
-  waitForSuppressedResult(timeoutMs: number, expectedUserMessageUuid?: string): Promise<boolean> {
-    this.settleSuppressedResultWaiter(false);
-    return new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => this.settleSuppressedResultWaiter(false), timeoutMs);
+  waitForSuppressedResult(
+    timeoutMs: number,
+    expectedUserMessageUuid?: string
+  ): Promise<SuppressedResultOutcome> {
+    this.settleSuppressedResultWaiter('reset');
+    return new Promise<SuppressedResultOutcome>((resolve) => {
+      const timer = setTimeout(() => this.settleSuppressedResultWaiter('reset'), timeoutMs);
       if (typeof timer.unref === 'function') {
         timer.unref();
       }
@@ -185,7 +190,13 @@ export class SDKMessageHandler {
   clearIdleSuppression(): void {
     this.suppressIdleOnNextResult = false;
     this.clearAwaitingTrailingIdle = false;
-    this.settleSuppressedResultWaiter(false);
+    this.settleSuppressedResultWaiter('reset');
+  }
+
+  cancelSuppressedResultWait(): void {
+    this.suppressIdleOnNextResult = false;
+    this.clearAwaitingTrailingIdle = false;
+    this.settleSuppressedResultWaiter('cancelled');
   }
 
   private matchesArmedClearResult(message: SDKMessage): boolean {
@@ -198,18 +209,18 @@ export class SDKMessageHandler {
       return false;
     }
     const expected = this.suppressedResultWaiter?.expectedUserMessageUuid;
-    if (expected === undefined) {
+    if (expected === undefined || !isSDKResultSuccess(message)) {
       return true;
     }
     return (message as { user_message_uuid?: string }).user_message_uuid === expected;
   }
 
-  private settleSuppressedResultWaiter(confirmed: boolean): void {
+  private settleSuppressedResultWaiter(outcome: SuppressedResultOutcome): void {
     const waiter = this.suppressedResultWaiter;
     if (!waiter) return;
     this.suppressedResultWaiter = null;
     clearTimeout(waiter.timer);
-    waiter.resolve(confirmed);
+    waiter.resolve(outcome);
   }
 
   markApiSuccess(): void {
@@ -964,7 +975,7 @@ export class SDKMessageHandler {
       if (this.usesSessionStateChangedTurnEnd && this.expectsSessionStateIdleAfterResult) {
         this.clearAwaitingTrailingIdle = true;
       } else {
-        this.settleSuppressedResultWaiter(true);
+        this.settleSuppressedResultWaiter('confirmed');
       }
     }
   }
@@ -996,7 +1007,7 @@ export class SDKMessageHandler {
       this.lastResultWasSuccess = null;
       if (this.clearAwaitingTrailingIdle) {
         this.clearAwaitingTrailingIdle = false;
-        this.settleSuppressedResultWaiter(true);
+        this.settleSuppressedResultWaiter('confirmed');
       }
     }
   }

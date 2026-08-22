@@ -718,7 +718,7 @@ describe('SDKMessageHandler', () => {
 
       handler.suppressIdleForNextResult();
       const wait = handler.waitForSuppressedResult(5_000);
-      let settled: boolean | null = null;
+      let settled: string | null = null;
       void wait.then((confirmed) => {
         settled = confirmed;
       });
@@ -732,15 +732,15 @@ describe('SDKMessageHandler', () => {
       expect(settled).toBe(null);
 
       await handler.handleMessage(result('clear-result'));
-      expect(await wait).toBe(true);
-      expect(settled).toBe(true);
+      expect(await wait).toBe('confirmed');
+      expect(settled).toBe('confirmed');
     });
 
     it('waitForSuppressedResult resolves false on timeout', async () => {
       handler.suppressIdleForNextResult();
       const wait = handler.waitForSuppressedResult(15);
 
-      expect(await wait).toBe(false);
+      expect(await wait).toBe('reset');
     });
 
     it('on session_state_changed SDKs the clear wait settles on the trailing idle, not the result', async () => {
@@ -755,7 +755,7 @@ describe('SDKMessageHandler', () => {
 
       handler.suppressIdleForNextResult();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
-      let settled: boolean | null = null;
+      let settled: string | null = null;
       void wait.then((confirmed) => {
         settled = confirmed;
       });
@@ -780,8 +780,8 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(sessionState('idle'));
 
-      expect(await wait).toBe(true);
-      expect(settled).toBe(true);
+      expect(await wait).toBe('confirmed');
+      expect(settled).toBe('confirmed');
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
@@ -804,7 +804,7 @@ describe('SDKMessageHandler', () => {
 
       handler.suppressIdleForNextResult();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
-      let settled: boolean | null = null;
+      let settled: string | null = null;
       void wait.then((confirmed) => {
         settled = confirmed;
       });
@@ -813,7 +813,7 @@ describe('SDKMessageHandler', () => {
       expect(settled).toBe(null);
 
       await handler.handleMessage(result('clear-result', 'clear-msg-id'));
-      expect(await wait).toBe(true);
+      expect(await wait).toBe('confirmed');
     });
 
     it('a result omitting user_message_uuid never confirms the correlated clear wait', async () => {
@@ -834,7 +834,7 @@ describe('SDKMessageHandler', () => {
         modelUsage: {},
       } as unknown as SDKMessage);
 
-      expect(await wait).toBe(false);
+      expect(await wait).toBe('reset');
     });
 
     it('an error result resolves the wait unconfirmed and releases idle suppression', async () => {
@@ -860,7 +860,7 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(errorResult);
 
-      expect(await wait).toBe(false);
+      expect(await wait).toBe('reset');
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
@@ -870,7 +870,41 @@ describe('SDKMessageHandler', () => {
 
       handler.clearIdleSuppression();
 
-      expect(await wait).toBe(false);
+      expect(await wait).toBe('reset');
+    });
+
+    it('a uuid-less error result releases a correlated clear wait promptly', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'error_during_execution',
+        uuid: 'clear-error',
+        is_error: true,
+        errors: ['boom'],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(await wait).toBe('reset');
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
+
+    it('cancelSuppressedResultWait settles a pending wait as cancelled', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+
+      handler.cancelSuppressedResultWait();
+
+      expect(await wait).toBe('cancelled');
     });
 
     it('settles the correlated clear wait only after the turn-end acknowledgement', async () => {
@@ -901,8 +935,8 @@ describe('SDKMessageHandler', () => {
         modelUsage: {},
       } as unknown as SDKMessage);
 
-      expect(order).toEqual(['turn-end-ack', 'settled:true']);
-      expect(await wait).toBe(true);
+      expect(order).toEqual(['turn-end-ack', 'settled:confirmed']);
+      expect(await wait).toBe('confirmed');
     });
 
     it('a result that fails to persist resolves the wait unconfirmed and releases suppression', async () => {
@@ -927,7 +961,7 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(result);
 
-      expect(await wait).toBe(false);
+      expect(await wait).toBe('reset');
 
       saveSDKMessageSpy.mockReturnValueOnce(true);
       await handler.handleMessage({ ...result, uuid: 'next-turn-result' });

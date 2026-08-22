@@ -64,7 +64,7 @@ function createAgentSession(
 function stubClearExternals(session: AgentSession): void {
   spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
   spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
-  spyOn(session.messageHandler, 'waitForSuppressedResult').mockResolvedValue(true);
+  spyOn(session.messageHandler, 'waitForSuppressedResult').mockResolvedValue('confirmed');
 }
 
 function makeClearResult(uuid: string, userMessageUuid?: string): SDKMessage {
@@ -118,7 +118,7 @@ describe('AgentSession.clearConversationContext', () => {
         order.push('enqueue');
       }
     );
-    spyOn(session.messageHandler, 'waitForSuppressedResult').mockResolvedValue(true);
+    spyOn(session.messageHandler, 'waitForSuppressedResult').mockResolvedValue('confirmed');
 
     await session.clearConversationContext();
 
@@ -227,9 +227,7 @@ describe('AgentSession.clearConversationContext', () => {
     const yielded = await messages.next();
     yielded.value?.onSent();
 
-    await session.messageHandler.handleMessage(
-      makeClearErrorResult('clear-error', String(yielded.value?.message.uuid))
-    );
+    await session.messageHandler.handleMessage(makeClearErrorResult('clear-error'));
     await clear;
 
     expect(resolved).toBe(true);
@@ -305,6 +303,35 @@ describe('AgentSession.clearConversationContext', () => {
     expect(warnSpy.mock.calls[1][0]).toContain('forcing query teardown');
     expect(stopSpy).toHaveBeenCalledTimes(1);
     expect(stopSpy).toHaveBeenCalledWith({ catchQueryErrors: true });
+
+    session.messageQueue.stop();
+    await messages.return(undefined);
+  });
+
+  it('an interrupt cancels the pending clear wait without timeout recovery', async () => {
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
+    const warnSpy = spyOn(session.logger, 'warn').mockImplementation(() => {});
+    const resetSpy = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
+    const stopSpy = spyOn(session['lifecycleManager'], 'stop').mockResolvedValue(undefined);
+    session.messageQueue.start();
+    const messages = session.messageQueue.messageGenerator(session.session.id);
+
+    let resolved = false;
+    const clear = session.clearConversationContext().then(() => {
+      resolved = true;
+    });
+    const yielded = await messages.next();
+    yielded.value?.onSent();
+
+    await session.handleInterrupt();
+    await clear;
+
+    expect(resolved).toBe(true);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain('cancelled by query teardown');
+    expect(resetSpy).not.toHaveBeenCalled();
+    expect(stopSpy).not.toHaveBeenCalled();
 
     session.messageQueue.stop();
     await messages.return(undefined);
