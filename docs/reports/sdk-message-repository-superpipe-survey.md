@@ -132,9 +132,10 @@ promoted). New module `sdk-message-projections.ts` beside the repo.
   today), `markDeliveryFailedByUuid` exclusive variant (zero), the
   `type:'unknown'` parse-fallback table across every parsing reader, subagent
   page-composition order + `hasMore`-with-filtering semantics,
-  duplicate-uuid-across-buckets reads (pin current arbitrary-pick in
-  `hasTerminalResultAfter` and earliest-pick in `getUserMessageByUuid` as
-  *current* behavior).
+  duplicate-uuid-across-buckets reads (pin current arbitrary-pick in both
+  consumed-seq probes — `hasTerminalResultAfter` :1616–1619 and
+  `getErrorTerminalResultSubtypeAfter` :1638–1641 — and earliest-pick in
+  `getUserMessageByUuid` as *current* behavior).
 - **PR A2:** extract parse/inflate layer (`parseSdkMessageRow`, row-metadata
   attach used by :764–787, :821–839, :955–970, :1268–1284).
 - **PR A3:** extract content/text projections (`extractVisibleText`,
@@ -154,25 +155,36 @@ Pattern: plain pure core first (the save gates are independent derivations,
 ADR sanctions pure-function admission gates from pilots 1/5).
 `updateMessageStatus` planning is the P7 transaction-sandwich shape.
 
-- **PR B1 (test-only):** the cross-variant admission drift table — same message
-  × `saveSDKMessage` / `saveUserMessageCore(sendStatus…)` /
-  `saveHyperNeoActionMessage`: anchor conditions (incl. the deliberate
-  status-gate divergence), badge counting, turn-index anchor/non-anchor
-  assignment (:519–530), replacement-edge recording incl. the refusal-subtype
-  gate, `consumed_seq` assignment; plus the
+- **PR B1 (test-only):** admission drift pins, split by accepted message type —
+  `saveSDKMessage` and `saveUserMessageCore` share the `SDKMessage` input, so
+  one matrix runs the same message × both variants × `sendStatus` (anchor
+  conditions incl. the deliberate status-gate divergence, badge counting,
+  turn-index anchor/non-anchor assignment :519–530, replacement-edge recording
+  incl. the refusal-subtype gate, `consumed_seq` assignment).
+  `saveHyperNeoActionMessage` takes the disjoint `HyperNeoActionMessage` type,
+  so no single valid message crosses all three APIs — its fixed-shape
+  admission (badge, turn index, no send_status) is pinned in a separate table,
+  with no unreachable cross-type combinations; plus the
   `saveUserMessageCore`/`runPostSaveSideEffects` composition contract (real
   repo + reactiveDb, per the live-query test bootstrap).
-- **PR B2:** extract `decideMessageAdmission(message, {variant, sendStatus,
-  origin})` → one admission record (`isRenderable`, `isTerminal`,
+- **PR B2:** extract `decideMessageAdmission(normalizedInput, {variant,
+  sendStatus, origin})` → one admission record (`isRenderable`, `isTerminal`,
   `isConversationAnchor`, `countsTowardsBadge`, `parentToolUseId`, `sdkUuid`,
-  `replacementEdges`); the three save sites consume it; divergences become
-  explicit parameters pinned by B1.
+  `replacementEdges`); the shared normalized input that lets the three save
+  sites — the two `SDKMessage` variants and the disjoint
+  `HyperNeoActionMessage` shape — consume one core is introduced here, not in
+  B1; divergences become explicit parameters pinned by B1.
 - **PR B3:** badge plan unification — pure `badgeDelta` derivation over
   admission records + the mutation paths (:589, :1136, :1362–1364, :1472–1477);
   interpreter applies.
-- **PR B4 (apply):** `updateMessageStatus` as plan/interpret — pure planner
-  over the pending-row snapshot producing the ordered update list (turn
-  promotion, timestamp, `consumed_seq`), transaction shell applies.
+- **PR B4 (apply):** `updateMessageStatus` as plan/interpret — the pure
+  planner over the pending-row snapshot produces the ordered instruction list
+  (turn promotion, timestamp, and a `consumed_seq` *allocation instruction* —
+  concrete values never appear in the plan: without `options.consumedSeq` the
+  interpreter invokes the atomic `nextConsumedSeq()` inside the open
+  transaction, as today at :1357; pre-transaction allocation would either make
+  planning effectful or let a concurrent transition invalidate the plan); the
+  transaction shell applies.
 - **PR B5 (cleanup + ADR note).**
 
 ### Chain C — FTS admission gates + delivery-status routing (rank 3: low risk, medium impact)
@@ -235,13 +247,23 @@ below ~10 µs/decision against dominated neighbor costs.
 
 1. **`saveSDKMessage` :591–597** — an exception in the *post-commit*
    notify/superseded-FTS-delete returns `false` after the row is committed;
-   `sdk-message-handler` :703–706 then skips the live UI delta (row appears
-   only on reload).
-2. **`hasTerminalResultAfter` :1616–1619** — the watermark subquery has no
-   ORDER BY; with duplicate `sdk_uuid` rows across status buckets it can pick a
-   NULL-`consumed_seq` row → NULL comparison → false negative at the delivery
-   re-claim boundary — exactly the #2598 double-delivery class. Contrast
-   `getUserMessageByUuid` :1554–1557 (deliberate earliest-wins).
+   `sdk-message-handler` :703–706 then skips the explicit
+   `state.sdkMessages.delta` publish. The row still reaches the web without a
+   reload: the save went through the reactive proxy, whose wrapper emits the
+   `'sdk_messages'` notification after the call returns regardless of the
+   `false` result (`reactive-database.ts:370–377`), and `withDbChangeBatch`
+   commits that notification — `messages.bySession` re-evaluates and picks up
+   the committed row. What is lost is the delta push plus the downstream
+   `sdk.message`/tool-result events behind the early return.
+2. **`hasTerminalResultAfter` :1616–1619 and
+   `getErrorTerminalResultSubtypeAfter` :1638–1641** — both watermark
+   subqueries have no ORDER BY; with duplicate `sdk_uuid` rows across status
+   buckets either can pick a NULL-`consumed_seq` row → NULL comparison → false
+   negative at the delivery re-claim boundary — exactly the #2598
+   double-delivery class (and, for the error probe, a missed terminal-error
+   subtype). Contrast `getUserMessageByUuid` :1554–1557 (deliberate
+   earliest-wins). Any fix and its regression coverage must scope to both
+   probes.
 3. **`getSupersededMessageUuids` :384–395** lacks the `model_refusal_fallback`
    subtype gate that `extractReplacementEdges` :162 applies — FTS supersession
    deletes and recorded replacement edges can diverge for non-refusal carriers
