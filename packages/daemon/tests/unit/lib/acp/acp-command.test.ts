@@ -4,6 +4,7 @@ import {
   getAcpCommandIdentity,
   getAcpCommandIdentityDigest,
   parseAcpCommand,
+  redactSecretArgs,
 } from '../../../../src/lib/acp/acp-command';
 
 describe('buildAcpSafeEnv', () => {
@@ -112,6 +113,9 @@ describe('getAcpCommandIdentityDigest', () => {
     ).toBe(
       getAcpCommandIdentityDigest('sh -c "curl -H \'Authorization: Bearer othersafe\' https://a"')
     );
+    expect(getAcpCommandIdentityDigest("curl -H'Authorization: Bearer topsecret' https://a")).toBe(
+      getAcpCommandIdentityDigest("curl -H'Authorization: Bearer othersafe' https://a")
+    );
   });
 
   test('keeps non-credential header values visible in the digest', () => {
@@ -123,6 +127,19 @@ describe('getAcpCommandIdentityDigest', () => {
     );
     expect(getAcpCommandIdentityDigest('sh -c "curl -H \'X-Method: DELETE\' /a"')).not.toBe(
       getAcpCommandIdentityDigest('sh -c "curl -H \'X-Method: PUT\' /a"')
+    );
+    expect(getAcpCommandIdentityDigest("curl -H'X-Method: DELETE' /a")).not.toBe(
+      getAcpCommandIdentityDigest("curl -H'X-Method: PUT' /a")
+    );
+  });
+
+  test('preserves token boundaries when redisplaying shell command arguments', () => {
+    expect(redactSecretArgs(['-c', 'rm -- "important file"'])).toEqual([
+      '-c',
+      `rm -- 'important file'`,
+    ]);
+    expect(redactSecretArgs(['-c', `curl -H 'Authorization: Bearer topsecret' https://a`])).toEqual(
+      ['-c', `curl -H '[redacted]' https://a`]
     );
   });
 

@@ -49,6 +49,7 @@ import {
   getAcpCommandIdentityDigest,
   parseAcpCommand,
   redactSecretArgs,
+  shellQuote,
 } from './acp-command';
 import { getAcpProcessTreeOwner } from './acp-process-tree';
 import { AcpQueryAdapter } from './acp-query-adapter';
@@ -301,10 +302,6 @@ function acpPermissionQuestionInput(params: AcpPermissionRequest): Record<string
       },
     ],
   };
-}
-
-function shellQuote(value: string): string {
-  return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 async function authorizeAcpFsWrite(

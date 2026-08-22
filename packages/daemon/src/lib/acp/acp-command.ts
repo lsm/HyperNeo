@@ -28,11 +28,15 @@ function isShellCommandArgName(name: string): boolean {
   return /^c$/i.test(stripped);
 }
 
+export function shellQuote(value: string): string {
+  return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
 function redactShellCommand(script: string, depth: number): string {
   if (depth <= 0) return script;
   try {
     const { command, args } = parseAcpCommand(script);
-    return [command, ...redactSecretArgs(args, depth - 1)].join(' ');
+    return [command, ...redactSecretArgs(args, depth - 1)].map(shellQuote).join(' ');
   } catch {
     return script;
   }
@@ -44,6 +48,14 @@ export function redactSecretArgs(args: string[], depth = 3): string[] {
     const arg = args[index];
     if (!arg.startsWith('-')) {
       redacted.push(arg);
+      continue;
+    }
+    if (/^-H./.test(arg)) {
+      redacted.push(isSecretHeaderValue(arg.slice(2)) ? '-H[redacted]' : arg);
+      continue;
+    }
+    if (/^-c./.test(arg)) {
+      redacted.push(`-c${redactShellCommand(arg.slice(2), depth)}`);
       continue;
     }
     const equalsIndex = arg.indexOf('=');
