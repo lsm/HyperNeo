@@ -337,7 +337,17 @@ polling sources.
   the drain it broadcasts after the update returns and a newly valid
   subscription silently misses. Disablement and projection/filter/suppression
   mutations share this drain obligation; no publisher lock is held while
-  draining.
+  draining. Retained rows need explicit treatment too (review finding, PR
+  #2723): a row persisted while key K was excluded stays `published` until TTL,
+  and its later retryable-duplicate republish would broadcast the stored
+  K-less payload without re-projection — silently missing a newly valid
+  subscription on K. Since stripped keys are unrecoverable from the projected
+  payload, retryable-duplicate republication **re-derives the payload from the
+  retained `rawPayload` under the current config** whenever it is present
+  (`rawPayload` keeps the full native object unless the user opted out);
+  when it is not, each row records its projection-config version at ingestion
+  and newly accepted filters do not apply to incompatible-version rows —
+  defined behavior instead of silent mismatch.
 - **PR A3 (surface):** UI and counters only — the `SpaceExternalEventsSettings`
   toggle UI reusing the write RPC A2 already delivered (review finding, PR #2723;
   A3 adds no RPC surface), plus a suppression counter with its own gate-side
