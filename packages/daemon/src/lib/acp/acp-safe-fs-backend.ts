@@ -354,11 +354,11 @@ export async function writeFileWithinWorkspace(
     throw new Error(`ACP filesystem write exceeds ${MAX_WRITE_BYTES} bytes`);
   }
   const { symbols, directoryFd, fileName } = await openWorkspacePath(workspace, segments, true);
-  const mode = replacementMode(symbols, directoryFd, fileName);
   const temporaryName = `.acp-${randomUUID()}`;
   let temporaryExists = false;
 
   try {
+    const mode = replacementMode(symbols, directoryFd, fileName);
     if (signal.aborted) throw new Error('ACP filesystem write cancelled');
     const fileFd = symbols.openat(
       directoryFd,
