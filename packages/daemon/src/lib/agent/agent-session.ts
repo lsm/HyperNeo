@@ -1636,6 +1636,16 @@ export class AgentSession
       .getSDKMessageRepo()
       ?.hasTerminalResultAfter(this.session.id, messageUuid);
     if (!producedResult) {
+      if (this.rateLimitWatchdog.isRecoveryPending()) {
+        const cooldownRetryAt = this.rateLimitWatchdog.getState().retryAt;
+        const retryAt = Math.max(Date.now() + MESSAGE_DELIVERY_PARK_MS, cooldownRetryAt ?? 0);
+        this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
+        this.logger.info(
+          `delivery-turn: parking job while limit recovery is pending ` +
+            `(uuid=${messageUuid}, retryAt=${new Date(retryAt).toISOString()})`
+        );
+        return { outcome: 'recovery_pending', retryAt };
+      }
       const turnError = this.consumeTerminalTurnError(turnStartedAt);
       this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
       const errorResultSubtype = this.db

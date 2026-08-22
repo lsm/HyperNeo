@@ -291,6 +291,7 @@ export const MAX_STEER_PARKS = 60;
 export type DriveTurnOutcome =
   | { outcome: 'completed' }
   | { outcome: 'blocked'; retryAt: number }
+  | { outcome: 'recovery_pending'; retryAt: number }
   | { outcome: 'aborted' }
   | { outcome: 'turn_terminated' };
 

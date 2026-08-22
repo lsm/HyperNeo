@@ -67,17 +67,23 @@ function structuredResetAtMs(rateLimitInfo: SDKRateLimitInfo, now: number): numb
     [rateLimitInfo.status === 'rejected', rateLimitInfo.resetsAt],
     [rateLimitInfo.overageStatus === 'rejected', rateLimitInfo.overageResetsAt],
   ];
+  let earliest: number | null = null;
   for (const [rejected, candidate] of candidates) {
     if (!rejected) continue;
     if (typeof candidate !== 'number' || !Number.isFinite(candidate)) continue;
     const ms = normalizeEpochMs(candidate);
-    if (ms > now && ms < now + MAX_RESET_HORIZON_MS) return ms;
+    if (ms > now && ms < now + MAX_RESET_HORIZON_MS) {
+      if (earliest === null || ms < earliest) earliest = ms;
+    }
   }
-  return null;
+  return earliest;
 }
 
+const FRAMED_429_RE =
+  /\b(?:status|code|http|error|failed|failure|rejected|returned)\W{0,10}429\b(?!\s*(?:ms|millisecond|second|sec|minute|min|hour|hr|s)\b)|\(\s*429\s*\)|\b429\b[^A-Za-z0-9]{0,3}(?:too many requests|rate[ _-]?limit)/i;
+
 function looksLikeLimitText(rawText: string): boolean {
-  if (/\b429\b/.test(rawText)) return true;
+  if (FRAMED_429_RE.test(rawText)) return true;
   if (RATE_LIMIT_MESSAGE_PATTERN.test(rawText)) return true;
   const lower = rawText.toLowerCase();
   return LIMIT_TEXT_MARKERS.some((marker) => lower.includes(marker.toLowerCase()));

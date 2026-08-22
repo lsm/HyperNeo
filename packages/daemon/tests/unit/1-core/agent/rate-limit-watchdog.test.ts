@@ -341,6 +341,7 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.getState().status).toBe('idle');
       expect(watchdog.getState().retryAt).toBeNull();
       expect(watchdog.retryNow()).toBe(true);
+      expect(watchdog.isRecoveryPending()).toBe(true);
     });
 
     it('does not publish a stale billing pause when the episode is cancelled mid-write', async () => {

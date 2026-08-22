@@ -236,6 +236,47 @@ describe('assessLimitError', () => {
     expect(assessment.isLimit).toBe(false);
   });
 
+  it('does not classify an unrelated 429 duration as a limit', () => {
+    const assessment = assessLimitError(
+      { rawText: 'request failed after 429 ms (req-429-abcdef)' },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(false);
+  });
+
+  it('classifies framed textual 429 statuses as limits', () => {
+    expect(assessLimitError({ rawText: 'API Error: Request rejected (429)' }, NOW).isLimit).toBe(
+      true
+    );
+    expect(assessLimitError({ rawText: 'upstream error 429 for this key' }, NOW).isLimit).toBe(
+      true
+    );
+    expect(assessLimitError({ rawText: 'Request failed: 429' }, NOW).isLimit).toBe(true);
+    expect(assessLimitError({ rawText: '429 Too Many Requests — slow down' }, NOW).isLimit).toBe(
+      true
+    );
+  });
+
+  it('selects the earliest usable rejected reset across primary and overage windows', () => {
+    const primaryReset = NOW + 5 * HOUR;
+    const overageReset = NOW + 1 * HOUR;
+    const assessment = assessLimitError(
+      {
+        rawText: 'no markers here',
+        rateLimitInfo: {
+          status: 'rejected',
+          resetsAt: primaryReset,
+          overageStatus: 'rejected',
+          overageResetsAt: overageReset,
+          rateLimitType: 'five_hour',
+        },
+      },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(true);
+    expect(assessment.resetAtMs).toBe(overageReset);
+  });
+
   it('ignores allowed rate-limit telemetry as limit evidence', () => {
     const resetsAtSeconds = Math.floor((NOW + 5 * HOUR) / 1000);
     for (const status of ['allowed', 'allowed_warning'] as const) {

@@ -1032,6 +1032,42 @@ describe('AgentSession', () => {
       expect(retrySpy).toHaveBeenCalledTimes(1);
     });
 
+    it('driveDeliveryTurn parks instead of reopening while limit recovery is pending', async () => {
+      const retrySpy = mock(() => 'db-1');
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
+        hasTerminalResultAfter: mock(() => false),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryRetryableByUuid: retrySpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const cooldownRetryAt = Date.now() + 60 * 60 * 1000;
+      const watchdog = (agentSession as unknown as { rateLimitWatchdog: unknown })
+        .rateLimitWatchdog as {
+        isRecoveryPending: () => boolean;
+        getState: () => { retryAt: number | null };
+      };
+      watchdog.isRecoveryPending = () => true;
+      watchdog.getState = mock(() => ({ retryAt: cooldownRetryAt })) as never;
+
+      await agentSession.stateManager.setProcessing('uuid-park');
+      const drive = agentSession.driveDeliveryTurn('uuid-park', 'hello', null, true, () => true);
+      await agentSession.stateManager.setIdle();
+      const result = await drive;
+
+      expect(result).toEqual({ outcome: 'recovery_pending', retryAt: cooldownRetryAt });
+      expect(retrySpy).not.toHaveBeenCalled();
+    });
+
     it('driveDeliveryTurn makes a terminal turn error non-retryable without reopening', async () => {
       const retrySpy = mock(() => 'db-terminal');
       mockDb.getSDKMessageRepo = mock(() => ({

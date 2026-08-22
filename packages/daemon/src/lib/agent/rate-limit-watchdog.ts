@@ -87,6 +87,7 @@ export class RateLimitWatchdog {
   private bannerCancelled = false;
   private episodeMessageUuid: string | null = null;
   private lastHint: LimitRetryHint | null = null;
+  private billingPauseSurfaced = false;
 
   constructor(
     sessionId: string,
@@ -149,6 +150,7 @@ export class RateLimitWatchdog {
       this.startupRetries = 0;
       this.startupExhausted = false;
       this.bannerCancelled = false;
+      this.billingPauseSurfaced = false;
       this.lastHint = hint ?? null;
     }
 
@@ -427,6 +429,7 @@ export class RateLimitWatchdog {
               return;
             }
             this.notifyPause({ kind: this.limitKind, reason: 'billing-terminal' });
+            this.billingPauseSurfaced = true;
           } else {
             this.logger.warn(
               'Fallback re-entry returned false (budget exhausted); scheduling a deferred cooldown.'
@@ -459,6 +462,7 @@ export class RateLimitWatchdog {
     this.cancelCooldownTimer();
     this.fallbackPending = false;
     this.startupExhausted = false;
+    this.billingPauseSurfaced = false;
     this.episodeMessageUuid = null;
     this.lastUserMessage = null;
     if (notifyResume) {
@@ -519,6 +523,7 @@ export class RateLimitWatchdog {
     this.startupRetries = 0;
     this.startupExhausted = false;
     this.bannerCancelled = false;
+    this.billingPauseSurfaced = false;
     this.lastUserMessage = null;
     this.lastErrorMessage = '';
     this.triedKeys.clear();
@@ -540,7 +545,7 @@ export class RateLimitWatchdog {
   }
 
   isRecoveryPending(): boolean {
-    return this.cooldownTimer !== null || this.fallbackPending;
+    return this.cooldownTimer !== null || this.fallbackPending || this.billingPauseSurfaced;
   }
 
   isRateLimitBannerCancelled(): boolean {
