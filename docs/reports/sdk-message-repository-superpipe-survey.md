@@ -117,10 +117,16 @@ reactive proxy's `METHOD_TABLE_MAP` (`reactive-database.ts:236–263`) and from
   separate raw SQL (`live-query-handlers.ts:3062`), with its own copy of the
   hidden-subtype exclusion list (:2867–2868 vs the repo's :50–53).
 - Shared schema: `sdk_messages`/`sdk_message_replacements` DDL at
-  `schema/index.ts:186–238`; `message_search_content` is written by three repos
+  `schema/index.ts:186–238`; `message_search_content` is written by four repos
   (`kind='task'` rows in `space-task-repository.ts:63–79`; space-deletion
-  cleanup in `space-repository.ts:244–249`); `sessions.task_id` now generated
-  columns (#2649).
+  cleanup in `space-repository.ts:244–249`; and — a second production FTS
+  *admission* implementation — `session-repository.ts:202–207` rebuilds a
+  session's rows on status/type/context updates via
+  `rebuildMessageSearchRows` :231, bulk delete+reinsert carrying its own
+  copies of the supersession, message-type, user-status, session-retention,
+  task-retention, and body rules (:231–295); the C-chain must include this
+  owner in its parity scope or the extracted gates keep drifting against it);
+  `sessions.task_id` now generated columns (#2649).
 - Worker constraint: the repo must stay constructible as
   `new SDKMessageRepository(db)` with pure module-top state (no shared mutable
   module state in any extracted module).
@@ -160,10 +166,15 @@ promoted). New module `sdk-message-projections.ts` beside the repo.
   and `getDeliveryContent` :1600 return null — pin each outcome explicitly so
   the A2 parse layer preserves rather than normalizes them, subagent
   page-composition order + `hasMore`-with-filtering semantics,
-  duplicate-uuid-across-buckets reads (pin current arbitrary-pick in both
-  consumed-seq probes — `hasTerminalResultAfter` :1616–1619 and
-  `getErrorTerminalResultSubtypeAfter` :1638–1641 — and earliest-pick in
-  `getUserMessageByUuid` as *current* behavior).
+  duplicate-uuid-across-buckets reads — characterize the *ambiguity*, not a
+  specific pick: the unordered `LIMIT 1` watermark subqueries
+  (`hasTerminalResultAfter` :1616–1619, `getErrorTerminalResultSubtypeAfter`
+  :1638–1641) have no stable result to pin — with duplicate uuid rows SQLite
+  may return either the NULL or non-NULL `consumed_seq` row as indexes or
+  plans change, so a test asserting one outcome would encode the race and
+  flake; assert only that both duplicate layouts expose the either/or outcome
+  (the bug-#2 ambiguity) and that `getUserMessageByUuid` :1554–1557 stays
+  deterministic earliest-wins.
 - **PR A2:** extract parse/inflate layer (`parseSdkMessageRow`, row-metadata
   attach used by :764–787, :821–839, :955–970, :1268–1284).
 - **PR A3:** extract content/text projections (`extractVisibleText`,
@@ -212,22 +223,27 @@ ADR sanctions pure-function admission gates from pilots 1/5).
   sites — the two `SDKMessage` variants and the disjoint
   `HyperNeoActionMessage` shape — consume one core is introduced here, not in
   B1; divergences become explicit parameters pinned by B1.
-- **PR B3:** badge plan unification — pure `badgeDelta` derivation over
-  admission records + the mutation paths (:589, :1136, :1362–1364,
+- **PR B3:** badge plan unification — an instruction set, not one derivation:
+  saves emit `delta(+1)` over the admission record (:589, :1136,
   `saveHyperNeoActionMessage`'s bump+notify :1997–2001 — B2 routes this third
-  save variant through the shared admission record, so its badge effect
-  belongs in the unified interpreter too — and *both* rewind operators —
-  `deleteMessagesAfter` :1472–1477 and `deleteMessagesAtAndAfter`
-  :1492–1499 — so no badge-recompute path stays outside the plan);
-  interpreter applies.
+  save variant through the shared record, so its badge effect belongs in the
+  unified interpreter too); the status-flip recompute (:1362–1364) and *both*
+  rewind operators — `deleteMessagesAfter` :1472–1477 and
+  `deleteMessagesAtAndAfter` :1492–1499 — emit a **recompute instruction**
+  (authoritative `COUNT(*)` + conditional update, which also repairs
+  pre-existing counter drift), never delta subtraction: subtracting only the
+  removed rows would leave prior drift — from bypass writes or an older buggy
+  counter — intact, a behavior change. Interpreter applies.
 - **PR B4 (apply):** `updateMessageStatus` as plan/interpret — the pure
   planner over the pending-row snapshot produces the ordered instruction list
-  (turn promotion, timestamp, and a `consumed_seq` *allocation instruction* —
+  (timestamp updates, and *allocation instructions* for both sequence axes —
   concrete values never appear in the plan: without `options.consumedSeq` the
   interpreter invokes the atomic `nextConsumedSeq()` inside the open
-  transaction, as today at :1357; pre-transaction allocation would either make
-  planning effectful or let a concurrent transition invalidate the plan); the
-  transaction shell applies.
+  transaction, as today at :1357, and turn promotion likewise reads the
+  current `MAX(conversation_turn_index)` per task — including the shared-turn
+  base map — inside the transaction (:1326–1352); pre-transaction allocation
+  of either axis would make planning effectful or let a concurrent writer
+  advancing the same task invalidate the plan); the transaction shell applies.
 - **PR B5 (cleanup + ADR note).**
 
 ### Chain C — FTS admission gates + delivery-status routing (rank 3: low risk, medium impact)
@@ -243,11 +259,20 @@ ADR sanctions pure-function admission gates from pilots 1/5).
   excluded, not its full window) plus the batch-semantics split — the
   turn-end variants' first-uuid all-or-nothing rule (:1763) vs the per-uuid
   skip of the bulk variants (:1788, :1808) — so a mistyped window or a
-  flattened batch rule cannot change delivery behavior unnoticed in C3.
+  flattened batch rule cannot change delivery behavior unnoticed in C3; and
+  the FTS malformed-shape pin — body extraction runs *first*
+  (`extractVisibleSearchText` at :297–303, before the DELETE at :304–306 and
+  all gates at :307–313), and a JSON-valid but invalid SDK payload (e.g.
+  `null`) makes it throw inside the flush transaction, which rolls back and
+  retains the pending row for retry — a gate-first reorder would skip the row
+  and delete the pending entry permanently.
 - **PR C2:** extract `message-search-admission.ts` as a real `decisionRun`
-  (legitimate first-skip-wins precedence as implemented at :307–313:
-  superseded → searchable-type → eligibility → body → user-status; runs ≤500
-  rows per 2 s flush — off-hot-path, GO).
+  (legitimate first-skip-wins precedence among the gates at :307–313:
+  superseded → searchable-type → eligibility → body-nonempty → user-status —
+  but body *gathering* stays ahead of the delete/decision boundary, where it
+  runs today (:297–303), because its throw-on-malformed behavior is what
+  retains the pending row for retry; runs ≤500 rows per 2 s flush +
+  synchronous fallback — off-hot-path, GO).
 - **PR C3:** delivery-status routing table (`routeDeliveryTransition(
   currentStatus, action)` → status-window + target) collapsing the ten
   wrappers' windows into data; SQL stays (precedent: `task-transition-routing.ts`
