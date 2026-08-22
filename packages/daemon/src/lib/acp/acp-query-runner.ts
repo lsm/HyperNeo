@@ -1472,18 +1472,6 @@ export class AcpQueryRunner {
     } finally {
       signal.removeEventListener('abort', onAbort);
       if (signal.aborted && messageDelivered) {
-        if (pendingNext) {
-          try {
-            const result = await pendingNext;
-            if (!result.done && isAcpToolResultMessage(result.value)) {
-              yield result.value;
-            }
-          } catch {}
-          pendingNext = null;
-        }
-        for (const msg of queryObj.flushPendingMessages()) {
-          yield msg;
-        }
         const drainDeadline = { expired: true } as const;
         let clearDrainTimer: (() => void) | undefined;
         const drainTimeout = new Promise<typeof drainDeadline>((resolve) => {
@@ -1494,6 +1482,23 @@ export class AcpQueryRunner {
             resolve(drainDeadline);
           };
         });
+        if (pendingNext) {
+          const inFlight = pendingNext;
+          inFlight.catch(() => {});
+          let result: IteratorResult<SDKMessage> | typeof drainDeadline;
+          try {
+            result = await Promise.race([inFlight, drainTimeout]);
+          } catch {
+            result = drainDeadline;
+          }
+          if (!('expired' in result) && !result.done && isAcpToolResultMessage(result.value)) {
+            yield result.value;
+          }
+          pendingNext = null;
+        }
+        for (const msg of queryObj.flushPendingMessages()) {
+          yield msg;
+        }
         let drained = 0;
         while (drained < MAX_POST_ABORT_DRAIN_MESSAGES) {
           const next = iterator.next();
@@ -1512,10 +1517,18 @@ export class AcpQueryRunner {
           }
         }
         clearDrainTimer?.();
+        try {
+          const settled = new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, POST_ABORT_DRAIN_TIMEOUT_MS);
+            timer.unref?.();
+          });
+          await Promise.race([Promise.resolve(iterator.return?.()), settled]);
+        } catch {}
+      } else {
+        try {
+          await iterator.return?.();
+        } catch {}
       }
-      try {
-        await iterator.return?.();
-      } catch {}
     }
   }
 

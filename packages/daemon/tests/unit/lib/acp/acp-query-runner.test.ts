@@ -2142,6 +2142,42 @@ describe('AcpQueryRunner', () => {
     expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
   }, 1000);
 
+  test('settles the query when the agent stops responding after abort', async () => {
+    const client = createMockClient();
+    let promptBlockedResolve: (() => void) | undefined;
+    const promptBlocked = new Promise<void>((resolve) => {
+      promptBlockedResolve = resolve;
+    });
+    client.sendPrompt.mockImplementation(async function* () {
+      yield {
+        sessionId: 'acp-session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-interrupted',
+          title: 'Long tool',
+          rawInput: {},
+        },
+      };
+      promptBlockedResolve?.();
+      await new Promise<void>(() => {});
+    });
+    const { runner, ctx, onSDKMessage } = createRunnerFixture({ client });
+
+    await runner.start();
+    await promptBlocked;
+    ctx.queryAbortController?.abort();
+    await ctx.queryPromise;
+
+    expect(
+      onSDKMessage.mock.calls.some(
+        ([message]) =>
+          message.type === 'user' &&
+          (message as SDKUserMessage).parent_tool_use_id === 'tc-interrupted'
+      )
+    ).toBe(true);
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  }, 5000);
+
   test('stops draining a continuing producer after abort', async () => {
     const client = createMockClient();
     let releasePrompt: (() => void) | undefined;
