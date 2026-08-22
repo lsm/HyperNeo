@@ -2134,6 +2134,108 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
     );
   });
 
+  test('paginates list_goal_tasks with a cursor and returns the compact projection', async () => {
+    const handlers = makeHandlers(ctx);
+    const goal = ctx.goalService.createGoal({ spaceId: ctx.spaceId, title: 'Paginated goal' });
+
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const task = ctx.taskRepo.createTask({
+        spaceId: ctx.spaceId,
+        title: `task-${i}`,
+        description: `desc-${i}`,
+        result: `result-${i}`,
+        goalId: goal.id,
+      });
+      ids.push(task.id);
+      ctx.db
+        .prepare(`UPDATE space_tasks SET updated_at = ? WHERE id = ?`)
+        .run(1000 + i * 100, task.id);
+    }
+    const expected = [...ids].reverse();
+
+    const collected: string[] = [];
+    let before: number | undefined;
+    let beforeId: string | undefined;
+    for (let guard = 0; guard < 10; guard++) {
+      const out = JSON.parse(
+        (
+          await handlers.list_goal_tasks({
+            goal_id: goal.id,
+            limit: 2,
+            before,
+            before_id: beforeId,
+          })
+        ).content[0].text
+      );
+      expect(out.success).toBe(true);
+      collected.push(...out.tasks.map((t: { id: string }) => t.id));
+      for (const t of out.tasks) {
+        expect(t).not.toHaveProperty('description');
+        expect(t).not.toHaveProperty('result');
+        expect(typeof t.id).toBe('string');
+        expect(typeof t.taskNumber).toBe('number');
+        expect(typeof t.title).toBe('string');
+        expect(typeof t.status).toBe('string');
+        expect(typeof t.priority).toBe('string');
+        expect(typeof t.createdAt).toBe('number');
+        expect(typeof t.updatedAt).toBe('number');
+      }
+      if (!out.has_more) break;
+      const last = out.tasks[out.tasks.length - 1];
+      before = last.updatedAt;
+      beforeId = last.id;
+    }
+
+    expect(collected).toEqual(expected);
+  });
+
+  test('list_goal_tasks honors the status filter and archived semantics', async () => {
+    const handlers = makeHandlers(ctx);
+    const goal = ctx.goalService.createGoal({ spaceId: ctx.spaceId, title: 'Filter goal' });
+
+    const openTask = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'open',
+      description: '',
+      goalId: goal.id,
+    });
+    const doneTask = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'done',
+      description: '',
+      status: 'done',
+      goalId: goal.id,
+    });
+    const archived = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'archived',
+      description: '',
+      status: 'archived',
+      goalId: goal.id,
+    });
+
+    ctx.db.prepare(`UPDATE space_tasks SET updated_at = ? WHERE id = ?`).run(3000, openTask.id);
+    ctx.db.prepare(`UPDATE space_tasks SET updated_at = ? WHERE id = ?`).run(2000, doneTask.id);
+    ctx.db.prepare(`UPDATE space_tasks SET updated_at = ? WHERE id = ?`).run(1000, archived.id);
+
+    const open = JSON.parse((await handlers.list_goal_tasks({ goal_id: goal.id })).content[0].text);
+    expect(open.total).toBe(2);
+    expect(open.tasks.map((t: { id: string }) => t.id)).toEqual([openTask.id, doneTask.id]);
+
+    const done = JSON.parse(
+      (await handlers.list_goal_tasks({ goal_id: goal.id, status: 'done' })).content[0].text
+    );
+    expect(done.total).toBe(1);
+    expect(done.tasks[0].id).toBe(doneTask.id);
+
+    const archivedOut = JSON.parse(
+      (await handlers.list_goal_tasks({ goal_id: goal.id, status: 'archived' })).content[0].text
+    );
+    expect(archivedOut.total).toBe(1);
+    expect(archivedOut.tasks[0].id).toBe(archived.id);
+  });
+
   test('rejects cross-space goal access', async () => {
     const otherGoal = ctx.goalService.createGoal({
       spaceId: ctx.spaceId,

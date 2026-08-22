@@ -237,6 +237,50 @@ export class SpaceTaskRepository {
     return rows.map((r) => this.rowToSpaceTask(r));
   }
 
+  listByGoal(
+    goalId: string,
+    params: {
+      status?: SpaceTaskStatus;
+      limit?: number;
+      before?: number;
+      beforeId?: string;
+    } = {}
+  ): { tasks: SpaceTask[]; total: number; hasMore: boolean } {
+    const limit = Math.max(1, Math.min(100, Math.trunc(params.limit ?? 20)));
+    const cursorId =
+      typeof params.beforeId === 'string' && params.beforeId.length > 0 ? params.beforeId : null;
+    const where: string[] = [`goal_id = ?`];
+    const bind: SQLiteValue[] = [goalId];
+    if (params.status) {
+      where.push(`status = ?`);
+      bind.push(params.status);
+    } else {
+      where.push(`status != 'archived'`);
+    }
+    if (params.before !== undefined) {
+      if (cursorId) {
+        where.push(`(updated_at < ? OR (updated_at = ? AND id < ?))`);
+        bind.push(params.before, params.before, cursorId);
+      } else {
+        where.push(`updated_at < ?`);
+        bind.push(params.before);
+      }
+    }
+    const whereSql = where.join(' AND ');
+    const countRow = this.db
+      .prepare(`SELECT COUNT(*) as count FROM space_tasks WHERE ${whereSql}`)
+      .get(...bind) as { count: number } | undefined;
+    const total = countRow?.count ?? 0;
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM space_tasks WHERE ${whereSql} ORDER BY updated_at DESC, id DESC LIMIT ?`
+      )
+      .all(...bind, limit + 1) as Record<string, unknown>[];
+    const hasMore = rows.length > limit;
+    const tasks = rows.slice(0, limit).map((r) => this.rowToSpaceTask(r));
+    return { tasks, total, hasMore };
+  }
+
   hasApprovedTaskForWorkflow(workflowId: string): boolean {
     const row = this.db
       .prepare(
