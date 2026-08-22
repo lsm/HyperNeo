@@ -302,7 +302,11 @@ export async function readFileWithinWorkspace(
     while (line < endLine) {
       const remainingBytes = options.maxBytes - scannedBytes;
       if (remainingBytes <= 0) {
-        throw new Error(`ACP filesystem scan exceeds ${options.maxBytes} bytes`);
+        const probe = Buffer.allocUnsafe(1);
+        if (Number(symbols.read(fileFd, probe, 1)) > 0) {
+          throw new Error(`ACP filesystem scan exceeds ${options.maxBytes} bytes`);
+        }
+        break;
       }
       const buffer = Buffer.allocUnsafe(Math.min(READ_BUFFER_BYTES, remainingBytes));
       const bytesRead = Number(symbols.read(fileFd, buffer, buffer.length));

@@ -401,6 +401,33 @@ bunRuntimeTest('opens a symlinked workspace root without following segment symli
   }
 });
 
+bunRuntimeTest('reads whole files exactly at the byte cap and rejects beyond it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-cap-'));
+  const workspace = join(root, 'workspace');
+  await mkdir(workspace);
+  await writeFile(join(workspace, 'content.txt'), 'abc');
+  await writeFile(join(workspace, 'large.txt'), 'abcd');
+
+  try {
+    expect(
+      await readFileWithinWorkspace(workspace, ['content.txt'], {
+        startLine: 0,
+        lineLimit: undefined,
+        maxBytes: 3,
+      })
+    ).toBe('abc');
+    await expect(
+      readFileWithinWorkspace(workspace, ['large.txt'], {
+        startLine: 0,
+        lineLimit: undefined,
+        maxBytes: 3,
+      })
+    ).rejects.toThrow('ACP filesystem scan exceeds 3 bytes');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 bunRuntimeTest('bounds bytes scanned before the requested line', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-safe-scan-'));
   const workspace = join(root, 'workspace');
