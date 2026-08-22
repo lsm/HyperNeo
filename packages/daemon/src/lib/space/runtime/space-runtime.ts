@@ -7226,6 +7226,8 @@ export class SpaceRuntime {
       }
       if (this.isPromptTooLongResultError(lastMessage)) continue;
 
+      if (this.isRecoveryInterceptedResult(lastMessage)) continue;
+
       if (this.isApiErrorTerminalResult(lastMessage) && this.isLimitErrorApiResult(lastMessage)) {
         continue;
       }
@@ -7443,6 +7445,13 @@ export class SpaceRuntime {
       message.is_error === true &&
       message.terminal_reason === 'api_error'
     );
+  }
+
+  private isRecoveryInterceptedResult(message: {
+    subtype: string;
+    recovery_intercepted?: boolean | number;
+  }): boolean {
+    return message.recovery_intercepted === true || message.recovery_intercepted === 1;
   }
 
   private isLimitErrorApiResult(message: {

@@ -198,6 +198,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       message.result = opts.resultText ?? '';
       if (typeof opts.apiErrorStatus === 'number') message.api_error_status = opts.apiErrorStatus;
     }
+    if (opts.recoveryIntercepted) message.recovery_intercepted = 1;
     const ts = new Date(Date.now() - (opts.minutesAgo ?? 0) * 60_000).toISOString();
     db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal)
@@ -214,6 +215,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     sessionId?: string;
     resultText?: string;
     apiErrorStatus?: number;
+    recoveryIntercepted?: boolean;
   }): { runId: string; taskId: string; executionId: string } {
     const workflow = workflowManager.createWorkflow({
       spaceId: SPACE_ID,
@@ -260,6 +262,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       terminalReason: opts.terminalReason,
       resultText: opts.resultText,
       apiErrorStatus: opts.apiErrorStatus,
+      recoveryIntercepted: opts.recoveryIntercepted,
     });
     return { runId: run.id, taskId: task.id, executionId: execution.id };
   }
@@ -272,6 +275,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       terminalReason?: string;
       resultText?: string;
       apiErrorStatus?: number;
+      recoveryIntercepted?: boolean;
     }
   ): void {
     const execution = nodeExecutionRepo.getById(executionId);
@@ -404,6 +408,43 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     await rt.executeTick();
 
     expect(tam._injected).toHaveLength(0);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+  });
+
+  test('recovery_intercepted flag carves out a generic-text api-error result (limit pipeline owns it)', async () => {
+    const { runId, taskId, executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: 500 Internal Server Error',
+      recoveryIntercepted: true,
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(0);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+    expect(workflowRunRepo.getRun(runId)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
+    expect(notifications).not.toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
+  });
+
+  test('generic-text api-error result without the interception flag is still admitted', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: 500 Internal Server Error',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1);
+    expect(tam._injected[0].message).toContain('500 Internal Server Error');
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
   });
 
@@ -748,6 +789,41 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
     expect(notifications).toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
     expect(notifications).toContainEqual(expect.objectContaining({ kind: 'workflow_run_blocked' }));
+  });
+
+  test('distinct api-error texts are distinct signatures (second continue before budget exhaustion)', async () => {
+    const { runId, taskId, executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: Connection refused (ConnectionRefused)',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(1);
+
+    resumeToIdle(executionId, {
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: 502 Bad Gateway',
+    });
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(2);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+
+    resumeToIdle(executionId, {
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: 503 Service Unavailable',
+    });
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(2);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
+    expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
+    expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
   });
 
   test('grace cooldown suppresses a re-evaluation before the prior continue is consumed', async () => {
