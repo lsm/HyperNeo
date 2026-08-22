@@ -2380,6 +2380,21 @@ describe('SDKMessageRepository', () => {
       );
     });
 
+    it('follows the EARLIEST non-NULL watermark when duplicate rows carry different consumed_seq values (retry layout)', () => {
+      const insertDuplicate = db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
+         VALUES (?, 'session-1', 'user', NULL, '{}', ?, 'consumed', 0, 'dup-seq-msg', ?)`
+      );
+      insertDuplicate.run('dup-seq-first', '2026-08-11T15:20:00.000Z', 10);
+      insertDuplicate.run('dup-seq-second', '2026-08-11T15:21:00.000Z', 5);
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
+         VALUES ('dup-seq-result', 'session-1', 'result', 'success', '{}', '2026-08-11T15:22:00.000Z', NULL, 1, 'dup-seq-result-uuid', 7, NULL)`
+      ).run();
+
+      expect(repository.hasTerminalResultAfter('session-1', 'dup-seq-msg')).toBe(true);
+    });
+
     it('is true when a terminal result shares the consumption millisecond but inserts after (P2 tiebreak)', () => {
       insertMessage('session-1', 'user', {
         uuid: 'tie-msg',
