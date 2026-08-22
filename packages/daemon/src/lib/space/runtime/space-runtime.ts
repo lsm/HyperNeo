@@ -7648,7 +7648,8 @@ export class SpaceRuntime {
       for (const execution of blockedExecutions) {
         const bindingAlive =
           !!execution.agentSessionId &&
-          (this.config.taskAgentManager?.isSessionInMemory(execution.agentSessionId) ?? false);
+          (this.config.taskAgentManager?.isSessionInMemory(execution.agentSessionId) ?? false) &&
+          !this.isFailedSessionBinding(execution.agentSessionId);
         this.config.nodeExecutionRepo.update(execution.id, {
           status: 'pending',
           result: null,
@@ -7698,6 +7699,14 @@ export class SpaceRuntime {
           `emitted workflow_run_needs_attention`
       );
     }
+  }
+
+  private isFailedSessionBinding(sessionId: string): boolean {
+    const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
+    if (!lastMessage || !isSDKResultError(lastMessage)) return false;
+    return (
+      lastMessage.subtype === 'error_during_execution' || lastMessage.subtype === 'error_max_turns'
+    );
   }
 
   private resolvePrUrlForRun(runId: string): string {
