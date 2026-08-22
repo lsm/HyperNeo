@@ -295,8 +295,9 @@ describe('artifact completeness mapping', () => {
     expect(jobNameToArtifactName('Daemon Online (features-a)')).toBe(
       'lcov-daemon-online-features-a'
     );
-    expect(jobNameToArtifactName('Web Tests (1)')).toBe('lcov-web-1');
-    expect(jobNameToArtifactName('Web Tests (2)')).toBe('lcov-web-2');
+    expect(jobNameToArtifactName('Web Tests (1/2)')).toBe('lcov-web-1');
+    expect(jobNameToArtifactName('Web Tests (2/2)')).toBe('lcov-web-2');
+    expect(jobNameToArtifactName('Web Tests (3/4)')).toBe('lcov-web-3');
   });
 
   it('ignores non-matrix and non-test jobs', () => {

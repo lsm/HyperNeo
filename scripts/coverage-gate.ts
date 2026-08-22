@@ -297,7 +297,8 @@ export function jobNameToArtifactName(jobName: string): string | null {
   if (!match) {
     return null;
   }
-  const [, family, leg] = match;
+  const [, family, rawLeg] = match;
+  const leg = rawLeg.split('/')[0];
   if (family === 'Daemon Unit Tests') {
     return `lcov-daemon-${leg}`;
   }
