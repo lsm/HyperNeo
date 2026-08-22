@@ -896,6 +896,7 @@ describe('SDKMessageHandler', () => {
     it('a uuid-less error result releases a correlated clear wait promptly', async () => {
       handler.suppressIdleForNextResult();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      handler.markClearMessageSent();
       setIdleSpy.mockClear();
 
       await handler.handleMessage({
@@ -918,6 +919,39 @@ describe('SDKMessageHandler', () => {
       expect(setIdleSpy).not.toHaveBeenCalled();
     });
 
+    it('a pre-send error from an earlier turn does not attribute to the queued clear', async () => {
+      const errorMessage = {
+        type: 'result',
+        subtype: 'error_during_execution',
+        uuid: 'compact-error',
+        is_error: true,
+        errors: ['compact boom'],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+
+      handler.suppressIdleForNextResult();
+      let settled: string | null = null;
+      void handler.waitForSuppressedResult(5_000, 'clear-msg-id').then((outcome) => {
+        settled = outcome;
+      });
+
+      await handler.handleMessage(errorMessage);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(settled).toBe(null);
+
+      handler.markClearMessageSent();
+      await handler.handleMessage({ ...errorMessage, uuid: 'clear-error' } as SDKMessage);
+
+      expect(settled).toBe('reset');
+    });
+
     it('an error result releases the clear wait only after its bookkeeping completes', async () => {
       let releaseBookkeeping!: () => void;
       const gate = new Promise<void>((resolve) => {
@@ -929,6 +963,7 @@ describe('SDKMessageHandler', () => {
 
       handler.suppressIdleForNextResult();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      handler.markClearMessageSent();
       let settled: string | null = null;
       void wait.then((outcome) => {
         settled = outcome;
@@ -1063,6 +1098,61 @@ describe('SDKMessageHandler', () => {
 
       releaseBookkeeping();
       await handled;
+
+      expect(await wait).toBe('confirmed');
+    });
+
+    it('the trailing-idle deadline starts only after result bookkeeping finishes', async () => {
+      let releasePublication!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releasePublication = resolve;
+      });
+      let sdkPublishes = 0;
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') {
+          sdkPublishes += 1;
+          if (sdkPublishes === 2) {
+            await gate;
+          }
+        }
+      });
+      const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
+        ({
+          type: 'system',
+          subtype: 'session_state_changed',
+          state,
+          uuid: `state-${state}`,
+          session_id: 'sdk-session-123',
+        }) as unknown as SDKMessage;
+
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(30, 'clear-msg-id');
+      let settled: string | null = null;
+      void wait.then((outcome) => {
+        settled = outcome;
+      });
+
+      await handler.handleMessage(sessionState('busy'));
+      const handled = handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'clear-result',
+        user_message_uuid: 'clear-msg-id',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(settled).toBe(null);
+
+      releasePublication();
+      await handled;
+      await handler.handleMessage(sessionState('idle'));
 
       expect(await wait).toBe('confirmed');
     });

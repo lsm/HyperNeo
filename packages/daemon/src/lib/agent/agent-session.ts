@@ -797,6 +797,7 @@ export class AgentSession
       }
       throw err;
     }
+    this.messageHandler.markClearMessageSent();
     this.messageHandler.startSuppressedResultTimer(this.clearConfirmTimeoutMs);
     const clearOutcome = await confirmedClear;
     if (clearOutcome === 'confirmed') {
