@@ -186,11 +186,14 @@ describe('redactCommandSecrets', () => {
   test('preserves token boundaries when redisplaying shell command arguments', () => {
     expect(redactCommandSecrets('sh', ['-c', `rm -- "important file" --token topsecret`])).toEqual([
       '-c',
-      `rm -- 'important file' --token [redacted]`,
+      `rm -- "important file" --token [redacted]`,
     ]);
     expect(
       redactCommandSecrets('sh', ['-c', `curl -H 'Authorization: Bearer topsecret' https://a`])
-    ).toEqual(['-c', `curl -H [redacted] https://a`]);
+    ).toEqual(['-c', `curl -H '[redacted]' https://a`]);
+    expect(
+      redactCommandSecrets('sh', ['-c', `echo "safe; rm -rf /" && curl --token topsecret`])
+    ).toEqual(['-c', `echo "safe; rm -rf /" && curl --token [redacted]`]);
   });
 
   test('redisplays shell scripts verbatim when nothing was redacted', () => {

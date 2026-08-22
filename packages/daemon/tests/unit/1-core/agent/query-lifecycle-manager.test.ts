@@ -194,6 +194,7 @@ describe('QueryLifecycleManager', () => {
       const stopSpy = spyOn(messageQueue, 'stop');
       stopSpy.mockImplementation(() => {
         mockContext.queryAbortController = newerController;
+        mockContext.queryPromise = Promise.resolve();
         originalStop();
       });
       manager = new QueryLifecycleManager(mockContext);
@@ -201,6 +202,34 @@ describe('QueryLifecycleManager', () => {
       await manager.stop();
 
       expect(entryController.signal.aborted).toBe(true);
+      expect(newerController.signal.aborted).toBe(false);
+    });
+
+    test('aborts a controller installed by the stopped query during the stop window', async () => {
+      const lateController = new AbortController();
+      mockContext.queryPromise = new Promise(() => {});
+      manager = new QueryLifecycleManager(mockContext);
+
+      const stopping = manager.stop({ timeoutMs: 50 });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      mockContext.queryAbortController = lateController;
+      await stopping;
+
+      expect(lateController.signal.aborted).toBe(true);
+      expect(mockContext.queryAbortController).toBeNull();
+    });
+
+    test('does not abort a newer query controller installed during the stop window', async () => {
+      const newerController = new AbortController();
+      mockContext.queryPromise = new Promise(() => {});
+      manager = new QueryLifecycleManager(mockContext);
+
+      const stopping = manager.stop({ timeoutMs: 50 });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      mockContext.queryAbortController = newerController;
+      mockContext.queryPromise = Promise.resolve();
+      await stopping;
+
       expect(newerController.signal.aborted).toBe(false);
     });
 

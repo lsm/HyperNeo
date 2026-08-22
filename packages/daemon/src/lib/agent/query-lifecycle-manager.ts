@@ -191,6 +191,7 @@ export class QueryLifecycleManager {
     const trackedProcessSnapshot = this.ctx.snapshotTrackedAgentProcesses();
     const noPidProcessSnapshot = this.ctx.snapshotNoPidTrackedProcesses?.() ?? [];
     const queryAbortController = this.ctx.queryAbortController;
+    const queryPromise = this.ctx.queryPromise;
 
     messageQueue.stop();
     queryAbortController?.abort();
@@ -204,7 +205,6 @@ export class QueryLifecycleManager {
       }
     }
 
-    const queryPromise = this.ctx.queryPromise;
     if (queryPromise) {
       try {
         const promiseToAwait = catchQueryErrors ? queryPromise.catch(() => {}) : queryPromise;
@@ -242,6 +242,13 @@ export class QueryLifecycleManager {
       this.ctx.startupTimeoutTimer = null;
     }
     const staleAbort = this.ctx.queryAbortController;
+    if (
+      staleAbort &&
+      staleAbort !== queryAbortController &&
+      this.ctx.queryPromise === queryPromise
+    ) {
+      staleAbort.abort();
+    }
     if (staleAbort) {
       this.ctx.queryAbortController = null;
     }

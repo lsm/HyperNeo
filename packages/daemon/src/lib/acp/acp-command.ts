@@ -69,10 +69,27 @@ function redactShellCommand(script: string, depth: number): string {
   try {
     const { command, args } = parseAcpCommand(script);
     const redactedArgs = redactCommandSecrets(command, args, depth - 1);
-    if (redactedArgs.length === args.length && redactedArgs.every((arg, i) => arg === args[i])) {
-      return script;
+    let result = script;
+    let cursor = 0;
+    let changed = false;
+    let missed = false;
+    for (let index = 0; index < redactedArgs.length; index++) {
+      if (redactedArgs[index] === args[index]) continue;
+      const span = result.indexOf(args[index], cursor);
+      if (span === -1) {
+        missed = true;
+        break;
+      }
+      result =
+        result.slice(0, span) + redactedArgs[index] + result.slice(span + args[index].length);
+      cursor = span + redactedArgs[index].length;
+      changed = true;
     }
-    return [command, ...redactedArgs].map(displayQuote).join(' ');
+    if (changed && !missed) return result;
+    if (changed) {
+      return [command, ...redactedArgs].map(displayQuote).join(' ');
+    }
+    return script;
   } catch {
     return script;
   }
