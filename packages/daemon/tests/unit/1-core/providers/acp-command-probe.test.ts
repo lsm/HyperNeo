@@ -64,6 +64,7 @@ describe('defaultAcpCommandProbe', () => {
     expect(clientOptions?.command).toBe('/Applications/Devin CLI/devin');
     expect(clientOptions?.args).toEqual(['acp']);
     expect(clientOptions?.env).toEqual({ PATH: '/safe/bin', HOME: '/safe/home' });
+    expect(clientOptions?.replaceEnv).toBe(true);
   });
 
   test('completes the handshake before resolving', async () => {

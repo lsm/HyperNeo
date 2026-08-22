@@ -59,6 +59,7 @@ export interface AcpClientOptions
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  replaceEnv?: boolean;
   cwd?: string;
   requestTimeoutMs?: number;
 }

@@ -26,6 +26,7 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
     args,
     cwd: process.cwd(),
     env: buildAcpSafeEnv(),
+    replaceEnv: true,
     requestTimeoutMs: timeoutMs,
   });
   try {
