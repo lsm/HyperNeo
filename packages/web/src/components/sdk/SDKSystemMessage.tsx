@@ -215,10 +215,31 @@ function WorkerShuttingDownMessage({ message }: { message: SDKWorkerShuttingDown
 }
 
 function ModelRefusalFallbackMessage({ message }: { message: SDKModelRefusalFallbackMessage }) {
+  const refusalCategory = message.api_refusal_category?.trim() || null;
+  const refusalExplanation = message.api_refusal_explanation?.trim() || null;
+
   return (
     <div class="my-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
-      <div class="mb-1 font-semibold">Model fallback</div>
+      <div class="mb-1 flex flex-wrap items-center gap-2 font-semibold">
+        Model fallback
+        {refusalCategory && (
+          <span
+            class="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/50 dark:text-amber-200"
+            data-testid="api-refusal-category"
+          >
+            {refusalCategory}
+          </span>
+        )}
+      </div>
       <div>{message.content}</div>
+      {refusalExplanation && (
+        <div
+          class="mt-1 text-xs text-amber-700 dark:text-amber-300"
+          data-testid="api-refusal-explanation"
+        >
+          {refusalExplanation}
+        </div>
+      )}
       <div class="mt-2 text-xs text-amber-700 dark:text-amber-300">
         {message.original_model} → {message.fallback_model}
       </div>

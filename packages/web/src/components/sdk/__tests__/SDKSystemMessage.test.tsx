@@ -397,6 +397,40 @@ describe('SDKSystemMessage', () => {
       expect(container.textContent).toContain('claude-sonnet-4-5');
     });
 
+    it('should render api refusal metadata on fallback messages', () => {
+      const message = {
+        ...createModelRefusalFallbackMessage(),
+        api_refusal_category: 'refusal_engine',
+        api_refusal_explanation: 'The request was refused by the refusal engine',
+      };
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.querySelector('[data-testid="api-refusal-category"]')).toBeTruthy();
+      expect(container.textContent).toContain('refusal_engine');
+      expect(container.querySelector('[data-testid="api-refusal-explanation"]')).toBeTruthy();
+      expect(container.textContent).toContain('The request was refused by the refusal engine');
+    });
+
+    it('should omit api refusal metadata when absent', () => {
+      const message = createModelRefusalFallbackMessage();
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.querySelector('[data-testid="api-refusal-category"]')).toBeFalsy();
+      expect(container.querySelector('[data-testid="api-refusal-explanation"]')).toBeFalsy();
+    });
+
+    it('should ignore blank api refusal metadata', () => {
+      const message = {
+        ...createModelRefusalFallbackMessage(),
+        api_refusal_category: '  ',
+        api_refusal_explanation: null,
+      };
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.querySelector('[data-testid="api-refusal-category"]')).toBeFalsy();
+      expect(container.querySelector('[data-testid="api-refusal-explanation"]')).toBeFalsy();
+    });
+
     it('should render informational messages', () => {
       const message = {
         type: 'system',

@@ -57,7 +57,10 @@ import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/goal-automat
 import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
-import type { SpaceTaskManager } from '../managers/space-task-manager';
+import {
+  assertValidSpaceTaskTransition,
+  type SpaceTaskManager,
+} from '../managers/space-task-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { ReplyRoutingRegistry } from '../runtime/reply-routing-registry';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
@@ -2027,6 +2030,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
         if (plan.action === 'reject' || plan.action === 'deny') {
           return jsonResult({ success: false, error: plan.message });
+        }
+        if (args.status !== undefined && task !== null && args.status !== task.status) {
+          assertValidSpaceTaskTransition(task.status, args.status);
         }
         switch (plan.action) {
           case 'park_stopped': {

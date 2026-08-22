@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import {
+  badgeColor,
+  buildBadge,
+  buildBaseline,
   type CoverageBaseline,
   type CoverageStats,
-  type MergedFiles,
-  buildBaseline,
   computeStats,
   evaluateGate,
   expectedArtifactsForJobs,
   isCountedPath,
   jobNameToArtifactName,
+  type MergedFiles,
   main,
   mergeLcovText,
   missingArtifacts,
@@ -255,6 +257,41 @@ describe('parseBaseline and buildBaseline', () => {
   });
 });
 
+describe('badgeColor and buildBadge', () => {
+  it('maps percentages onto the superpipe color thresholds', () => {
+    expect(badgeColor(100)).toBe('brightgreen');
+    expect(badgeColor(90)).toBe('brightgreen');
+    expect(badgeColor(89.99)).toBe('green');
+    expect(badgeColor(80)).toBe('green');
+    expect(badgeColor(79.5)).toBe('yellowgreen');
+    expect(badgeColor(70)).toBe('yellowgreen');
+    expect(badgeColor(69)).toBe('yellow');
+    expect(badgeColor(60)).toBe('yellow');
+    expect(badgeColor(59.9)).toBe('orange');
+    expect(badgeColor(50)).toBe('orange');
+    expect(badgeColor(49.99)).toBe('red');
+    expect(badgeColor(0)).toBe('red');
+  });
+
+  it('renders the shields endpoint document with a rounded message', () => {
+    expect(buildBadge(statsFixture({ percent: 83.874 }))).toBe(
+      '{"schemaVersion":1,"label":"coverage","message":"83.87%","color":"green"}'
+    );
+    expect(JSON.parse(buildBadge(statsFixture({ percent: 96.336 })))).toEqual({
+      schemaVersion: 1,
+      label: 'coverage',
+      message: '96.34%',
+      color: 'brightgreen',
+    });
+    expect(JSON.parse(buildBadge(statsFixture({ percent: 30, total: 0 })))).toEqual({
+      schemaVersion: 1,
+      label: 'coverage',
+      message: '30%',
+      color: 'red',
+    });
+  });
+});
+
 describe('renderSummary', () => {
   it('renders overall, per-package rows, and failure reasons', () => {
     const gate = evaluateGate(statsFixture({ percent: 20 }), baselineFixture(), {
@@ -380,5 +417,34 @@ describe('main', () => {
     mkdirSync(artifactsDir, { recursive: true });
     writeFileSync(`${artifactsDir}/keep.txt`, 'x');
     expect(await main(['--artifacts', artifactsDir])).toBe(1);
+  });
+
+  it('writes a badge document alongside the gate verdict', async () => {
+    const artifactsDir = `/tmp/coverage-gate-test-badge-${process.pid}`;
+    const baselinePath = `${artifactsDir}/baseline.json`;
+    const badgePath = `${artifactsDir}/coverage-badge.json`;
+    mkdirSync(`${artifactsDir}/a`, { recursive: true });
+    writeFileSync(
+      `${artifactsDir}/a/lcov.info`,
+      ['SF:packages/daemon/src/a.ts', 'DA:1,1', 'DA:2,1', 'end_of_record'].join('\n')
+    );
+    writeFileSync(
+      baselinePath,
+      JSON.stringify({ schemaVersion: 1, overallPercent: 50, packages: {} })
+    );
+
+    expect(
+      await main([
+        '--artifacts',
+        artifactsDir,
+        '--baseline',
+        baselinePath,
+        '--write-badge',
+        badgePath,
+      ])
+    ).toBe(0);
+    expect(await Bun.file(badgePath).text()).toBe(
+      '{"schemaVersion":1,"label":"coverage","message":"100%","color":"brightgreen"}'
+    );
   });
 });

@@ -1,0 +1,68 @@
+import { describe, expect, test } from 'bun:test';
+import {
+  buildAcpSafeEnv,
+  getAcpCommandIdentity,
+  parseAcpCommand,
+} from '../../../../src/lib/acp/acp-command';
+
+describe('buildAcpSafeEnv', () => {
+  test('keeps only safe environment variables without unrelated secrets', () => {
+    expect(
+      buildAcpSafeEnv({
+        HOME: '/Users/devin',
+        PATH: '/usr/local/bin:/usr/bin:/bin',
+        SHELL: '/bin/zsh',
+        TMPDIR: '/var/folders/ab/',
+        HTTPS_PROXY: 'http://proxy.internal:8080',
+        NO_PROXY: 'localhost,.internal',
+        https_proxy: 'http://legacy-secure-proxy.internal:8080',
+        http_proxy: 'http://legacy-proxy.internal:8080',
+        no_proxy: '127.0.0.1',
+        NODE_USE_ENV_PROXY: '1',
+        NODE_EXTRA_CA_CERTS: '/certs/internal.pem',
+        GITHUB_TOKEN: 'secret',
+        ANTHROPIC_API_KEY: 'secret',
+      })
+    ).toEqual({
+      HOME: '/Users/devin',
+      PATH: '/usr/local/bin:/usr/bin:/bin',
+      SHELL: '/bin/zsh',
+      TMPDIR: '/var/folders/ab/',
+      HTTPS_PROXY: 'http://proxy.internal:8080',
+      NO_PROXY: 'localhost,.internal',
+      https_proxy: 'http://legacy-secure-proxy.internal:8080',
+      http_proxy: 'http://legacy-proxy.internal:8080',
+      no_proxy: '127.0.0.1',
+      NODE_USE_ENV_PROXY: '1',
+      NODE_EXTRA_CA_CERTS: '/certs/internal.pem',
+    });
+  });
+});
+
+describe('parseAcpCommand', () => {
+  test('parses quoted paths, quoted arguments, and escapes', () => {
+    expect(
+      parseAcpCommand('"/Applications/Devin CLI/devin" acp "model one" escaped\\ arg')
+    ).toEqual({
+      command: '/Applications/Devin CLI/devin',
+      args: ['acp', 'model one', 'escaped arg'],
+    });
+  });
+
+  test('rejects empty commands', () => {
+    expect(() => parseAcpCommand('   ')).toThrow('Invalid ACP command: command is empty');
+  });
+
+  test('rejects unmatched quotes', () => {
+    expect(() => parseAcpCommand("devin 'acp")).toThrow('Invalid ACP command: unmatched quote');
+    expect(() => parseAcpCommand('devin "acp')).toThrow('Invalid ACP command: unmatched quote');
+  });
+});
+
+describe('getAcpCommandIdentity', () => {
+  test('normalizes equivalent command identities', () => {
+    expect(getAcpCommandIdentity('devin   acp "model one"')).toBe(
+      getAcpCommandIdentity("devin acp 'model one'")
+    );
+  });
+});

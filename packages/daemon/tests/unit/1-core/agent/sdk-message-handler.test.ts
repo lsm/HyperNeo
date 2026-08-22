@@ -2166,6 +2166,167 @@ describe('SDKMessageHandler', () => {
       );
     });
 
+    describe('refusal rewind target plumbing (refused_user_message_uuid)', () => {
+      it('records the refused user message uuid on session metadata', async () => {
+        await handler.handleMessage({
+          type: 'system',
+          subtype: 'model_refusal_fallback',
+          direction: 'retry',
+          original_model: 'claude-opus-4-7',
+          fallback_model: 'claude-sonnet-4-20250514',
+          refused_user_message_uuid: 'refused-user-uuid',
+          content: 'Retrying with fallback model',
+        } as unknown as SDKMessage);
+
+        expect(mockSession.metadata?.refusalRewindTargetUuid).toBe('refused-user-uuid');
+        expect(updateSessionSpy).toHaveBeenCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            metadata: expect.objectContaining({ refusalRewindTargetUuid: 'refused-user-uuid' }),
+          })
+        );
+        expect(emitSpy).toHaveBeenCalledWith(
+          'session.updated',
+          expect.objectContaining({
+            sessionId: 'test-session-id',
+            session: expect.objectContaining({
+              metadata: expect.objectContaining({ refusalRewindTargetUuid: 'refused-user-uuid' }),
+            }),
+          })
+        );
+      });
+
+      it('records the target for non-retry directions too', async () => {
+        await handler.handleMessage({
+          type: 'system',
+          subtype: 'model_refusal_fallback',
+          direction: 'revert',
+          original_model: 'claude-opus-4-7',
+          fallback_model: 'claude-sonnet-4-20250514',
+          refused_user_message_uuid: 'refused-user-uuid',
+          content: 'Reverting after refusal',
+        } as unknown as SDKMessage);
+
+        expect(mockSession.metadata?.refusalRewindTargetUuid).toBe('refused-user-uuid');
+      });
+
+      it('records the target for model_refusal_no_fallback messages', async () => {
+        await handler.handleMessage({
+          type: 'system',
+          subtype: 'model_refusal_no_fallback',
+          original_model: 'claude-opus-4-7',
+          request_id: null,
+          refused_user_message_uuid: 'refused-user-uuid',
+          content: 'No fallback model available',
+        } as unknown as SDKMessage);
+
+        expect(mockSession.metadata?.refusalRewindTargetUuid).toBe('refused-user-uuid');
+        expect(updateSessionSpy).toHaveBeenCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            metadata: expect.objectContaining({ refusalRewindTargetUuid: 'refused-user-uuid' }),
+          })
+        );
+      });
+
+      it('does not republish when the target is unchanged', async () => {
+        mockSession.metadata = {
+          ...mockSession.metadata,
+          refusalRewindTargetUuid: 'refused-user-uuid',
+        };
+        updateSessionSpy.mockClear();
+        emitSpy.mockClear();
+
+        await handler.handleMessage({
+          type: 'system',
+          subtype: 'model_refusal_fallback',
+          direction: 'retry',
+          original_model: 'claude-opus-4-7',
+          fallback_model: 'default',
+          refused_user_message_uuid: 'refused-user-uuid',
+          content: 'Retrying with fallback model',
+        } as unknown as SDKMessage);
+
+        expect(updateSessionSpy).not.toHaveBeenCalled();
+        expect(emitSpy).not.toHaveBeenCalledWith('session.updated', expect.anything());
+      });
+
+      it('leaves metadata untouched when the refusal carries no uuid', async () => {
+        await handler.handleMessage({
+          type: 'system',
+          subtype: 'model_refusal_fallback',
+          direction: 'retry',
+          original_model: 'claude-opus-4-7',
+          fallback_model: 'default',
+          refused_user_message_uuid: null,
+          content: 'Retrying with fallback model',
+        } as unknown as SDKMessage);
+
+        expect(mockSession.metadata?.refusalRewindTargetUuid).toBeUndefined();
+        expect(emitSpy).not.toHaveBeenCalledWith('session.updated', expect.anything());
+      });
+
+      it('clears the target on the next successful result, including the persisted row', async () => {
+        mockSession.metadata = {
+          ...mockSession.metadata,
+          refusalRewindTargetUuid: 'refused-user-uuid',
+        };
+
+        await handler.handleMessage({
+          type: 'result',
+          subtype: 'success',
+          uuid: 'success-result',
+          usage: { input_tokens: 10, output_tokens: 5 },
+          total_cost_usd: 0,
+          modelUsage: {},
+        } as unknown as SDKMessage);
+
+        expect(mockSession.metadata?.refusalRewindTargetUuid).toBeUndefined();
+        expect(updateSessionSpy).toHaveBeenCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            metadata: expect.objectContaining({ refusalRewindTargetUuid: null }),
+          })
+        );
+        expect(emitSpy).toHaveBeenCalledWith(
+          'session.updated',
+          expect.objectContaining({
+            session: expect.objectContaining({
+              metadata: expect.not.objectContaining({ refusalRewindTargetUuid: expect.anything() }),
+            }),
+          })
+        );
+      });
+    });
+
+    describe('SDK capability capture', () => {
+      it('exposes capabilities advertised on system/init', async () => {
+        await handler.handleMessage({
+          type: 'system',
+          subtype: 'init',
+          capabilities: ['interrupt_receipt_v1', 'interrupt_cancel_queued_v1'],
+        } as unknown as SDKMessage);
+
+        expect(handler.getSdkCapabilities().has('interrupt_cancel_queued_v1')).toBe(true);
+        expect(handler.getSdkCapabilities().has('interrupt_receipt_v1')).toBe(true);
+        expect(handler.getSdkCapabilities().has('unknown_capability')).toBe(false);
+      });
+
+      it('starts empty and resets when a fresh init advertises nothing', async () => {
+        await handler.handleMessage({
+          type: 'system',
+          subtype: 'init',
+          capabilities: ['interrupt_cancel_queued_v1'],
+        } as unknown as SDKMessage);
+        await handler.handleMessage({
+          type: 'system',
+          subtype: 'init',
+        } as unknown as SDKMessage);
+
+        expect(handler.getSdkCapabilities().size).toBe(0);
+      });
+    });
+
     it('should emit session.errorClear event', async () => {
       const message: SDKMessage = {
         type: 'result',

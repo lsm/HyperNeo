@@ -7,6 +7,16 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Database } from '../../storage/database';
 import { withSessionLock } from './message-delivery';
 
+const DEFAULT_INTERRUPT_CONTROL_TIMEOUT_MS = 2000;
+const INTERRUPT_CONTROL_TIMED_OUT = 'interrupt-control-timed-out';
+
+function getInterruptControlTimeoutMs(): number {
+  const raw = process.env.HYPERNEO_INTERRUPT_CONTROL_TIMEOUT_MS;
+  if (!raw) return DEFAULT_INTERRUPT_CONTROL_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_INTERRUPT_CONTROL_TIMEOUT_MS;
+}
+
 export interface InterruptHandlerContext {
   readonly session: Session;
   readonly messageHub: MessageHub;
@@ -20,6 +30,8 @@ export interface InterruptHandlerContext {
   queryPromise: Promise<void> | null;
   queryAbortController: AbortController | null;
   processExitedPromise: Promise<void> | null;
+
+  getSdkCapabilities?(): ReadonlySet<string>;
 }
 
 export class InterruptHandler {
@@ -97,28 +109,49 @@ export class InterruptHandler {
         messageQueue.clear();
       }
 
-      if (this.ctx.queryAbortController) {
-        this.ctx.queryAbortController.abort();
-        this.ctx.queryAbortController = null;
-      }
-
       const queryObjectSnapshot = this.ctx.queryObject;
 
       let hasInterruptSurvivors = false;
       if (queryObjectSnapshot && typeof queryObjectSnapshot.interrupt === 'function') {
         try {
-          const receipt = await queryObjectSnapshot.interrupt();
-          const survivors = receipt?.still_queued?.length ?? 0;
-          if (survivors > 0) {
+          const receipt = await this.withInterruptControlDeadline(queryObjectSnapshot.interrupt());
+          if (receipt === INTERRUPT_CONTROL_TIMED_OUT) {
             hasInterruptSurvivors = true;
             logger.warn(
-              `SDK interrupt left ${survivors} queued message(s) still running; closing immediately to stop them`
+              `SDK interrupt() did not answer within ${getInterruptControlTimeoutMs()}ms; closing immediately`
             );
+          } else {
+            const survivors = receipt?.still_queued ?? [];
+            if (survivors.length > 0) {
+              const cancelled = await this.withInterruptControlDeadline(
+                this.cancelQueuedSurvivors(queryObjectSnapshot, survivors)
+              );
+              if (cancelled === INTERRUPT_CONTROL_TIMED_OUT) {
+                hasInterruptSurvivors = true;
+                logger.warn(
+                  `SDK cancel_async_message did not settle within ${getInterruptControlTimeoutMs()}ms; closing immediately`
+                );
+              } else if (cancelled) {
+                logger.info(
+                  `SDK interrupt: cancelled ${survivors.length} queued message(s) via cancel_async_message`
+                );
+              } else {
+                hasInterruptSurvivors = true;
+                logger.warn(
+                  `SDK interrupt left ${survivors.length} queued message(s) still running; closing immediately to stop them`
+                );
+              }
+            }
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           logger.warn('SDK interrupt() failed (may be expected):', errorMessage);
         }
+      }
+
+      if (this.ctx.queryAbortController) {
+        this.ctx.queryAbortController.abort();
+        this.ctx.queryAbortController = null;
       }
 
       if (this.ctx.queryPromise && !hasInterruptSurvivors) {
@@ -163,6 +196,50 @@ export class InterruptHandler {
         this.interruptResolve = null;
       }
       this.interruptPromise = null;
+    }
+  }
+
+  private async withInterruptControlDeadline<T>(
+    promise: Promise<T>
+  ): Promise<T | typeof INTERRUPT_CONTROL_TIMED_OUT> {
+    void promise.catch(() => {});
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<typeof INTERRUPT_CONTROL_TIMED_OUT>((resolve) => {
+      timer = setTimeout(
+        () => resolve(INTERRUPT_CONTROL_TIMED_OUT),
+        getInterruptControlTimeoutMs()
+      );
+    });
+    try {
+      return await Promise.race([promise, deadline]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
+  private async cancelQueuedSurvivors(
+    queryObject: QueryLike,
+    survivors: string[]
+  ): Promise<boolean> {
+    if (!this.ctx.getSdkCapabilities?.().has('interrupt_cancel_queued_v1')) return false;
+    if (typeof queryObject.cancelAsyncMessage !== 'function') return false;
+    try {
+      for (const messageUuid of survivors) {
+        const cancelled = await queryObject.cancelAsyncMessage(messageUuid);
+        if (!cancelled) {
+          this.ctx.logger.warn(
+            `SDK cancel_async_message did not confirm cancellation of ${messageUuid}; falling back to subprocess close`
+          );
+          return false;
+        }
+      }
+      return true;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.ctx.logger.warn(
+        `SDK cancel_async_message failed (${errorMessage}); falling back to subprocess close`
+      );
+      return false;
     }
   }
 
