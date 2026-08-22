@@ -109,26 +109,62 @@ function precedesAsiKeyword(text: string, before: number): boolean {
   return ASI_KEYWORDS.has(text.slice(start + 1, end + 1));
 }
 
+function trailingNewlines(s: string): number {
+  let n = 0;
+  while (s[s.length - 1 - n] === '\n') n++;
+  return n;
+}
+
+function leadingNewlines(s: string): number {
+  let n = 0;
+  while (s[n] === '\n') n++;
+  return n;
+}
+
 export function stripComments(text: string, fileName: string, isTsx: boolean): string {
   const comments = collectCommentRanges(text, fileName, isTsx);
   if (comments.length === 0) return text;
   const removals = mergeRanges(comments.map((r) => expandRange(text, r)));
   let out = '';
   let cursor = 0;
+  let afterRemoval = false;
+  const appendUpTo = (upTo: number): void => {
+    let chunk = text.slice(cursor, upTo);
+    if (afterRemoval) {
+      if (cursor >= text.length || text[cursor] === '\n') {
+        out = out.replace(/[ \t]+$/, '');
+      }
+      const trail = trailingNewlines(out);
+      const lead = leadingNewlines(chunk);
+      const excess = trail + lead - 2;
+      if (excess > 0) {
+        const fromOut = Math.min(trail, excess);
+        out = out.slice(0, out.length - fromOut);
+        chunk = chunk.slice(Math.min(lead, excess - fromOut));
+      }
+    }
+    out += chunk;
+  };
   for (const { start, end } of removals) {
-    out += text.slice(cursor, start);
+    appendUpTo(start);
     const hadLineTerminator = text.slice(start, end).includes('\n');
     const retainsLineTerminator =
       (start > 0 && text[start - 1] === '\n') || (end < text.length && text[end] === '\n');
-    if (mergesTokens(text, start - 1, end)) {
-      out += hadLineTerminator ? '\n' : ' ';
-    } else if (hadLineTerminator && !retainsLineTerminator && precedesAsiKeyword(text, start - 1)) {
+    const emitLineBreak = (): void => {
+      out = out.replace(/[ \t]+$/, '');
       out += '\n';
+    };
+    if (mergesTokens(text, start - 1, end)) {
+      if (hadLineTerminator) emitLineBreak();
+      else out += ' ';
+    } else if (hadLineTerminator && !retainsLineTerminator && precedesAsiKeyword(text, start - 1)) {
+      emitLineBreak();
     }
     cursor = end;
+    afterRemoval = true;
   }
-  out += text.slice(cursor);
-  return out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n');
+  appendUpTo(text.length);
+  return out;
 }
 
 async function main(): Promise<void> {
@@ -141,7 +177,10 @@ async function main(): Promise<void> {
   if (filesIdx !== -1) {
     files = args.slice(filesIdx + 1).filter((a) => !a.startsWith('--'));
   } else {
-    const proc = Bun.spawnSync(['git', 'ls-files', '*.ts', '*.tsx']);
+    const lsArgs = check
+      ? ['git', 'ls-files', '*.ts', '*.tsx']
+      : ['git', 'ls-files', '--cached', '--others', '--exclude-standard', '*.ts', '*.tsx'];
+    const proc = Bun.spawnSync(lsArgs);
     files = proc.stdout
       .toString()
       .split('\n')

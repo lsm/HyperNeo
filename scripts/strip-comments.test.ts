@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripComments } from './strip-comments.ts';
 
@@ -16,6 +18,27 @@ describe('strip-comments', () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
     expect(result.stdout).toBe('files with comments: 0, comments removed: 0\n');
+  });
+
+  it('strips untracked sources in strip mode but checks only tracked files', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'strip-comments-'));
+    try {
+      spawnSync('git', ['init'], { cwd: dir });
+      writeFileSync(join(dir, 'tracked.ts'), 'const a = 1; // gone\n');
+      spawnSync('git', ['add', 'tracked.ts'], { cwd: dir });
+      writeFileSync(join(dir, 'fresh.ts'), 'const b = 2; // gone\n');
+
+      const strip = spawnSync('bun', [scriptPath], { cwd: dir, encoding: 'utf8' });
+      expect(strip.status).toBe(0);
+      expect(readFileSync(join(dir, 'tracked.ts'), 'utf8')).toBe('const a = 1;\n');
+      expect(readFileSync(join(dir, 'fresh.ts'), 'utf8')).toBe('const b = 2;\n');
+
+      writeFileSync(join(dir, 'fresh.ts'), 'const b = 2; // back\n');
+      const check = spawnSync('bun', [scriptPath, '--check'], { cwd: dir, encoding: 'utf8' });
+      expect(check.status).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('strips a comment that is the sole content of an arrow function block', () => {
@@ -142,6 +165,16 @@ describe('strip-comments', () => {
   it('does not duplicate a newline for comments that already occupied whole lines', () => {
     const source = 'return\n/* note\n */\n(1);\n';
     expect(stripComments(source, 'a.ts', false)).toBe('return\n(1);\n');
+  });
+
+  it('leaves template literal contents untouched even when comments exist elsewhere', () => {
+    const source = 'const t = `a   \n\n\nb`;\nconst u = 1; // note\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('const t = `a   \n\n\nb`;\nconst u = 1;\n');
+  });
+
+  it('cleans removal seams without touching pre-existing whitespace elsewhere', () => {
+    const source = 'a();   \n\n\nb(); /* tail */\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('a();   \n\n\nb();\n');
   });
 });
 
