@@ -62,8 +62,13 @@ hydration), status/uuid point lookups :1206–1266, `inflatePersistedMessage`
 ### (d) Schema introspection caching
 
 :171–216 (`tableExists`/`tableColumns`, never-invalidated — schema is fixed
-post-init) and :1026–1034 (`visibleMessageCountReady`). Added by #2614; pinned
-by the `schema introspection caching` describe (test :3764).
+post-init) and :1026–1034 (`visibleMessageCountReady`). Added by #2614.
+Pin caveat: the `schema introspection caching` describe's counter (test :3773)
+matches `sqlite_master` or `PRAGMA table_info`, while `tableColumns()` issues
+`PRAGMA table_xinfo` (:205) — so `tableExistsCache` is pinned but
+`tableColumnsCache` is not; the test stays green even if the column cache
+regresses to per-save introspection. Fixing the counter to match
+`table_xinfo` is PR 1 material for any chain touching the caches.
 
 ### (e) Sessions-change notification
 
@@ -74,9 +79,17 @@ reactive proxy's `METHOD_TABLE_MAP` (`reactive-database.ts:236–263`) and from
 
 ## 2. Consumers and coupling constraints
 
-- Everything goes through the facade (`storage/index.ts:217–378` delegates
-  1:1) — internal extraction is invisible to consumers. Save-side callers hold
-  the **proxied** DB (`app.ts:478–479` passes `reactiveDb.db` into
+- The facade (`storage/index.ts:217–378` delegates 1:1) is the main path but
+  **not the only one** — direct `SDKMessageRepository` consumers bypass it:
+  `message-handlers.ts:66,137,176` and `state-projection-service.ts:424`
+  construct `new SDKMessageRepository(db.getDatabase())` inline per call (no
+  reactiveDb — these instances never notify), `space-runtime.ts:781` lazily
+  constructs and caches an instance with reactiveDb, and
+  `message-search-worker.ts:29` constructs one standalone in the worker.
+  Constructor and module-state changes are therefore *not* hidden behind the
+  facade — the real contract is the 2-arg constructor plus a pure module top
+  (zone 6). Save-side callers that do go through the facade hold the
+  **proxied** DB (`app.ts:478–479` passes `reactiveDb.db` into
   `SessionManager` → `AgentSession`/`sdk-message-handler`/
   `message-persistence`); the proxy keys invalidation on **facade method
   names** — that surface is load-bearing and must not change.
@@ -156,11 +169,15 @@ ADR sanctions pure-function admission gates from pilots 1/5).
 `updateMessageStatus` planning is the P7 transaction-sandwich shape.
 
 - **PR B1 (test-only):** admission drift pins, split by accepted message type —
-  `saveSDKMessage` and `saveUserMessageCore` share the `SDKMessage` input, so
-  one matrix runs the same message × both variants × `sendStatus` (anchor
-  conditions incl. the deliberate status-gate divergence, badge counting,
-  turn-index anchor/non-anchor assignment :519–530, replacement-edge recording
-  incl. the refusal-subtype gate, `consumed_seq` assignment).
+  `saveSDKMessage` and `saveUserMessageCore` share the `SDKMessage` input, but
+  only `saveUserMessageCore` has a status axis: `saveSDKMessage(sessionId,
+  message, origin?)` takes no send status (badge evaluates `sendStatus: null`
+  :548; the INSERT omits the column, so the schema default `'consumed'`
+  applies) and contributes **one fixed-status row** — the five send statuses
+  cross only `saveUserMessageCore` (anchor conditions incl. the deliberate
+  status-gate divergence, badge counting, turn-index anchor/non-anchor
+  assignment :519–530, replacement-edge recording incl. the refusal-subtype
+  gate, `consumed_seq` assignment).
   `saveHyperNeoActionMessage` takes the disjoint `HyperNeoActionMessage` type,
   so no single valid message crosses all three APIs — its fixed-shape
   admission (badge, turn index, no send_status) is pinned in a separate table,
@@ -175,8 +192,10 @@ ADR sanctions pure-function admission gates from pilots 1/5).
   `HyperNeoActionMessage` shape — consume one core is introduced here, not in
   B1; divergences become explicit parameters pinned by B1.
 - **PR B3:** badge plan unification — pure `badgeDelta` derivation over
-  admission records + the mutation paths (:589, :1136, :1362–1364, :1472–1477);
-  interpreter applies.
+  admission records + the mutation paths (:589, :1136, :1362–1364, and *both*
+  rewind operators — `deleteMessagesAfter` :1472–1477 and
+  `deleteMessagesAtAndAfter` :1492–1499 — so neither badge-recompute path
+  stays outside the unified plan); interpreter applies.
 - **PR B4 (apply):** `updateMessageStatus` as plan/interpret — the pure
   planner over the pending-row snapshot produces the ordered instruction list
   (turn promotion, timestamp, and a `consumed_seq` *allocation instruction* —
@@ -227,13 +246,19 @@ below ~10 µs/decision against dominated neighbor costs.
 
 ## 6. Do-not-extract zones
 
-1. **Raw SQL builders with pinned query plans:** `_getSDKMessagesImpl`
+1. **Raw SQL builders (hand-tuned, sargable):** `_getSDKMessagesImpl`
    :703–761, `getUserMessagesByStatus` :1162–1171, `searchMessages`
    :2080–2143, `getBackgroundTaskMessages` CTE :857–947, consumed-seq probes
-   :1605–1647 — pinned by EXPLAIN QUERY PLAN tests (test :3036–3117) and the
-   perf history (#2608–#2649).
+   :1605–1647 — protected by the perf history (#2608–#2649), **not** by
+   query-plan tests: the EXPLAIN describe (test :3036–3117) pins only the
+   three uuid lookups (`getMessageByStatusAndUuid`, `getUserMessageByUuid`,
+   `updateHyperNeoActionMessageByUuid`). Adding EXPLAIN coverage for the
+   builders listed here is PR 1 material for chains A/C so refactors cannot
+   silently change their access plans.
 2. **Schema introspection caches** :171–216, :1026–1034 — instance memoized
-   state (resource-owning); pinned by the :3764 describe.
+   state (resource-owning); only partially pinned — see the §1(d) counter
+   caveat (`tableColumnsCache` has no effective pin until the counter matches
+   `table_xinfo`).
 3. **Transaction shells + notify ordering** (:559–592, :1074–1077, :1321–1365,
    :1741–1774) — atomicity stays in the class (ADR atomicity-delegation rule);
    the outbox depends on `saveUserMessageCore` remaining transaction-free.
