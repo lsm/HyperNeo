@@ -176,8 +176,10 @@ only: `model-switch-handler.ts` (+57, ACP session disposal on switch),
 diff of reference ref `origin/space/acp-devin-integration-verify-and-open-pr`).
 **Conclusion: query-runner.ts pilot work does NOT need to sequence after ACP
 8/10.** Only model-switch-handler work does (hence no model-switch chain below).
-Dependencies of 8/10: splits 1, 5, 6, and 7 have merged (#2689, #2688, #2699,
-#2687); splits 2 (#2698) and 3, 4, 9, 10 are still open.
+Dependencies of 8/10: splits 1, 2, 5, 6, and 7 have merged (#2689, #2698
+(merged as `876c5a1` on 2026-08-22, after this survey's basis — it touched only
+`lib/acp/`, `providers/`, and `rpc-handlers/`, not `lib/agent/`), #2688, #2699,
+#2687); splits 3, 4, 9, and 10 are still open.
 
 Other live collisions (all must land or stall before the corresponding chain's
 apply PRs):
