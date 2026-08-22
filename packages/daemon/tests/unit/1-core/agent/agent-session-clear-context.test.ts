@@ -229,6 +229,7 @@ describe('AgentSession.clearConversationContext', () => {
     session.overrideClearConfirmTimeoutMsForTest(15);
     const warnSpy = spyOn(session.logger, 'warn').mockImplementation(() => {});
     const resetSpy = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
+    const stopSpy = spyOn(session['lifecycleManager'], 'stop').mockResolvedValue(undefined);
     const setIdleSpy = spyOn(session.stateManager, 'setIdle').mockResolvedValue(undefined);
     session.messageQueue.start();
     const messages = session.messageQueue.messageGenerator(session.session.id);
@@ -246,9 +247,42 @@ describe('AgentSession.clearConversationContext', () => {
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy.mock.calls[0][0]).toContain('proceeding without confirmed clear');
     expect(resetSpy).toHaveBeenCalledTimes(1);
+    expect(stopSpy).not.toHaveBeenCalled();
 
     await session.messageHandler.handleMessage(makeClearResult('late-result'));
     expect(setIdleSpy).toHaveBeenCalled();
+
+    session.messageQueue.stop();
+    await messages.return(undefined);
+  });
+
+  it('timeout fallback forces query teardown when the recovery reset itself fails', async () => {
+    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
+    spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
+    session.overrideClearConfirmTimeoutMsForTest(15);
+    const warnSpy = spyOn(session.logger, 'warn').mockImplementation(() => {});
+    spyOn(session, 'resetQuery').mockResolvedValue({
+      success: false,
+      error: 'event subscriber rejected',
+    });
+    const stopSpy = spyOn(session['lifecycleManager'], 'stop').mockResolvedValue(undefined);
+    session.messageQueue.start();
+    const messages = session.messageQueue.messageGenerator(session.session.id);
+
+    let resolved = false;
+    const clear = session.clearConversationContext().then(() => {
+      resolved = true;
+    });
+    const yielded = await messages.next();
+    yielded.value?.onSent();
+
+    await clear;
+
+    expect(resolved).toBe(true);
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    expect(warnSpy.mock.calls[1][0]).toContain('forcing query teardown');
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(stopSpy).toHaveBeenCalledWith({ catchQueryErrors: true });
 
     session.messageQueue.stop();
     await messages.return(undefined);

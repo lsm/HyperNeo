@@ -781,7 +781,16 @@ export class AgentSession
           `confirmed clear`
       );
       this.messageHandler.clearIdleSuppression();
-      await this.resetQuery();
+      const resetResult = await this.resetQuery();
+      if (!resetResult.success) {
+        this.logger.warn(
+          `clearConversationContext: query reset failed (${resetResult.error ?? 'unknown error'}) ` +
+            `— forcing query teardown before proceeding`
+        );
+        await this.lifecycleManager.stop({ catchQueryErrors: true }).catch((stopError) => {
+          this.logger.warn('clearConversationContext: forced teardown failed:', stopError);
+        });
+      }
     }
   }
 
