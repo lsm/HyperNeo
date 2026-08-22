@@ -275,7 +275,12 @@ async function openWorkspacePath(
         const created = symbols.mkdirat(directoryFd, cString(segment), DIRECTORY_MODE) === 0;
         nextFd = openDirectory(symbols, directoryFd, segment);
         if (created && nextFd >= 0) {
-          fchmodSync(nextFd, DIRECTORY_MODE);
+          try {
+            fchmodSync(nextFd, DIRECTORY_MODE);
+          } catch (error) {
+            closeFile(symbols, nextFd);
+            throw error;
+          }
         } else if (created) {
           symbols.fchmodat(directoryFd, cString(segment), DIRECTORY_MODE, 0);
           nextFd = openDirectory(symbols, directoryFd, segment);
@@ -340,16 +345,14 @@ export async function readFileWithinWorkspace(
       scannedBytes += bytesRead;
       const content = buffer.subarray(0, bytesRead);
       let cursor = 0;
+      let selectionStart = -1;
+      let selectionEnd = -1;
 
       for (let index = 0; index < content.length; index++) {
         if (content[index] !== 10) continue;
         if (line >= options.startLine && line < endLine) {
-          const chunk = content.subarray(cursor, index + 1);
-          selectedBytes += chunk.length;
-          if (selectedBytes > options.maxBytes) {
-            throw new Error(`ACP filesystem read exceeds ${options.maxBytes} bytes`);
-          }
-          chunks.push(Buffer.from(chunk));
+          if (selectionStart < 0) selectionStart = cursor;
+          selectionEnd = index + 1;
         }
         line++;
         cursor = index + 1;
@@ -357,7 +360,12 @@ export async function readFileWithinWorkspace(
       }
 
       if (line >= options.startLine && line < endLine && cursor < content.length) {
-        const chunk = content.subarray(cursor);
+        if (selectionStart < 0) selectionStart = cursor;
+        selectionEnd = content.length;
+      }
+
+      if (selectionStart >= 0) {
+        const chunk = content.subarray(selectionStart, selectionEnd);
         selectedBytes += chunk.length;
         if (selectedBytes > options.maxBytes) {
           throw new Error(`ACP filesystem read exceeds ${options.maxBytes} bytes`);
@@ -409,7 +417,6 @@ export async function writeFileWithinWorkspace(
     let closed = -1;
     try {
       if (!fstatSync(fileFd).isFile()) throwFsError('write', fileName);
-      fchmodSync(fileFd, mode);
       let offset = 0;
       while (offset < data.length) {
         if (signal.aborted) throw new Error('ACP filesystem write cancelled');
@@ -417,6 +424,7 @@ export async function writeFileWithinWorkspace(
         if (written <= 0) throwFsError('write', fileName);
         offset += written;
       }
+      fchmodSync(fileFd, mode);
     } finally {
       closed = symbols.close(fileFd);
     }
