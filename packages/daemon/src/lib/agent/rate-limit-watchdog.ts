@@ -509,6 +509,7 @@ export class RateLimitWatchdog {
       this.startupExhausted = false;
       this.startupRetries = 0;
     }
+    this.billingPauseSurfaced = false;
 
     this.logger.info(
       `Immediate retry triggered (step ${this.retryCount}/${this.config.maxAutoRetries}).`

@@ -2974,7 +2974,7 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(makeApiErrorResult());
 
       expect(onResultLimitError).toHaveBeenCalledTimes(1);
-      expect(publishedTopics()).toContain('query.trigger');
+      expect(publishedTopics()).not.toContain('query.trigger');
     });
 
     it('ignores genuine success results', async () => {

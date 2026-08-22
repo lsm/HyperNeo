@@ -657,6 +657,12 @@ export class AcpQueryRunner {
         suppressPreYieldCallback: true,
       })) {
         if (abortController.signal.aborted) break;
+        if (this.ctx.isLimitRecoveryPending?.()) {
+          logger.info(
+            'ACP prompt loop: limit recovery engaged; stopping prompt dequeue until the retry.'
+          );
+          break;
+        }
 
         const queuedMessage = message as SDKUserMessage & { internal?: boolean };
         if (!queuedMessage.internal) {

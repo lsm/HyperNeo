@@ -760,7 +760,7 @@ export class SDKMessageHandler {
             limitError.userMessageUuid
           )) ?? false;
       }
-      this.lastResultWasSuccess = !limitEngaged && isSDKResultSuccess(message);
+      this.lastResultWasSuccess = limitError === null && isSDKResultSuccess(message);
       this.lastRateLimitInfo = null;
       this.lastSdkErrorTag = null;
     }
@@ -982,7 +982,7 @@ export class SDKMessageHandler {
     if (this.suppressIdleOnNextResult) {
       this.suppressIdleOnNextResult = false;
     } else if (!this.usesSessionStateChangedTurnEnd && !this.expectsSessionStateIdleAfterResult) {
-      await this.finishTurn();
+      await this.finishTurn(this.lastResultWasSuccess !== false);
     }
   }
 

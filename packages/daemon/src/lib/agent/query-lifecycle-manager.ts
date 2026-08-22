@@ -513,7 +513,7 @@ export class QueryLifecycleManager {
     await stateManager.setQueued(messageId);
 
     if (options?.prepend) {
-      await messageQueue
+      void messageQueue
         .enqueueWithId(messageId, messageContent, false, { prepend: true })
         .catch((error) => this.handleQueuedMessageFailure(messageId, messageContent, error))
         .catch((handlerError) => {
