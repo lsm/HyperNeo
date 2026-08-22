@@ -355,7 +355,10 @@ note.
   :52–72) — **wire the already-extracted but dead `resolveDeliveryRole` core**;
   `driveDeliveryTurn` admission cascade (:1338–1497) and turn-end race loop
   (:1553–1614) as `stagedRun` flows (effects: `ensureQueryStarted`, DB reloads,
-  queue admit — each already idempotent or UNIQUE-guarded);
+  queue admit — idempotent or UNIQUE-guarded, **except** batch narrowing:
+  `narrowActiveDeliveryBatchUuids` reads the active batch and updates matching
+  pending/processing jobs with no claim token or expected-payload predicate, so
+  it needs the new primitive below before staging);
   `reconcileStrandedDeliveries` stale-submitted sweep (:1977–1997); MessageQueue
   timeout policy (:105–128) as plain transform. Includes removing the
   production-dead module-level `reconcileStrandedDeliveries`
@@ -393,7 +396,11 @@ note.
   and job insert committed together (the outbox path's existing shape), or an
   explicit compensating transition on enqueue failure; a bare `send_status`
   CAS/transition table only orders competing writers and leaves the stranded-row
-  window open. Spawn reservation has no analog need here (in-memory startup gate
+  window open. Staging `driveDeliveryTurn` additionally requires a
+  **claim-fenced batch-update primitive** before PR 4: without one,
+  `narrowActiveDeliveryBatchUuids`'s read-then-update lets a superseded handler
+  mutate a batch now owned by a replacement claim across the new async stage
+  boundaries. Spawn reservation has no analog need here (in-memory startup gate
   suffices).
 - **Impact/risk:** highest ceiling — this is the repo's recurring fix area
   (delivery duplication, deferred-backlog gaps, park-vs-cancel), and ~500 lines
@@ -465,8 +472,12 @@ drains through microtasks into the timer-clear at :791–795 first.)
 **Delivery:** (D1) dead duplicate `reconcileStrandedDeliveries` inlined instead
 of using the extracted core (message-delivery.ts:207–242). (D2)
 `resolveDeliveryRole` core dead — `deliverMessage` (:97–139) keeps the imperative
-try/catch; its `getActiveDeliveryRole` pre-check is redundant with the UNIQUE
-constraint rather than racy (check and enqueue are both synchronous), and callers
+try/catch. Its `getActiveDeliveryRole` pre-check is *not* redundant and must be
+preserved when wiring the core: the partial UNIQUE index dedupes only active
+`turn` jobs per session — not message UUIDs or `steer` jobs — so re-delivering
+an already-active UUID without an equivalent same-message ownership lookup would
+enqueue a second turn or fall through to a duplicate steer. The check is
+synchronous rather than racy, and callers
 branch on turn-vs-steer for `setQueuedIfIdle` **and** for a lifecycle-critical
 consumer any extraction must preserve: `deliverChatMessage` cancels the
 rate-limit watchdog when a new turn is enqueued outside cooldown
