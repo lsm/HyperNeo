@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   decideReportableTerminal,
+  REPORTABLE_TERMINAL_PREDICATE_VERSION,
   type ReportableTerminalInput,
 } from '../../../../src/lib/space/goals/reportable-terminal-gates';
 
@@ -41,13 +42,54 @@ describe('decideReportableTerminal', () => {
     });
   });
 
+  describe('archival never produces a worker outcome notification', () => {
+    test('archives an already-done task', () => {
+      expect(
+        decideReportableTerminal(
+          input({
+            fromStatus: 'done',
+            toStatus: 'archived',
+            hasStartGeneration: true,
+            hasPriorTerminalGeneration: true,
+          })
+        )
+      ).toEqual({ action: 'none', reason: 'administrative' });
+    });
+
+    test('archives an already-blocked task', () => {
+      expect(
+        decideReportableTerminal(
+          input({
+            fromStatus: 'blocked',
+            toStatus: 'archived',
+            hasStartGeneration: true,
+            hasPriorTerminalGeneration: true,
+          })
+        )
+      ).toEqual({ action: 'none', reason: 'administrative' });
+    });
+
+    test('archives an already-cancelled task', () => {
+      expect(
+        decideReportableTerminal(
+          input({
+            fromStatus: 'cancelled',
+            toStatus: 'archived',
+            hasStartGeneration: true,
+            hasPriorTerminalGeneration: true,
+          })
+        )
+      ).toEqual({ action: 'none', reason: 'administrative' });
+    });
+  });
+
   describe('active-work completions notify', () => {
     test('notifies for in_progress → open → done (started, completed from open)', () => {
       expect(
         decideReportableTerminal(
           input({ fromStatus: 'open', toStatus: 'done', hasStartGeneration: true })
         )
-      ).toEqual({ action: 'notify' });
+      ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
     });
 
     test('notifies for in_progress → done', () => {
@@ -55,7 +97,7 @@ describe('decideReportableTerminal', () => {
         decideReportableTerminal(
           input({ fromStatus: 'in_progress', toStatus: 'done', hasStartGeneration: true })
         )
-      ).toEqual({ action: 'notify' });
+      ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
     });
 
     test('notifies for in_progress → cancelled after start', () => {
@@ -63,7 +105,7 @@ describe('decideReportableTerminal', () => {
         decideReportableTerminal(
           input({ fromStatus: 'in_progress', toStatus: 'cancelled', hasStartGeneration: true })
         )
-      ).toEqual({ action: 'notify' });
+      ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
     });
 
     test('notifies for review → approved → done', () => {
@@ -71,7 +113,7 @@ describe('decideReportableTerminal', () => {
         decideReportableTerminal(
           input({ fromStatus: 'approved', toStatus: 'done', hasStartGeneration: true })
         )
-      ).toEqual({ action: 'notify' });
+      ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
     });
   });
 
@@ -86,7 +128,10 @@ describe('decideReportableTerminal', () => {
             hasPriorTerminalGeneration: true,
           })
         )
-      ).toEqual({ action: 'supersede_notify' });
+      ).toEqual({
+        action: 'supersede_notify',
+        predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION,
+      });
     });
 
     test('cancelled → done produces a new terminal generation superseding the record', () => {
@@ -99,7 +144,10 @@ describe('decideReportableTerminal', () => {
             hasPriorTerminalGeneration: true,
           })
         )
-      ).toEqual({ action: 'supersede_notify' });
+      ).toEqual({
+        action: 'supersede_notify',
+        predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION,
+      });
     });
 
     test('in_progress → blocked → done supersedes the blocked record', () => {
@@ -112,7 +160,10 @@ describe('decideReportableTerminal', () => {
             hasPriorTerminalGeneration: true,
           })
         )
-      ).toEqual({ action: 'supersede_notify' });
+      ).toEqual({
+        action: 'supersede_notify',
+        predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION,
+      });
     });
   });
 
@@ -145,7 +196,7 @@ describe('decideReportableTerminal', () => {
         decideReportableTerminal(
           input({ fromStatus: null, toStatus: 'done', hasStartGeneration: true })
         )
-      ).toEqual({ action: 'notify' });
+      ).toEqual({ action: 'notify', predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION });
     });
   });
 });

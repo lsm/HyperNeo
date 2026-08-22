@@ -8,10 +8,12 @@ export const TERMINAL_TASK_STATUSES: readonly SpaceTaskStatus[] = [
   'archived',
 ];
 
+export const REPORTABLE_TERMINAL_PREDICATE_VERSION = 1;
+
 export type ReportableTerminalDecision =
   | { action: 'none'; reason: 'not_terminal' | 'administrative' | 'no_outcome_change' }
-  | { action: 'notify' }
-  | { action: 'supersede_notify' };
+  | { action: 'notify'; predicateVersion: number }
+  | { action: 'supersede_notify'; predicateVersion: number };
 
 export interface ReportableTerminalCtx {
   fromStatus: SpaceTaskStatus | null;
@@ -44,6 +46,12 @@ export function applyAdministrativeGate(ctx: ReportableTerminalCtx): ReportableT
   return ctx.hasStartGeneration ? ctx : decided(ctx, { action: 'none', reason: 'administrative' });
 }
 
+export function applyArchiveGate(ctx: ReportableTerminalCtx): ReportableTerminalCtx {
+  return ctx.toStatus === 'archived'
+    ? decided(ctx, { action: 'none', reason: 'administrative' })
+    : ctx;
+}
+
 export function applySameOutcomeGate(ctx: ReportableTerminalCtx): ReportableTerminalCtx {
   return ctx.fromStatus === ctx.toStatus
     ? decided(ctx, { action: 'none', reason: 'no_outcome_change' })
@@ -51,16 +59,25 @@ export function applySameOutcomeGate(ctx: ReportableTerminalCtx): ReportableTerm
 }
 
 export function applySupersedeGate(ctx: ReportableTerminalCtx): ReportableTerminalCtx {
-  return ctx.hasPriorTerminalGeneration ? decided(ctx, { action: 'supersede_notify' }) : ctx;
+  return ctx.hasPriorTerminalGeneration
+    ? decided(ctx, {
+        action: 'supersede_notify',
+        predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION,
+      })
+    : ctx;
 }
 
 export function applyNotifyGate(ctx: ReportableTerminalCtx): ReportableTerminalCtx {
-  return decided(ctx, { action: 'notify' });
+  return decided(ctx, {
+    action: 'notify',
+    predicateVersion: REPORTABLE_TERMINAL_PREDICATE_VERSION,
+  });
 }
 
 const reportableTerminalRun = decisionRun('reportable-terminal', [
   applyNotTerminalGate,
   applyAdministrativeGate,
+  applyArchiveGate,
   applySameOutcomeGate,
   applySupersedeGate,
   applyNotifyGate,
