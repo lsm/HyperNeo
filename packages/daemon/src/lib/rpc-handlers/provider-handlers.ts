@@ -11,6 +11,8 @@ import {
 import { syncProviderToRegistry, removeProviderFromRegistry } from '../providers/provider-sync.js';
 import { getProviderRegistry } from '../providers/registry.js';
 import { markBuiltInProviderDisabled } from '../providers/factory.js';
+import { AcpProvider } from '../providers/acp-provider.js';
+import { parseAcpCommand } from '../acp/acp-command.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
@@ -144,6 +146,21 @@ function rethrowKeychainError(err: unknown, action: string, providerId: string):
   throw err;
 }
 
+function validateAcpConfigCommand(configJson: string | undefined): void {
+  if (!configJson) return;
+  let parsed: { command?: unknown };
+  try {
+    parsed = JSON.parse(configJson) as { command?: unknown };
+  } catch {
+    throw new Error('Invalid ACP config JSON');
+  }
+  if (!parsed || typeof parsed !== 'object') throw new Error('Invalid ACP config JSON');
+  if (parsed.command === undefined) return;
+  if (typeof parsed.command !== 'string') throw new Error('ACP command must be a string');
+  if (!parsed.command.trim()) throw new Error('ACP command is required');
+  parseAcpCommand(parsed.command);
+}
+
 export interface ProviderHandlerDeps {
   messageHub: MessageHub;
   providerRepo: ProviderRepository;
@@ -202,6 +219,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         data.params.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
       return lock(async () => {
         validateCreateParams(data.params);
+        if (data.params.providerId === 'acp') {
+          validateAcpConfigCommand(data.params.configJson);
+        }
         const record = providerRepo.createProvider(data.params);
 
         try {
@@ -217,16 +237,21 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             }
           }
 
-          if (record.kind === 'built_in') {
-            const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
-            await ensureBuiltInProviderRegistered(record.providerId);
+          if (record.isEnabled) {
+            if (record.kind === 'built_in') {
+              const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
+              await ensureBuiltInProviderRegistered(record.providerId);
+            }
+            const creds = await resolveCredentialsForHydration(
+              credentialManager,
+              record.providerId,
+              data.credentials
+            );
+            await syncProviderToRegistry(record, creds);
+          } else if (record.kind === 'built_in') {
+            markBuiltInProviderDisabled(record.providerId);
+            await removeProviderFromRegistry(record.providerId);
           }
-          const creds = await resolveCredentialsForHydration(
-            credentialManager,
-            record.providerId,
-            data.credentials
-          );
-          await syncProviderToRegistry(record, creds);
         } catch (err) {
           providerRepo.deleteProvider(record.id);
           rethrowKeychainError(err, 'create', record.providerId);
@@ -258,6 +283,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         if (!existing) throw new Error(`Provider ${data.id} not found`);
         if (existing.providerId === VOICE_CREDENTIAL_PROVIDER_ID)
           throw new Error(`providerId '${VOICE_CREDENTIAL_PROVIDER_ID}' is reserved`);
+        if (existing.providerId === 'acp' && updates.configJson !== undefined) {
+          validateAcpConfigCommand(updates.configJson);
+        }
         const lock =
           existing.kind === 'custom_endpoint'
             ? withCustomEndpointsLock
@@ -373,6 +401,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         });
         return { healthy: false, error: 'Provider not available' };
       }
+      if (provider instanceof AcpProvider) {
+        await provider.verifyCommandAvailable({ force: true });
+      }
       await provider.getModels();
       providerRepo.updateProvider(data.id, {
         healthStatus: 'healthy',
@@ -410,6 +441,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
               lastHealthCheckAt: Date.now(),
             });
             return { providerId: record.providerId, healthy: false, error: 'Not available' };
+          }
+          if (provider instanceof AcpProvider) {
+            await provider.verifyCommandAvailable();
           }
           await provider.getModels();
           providerRepo.updateProvider(record.id, {

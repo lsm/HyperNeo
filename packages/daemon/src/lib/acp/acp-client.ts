@@ -59,6 +59,7 @@ export interface AcpClientOptions
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  replaceEnv?: boolean;
   cwd?: string;
   requestTimeoutMs?: number;
 }
@@ -359,10 +360,10 @@ export class AcpClient {
     } as AcpSessionCancelParams);
   }
 
-  close(): void {
-    if (this.closed) return;
+  close(): Promise<void> {
+    if (this.closed) return Promise.resolve();
     this.closed = true;
-    this.transport.close().catch(() => {});
+    return this.transport.close().catch(() => {});
   }
 
   getSessionId(): string | undefined {

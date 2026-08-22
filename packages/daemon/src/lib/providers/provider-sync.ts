@@ -2,12 +2,24 @@ import type { ProviderRecord, CustomEndpointConfig } from '@hyperneo/shared';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import { getProviderRegistry } from './registry.js';
 import { initializeProviders, registerBuiltInProvider } from './factory.js';
+import { AcpProvider } from './acp-provider.js';
 import { CustomEndpointProvider, customProviderIdFor } from './custom-endpoint-provider.js';
 import { Logger } from '../logger.js';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.js';
 import { resolveKimiRegion } from './kimi-provider.js';
 
 const logger = new Logger('providers:sync');
+
+export function parseAcpConfig(configJson: string | undefined): { command?: string } {
+  if (!configJson) return {};
+  try {
+    const parsed = JSON.parse(configJson) as { command?: unknown };
+    const command = typeof parsed.command === 'string' ? parsed.command : undefined;
+    return { command };
+  } catch {
+    return {};
+  }
+}
 
 export async function syncProviderToRegistry(
   record: ProviderRecord,
@@ -29,6 +41,11 @@ export async function syncProviderToRegistry(
       const region = resolveKimiRegion(parsedRegion);
       (provider as { setDefaultRegion: (r: 'china' | 'global') => void }).setDefaultRegion(region);
       logger.info(`Kimi provider region set to '${region}'`);
+    }
+    if (provider instanceof AcpProvider) {
+      const { command } = parseAcpConfig(record.configJson);
+      provider.setAcpCommand(command);
+      logger.info(`ACP provider command ${command ? 'configured' : 'reset to env default'}`);
     }
     if (provider?.setCredentials && credentials) {
       if (isStartupSync && provider.logout && provider.getCredentials) {
