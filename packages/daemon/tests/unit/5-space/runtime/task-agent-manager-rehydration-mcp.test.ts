@@ -243,6 +243,9 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       .agentSessionIndex;
     expect(index.has(SUB_SESSION_ID)).toBe(false);
     expect(unregistered).toEqual([SUB_SESSION_ID]);
+    const bookkeeping = (tam as unknown as { completionCallbacks: Map<string, unknown[]> })
+      .completionCallbacks;
+    expect(bookkeeping.has(SUB_SESSION_ID)).toBe(false);
 
     restoreSpy.mockImplementation(
       (() => healthy.agentSession) as unknown as typeof AgentSession.restore
@@ -251,6 +254,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(retried).toBe(healthy.agentSession);
     expect(healthy.state.calls).toContain('startStreamingQuery');
     expect(index.get(SUB_SESSION_ID)).toBe(healthy.agentSession);
+    expect(bookkeeping.get(SUB_SESSION_ID)).toHaveLength(1);
   });
 
   test('mcpSelfHeal provisions and adopts the instance the runner actually started', async () => {

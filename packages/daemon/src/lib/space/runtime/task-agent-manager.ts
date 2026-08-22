@@ -3034,7 +3034,7 @@ export class TaskAgentManager {
       await agentSession.startStreamingQuery();
       await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
     } catch (err) {
-      this.subSessions.get(taskId)?.delete(subSessionId);
+      this.detachSessionBookkeeping(subSessionId);
       this.agentSessionIndex.delete(subSessionId);
       if (this.config.sessionManager.getCachedSession(subSessionId) === agentSession) {
         await this.config.sessionManager.unregisterSession(subSessionId).catch(() => {});
