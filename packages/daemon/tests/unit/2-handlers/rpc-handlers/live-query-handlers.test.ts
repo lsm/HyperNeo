@@ -2790,10 +2790,19 @@ describe('NAMED_QUERY_REGISTRY', () => {
           `INSERT INTO space_agents (id, space_id, name) VALUES ('agent-merger', ?, 'PR Merger')`
         ).run(spaceId);
         sessionTaskIds.set(mergerSessionId, taskId);
-        insertSdkMessageAt('sdk-ms-prov-1', mergerSessionId, now + 1000, {
-          type: 'assistant',
-          message: { role: 'assistant', content: [{ type: 'text', text: 'merging' }] },
-        });
+        insertSdkMessageAt(
+          'sdk-ms-prov-1',
+          mergerSessionId,
+          now + 1000,
+          'assistant',
+          'consumed',
+          'system',
+          null,
+          {
+            type: 'assistant',
+            message: { role: 'assistant', content: [{ type: 'text', text: 'merging' }] },
+          }
+        );
 
         const rows = queryMilestones(taskId);
         const answer = rows.find((r) => r.id === 'answer:sdk-ms-prov-1');
@@ -5574,8 +5583,23 @@ describe('NAMED_QUERY_REGISTRY', () => {
     test('turn anchor uses a window forward-fill, not a per-row correlated subquery (#2660)', () => {
       const sql = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.sql;
       expect(sql).not.toMatch(/\(\s*SELECT urs\.userMessageId/);
-      expect(sql).toContain('MAX(p.thisUserRowPos) OVER');
-      expect(sql).toContain("CASE WHEN n.messageType = 'user' THEN n.rowPos");
+      expect(sql).toContain("MAX(CASE WHEN n.messageType = 'user' THEN n.rowPos END) OVER");
+    });
+
+    test('turn-position window passes project narrow columns, keeping payloads out of window sorts', () => {
+      const sql = NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.sql;
+      const start = sql.indexOf('sdk_rows_numbered AS (');
+      const end = sql.indexOf('sdk_rows AS (');
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      const windowCtes = sql
+        .slice(start, end)
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('--'))
+        .join('\n');
+      expect(windowCtes).not.toMatch(/\br\.\*/);
+      expect(windowCtes).not.toMatch(/\bn\.\*/);
+      expect(windowCtes).not.toContain('content');
     });
 
     test('turnUserMessageId forwards the latest settled user row per session', () => {

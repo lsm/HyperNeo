@@ -1424,37 +1424,34 @@ sdk_rows_raw AS (
 ),
 sdk_rows_numbered AS (
   SELECT
-    r.*,
+    r.id AS id,
+    r.sessionId AS sessionId,
+    r.messageType AS messageType,
     ROW_NUMBER() OVER (
       PARTITION BY r.sessionId
       ORDER BY r.createdAt ASC, r.id ASC
     ) AS rowPos
   FROM sdk_rows_raw r
 ),
-sdk_rows_with_pos AS (
-  -- Mark this row's own rowPos as the turn anchor when it's a user row. The
-  -- base WHERE above already restricts user rows to settled ones, so every
-  -- user row present can anchor a turn.
-  SELECT
-    n.*,
-    CASE WHEN n.messageType = 'user' THEN n.rowPos ELSE NULL END AS thisUserRowPos
-  FROM sdk_rows_numbered n
-),
 -- Forward-fill the latest user-row position seen in each session up to and
 -- including the current row. SQLite ignores NULLs in MAX(), so this carries
--- the most recent user message through subsequent rows. Replaces the former
--- per-row correlated subquery over user_row_starts, which ran an ORDER BY /
--- LIMIT probe for every message of every session in the group and blocked
--- the main thread inside sqlite3_step on large groups (#2660).
-sdk_rows_with_turn AS (
+-- the most recent user message through subsequent rows. The base WHERE above
+-- already restricts user rows to settled ones, so every user row present can
+-- anchor a turn. Replaces the former per-row correlated subquery over
+-- user_row_starts, which ran an ORDER BY / LIMIT probe for every message of
+-- every session in the group and blocked the main thread inside sqlite3_step
+-- on large groups (#2660). Both window passes deliberately run over this
+-- narrow projection — never r.* — so message payloads stay out of the window
+-- sorts; wide columns are joined back only in the final sdk_rows pass.
+sdk_row_turns AS (
   SELECT
-    p.*,
-    MAX(p.thisUserRowPos) OVER (
-      PARTITION BY p.sessionId
-      ORDER BY p.rowPos
+    n.id AS id,
+    MAX(CASE WHEN n.messageType = 'user' THEN n.rowPos END) OVER (
+      PARTITION BY n.sessionId
+      ORDER BY n.rowPos
       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
     ) AS turnUserRowPos
-  FROM sdk_rows_with_pos p
+  FROM sdk_rows_numbered n
 ),
 user_row_starts AS (
   -- Maps the forwarded rowPos back to the user message id with a single join.
@@ -1462,23 +1459,24 @@ user_row_starts AS (
     sessionId,
     rowPos AS userRowPos,
     id AS userMessageId
-  FROM sdk_rows_with_pos
+  FROM sdk_rows_numbered
   WHERE messageType = 'user'
 ),
 sdk_rows AS (
   SELECT
-    t.id,
-    t.groupId,
-    t.sessionId,
-    t.role,
-    t.messageType,
-    t.content,
-    t.createdAt,
-    t.parentToolUseId,
+    r.id,
+    r.groupId,
+    r.sessionId,
+    r.role,
+    r.messageType,
+    r.content,
+    r.createdAt,
+    r.parentToolUseId,
     urs.userMessageId AS turnUserMessageId
-  FROM sdk_rows_with_turn t
+  FROM sdk_rows_raw r
+  JOIN sdk_row_turns t ON t.id = r.id
   LEFT JOIN user_row_starts urs
-    ON urs.sessionId = t.sessionId
+    ON urs.sessionId = r.sessionId
    AND urs.userRowPos = t.turnUserRowPos
 )
 SELECT
