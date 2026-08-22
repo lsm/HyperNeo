@@ -377,6 +377,7 @@ export class RateLimitWatchdog {
     }
 
     let ok = false;
+    this.retryCallbackInFlight = true;
     try {
       ok = await this.deps.switchAndRetry(lastUserMessage, entry, episodeGeneration);
     } catch (err) {
@@ -386,6 +387,7 @@ export class RateLimitWatchdog {
       );
       ok = false;
     } finally {
+      this.retryCallbackInFlight = false;
       this.fallbackPending = false;
     }
 

@@ -394,6 +394,32 @@ describe('RateLimitWatchdog', () => {
       await flush();
       expect(watchdog.isRecoveryPending()).toBe(false);
     });
+
+    it('keeps isRecoveryPending true while the immediate fallback switch is starting the retry', async () => {
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
+      let releaseSwitch: (() => void) | undefined;
+      const switchGate = new Promise<void>((resolve) => {
+        releaseSwitch = resolve;
+      });
+      const { deps } = createMockDeps({ chain: [A] });
+      const gatedSwitch = mock(async () => {
+        watchdog.clearPendingCooldown();
+        await switchGate;
+        return true;
+      });
+      deps.switchAndRetry = gatedSwitch as unknown as typeof deps.switchAndRetry;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 9 });
+
+      await watchdog.scheduleRetry('429 rate limit', { uuid: 'm1', content: 'hi' });
+      await flush();
+      expect(gatedSwitch).toHaveBeenCalledTimes(1);
+      expect(watchdog.isRecoveryPending()).toBe(true);
+
+      releaseSwitch?.();
+      await flush();
+      await flush();
+      expect(watchdog.isRecoveryPending()).toBe(false);
+    });
   });
 
   describe('Phase A — immediate fallback switch', () => {
