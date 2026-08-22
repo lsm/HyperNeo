@@ -373,8 +373,12 @@ note.
 - **PR sketch:**
   1. **PR 1 (test-only pins):** decision-table tests for retry-route
      classification covering **every declared classifier input as a dimension**
-     (error class × subtype × attempt × retry-cap exhaustion × lifecycle
-     interrupted/cleaning-up × prompt redeliverability × billing-non-resettable ×
+     (error class × subtype × attempt × retry-cap exhaustion × lifecycle as
+     **separate dimensions** — processing status, abort-controller signal, and
+     cleaning-up — pinning that with status `processing` an aborted controller
+     still permits a redeliverable attempt-zero startup retry while blocking
+     transient/provider (:853–858, :898–904, :1010–1015, :1066–1070) ×
+     prompt redeliverability × billing-non-resettable ×
      provider family — an exhausted 503 is `PROVIDER_UNAVAILABLE` on
      non-Anthropic/non-GLM providers but `SYSTEM` under Anthropic, :1169–1229 ×
      recoveryState/supersede flags → arm) — e.g. a configured cap of zero, an
