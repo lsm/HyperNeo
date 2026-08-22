@@ -204,7 +204,7 @@ jobs:
           - components
           - convo
           - coordinator
-          # features/ is hash-split 3-way by scripts/test-online.sh (features-a/b/c).
+          # features/ is split 3-way (duration-weighted) by scripts/test-online.sh (features-a/b/c).
           - features-a
           - features-b
           - features-c
@@ -215,10 +215,10 @@ jobs:
           # - providers-anthropic-to-codex-bridge
           # Copilot bridge tests disabled — COPILOT_GITHUB_TOKEN credential issue causing hard-fail
           # - providers-anthropic-copilot
-          # rewind/ is hash-split 2-way by scripts/test-online.sh (rewind-a/b).
+          # rewind/ is split 2-way (duration-weighted) by scripts/test-online.sh (rewind-a/b).
           - rewind-a
           - rewind-b
-          # rpc/ is hash-split 6-way by scripts/test-online.sh (rpc-a…rpc-f).
+          # rpc/ is split 6-way (duration-weighted) by scripts/test-online.sh (rpc-a…rpc-f).
           - rpc-a
           - rpc-b
           - rpc-c
@@ -226,11 +226,10 @@ jobs:
           - rpc-e
           - rpc-f
           - sdk
-          # space/ is hash-split 4-way by scripts/test-online.sh (space-a…space-d).
+          # space/ is split 3-way (duration-weighted) by scripts/test-online.sh (space-a…space-c).
           - space-a
           - space-b
           - space-c
-          - space-d
           - websocket
         include:
           # mock_sdk: true → uses Dev Proxy (HYPERNEO_USE_DEV_PROXY) for mocking instead of real API calls.
@@ -294,8 +293,6 @@ jobs:
           - module: space-b
             mock_sdk: true
           - module: space-c
-            mock_sdk: true
-          - module: space-d
             mock_sdk: true
           - module: websocket
             mock_sdk: true
