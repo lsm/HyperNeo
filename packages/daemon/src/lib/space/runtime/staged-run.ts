@@ -261,7 +261,7 @@ function buildGatherAdapter(
       if (!isPlainObject(gathered)) {
         return fail(new StagedRunContractError(flow, `stage ${stage.name} must return an object`));
       }
-      const materialized: Record<string, unknown> = {};
+      const materialized: Record<string, unknown> = Object.create(null);
       for (const key of Object.keys(gathered)) {
         materialized[key] = gathered[key];
       }
@@ -332,7 +332,7 @@ function buildDecideAdapter(
       if (!isPlainObject(stamped)) {
         return fail(new StagedRunContractError(flow, `stage ${stage.name} must return an object`));
       }
-      const materialized: Record<string, unknown> = {};
+      const materialized: Record<string, unknown> = Object.create(null);
       for (const key of Object.keys(stamped)) {
         materialized[key] = stamped[key];
       }
@@ -631,7 +631,7 @@ export function stagedRun<S extends object>(
   build: (s: StageBuilders<S>) => readonly AnyStage[],
   options: StagedRunOptions<S> = {}
 ): StagedFlowRunner<S> {
-  const inputKeys = [...(options.input ?? [])];
+  const inputKeys = [...new Set(options.input ?? [])];
   const log = options.log;
   const builders: StageBuilders<S> = {
     snapshot: (def) => ({ kind: 'snapshot', ...def }) as AnyStage,

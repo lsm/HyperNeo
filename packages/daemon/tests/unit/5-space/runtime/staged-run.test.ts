@@ -634,6 +634,35 @@ describe('stagedRun declared-key access', () => {
     expect(reads).toBe(1);
   });
 
+  test('duplicate declared input keys still read the accessor once', async () => {
+    type Needs = { sessionId: string; echo: string };
+    let reads = 0;
+    const input: Record<string, unknown> = {};
+    Object.defineProperty(input, 'sessionId', {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return `read-${reads}`;
+      },
+    });
+    const flow = stagedRun<Needs>(
+      'dupe-input',
+      (s) => [
+        s.snapshot({
+          name: 'load',
+          provides: ['echo'],
+          reads: ['sessionId'],
+          run: ({ sessionId }) => ({ echo: sessionId }),
+        }),
+        s.halt({ name: 'end', reads: ['echo'], run: ({ echo }) => echo }),
+      ],
+      { input: ['sessionId', 'sessionId'] }
+    );
+    const outcome = await flow(input as unknown as Partial<Needs>);
+    expect(outcome).toEqual({ status: 'completed', result: 'read-1' });
+    expect(reads).toBe(1);
+  });
+
   test('input keys beyond the declared list stay unreadable inside the flow', async () => {
     type Pair = { a: number; b: number };
     let seen: Record<string, unknown> = {};
@@ -815,6 +844,32 @@ describe('stagedRun decide contract', () => {
     expect(outcome.stage).toBe('bad');
     expect(String(outcome.error)).toContain('synchronous');
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+
+  test('an own __proto__ key cannot smuggle a decision through the materializer', async () => {
+    const flow = stagedRun<Box>('proto-smuggle', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+      s.decide({
+        name: 'smuggler',
+        reads: ['value'],
+        branches: ['act'],
+        run: () =>
+          JSON.parse('{"__proto__": {"decision": "act"}, "act": 1}') as unknown as {
+            decision: unknown;
+          },
+      }),
+      s.effect({
+        name: 'fx',
+        when: 'act',
+        writes: ['value'],
+        run: () => {},
+      }),
+      s.halt({ name: 'end', run: () => 'done' }),
+    ]);
+    const outcome = await flow({});
+    expect(outcome.status).toBe('error');
+    expect(outcome.stage).toBe('smuggler');
+    expect(String(outcome.error)).toContain('own enumerable property');
   });
 
   test('an inherited decision stamp is a contract violation', async () => {
