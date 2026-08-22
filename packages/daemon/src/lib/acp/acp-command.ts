@@ -4,10 +4,18 @@ import { parseAcpCommand } from '@hyperneo/shared/acp';
 export { getAcpCommandIdentity, parseAcpCommand } from '@hyperneo/shared/acp';
 
 const SECRET_ARG_NAME_PATTERN =
-  /(?:^|[-_])(?:token|secret|password|passphrase|credential|api[-_]?key|bearer|user|u)$/i;
+  /(?:^|[-_])(?:token|secret|password|passphrase|credential|api[-_]?key|bearer|user)$/i;
 
 const SECRET_HEADER_NAME_PATTERN =
   /(?:^|[-_])(?:authorization|auth|cookie|session|token|secret|password|credential|api[-_]?key|bearer)$/i;
+
+const SHELL_COMMAND_NAMES = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
+const CURL_COMMAND_NAMES = new Set(['curl']);
+const ENV_COMMAND_NAMES = new Set(['env']);
+
+function commandBaseName(command: string): string {
+  return (command.split('/').pop() ?? command).toLowerCase();
+}
 
 function isSecretArgName(name: string): boolean {
   return SECRET_ARG_NAME_PATTERN.test(name.replace(/^-+/, ''));
@@ -20,12 +28,23 @@ function isSecretHeaderValue(value: string): boolean {
 
 function isHeaderArgName(name: string): boolean {
   const stripped = name.replace(/^-+/, '');
-  return /^(?:H|header)$/i.test(stripped);
+  return /^H$/i.test(stripped) || /^header$/i.test(stripped);
+}
+
+function isUserArgName(name: string): boolean {
+  const stripped = name.replace(/^-+/, '');
+  return /^u$/i.test(stripped) || /^user$/i.test(stripped);
 }
 
 function isShellCommandArgName(name: string): boolean {
   const stripped = name.replace(/^-+/, '');
   return /^c$/i.test(stripped);
+}
+
+function isSecretEnvAssignment(arg: string): boolean {
+  const equalsIndex = arg.indexOf('=');
+  if (equalsIndex <= 0) return false;
+  return isSecretArgName(arg.slice(0, equalsIndex));
 }
 
 export function shellQuote(value: string): string {
@@ -42,29 +61,38 @@ function redactShellCommand(script: string, depth: number): string {
   if (depth <= 0) return script;
   try {
     const { command, args } = parseAcpCommand(script);
-    return [command, ...redactSecretArgs(args, depth - 1)].map(displayQuote).join(' ');
+    const redactedArgs = redactCommandSecrets(command, args, depth - 1);
+    return [command, ...redactedArgs].map(displayQuote).join(' ');
   } catch {
     return script;
   }
 }
 
-export function redactSecretArgs(args: string[], depth = 3): string[] {
+export function redactCommandSecrets(command: string, args: string[], depth = 3): string[] {
+  const commandName = commandBaseName(command);
+  const isShell = SHELL_COMMAND_NAMES.has(commandName);
+  const isCurl = CURL_COMMAND_NAMES.has(commandName);
+  const isEnv = ENV_COMMAND_NAMES.has(commandName);
   const redacted: string[] = [];
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (!arg.startsWith('-')) {
-      redacted.push(arg);
+      if (isEnv && isSecretEnvAssignment(arg)) {
+        redacted.push(`${arg.slice(0, arg.indexOf('='))}=[redacted]`);
+      } else {
+        redacted.push(arg);
+      }
       continue;
     }
-    if (/^-H./.test(arg)) {
+    if (isCurl && /^-H./.test(arg)) {
       redacted.push(isSecretHeaderValue(arg.slice(2)) ? '-H[redacted]' : arg);
       continue;
     }
-    if (/^-u./.test(arg)) {
+    if (isCurl && /^-u./.test(arg)) {
       redacted.push('-u[redacted]');
       continue;
     }
-    if (/^-c./.test(arg)) {
+    if (isShell && /^-c./.test(arg)) {
       redacted.push(`-c${redactShellCommand(arg.slice(2), depth)}`);
       continue;
     }
@@ -87,12 +115,17 @@ export function redactSecretArgs(args: string[], depth = 3): string[] {
       index++;
       continue;
     }
-    if (isHeaderArgName(arg) && next !== undefined && isSecretHeaderValue(next)) {
+    if (isCurl && isHeaderArgName(arg) && next !== undefined && isSecretHeaderValue(next)) {
       redacted.push(arg, '[redacted]');
       index++;
       continue;
     }
-    if (isShellCommandArgName(arg) && next !== undefined) {
+    if (isCurl && isUserArgName(arg) && next !== undefined && !next.startsWith('--')) {
+      redacted.push(arg, '[redacted]');
+      index++;
+      continue;
+    }
+    if (isShell && isShellCommandArgName(arg) && next !== undefined) {
       redacted.push(arg, redactShellCommand(next, depth));
       index++;
       continue;
@@ -104,7 +137,7 @@ export function redactSecretArgs(args: string[], depth = 3): string[] {
 
 export function getAcpCommandIdentityDigest(commandLine: string): string {
   const { command, args } = parseAcpCommand(commandLine);
-  const identity = JSON.stringify([command, ...redactSecretArgs(args)]);
+  const identity = JSON.stringify([command, ...redactCommandSecrets(command, args)]);
   return createHash('sha256').update(identity).digest('hex');
 }
 

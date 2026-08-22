@@ -4,7 +4,7 @@ import {
   getAcpCommandIdentity,
   getAcpCommandIdentityDigest,
   parseAcpCommand,
-  redactSecretArgs,
+  redactCommandSecrets,
 } from '../../../../src/lib/acp/acp-command';
 
 describe('buildAcpSafeEnv', () => {
@@ -143,18 +143,36 @@ describe('getAcpCommandIdentityDigest', () => {
   });
 
   test('preserves token boundaries when redisplaying shell command arguments', () => {
-    expect(redactSecretArgs(['-c', 'rm -- "important file"'])).toEqual([
+    expect(redactCommandSecrets('sh', ['-c', 'rm -- "important file"'])).toEqual([
       '-c',
       `rm -- 'important file'`,
     ]);
-    expect(redactSecretArgs(['-c', `curl -H 'Authorization: Bearer topsecret' https://a`])).toEqual(
-      ['-c', `curl -H [redacted] https://a`]
-    );
-    expect(redactSecretArgs(['-c', 'echo safe && rm -- "important file"'])).toEqual([
+    expect(
+      redactCommandSecrets('sh', ['-c', `curl -H 'Authorization: Bearer topsecret' https://a`])
+    ).toEqual(['-c', `curl -H [redacted] https://a`]);
+    expect(redactCommandSecrets('sh', ['-c', 'echo safe && rm -- "important file"'])).toEqual([
       '-c',
       `echo safe && rm -- 'important file'`,
     ]);
-    expect(redactSecretArgs(['-c', 'echo $HOME | wc -l'])).toEqual(['-c', 'echo $HOME | wc -l']);
+    expect(redactCommandSecrets('sh', ['-c', 'echo $HOME | wc -l'])).toEqual([
+      '-c',
+      'echo $HOME | wc -l',
+    ]);
+  });
+
+  test('gates tool-specific short options on their executables', () => {
+    expect(getAcpCommandIdentityDigest('python3 -u agent-a.py')).not.toBe(
+      getAcpCommandIdentityDigest('python3 -u agent-b.py')
+    );
+    expect(getAcpCommandIdentityDigest('python3 -c \'print("one")\'')).not.toBe(
+      getAcpCommandIdentityDigest('python3 -c \'print("two")\'')
+    );
+    expect(getAcpCommandIdentityDigest('env API_TOKEN=topsecret agent')).toBe(
+      getAcpCommandIdentityDigest('env API_TOKEN=othersafe agent')
+    );
+    expect(getAcpCommandIdentityDigest('env MODE=fast agent')).not.toBe(
+      getAcpCommandIdentityDigest('env MODE=slow agent')
+    );
   });
 
   test('does not swallow the next flag after a valueless secret flag', () => {

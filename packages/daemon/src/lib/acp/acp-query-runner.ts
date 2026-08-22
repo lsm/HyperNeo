@@ -48,7 +48,7 @@ import {
   buildAcpSafeEnv,
   getAcpCommandIdentityDigest,
   parseAcpCommand,
-  redactSecretArgs,
+  redactCommandSecrets,
   shellQuote,
 } from './acp-command';
 import { getAcpProcessTreeOwner } from './acp-process-tree';
@@ -350,7 +350,7 @@ async function authorizeAcpTerminalCreate(
     params.args === undefined
       ? parseAcpCommand(params.command)
       : { command: params.command, args: params.args };
-  const displayCommand = [parsed.command, ...redactSecretArgs(parsed.args)]
+  const displayCommand = [parsed.command, ...redactCommandSecrets(parsed.command, parsed.args)]
     .map(shellQuote)
     .join(' ');
   const permission = await handleAcpPermissionRequest(
