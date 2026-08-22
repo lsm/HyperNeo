@@ -32,7 +32,7 @@ function fixtureState(
 const EVENTS: Record<string, LiveQueryLifecycleEvent> = {
   subscribed: { type: 'subscribed', generation: 3 },
   'snapshot-arrived': { type: 'snapshot-arrived', generation: 3 },
-  'snapshot-failed-timeout': { type: 'snapshot-failed', generation: 3 },
+  'snapshot-failed-messageless': { type: 'snapshot-failed', generation: 3 },
   'snapshot-failed-error': { type: 'snapshot-failed', generation: 3, message: 'query failed' },
   'delta-arrived': { type: 'delta-arrived', generation: 3 },
   'transport-error': { type: 'transport-error', generation: 3 },
@@ -56,16 +56,19 @@ const TRANSITION_TABLE: Record<LiveQueryLifecycleStatus, Record<string, TableCel
   subscribing: {
     subscribed: cell('awaiting-snapshot', ['retry-with-backoff'], { snapshotRetries: 3 }),
     'snapshot-arrived': cell('live', ['emit-to-store']),
-    'snapshot-failed-timeout': cell('subscribing', []),
+    'snapshot-failed-messageless': cell('error-retry', ['emit-to-store']),
     'snapshot-failed-error': cell('error-retry', ['emit-to-store'], { error: 'query failed' }),
     'delta-arrived': cell('subscribing', []),
-    'transport-error': cell('subscribing', []),
+    'transport-error': cell('subscribing', ['re-snapshot'], {
+      generation: 4,
+      snapshotRetries: 0,
+    }),
     unsubscribe: cell('disposed', ['schedule-cleanup']),
   },
   'awaiting-snapshot': {
     subscribed: cell('awaiting-snapshot', []),
     'snapshot-arrived': cell('live', ['emit-to-store']),
-    'snapshot-failed-timeout': cell('subscribing', ['re-snapshot'], { generation: 4 }),
+    'snapshot-failed-messageless': cell('subscribing', ['re-snapshot'], { generation: 4 }),
     'snapshot-failed-error': cell('error-retry', ['emit-to-store'], { error: 'query failed' }),
     'delta-arrived': cell('awaiting-snapshot', []),
     'transport-error': cell('subscribing', ['re-snapshot'], {
@@ -77,7 +80,7 @@ const TRANSITION_TABLE: Record<LiveQueryLifecycleStatus, Record<string, TableCel
   live: {
     subscribed: cell('live', []),
     'snapshot-arrived': cell('live', ['emit-to-store']),
-    'snapshot-failed-timeout': cell('live', []),
+    'snapshot-failed-messageless': cell('live', []),
     'snapshot-failed-error': cell('error-retry', ['emit-to-store'], { error: 'query failed' }),
     'delta-arrived': cell('live', ['emit-to-store']),
     'transport-error': cell('subscribing', ['re-snapshot'], {
@@ -89,16 +92,19 @@ const TRANSITION_TABLE: Record<LiveQueryLifecycleStatus, Record<string, TableCel
   'error-retry': {
     subscribed: cell('error-retry', []),
     'snapshot-arrived': cell('live', ['emit-to-store']),
-    'snapshot-failed-timeout': cell('error-retry', []),
+    'snapshot-failed-messageless': cell('error-retry', []),
     'snapshot-failed-error': cell('error-retry', []),
     'delta-arrived': cell('error-retry', []),
-    'transport-error': cell('error-retry', []),
+    'transport-error': cell('subscribing', ['re-snapshot'], {
+      generation: 4,
+      snapshotRetries: 0,
+    }),
     unsubscribe: cell('disposed', ['schedule-cleanup']),
   },
   disposed: {
     subscribed: cell('disposed', []),
     'snapshot-arrived': cell('disposed', []),
-    'snapshot-failed-timeout': cell('disposed', []),
+    'snapshot-failed-messageless': cell('disposed', []),
     'snapshot-failed-error': cell('disposed', []),
     'delta-arrived': cell('disposed', []),
     'transport-error': cell('disposed', []),
@@ -203,6 +209,23 @@ describe('live-query-lifecycle', () => {
       });
       expect(revived.state).toEqual(fixtureState('live', { error: 'query failed' }));
       expect(revived.effects).toEqual([{ kind: 'emit-to-store', emission: { type: 'snapshot' } }]);
+    });
+
+    it('settles a rejected subscribe request as settled-empty without an error', () => {
+      const rejected = transitionLiveQueryLifecycle(fixtureState('subscribing'), {
+        type: 'snapshot-failed',
+        generation: 3,
+      });
+      expect(rejected.state).toEqual(fixtureState('error-retry'));
+      expect(rejected.effects).toEqual([
+        { kind: 'emit-to-store', emission: { type: 'settled-empty' } },
+      ]);
+      const lateTimer = transitionLiveQueryLifecycle(rejected.state, {
+        type: 'snapshot-failed',
+        generation: 3,
+      });
+      expect(lateTimer.state).toBe(rejected.state);
+      expect(lateTimer.effects).toEqual([]);
     });
   });
 
@@ -343,6 +366,33 @@ describe('live-query-lifecycle', () => {
       );
       expect(retry.effects).toEqual([{ kind: 're-snapshot', generation: 4 }]);
       const resolved = transitionLiveQueryLifecycle(retry.state, {
+        type: 'subscribed',
+        generation: 4,
+      });
+      expect(resolved.state.status).toBe('awaiting-snapshot');
+      expect(resolved.state.snapshotRetries).toBe(1);
+      expect(resolved.effects).toEqual([
+        { kind: 'retry-with-backoff', generation: 4, delayMs: 2000 },
+      ]);
+    });
+
+    it('recovers when the transport drops while a subscribe request is pending', () => {
+      const pending = fixtureState('subscribing', { snapshotRetries: 4 });
+      const dropped = transitionLiveQueryLifecycle(pending, {
+        type: 'transport-error',
+        generation: 3,
+      });
+      expect(dropped.state).toEqual(
+        fixtureState('subscribing', { generation: 4, snapshotRetries: 0 })
+      );
+      expect(dropped.effects).toEqual([{ kind: 're-snapshot', generation: 4 }]);
+      const staleResolve = transitionLiveQueryLifecycle(dropped.state, {
+        type: 'subscribed',
+        generation: 3,
+      });
+      expect(staleResolve.state).toBe(dropped.state);
+      expect(staleResolve.effects).toEqual([]);
+      const resolved = transitionLiveQueryLifecycle(dropped.state, {
         type: 'subscribed',
         generation: 4,
       });

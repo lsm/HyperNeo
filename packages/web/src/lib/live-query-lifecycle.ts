@@ -79,6 +79,9 @@ export function transitionLiveQueryLifecycle(
   if (event.generation !== state.generation) {
     return { state, effects: [] };
   }
+  if (event.type === 'transport-error') {
+    return resubscribe({ ...state, snapshotRetries: 0 });
+  }
   switch (state.status) {
     case 'subscribing':
       return transitionSubscribing(state, event);
@@ -125,8 +128,14 @@ function transitionSubscribing(
       effects: [{ kind: 'emit-to-store', emission: { type: 'snapshot' } }],
     };
   }
-  if (event.type === 'snapshot-failed' && event.message !== undefined) {
-    return settleSnapshotError(state, event.message);
+  if (event.type === 'snapshot-failed') {
+    if (event.message !== undefined) {
+      return settleSnapshotError(state, event.message);
+    }
+    return {
+      state: { ...state, status: 'error-retry' },
+      effects: [{ kind: 'emit-to-store', emission: { type: 'settled-empty' } }],
+    };
   }
   return { state, effects: [] };
 }
@@ -147,9 +156,6 @@ function transitionAwaitingSnapshot(
     }
     return resubscribe(state);
   }
-  if (event.type === 'transport-error') {
-    return resubscribe({ ...state, snapshotRetries: 0 });
-  }
   return { state, effects: [] };
 }
 
@@ -162,9 +168,6 @@ function transitionLive(
   }
   if (event.type === 'snapshot-arrived') {
     return { state, effects: [{ kind: 'emit-to-store', emission: { type: 'snapshot' } }] };
-  }
-  if (event.type === 'transport-error') {
-    return resubscribe({ ...state, snapshotRetries: 0 });
   }
   if (event.type === 'snapshot-failed' && event.message !== undefined) {
     return settleSnapshotError(state, event.message);
