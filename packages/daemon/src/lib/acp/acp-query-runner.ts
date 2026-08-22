@@ -451,6 +451,19 @@ function isAcpToolResultMessage(message: SDKMessage): boolean {
   return message.type === 'user' && (message as SDKUserMessage).parent_tool_use_id != null;
 }
 
+function isAcpToolUseMessage(message: SDKMessage): boolean {
+  if (message.type !== 'assistant') return false;
+  const content = (message as { message?: { content?: unknown } }).message?.content;
+  return (
+    Array.isArray(content) &&
+    content.some((block) => (block as { type?: string } | null)?.type === 'tool_use')
+  );
+}
+
+function isAcpPostAbortRelevantMessage(message: SDKMessage): boolean {
+  return isAcpToolResultMessage(message) || isAcpToolUseMessage(message);
+}
+
 function systemPromptText(systemPrompt: Options['systemPrompt']): string[] {
   if (!systemPrompt) return [];
   if (typeof systemPrompt === 'string') return [systemPrompt];
@@ -772,6 +785,7 @@ export class AcpQueryRunner {
           ),
         ...hostCallbacks,
       });
+      assertActiveAcpStartup();
 
       if (messageQueue.size() > 0) {
         startStartupTimer(() => false);
@@ -826,6 +840,7 @@ export class AcpQueryRunner {
       await this.ctx.onModelsFetched().catch((error) => {
         logger.warn('Background fetch of models failed:', error);
       });
+      assertActiveAcpStartup();
 
       for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
         suppressPreYieldCallback: true,
@@ -969,6 +984,11 @@ export class AcpQueryRunner {
       proxyBridge = null;
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
 
+      if (isStaleQuery && client) {
+        try {
+          client.close();
+        } catch {}
+      }
       if (!isStaleQuery) {
         this.clearStartupTimer();
 
@@ -1491,7 +1511,7 @@ export class AcpQueryRunner {
           } catch {
             result = drainDeadline;
           }
-          if (!('expired' in result) && !result.done && isAcpToolResultMessage(result.value)) {
+          if (!('expired' in result) && !result.done) {
             yield result.value;
           }
           pendingNext = null;
@@ -1512,7 +1532,7 @@ export class AcpQueryRunner {
           if ('expired' in result) break;
           if (result.done) break;
           drained++;
-          if (isAcpToolResultMessage(result.value)) {
+          if (isAcpPostAbortRelevantMessage(result.value)) {
             yield result.value;
           }
         }

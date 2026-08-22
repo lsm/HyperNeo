@@ -104,6 +104,18 @@ describe('getAcpCommandIdentityDigest', () => {
     expect(
       getAcpCommandIdentityDigest('curl -H "Authorization: Bearer topsecret" https://api')
     ).toBe(getAcpCommandIdentityDigest('curl -H "Authorization: Bearer othersafe" https://api'));
+    expect(getAcpCommandIdentityDigest('curl -H "Cookie: session=topsecret" https://a')).toBe(
+      getAcpCommandIdentityDigest('curl -H "Cookie: session=other" https://a')
+    );
+  });
+
+  test('keeps non-credential header values visible in the digest', () => {
+    expect(getAcpCommandIdentityDigest('curl -H "X-HTTP-Method-Override: DELETE" /a')).not.toBe(
+      getAcpCommandIdentityDigest('curl -H "X-HTTP-Method-Override: PUT" /a')
+    );
+    expect(getAcpCommandIdentityDigest('curl -H "Accept: application/json" /a')).not.toBe(
+      getAcpCommandIdentityDigest('curl -H "Accept: text/plain" /a')
+    );
   });
 
   test('still distinguishes commands that differ outside secret arguments', () => {

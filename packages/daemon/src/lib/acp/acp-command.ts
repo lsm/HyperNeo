@@ -4,10 +4,23 @@ import { parseAcpCommand } from '@hyperneo/shared/acp';
 export { getAcpCommandIdentity, parseAcpCommand } from '@hyperneo/shared/acp';
 
 const SECRET_ARG_NAME_PATTERN =
-  /(?:^|[-_])(?:token|secret|password|passphrase|credential|api[-_]?key|bearer|header)$|^H$/i;
+  /(?:^|[-_])(?:token|secret|password|passphrase|credential|api[-_]?key|bearer)$/i;
+
+const SECRET_HEADER_NAME_PATTERN =
+  /(?:^|[-_])(?:authorization|auth|cookie|session|token|secret|password|credential|api[-_]?key|bearer)$/i;
 
 function isSecretArgName(name: string): boolean {
   return SECRET_ARG_NAME_PATTERN.test(name.replace(/^-+/, ''));
+}
+
+function isSecretHeaderValue(value: string): boolean {
+  const headerName = value.split(':', 1)[0]?.trim() ?? '';
+  return SECRET_HEADER_NAME_PATTERN.test(headerName);
+}
+
+function isHeaderArgName(name: string): boolean {
+  const stripped = name.replace(/^-+/, '');
+  return /^(?:H|header)$/i.test(stripped);
 }
 
 export function redactSecretArgs(args: string[]): string[] {
@@ -21,11 +34,23 @@ export function redactSecretArgs(args: string[]): string[] {
     const equalsIndex = arg.indexOf('=');
     if (equalsIndex >= 0) {
       const name = arg.slice(0, equalsIndex);
-      redacted.push(isSecretArgName(name) ? `${name}=[redacted]` : arg);
+      const value = arg.slice(equalsIndex + 1);
+      if (isSecretArgName(name)) {
+        redacted.push(`${name}=[redacted]`);
+      } else if (isHeaderArgName(name) && isSecretHeaderValue(value)) {
+        redacted.push(`${name}=[redacted]`);
+      } else {
+        redacted.push(arg);
+      }
       continue;
     }
     const next = args[index + 1];
     if (isSecretArgName(arg) && next !== undefined) {
+      redacted.push(arg, '[redacted]');
+      index++;
+      continue;
+    }
+    if (isHeaderArgName(arg) && next !== undefined && isSecretHeaderValue(next)) {
       redacted.push(arg, '[redacted]');
       index++;
       continue;

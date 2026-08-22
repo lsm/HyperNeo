@@ -855,6 +855,84 @@ describe('AcpQueryRunner', () => {
     await ctx.queryPromise;
   });
 
+  test('closes the ACP client when the query becomes stale during startup', async () => {
+    const client = createMockClient();
+    let releaseInitialize: (() => void) | undefined;
+    let markInitializeStarted: (() => void) | undefined;
+    const initializeStarted = new Promise<void>((resolve) => {
+      markInitializeStarted = resolve;
+    });
+    const initializeGate = new Promise<void>((resolve) => {
+      releaseInitialize = resolve;
+    });
+    client.initialize.mockImplementation(async () => {
+      markInitializeStarted?.();
+      await initializeGate;
+      return { protocolVersion: 1, agentCapabilities: {}, agentInfo: {} };
+    });
+    const { runner, ctx } = createRunnerFixture({ client });
+
+    await runner.start();
+    await initializeStarted;
+    ctx.incrementQueryGeneration();
+    releaseInitialize?.();
+    await ctx.queryPromise;
+
+    expect(client.sendPrompt).not.toHaveBeenCalled();
+    expect(client.close).toHaveBeenCalled();
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  });
+
+  test('delivers an interrupted tool call with its synthesized result', async () => {
+    const client = createMockClient();
+    let releasePrompt: (() => void) | undefined;
+    let promptBlockedResolve: (() => void) | undefined;
+    const promptBlocked = new Promise<void>((resolve) => {
+      promptBlockedResolve = resolve;
+    });
+    client.sendPrompt.mockImplementation(async function* () {
+      yield {
+        sessionId: 'acp-session-1',
+        update: { sessionUpdate: 'plan', entries: [] },
+      };
+      await new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+        promptBlockedResolve?.();
+      });
+      yield {
+        sessionId: 'acp-session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-late',
+          title: 'Late tool',
+          rawInput: {},
+        },
+      };
+    });
+    const { runner, ctx, onSDKMessage } = createRunnerFixture({ client });
+
+    await runner.start();
+    await promptBlocked;
+    ctx.queryAbortController?.abort();
+    releasePrompt?.();
+    await ctx.queryPromise;
+
+    const hasToolUse = onSDKMessage.mock.calls.some(
+      ([message]) =>
+        message.type === 'assistant' &&
+        (
+          (message as { message?: { content?: Array<{ type?: string }> } }).message?.content ?? []
+        ).some((block) => block?.type === 'tool_use')
+    );
+    const hasToolResult = onSDKMessage.mock.calls.some(
+      ([message]) =>
+        message.type === 'user' && (message as SDKUserMessage).parent_tool_use_id === 'tc-late'
+    );
+    expect(hasToolUse).toBe(true);
+    expect(hasToolResult).toBe(true);
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  }, 1000);
+
   test('aborts stale ACP startup after cleanup begins', async () => {
     let markBuildStarted: () => void;
     const buildStarted = new Promise<void>((resolve) => {
