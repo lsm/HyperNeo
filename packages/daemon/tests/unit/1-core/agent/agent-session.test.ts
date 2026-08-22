@@ -1925,6 +1925,22 @@ describe('AgentSession', () => {
       }
     });
 
+    it('replayAllPendingMessages bypasses the manual-mode guard that stops immediate-mode replay', async () => {
+      agentSession.session.config.queryMode = 'manual';
+      const inner = agentSession.queryModeHandler as unknown as {
+        replayPendingMessagesForImmediateMode: ReturnType<typeof mock>;
+      };
+      const innerSpy = spyOn(inner, 'replayPendingMessagesForImmediateMode').mockResolvedValue(
+        undefined
+      );
+
+      await agentSession.replayPendingMessagesForImmediateMode();
+      expect(innerSpy).not.toHaveBeenCalled();
+
+      await agentSession.replayAllPendingMessages();
+      expect(innerSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('handleModelSwitch should delegate to modelSwitchHandler', async () => {
       const mockResult = { success: true, model: 'claude-opus-4-20250514' };
       const switchModelSpy = mock(() => mockResult);

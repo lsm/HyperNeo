@@ -995,7 +995,7 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    await agentSession.replayPendingMessagesForImmediateMode();
+    await agentSession.replayAllPendingMessages();
 
     return { success: true };
   });

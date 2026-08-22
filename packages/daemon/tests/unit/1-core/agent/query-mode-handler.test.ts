@@ -735,6 +735,39 @@ describe('QueryModeHandler', () => {
       expect(updateMessageStatusSpy).toHaveBeenLastCalledWith(['db-1', 'db-2'], 'deferred');
     });
 
+    it('re-triggers the deferred flush after the blocking delivery job settles', async () => {
+      const order: string[] = [];
+      const clearSpy = mock(async () => {
+        order.push('clear');
+      });
+      enqueueWithIdSpy.mockImplementation(async (uuid: string) => {
+        order.push(uuid);
+      });
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(deferredBatch(1)));
+      resetSlotDb();
+      let jobActive = true;
+      setTimeout(() => {
+        jobActive = false;
+      }, 50);
+      mockDb = {
+        getUserMessagesByStatus: getUserMessagesByStatusSpy,
+        updateMessageStatus: updateMessageStatusSpy,
+        getJobQueueRepo: () => ({
+          activeDeliveryMessageUuids: () => (jobActive ? new Set(['uuid-active']) : new Set()),
+          hasActiveTurnDeliveryJob: () => false,
+        }),
+      } as unknown as Database;
+
+      handler = new QueryModeHandler(resetSlotContext(clearSpy));
+      await handler.replayPendingMessagesForImmediateMode();
+
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      await new Promise((resolve) => setTimeout(resolve, 700));
+
+      expect(order).toEqual(['clear', 'uuid-1']);
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('delivers leading human rows before the clear that fronts the task rows', async () => {
       const order: string[] = [];
       const clearSpy = mock(async () => {
@@ -1318,6 +1351,60 @@ describe('QueryModeHandler', () => {
       expect(deliveryUuids()).toEqual([]);
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
       expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
+    });
+
+    it('excludes re-deferred task rows from the trailing enqueued announce', async () => {
+      jobQueue.enqueue({
+        queue: 'message_delivery',
+        payload: {
+          sessionId: 'test-session-id',
+          messageUuid: 'uuid-active',
+          role: 'turn',
+          origin: 'chat',
+          parentToolUseId: null,
+        },
+      });
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          {
+            dbId: 'db-human',
+            uuid: 'uuid-human',
+            type: 'user',
+            isSynthetic: false,
+            inputKind: 'human',
+            message: { role: 'user', content: 'a human follow-up' },
+          },
+          {
+            dbId: 'db-task',
+            uuid: 'uuid-task',
+            type: 'user',
+            isSynthetic: true,
+            inputKind: 'task',
+            message: { role: 'user', content: 'handoff' },
+          },
+        ] as unknown as SDKMessage[])
+      );
+
+      handler = new QueryModeHandler({
+        ...createContext(),
+        session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
+        slotResetsContext: () => true,
+        clearConversationContext: async () => {},
+      });
+      await handler.handleQueryTrigger();
+
+      const events = emitSpy.mock.calls
+        .filter(([event]) => event === 'messages.statusChanged')
+        .map(([, payload]) => payload as { status: string; messageIds: string[] });
+      const enqueuedIds = events
+        .filter((p) => p.status === 'enqueued')
+        .flatMap((p) => p.messageIds);
+      const deferredIds = events
+        .filter((p) => p.status === 'deferred')
+        .flatMap((p) => p.messageIds);
+      expect(deferredIds).toEqual(['db-task']);
+      expect(enqueuedIds).toContain('db-human');
+      expect(enqueuedIds).not.toContain('db-task');
     });
 
     it('replay defers the deferred-task pass while the replayed human job is active', async () => {

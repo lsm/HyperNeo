@@ -63,24 +63,29 @@ export class QueryModeHandler {
       db.updateMessageStatus(dbIds, 'enqueued');
       const flushMessages = this.toFlushMessages(deferredMessages);
 
+      let reDeferredDbIds: string[] = [];
       if (isMessageDeliveryV2Enabled()) {
         try {
-          await this.deliverFlushUnderV2(flushMessages, 'recovery', options);
+          const v2 = await this.deliverFlushUnderV2(flushMessages, 'recovery', options);
+          reDeferredDbIds = v2.reDeferredDbIds;
         } catch (error) {
           await internalEventBus.publish('messages.statusChanged', {
             sessionId: session.id,
-            messageIds: dbIds,
+            messageIds: dbIds.filter((id) => !reDeferredDbIds.includes(id)),
             status: 'enqueued',
           });
           throw error;
         }
       }
 
-      await internalEventBus.publish('messages.statusChanged', {
-        sessionId: session.id,
-        messageIds: dbIds,
-        status: 'enqueued',
-      });
+      const admittedDbIds = dbIds.filter((id) => !reDeferredDbIds.includes(id));
+      if (admittedDbIds.length > 0) {
+        await internalEventBus.publish('messages.statusChanged', {
+          sessionId: session.id,
+          messageIds: admittedDbIds,
+          status: 'enqueued',
+        });
+      }
 
       if (!isMessageDeliveryV2Enabled()) {
         await this.deliverRowsViaMemoryQueue(deferredMessages, flushMessages, options);
@@ -238,17 +243,18 @@ export class QueryModeHandler {
   private async deferTaskDeliverables(
     flushMessages: FlushMessage[],
     deliverables: ReadonlySet<string>
-  ): Promise<void> {
+  ): Promise<string[]> {
     const dbIds = flushMessages
       .filter((message) => message.isTaskInput && deliverables.has(message.uuid))
       .map((message) => message.dbId);
-    if (dbIds.length === 0) return;
+    if (dbIds.length === 0) return [];
     this.ctx.db.updateMessageStatus(dbIds, 'deferred');
     await this.ctx.internalEventBus.publish('messages.statusChanged', {
       sessionId: this.ctx.session.id,
       messageIds: dbIds,
       status: 'deferred',
     });
+    return dbIds;
   }
 
   private async deliverFlushUnderV2(
@@ -259,22 +265,23 @@ export class QueryModeHandler {
       skipContextReset?: boolean;
       pendingTaskInput?: boolean;
     }
-  ): Promise<boolean> {
+  ): Promise<{ clearedContext: boolean; reDeferredDbIds: string[] }> {
     const jobQueue = this.ctx.db.getJobQueueRepo();
     const plan = this.planFlush(flushMessages, options);
-    if (plan.action === 'noop') return false;
+    if (plan.action === 'noop') return { clearedContext: false, reDeferredDbIds: [] };
     let clearedContext = false;
+    let reDeferredDbIds: string[] = [];
     let deliverables = plan.action === 'batch' ? plan.uuids : plan.deliver;
     if (plan.contextReset.action === 'clear_then_flush') {
       clearedContext = await this.clearContextAheadOfFlush(flushMessages, options);
     } else if (plan.contextReset.reason === 'active_delivery_job') {
       const deliverableSet = new Set(deliverables);
-      await this.deferTaskDeliverables(flushMessages, deliverableSet);
+      reDeferredDbIds = await this.deferTaskDeliverables(flushMessages, deliverableSet);
       deliverables = deliverables.filter((uuid) => {
         const message = flushMessages.find((entry) => entry.uuid === uuid);
         return message !== undefined && !message.isTaskInput;
       });
-      if (deliverables.length === 0) return clearedContext;
+      if (deliverables.length === 0) return { clearedContext, reDeferredDbIds };
     }
     if (plan.action === 'batch' && !options?.deliverIndividually) {
       const batched = await deliverBatchAndMarkQueued({
@@ -284,7 +291,7 @@ export class QueryModeHandler {
         messageUuids: deliverables,
         origin,
       });
-      if (batched) return clearedContext;
+      if (batched) return { clearedContext, reDeferredDbIds };
     }
     for (const uuid of deliverables) {
       await deliverAndMarkQueued({
@@ -295,7 +302,7 @@ export class QueryModeHandler {
         origin,
       });
     }
-    return clearedContext;
+    return { clearedContext, reDeferredDbIds };
   }
 
   async sendEnqueuedMessagesOnTurnEnd(options?: {
@@ -323,11 +330,12 @@ export class QueryModeHandler {
       replayedWork = true;
 
       if (isMessageDeliveryV2Enabled()) {
-        clearedContext = await this.deliverFlushUnderV2(
+        const v2 = await this.deliverFlushUnderV2(
           this.toFlushMessages(pendingMessages),
           'recovery',
           { pendingTaskInput: options?.pendingTaskInput }
         );
+        clearedContext = v2.clearedContext;
       } else {
         clearedContext = await this.deliverRowsViaMemoryQueue(
           pendingMessages,
@@ -357,10 +365,35 @@ export class QueryModeHandler {
     if (!clearedContext) {
       const jobQueue = this.ctx.db.getJobQueueRepo?.();
       if (jobQueue?.activeDeliveryMessageUuids?.(this.ctx.session.id).size) {
+        this.schedulePostSettlementFlush();
         return;
       }
     }
     await this.handleQueryTrigger({ skipContextReset: clearedContext });
+  }
+
+  private postSettlementFlushScheduled = false;
+
+  private schedulePostSettlementFlush(): void {
+    if (this.postSettlementFlushScheduled) return;
+    this.postSettlementFlushScheduled = true;
+    void (async () => {
+      try {
+        const jobQueue = this.ctx.db.getJobQueueRepo?.();
+        for (let i = 0; i < 240; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          if (!jobQueue?.activeDeliveryMessageUuids?.(this.ctx.session.id).size) break;
+        }
+        await this.handleQueryTrigger();
+      } catch (error) {
+        this.ctx.logger.warn(
+          `post-settlement deferred flush failed for session ${this.ctx.session.id}:`,
+          error
+        );
+      } finally {
+        this.postSettlementFlushScheduled = false;
+      }
+    })();
   }
 
   private toReplayContent(
