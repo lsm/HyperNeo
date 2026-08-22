@@ -369,6 +369,14 @@ describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
     expect(h.updates.some((u) => u.patch.status === 'in_progress')).toBe(true);
   });
 
+  test('null workflow (definition vanished) is a permanent rejection', async () => {
+    const h = makeSpawnHarness({ workflow: null });
+
+    await expect(h.spawn()).rejects.toBeInstanceOf(PermanentSpawnError);
+    await expect(h.spawn()).rejects.toThrow(`Workflow for execution exec-1 no longer exists`);
+    expect(h.order).toEqual([]);
+  });
+
   test('workflow no longer containing the node is a permanent rejection', async () => {
     const h = makeSpawnHarness({
       workflow: makeWorkflow([
@@ -425,7 +433,7 @@ describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
 });
 
 describe('spawnWorkflowNodeAgentForExecution — concurrent-spawn waiter', () => {
-  test('a second call while the first is in flight resolves with the peer session once bound', async () => {
+  test('a second call waits on the in-flight peer instead of spawning independently', async () => {
     const gate = deferred<{ path: string }>();
     const h = makeSpawnHarness({ kickoff: false, worktreeGate: gate.promise });
 
@@ -435,6 +443,7 @@ describe('spawnWorkflowNodeAgentForExecution — concurrent-spawn waiter', () =>
 
     expect(await second).toBe(SPAWNED_SESSION_ID);
     expect(await first).toBe(SPAWNED_SESSION_ID);
+    expect(h.order.filter((step) => step === 'createSubSession')).toHaveLength(1);
     expect(h.updates.some((u) => u.patch.agentSessionId === SPAWNED_SESSION_ID)).toBe(true);
   });
 
@@ -446,9 +455,10 @@ describe('spawnWorkflowNodeAgentForExecution — concurrent-spawn waiter', () =>
     const second = h.spawn();
     gate.resolve({ path: '/tmp/wt-1237' });
 
-    await expect(first).rejects.toThrow('Agent not found');
+    await expect(first).rejects.toThrow('Agent not found: agent-coder (task: task-1237)');
     await expect(second).rejects.toThrow('failed before session was created');
     expect(h.cancels).toEqual([]);
+    expect(h.order.filter((step) => step === 'createSubSession')).toHaveLength(0);
   });
 
   test('rejects with the concurrent-spawn timeout when the peer never produces a session', async () => {
@@ -463,10 +473,13 @@ describe('spawnWorkflowNodeAgentForExecution — concurrent-spawn waiter', () =>
       const second = h.spawn();
       clockOffset = 60_000;
       await expect(second).rejects.toThrow('timed out after 30000ms');
+      clockOffset = 0;
+      gate.resolve({ path: '/tmp/wt-1237' });
     } finally {
       nowSpy.mockRestore();
     }
-    expect(first).toBeInstanceOf(Promise);
+    await expect(first).resolves.toBe(SPAWNED_SESSION_ID);
+    expect(h.order.filter((step) => step === 'createSubSession')).toHaveLength(1);
   });
 });
 
@@ -676,6 +689,22 @@ function makeActivateHarness(
   };
 }
 
+function fireActivationTimeoutImmediately(onLongTimer?: (delay: number) => void): () => void {
+  const originalSetTimeout = globalThis.setTimeout;
+  const spy = spyOn(globalThis, 'setTimeout').mockImplementation(((
+    callback: () => void,
+    delay?: number
+  ) => {
+    const effective = typeof delay === 'number' ? delay : 0;
+    if (effective >= 30_000) {
+      onLongTimer?.(effective);
+      return originalSetTimeout(callback, 0);
+    }
+    return originalSetTimeout(callback, effective);
+  }) as unknown as typeof setTimeout);
+  return () => spy.mockRestore();
+}
+
 describe('activateTargetSessionsForMessage — admission', () => {
   test('an alive in_progress execution is reused without update or spawn', async () => {
     const h = makeActivateHarness({
@@ -707,24 +736,34 @@ describe('activateTargetSessionsForMessage — admission', () => {
       executions: [makeExecution({ status: 'in_progress', agentSessionId: 'dead-session' })],
       indexSession: { id: 'dead-session', processingStatus: 'completed' },
     });
+    const restoreTimers = fireActivationTimeoutImmediately();
     const index = h.tam as unknown as { agentSessionIndex: Map<string, AgentSession> };
 
-    const result = await h.activate();
+    try {
+      const result = await h.activate();
 
-    expect(result).toEqual([{ agentName: AGENT_NAME, sessionId: 'new-session' }]);
-    expect(h.updates).toEqual([{ id: 'exec-1', patch: { status: 'pending' } }]);
-    expect(index.agentSessionIndex.has('dead-session')).toBe(false);
-    expect(h.order).toEqual(['activation', 'spawn']);
+      expect(result).toEqual([{ agentName: AGENT_NAME, sessionId: 'new-session' }]);
+      expect(h.updates).toEqual([{ id: 'exec-1', patch: { status: 'pending' } }]);
+      expect(index.agentSessionIndex.has('dead-session')).toBe(false);
+      expect(h.order).toEqual(['activation', 'spawn']);
+    } finally {
+      restoreTimers();
+    }
   });
 
   test('dead-session reset is an unconditional status-only write (BEFORE picture, ADR 0004 Phase 0)', async () => {
     const h = makeActivateHarness({
       executions: [makeExecution({ status: 'in_progress', agentSessionId: 'dead-session' })],
     });
+    const restoreTimers = fireActivationTimeoutImmediately();
 
-    await h.activate();
+    try {
+      await h.activate();
 
-    expect(h.updates).toEqual([{ id: 'exec-1', patch: { status: 'pending' } }]);
+      expect(h.updates).toEqual([{ id: 'exec-1', patch: { status: 'pending' } }]);
+    } finally {
+      restoreTimers();
+    }
   });
 
   test('a declared workflowNodeId with an undeclared agent name rejects with [] before activation', async () => {
@@ -744,11 +783,16 @@ describe('activateTargetSessionsForMessage — admission', () => {
 
   test('a declared workflowNodeId proceeds through activation to spawn', async () => {
     const h = makeActivateHarness({ executions: [makeExecution()] });
+    const restoreTimers = fireActivationTimeoutImmediately();
 
-    const result = await h.activate({ workflowNodeId: NODE_ID });
+    try {
+      const result = await h.activate({ workflowNodeId: NODE_ID });
 
-    expect(result).toEqual([{ agentName: AGENT_NAME, sessionId: 'new-session' }]);
-    expect(h.order).toEqual(['activation', 'spawn']);
+      expect(result).toEqual([{ agentName: AGENT_NAME, sessionId: 'new-session' }]);
+      expect(h.order).toEqual(['activation', 'spawn']);
+    } finally {
+      restoreTimers();
+    }
   });
 
   test('no matching execution after activation returns [] without spawning', async () => {
@@ -762,19 +806,6 @@ describe('activateTargetSessionsForMessage — admission', () => {
 
   test('spawn timeout returns [] while the background spawn continues', async () => {
     const spawnOutcome = deferred<string>();
-    let observedDelay: number | undefined;
-    const originalSetTimeout = globalThis.setTimeout;
-    const timeoutSpy = spyOn(globalThis, 'setTimeout').mockImplementation(((
-      callback: () => void,
-      delay?: number
-    ) => {
-      const effective = typeof delay === 'number' ? delay : 0;
-      if (effective >= 30_000) {
-        observedDelay = effective;
-        return originalSetTimeout(callback, 0);
-      }
-      return originalSetTimeout(callback, effective);
-    }) as unknown as typeof setTimeout);
     const h = makeActivateHarness({
       executions: [makeExecution()],
       spawn: () => {
@@ -782,8 +813,13 @@ describe('activateTargetSessionsForMessage — admission', () => {
         return spawnOutcome.promise;
       },
     });
+    let observedDelay: number | undefined;
+    const restoreTimers = fireActivationTimeoutImmediately((delay) => {
+      observedDelay = delay;
+    });
 
     try {
+      expect(observedDelay).toBeUndefined();
       const result = await h.activate();
       expect(result).toEqual([]);
       expect(observedDelay).toBe(30_000);
@@ -791,9 +827,8 @@ describe('activateTargetSessionsForMessage — admission', () => {
 
       spawnOutcome.resolve('late-session');
       await expect(spawnOutcome.promise).resolves.toBe('late-session');
-      expect(h.updates).toEqual([]);
     } finally {
-      timeoutSpy.mockRestore();
+      restoreTimers();
     }
   });
 });
