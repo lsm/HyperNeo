@@ -216,7 +216,14 @@ plus condition 5 (for the run tick, the next tick). In-memory compensation
 covers only the live process: correlated persistent-transition sets commit as
 one database transaction or carry a durable saga record completed or reversed
 during recovery, and replay that crosses a process crash needs condition 5's
-durable arm — a persistent idempotency key or outbox record.
+durable arm — a persistent idempotency key or outbox record. **Deferral
+(2026-08-22, landed with the combinator):** the durable saga/outbox arm is
+deliberately deferred — no flow's compensation must currently survive a process
+crash (daemon-crash recovery is reconcile/rehydrate plus caller re-entry), so
+the landed interpreter registers compensations in memory only. The deferral is
+recorded in the module as `DEFERRED_DURABLE_COMPENSATION_ARMS` and pinned by
+the contract suite; revisiting it is its own evidence-backed change when a flow
+grows that requirement — the caveats narrow, never expand.
 
 **The RFC's open questions, answered:**
 
@@ -702,8 +709,16 @@ Pilot 5 PRs: #2663, #2668, #2669, #2673, #2676, plus this closing sweep.
   engine): read → plan → CAS within transaction → apply effects after commit.
 - **Phase 5 — web functional cores** (P1: `useTurnBlocks`, message projections,
   model-switcher projections).
+- **Done (combinator, 2026-08-22):** `staged-run.ts` landed — the `stagedRun`
+  interpreter plus its contract suite (composition-time stage-contract
+  validation, declared-key views, interpreter-stamped `superseded`, reverse
+  compensation unwind, microtask-profile pins; branching rides superpipe's
+  native `!dep`/`?dep`). No production consumer yet; Chain S PR 4
+  (`stopSessionVerified`) is the first. Everything below in the staged rollout
+  composes **on this landed module** — it is never re-landed or duplicated.
 - **Staged rollout of `stagedRun`** (from #2670; the pilot-3 "future mini-pilots"
-  sub-flows become these phases):
+  sub-flows become these phases; all phases build on the landed
+  `staged-run.ts`):
 
   | Phase | Scope | Notes |
   | --- | --- | --- |
@@ -748,6 +763,9 @@ Pilot 5 PRs: #2663, #2668, #2669, #2673, #2676, plus this closing sweep.
   #2663, #2668, #2669, #2673, #2676.
 - RFC: issue #2670 (`stagedRun` rollout proposal; its open questions are answered
   by the "Staged run pipelines" section).
-- Staged combinator (Phase 1+): `packages/daemon/src/lib/space/runtime/staged-run.ts`.
+- Staged combinator (landed 2026-08-22):
+  `packages/daemon/src/lib/space/runtime/staged-run.ts`, contract suite in
+  `packages/daemon/tests/unit/5-space/runtime/staged-run.test.ts`. The run-tick
+  phases below and every later pilot depend on this module — never re-land it.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.
