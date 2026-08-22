@@ -605,6 +605,35 @@ describe('stagedRun declared-key access', () => {
     expect(ran).toEqual(['load', 'route', 'halt']);
   });
 
+  test('accessor-backed flow inputs pass the value that was validated', async () => {
+    type Needs = { sessionId: string; echo: string };
+    let reads = 0;
+    const input: Record<string, unknown> = {};
+    Object.defineProperty(input, 'sessionId', {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return reads === 1 ? 'first-read' : 'shifted';
+      },
+    });
+    const flow = stagedRun<Needs>(
+      'shifting-input',
+      (s) => [
+        s.snapshot({
+          name: 'load',
+          provides: ['echo'],
+          reads: ['sessionId'],
+          run: ({ sessionId }) => ({ echo: sessionId }),
+        }),
+        s.halt({ name: 'end', reads: ['echo'], run: ({ echo }) => echo }),
+      ],
+      { input: ['sessionId'] }
+    );
+    const outcome = await flow(input as unknown as Partial<Needs>);
+    expect(outcome).toEqual({ status: 'completed', result: 'first-read' });
+    expect(reads).toBe(1);
+  });
+
   test('input keys beyond the declared list stay unreadable inside the flow', async () => {
     type Pair = { a: number; b: number };
     let seen: Record<string, unknown> = {};
@@ -1217,6 +1246,60 @@ describe('stagedRun stage failure and compensation', () => {
     expect(observedView).toEqual({ value: 7 });
     expect(observedResult).toBe('won');
     expect(partialResult).toBeUndefined();
+  });
+
+  test('a compensation observes the registration view, not effect mutations of it', async () => {
+    let observedView: Record<string, unknown> | undefined;
+    const flow = stagedRun<Box>('compensate-snapshot', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 7 }) }),
+      s.effect({
+        name: 'mutating',
+        reads: ['value'],
+        writes: ['value'],
+        run: (view) => {
+          view.value = 999;
+          return 'won';
+        },
+        compensate: (view) => {
+          observedView = { ...view };
+        },
+      }),
+      s.effect({
+        name: 'trigger',
+        writes: ['value'],
+        run: () => {
+          throw new Error('boom');
+        },
+      }),
+      s.halt({ name: 'end', run: () => 'done' }),
+    ]);
+    const outcome = await flow({});
+    expect(outcome.status).toBe('error');
+    expect(observedView).toEqual({ value: 7 });
+  });
+
+  test('unstamped branch keys named after prototype members do not fire guards', async () => {
+    const ran: string[] = [];
+    const flow = stagedRun<Box>('proto-branch-inert', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+      s.decide({
+        name: 'route',
+        reads: ['value'],
+        branches: ['constructor', 'toString', 'hasOwnProperty'],
+        run: ({ value }) => ({ decision: value }),
+      }),
+      s.effect({
+        name: 'fx',
+        when: 'constructor',
+        writes: ['value'],
+        run: () => {
+          ran.push('fx');
+        },
+      }),
+      s.halt({ name: 'end', run: () => 'done' }),
+    ]);
+    await expect(flow({})).resolves.toEqual({ status: 'completed', result: 'done' });
+    expect(ran).toEqual([]);
   });
 
   test('a failing compensation is recorded while unwinding continues', async () => {

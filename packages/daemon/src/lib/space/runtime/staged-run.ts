@@ -388,7 +388,7 @@ function buildEffectAdapter(
       ? {
           stage: stage.name,
           compensate: stage.compensate,
-          view: bodyView,
+          view: { ...bodyView },
           result: undefined,
         }
       : null;
@@ -676,17 +676,22 @@ export function stagedRun<S extends object>(
   });
   const runAsync = api.endAsync('$outcome');
   return ((input: Record<string, unknown>) => {
+    const materializedInput: Record<string, unknown> = {};
     if (inputKeys.length > 0) {
       if (input === null || typeof input !== 'object') {
         throw new StagedRunContractError(name, 'flow input must be an object');
       }
       for (const key of inputKeys) {
-        if (input[key] === undefined || !Object.hasOwn(input, key)) {
+        if (!Object.hasOwn(input, key)) {
+          throw new StagedRunContractError(name, `flow input key "${key}" is missing`);
+        }
+        materializedInput[key] = input[key];
+        if (materializedInput[key] === undefined) {
           throw new StagedRunContractError(name, `flow input key "${key}" is missing`);
         }
       }
     }
-    return runAsync(input).then(
+    return runAsync(materializedInput).then(
       (outcome) =>
         (outcome as StagedRunOutcome | undefined) ?? { status: 'completed', result: undefined },
       (error: unknown) => ({ status: 'error', stage: '$pipeline', error, unwind: [] })
