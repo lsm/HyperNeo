@@ -182,6 +182,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function emitLog(log: StagedRunLog | undefined, event: StagedRunLogEvent): void {
+  if (!log) return;
+  try {
+    log(event);
+  } catch {
+    return;
+  }
+}
+
 async function unwindCompensations(
   flow: string,
   stack: readonly RegisteredCompensation[],
@@ -194,7 +203,7 @@ async function unwindCompensations(
       await entry.compensate(entry.view, entry.result);
       report.push({ stage: entry.stage, status: 'compensated' });
     } catch (error) {
-      log?.({ event: 'compensation-failed', flow, stage: entry.stage, error });
+      emitLog(log, { event: 'compensation-failed', flow, stage: entry.stage, error });
       report.push({ stage: entry.stage, status: 'failed', error });
     }
   }
@@ -232,7 +241,7 @@ function failureOutcome(
   stack: readonly RegisteredCompensation[],
   log?: StagedRunLog
 ): Promise<Record<string, unknown>> {
-  log?.({ event: 'stage-error', flow, stage, error });
+  emitLog(log, { event: 'stage-error', flow, stage, error });
   return unwindCompensations(flow, stack, log).then((unwind) => ({
     $outcome: { status: 'error', stage, error, unwind },
     $unwind: [],
@@ -327,8 +336,10 @@ function buildDecideAdapter(
           new StagedRunContractError(flow, `stage ${stage.name} must stamp a defined decision`)
         );
       }
+      let activated = 0;
       for (const key of Object.keys(stamped)) {
-        if (key !== 'decision' && !branches.has(key)) {
+        if (key === 'decision') continue;
+        if (!branches.has(key)) {
           return fail(
             new StagedRunContractError(
               flow,
@@ -336,6 +347,15 @@ function buildDecideAdapter(
             )
           );
         }
+        if (stamped[key] !== undefined) activated += 1;
+      }
+      if (activated > 1) {
+        return fail(
+          new StagedRunContractError(
+            flow,
+            `stage ${stage.name} stamped ${activated} branch payloads — a decision activates at most one branch`
+          )
+        );
       }
       return { ...stamped };
     };
@@ -377,7 +397,7 @@ function buildEffectAdapter(
       }
       if (entry) entry.result = result;
       if (result === 'superseded') {
-        log?.({ event: 'superseded', flow, stage: stage.name });
+        emitLog(log, { event: 'superseded', flow, stage: stage.name });
         return unwindCompensations(flow, registered, log).then((unwind) => ({
           $outcome: { status: 'superseded', stage: stage.name, unwind },
           $unwind: [],
@@ -475,15 +495,16 @@ function validateStageContract(
   for (const stage of stages) {
     if (stage.kind === 'snapshot' || stage.kind === 'resnapshot') {
       for (const key of stage.provides) stateKeys.add(key);
-    } else if (stage.kind === 'decide') {
-      for (const key of stage.branches ?? []) {
-        if (stateKeys.has(key)) {
-          throw new StagedRunContractError(
-            flow,
-            `stage ${stage.name} branches on "${key}" which collides with a state key`
-          );
-        }
-        branchKeys.add(key);
+    }
+  }
+  for (const stage of stages) {
+    if (stage.kind !== 'decide') continue;
+    for (const key of stage.branches ?? []) {
+      if (stateKeys.has(key)) {
+        throw new StagedRunContractError(
+          flow,
+          `stage ${stage.name} branches on "${key}" which collides with a state key`
+        );
       }
     }
   }
@@ -536,7 +557,10 @@ function validateStageContract(
         }
       }
     }
-    if (stage.kind === 'decide') decisionSeen = true;
+    if (stage.kind === 'decide') {
+      decisionSeen = true;
+      for (const key of stage.branches ?? []) branchKeys.add(key);
+    }
     if (stage.kind === 'effect') {
       for (const key of stage.writes) {
         if (!provided.has(key)) {

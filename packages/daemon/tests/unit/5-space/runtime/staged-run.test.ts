@@ -84,6 +84,27 @@ describe('stagedRun composition contract', () => {
     ).toThrow(/guards on "neverDeclared"/);
   });
 
+  test('refuses a when guard on a branch only a later decide declares', () => {
+    expect(() =>
+      stagedRun<Box>('late-branch', (s) => [
+        s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+        s.effect({
+          name: 'fx',
+          writes: ['value'],
+          when: 'laterBranch',
+          run: () => {},
+        }),
+        s.decide({
+          name: 'late-decide',
+          reads: ['value'],
+          branches: ['laterBranch'],
+          run: ({ value }) => ({ decision: value, laterBranch: 1 }),
+        }),
+        s.halt({ name: 'end', run: () => 'done' }),
+      ])
+    ).toThrow(/no earlier decide stage branches on/);
+  });
+
   test('refuses reading decision before any decide stage', () => {
     expect(() =>
       stagedRun<Box>('early-decision', (s) => [
@@ -129,6 +150,23 @@ describe('stagedRun composition contract', () => {
           branches: ['act'],
           run: ({ value }) => ({ decision: value, act: true }),
         }),
+      ])
+    ).toThrow(/collides with a state key/);
+  });
+
+  test('refuses a branch key that collides with a later state provider', () => {
+    type Pair = { value: number; extra: number };
+    expect(() =>
+      stagedRun<Pair>('late-collision', (s) => [
+        s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+        s.decide({
+          name: 'route',
+          reads: ['value'],
+          branches: ['extra'],
+          run: ({ value }) => ({ decision: value, extra: 1 }),
+        }),
+        s.resnapshot({ name: 'late-load', provides: ['extra'], run: () => ({ extra: 2 }) }),
+        s.halt({ name: 'end', run: () => 'done' }),
       ])
     ).toThrow(/collides with a state key/);
   });
@@ -434,6 +472,25 @@ describe('stagedRun decide contract', () => {
     const outcome = await flow({});
     expect(outcome.status).toBe('error');
     expect(String(outcome.error)).toContain('without declaring it in branches');
+  });
+
+  test('stamping two branch payloads is a contract violation', async () => {
+    const flow = stagedRun<Box>('multi-branch', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+      s.decide({
+        name: 'greedy',
+        reads: ['value'],
+        branches: ['first', 'second'],
+        run: ({ value }) => ({ decision: value, first: 1, second: 2 }),
+      }),
+      s.effect({ name: 'one', writes: ['value'], when: 'first', run: () => {} }),
+      s.effect({ name: 'two', writes: ['value'], when: 'second', run: () => {} }),
+      s.halt({ name: 'end', run: () => 'done' }),
+    ]);
+    const outcome = await flow({});
+    expect(outcome.status).toBe('error');
+    expect(outcome.stage).toBe('greedy');
+    expect(String(outcome.error)).toContain('at most one branch');
   });
 });
 
@@ -810,6 +867,81 @@ describe('stagedRun stage failure and compensation', () => {
     expect(outcome.status).toBe('error');
     expect(outcome.stage).toBe('async-fx');
     expect(order).toEqual(['async-fx', 'undo-async-fx']);
+  });
+
+  test('a throwing log observer cannot hang failure outcomes', async () => {
+    const flow = stagedRun<Box>(
+      'bad-log',
+      (s) => [
+        s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+        s.effect({
+          name: 'doomed',
+          writes: ['value'],
+          run: async () => {
+            throw new Error('boom');
+          },
+        }),
+        s.halt({ name: 'end', run: () => 'done' }),
+      ],
+      {
+        log: () => {
+          throw new Error('observer exploded');
+        },
+      }
+    );
+    const outcome = await flow({});
+    expect(outcome.status).toBe('error');
+    expect(outcome.stage).toBe('doomed');
+    expect((outcome.error as Error).message).toBe('boom');
+  });
+
+  test('a throwing log observer does not stop reverse unwinding', async () => {
+    const order: string[] = [];
+    const undoBoom = new Error('undo-boom');
+    const flow = stagedRun<Box>(
+      'bad-log-unwind',
+      (s) => [
+        s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+        s.effect({
+          name: 'one',
+          writes: ['value'],
+          run: () => {},
+          compensate: () => {
+            order.push('undo-one');
+          },
+        }),
+        s.effect({
+          name: 'two',
+          writes: ['value'],
+          run: () => {},
+          compensate: () => {
+            order.push('undo-two');
+            throw undoBoom;
+          },
+        }),
+        s.effect({
+          name: 'three',
+          writes: ['value'],
+          run: () => {
+            throw new Error('trigger');
+          },
+        }),
+        s.halt({ name: 'end', run: () => 'done' }),
+      ],
+      {
+        log: () => {
+          throw new Error('observer exploded');
+        },
+      }
+    );
+    const outcome = await flow({});
+    expect(outcome.status).toBe('error');
+    expect(outcome.stage).toBe('three');
+    expect(order).toEqual(['undo-two', 'undo-one']);
+    expect(outcome.unwind).toEqual([
+      { stage: 'two', status: 'failed', error: undoBoom },
+      { stage: 'one', status: 'compensated' },
+    ]);
   });
 
   test('a failed pass leaves no compensation state behind for the next run', async () => {
