@@ -87,7 +87,13 @@ export class AcpTerminalManager {
       logger.error(`Terminal ${terminalId} process error:`, err.message);
     };
     child.once('error', handleUnownedError);
-    const processTree = owner(child);
+    let processTree: AcpProcessTree;
+    try {
+      processTree = owner(child);
+    } catch (err) {
+      child.kill('SIGKILL');
+      throw err;
+    }
 
     const requestedOutputByteLimit =
       typeof outputByteLimit === 'number' && Number.isFinite(outputByteLimit)
@@ -125,6 +131,7 @@ export class AcpTerminalManager {
         waiter({ exitCode: session.exitCode, signal: session.exitSignal });
       }
       session.exitWaiters = [];
+      this.recordGroupGone(session);
     });
 
     child.on('close', (code, signal) => {
@@ -137,6 +144,7 @@ export class AcpTerminalManager {
         }
         session.exitWaiters = [];
       }
+      this.recordGroupGone(session);
     });
 
     child.on('error', (err) => {
@@ -150,6 +158,7 @@ export class AcpTerminalManager {
         waiter({ exitCode: 1, signal: null });
       }
       session.exitWaiters = [];
+      this.recordGroupGone(session);
     });
     child.removeListener('error', handleUnownedError);
 
@@ -239,7 +248,7 @@ export class AcpTerminalManager {
     const session = this.sessions.get(terminalId);
     if (!session) return;
     if (chunk.length > session.outputByteLimit) {
-      session.outputChunks = [chunk.subarray(chunk.length - session.outputByteLimit)];
+      session.outputChunks = [Buffer.from(chunk.subarray(chunk.length - session.outputByteLimit))];
       session.outputByteLength = session.outputByteLimit;
       session.outputTruncated = true;
       return;

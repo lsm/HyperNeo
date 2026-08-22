@@ -134,6 +134,7 @@ describe('AcpTerminalManager', () => {
     await expect(manager.create({ sessionId: 'session-1', command: 'missing' })).rejects.toThrow(
       'missing process id'
     );
+    expect(spawned[0].killed).toBe(true);
     expect(() => spawned[0].emit('error', new Error('not found'))).not.toThrow();
   });
 
@@ -217,6 +218,26 @@ describe('AcpTerminalManager', () => {
     expect(terminate).not.toHaveBeenCalledWith('SIGTERM');
     expect(terminate).not.toHaveBeenCalledWith('SIGKILL');
   }, 1000);
+
+  test('does not re-signal a process group observed gone at close', async () => {
+    const terminate = mock((_signal: NodeJS.Signals) => {});
+    let groupExists = true;
+    const manager = new AcpTerminalManager(
+      {},
+      undefined,
+      () => ({ terminate }),
+      () => groupExists,
+      50
+    );
+    const { terminalId } = await manager.create({ sessionId: 'session-1', command: 'command' });
+
+    groupExists = false;
+    spawned[0].emit('close', 0, null);
+    groupExists = true;
+
+    await manager.release(params(terminalId));
+    expect(terminate).not.toHaveBeenCalled();
+  });
 
   test('resolves waiters on process exit before stream close', async () => {
     const manager = new AcpTerminalManager();
