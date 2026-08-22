@@ -1055,7 +1055,11 @@ export class SDKMessageHandler {
       this.resetThinkingTokenTracking();
       const clearTurnIdle = this.clearAwaitingTrailingIdle;
       const allowQueueReplay = !clearTurnIdle && this.lastResultWasSuccess !== false;
-      await this.finishTurn(allowQueueReplay);
+      if (clearTurnIdle) {
+        await this.ctx.stateManager.setIdle({ suppressIdlePublish: true });
+      } else {
+        await this.finishTurn(allowQueueReplay);
+      }
       this.usesSessionStateChangedTurnEnd = false;
       this.expectsSessionStateIdleAfterResult = false;
       this.lastResultWasSuccess = null;

@@ -140,7 +140,10 @@ export class ProcessingStateManager {
     return this.terminalIdleTransitions > 0;
   }
 
-  async setIdle(opts?: { suppressDeliveryWaiters?: boolean }): Promise<void> {
+  async setIdle(opts?: {
+    suppressDeliveryWaiters?: boolean;
+    suppressIdlePublish?: boolean;
+  }): Promise<void> {
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
     const consumesTerminalFence = this.pendingTerminalIdleTransitions > 0;
     const ownsTerminalTransition = !suppressDrain || consumesTerminalFence;
@@ -153,7 +156,7 @@ export class ProcessingStateManager {
       for (const w of this.idleWaiters.values()) w.fireEnd();
     }
     try {
-      await this.setState({ status: 'idle' });
+      await this.setState({ status: 'idle' }, opts?.suppressIdlePublish);
       if (this.onIdleCallback && !this.idleCallbackInFlight) {
         this.idleCallbackInFlight = true;
         try {
@@ -361,7 +364,7 @@ export class ProcessingStateManager {
     }
   }
 
-  private async setState(newState: AgentProcessingState): Promise<void> {
+  private async setState(newState: AgentProcessingState, suppressPublish = false): Promise<void> {
     if (newState.status === 'idle' || newState.status === 'interrupted') {
       this.streamingPhase = 'initializing';
       this.streamingStartedAt = null;
@@ -371,6 +374,8 @@ export class ProcessingStateManager {
     this.processingState = newState;
 
     this.persistToDatabase();
+
+    if (suppressPublish) return;
 
     await this.internalEventBus.publish('session.updated', {
       sessionId: this.sessionId,

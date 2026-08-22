@@ -68,6 +68,17 @@ describe('ProcessingStateManager', () => {
       expect(manager.isIdle()).toBe(true);
     });
 
+    test('suppressIdlePublish idles and persists without the session.updated event', async () => {
+      await manager.setQueued('msg-1');
+      emitMock.mockClear();
+
+      await manager.setIdle({ suppressIdlePublish: true });
+
+      expect(manager.getState().status).toBe('idle');
+      expect(updateSessionMock).toHaveBeenCalled();
+      expect(emitMock).not.toHaveBeenCalled();
+    });
+
     test('persists state to database', async () => {
       await manager.setIdle();
 

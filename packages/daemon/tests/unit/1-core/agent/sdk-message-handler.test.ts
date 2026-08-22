@@ -782,7 +782,7 @@ describe('SDKMessageHandler', () => {
 
       expect(await wait).toBe('confirmed');
       expect(settled).toBe('confirmed');
-      expect(setIdleSpy).toHaveBeenCalled();
+      expect(setIdleSpy).toHaveBeenCalledWith({ suppressIdlePublish: true });
       expect(emitSpy.mock.calls.filter((call) => call[0] === 'query.trigger')).toHaveLength(0);
     });
 
