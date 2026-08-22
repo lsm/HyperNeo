@@ -327,7 +327,17 @@ polling sources.
   via REST (up to five pages — `resolveDeploymentPrNumbers :851-862`,
   `resolvePullRequestNumbersForCommit :951-985`) *before* normalization, so when
   every matched space denies the header event type, short-circuit before those
-  calls — **and `markWebhookReceived` on all matched targets first** (review
+  calls — **but only when no retryable duplicate could exist** (review finding,
+  PR #2723): these events' dedupe keys embed the *resolved* PR number
+  (`github-normalizer.ts:602`, `:717`, `:783`), so the coarse gate cannot run a
+  `getByDedupe` check before PR resolution; short-circuiting unconditionally
+  would drop a GitHub redelivery whose canonical row is retryable `published`,
+  stranding its republish — the same behavior A2's dedupe bypass forbids, one
+  return point earlier. The pre-gate first queries the store for any retryable
+  `published` row of the matched space whose topic matches the event type's
+  suffix family for that repo (one indexed lookup — cheap against the REST call
+  it guards); if any exists, fall through to the normal resolution+dedupe path.
+  Short-circuits also **`markWebhookReceived` on all matched targets first** (review
   finding, PR #2723): the enrichment handlers otherwise mark only after PR
   resolution and publication (`:845`, `:935`), so without the mark, installations
   denying these types would show stale `lastWebhookAt` despite valid signed
