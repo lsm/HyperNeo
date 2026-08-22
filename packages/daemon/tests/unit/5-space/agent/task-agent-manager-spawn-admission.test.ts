@@ -259,6 +259,33 @@ describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
     expect(h.order).toEqual([]);
   });
 
+  test('live-session reuse precedes task validation: an archived task still rebinds (BEFORE picture)', async () => {
+    const h = makeSpawnHarness({
+      taskStatus: 'archived',
+      execution: makeExecution({
+        agentSessionId: 'live-session',
+        status: 'idle',
+        startedAt: 1234,
+      }),
+    });
+    seedIndexedSession(h.tam, 'live-session');
+
+    const result = await h.spawn();
+
+    expect(result).toBe('live-session');
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0]).toEqual({
+      id: 'exec-1',
+      patch: {
+        status: 'in_progress',
+        agentSessionId: 'live-session',
+        startedAt: 1234,
+        completedAt: null,
+      },
+    });
+    expect(h.order).toEqual([]);
+  });
+
   test('rebind fills startedAt from the clock when the snapshot has none', async () => {
     const h = makeSpawnHarness({
       execution: makeExecution({ agentSessionId: 'live-session', status: 'idle', startedAt: null }),
