@@ -28,7 +28,9 @@ describe('InterruptHandler', () => {
   let queueClearSpy: ReturnType<typeof mock>;
   let queueStopSpy: ReturnType<typeof mock>;
   let sdkInterruptSpy: ReturnType<typeof mock>;
+  let sdkCancelAsyncMessageSpy: ReturnType<typeof mock>;
   let sdkCloseSpy: ReturnType<typeof mock>;
+  let getSdkCapabilitiesSpy: ReturnType<typeof mock>;
   let cancelForSessionSpy: ReturnType<typeof mock>;
   let markFailedSpy: ReturnType<typeof mock>;
   let mockDb: InterruptHandlerContext['db'];
@@ -83,11 +85,15 @@ describe('InterruptHandler', () => {
     } as unknown as Logger;
 
     sdkInterruptSpy = mock(async () => {});
+    sdkCancelAsyncMessageSpy = mock(async () => true);
     sdkCloseSpy = mock(() => {});
     mockQueryObject = {
       interrupt: sdkInterruptSpy,
+      cancelAsyncMessage: sdkCancelAsyncMessageSpy,
       close: sdkCloseSpy,
     } as unknown as Query;
+
+    getSdkCapabilitiesSpy = mock(() => new Set<string>());
 
     mockAbortController = new AbortController();
     mockQueryPromise = null;
@@ -124,6 +130,7 @@ describe('InterruptHandler', () => {
       queryPromise: mockQueryPromise,
       queryAbortController: mockAbortController,
       processExitedPromise: null,
+      getSdkCapabilities: getSdkCapabilitiesSpy,
       ...overrides,
     };
   }
@@ -307,6 +314,91 @@ describe('InterruptHandler', () => {
         expect.stringContaining('SDK interrupt() failed'),
         'Interrupt failed'
       );
+    });
+
+    describe('interrupt receipt survivors (cancel_async_message)', () => {
+      it('cancels queued survivors via cancel_async_message when interrupt_cancel_queued_v1 is advertised', async () => {
+        sdkInterruptSpy.mockImplementation(async () => ({ still_queued: ['uuid-a', 'uuid-b'] }));
+        getSdkCapabilitiesSpy.mockImplementation(() => new Set(['interrupt_cancel_queued_v1']));
+        handler = createHandler();
+
+        await handler.handleInterrupt();
+
+        expect(sdkCancelAsyncMessageSpy).toHaveBeenCalledTimes(2);
+        expect(sdkCancelAsyncMessageSpy).toHaveBeenCalledWith('uuid-a');
+        expect(sdkCancelAsyncMessageSpy).toHaveBeenCalledWith('uuid-b');
+        expect(mockLogger.warn).not.toHaveBeenCalledWith(
+          expect.stringContaining('closing immediately'),
+          expect.anything()
+        );
+      });
+
+      it('falls back to closing immediately when the capability is absent', async () => {
+        sdkInterruptSpy.mockImplementation(async () => ({ still_queued: ['uuid-a'] }));
+        handler = createHandler();
+
+        await handler.handleInterrupt();
+
+        expect(sdkCancelAsyncMessageSpy).not.toHaveBeenCalled();
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('closing immediately')
+        );
+        expect(sdkCloseSpy).toHaveBeenCalled();
+      });
+
+      it('falls back to closing immediately when cancel_async_message fails', async () => {
+        sdkInterruptSpy.mockImplementation(async () => ({ still_queued: ['uuid-a'] }));
+        sdkCancelAsyncMessageSpy.mockRejectedValue(new Error('Cancel rejected'));
+        getSdkCapabilitiesSpy.mockImplementation(() => new Set(['interrupt_cancel_queued_v1']));
+        handler = createHandler();
+
+        await handler.handleInterrupt();
+
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('cancel_async_message failed (Cancel rejected)')
+        );
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('closing immediately')
+        );
+        expect(sdkCloseSpy).toHaveBeenCalled();
+      });
+
+      it('falls back to closing immediately when the query object lacks cancelAsyncMessage', async () => {
+        sdkInterruptSpy.mockImplementation(async () => ({ still_queued: ['uuid-a'] }));
+        getSdkCapabilitiesSpy.mockImplementation(() => new Set(['interrupt_cancel_queued_v1']));
+        handler = createHandler({
+          queryObject: { interrupt: sdkInterruptSpy, close: sdkCloseSpy } as unknown as Query,
+        });
+
+        await handler.handleInterrupt();
+
+        expect(sdkCancelAsyncMessageSpy).not.toHaveBeenCalled();
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('closing immediately')
+        );
+        expect(sdkCloseSpy).toHaveBeenCalled();
+      });
+
+      it('sends no cancel_async_message when the receipt has no survivors', async () => {
+        sdkInterruptSpy.mockImplementation(async () => ({ still_queued: [] }));
+        getSdkCapabilitiesSpy.mockImplementation(() => new Set(['interrupt_cancel_queued_v1']));
+        handler = createHandler();
+
+        await handler.handleInterrupt();
+
+        expect(sdkCancelAsyncMessageSpy).not.toHaveBeenCalled();
+        expect(sdkCloseSpy).toHaveBeenCalled();
+      });
+
+      it('falls back to closing immediately when no capability provider is wired', async () => {
+        sdkInterruptSpy.mockImplementation(async () => ({ still_queued: ['uuid-a'] }));
+        handler = createHandler({ getSdkCapabilities: undefined });
+
+        await handler.handleInterrupt();
+
+        expect(sdkCancelAsyncMessageSpy).not.toHaveBeenCalled();
+        expect(sdkCloseSpy).toHaveBeenCalled();
+      });
     });
 
     it('should handle missing query object gracefully', async () => {

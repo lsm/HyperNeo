@@ -1091,6 +1091,10 @@ export class AgentSession
     return this.queryObject;
   }
 
+  getSdkCapabilities(): ReadonlySet<string> {
+    return this.messageHandler.getSdkCapabilities();
+  }
+
   isQueryActiveOrStarting(): boolean {
     return Boolean(this.queryObject || this.queryPromise || this.messageQueue.isRunning());
   }

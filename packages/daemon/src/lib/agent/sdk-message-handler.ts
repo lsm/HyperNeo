@@ -90,6 +90,8 @@ export class SDKMessageHandler {
 
   private terminalCommands: Set<string> = new Set();
 
+  private sdkCapabilities: ReadonlySet<string> = new Set();
+
   private repeatedToolErrorGuardrail: RepeatedToolErrorGuardrail;
 
   constructor(private ctx: SDKMessageHandlerContext) {
@@ -171,6 +173,10 @@ export class SDKMessageHandler {
 
   markApiSuccess(): void {
     this.circuitBreaker.markSuccess();
+  }
+
+  getSdkCapabilities(): ReadonlySet<string> {
+    return this.sdkCapabilities;
   }
 
   private async handleCircuitBreakerTrip(reason: string, userMessage: string): Promise<void> {
@@ -794,6 +800,7 @@ export class SDKMessageHandler {
 
     if (isSDKSystemInit(message)) {
       this.resetThinkingTokenTracking();
+      this.sdkCapabilities = new Set(message.capabilities ?? []);
     }
 
     if (
@@ -832,6 +839,23 @@ export class SDKMessageHandler {
     }
   }
 
+  private async recordRefusalRewindTarget(refusedUserMessageUuid: string | null | undefined) {
+    const { session, db, internalEventBus } = this.ctx;
+    if (!refusedUserMessageUuid) return;
+    if (session.metadata?.refusalRewindTargetUuid === refusedUserMessageUuid) return;
+
+    session.metadata = {
+      ...session.metadata,
+      refusalRewindTargetUuid: refusedUserMessageUuid,
+    };
+    db.updateSession(session.id, { metadata: session.metadata });
+    await internalEventBus.publish('session.updated', {
+      sessionId: session.id,
+      source: 'metadata',
+      session: { metadata: session.metadata },
+    });
+  }
+
   private async handleResultMessage(
     message: SDKMessage,
     activeMessageId: string | null
@@ -860,8 +884,10 @@ export class SDKMessageHandler {
     const totalCost = newCostBaseline + sdkCost;
 
     session.lastActiveAt = new Date().toISOString();
+    const { refusalRewindTargetUuid: _clearedRefusalRewindTargetUuid, ...restMetadata } =
+      session.metadata ?? {};
     session.metadata = {
-      ...session.metadata,
+      ...restMetadata,
       messageCount: (session.metadata?.messageCount || 0) + 1,
       totalTokens: (session.metadata?.totalTokens || 0) + totalTokens,
       inputTokens: (session.metadata?.inputTokens || 0) + usage.input_tokens,
@@ -941,7 +967,9 @@ export class SDKMessageHandler {
 
   private async handleModelRefusalFallbackMessage(message: SDKMessage): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
-    if (!isSDKModelRefusalFallbackMessage(message) || message.direction !== 'retry') return;
+    if (!isSDKModelRefusalFallbackMessage(message)) return;
+    await this.recordRefusalRewindTarget(message.refused_user_message_uuid);
+    if (message.direction !== 'retry') return;
     if (message.scope === 'local') return;
     const fallbackModel = this.resolveConfiguredFallbackModel(message.fallback_model);
     if (!fallbackModel || session.config.model === fallbackModel) return;

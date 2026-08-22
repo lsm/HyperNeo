@@ -20,6 +20,8 @@ export interface InterruptHandlerContext {
   queryPromise: Promise<void> | null;
   queryAbortController: AbortController | null;
   processExitedPromise: Promise<void> | null;
+
+  getSdkCapabilities?(): ReadonlySet<string>;
 }
 
 export class InterruptHandler {
@@ -108,12 +110,19 @@ export class InterruptHandler {
       if (queryObjectSnapshot && typeof queryObjectSnapshot.interrupt === 'function') {
         try {
           const receipt = await queryObjectSnapshot.interrupt();
-          const survivors = receipt?.still_queued?.length ?? 0;
-          if (survivors > 0) {
-            hasInterruptSurvivors = true;
-            logger.warn(
-              `SDK interrupt left ${survivors} queued message(s) still running; closing immediately to stop them`
-            );
+          const survivors = receipt?.still_queued ?? [];
+          if (survivors.length > 0) {
+            const cancelled = await this.cancelQueuedSurvivors(queryObjectSnapshot, survivors);
+            if (cancelled) {
+              logger.info(
+                `SDK interrupt: cancelled ${survivors.length} queued message(s) via cancel_async_message`
+              );
+            } else {
+              hasInterruptSurvivors = true;
+              logger.warn(
+                `SDK interrupt left ${survivors.length} queued message(s) still running; closing immediately to stop them`
+              );
+            }
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
@@ -163,6 +172,26 @@ export class InterruptHandler {
         this.interruptResolve = null;
       }
       this.interruptPromise = null;
+    }
+  }
+
+  private async cancelQueuedSurvivors(
+    queryObject: QueryLike,
+    survivors: string[]
+  ): Promise<boolean> {
+    if (!this.ctx.getSdkCapabilities?.().has('interrupt_cancel_queued_v1')) return false;
+    if (typeof queryObject.cancelAsyncMessage !== 'function') return false;
+    try {
+      for (const messageUuid of survivors) {
+        await queryObject.cancelAsyncMessage(messageUuid);
+      }
+      return true;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.ctx.logger.warn(
+        `SDK cancel_async_message failed (${errorMessage}); falling back to subprocess close`
+      );
+      return false;
     }
   }
 
