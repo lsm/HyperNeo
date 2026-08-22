@@ -827,6 +827,23 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
   });
 
+  test('declined rapid-refill-breaker result falls through to runtime continue (limit pipeline did not claim it)', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'rapid_refill_breaker',
+      resultText: 'API Error: rapid refill breaker open',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1);
+    expect(tam._injected[0].message).toContain('rapid refill breaker');
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+  });
+
   test('status-only results with different HTTP statuses are distinct signatures', async () => {
     const { executionId } = seedIdleErrorRun({
       subtype: 'success',
