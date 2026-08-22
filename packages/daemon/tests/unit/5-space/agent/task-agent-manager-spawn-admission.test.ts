@@ -500,10 +500,10 @@ describe('spawnWorkflowNodeAgentForExecution — concurrent-spawn waiter', () =>
       const second = h.spawn();
       clockOffset = 60_000;
       await expect(second).rejects.toThrow('timed out after 30000ms');
-      clockOffset = 0;
-      gate.resolve({ path: '/tmp/wt-1237' });
     } finally {
+      clockOffset = 0;
       nowSpy.mockRestore();
+      gate.resolve({ path: '/tmp/wt-1237' });
     }
     await expect(first).resolves.toBe(SPAWNED_SESSION_ID);
     expect(h.order.filter((step) => step === 'createSubSession')).toHaveLength(1);
