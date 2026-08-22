@@ -461,7 +461,15 @@ note.
   waiters (processing-state-manager.ts:143–175), so the successor can be
   reported complete while still running. The ACP terminal path therefore
   takes a **post-effect generation/lifecycle resnapshot** before `:921`:
-  when ownership changed it cancels the owned fence instead of idling;
+  when ownership changed it cancels the owned fence instead of idling — and
+  **ownership stays guarded throughout `setIdle` itself**: the manager writes
+  the shared idle state synchronously then awaits the `session.updated`
+  publish (processing-state-manager.ts:156), and its `finally` clears *every*
+  waiter (`:168–175`), including successor waiters installed during that
+  await — so a replacement starting between the resnapshot and the publish is
+  still drained by the stale call; the state transition and waiter drain are
+  generation/owner-scoped, with a replacement-during-publish interleaving
+  pinned;
   the **rejection interleaving** remains the leak case — a `handleError`
   throw propagates past `:921` to the stale-gated finalizer backstop
   (:736, :766–767), which skips, leaving the ACP-owned fence
