@@ -186,13 +186,19 @@ polling sources.
   and gates **first observations only** (review finding, PR #2723): a `getByDedupe`
   lookup precedes the gate, and an existing canonical row — retryable (`published`)
   or terminal — bypasses the gate entirely and flows through the normal duplicate
-  path. The dedupe check, gate decision, and insertion execute **inside one per-key
-  critical section** (review finding, PR #2723 — the wave-13 admission section,
-  with the dedupe lookup riding *inside* it, not before it): two overlapping
+  path. The dedupe check, gate decision, and insertion execute **inside one
+  per-dedupe-key critical section** — a *separate, finer lock* than the
+  disablement serialization (review finding, PR #2723): two overlapping
   same-key observations must not both classify as first, or the first can persist
   and fail during bus delivery while the second — seeing a warmed identity or
   changed filter — is dropped without invoking the publisher, stranding the
-  retryable canonical row. Without this, an event admitted and persisted while identity was unknown
+  retryable canonical row. This per-key section does **not** carry the
+  disable-vs-insert race: a config mutation cannot know all current or future
+  dedupe keys, so cross-key serialization with disablement comes from the epoch
+  mechanism of bug 4 (disablement bumps the admission epoch inside the config
+  queue; every publisher re-verifies it immediately before insert) — no shared
+  admission lock is needed for that purpose, and the per-key section nests
+  entirely inside a single publisher's epoch-verified window. Without this, an event admitted and persisted while identity was unknown
   (fail-open) could be re-observed after the cache warms, classified as a
   self-event, returned as an intentional drop, and the polling cursor would advance
   without the retryable-duplicate republish (`_handleRetryableDuplicate`) —
