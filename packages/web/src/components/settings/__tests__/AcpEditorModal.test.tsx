@@ -329,23 +329,50 @@ describe('AcpEditorModal', () => {
     await waitFor(() => expect(screen.getByText('Discovery failed')).toBeTruthy());
   });
 
-  it('shows error when ACP command is empty on save', async () => {
+  it('clears a stored command to restore the environment fallback on save', async () => {
+    mockUpdateProvider.mockResolvedValue({ success: true });
+
     render(
       <AcpEditorModal
         providerId="acp-1"
         providerName="ACP Agent"
-        command=""
+        command="devin acp"
+        models={[{ id: 'old-model' }]}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.input(screen.getByDisplayValue('devin acp'), { target: { value: '' } });
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledWith('acp-1', {
+        configJson: JSON.stringify({ models: [] }),
+      });
+    });
+  });
+
+  it('fetches through the environment command after clearing a stored command', async () => {
+    mockFetchAcpModels.mockResolvedValue({ models: [{ id: 'env-model' }] });
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command="devin acp"
         models={[]}
         onClose={() => {}}
         onSaved={() => {}}
       />
     );
 
-    fireEvent.click(screen.getByText('Save changes'));
+    fireEvent.input(screen.getByDisplayValue('devin acp'), { target: { value: '' } });
+    fireEvent.click(screen.getByText('Fetch models'));
 
     await waitFor(() => {
-      expect(screen.getByText('ACP command is required')).toBeTruthy();
-      expect(mockUpdateProvider).not.toHaveBeenCalled();
+      expect(mockFetchAcpModels).toHaveBeenCalledWith('acp-1', undefined);
+      expect(screen.getByText('env-model')).toBeTruthy();
     });
   });
 

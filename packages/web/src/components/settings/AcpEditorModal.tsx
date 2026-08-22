@@ -52,10 +52,6 @@ export function AcpEditorModal({
 
   const handleFetch = async () => {
     const trimmedCommand = command.trim();
-    if (!trimmedCommand && !envBacked) {
-      setError('ACP command is required');
-      return;
-    }
     setFetching(true);
     setError(null);
     setFetchedModels(null);
@@ -94,10 +90,6 @@ export function AcpEditorModal({
 
   const handleSave = async () => {
     const trimmedCommand = command.trim();
-    if (!trimmedCommand && !envBacked) {
-      setError('ACP command is required');
-      return;
-    }
     setSaving(true);
     setError(null);
     try {
@@ -163,7 +155,9 @@ export function AcpEditorModal({
             />
             <span class="text-[11px] text-gray-500 mt-1 block">
               Shell command that launches the ACP agent.
-              {envBacked && ' Leave empty to keep using HYPERNEO_ACP_COMMAND.'}
+              {envBacked
+                ? ' Leave empty to keep using HYPERNEO_ACP_COMMAND.'
+                : ' Leave empty to fall back to HYPERNEO_ACP_COMMAND.'}
             </span>
           </label>
 
