@@ -710,7 +710,14 @@ note.
      `handleSDKMessage` (adding the
      owner token to `SDKMessageHandlerContext`) and validates it before the
      shared handler begins its fence, with the late old-generation result
-     after a stop-timeout replacement pinned — the ACP runner has its own
+     after a stop-timeout replacement pinned — validating the **full
+     lifecycle, not the generation alone**: `cleanup()` sets `isCleaningUp`
+     without bumping the generation (`:652–655`), so cleanup-without-
+     replacement leaves the owner check passing while a late top-level result
+     enters the handler during `stop()` and fires the fence and its current
+     delivery waiters (`:720–722`), potentially acknowledging a delivery or
+     persisting turn completion mid-teardown; `isCleaningUp()` is part of the
+     dispatch-entry validation — the ACP runner has its own
      generationless dispatch (`acp-query-runner.ts:925–929` calls the shared
      `ctx.onSDKMessage` without its local `queryGeneration`), so fencing only
      the QueryRunner would leave ACP able to fire the replacement's terminal
