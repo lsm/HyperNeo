@@ -45,8 +45,10 @@ standalone on a readonly connection.
 
 ### (c) Read projections
 
-`getRenderableTextMessages` :628–684 (batched scan, 50/batch, max-250 cap,
-inline filter gates); `_getSDKMessagesImpl` :686–852 (dynamic-cursor SQL builder
+`getRenderableTextMessages` :628–684 (batched scan, 50/batch, scan budget
+`max(limit, 250)` — 250 is the floor, not the ceiling; the sole production
+caller passes 24 (`space-agent-handlers.ts:20`), so 250 is today's effective
+bound); `_getSDKMessagesImpl` :686–852 (dynamic-cursor SQL builder
 :703–761, row-inflate loop :764–787, tool-use-id collection :793–803, subagent
 second query + merge :805–851); `getBackgroundTaskMessages` :854–971 (3-arm
 MATERIALIZED CTE, ROW_NUMBER progress dedup); `getSDKMessagesByType` :973,
@@ -201,12 +203,15 @@ below ~10 µs/decision against dominated neighbor costs.
   transaction opens.
 - **FTS flush path — GO.** ≤500 rows per 2 s tick, each already paying SQL
   reads + `JSON.parse`; per-row `decisionRun` skip-reasons are noise.
-- **Read-projection row loops — NO GATES.** `getRenderableTextMessages` scans
-  ≤250 rows/call and `_getSDKMessagesImpl` inflates ≤limit rows; `JSON.parse`
-  of a full `sdk_message` blob (~5–50 µs/row) dominates, and the ADR names
-  tight loops as inline territory — per-row pipeline overhead (~2 µs/row ≈
-  0.5 ms on a max scan) is the case it excludes. Per-row work stays plain
-  function calls; pipeline composition, if ever, is per call, not per row.
+- **Read-projection row loops — NO GATES.** `getRenderableTextMessages`' scan
+  budget is `max(limit, 250)` (:649) — 250 is the floor, and a caller-supplied
+  limit above it raises the budget 1:1 (the sole production caller passes 24,
+  so 250 is today's effective ceiling); `_getSDKMessagesImpl` inflates ≤limit
+  rows. `JSON.parse` of a full `sdk_message` blob (~5–50 µs/row) dominates,
+  and the ADR names tight loops as inline territory — per-row pipeline
+  overhead (~2 µs/row ≈ 0.5 ms at the 250-row floor, scaling linearly with
+  limit) is the case it excludes. Per-row work stays plain function calls;
+  pipeline composition, if ever, is per call, not per row.
 
 ## 6. Do-not-extract zones
 
