@@ -2136,6 +2136,30 @@ describe('SDKMessageRepository', () => {
       expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'msg-uuid')).toBe(true);
     });
 
+    it('reclaims intercepted error-subtype results after a restart', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-err',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        uuid: 'result-err-uuid',
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+        subtype: 'error_during_execution',
+        sdkMessage: JSON.stringify({
+          type: 'result',
+          subtype: 'error_during_execution',
+          is_error: true,
+          errors: ['API Error: 429 rate limit exceeded'],
+        }),
+      });
+      expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'msg-err')).toBe(false);
+
+      repository.markResultRecoveryIntercepted('session-1', 'result-err-uuid');
+
+      expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'msg-err')).toBe(true);
+    });
+
     it('getErrorTerminalResultSubtypeAfter returns the error subtype (null for success/none)', () => {
       insertMessage('session-1', 'user', {
         uuid: 'msg-budget',

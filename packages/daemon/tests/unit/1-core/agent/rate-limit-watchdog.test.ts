@@ -342,6 +342,7 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.getState().retryAt).toBeNull();
       expect(watchdog.isRecoveryPending()).toBe(true);
       expect(watchdog.retryNow()).toBe(true);
+      await flush();
       expect(watchdog.isRecoveryPending()).toBe(false);
     });
 
@@ -368,6 +369,30 @@ describe('RateLimitWatchdog', () => {
       await flush();
       await flush();
       expect(notifyPause).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('retry-in-flight recovery state', () => {
+    it('keeps isRecoveryPending true while the retry callback is running', async () => {
+      const { deps } = createMockDeps();
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 9 });
+      let releaseRetry: (() => void) | undefined;
+      const retryGate = new Promise<void>((resolve) => {
+        releaseRetry = resolve;
+      });
+      watchdog.setRetryCallback(async () => {
+        await retryGate;
+        return true;
+      });
+
+      await watchdog.scheduleRetry('429 rate limit', { uuid: 'm1', content: 'hi' });
+      expect(watchdog.retryNow()).toBe(true);
+      expect(watchdog.isRecoveryPending()).toBe(true);
+
+      releaseRetry?.();
+      await flush();
+      await flush();
+      expect(watchdog.isRecoveryPending()).toBe(false);
     });
   });
 

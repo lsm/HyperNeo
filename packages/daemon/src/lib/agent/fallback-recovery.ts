@@ -116,7 +116,7 @@ function relativeUnitMs(unit: string): number {
 
 function isValidReset(ms: number, now: number): boolean {
   if (!Number.isFinite(ms)) return false;
-  return ms > now && ms < now + MAX_RESET_HORIZON_MS;
+  return ms > now && ms <= now + MAX_RESET_HORIZON_MS;
 }
 
 function parseLocalGroups(groups: RegExpMatchArray): number {

@@ -1679,14 +1679,12 @@ export class SDKMessageRepository {
           WHERE r.session_id = ?
             AND r.message_type = 'result'
             AND r.is_terminal = 1
-            AND r.message_subtype = 'success'
             AND r.parent_tool_use_id IS NULL
             AND r.consumed_seq IS NOT NULL
             AND r.consumed_seq >= (
               SELECT m.consumed_seq FROM sdk_messages m
                WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
             )
-            AND COALESCE(json_extract(r.sdk_message, '$.is_error'), 0) = 1
             AND COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
           LIMIT 1`
       )

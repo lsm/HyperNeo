@@ -1548,6 +1548,10 @@ export class AgentSession
         `delivery-turn: reclaiming recovery-intercepted row directly (uuid=${messageUuid}); ` +
           `the parked recovery episode no longer owns its retry.`
       );
+      started.turnEnd.cancel();
+      if (started.responseObserver && this.deliveryResponseObserver === started.responseObserver) {
+        this.deliveryResponseObserver = null;
+      }
       if (!claimGuard || claimGuard()) {
         this.reopenDeliveryForRetry(messageUuid);
       }

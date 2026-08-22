@@ -88,6 +88,7 @@ export class RateLimitWatchdog {
   private episodeMessageUuid: string | null = null;
   private lastHint: LimitRetryHint | null = null;
   private billingPauseSurfaced = false;
+  private retryCallbackInFlight = false;
 
   constructor(
     sessionId: string,
@@ -211,7 +212,7 @@ export class RateLimitWatchdog {
     const now = Date.now();
     const hintedReset = this.lastHint?.resetAtMs ?? null;
     const usableHintedReset =
-      hintedReset !== null && hintedReset > now && hintedReset < now + MAX_RESET_HORIZON_MS
+      hintedReset !== null && hintedReset > now && hintedReset <= now + MAX_RESET_HORIZON_MS
         ? hintedReset
         : null;
     const decision =
@@ -293,6 +294,15 @@ export class RateLimitWatchdog {
 
   private async fireCooldownRetry(errorMessage: string): Promise<void> {
     const entryGeneration = this.generation;
+    this.retryCallbackInFlight = true;
+    try {
+      await this.runCooldownRetry(errorMessage, entryGeneration);
+    } finally {
+      this.retryCallbackInFlight = false;
+    }
+  }
+
+  private async runCooldownRetry(errorMessage: string, entryGeneration: number): Promise<void> {
     if (!this.retryCallback) {
       if (entryGeneration === this.generation) this.notifyResume();
       return;
@@ -546,7 +556,12 @@ export class RateLimitWatchdog {
   }
 
   isRecoveryPending(): boolean {
-    return this.cooldownTimer !== null || this.fallbackPending || this.billingPauseSurfaced;
+    return (
+      this.cooldownTimer !== null ||
+      this.fallbackPending ||
+      this.billingPauseSurfaced ||
+      this.retryCallbackInFlight
+    );
   }
 
   isRateLimitBannerCancelled(): boolean {

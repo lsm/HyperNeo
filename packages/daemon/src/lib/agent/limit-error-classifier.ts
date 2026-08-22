@@ -72,7 +72,7 @@ function structuredResetAtMs(rateLimitInfo: SDKRateLimitInfo, now: number): numb
     if (!rejected) continue;
     if (typeof candidate !== 'number' || !Number.isFinite(candidate)) continue;
     const ms = normalizeEpochMs(candidate);
-    if (ms > now && ms < now + MAX_RESET_HORIZON_MS) {
+    if (ms > now && ms <= now + MAX_RESET_HORIZON_MS) {
       if (earliest === null || ms < earliest) earliest = ms;
     }
   }

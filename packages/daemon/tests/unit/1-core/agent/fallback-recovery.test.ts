@@ -189,6 +189,12 @@ describe('extractResetTimestamp', () => {
     expect(r?.resetAtMs).toBe(NOW + 3 * 60 * 1000);
   });
 
+  test('relative delay at the seven-day horizon is accepted', () => {
+    const r = extractResetTimestamp('rate limit — retry after 7 days', NOW);
+    expect(r?.strategy).toBe('relative-delay');
+    expect(r?.resetAtMs).toBe(NOW + 7 * 24 * 60 * 60 * 1000);
+  });
+
   test('relative delay beyond the horizon → null', () => {
     expect(extractResetTimestamp('Your limit will reset in 30 days', NOW)).toBeNull();
   });

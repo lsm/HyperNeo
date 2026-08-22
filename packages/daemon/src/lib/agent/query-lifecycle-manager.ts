@@ -521,7 +521,15 @@ export class QueryLifecycleManager {
         });
     }
 
-    const queryStartResult = await this.ensureQueryStarted();
+    let queryStartResult: EnsureQueryStartedResult;
+    try {
+      queryStartResult = await this.ensureQueryStarted();
+    } catch (error) {
+      if (options?.prepend) {
+        messageQueue.remove(messageId);
+      }
+      throw error;
+    }
     if (
       episodeGeneration !== undefined &&
       this.ctx.isRateLimitEpisodeSuperseded?.(episodeGeneration)
