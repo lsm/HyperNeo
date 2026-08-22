@@ -333,7 +333,11 @@ note.
   first guard; the message-not-found pointer consumption at :970 is *not* one —
   the stale-generation return at :849–851 reaches it with no intervening await)
   as characterization — **and closing the reachable ones is an explicit
-  apply-PR requirement**: the apply arms add a generation resnapshot before
+  apply-PR requirement**: the apply arms add a generation resnapshot
+  **immediately after each awaited `setIdle` — before reading or re-enqueueing
+  the consumed message** (the transient arm's `:1027–1034` re-enqueue sits
+  between its awaited `setIdle` and the `:1060` guard, so a stale arm could
+  otherwise append the old prompt to the queue) — before
   touching shared query/process fields and immediately before each recursion,
   since staged async boundaries widen these windows. Teardown dedup is
   plain helper extraction, not a pipeline.
