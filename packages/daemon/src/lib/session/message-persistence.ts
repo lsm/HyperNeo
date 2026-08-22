@@ -269,7 +269,9 @@ export class MessagePersistence {
         );
 
       if (shouldDispatchToQuery && !useV2Delivery) {
-        await agentSession.startQueryAndEnqueue(messageId, messageContent);
+        await withSessionResetCoordination(sessionId, async () => {
+          await agentSession.startQueryAndEnqueue(messageId, messageContent);
+        });
       }
       if (shouldDispatchToQuery) {
         await this.internalEventBus
