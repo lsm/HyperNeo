@@ -285,7 +285,10 @@ note.
 ### Chain B (propose first): query-runner retry routing & teardown dedup
 
 - **Scope:** query-runner.ts catch-classification + four retry arms + terminal
-  cascade (:840–1291); the four-copy teardown liturgy (:912–934, :972–1002,
+  cascade (:840–1291) **plus the common finalizer's post-await guards
+  (:1292–1340)** — the finalizer window is an apply obligation, not just a pin,
+  so its generation/identity revalidation after the provider-service import and
+  `setIdle` awaits is in scope; the four-copy teardown liturgy (:912–934, :972–1002,
   :1018–1058, :1078–1114); supporting pure islands `looksLikeRateLimit429` :92
   and `parseApiValidationError` :1568 stay as-is.
 - **ADR pattern:** `decisionRun` core —
@@ -446,6 +449,8 @@ note.
   2. **PR 2 (additive core):** new `query-retry-routing.ts` pure module +
      `decisionRun` composition, unwired.
   3. **PR 3 (apply):** interpret the core in the catch block; one branch per
+     route — and add the finalizer's post-await generation/identity guards
+     (:1292–1340) here, so the pinned window is actually closed in production;
      route; arms become interpreters.
   4. **PR 4 (dedup):** collapse the four teardown liturgies into one
      parameterized helper.
