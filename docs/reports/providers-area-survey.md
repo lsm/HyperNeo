@@ -67,10 +67,14 @@ Each defect below is stuck until one of those three things happens.
   `:67`). `refreshedMissingProviders` (D`lib/model-service.ts:110`) is cleared
   **only** by the global `clearModelsCache()` (`:274`) — i.e. by provider
   create/update/delete, auth login/refresh (and logout, via the same helper,
-  D`lib/rpc-handlers/auth-handlers.ts:27-32,139,289`), settings changes
-  touching custom endpoints or allowlists
-  (D`lib/rpc-handlers/settings-handlers.ts:103-112,181-188`), or the
-  `models.clearCache` RPC (D`lib/rpc-handlers/session-handlers.ts:812-815`).
+  D`lib/rpc-handlers/auth-handlers.ts:27-32,139,289`), custom-endpoint
+  persistence (`persistAndSync`,
+  D`lib/rpc-handlers/custom-endpoint-handlers.ts:294-319`), allowlist
+  application (`syncProviderModelAllowlists`, plus the two settings-branch
+  call sites, D`lib/rpc-handlers/settings-handlers.ts:12-18,103-112,181-188`),
+  or the `models.clearCache` RPC
+  (D`lib/rpc-handlers/session-handlers.ts:812-815`). All of these are manual
+  mutation paths; none retries on its own.
   Session-scoped cache clears don't touch it. A forced
   `models.list {forceRefresh:true}` (the Models settings refresh button)
   bypasses the marker entirely by calling `refreshModels` directly — manual
