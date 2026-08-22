@@ -183,7 +183,18 @@ polling sources.
   writer today (`listConfig` is read-only), so a default-on flip without a supported
   opt-out is not shippable. Case-insensitive login compare; Bot actors (e.g.
   `github-actions[bot]`) never match a user token identity.
-- **Identity-resolution policy (review findings, PR #2723):** do NOT reuse
+- **Identity-resolution policy (review findings, PR #2723):** the self identity is
+  a **configurable login set**, not a single derived value. The extension's
+  ingestion credential (`neokai.external-events.github` or `GITHUB_TOKEN`,
+  `:103-104`, `:1171-1217`) is not necessarily the account behind HyperNeo's
+  *outbound* GitHub writes: built-in workflows post through the `gh` CLI connector,
+  whose auth honors `GH_TOKEN`/`GITHUB_TOKEN`/`GH_CONFIG_DIR`
+  (`runtime/connectors/github-connector.ts:1-15`) and can be a different account —
+  in that configuration a token-login-only gate would admit the agent's own echo
+  while suppressing unrelated activity by the ingestion-token owner. The set is
+  seeded from the ingestion token's `/user` login and extended via the A2 config
+  RPC (`suppressSelfEventsLogins: string[]` — e.g. the gh account, a bot login).
+  Do NOT reuse
   `resolveTokenStatus` semantics on the publish path — it caches only
   success/auth-rejected/403 and clears on timeouts and network/5xx failures
   (`github-event-extension.ts:1331-1359`), with `/user` allowed to wait 5 s; inline
@@ -364,8 +375,14 @@ polling sources.
    only and never reads `SpaceExternalEventSourceConfig`, and the pilot-1 gates check
    subscription/task/session/pause state, not source enablement. The event can
    therefore be injected into a subscribed session of a just-disabled space.
-   Mitigation: recheck the space config at the ingestion choke point — the seam
-   chains A/B open in `publishEvent` anyway.
+   Mitigation: recheck **both the global and the space enablement state** at the
+   ingestion choke point (review finding, PR #2723): `handleWebhook` reads
+   `globallyEnabled` once at `:666-667` — before signature verification and
+   potentially multi-page enrichment — and `stop()` does not cancel in-flight
+   webhook handlers, so a handler that passed the initial read can still reach
+   `publishEvent` after `externalEvents.extensions.setGlobalEnabled(false)` has
+   completed; the seam chains A/B open in `publishEvent` rechecks both
+   immediately before persistence.
 5. `normalizeGitHubWebhook` falls back to `Date.now()` for `occurredAt` (`:205`) —
    nondeterministic timestamps for malformed payloads (pre-existing).
 6. ADR-0004 Pilot 5's gather-layer asymmetry applies here too: don't repeat the
