@@ -1,11 +1,11 @@
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { FallbackModelEntry } from '@hyperneo/shared';
+import { BACKOFF_LADDER_MS, RESET_BUFFER_MS } from '../../../../src/lib/agent/fallback-recovery';
+import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import {
   RateLimitWatchdog,
   type RateLimitWatchdogDeps,
 } from '../../../../src/lib/agent/rate-limit-watchdog';
-import { BACKOFF_LADDER_MS, RESET_BUFFER_MS } from '../../../../src/lib/agent/fallback-recovery';
-import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import type { FallbackModelEntry } from '@hyperneo/shared';
 
 type Msg = { uuid: string; content: string };
 
@@ -319,9 +319,9 @@ describe('RateLimitWatchdog', () => {
       expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
     });
 
-    it('does not schedule a deferred ladder cooldown when a billing fallback switch fails', async () => {
+    it('surfaces a manual-retry pause instead of a ladder cooldown when a billing fallback switch fails', async () => {
       const A: FallbackModelEntry = { provider: 'minimax', model: 'abab6.5' };
-      const { deps } = createMockDeps({ chain: [A], switchSucceeds: false });
+      const { deps, notifyPause } = createMockDeps({ chain: [A], switchSucceeds: false });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
       await watchdog.scheduleRetry(
         "403 You've reached your usage limit for this billing cycle",
@@ -330,9 +330,16 @@ describe('RateLimitWatchdog', () => {
       );
       await flush();
       await flush();
-      expect(
-        (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls
-      ).toHaveLength(0);
+      const cooldownCalls = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock
+        .calls;
+      expect(cooldownCalls).toHaveLength(1);
+      const [cooldownState] = cooldownCalls[0] as [{ retryAt: number }];
+      expect(cooldownState.retryAt).toBeLessThanOrEqual(Date.now());
+      expect(notifyPause).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'usage_limit', reason: 'billing-terminal' })
+      );
+      expect(watchdog.getState().status).toBe('idle');
+      expect(watchdog.getState().retryAt).toBeNull();
     });
   });
 
@@ -384,7 +391,7 @@ describe('RateLimitWatchdog', () => {
     });
 
     it('advances to the next entry when a switch fails, without bumping retryCount', async () => {
-      let calls = 0;
+      const calls = 0;
       const { deps, switchAndRetry } = createMockDeps({
         current: { provider: 'anthropic', model: 'sonnet' },
         chain: [A, B],

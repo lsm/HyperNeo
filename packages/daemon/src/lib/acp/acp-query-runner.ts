@@ -408,6 +408,12 @@ export class AcpQueryRunner {
     return this._lastConsumedUserMessage;
   }
 
+  resolveRetryUserMessage(
+    _userMessageUuid?: string
+  ): { uuid: string; content: string | MessageContent[] } | null {
+    return this._lastConsumedUserMessage;
+  }
+
   constructor(
     private ctx: QueryRunnerContext,
     private readonly createAcpClient: AcpClientFactory = (options) => new AcpClient(options)

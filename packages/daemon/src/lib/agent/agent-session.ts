@@ -124,8 +124,8 @@ import {
   type EventSubscriptionSetupContext,
 } from './event-subscription-setup';
 import { resolveFallbackChain } from './fallback-recovery';
-import type { LimitRetryHint } from './limit-error-classifier';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
+import type { LimitRetryHint } from './limit-error-classifier';
 import {
   BATCH_DELIVERY_MAX_CHARS,
   buildBatchedDeliveryContent,
@@ -152,8 +152,8 @@ import { MessageQueue } from './message-queue';
 import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler';
 import { ProcessingStateManager } from './processing-state-manager';
 import {
-  QueryLifecycleManager,
   type EnsureQueryStartedResult,
+  QueryLifecycleManager,
   type QueryLifecycleManagerContext,
 } from './query-lifecycle-manager';
 import type { QueryLike } from './query-like';
@@ -1294,8 +1294,16 @@ export class AgentSession
     return this.rateLimitWatchdog.scheduleRetry(errorMessage, lastUserMessage, hint);
   }
 
-  async onResultLimitError(errorText: string, hint: LimitRetryHint): Promise<boolean> {
-    return this.onRateLimitExhausted(errorText, this.queryRunner.lastConsumedUserMessage, hint);
+  async onResultLimitError(
+    errorText: string,
+    hint: LimitRetryHint,
+    userMessageUuid?: string
+  ): Promise<boolean> {
+    return this.onRateLimitExhausted(
+      errorText,
+      this.queryRunner.resolveRetryUserMessage(userMessageUuid),
+      hint
+    );
   }
 
   setCleaningUp(value: boolean): void {

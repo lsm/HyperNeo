@@ -1,28 +1,25 @@
-import type { UUID } from 'crypto';
-import type { QueryLike } from './query-like';
-import { signalDeliveryConsumed } from './message-delivery';
 import type { ContextInfo, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type {
   SDKMessage,
   SDKRateLimitInfo,
-  SDKResultSuccess,
+  SDKResultMessage,
   SDKUserMessage,
 } from '@hyperneo/shared/sdk';
 import {
+  flattenSDKSlashCommands,
+  isSDKActiveGoalMessage,
   isSDKAPIRetryMessage,
   isSDKAssistantMessage,
-  flattenSDKSlashCommands,
   isSDKBackgroundTasksChangedMessage,
   isSDKCommandLifecycleMessage,
   isSDKCommandsChangedMessage,
   isSDKCompactBoundary,
   isSDKControlRequestProgressMessage,
   isSDKConversationResetMessage,
-  isSDKActiveGoalMessage,
   isSDKModelRefusalFallbackMessage,
   isSDKRateLimitEvent,
+  isSDKResultError,
   isSDKResultMessage,
   isSDKResultSuccess,
   isSDKSessionStateChangedMessage,
@@ -34,21 +31,25 @@ import {
   isSDKUserMessage,
   isToolUseBlock,
 } from '@hyperneo/shared/sdk/type-guards';
+import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database';
-import { Logger } from '../logger';
 import { ErrorCategory, type ErrorManager } from '../error-manager';
-import { getProviderContextManager } from '../providers/factory';
-import type { ProcessingStateManager } from './processing-state-manager';
-import type { ContextTracker } from './context-tracker';
-import { ContextFetcher } from './context-fetcher';
-import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
-import { assessLimitError, type LimitRetryHint } from './limit-error-classifier';
-import type { MessageQueue } from './message-queue';
-import type { QueryLifecycleManager } from './query-lifecycle-manager';
-import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import { Logger } from '../logger';
 import { getSessionModelInfo } from '../model-service';
-import { shouldUseHyperNeoCompactFallback } from './query-options-builder.js';
+import { getProviderContextManager } from '../providers/factory';
+import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
+import { ContextFetcher } from './context-fetcher';
+import type { ContextTracker } from './context-tracker';
 import { reserveBasedThreshold } from './context-tracker.js';
+import { assessLimitError, type LimitRetryHint } from './limit-error-classifier';
+import { signalDeliveryConsumed } from './message-delivery';
+import type { MessageQueue } from './message-queue';
+import type { ProcessingStateManager } from './processing-state-manager';
+import type { QueryLifecycleManager } from './query-lifecycle-manager';
+import type { QueryLike } from './query-like';
+import { shouldUseHyperNeoCompactFallback } from './query-options-builder.js';
+import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail';
 
 const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
 
@@ -71,7 +72,11 @@ export interface SDKMessageHandlerContext {
 
   onCommandsChanged: (commands: string[]) => Promise<void>;
 
-  onResultLimitError?(errorText: string, hint: LimitRetryHint): Promise<boolean>;
+  onResultLimitError?(
+    errorText: string,
+    hint: LimitRetryHint,
+    userMessageUuid?: string
+  ): Promise<boolean>;
 
   bumpDeliveryTurnActivity?(): void;
   reportFirstDeliverySDKResponse?(responseType: string): void;
@@ -90,6 +95,7 @@ export class SDKMessageHandler {
   private lastResultWasSuccess: boolean | null = null;
   private suppressIdleOnNextResult: boolean = false;
   private lastRateLimitInfo: SDKRateLimitInfo | null = null;
+  private lastSdkErrorTag: string | null = null;
 
   private eventsSinceContextRefresh: number = 0;
 
@@ -673,7 +679,13 @@ export class SDKMessageHandler {
     await stateManager.detectPhaseFromMessage(message);
 
     if (isSDKRateLimitEvent(message)) {
-      this.lastRateLimitInfo = message.rate_limit_info;
+      const info = message.rate_limit_info;
+      this.lastRateLimitInfo =
+        info.status === 'rejected' || info.overageStatus === 'rejected' ? info : null;
+    }
+
+    if (isSDKAssistantMessage(message) && message.error) {
+      this.lastSdkErrorTag = message.error;
     }
 
     if (await this.acknowledgePersistedUserMessage(message)) {
@@ -729,7 +741,23 @@ export class SDKMessageHandler {
       isTopLevelResult && processingState.status === 'processing'
         ? processingState.messageId
         : null;
-    if (isTopLevelResult && !this.suppressIdleOnNextResult) {
+
+    let limitEngaged = false;
+    if (isTopLevelResult) {
+      this.resetThinkingTokenTracking();
+      const limitError = this.assessResultLimitError(message);
+      if (limitError) {
+        limitEngaged =
+          (await this.ctx.onResultLimitError?.(
+            limitError.errorText,
+            limitError.hint,
+            limitError.userMessageUuid
+          )) ?? false;
+      }
+      this.lastResultWasSuccess = !limitEngaged && isSDKResultSuccess(message);
+    }
+
+    if (isTopLevelResult && !limitEngaged && !this.suppressIdleOnNextResult) {
       stateManager.beginTerminalIdle();
     }
 
@@ -748,6 +776,14 @@ export class SDKMessageHandler {
       message,
     });
 
+    if (limitEngaged) {
+      this.lastRateLimitInfo = null;
+      this.lastSdkErrorTag = null;
+      await this.recordResultUsageMetadata(message as SDKResultMessage);
+      void this.refreshContextUsage('turn-end');
+      return;
+    }
+
     if (isSDKSessionStateChangedMessage(message)) {
       this.usesSessionStateChangedTurnEnd = true;
       if (message.state !== 'idle') {
@@ -759,21 +795,6 @@ export class SDKMessageHandler {
       if (!this.suppressIdleOnNextResult) {
         await stateManager.setIdle();
       }
-    }
-
-    if (isTopLevelResult) {
-      this.resetThinkingTokenTracking();
-      const limitError = this.assessResultLimitError(message);
-      if (limitError) {
-        const engaged =
-          (await this.ctx.onResultLimitError?.(limitError.errorText, limitError.hint)) ?? false;
-        if (engaged) {
-          this.lastResultWasSuccess = false;
-          void this.refreshContextUsage('turn-end');
-          return;
-        }
-      }
-      this.lastResultWasSuccess = isSDKResultSuccess(message);
     }
 
     if (isSDKUserMessage(message)) {
@@ -861,15 +882,8 @@ export class SDKMessageHandler {
     }
   }
 
-  private async handleResultMessage(
-    message: SDKMessage,
-    activeMessageId: string | null
-  ): Promise<void> {
+  private async recordResultUsageMetadata(message: SDKResultMessage): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
-
-    if (!isSDKResultSuccess(message)) return;
-
-    this.lastRateLimitInfo = null;
 
     const usage = message.usage ?? {
       input_tokens: 0,
@@ -916,6 +930,27 @@ export class SDKMessageHandler {
         metadata: session.metadata,
       },
     });
+  }
+
+  private async handleResultMessage(
+    message: SDKMessage,
+    activeMessageId: string | null
+  ): Promise<void> {
+    const { session, internalEventBus } = this.ctx;
+
+    if (!isSDKResultSuccess(message)) return;
+
+    this.lastRateLimitInfo = null;
+    this.lastSdkErrorTag = null;
+
+    await this.recordResultUsageMetadata(message);
+
+    const usage = message.usage ?? {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
 
     if (usage.input_tokens > 0 || usage.output_tokens > 0) {
       this.circuitBreaker.markSuccess();
@@ -939,21 +974,36 @@ export class SDKMessageHandler {
 
   private assessResultLimitError(
     message: SDKMessage
-  ): { errorText: string; hint: LimitRetryHint } | null {
-    if (!isSDKResultSuccess(message)) return null;
-    const result = message as SDKResultSuccess;
-    if (result.is_error !== true) return null;
-    const terminalReason = result.terminal_reason;
-    const apiErrorStatus = result.api_error_status;
-    const isApiErrorTerminal =
-      terminalReason === 'blocking_limit' ||
-      terminalReason === 'api_error' ||
-      typeof apiErrorStatus === 'number';
-    if (!isApiErrorTerminal) return null;
-    const errorText = typeof result.result === 'string' ? result.result : '';
+  ): { errorText: string; hint: LimitRetryHint; userMessageUuid?: string } | null {
+    let errorText = '';
+    let terminalReason: string | undefined;
+    let apiErrorStatus: number | null | undefined;
+    let userMessageUuid: string | undefined;
+
+    if (isSDKResultSuccess(message)) {
+      const result = message;
+      if (result.is_error !== true) return null;
+      terminalReason = result.terminal_reason;
+      apiErrorStatus = result.api_error_status;
+      userMessageUuid = result.user_message_uuid;
+      errorText = typeof result.result === 'string' ? result.result : '';
+      const isApiErrorTerminal =
+        terminalReason === 'blocking_limit' ||
+        terminalReason === 'api_error' ||
+        terminalReason === 'rapid_refill_breaker' ||
+        typeof apiErrorStatus === 'number';
+      if (!isApiErrorTerminal) return null;
+    } else if (isSDKResultError(message)) {
+      errorText = Array.isArray(message.errors) ? message.errors.join('\n') : '';
+      terminalReason = message.terminal_reason;
+    } else {
+      return null;
+    }
+
     const assessment = assessLimitError({
       rawText: errorText,
       httpStatus: typeof apiErrorStatus === 'number' ? apiErrorStatus : undefined,
+      sdkErrorTag: this.lastSdkErrorTag ?? undefined,
       terminalReason,
       rateLimitInfo: this.lastRateLimitInfo ?? undefined,
     });
@@ -965,6 +1015,7 @@ export class SDKMessageHandler {
         kind: assessment.kind,
         billingTerminal: assessment.billingTerminal,
       },
+      userMessageUuid,
     };
   }
 

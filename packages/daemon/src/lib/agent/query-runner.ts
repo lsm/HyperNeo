@@ -336,6 +336,18 @@ export class QueryRunner {
     return this._lastConsumedUserMessage;
   }
 
+  resolveRetryUserMessage(
+    userMessageUuid?: string
+  ): { uuid: string; content: string | MessageContent[] } | null {
+    if (userMessageUuid) {
+      for (const messages of this._consumedUserMessages.values()) {
+        const found = messages.find((entry) => entry.uuid === userMessageUuid);
+        if (found) return found;
+      }
+    }
+    return this._lastConsumedUserMessage;
+  }
+
   constructor(private ctx: QueryRunnerContext) {}
 
   async start(): Promise<void> {

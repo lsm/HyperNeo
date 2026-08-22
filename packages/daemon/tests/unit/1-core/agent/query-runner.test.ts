@@ -247,6 +247,39 @@ describe('QueryRunner', () => {
     });
   });
 
+  describe('resolveRetryUserMessage', () => {
+    it('prefers the message identified by the result uuid and falls back to last-consumed', async () => {
+      async function* generator() {
+        yield {
+          message: { uuid: 'init-uuid', message: { content: 'first prompt' } },
+          onSent: () => {},
+        };
+        yield {
+          message: { uuid: 'steer-uuid', message: { content: 'later steer' } },
+          onSent: () => {},
+        };
+      }
+      runner = createRunner({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: generator,
+        } as unknown as MessageQueue,
+      });
+
+      const wrapper = runner.createMessageGeneratorWrapper(1);
+      for await (const yielded of wrapper) {
+        void yielded;
+      }
+
+      expect(runner.lastConsumedUserMessage?.uuid).toBe('steer-uuid');
+      expect(runner.resolveRetryUserMessage('init-uuid')?.uuid).toBe('init-uuid');
+      expect(runner.resolveRetryUserMessage('init-uuid')?.content).toBe('first prompt');
+      expect(runner.resolveRetryUserMessage('unknown-uuid')).toBe(runner.lastConsumedUserMessage);
+      expect(runner.resolveRetryUserMessage(undefined)).toBe(runner.lastConsumedUserMessage);
+      expect(runner.resolveRetryUserMessage('unknown-uuid')?.uuid).toBe('steer-uuid');
+    });
+  });
+
   describe('start', () => {
     async function withAnthropicApiKey(fn: () => Promise<void>): Promise<void> {
       const savedApiKey = process.env.ANTHROPIC_API_KEY;

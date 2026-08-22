@@ -1,16 +1,16 @@
 import type { FallbackModelEntry, MessageContent } from '@hyperneo/shared';
-import type { ProcessingStateManager } from './processing-state-manager';
+import { Logger } from '../logger';
 import {
   BACKOFF_LADDER_MS,
+  type CooldownDecision,
   classifyLimitKind,
   computeCooldown,
   entryKey,
   MAX_RESET_HORIZON_MS,
   selectNextFallback,
-  type CooldownDecision,
 } from './fallback-recovery';
 import { cooldownFromReset, type LimitRetryHint } from './limit-error-classifier';
-import { Logger } from '../logger';
+import type { ProcessingStateManager } from './processing-state-manager';
 
 export interface RateLimitWatchdogConfig {
   cooldownMs: number;
@@ -401,15 +401,35 @@ export class RateLimitWatchdog {
           this.lastUserMessage,
           this.lastHint ?? undefined
         );
-        if (!scheduled && !this.lastHint?.billingTerminal) {
-          this.logger.warn(
-            'Fallback re-entry returned false (budget exhausted); scheduling a deferred cooldown.'
-          );
-          await this.scheduleCooldown(
-            this.lastErrorMessage,
-            computeCooldown(this.lastErrorMessage, this.retryCount),
-            episodeGeneration
-          );
+        if (!scheduled) {
+          if (this.lastHint?.billingTerminal) {
+            if (episodeGeneration !== this.generation) {
+              this.logger.info(
+                'Billing surfacing aborted (episode superseded) after fallback re-entry failed.'
+              );
+              return;
+            }
+            this.logger.warn(
+              'Billing-cycle limit persisted after the fallback switch failed; ' +
+                'surfacing a manual-retry pause instead of abandoning the request.'
+            );
+            this.limitKind = this.lastHint.kind ?? 'usage_limit';
+            await this.stateManager.setRateLimitCooldown({
+              retryCount: this.retryCount,
+              maxRetries: this.config.maxAutoRetries,
+              retryAt: Date.now(),
+            });
+            this.notifyPause({ kind: this.limitKind, reason: 'billing-terminal' });
+          } else {
+            this.logger.warn(
+              'Fallback re-entry returned false (budget exhausted); scheduling a deferred cooldown.'
+            );
+            await this.scheduleCooldown(
+              this.lastErrorMessage,
+              computeCooldown(this.lastErrorMessage, this.retryCount),
+              episodeGeneration
+            );
+          }
         }
       } catch (err) {
         this.logger.error('Fallback re-entry rejected; scheduling a deferred cooldown:', err);

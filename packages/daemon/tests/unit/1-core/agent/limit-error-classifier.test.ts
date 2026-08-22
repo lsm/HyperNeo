@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test';
+import { RESET_BUFFER_MS } from '../../../../src/lib/agent/fallback-recovery';
 import {
   assessLimitError,
   cooldownFromReset,
   isBillingTerminal,
   normalizeEpochMs,
 } from '../../../../src/lib/agent/limit-error-classifier';
-import { RESET_BUFFER_MS } from '../../../../src/lib/agent/fallback-recovery';
 
 const NOW = new Date('2026-08-21T15:00:00Z').getTime();
 const HOUR = 60 * 60 * 1000;
@@ -183,6 +183,83 @@ describe('assessLimitError', () => {
     );
     expect(assessment.isLimit).toBe(true);
     expect(assessment.billingTerminal).toBe(true);
+  });
+
+  it('ignores allowed rate-limit telemetry as limit evidence', () => {
+    const resetsAtSeconds = Math.floor((NOW + 5 * HOUR) / 1000);
+    for (const status of ['allowed', 'allowed_warning'] as const) {
+      const assessment = assessLimitError(
+        {
+          rawText: 'Error: 500 Internal Server Error',
+          rateLimitInfo: { status, resetsAt: resetsAtSeconds, rateLimitType: 'five_hour' },
+        },
+        NOW
+      );
+      expect(assessment.isLimit).toBe(false);
+    }
+  });
+
+  it('treats a rejected event without a reset timestamp as a limit', () => {
+    const assessment = assessLimitError(
+      {
+        rawText: 'Error: upstream rejected the request',
+        rateLimitInfo: { status: 'rejected', rateLimitType: 'five_hour' },
+      },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(true);
+    expect(assessment.confidence).toBe('structured');
+    expect(assessment.source).toBe('rate_limit_event');
+    expect(assessment.resetAtMs).toBeNull();
+  });
+
+  it('treats a rejected overage status as limit evidence', () => {
+    const assessment = assessLimitError(
+      {
+        rawText: 'Error: upstream rejected the request',
+        rateLimitInfo: { status: 'allowed', overageStatus: 'rejected', rateLimitType: 'overage' },
+      },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(true);
+  });
+
+  it('matches usage-limit markers case-insensitively', () => {
+    const assessment = assessLimitError({ rawText: 'Usage limit reached. Please try later.' }, NOW);
+    expect(assessment.isLimit).toBe(true);
+  });
+
+  it('keeps resettable upgrade-advice limits off the billing-terminal path', () => {
+    const assessment = assessLimitError(
+      {
+        rawText:
+          '429 rate limit exceeded — your usage limit will reset in 3 hours. ' +
+          'Upgrade your plan for higher limits.',
+      },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(true);
+    expect(assessment.billingTerminal).toBe(false);
+    expect(assessment.resetAtMs).not.toBeNull();
+  });
+
+  it('treats a rapid_refill_breaker terminal reason as a limit', () => {
+    const assessment = assessLimitError(
+      {
+        rawText: 'Request interrupted: refill breaker tripped',
+        terminalReason: 'rapid_refill_breaker',
+      },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(true);
+  });
+
+  it('excludes prompt-too-long blocking results from limit recovery', () => {
+    const assessment = assessLimitError(
+      { rawText: 'Prompt is too long', terminalReason: 'blocking_limit' },
+      NOW
+    );
+    expect(assessment.isLimit).toBe(false);
   });
 });
 
