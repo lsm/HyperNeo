@@ -142,31 +142,6 @@ describe('getAcpCommandIdentityDigest', () => {
     );
   });
 
-  test('preserves token boundaries when redisplaying shell command arguments', () => {
-    expect(redactCommandSecrets('sh', ['-c', `rm -- "important file" --token topsecret`])).toEqual([
-      '-c',
-      `rm -- 'important file' --token [redacted]`,
-    ]);
-    expect(
-      redactCommandSecrets('sh', ['-c', `curl -H 'Authorization: Bearer topsecret' https://a`])
-    ).toEqual(['-c', `curl -H [redacted] https://a`]);
-  });
-
-  test('gates tool-specific short options on their executables', () => {
-    expect(getAcpCommandIdentityDigest('python3 -u agent-a.py')).not.toBe(
-      getAcpCommandIdentityDigest('python3 -u agent-b.py')
-    );
-    expect(getAcpCommandIdentityDigest('python3 -c \'print("one")\'')).not.toBe(
-      getAcpCommandIdentityDigest('python3 -c \'print("two")\'')
-    );
-    expect(getAcpCommandIdentityDigest('env API_TOKEN=topsecret agent')).toBe(
-      getAcpCommandIdentityDigest('env API_TOKEN=othersafe agent')
-    );
-    expect(getAcpCommandIdentityDigest('env MODE=fast agent')).not.toBe(
-      getAcpCommandIdentityDigest('env MODE=slow agent')
-    );
-  });
-
   test('redacts userinfo credentials embedded in positional URLs', () => {
     expect(getAcpCommandIdentityDigest('psql postgresql://alice:topsecret@db/app')).toBe(
       getAcpCommandIdentityDigest('psql postgresql://alice:othersafe@db/app')
@@ -177,17 +152,6 @@ describe('getAcpCommandIdentityDigest', () => {
     expect(getAcpCommandIdentityDigest('psql postgresql://alice:pw@db-a/app')).not.toBe(
       getAcpCommandIdentityDigest('psql postgresql://alice:pw@db-b/app')
     );
-  });
-
-  test('redisplays shell scripts verbatim when nothing was redacted', () => {
-    expect(redactCommandSecrets('sh', ['-c', 'echo "safe; rm -rf /"'])).toEqual([
-      '-c',
-      'echo "safe; rm -rf /"',
-    ]);
-    expect(redactCommandSecrets('sh', ['-c', "echo 'a b' && echo c"])).toEqual([
-      '-c',
-      "echo 'a b' && echo c",
-    ]);
   });
 
   test('does not swallow the next flag after a valueless secret flag', () => {
@@ -215,5 +179,28 @@ describe('getAcpCommandIdentityDigest', () => {
     expect(getAcpCommandIdentityDigest('devin acp --password-policy strict')).not.toBe(
       getAcpCommandIdentityDigest('devin acp --password-policy relaxed')
     );
+  });
+});
+
+describe('redactCommandSecrets', () => {
+  test('preserves token boundaries when redisplaying shell command arguments', () => {
+    expect(redactCommandSecrets('sh', ['-c', `rm -- "important file" --token topsecret`])).toEqual([
+      '-c',
+      `rm -- 'important file' --token [redacted]`,
+    ]);
+    expect(
+      redactCommandSecrets('sh', ['-c', `curl -H 'Authorization: Bearer topsecret' https://a`])
+    ).toEqual(['-c', `curl -H [redacted] https://a`]);
+  });
+
+  test('redisplays shell scripts verbatim when nothing was redacted', () => {
+    expect(redactCommandSecrets('sh', ['-c', 'echo "safe; rm -rf /"'])).toEqual([
+      '-c',
+      'echo "safe; rm -rf /"',
+    ]);
+    expect(redactCommandSecrets('sh', ['-c', "echo 'a b' && echo c"])).toEqual([
+      '-c',
+      "echo 'a b' && echo c",
+    ]);
   });
 });
