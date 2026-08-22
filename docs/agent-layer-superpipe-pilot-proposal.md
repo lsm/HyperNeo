@@ -289,9 +289,12 @@ note.
   `SYSTEM` by `session.config.provider`, :1169–1229) →
   startup_timeout_retry | message_not_found_retry |
   transient_retry | provider_backoff(5xx) | rate_limit_handoff |
-  aborted_noop — an AbortError matching no arm skips the entire terminal path
-  via the `!isAbortError` gate (:1158–1291) and performs finally-cleanup only;
-  without this route the interpreter would classify intentional cancellation as
+  aborted_noop(clear_queue) — an AbortError matching no arm skips the entire
+  terminal path via the `!isAbortError` gate (:1158–1291), **but the pre-gate
+  `messageQueue.clear()` at :1153 still runs** — pending/claimed/yielded
+  messages are drained on cancellation, so the route (or a shared pre-route
+  effect) must preserve that clear; without this route the interpreter would
+  classify intentional cancellation as
   terminal and display an error or run terminal-idle handling |
   cleanup_noop / superseded_noop — the early exits at :845–851 (cleaning-up
   begun, or generation replaced) return before queue-clear or any arm; as
