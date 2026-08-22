@@ -152,7 +152,7 @@ export function createDbQueryMcpServer(config: DbQueryToolsConfig): DbQueryMcpSe
 
   const handlers = createDbQueryToolHandlers(config, db);
   const workerService = new DbQueryWorkerService(config.dbPath);
-  let warnedWorkerFallback = false;
+  let warnedWorkerUnavailable = false;
 
   const scopeDescription =
     config.scopeType === 'global'
@@ -194,16 +194,10 @@ export function createDbQueryMcpServer(config: DbQueryToolsConfig): DbQueryMcpSe
           })
           .then(
             (result) => jsonResult(result),
-            async (err: unknown) => {
-              if (err instanceof DbQueryWorkerUnavailableError) {
-                if (!warnedWorkerFallback) {
-                  warnedWorkerFallback = true;
-                  dbQueryLog.warn(
-                    'db_query worker unavailable, executing queries on the main thread:',
-                    err.message
-                  );
-                }
-                return handlers.db_query(args);
+            (err: unknown) => {
+              if (err instanceof DbQueryWorkerUnavailableError && !warnedWorkerUnavailable) {
+                warnedWorkerUnavailable = true;
+                dbQueryLog.warn(err.message);
               }
               return errorResult(err instanceof Error ? err.message : String(err));
             }
