@@ -186,10 +186,16 @@ polling sources.
   the `space.github.getTokenStatus` RPC calls `getTokenStatus` directly without
   writing the `lastTokenStatus` cache — so in a headless space that never opens the
   health panel the login stays unknown and default-on suppression would silently
-  never activate. PR A2 therefore adds a fire-and-forget identity refresh at
-  `start()` plus a bounded periodic re-resolve piggybacked on poll cycles (cold
-  cache or credential-generation change), never blocking the publish path and
-  keeping the negative-cache/fail-open behavior during outages.
+  never activate. PR A2 therefore adds a fire-and-forget identity refresh whose
+  triggers do **not** depend on polling (review finding, PR #2723): (a) at
+  `start()`, (b) directly from the credential-change paths — `setToken`/`clearToken`
+  currently only bump `credentialGeneration` via `resetRateLimitObservation`
+  (`:576-617`, `:1676-1681`) without scheduling any re-resolution, and (c) a
+  bounded independent timer — because `start()` returns early without scheduling
+  polls when polling is disabled (`:329`), poll-cycle piggybacking alone never runs
+  in webhook-only installs and a live token rotation would leave every subsequent
+  webhook fail-open until a health request or restart. The refresh never blocks the
+  publish path and keeps the negative-cache/fail-open behavior during outages.
 - **PR A2 also carries the settings-preservation fix (review finding on PR #2723):**
   `persistSpaceConfig` (`:1739-1772`) rebuilds the per-space `settings` object from
   only `pollingIntent` + `watchedRepos`, and `setSpaceConfig`
