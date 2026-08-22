@@ -27,8 +27,8 @@ function createDeps(replyText: string | Error): {
   const deps: LimitErrorLlmClassifierDeps = {
     providerService: {
       getAvailableProviders: async () => [
-        { id: 'glm', name: 'GLM', models: [], available: true },
-        { id: 'deepseek', name: 'DeepSeek', models: [], available: true },
+        { id: 'glm', name: 'GLM', models: ['some-model'], available: true },
+        { id: 'deepseek', name: 'DeepSeek', models: ['some-model'], available: true },
       ],
       isProviderAvailable: async () => true,
       getCheapTierModel: async () => 'cheap-model',
@@ -173,7 +173,7 @@ describe('LimitErrorLlmClassifier', () => {
         if (discoveryCalls === 1) {
           await firstGate;
         }
-        return [{ id: 'glm', name: 'GLM', models: [], available: true }];
+        return [{ id: 'glm', name: 'GLM', models: ['some-model'], available: true }];
       },
     };
     const slowClassifier = new LimitErrorLlmClassifier('s1', { ...deps, timeoutMs: 5000 });
@@ -199,8 +199,8 @@ describe('LimitErrorLlmClassifier', () => {
     deps.providerService = {
       ...deps.providerService,
       getAvailableProviders: async () => [
-        { id: 'broken', name: 'Broken', models: [], available: true },
-        { id: 'glm', name: 'GLM', models: [], available: true },
+        { id: 'broken', name: 'Broken', models: ['some-model'], available: true },
+        { id: 'glm', name: 'GLM', models: ['some-model'], available: true },
       ],
       isProviderAvailable: async (id: string) => {
         if (id === 'broken') throw new Error('probe failed');
@@ -230,7 +230,7 @@ describe('LimitErrorLlmClassifier', () => {
         if (discoveryCalls === 1) {
           await hangGate;
         }
-        return [{ id: 'glm', name: 'GLM', models: [], available: true }];
+        return [{ id: 'glm', name: 'GLM', models: ['some-model'], available: true }];
       },
     };
     deps.queryForTesting = ((params: { prompt: string }) => {
@@ -344,7 +344,7 @@ describe('LimitErrorLlmClassifier', () => {
     deps.providerService = {
       ...deps.providerService,
       getAvailableProviders: async () => [
-        { id: 'kimi', name: 'Kimi', models: [], available: true },
+        { id: 'kimi', name: 'Kimi', models: ['some-model'], available: true },
       ],
       getTitleGenerationModels: async () => ({
         providerModelId: 'kimi-for-coding',
@@ -376,8 +376,8 @@ describe('LimitErrorLlmClassifier', () => {
     deps.providerService = {
       ...deps.providerService,
       getAvailableProviders: async () => [
-        { id: 'acp', name: 'ACP', models: [], available: true },
-        { id: 'glm', name: 'GLM', models: [], available: true },
+        { id: 'acp', name: 'ACP', models: ['some-model'], available: true },
+        { id: 'glm', name: 'GLM', models: ['some-model'], available: true },
       ],
       applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
         seenProviders.push(providerId);
@@ -389,7 +389,7 @@ describe('LimitErrorLlmClassifier', () => {
     expect(seenProviders).toEqual(['glm']);
   });
 
-  it('skips available providers that expose no cheap-tier model', async () => {
+  it('skips providers whose model probe returned an empty list', async () => {
     const seenProviders: string[] = [];
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
     const originalApply = deps.providerService.applyEnvVarsToProcessForProvider;
@@ -397,7 +397,74 @@ describe('LimitErrorLlmClassifier', () => {
       ...deps.providerService,
       getAvailableProviders: async () => [
         { id: 'openrouter', name: 'OpenRouter', models: [], available: true },
-        { id: 'glm', name: 'GLM', models: [], available: true },
+        { id: 'glm', name: 'GLM', models: ['glm-4.6'], available: true },
+      ],
+      applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
+        seenProviders.push(providerId);
+        return originalApply(providerId, modelId);
+      },
+    };
+    const classifier = new LimitErrorLlmClassifier('s1', { ...deps, excludeProvider: 'anthropic' });
+    const assessment = await classifier.classify('revoked key wall');
+    expect(seenProviders).toEqual(['glm']);
+    expect(assessment?.kind).toBe('rate_limit');
+  });
+
+  it('runs separate lookups for callers excluding different providers', async () => {
+    const seenProviders: string[] = [];
+    let queries = 0;
+    const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
+    const originalApply = deps.providerService.applyEnvVarsToProcessForProvider;
+    deps.providerService = {
+      ...deps.providerService,
+      getAvailableProviders: async () => [
+        { id: 'glm', name: 'GLM', models: ['glm-4.6'], available: true },
+        { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-chat'], available: true },
+      ],
+      applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
+        seenProviders.push(providerId);
+        return originalApply(providerId, modelId);
+      },
+    };
+    deps.queryForTesting = (() => {
+      queries += 1;
+      return (async function* () {
+        yield {
+          type: 'assistant',
+          message: {
+            content: [
+              { type: 'text', text: '{"is_limit":true,"kind":"rate_limit","reset_at":null}' },
+            ],
+          },
+        };
+      })();
+    }) as LimitErrorLlmClassifierDeps['queryForTesting'];
+    const glmSession = new LimitErrorLlmClassifier('s1', { ...deps, excludeProvider: 'glm' });
+    const anthropicSession = new LimitErrorLlmClassifier('s2', {
+      ...deps,
+      excludeProvider: 'anthropic',
+    });
+
+    const [glmResult, anthropicResult] = await Promise.all([
+      glmSession.classify('shared wall text'),
+      anthropicSession.classify('shared wall text'),
+    ]);
+
+    expect(glmResult?.kind).toBe('rate_limit');
+    expect(anthropicResult?.kind).toBe('rate_limit');
+    expect(queries).toBe(2);
+    expect(seenProviders).toEqual(['deepseek', 'glm']);
+  });
+
+  it('skips available providers that expose no cheap-tier model', async () => {
+    const seenProviders: string[] = [];
+    const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
+    const originalApply = deps.providerService.applyEnvVarsToProcessForProvider;
+    deps.providerService = {
+      ...deps.providerService,
+      getAvailableProviders: async () => [
+        { id: 'openrouter', name: 'OpenRouter', models: ['some-model'], available: true },
+        { id: 'glm', name: 'GLM', models: ['some-model'], available: true },
       ],
       getCheapTierModel: async (id: string) => (id === 'glm' ? 'cheap-model' : null),
       applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {
@@ -417,9 +484,9 @@ describe('LimitErrorLlmClassifier', () => {
     deps.providerService = {
       ...deps.providerService,
       getAvailableProviders: async () => [
-        { id: 'glm', name: 'GLM', models: [], available: true },
-        { id: 'kimi', name: 'Kimi', models: [], available: true },
-        { id: 'deepseek', name: 'DeepSeek', models: [], available: true },
+        { id: 'glm', name: 'GLM', models: ['some-model'], available: true },
+        { id: 'kimi', name: 'Kimi', models: ['some-model'], available: true },
+        { id: 'deepseek', name: 'DeepSeek', models: ['some-model'], available: true },
       ],
       isProviderAvailable: async (id: string) => id === 'deepseek',
       applyEnvVarsToProcessForProvider: async (providerId: string, modelId: string) => {

@@ -92,7 +92,6 @@ export class RateLimitWatchdog {
   private lastHint: LimitRetryHint | null = null;
   private billingPauseSurfaced = false;
   private retryCallbackInFlight = false;
-  private llmRefinementInFlight = false;
 
   constructor(
     sessionId: string,
@@ -157,7 +156,6 @@ export class RateLimitWatchdog {
       this.bannerCancelled = false;
       this.billingPauseSurfaced = false;
       this.lastHint = hint ?? null;
-      this.llmRefinementInFlight = false;
     }
 
     const { provider, model } = this.deps.getCurrentModel();
@@ -249,7 +247,6 @@ export class RateLimitWatchdog {
       armed &&
       decision.reason === 'backoff-ladder' &&
       this.deps.classifyUnknownLimit &&
-      !this.llmRefinementInFlight &&
       entryGeneration === this.generation
     ) {
       this.fireLlmRefinement(errorMessage, entryGeneration, !decision.freeWait);
@@ -264,7 +261,6 @@ export class RateLimitWatchdog {
   ): void {
     const classify = this.deps.classifyUnknownLimit;
     if (!classify) return;
-    this.llmRefinementInFlight = true;
     const timerAtFire = this.cooldownTimer;
     void classify(errorMessage)
       .then(async (result) => {
@@ -297,10 +293,7 @@ export class RateLimitWatchdog {
           this.retryCount--;
         }
       })
-      .catch(() => {})
-      .finally(() => {
-        this.llmRefinementInFlight = false;
-      });
+      .catch(() => {});
   }
 
   private async scheduleCooldown(
@@ -635,7 +628,6 @@ export class RateLimitWatchdog {
     this.chain = null;
     this.limitKind = null;
     this.lastHint = null;
-    this.llmRefinementInFlight = false;
   }
 
   private getRemainingMs(): number {

@@ -139,19 +139,20 @@ export class LimitErrorLlmClassifier {
   async classify(rawText: string, signal?: AbortSignal): Promise<LlmLimitAssessment | null> {
     if (!rawText || signal?.aborted) return null;
     const key = normalizeErrorText(rawText);
+    const taskKey = `${key}|${this.deps.excludeProvider ?? ''}`;
     const now = Date.now();
     const cached = assessmentCache.get(key);
     if (cached && cached.expiresAt > now) {
       return cached.assessment;
     }
-    activeWaiters.set(key, (activeWaiters.get(key) ?? 0) + 1);
+    activeWaiters.set(taskKey, (activeWaiters.get(taskKey) ?? 0) + 1);
     try {
-      const pending = inflightClassifications.get(key);
+      const pending = inflightClassifications.get(taskKey);
       const task =
         pending ??
         runSerialized(() => {
-          if ((activeWaiters.get(key) ?? 0) <= 0) {
-            inflightClassifications.delete(key);
+          if ((activeWaiters.get(taskKey) ?? 0) <= 0) {
+            inflightClassifications.delete(taskKey);
             return Promise.resolve(null);
           }
           return this.classifyUncached(rawText, Date.now());
@@ -164,18 +165,18 @@ export class LimitErrorLlmClassifier {
             return assessment;
           })
           .finally(() => {
-            inflightClassifications.delete(key);
+            inflightClassifications.delete(taskKey);
           });
       if (!pending) {
-        inflightClassifications.set(key, task);
+        inflightClassifications.set(taskKey, task);
       }
       return await (signal ? this.raceWithAbort(task, signal) : task);
     } finally {
-      const remaining = (activeWaiters.get(key) ?? 1) - 1;
+      const remaining = (activeWaiters.get(taskKey) ?? 1) - 1;
       if (remaining <= 0) {
-        activeWaiters.delete(key);
+        activeWaiters.delete(taskKey);
       } else {
-        activeWaiters.set(key, remaining);
+        activeWaiters.set(taskKey, remaining);
       }
     }
   }
@@ -311,6 +312,7 @@ export class LimitErrorLlmClassifier {
     ];
     for (const candidate of ordered) {
       try {
+        if (candidate.models.length === 0) continue;
         if (!(await providerService.isProviderAvailable(candidate.id))) continue;
         if (!(await providerService.getCheapTierModel(candidate.id))) continue;
         return candidate.id;

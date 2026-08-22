@@ -727,12 +727,14 @@ describe('RateLimitWatchdog', () => {
       await flush();
 
       const writes = originalSet.mock.calls;
-      expect(notifyPause).toHaveBeenCalledTimes(2);
-      const newerOwnerPayload = writes[1][0] as { retryAt: number };
-      const staleRefinedPayload = writes[2][0] as { retryAt: number };
+      expect(notifyPause.mock.calls.length).toBeGreaterThanOrEqual(2);
+      const stalePayload = writes[0][0] as { retryAt: number };
       const lastPayload = writes[writes.length - 1][0] as { retryAt: number };
-      expect(lastPayload.retryAt).toBe(newerOwnerPayload.retryAt);
-      expect(lastPayload.retryAt).not.toBe(staleRefinedPayload.retryAt);
+      const ownerRetryAt = (watchdog as unknown as { currentRetryAt: number | null })
+        .currentRetryAt;
+      expect(ownerRetryAt).not.toBeNull();
+      expect(lastPayload.retryAt).toBe(ownerRetryAt);
+      expect(lastPayload.retryAt).not.toBe(stalePayload.retryAt);
       expect((watchdog as unknown as { cooldownTimer: unknown }).cooldownTimer).not.toBeNull();
       watchdog.cancel();
     });
@@ -772,6 +774,54 @@ describe('RateLimitWatchdog', () => {
         retryAt: number;
       };
       expect(lastPayload.retryAt).toBeLessThanOrEqual(Date.now());
+      watchdog.cancel();
+    });
+
+    it('refines a newer cooldown even while an older refinement is in flight', async () => {
+      const classifyCalls: string[] = [];
+      let releaseAll: (() => void) | undefined;
+      const gate = new Promise<void>((resolve) => {
+        releaseAll = resolve;
+      });
+      const classify = mock(() => {
+        return new Promise<{ resetAtMs: number; kind: 'usage_limit'; notALimit: boolean }>(
+          (resolve) => {
+            void gate.then(() =>
+              resolve({
+                resetAtMs: Date.now() + 2 * 60 * 60 * 1000,
+                kind: 'usage_limit',
+                notALimit: false,
+              })
+            );
+          }
+        ).then((value) => {
+          return value;
+        });
+      });
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = async (rawText: string) => {
+        classifyCalls.push(rawText);
+        return classify() as Promise<{
+          resetAtMs: number;
+          kind: 'usage_limit';
+          notALimit: boolean;
+        }>;
+      };
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+      await flush();
+      await watchdog.scheduleRetry('throttled by proxy again', { uuid: 'm1', content: 'x' });
+      await flush();
+
+      expect(classifyCalls).toEqual(['throttled by waf', 'throttled by proxy again']);
+
+      releaseAll?.();
+      await flush();
+      await flush();
+      await flush();
+
+      expect(notifyPause.mock.calls.length).toBeGreaterThanOrEqual(3);
       watchdog.cancel();
     });
 
