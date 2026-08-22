@@ -234,7 +234,7 @@ describe('AgentSession.clearConversationContext', () => {
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy.mock.calls[0][0]).toContain('proceeding without confirmed clear');
     expect(resetSpy).toHaveBeenCalledTimes(1);
-    expect(setIdleSpy).toHaveBeenCalledTimes(1);
+    expect(setIdleSpy).not.toHaveBeenCalled();
 
     await session.messageHandler.handleMessage(makeClearResult('next-turn-result'));
     expect(setIdleSpy.mock.calls.length).toBeGreaterThan(1);

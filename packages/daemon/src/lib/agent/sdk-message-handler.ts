@@ -787,8 +787,10 @@ export class SDKMessageHandler {
       return;
     }
 
-    if (this.matchesArmedClearResult(message) && !isSDKResultSuccess(message)) {
-      this.clearIdleSuppression();
+    const settlesArmedClearError =
+      this.matchesArmedClearResult(message) && !isSDKResultSuccess(message);
+    if (settlesArmedClearError) {
+      this.cancelSuppressedResultTimer();
     }
 
     const processingState = stateManager.getState();
@@ -867,6 +869,9 @@ export class SDKMessageHandler {
 
     if (isSDKResultMessage(message)) {
       void this.refreshContextUsage('turn-end');
+      if (settlesArmedClearError) {
+        this.clearIdleSuppression();
+      }
       return;
     }
 

@@ -862,7 +862,7 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(errorResult);
 
       expect(await wait).toBe('reset');
-      expect(setIdleSpy).toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
     });
 
     it('clearIdleSuppression settles a pending wait as unconfirmed', async () => {
@@ -896,7 +896,49 @@ describe('SDKMessageHandler', () => {
       } as unknown as SDKMessage);
 
       expect(await wait).toBe('reset');
-      expect(setIdleSpy).toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+    });
+
+    it('an error result releases the clear wait only after its bookkeeping completes', async () => {
+      let releaseBookkeeping!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseBookkeeping = resolve;
+      });
+      emitSpy.mockImplementationOnce(async () => {
+        await gate;
+      });
+
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      let settled: string | null = null;
+      void wait.then((outcome) => {
+        settled = outcome;
+      });
+
+      const handled = handler.handleMessage({
+        type: 'result',
+        subtype: 'error_during_execution',
+        uuid: 'clear-error',
+        is_error: true,
+        errors: ['boom'],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(settled).toBe(null);
+
+      releaseBookkeeping();
+      await handled;
+
+      expect(await wait).toBe('reset');
+      expect(settled).toBe('reset');
     });
 
     it('cancelSuppressedResultWait settles a pending wait as cancelled', async () => {
