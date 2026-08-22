@@ -1,13 +1,15 @@
-import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
-import type { AgentSession as AgentSessionType } from '../../../../src/lib/agent/agent-session.ts';
-import type { AgentSessionInit } from '../../../../src/lib/agent/agent-session.ts';
-import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type {
+  AgentSessionInit,
+  AgentSession as AgentSessionType,
+} from '../../../../src/lib/agent/agent-session.ts';
+import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const TASK_ID = 'task-850';
 const RUN_ID = 'run-850';
@@ -18,13 +20,15 @@ const REVIEWER_SESSION_ID = 'reviewer-session-live';
 
 function makeFakeSession(id: string = REVIEWER_SESSION_ID) {
   const calls: string[] = [];
+  const configUpdates: Array<Record<string, unknown>> = [];
   const session = {
     session: { id },
     skillOverrides: undefined,
     toolGuards: undefined,
     onMissingWorkflowMcpServers: undefined,
-    updateConfig: async (): Promise<void> => {
+    updateConfig: async (arg: Record<string, unknown>): Promise<void> => {
       calls.push('updateConfig');
+      configUpdates.push(arg);
     },
     mergeRuntimeMcpServers: (): void => {
       calls.push('mergeRuntimeMcpServers');
@@ -33,7 +37,7 @@ function makeFakeSession(id: string = REVIEWER_SESSION_ID) {
       calls.push('startStreamingQuery');
     },
   };
-  return { session: session as unknown as AgentSessionType, calls };
+  return { session: session as unknown as AgentSessionType, calls, configUpdates };
 }
 
 function makeCapturingFakeSession(id: string): {
@@ -96,20 +100,20 @@ function makeManager(rows: unknown[] = [reviewerExec()]): TaskAgentManager {
 function seedLiveSession(
   tam: TaskAgentManager,
   sessionId: string = REVIEWER_SESSION_ID
-): AgentSessionType {
-  const { session } = makeFakeSession(sessionId);
+): ReturnType<typeof makeFakeSession> {
+  const fake = makeFakeSession(sessionId);
   const subSessions = (
     tam as unknown as {
       subSessions: Map<string, Map<string, AgentSessionType>>;
     }
   ).subSessions;
   if (!subSessions.has(TASK_ID)) subSessions.set(TASK_ID, new Map());
-  subSessions.get(TASK_ID)!.set(sessionId, session);
+  subSessions.get(TASK_ID)!.set(sessionId, fake.session);
   (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> }).agentSessionIndex.set(
     sessionId,
-    session
+    fake.session
   );
-  return session;
+  return fake;
 }
 
 function stubReusePathHelpers(tam: TaskAgentManager): void {
@@ -374,5 +378,271 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(typeof fake.session.onMissingMemberSpaceMcpServers).toBe('function');
     await fake.session.onMissingMemberSpaceMcpServers!(result.sessionId, ['space-agent-tools']);
     expect(reattachCalls).toEqual([result.sessionId]);
+  });
+});
+
+function makeExecutionRow(
+  overrides: Partial<Record<string, unknown>> = {}
+): Record<string, unknown> {
+  return {
+    id: 'reviewer-exec-1',
+    workflowRunId: RUN_ID,
+    workflowNodeId: REVIEWER_NODE_ID,
+    agentName: REVIEWER_AGENT,
+    agentId: 'agent-reviewer',
+    agentSessionId: REVIEWER_SESSION_ID,
+    status: 'in_progress',
+    result: null,
+    data: null,
+    createdAt: 0,
+    startedAt: 1,
+    completedAt: null,
+    updatedAt: 0,
+    ...overrides,
+  };
+}
+
+function makeRecordingManager(
+  rows: Array<Record<string, unknown>>,
+  listByNode?: (nodeId: string) => Array<Record<string, unknown>>
+): {
+  tam: TaskAgentManager;
+  updates: Array<{ id: string; payload: Record<string, unknown> }>;
+} {
+  const updates: Array<{ id: string; payload: Record<string, unknown> }> = [];
+  const tam = new TaskAgentManager({
+    db: { getDatabase: () => new BunDatabase(':memory:') },
+    sessionManager: { registerSession: () => {} },
+    internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+    taskRepo: {
+      getTask: () => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'T' }),
+    },
+    nodeExecutionRepo: {
+      listByWorkflowRun: () => rows,
+      listByNode: (_runId: string, nodeId: string) => (listByNode ? listByNode(nodeId) : rows),
+      listByAgentSessionId: () => [],
+      update: (id: string, payload: Record<string, unknown>) => {
+        updates.push({ id, payload });
+        return null;
+      },
+    },
+    spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+  } as unknown as TaskAgentManagerConfig);
+  return { tam, updates };
+}
+
+function stubMcpReinjection(tam: TaskAgentManager): {
+  reinjectCtx: Array<Record<string, unknown>>;
+  ensureCtx: Array<Record<string, unknown>>;
+} {
+  const reinjectCtx: Array<Record<string, unknown>> = [];
+  const ensureCtx: Array<Record<string, unknown>> = [];
+  (
+    tam as unknown as {
+      reinjectNodeAgentMcpServer: (session: unknown, ctx: Record<string, unknown>) => Promise<void>;
+    }
+  ).reinjectNodeAgentMcpServer = async (_session, ctx) => {
+    reinjectCtx.push(ctx);
+  };
+  (
+    tam as unknown as {
+      ensureRequiredMcpServersAttached: (
+        session: unknown,
+        ctx: Record<string, unknown>
+      ) => Promise<void>;
+    }
+  ).ensureRequiredMcpServersAttached = async (_session, ctx) => {
+    ensureCtx.push(ctx);
+  };
+  return { reinjectCtx, ensureCtx };
+}
+
+describe('createSubSession — reuse hard-constraint binding details (spawn seam pins)', () => {
+  let fromInitSpy: ReturnType<typeof spyOn<typeof AgentSession, 'fromInit'>>;
+
+  beforeEach(() => {
+    fromInitSpy = spyOn(AgentSession, 'fromInit').mockImplementation(
+      (() => makeFakeSession('fresh-session').session) as unknown as typeof AgentSession.fromInit
+    );
+  });
+  afterEach(() => {
+    fromInitSpy.mockRestore();
+  });
+
+  test('reuse path updates the config and re-injects required MCP servers on the existing session', async () => {
+    const { tam } = makeRecordingManager([makeExecutionRow()]);
+    const live = seedLiveSession(tam);
+    const { reinjectCtx, ensureCtx } = stubMcpReinjection(tam);
+    (tam as unknown as { registerCompletionCallback: () => void }).registerCompletionCallback =
+      () => {};
+
+    const actual = await tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    expect(actual).toBe(REVIEWER_SESSION_ID);
+    expect(live.configUpdates).toHaveLength(1);
+    expect(live.configUpdates[0]).toMatchObject({ model: 'm' });
+    expect(reinjectCtx).toHaveLength(1);
+    expect(reinjectCtx[0]).toMatchObject({
+      taskId: TASK_ID,
+      subSessionId: REVIEWER_SESSION_ID,
+      agentName: REVIEWER_AGENT,
+      workflowNodeId: REVIEWER_NODE_ID,
+    });
+    expect(ensureCtx).toHaveLength(1);
+    expect(ensureCtx[0]).toMatchObject({ subSessionId: REVIEWER_SESSION_ID, phase: 'spawn' });
+    expect(fromInitSpy).not.toHaveBeenCalled();
+  });
+
+  test('reuse path rebinds the node execution with an unconditional in_progress write (BEFORE picture)', async () => {
+    const { tam, updates } = makeRecordingManager([makeExecutionRow()]);
+    seedLiveSession(tam);
+    stubMcpReinjection(tam);
+    (tam as unknown as { registerCompletionCallback: () => void }).registerCompletionCallback =
+      () => {};
+
+    const actual = await tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    expect(actual).toBe(REVIEWER_SESSION_ID);
+    const rebind = updates.find((u) => u.id === 'reviewer-exec-1');
+    expect(rebind).toEqual({
+      id: 'reviewer-exec-1',
+      payload: {
+        status: 'in_progress',
+        agentSessionId: REVIEWER_SESSION_ID,
+        startedAt: 1,
+        completedAt: null,
+      },
+    });
+  });
+
+  test('reuse path replaces any stale completion callback with a fresh registration for the existing session', async () => {
+    const { tam } = makeRecordingManager([makeExecutionRow()]);
+    seedLiveSession(tam);
+    stubMcpReinjection(tam);
+    const callbacks = (
+      tam as unknown as { completionCallbacks: Map<string, Array<() => Promise<void>>> }
+    ).completionCallbacks;
+    const stale = async (): Promise<void> => {};
+    callbacks.set(REVIEWER_SESSION_ID, [stale]);
+
+    const actual = await tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    expect(actual).toBe(REVIEWER_SESSION_ID);
+    const registered = callbacks.get(REVIEWER_SESSION_ID);
+    expect(registered).toHaveLength(1);
+    expect(registered![0]).not.toBe(stale);
+  });
+
+  test('stale co-owner sweep preserves cancelled and waiting_rebind, flips only active co-owners to idle', async () => {
+    const NODE_2 = 'node-2';
+    const targetExec = makeExecutionRow({
+      id: 'exec-target',
+      workflowNodeId: NODE_2,
+      agentSessionId: null,
+      status: 'pending',
+      startedAt: null,
+    });
+    const cancelledCoOwner = makeExecutionRow({
+      id: 'exec-cancelled',
+      workflowNodeId: 'node-a',
+      status: 'cancelled',
+    });
+    const waitingRebindCoOwner = makeExecutionRow({
+      id: 'exec-waiting-rebind',
+      workflowNodeId: 'node-b',
+      status: 'waiting_rebind',
+    });
+    const activeCoOwner = makeExecutionRow({
+      id: 'exec-active',
+      workflowNodeId: 'node-c',
+      status: 'in_progress',
+    });
+    const { tam, updates } = makeRecordingManager(
+      [cancelledCoOwner, waitingRebindCoOwner, activeCoOwner, targetExec],
+      (nodeId) => (nodeId === NODE_2 ? [targetExec] : [])
+    );
+    seedLiveSession(tam);
+    stubMcpReinjection(tam);
+    (tam as unknown as { registerCompletionCallback: () => void }).registerCompletionCallback =
+      () => {};
+
+    const actual = await tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: NODE_2,
+    });
+
+    expect(actual).toBe(REVIEWER_SESSION_ID);
+    expect(updates.find((u) => u.id === 'exec-cancelled')).toEqual({
+      id: 'exec-cancelled',
+      payload: { agentSessionId: null },
+    });
+    expect(updates.find((u) => u.id === 'exec-waiting-rebind')).toEqual({
+      id: 'exec-waiting-rebind',
+      payload: { agentSessionId: null },
+    });
+    expect(updates.find((u) => u.id === 'exec-active')).toEqual({
+      id: 'exec-active',
+      payload: { agentSessionId: null, status: 'idle' },
+    });
+  });
+
+  test('fresh create binds the new session to the matching pending execution (unconditional write)', async () => {
+    const pendingExec = makeExecutionRow({
+      id: 'exec-pending',
+      agentSessionId: null,
+      status: 'pending',
+      startedAt: null,
+    });
+    const { tam, updates } = makeRecordingManager([pendingExec]);
+
+    const actual = await tam.createSubSession(TASK_ID, 'fresh-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    expect(actual).toBe('fresh-id');
+    expect(fromInitSpy).toHaveBeenCalledTimes(1);
+    expect(updates.find((u) => u.id === 'exec-pending')).toEqual({
+      id: 'exec-pending',
+      payload: {
+        status: 'in_progress',
+        agentSessionId: 'fresh-id',
+        startedAt: expect.any(Number),
+        completedAt: null,
+      },
+    });
+  });
+
+  test('fresh create skips the execution bind when the matching execution is already bound elsewhere', async () => {
+    const boundExec = makeExecutionRow({
+      id: 'exec-bound-elsewhere',
+      agentSessionId: 'other-session',
+      status: 'pending',
+    });
+    const { tam, updates } = makeRecordingManager([boundExec]);
+
+    const actual = await tam.createSubSession(TASK_ID, 'fresh-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    expect(actual).toBe('fresh-id');
+    expect(fromInitSpy).toHaveBeenCalledTimes(1);
+    expect(updates.find((u) => u.id === 'exec-bound-elsewhere')).toBeUndefined();
   });
 });
