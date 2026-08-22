@@ -659,8 +659,12 @@ export class AcpQueryRunner {
         if (abortController.signal.aborted) break;
         if (this.ctx.isLimitRecoveryPending?.()) {
           logger.info(
-            'ACP prompt loop: limit recovery engaged; stopping prompt dequeue until the retry.'
+            'ACP prompt loop: limit recovery engaged; requeueing prompt until the retry.'
           );
+          const yieldedUuid = (message as SDKUserMessage).uuid;
+          if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {
+            logger.warn(`ACP prompt loop: could not requeue yielded prompt ${yieldedUuid}.`);
+          }
           break;
         }
 

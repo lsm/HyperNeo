@@ -165,6 +165,43 @@ describe('MessageQueue', () => {
     });
   });
 
+  describe('requeueYielded', () => {
+    it('moves a yielded message back to the front of the queue so the generator can re-yield it', async () => {
+      queue.start();
+      const acknowledgment = queue.enqueueWithId('requeued-id', 'Message 1');
+      const generator = queue.messageGenerator(testSessionId);
+      const result = await generator.next();
+      expect(result.done).toBe(false);
+      expect(queue.hasYielded('requeued-id')).toBe(true);
+
+      expect(queue.requeueYielded('requeued-id')).toBe(true);
+      expect(queue.hasYielded('requeued-id')).toBe(false);
+      expect(queue.hasPendingOrClaimed('requeued-id')).toBe(true);
+
+      const second = await generator.next();
+      expect(second.done).toBe(false);
+      expect((second.value?.message as { uuid?: string }).uuid).toBe('requeued-id');
+
+      second.value.onSent();
+      await acknowledgment;
+      queue.stop();
+    });
+
+    it('returns false when the id is unknown or not yielded', async () => {
+      expect(queue.requeueYielded('nope')).toBe(false);
+
+      queue.start();
+      const acknowledgment = queue.enqueueWithId('consumed-id', 'Message 1');
+      const generator = queue.messageGenerator(testSessionId);
+      const result = await generator.next();
+      expect(result.done).toBe(false);
+      result.value.onSent();
+      await acknowledgment;
+      expect(queue.requeueYielded('consumed-id')).toBe(false);
+      queue.stop();
+    });
+  });
+
   describe('hasPendingOrInFlight', () => {
     it('reports false for an unknown id and true while queued/claimed/yielded', async () => {
       expect(queue.hasPendingOrInFlight('nope')).toBe(false);

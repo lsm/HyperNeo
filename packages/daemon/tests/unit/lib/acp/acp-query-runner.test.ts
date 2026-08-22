@@ -586,6 +586,19 @@ describe('AcpQueryRunner', () => {
     expect(publishAsync).toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
   });
 
+  test('requeues the yielded prompt instead of stranding it when limit recovery engages', async () => {
+    const requeueYielded = mock(() => true);
+    const { runner, ctx, messageQueue, mockClient } = createRunnerFixture();
+    (messageQueue as unknown as { requeueYielded: unknown }).requeueYielded = requeueYielded;
+    ctx.isLimitRecoveryPending = async () => true;
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(mockClient.sendPrompt).not.toHaveBeenCalled();
+    expect(requeueYielded).toHaveBeenCalledWith('user-message-1');
+  });
+
   test('does not publish query.trigger after a terminal turn failure', async () => {
     const failingClient = createMockClient();
     failingClient.initialize = mock(async () => {

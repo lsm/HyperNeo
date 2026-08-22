@@ -177,6 +177,8 @@ export class SDKMessageHandler {
 
   resetCircuitBreaker(): void {
     this.circuitBreaker.reset();
+    this.lastRateLimitInfo = null;
+    this.lastSdkErrorTag = null;
   }
 
   suppressIdleForNextResult(): void {
@@ -749,10 +751,12 @@ export class SDKMessageHandler {
         : null;
 
     let limitEngaged = false;
+    let limitBillingTerminal = false;
     if (isTopLevelResult) {
       this.resetThinkingTokenTracking();
       const limitError = this.assessResultLimitError(message);
       if (limitError) {
+        limitBillingTerminal = limitError.hint.billingTerminal === true;
         limitEngaged =
           (await this.ctx.onResultLimitError?.(
             limitError.errorText,
@@ -788,7 +792,11 @@ export class SDKMessageHandler {
       const resultUuid = (message as SDKResultMessage).uuid;
       if (resultUuid) {
         try {
-          db.getSDKMessageRepo()?.markResultRecoveryIntercepted(session.id, resultUuid);
+          db.getSDKMessageRepo()?.markResultRecoveryIntercepted(
+            session.id,
+            resultUuid,
+            limitBillingTerminal
+          );
         } catch (error) {
           this.logger.warn('Failed to mark intercepted limit result:', error);
         }
@@ -905,7 +913,9 @@ export class SDKMessageHandler {
       cache_creation_input_tokens: 0,
       cache_read_input_tokens: 0,
     };
-    const totalTokens = usage.input_tokens + usage.output_tokens;
+    const inputTokens = usage.input_tokens ?? 0;
+    const outputTokens = usage.output_tokens ?? 0;
+    const totalTokens = inputTokens + outputTokens;
 
     const sdkCost = message.total_cost_usd || 0;
     const lastSdkCost = session.metadata?.lastSdkCost || 0;
@@ -923,8 +933,8 @@ export class SDKMessageHandler {
       ...session.metadata,
       messageCount: (session.metadata?.messageCount || 0) + 1,
       totalTokens: (session.metadata?.totalTokens || 0) + totalTokens,
-      inputTokens: (session.metadata?.inputTokens || 0) + usage.input_tokens,
-      outputTokens: (session.metadata?.outputTokens || 0) + usage.output_tokens,
+      inputTokens: (session.metadata?.inputTokens || 0) + inputTokens,
+      outputTokens: (session.metadata?.outputTokens || 0) + outputTokens,
       totalCost,
       toolCallCount: session.metadata?.toolCallCount || 0,
       lastSdkCost: sdkCost,

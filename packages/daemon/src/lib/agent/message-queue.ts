@@ -216,6 +216,20 @@ export class MessageQueue {
     return false;
   }
 
+  requeueYielded(messageId: string): boolean {
+    for (const message of this.yielded) {
+      if (message.id !== messageId) continue;
+      this.yielded.delete(message);
+      if (message.timeoutId) {
+        clearTimeout(message.timeoutId);
+        message.timeoutId = undefined;
+      }
+      this.queue.unshift(message);
+      return true;
+    }
+    return false;
+  }
+
   waitForPendingOrInFlight(
     messageId: string
   ): { acknowledgment: Promise<void>; content: string | MessageContent[] } | null {

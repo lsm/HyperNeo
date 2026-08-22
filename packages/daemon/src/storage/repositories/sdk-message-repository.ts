@@ -1654,6 +1654,7 @@ export class SDKMessageRepository {
             AND NOT (
               COALESCE(json_extract(r.sdk_message, '$.is_error'), 0) = 1
               AND COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
+              AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
             )
           LIMIT 1`
       )
@@ -1661,14 +1662,18 @@ export class SDKMessageRepository {
     return row != null;
   }
 
-  markResultRecoveryIntercepted(sessionId: string, sdkUuid: string): void {
+  markResultRecoveryIntercepted(sessionId: string, sdkUuid: string, billingTerminal = false): void {
     this.db
       .prepare(
         `UPDATE sdk_messages
-            SET sdk_message = json_set(sdk_message, '$.recovery_intercepted', 1)
+            SET sdk_message = json_set(
+              sdk_message,
+              '$.recovery_intercepted', 1,
+              '$.recovery_billing_terminal', ?
+            )
           WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'result'`
       )
-      .run(sessionId, sdkUuid);
+      .run(billingTerminal ? 1 : 0, sessionId, sdkUuid);
   }
 
   hasRecoveryInterceptedResultAfter(sessionId: string, uuid: string): boolean {
@@ -1686,6 +1691,7 @@ export class SDKMessageRepository {
                WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
             )
             AND COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
+            AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
           LIMIT 1`
       )
       .get(sessionId, sessionId, uuid) as { 1: number } | undefined | null;

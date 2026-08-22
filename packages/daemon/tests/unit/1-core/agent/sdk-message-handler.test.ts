@@ -3063,7 +3063,71 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(makeApiErrorResult());
 
-      expect(markRecoveryIntercepted).toHaveBeenCalledWith('test-session-id', 'result-uuid');
+      expect(markRecoveryIntercepted).toHaveBeenCalledWith('test-session-id', 'result-uuid', false);
+    });
+
+    it('marks billing-terminal interceptions so their restart reclaim stays manual', async () => {
+      const onResultLimitError = mock(async () => true);
+      mockContext.onResultLimitError = onResultLimitError;
+      const markRecoveryIntercepted = mock(() => {});
+      mockDb.getSDKMessageRepo = mock(
+        () => ({ markResultRecoveryIntercepted: markRecoveryIntercepted }) as never
+      ) as never;
+
+      await handler.handleMessage(
+        makeApiErrorResult({
+          api_error_status: null,
+          result:
+            "API Error: 403 You've reached your usage limit for this billing cycle. " +
+            'To continue now, purchase extra usage or upgrade your plan.',
+        })
+      );
+
+      expect(onResultLimitError).toHaveBeenCalledTimes(1);
+      const [, hint] = onResultLimitError.mock.calls[0] as [
+        string,
+        { billingTerminal?: boolean | null },
+      ];
+      expect(hint.billingTerminal).toBe(true);
+      expect(markRecoveryIntercepted).toHaveBeenCalledWith('test-session-id', 'result-uuid', true);
+    });
+
+    it('keeps numeric token totals when an intercepted result carries an empty usage object', async () => {
+      const onResultLimitError = mock(async () => true);
+      mockContext.onResultLimitError = onResultLimitError;
+      mockSession.metadata = {
+        messageCount: 2,
+        totalTokens: 120,
+        inputTokens: 100,
+        outputTokens: 20,
+        totalCost: 0.5,
+        toolCallCount: 1,
+      };
+
+      await handler.handleMessage(makeApiErrorResult());
+
+      expect(mockSession.metadata?.totalTokens).toBe(120);
+      expect(mockSession.metadata?.inputTokens).toBe(100);
+      expect(mockSession.metadata?.outputTokens).toBe(20);
+    });
+
+    it('clears captured limit evidence when the circuit breaker resets', async () => {
+      const onResultLimitError = mock(async () => true);
+      mockContext.onResultLimitError = onResultLimitError;
+
+      await handler.handleMessage(
+        makeRateLimitEvent(Math.floor((Date.now() + 60 * 60 * 1000) / 1000))
+      );
+      handler.resetCircuitBreaker();
+      await handler.handleMessage(
+        makeApiErrorResult({
+          api_error_status: 500,
+          result: 'Error: 500 Internal Server Error',
+        })
+      );
+
+      expect(onResultLimitError).not.toHaveBeenCalled();
+      expect(publishedTopics()).toContain('query.trigger');
     });
 
     it('ignores allowed rate-limit telemetry when assessing a later api error', async () => {

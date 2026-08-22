@@ -2160,6 +2160,30 @@ describe('SDKMessageRepository', () => {
       expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'msg-err')).toBe(true);
     });
 
+    it('keeps billing-terminal intercepted results terminal and skips their restart reclaim', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-billing',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        uuid: 'result-billing-uuid',
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+        subtype: 'success',
+        sdkMessage: JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          terminal_reason: 'api_error',
+        }),
+      });
+
+      repository.markResultRecoveryIntercepted('session-1', 'result-billing-uuid', true);
+
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-billing')).toBe(true);
+      expect(repository.hasRecoveryInterceptedResultAfter('session-1', 'msg-billing')).toBe(false);
+    });
+
     it('getErrorTerminalResultSubtypeAfter returns the error subtype (null for success/none)', () => {
       insertMessage('session-1', 'user', {
         uuid: 'msg-budget',
