@@ -93,8 +93,11 @@ reactive proxy's `METHOD_TABLE_MAP` (`reactive-database.ts:236–263`) and from
   `message-handlers.ts:66,137,176` and `state-projection-service.ts:424`
   construct `new SDKMessageRepository(db.getDatabase())` inline per call (no
   reactiveDb — these instances never notify), `space-runtime.ts:781` lazily
-  constructs and caches an instance with reactiveDb, and
-  `message-search-worker.ts:29` constructs one standalone in the worker.
+  constructs and caches an instance with reactiveDb, `message-search-worker.ts:29`
+  constructs one standalone in the worker, and an operational path does too:
+  `scripts/recover-messages.ts:276` builds a 1-arg instance and calls the
+  public `recomputeVisibleMessageCount` (:280) — a notification-free
+  authoritative recount the B3 surface must keep.
   Constructor and module-state changes are therefore *not* hidden behind the
   facade — the real contract is the 2-arg constructor plus a pure module top
   (zone 6). Save-side callers that do go through the facade hold the
@@ -228,18 +231,29 @@ ADR sanctions pure-function admission gates from pilots 1/5).
   `replacementEdges`); the shared normalized input that lets the three save
   sites — the two `SDKMessage` variants and the disjoint
   `HyperNeoActionMessage` shape — consume one core is introduced here, not in
-  B1; divergences become explicit parameters pinned by B1.
+  B1; divergences become explicit parameters pinned by B1. Placement is
+  per-variant as today: the SDK variant computes the record before its
+  transaction (:536–549 ahead of :559), while the user variant computes it
+  *inside* the composed transaction (wrapper :1074–1076; outbox :52–53) — B2
+  does not relocate the computation; doing so later would be an explicit
+  plan-input change at both callers.
 - **PR B3:** badge plan unification — an instruction set, not one derivation:
   saves emit `delta(+1)` over the admission record (:589, :1136,
   `saveHyperNeoActionMessage`'s bump+notify :1997–2001 — B2 routes this third
   save variant through the shared record, so its badge effect belongs in the
-  unified interpreter too); the status-flip recompute (:1362–1364) and *both*
+  unified interpreter too); the status-flip recompute (:1362–1364), *both*
   rewind operators — `deleteMessagesAfter` :1472–1477 and
-  `deleteMessagesAtAndAfter` :1492–1499 — emit a **recompute instruction**
-  (authoritative `COUNT(*)` + conditional update, which also repairs
-  pre-existing counter drift), never delta subtraction: subtracting only the
-  removed rows would leave prior drift — from bypass writes or an older buggy
-  counter — intact, a behavior change. Interpreter applies.
+  `deleteMessagesAtAndAfter` :1492–1499 — and `deletePendingUserMessage`'s
+  recount (:1415) emit a **recompute instruction** (authoritative `COUNT(*)` +
+  conditional update, which also repairs pre-existing counter drift), never
+  delta subtraction: subtracting only the removed rows would leave prior
+  drift — from bypass writes or an older buggy counter — intact, a behavior
+  change. The `deletePendingUserMessage` site carries a notification nuance
+  to pin: it recomputes but, unlike the rewind paths, emits **no** sessions
+  notification today — the unified interpreter must not accidentally add one.
+  `recomputeVisibleMessageCount` also stays public and notification-free for
+  the recovery script (`scripts/recover-messages.ts:276–280`). Interpreter
+  applies.
 - **PR B4 (apply):** `updateMessageStatus` as plan/interpret — the pure
   planner over the pending-row snapshot produces the ordered instruction list
   (timestamp updates, and *allocation instructions* for both sequence axes —
@@ -264,14 +278,22 @@ ADR sanctions pure-function admission gates from pilots 1/5).
   `markDeliveryFailedByUuidInclusive` pin checks only that `deferred` is
   excluded, not its full window) plus the batch-semantics split — the
   turn-end variants' first-uuid all-or-nothing rule (:1763) vs the per-uuid
-  skip of the bulk variants (:1788, :1808) — so a mistyped window or a
-  flattened batch rule cannot change delivery behavior unnoticed in C3; and
-  the FTS malformed-shape pin — body extraction runs *first*
-  (`extractVisibleSearchText` at :297–303, before the DELETE at :304–306 and
-  all gates at :307–313), and a JSON-valid but invalid SDK payload (e.g.
-  `null`) makes it throw inside the flush transaction, which rolls back and
-  retains the pending row for retry — a gate-first reorder would skip the row
-  and delete the pending entry permanently.
+  skip of the bulk variants (:1788, :1808) — plus the turn-end *result
+  prerequisite*: without a matching top-level success terminal result whose
+  `consumed_seq` is non-NULL, `markDeliveriesConsumedAtTurnEnd` returns empty
+  before inspecting any delivery status (:1742–1751), and when it exists,
+  every consumed delivery reuses that exact sequence (:1769–1772) — so C3
+  cannot drop the prerequisite or allocate unrelated sequences without a
+  failing pin; and the FTS malformed-shape pins, which cover two *distinct*
+  outcomes — body extraction runs first (`extractVisibleSearchText` at
+  :297–303, before the DELETE at :304–306 and all gates at :307–313), so a
+  JSON-valid but invalid SDK payload (e.g. `null`) throws inside the flush
+  transaction, which rolls back and retains the pending row for retry, while
+  syntactically invalid JSON hits the parse catch (:297–301), returns
+  normally *before* the old-row delete, and the flush then removes the
+  pending entry — a previously indexed row keeps stale FTS content with no
+  retry. Pin both; a gate-first reorder or a moved parse would silently turn
+  one policy into the other.
 - **PR C2:** extract `message-search-admission.ts` as a real `decisionRun`
   (legitimate first-skip-wins precedence among the gates at :307–313:
   superseded → searchable-type → eligibility → body-nonempty → user-status —
@@ -283,7 +305,13 @@ ADR sanctions pure-function admission gates from pilots 1/5).
   currentStatus, action)` → status-window + target) collapsing the ten
   wrappers' windows into data; SQL stays (precedent: `task-transition-routing.ts`
   from Pilot 5).
-- **PR C4 (cleanup + ADR note).**
+- **PR C4:** session-rebuild parity — `SessionRepository.rebuildMessageSearchRows`
+  (:231–295) is the second production FTS admission implementation; parity-test
+  its bulk SQL's admission outcomes against the extracted gates on identical
+  inputs, then either route its WHERE policy through the shared predicates or
+  record the residual duplication as deliberate. Without this step the
+  extracted gates keep drifting against the second implementation.
+- **PR C5 (cleanup + ADR note).**
 
 ## 5. Hot-path rule assessment
 
@@ -293,8 +321,11 @@ below ~10 µs/decision against dominated neighbor costs.
 - **Save path — GO for gates.** One admission per persisted message; each save
   is one transaction with a turn-index SELECT, INSERT, and up to five auxiliary
   statements plus a WAL commit — ≥~100 µs typical, ms-scale at p99. A 2.6 µs
-  admission core is ≤~3%. Gates sit at admission (per message), before the
-  transaction opens.
+  admission core is ≤~3%. Gates sit at admission (per message); on the SDK
+  variant that is before the transaction opens (:536–549 ahead of :559),
+  while the user variant computes admission inside its composed transaction
+  today (:1074–1076; outbox :52–53) — pure either way, and B2 keeps each
+  variant's placement rather than relocating it.
 - **FTS flush path — GO.** ≤500 rows per 2 s tick, each already paying SQL
   reads + `JSON.parse`; per-row `decisionRun` skip-reasons are noise.
 - **Read-projection row loops — NO GATES.** `getRenderableTextMessages`' scan
