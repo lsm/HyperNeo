@@ -84,15 +84,18 @@ vi.mock('../AcpEditorModal.tsx', () => ({
     providerId,
     command,
     models,
+    envBacked,
     onClose,
   }: {
     providerId: string;
     command: string;
     models: Array<{ id: string }>;
+    envBacked?: boolean;
     onClose: () => void;
   }) => (
     <div data-testid="acp-editor-modal">
-      <span>{`${providerId}:${command}:${models.map((model) => model.id).join(',')}`}</span>
+      <span>{`${providerId}:${command}:${(models ?? []).map((model) => model.id).join(',')}`}</span>
+      <span data-testid="acp-editor-env-backed">{envBacked ? 'env' : 'explicit'}</span>
       <button data-testid="acp-editor-close" onClick={onClose}>
         Close
       </button>
@@ -361,6 +364,24 @@ describe('ProvidersSettings', () => {
     );
     fireEvent.click(screen.getByTestId('acp-editor-close'));
     expect(screen.queryByTestId('acp-editor-modal')).toBeNull();
+  });
+
+  it('treats a disabled record without a stored command as environment-backed', async () => {
+    const provider = createMockProvider('acp-1', 'acp', {
+      displayName: 'ACP Agent',
+      authType: 'none',
+      isEnabled: false,
+      available: false,
+    });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    await waitFor(() => expect(screen.getByText('Edit')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Edit'));
+    expect(screen.getByTestId('acp-editor-env-backed').textContent).toBe('env');
   });
 
   it('handles malformed ACP configuration', async () => {

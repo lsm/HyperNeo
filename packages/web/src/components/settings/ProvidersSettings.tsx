@@ -736,7 +736,7 @@ export function ProvidersSettings() {
                                     providerName: provider.displayName,
                                     command: readAcpCommand(provider),
                                     models: readAcpModels(provider),
-                                    envBacked: !readAcpCommand(provider) && provider.available,
+                                    envBacked: !readAcpCommand(provider),
                                   })
                                 }
                                 disabled={isPending}
