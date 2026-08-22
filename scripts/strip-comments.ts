@@ -128,8 +128,11 @@ function mergesTokens(text: string, before: number, after: number): boolean {
 }
 
 function followsPostfixOperand(text: string, before: number, after: number): boolean {
-  if (before < 0 || after + 1 >= text.length) return false;
-  const endsOperand = IDENT_CONTINUE.test(text[before]) || /[)\]'"`]/.test(text[before]);
+  if (after + 1 >= text.length) return false;
+  let b = before;
+  while (b >= 0 && /\s/.test(text[b])) b--;
+  if (b < 0) return false;
+  const endsOperand = IDENT_CONTINUE.test(text[b]) || /[)\]'"`]/.test(text[b]);
   const op = text.slice(after, after + 2);
   return endsOperand && (op === '++' || op === '--');
 }

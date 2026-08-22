@@ -223,6 +223,11 @@ describe('strip-comments', () => {
     expect(stripComments(source, 'a.ts', false)).toBe('x\n++\ny;\n');
   });
 
+  it('skips whitespace before a removed comment when preserving postfix ASI', () => {
+    const source = 'x /* note\n */++\ny;\n';
+    expect(stripComments(source, 'a.ts', false)).toBe('x\n++\ny;\n');
+  });
+
   it('retains empty JSX expression containers so child structure survives', () => {
     const source = 'export const W = () => (<W>Hello{/* note */}World</W>);\n';
     expect(stripComments(source, 'a.tsx', true)).toBe(
