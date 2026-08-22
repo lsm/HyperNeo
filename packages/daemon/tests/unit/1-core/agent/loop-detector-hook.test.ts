@@ -776,4 +776,362 @@ describe('LoopDetectorHook', () => {
       });
     });
   });
+
+  describe('deny message content (characterization)', () => {
+    function denyReason(result: unknown): string {
+      return (result as { hookSpecificOutput: { permissionDecisionReason: string } })
+        .hookSpecificOutput.permissionDecisionReason;
+    }
+
+    it('pins the exact generic loop recovery message', async () => {
+      const input = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
+      await call(hook, input);
+      await call(hook, input);
+      const result = await call(hook, input);
+
+      expect(denyReason(result)).toBe(
+        'Loop detected: Read was called 3 times in a row with identical arguments (file_path=/abs/foo.ts).' +
+          ' The result has not changed since the previous call. STOP re-running this tool — move on to the next step in your task.' +
+          ' If you have a TodoWrite list, mark progress and proceed to the next item.' +
+          ' If you genuinely need fresh data, perform a *different* action (edit a file, run a command, ask a question) before retrying.'
+      );
+    });
+
+    it('pins the exact Bash dead-loop recovery message', async () => {
+      const { preToolUse, postToolUseFailure } = createLoopDetectorHooks();
+      const cmd = makePreToolUse('Bash', {
+        command: 'ls -la .git/hooks 2>&1',
+        description: 'List git hooks',
+      });
+
+      for (let i = 0; i < 5; i++) {
+        expect(await call(preToolUse, cmd)).toEqual({});
+        await callPost(
+          postToolUseFailure,
+          makePostToolUseFailure('Bash', cmd.tool_input as Record<string, unknown>)
+        );
+      }
+      const result = await call(preToolUse, cmd);
+
+      expect(denyReason(result)).toBe(
+        'Bash dead-loop detected: the same command was run 6 times in a row and the last 5 attempts all failed (command=ls -la .git/hooks 2>&1).' +
+          ' Re-running the same failing command will not change the outcome. STOP and reconsider:' +
+          ' (1) read the previous error output carefully,' +
+          ' (2) inspect the relevant files or run a *different* diagnostic command,' +
+          ' (3) only retry after you have changed something that could plausibly affect the outcome.' +
+          ' If you are checking for a file or path, run a different probe (e.g. `ls` on the parent directory) instead of re-running the failing command.'
+      );
+    });
+  });
+
+  describe('argument summary rules (characterization)', () => {
+    function denyReason(result: unknown): string {
+      return (result as { hookSpecificOutput: { permissionDecisionReason: string } })
+        .hookSpecificOutput.permissionDecisionReason;
+    }
+
+    it('summarises Grep args as pattern then path', async () => {
+      const input = makePreToolUse('Grep', { pattern: 'TODO', path: 'src' });
+      for (let i = 0; i < 4; i++) {
+        await call(hook, input);
+      }
+      const result = await call(hook, input);
+      expect(denyReason(result)).toContain('(pattern=TODO, path=src)');
+    });
+
+    it('excludes a stray path field from the Read summary', async () => {
+      const input = makePreToolUse('Read', { file_path: '/abs/foo.ts', path: '/stray' });
+      await call(hook, input);
+      await call(hook, input);
+      const result = await call(hook, input);
+      const reason = denyReason(result);
+      expect(reason).toContain('(file_path=/abs/foo.ts)');
+      expect(reason).not.toContain('path=/stray');
+    });
+
+    it('falls back to a truncated JSON dump when no known arg fields exist', async () => {
+      const jsonHook = createLoopDetectorHook({ thresholds: { WebFetch: 2 } });
+      const input = makePreToolUse('WebFetch', { url: 'https://example.com' });
+      expect(await call(jsonHook, input)).toEqual({});
+      const result = await call(jsonHook, input);
+      expect(denyReason(result)).toContain('({"url":"https://example.com"})');
+    });
+
+    it('truncates the Bash command in the summary to 160 chars', async () => {
+      const { preToolUse, postToolUseFailure } = createLoopDetectorHooks();
+      const command = 'x'.repeat(200);
+      const cmd = makePreToolUse('Bash', { command });
+
+      for (let i = 0; i < 5; i++) {
+        expect(await call(preToolUse, cmd)).toEqual({});
+        await callPost(
+          postToolUseFailure,
+          makePostToolUseFailure('Bash', cmd.tool_input as Record<string, unknown>)
+        );
+      }
+      const result = await call(preToolUse, cmd);
+      const reason = denyReason(result);
+      expect(reason).toContain(`command=${'x'.repeat(160)}`);
+      expect(reason).not.toContain('x'.repeat(161));
+    });
+
+    it('truncates the joined candidate summary to 240 chars', async () => {
+      const pattern = 'p'.repeat(300);
+      const input = makePreToolUse('Grep', { pattern, path: 'src' });
+      for (let i = 0; i < 4; i++) {
+        await call(hook, input);
+      }
+      const result = await call(hook, input);
+      const expected = `pattern=${pattern}, path=src`.slice(0, 240);
+      expect(denyReason(result)).toContain(`(${expected}).`);
+      expect(denyReason(result)).not.toContain(', path=src');
+    });
+  });
+
+  describe('arg fingerprint similarity rules (characterization)', () => {
+    it('treats nested objects with different key order as identical', async () => {
+      const nestedHook = createLoopDetectorHook({ thresholds: { MyTool: 2 } });
+      const a = makePreToolUse('MyTool', { opts: { x: 1, y: 2 } });
+      const b = makePreToolUse('MyTool', { opts: { y: 2, x: 1 } });
+      expect(await call(nestedHook, a)).toEqual({});
+      expect(await call(nestedHook, b)).toMatchObject({
+        hookSpecificOutput: { permissionDecision: 'deny' },
+      });
+    });
+
+    it('treats arrays with different element order as different keys', async () => {
+      const nestedHook = createLoopDetectorHook({ thresholds: { MyTool: 3 } });
+      const a = makePreToolUse('MyTool', { opts: [1, 2] });
+      const b = makePreToolUse('MyTool', { opts: [2, 1] });
+      for (let i = 0; i < 6; i++) {
+        expect(await call(nestedHook, i % 2 === 0 ? a : b)).toEqual({});
+      }
+    });
+
+    it('does not normalise relative Read paths when cwd is absent', async () => {
+      const a = makePreToolUse('Read', { file_path: 'foo.ts' }, { cwd: undefined });
+      const b = makePreToolUse('Read', { file_path: './foo.ts' }, { cwd: undefined });
+      for (let i = 0; i < 6; i++) {
+        expect(await call(hook, i % 2 === 0 ? a : b)).toEqual({});
+      }
+      expect(await call(hook, a)).toEqual({});
+      expect(await call(hook, a)).toEqual({});
+      expect(await call(hook, a)).toMatchObject({
+        hookSpecificOutput: { permissionDecision: 'deny' },
+      });
+    });
+  });
+
+  describe('window boundaries (characterization)', () => {
+    it('treats a streak exactly windowMs old as still inside the window (inclusive)', async () => {
+      const original = Date.now;
+      let now = 1_000_000;
+      Date.now = () => now;
+      try {
+        const boundaryHook = createLoopDetectorHook({ windowMs: 100 });
+        const input = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
+
+        expect(await call(boundaryHook, input)).toEqual({});
+        now += 50;
+        expect(await call(boundaryHook, input)).toEqual({});
+        now += 50;
+        expect(await call(boundaryHook, input)).toMatchObject({
+          hookSpecificOutput: { permissionDecision: 'deny' },
+        });
+      } finally {
+        Date.now = original;
+      }
+    });
+
+    it('resets a streak one millisecond past the window', async () => {
+      const original = Date.now;
+      let now = 1_000_000;
+      Date.now = () => now;
+      try {
+        const boundaryHook = createLoopDetectorHook({ windowMs: 100 });
+        const input = makePreToolUse('Read', { file_path: '/abs/foo.ts' });
+
+        expect(await call(boundaryHook, input)).toEqual({});
+        now += 50;
+        expect(await call(boundaryHook, input)).toEqual({});
+        now += 51;
+        expect(await call(boundaryHook, input)).toEqual({});
+      } finally {
+        Date.now = original;
+      }
+    });
+
+    it('keeps a failure ring exactly windowMs old (staleness is strictly greater)', async () => {
+      const original = Date.now;
+      let now = 1_000_000;
+      Date.now = () => now;
+      try {
+        const { preToolUse, postToolUseFailure } = createLoopDetectorHooks({
+          windowMs: 50,
+          bash: { enabled: true, threshold: 1, failuresRequired: 2 },
+        });
+        const cmd = makePreToolUse('Bash', { command: 'flaky-cmd' });
+        const args = cmd.tool_input as Record<string, unknown>;
+
+        expect(await call(preToolUse, cmd)).toEqual({});
+        await callPost(postToolUseFailure, makePostToolUseFailure('Bash', args));
+        now += 50;
+        expect(await call(preToolUse, cmd)).toEqual({});
+        await callPost(postToolUseFailure, makePostToolUseFailure('Bash', args));
+        expect(await call(preToolUse, cmd)).toMatchObject({
+          hookSpecificOutput: { permissionDecision: 'deny' },
+        });
+      } finally {
+        Date.now = original;
+      }
+    });
+
+    it('expires a failure ring one millisecond past the window', async () => {
+      const original = Date.now;
+      let now = 1_000_000;
+      Date.now = () => now;
+      try {
+        const { preToolUse, postToolUseFailure } = createLoopDetectorHooks({
+          windowMs: 50,
+          bash: { enabled: true, threshold: 1, failuresRequired: 2 },
+        });
+        const cmd = makePreToolUse('Bash', { command: 'flaky-cmd' });
+        const args = cmd.tool_input as Record<string, unknown>;
+
+        expect(await call(preToolUse, cmd)).toEqual({});
+        await callPost(postToolUseFailure, makePostToolUseFailure('Bash', args));
+        now += 51;
+        expect(await call(preToolUse, cmd)).toEqual({});
+        await callPost(postToolUseFailure, makePostToolUseFailure('Bash', args));
+        expect(await call(preToolUse, cmd)).toEqual({});
+      } finally {
+        Date.now = original;
+      }
+    });
+  });
+
+  describe('Bash failure-ring semantics (characterization)', () => {
+    async function fail(
+      postToolUseFailure: HookCallback,
+      tool_input: Record<string, unknown>
+    ): Promise<void> {
+      await callPost(postToolUseFailure, makePostToolUseFailure('Bash', tool_input));
+    }
+
+    async function succeed(
+      postToolUse: HookCallback,
+      tool_input: Record<string, unknown>
+    ): Promise<void> {
+      await callPost(postToolUse, makePostToolUse('Bash', tool_input, { stdout: 'ok' }));
+    }
+
+    it('does not deny when the streak threshold is met but the ring has fewer than failuresRequired outcomes', async () => {
+      const { preToolUse, postToolUseFailure } = createLoopDetectorHooks({
+        bash: { enabled: true, threshold: 3, failuresRequired: 5 },
+      });
+      const cmd = makePreToolUse('Bash', { command: 'flaky-cmd' });
+      const args = cmd.tool_input as Record<string, unknown>;
+
+      for (let i = 0; i < 5; i++) {
+        expect(await call(preToolUse, cmd)).toEqual({});
+        await fail(postToolUseFailure, args);
+      }
+      expect(await call(preToolUse, cmd)).toMatchObject({
+        hookSpecificOutput: { permissionDecision: 'deny' },
+      });
+    });
+
+    it('a single success requires failuresRequired fresh failures before denying again (ring window)', async () => {
+      const { preToolUse, postToolUse, postToolUseFailure } = createLoopDetectorHooks({
+        bash: { enabled: true, threshold: 2, failuresRequired: 3 },
+      });
+      const cmd = makePreToolUse('Bash', { command: 'flaky-cmd' });
+      const args = cmd.tool_input as Record<string, unknown>;
+
+      for (let i = 0; i < 3; i++) {
+        expect(await call(preToolUse, cmd)).toEqual({});
+        await fail(postToolUseFailure, args);
+      }
+      expect(await call(preToolUse, cmd)).toMatchObject({
+        hookSpecificOutput: { permissionDecision: 'deny' },
+      });
+
+      await succeed(postToolUse, args);
+      expect(await call(preToolUse, cmd)).toEqual({});
+      await fail(postToolUseFailure, args);
+      expect(await call(preToolUse, cmd)).toEqual({});
+      await fail(postToolUseFailure, args);
+      expect(await call(preToolUse, cmd)).toEqual({});
+      await fail(postToolUseFailure, args);
+      expect(await call(preToolUse, cmd)).toMatchObject({
+        hookSpecificOutput: { permissionDecision: 'deny' },
+      });
+    });
+
+    it('drops the oldest outcome once the ring exceeds failuresRequired', async () => {
+      const { preToolUse, postToolUse, postToolUseFailure } = createLoopDetectorHooks({
+        bash: { enabled: true, threshold: 2, failuresRequired: 2 },
+      });
+      const cmd = makePreToolUse('Bash', { command: 'flaky-cmd' });
+      const args = cmd.tool_input as Record<string, unknown>;
+
+      expect(await call(preToolUse, cmd)).toEqual({});
+      await fail(postToolUseFailure, args);
+      await succeed(postToolUse, args);
+      expect(await call(preToolUse, cmd)).toEqual({});
+      await fail(postToolUseFailure, args);
+      expect(await call(preToolUse, cmd)).toEqual({});
+      await fail(postToolUseFailure, args);
+      expect(await call(preToolUse, cmd)).toMatchObject({
+        hookSpecificOutput: { permissionDecision: 'deny' },
+      });
+    });
+  });
+
+  describe('config resolution (characterization)', () => {
+    it('merges a partial bash override with the defaults', async () => {
+      const { preToolUse, postToolUseFailure } = createLoopDetectorHooks({
+        bash: { enabled: true, threshold: 2 },
+      });
+      const cmd = makePreToolUse('Bash', { command: 'flaky-cmd' });
+      const args = cmd.tool_input as Record<string, unknown>;
+
+      for (let i = 0; i < 5; i++) {
+        expect(await call(preToolUse, cmd)).toEqual({});
+        await callPost(postToolUseFailure, makePostToolUseFailure('Bash', args));
+      }
+      expect(await call(preToolUse, cmd)).toMatchObject({
+        hookSpecificOutput: { permissionDecision: 'deny' },
+      });
+    });
+
+    it('ignores a thresholds.Bash entry while bash.enabled is true (Bash never denies on successes)', async () => {
+      const { preToolUse, postToolUse } = createLoopDetectorHooks({
+        thresholds: { Bash: 2 },
+      });
+      const cmd = makePreToolUse('Bash', { command: 'git status' });
+      const args = cmd.tool_input as Record<string, unknown>;
+
+      for (let i = 0; i < 10; i++) {
+        expect(await call(preToolUse, cmd)).toEqual({});
+        await callPost(postToolUse, makePostToolUse('Bash', args, { stdout: 'ok' }));
+      }
+    });
+
+    it('applies thresholds.Bash through the generic path when bash.enabled is false', async () => {
+      const disabledBash = createLoopDetectorHook({
+        thresholds: { Bash: 2 },
+        bash: { enabled: false },
+      });
+      const input = makePreToolUse('Bash', { command: 'git status' });
+      expect(await call(disabledBash, input)).toEqual({});
+      const result = await call(disabledBash, input);
+      expect(result).toMatchObject({
+        hookSpecificOutput: { permissionDecision: 'deny' },
+      });
+      const reason = (result as { hookSpecificOutput: { permissionDecisionReason: string } })
+        .hookSpecificOutput.permissionDecisionReason;
+      expect(reason).toContain('Loop detected: Bash was called 2 times');
+    });
+  });
 });
