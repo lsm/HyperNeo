@@ -208,8 +208,18 @@ polling sources.
   (`runtime/connectors/github-connector.ts:1-15`) and can be a different account —
   in that configuration a token-login-only gate would admit the agent's own echo
   while suppressing unrelated activity by the ingestion-token owner. The set is
-  seeded from the ingestion token's `/user` login and extended via the A2 config
-  RPC (`suppressSelfEventsLogins: string[]` — e.g. the gh account, a bot login).
+  **explicitly configurable** via the A2 config RPC (`suppressSelfEventsLogins:
+  string[]` — e.g. the gh account, a bot login), and an explicit set always wins —
+  no auto-seed applies beside it. Auto-seeding from the ingestion token's `/user`
+  login is **conditional** (review finding, PR #2723): seed only when the ingestion
+  credential is known to be shared with the outbound path (sourced from the
+  `GITHUB_TOKEN` env the gh connector also honors, or a matching credential
+  fingerprint); when the ingestion credential is a distinct service credential and
+  a different outbound auth path exists (`GH_TOKEN`/`GH_CONFIG_DIR`), the
+  unconditional seed would false-drop every event initiated by the
+  ingestion-token owner — unrelated activity — so the daemon seeds nothing,
+  suppression waits for explicit configuration, and the health snapshot surfaces an
+  "identity ambiguous — set `suppressSelfEventsLogins`" hint.
   Do NOT reuse
   `resolveTokenStatus` semantics on the publish path — it caches only
   success/auth-rejected/403 and clears on timeouts and network/5xx failures
