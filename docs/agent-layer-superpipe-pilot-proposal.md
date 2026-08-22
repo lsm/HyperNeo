@@ -1447,7 +1447,16 @@ blocked awaiting the lease can acquire it *after* a replacement bumped the
 generation (`runQuery` has no setup-time check), then proceed through reads,
 apply, copy, and spawn overwriting the replacement — both runners take a full
 lifecycle resnapshot immediately after every awaited lease acquisition and
-before any apply/copy/spawn work; and the four ProviderService services (title
+before any apply/copy/spawn work, **and the QueryRunner revalidates after
+each awaited setup operation just as ACP does**: a replacement bumping the
+generation while the old runner already owns the lease and awaits
+`provider.isAvailable()`, `optionsBuilder.build()`, or an MCP
+invariant/self-heal callback would otherwise resume into the setup effects
+of `:462–639` (`errorManager.handleError`,
+`provider.setSessionThinkingConfig`, and the session-mutating self-heal
+callbacks) against the replacement's session; the lifecycle check follows
+every awaited setup operation and precedes its subsequent shared effects;
+and the four ProviderService services (title
 generation, conversation analysis, episode judging, workflow selection) all
 build a complete immutable `options.env` via `mergeProviderEnvVars` before
 iterating their query (session-lifecycle.ts:952–984,
