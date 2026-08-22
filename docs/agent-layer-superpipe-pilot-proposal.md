@@ -173,9 +173,8 @@ only: `model-switch-handler.ts` (+57, ACP session disposal on switch),
 diff of reference ref `origin/space/acp-devin-integration-verify-and-open-pr`).
 **Conclusion: query-runner.ts pilot work does NOT need to sequence after ACP
 8/10.** Only model-switch-handler work does (hence no model-switch chain below).
-Dependencies of 8/10 are mid-flight: splits 1 and 7 merged (#2689, #2687);
-splits 2 (#2698 open), 5 (#2688 merged), 6 (#2699 open), plus 3, 4, 9, 10 still
-open.
+Dependencies of 8/10: splits 1, 5, 6, and 7 have merged (#2689, #2688, #2699,
+#2687); splits 2 (#2698) and 3, 4, 9, 10 are still open.
 
 Other live collisions (all must land or stall before the corresponding chain's
 apply PRs):
@@ -217,8 +216,13 @@ apply PRs):
    enqueue failure after `deferred→enqueued` still strands an owner-less row. The
    fix shape is transactional ownership creation (status change + job insert in
    one transaction, as `persistAndEnqueueDelivery` already does) or an explicit
-   compensating transition; a CAS/transition table on `sdk-message-repository`
-   complements that but cannot replace it.
+   compensating transition. An expected-status CAS is explicitly *not* part of
+   this groundwork: the ack/consume paths run check→write synchronously in the
+   single-process daemon (`consumePersistedUserMessage` commits its
+   `updateMessageStatus` before its first await, sdk-message-handler.ts:302–306;
+   `handleMessageYielded` is synchronous through its update, :520–526), so a CAS
+   would close no reachable race — it was retracted on the same
+   run-to-completion grounds as the other withdrawn reports.
 4. **MessageQueue is shared by B and A**: the runner's generator consumes it
    (:1478–1510); the delivery machine admits into it (agent-session.ts:1481–1483).
    Extraction must not reorder enqueue vs generation-fence semantics
@@ -280,8 +284,9 @@ note.
   recoveryState, timers). The startup gate is the in-memory analog of spawn
   reservation; no DB primitive warranted (single process, children die with the
   daemon).
-- **Impact/risk:** top in-window fix density (3 fixes / 5 days; #2572, #2579,
-  #2549 pre-import); ~450 lines of nested classification become a readable
+- **Impact/risk:** top in-window fix density — all three post-import fixes
+  touching the file are retry-path corrections (#2564, #2572, #2579); ~450
+  lines of nested classification become a readable
   table; teardown dedup removes four copies of the most error-prone code in the
   layer. Risk low-moderate: best test coverage in the layer. **Sequence after PR
   #2661 merges** (it edits the terminal cascade region).
@@ -315,15 +320,14 @@ note.
   2. **PR 2 (additive):** `turn-end-routing.ts` + `usage-accounting.ts` pure
      modules + pipeline composition, unwired.
   3. **PR 3 (apply):** interpret at :720–755/:936–973, :333–392, :872–889.
-  4. **PR 4 (cleanup/ADR note);** optional separate Phase-0-style PR: expected-
-     status CAS on `sdk_messages.send_status` with its own characterization pins
-     (product-behavior change — racy flips become superseded outcomes).
-- **Phase 0 primitives:** direct analog applies to the ack/consume flips
-  (`acknowledgePersistedUserMessage` :265–296, `consumePersistedUserMessage`
-  :298–331, `handleMessageYielded` :512–595): expected-status CAS on
-  `sdk_messages`. Not the space primitives themselves — a new small primitive on
-  `sdk-message-repository`; per §4.3, pair it with transactional ownership
-  creation where a job insert must accompany the status change.
+  4. **PR 4 (cleanup/ADR note).**
+- **Phase 0 primitives:** none for race-closing — the ack/consume flips
+  (`acknowledgePersistedUserMessage` :265–296 → `consumePersistedUserMessage`
+  :298–331, `handleMessageYielded` :512–595) run check→write synchronously in
+  the single-process daemon, so an expected-status CAS on `sdk_messages` would
+  close no reachable race (retracted on the same run-to-completion grounds as
+  the other withdrawn reports). Transactional ownership creation (§4.3) remains
+  the Q4 fix where a job insert must accompany a status change.
 - **Impact/risk:** targets the recurring ack/idle/duplicate-delivery bug class
   (pre-import ancestors show it since Dec 2025; #2598 in-window). All targets
   are per-turn-boundary (cold) — hot-path rule respected. Risk moderate: the
@@ -434,9 +438,14 @@ deferred→enqueued written before durable V2 ownership; failure leaves owner-le
 snapshot can double-enqueue (:78–86). (Q6) `QueryRunner.start` silently
 no-ops on stale running-with-null-promise state (:341–348). (Q7) deferred
 restart reason dropped + failure swallowed (query-lifecycle-manager.ts:644–649).
-(Q8) deferred-permission TOCTOU (query-runner.ts:373–399). (Q9) 429-handoff can
-strand: superseded episode + skipped terminal path ⇒ no retry, no idle
-(:1240–1242 + query-lifecycle-manager.ts:503–512). (Q10) process-env mutated
+(Q8) deferred-permission TOCTOU (query-runner.ts:373–399). (Retraction: the
+earlier 429-handoff stranding report (Q9) is withdrawn — episode generation
+advances only via watchdog `cancel()`/`reset()`, and every production caller
+either installs a replacement owner (`deliverChatMessage` cancels after
+creating the durable turn and then queues it), runs lifecycle normalization
+(interrupt/reset/restart), or finishes a turn; `scheduleRetry` returning true on
+a generation mismatch intentionally defers to the successor rather than
+stranding state.) (Q10) process-env mutated
 before startup-gate admission; queued session holds mutated env
 (query-runner.ts:660 vs :690). (Q11) startup-gate cap re-read per call; release
 bypasses cap re-check (sdk-startup-gate.ts:43–53, :102–107). (Q12) substring
@@ -467,15 +476,20 @@ processing-state guard; races an in-flight turn (rewind-handler.ts:239–274,
 :606–645). (F3) diff revert replaces first occurrence only; Write-created files
 silently skipped (:374–400). (F4) selective rewind 10k-message window +
 `messageIds[0]`-as-checkpoint (:436, :461, :513). (F5) terminal errors
-correlated to turns by wall-clock, not uuid (agent-session.ts:1681–1686). (F6)
-`replayPendingMessagesForImmediateMode` force-enables the periodic reconciler
-even for Space-gated sessions (:658). (Retraction: the earlier unbounded-
+correlated to turns by wall-clock, not uuid (agent-session.ts:1681–1686).
+(Retractions: the earlier unbounded-
 `recentlyExitedAgentRootPids` report is withdrawn — app.ts:316's ProcessWatchdog
 polls `getTrackedAgentRootPidsSplit` every five minutes, which expires the map
 (agent-session.ts:2052), so it is retention-bounded in production. The earlier
 queued-answer-without-`ensureQueryStarted` report (M4) is likewise withdrawn:
 the only production construction (agent-session.ts:339) always supplies the
-callback; the gap exists only in test doubles.)
+callback; the gap exists only in test doubles. The earlier Space
+reconciler-gate report (F6) is withdrawn too: gated sessions are constructed
+with `autoReplayPendingMessages: false` (session-manager.ts:122–145) and the
+runtime calls `replayPendingMessagesAfterRuntimeProvisioning` →
+`replayPendingMessagesForImmediateMode` only after attaching the runtime MCP
+servers (space-runtime-service.ts:787–805, :1473–1483, :1656–1658) — setting
+`reconcilerProvisioned` there is the intended gate release, not a bypass.)
 
 **State machines:** (M1) orphan records hardcode
 `cancelReason:'agent_session_terminated'` while the event carries the real
