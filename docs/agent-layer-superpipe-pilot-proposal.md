@@ -1169,7 +1169,10 @@ GitHub security/router spawns, and the ambient availability readers — handles
 ACP's pre-apply snapshot and the recursive arms' release-before-recursion, and
 ships concurrency pins for each interleaving named above (cross-session
 overlap, replacement-during-apply, reader-during-window). It lands before or
-with Chain B's apply PRs.
+with Chain B's apply PRs — and **after (or explicitly coordinating with) ACP
+split 8/10**, which owns `acp-query-runner.ts` around the same `:451–456`
+snapshot/apply region PR 0's ACP handling edits; running concurrently risks
+conflicting or lost ownership changes on that file.
 
 Create chain B first (sequence its apply PRs after #2661 merges), chain C in
 parallel once #2661/#2543 clear, chain A as the wave-2 capstone after #2543
