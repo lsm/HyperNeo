@@ -4,6 +4,7 @@ import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Logger } from '../logger';
+import { ClearConversationCancelledError } from './agent-session';
 import {
   deliverAndMarkQueued,
   deliverBatchAndMarkQueued,
@@ -131,7 +132,15 @@ export class QueryModeHandler {
     const plan = this.planFlush(flushMessages);
     if (plan.action === 'noop') return;
     if (plan.contextReset.action !== 'clear_then_flush') return;
-    await this.ctx.clearConversationContext();
+    try {
+      await this.ctx.clearConversationContext();
+    } catch (error) {
+      if (error instanceof ClearConversationCancelledError) throw error;
+      this.ctx.logger.warn(
+        `turn-end flush clear failed for session ${this.ctx.session.id}: ` +
+          `${error instanceof Error ? error.message : String(error)} — flushing without clear`
+      );
+    }
   }
 
   private async deliverFlushUnderV2(

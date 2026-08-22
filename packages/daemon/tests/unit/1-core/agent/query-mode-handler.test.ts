@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { ClearConversationCancelledError } from '../../../../src/lib/agent/agent-session';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import {
   QueryModeHandler,
@@ -634,6 +635,52 @@ describe('QueryModeHandler', () => {
 
       expect(result).toEqual({ success: true, messageCount: 1 });
       expect(clearSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps flushing when the pre-flush clear fails (non-cancellation)', async () => {
+      const clearSpy = mock(async () => {
+        throw new Error('MessageQueueTimeoutError: /clear delivery timed out');
+      });
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(deferredBatch(3)));
+      mockDb = {
+        getUserMessagesByStatus: getUserMessagesByStatusSpy,
+        updateMessageStatus: updateMessageStatusSpy,
+        getJobQueueRepo: () => ({
+          activeDeliveryMessageUuids: () => new Set<string>(),
+          hasActiveTurnDeliveryJob: () => false,
+        }),
+      } as unknown as Database;
+
+      handler = new QueryModeHandler(resetSlotContext(clearSpy));
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 3 });
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(3);
+      expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+      expect(String(mockLogger.warn.mock.calls[0][0])).toContain('flushing without clear');
+    });
+
+    it('aborts the flush when the pre-flush clear is cancelled by teardown', async () => {
+      const clearSpy = mock(async () => {
+        throw new ClearConversationCancelledError();
+      });
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(deferredBatch(3)));
+      mockDb = {
+        getUserMessagesByStatus: getUserMessagesByStatusSpy,
+        updateMessageStatus: updateMessageStatusSpy,
+        getJobQueueRepo: () => ({
+          activeDeliveryMessageUuids: () => new Set<string>(),
+          hasActiveTurnDeliveryJob: () => false,
+        }),
+      } as unknown as Database;
+
+      handler = new QueryModeHandler(resetSlotContext(clearSpy));
+      const result = await handler.handleQueryTrigger();
+
+      expect(result.success).toBe(false);
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
     });
   });
 
