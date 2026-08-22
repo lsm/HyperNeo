@@ -26,6 +26,7 @@ import type {
   SystemPromptConfig,
 } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type { Database } from '../../storage/database';
 import { ErrorManager, type StructuredError } from '../error-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -35,6 +36,15 @@ import { SettingsManager } from '../settings-manager';
 export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 
 const SESSION_RECONCILE_INTERVAL_MS = 60_000;
+
+const CLEAR_CONFIRM_TIMEOUT_MS = 45_000;
+
+export class ClearConversationCancelledError extends Error {
+  constructor() {
+    super('clearConversationContext cancelled by query teardown');
+    this.name = 'ClearConversationCancelledError';
+  }
+}
 
 const DELIVERY_TURN_NO_ACTIVITY_MS = (() => {
   const env = Number(process.env.HYPERNEO_DELIVERY_NO_ACTIVITY_MS);
@@ -169,7 +179,11 @@ import {
 } from './query-runner';
 import { RateLimitWatchdog } from './rate-limit-watchdog';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
-import { SDKMessageHandler, type SDKMessageHandlerContext } from './sdk-message-handler';
+import {
+  SDKMessageHandler,
+  type SDKMessageHandlerContext,
+  type SuppressedResultOutcome,
+} from './sdk-message-handler';
 import { SDKRuntimeConfig, type SDKRuntimeConfigContext } from './sdk-runtime-config';
 import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager';
@@ -246,6 +260,7 @@ export class AgentSession
   private reconcilerProvisioned = false;
   pendingRestartReason: 'settings.local.json' | null = null;
   private initialPendingReplayScheduled = false;
+  private clearConfirmTimeoutMs = CLEAR_CONFIRM_TIMEOUT_MS;
 
   readonly errorManager: ErrorManager;
   settingsManager: SettingsManager;
@@ -715,6 +730,7 @@ export class AgentSession
     skipDeferredReplay?: boolean;
   }): Promise<void> {
     this.rateLimitWatchdog.cancel();
+    this.messageHandler.cancelSuppressedResultWait();
 
     await this.interruptHandler.handleInterrupt(opts);
   }
@@ -759,12 +775,60 @@ export class AgentSession
 
     await this.lifecycleManager.ensureQueryStarted();
     this.messageHandler.suppressIdleForNextResult();
+    const clearMessageId = generateUUID();
+    const confirmedClear = this.messageHandler.armSuppressedResultWait(clearMessageId);
+    let clearWaitOutcome: SuppressedResultOutcome | null = null;
+    void confirmedClear.then((outcome) => {
+      clearWaitOutcome = outcome;
+    });
     try {
-      await this.messageQueue.enqueue('/clear', true);
+      await this.messageQueue.enqueueWithId(clearMessageId, '/clear', true);
     } catch (err) {
       this.messageHandler.clearIdleSuppression();
+      if (clearWaitOutcome === 'cancelled') {
+        throw new ClearConversationCancelledError();
+      }
+      if (err instanceof Error && err.name === 'MessageQueueTimeoutError') {
+        this.logger.warn(
+          `clearConversationContext: /clear delivery to the SDK timed out — resetting the ` +
+            `query before rethrowing`
+        );
+        await this.resetQueryForcingTeardown();
+      }
       throw err;
     }
+    this.messageHandler.markClearMessageSent();
+    this.messageHandler.startSuppressedResultTimer(this.clearConfirmTimeoutMs);
+    const clearOutcome = await confirmedClear;
+    if (clearOutcome === 'confirmed') {
+      return;
+    }
+    this.messageHandler.clearIdleSuppression();
+    if (clearOutcome === 'cancelled') {
+      throw new ClearConversationCancelledError();
+    }
+    this.logger.warn(
+      `clearConversationContext: /clear not confirmed within ${this.clearConfirmTimeoutMs / 1000}s ` +
+        `— resetting the query and proceeding without confirmed clear`
+    );
+    await this.resetQueryForcingTeardown();
+  }
+
+  private async resetQueryForcingTeardown(): Promise<void> {
+    const resetResult = await this.resetQuery();
+    if (!resetResult.success) {
+      this.logger.warn(
+        `clearConversationContext: query reset failed (${resetResult.error ?? 'unknown error'}) ` +
+          `— forcing query teardown before proceeding`
+      );
+      await this.lifecycleManager.stop({ catchQueryErrors: true }).catch((stopError) => {
+        this.logger.warn('clearConversationContext: forced teardown failed:', stopError);
+      });
+    }
+  }
+
+  overrideClearConfirmTimeoutMsForTest(ms: number): void {
+    this.clearConfirmTimeoutMs = ms;
   }
 
   private nextPastSdkSessionIds(): string[] | undefined {
@@ -2213,6 +2277,7 @@ export class AgentSession
       clearInterval(this.reconcileTimer);
       this.reconcileTimer = null;
     }
+    this.messageHandler.cancelSuppressedResultWait();
     this.clearDeliveryTurnStall();
     for (const unsub of this.deliveryErrorSubs) {
       try {
