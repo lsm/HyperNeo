@@ -716,7 +716,9 @@ export class SpaceTaskRepository {
   archiveTask(id: string): SpaceTask | null {
     const now = Date.now();
     const stmt = this.db.prepare(
-      `UPDATE space_tasks SET status = 'archived', archived_at = ?, updated_at = ? WHERE id = ?`
+      `UPDATE space_tasks SET status = 'archived', archived_at = ?, updated_at = ?,
+        terminal_generation = terminal_generation + CASE WHEN status = 'archived' THEN 0 ELSE 1 END
+       WHERE id = ?`
     );
     stmt.run(now, now, id);
     this.upsertTaskSearchRow(id);

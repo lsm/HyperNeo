@@ -1021,4 +1021,17 @@ describe('SpaceGoalService', () => {
     expect(superseded).toBe('superseded');
     expect(taskRepo.getTask(task.task!.id)?.terminalGeneration).toBe(1);
   });
+
+  it('advances the terminal generation through the archive writer without re-advancing archived rows', () => {
+    const goal = service.createGoal({ spaceId, title: 'Archive generation goal' });
+    const task = service.createImmediateTask(goal.id);
+    expect(task.task).not.toBeNull();
+
+    taskRepo.updateTask(task.task!.id, { status: 'in_progress' });
+    taskRepo.archiveTask(task.task!.id);
+    expect(taskRepo.getTask(task.task!.id)?.terminalGeneration).toBe(1);
+
+    taskRepo.archiveTask(task.task!.id);
+    expect(taskRepo.getTask(task.task!.id)?.terminalGeneration).toBe(1);
+  });
 });
