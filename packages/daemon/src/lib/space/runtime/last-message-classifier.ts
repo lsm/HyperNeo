@@ -10,8 +10,7 @@ export function classifyLastMessageForIdleAgent(
   if (!message) return { terminal: false, reason: 'no SDK messages were recorded' };
 
   if (message.type === 'result') {
-    const isError = (message as { is_error?: unknown }).is_error === true;
-    if (!isError && getSdkResultOriginKind(message) === 'task-notification') {
+    if (isHollowTaskNotificationResult(message)) {
       return { terminal: false, reason: 'task-notification result awaits follow-up turn' };
     }
     const subtype =
@@ -63,6 +62,19 @@ export function classifyLastMessageForIdleAgent(
   }
 
   return { terminal: false, reason: 'assistant message has no terminal end_turn/result signal' };
+}
+
+function isHollowTaskNotificationResult(message: SDKMessage): boolean {
+  if ((message as { is_error?: unknown }).is_error === true) return false;
+  if (getSdkResultOriginKind(message) !== 'task-notification') return false;
+  const result = (message as { result?: unknown }).result;
+  if (typeof result === 'string' && result.trim().length > 0) return false;
+  const usage = (message as { usage?: unknown }).usage;
+  const inputTokens =
+    isRecord(usage) && typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
+  const outputTokens =
+    isRecord(usage) && typeof usage.output_tokens === 'number' ? usage.output_tokens : 0;
+  return inputTokens === 0 && outputTokens === 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

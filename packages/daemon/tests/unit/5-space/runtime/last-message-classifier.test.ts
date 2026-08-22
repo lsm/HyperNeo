@@ -39,6 +39,34 @@ describe('classifyLastMessageForIdleAgent', () => {
     });
   });
 
+  it('classifies a task-notification-origin result with non-empty text as terminal', () => {
+    const message = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: 'Background task output consumed; continuing.',
+      usage: { input_tokens: 0, output_tokens: 0 },
+      origin: { kind: 'task-notification' },
+    } as unknown as SDKMessage;
+    expect(classifyLastMessageForIdleAgent(message)).toEqual(
+      expect.objectContaining({ terminal: true })
+    );
+  });
+
+  it('classifies a task-notification-origin result with nonzero usage as terminal', () => {
+    const message = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: '',
+      usage: { input_tokens: 12, output_tokens: 34 },
+      origin: { kind: 'task-notification' },
+    } as unknown as SDKMessage;
+    expect(classifyLastMessageForIdleAgent(message)).toEqual(
+      expect.objectContaining({ terminal: true })
+    );
+  });
+
   it('classifies an error-flagged task-notification-origin result as terminal (part-3 territory)', () => {
     const message = {
       type: 'result',
