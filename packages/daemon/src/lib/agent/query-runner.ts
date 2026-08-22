@@ -1508,6 +1508,14 @@ export class QueryRunner {
     const { session, messageQueue, stateManager, logger } = this.ctx;
 
     for await (const { message, onSent } of messageQueue.messageGenerator(session.id)) {
+      if (this.ctx.isLimitRecoveryPending?.()) {
+        logger.info('Prompt feed: limit recovery engaged; requeueing prompt until the retry.');
+        const yieldedUuid = message.uuid;
+        if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {
+          logger.warn(`Prompt feed: could not requeue yielded prompt ${yieldedUuid}.`);
+        }
+        break;
+      }
       const queuedMessage = message as typeof message & { internal?: boolean };
       const isInternal = queuedMessage.internal || false;
 

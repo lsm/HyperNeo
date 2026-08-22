@@ -305,6 +305,34 @@ describe('QueryRunner', () => {
       expect(runner.resolveRetryUserMessage('init-uuid')?.uuid).toBe('init-uuid');
       expect(runner.resolveRetryUserMessage('init-uuid')?.content).toBe('first prompt');
     });
+
+    it('stops feeding prompts and requeues them while limit recovery is pending', async () => {
+      async function* generator() {
+        yield {
+          message: { uuid: 'queued-uuid', message: { content: 'queued steer' } },
+          onSent: () => {},
+        };
+      }
+      const requeueYieldedSpy = mock(() => true);
+      runner = createRunner({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: generator,
+          requeueYielded: requeueYieldedSpy,
+        } as unknown as MessageQueue,
+        isLimitRecoveryPending: () => true,
+      });
+
+      const wrapper = runner.createMessageGeneratorWrapper(1);
+      const yielded: unknown[] = [];
+      for await (const item of wrapper) {
+        yielded.push(item);
+      }
+
+      expect(yielded).toEqual([]);
+      expect(requeueYieldedSpy).toHaveBeenCalledWith('queued-uuid');
+      expect(runner.lastConsumedUserMessage).toBeNull();
+    });
   });
 
   describe('start', () => {
