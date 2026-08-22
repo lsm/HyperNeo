@@ -376,8 +376,14 @@ polling sources.
   `eventType`, `action`, `actor`, `repoOwner`, `repoName`, `prNumber`, `prUrl`,
   `body`, plus the per-type extras it copies) and the `replyHandle`/`resolveHandle`
   fields — can never be removed, so delivered messages keep basic context and agents
-  keep the handles they need to respond — **as must every key referenced by an
-  active goal-automation subscription filter** (review finding, PR #2723):
+  keep the handles they need to respond — and compatibility with goal-automation
+  subscriptions is enforced **against all stored GitHub-matchable subscriptions
+  through the bidirectional write-time validation below, never by dynamically
+  reserving active-filter keys** (review finding, PR #2723): a dynamic active-key
+  reserved set would make persisted fields depend on goal status — pausing a goal
+  could change what is stored, and resuming it could reactivate a filter whose key
+  was omitted — contradicting the all-stored validation rule and §4's
+  subscriber-driven prohibition.
   `findMatchingSubscription` calls `filterMatches(subscription.filter,
   event.payload)` directly against the persisted payload
   (`goal-automation-service.ts:308-316`), so removing a referenced key (e.g.
