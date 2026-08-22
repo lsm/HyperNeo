@@ -189,8 +189,8 @@ apply PRs):
   `limit-error-classifier.ts`. Collides with chains B and C.
 - **PR #2543 (open)** — Codex-findings triage: touches `agent-session.ts`,
   `message-delivery.ts`, `sdk-message-handler.ts`,
-  `job-handlers/message-delivery.handler.ts`. Collides with chains B (lightly)
-  and C.
+  `job-handlers/message-delivery.handler.ts`. Collides with chains A, B, and C
+  — those are exactly Chain A's target files as well as B/C regions.
 - **Landed since the survey basis:** #2696 (Issue #2548 part 2 — SDK interrupt
   receipt + refusal rewind target; `61e5f9b`) touched interrupt-handler.ts,
   sdk-message-handler.ts, agent-session.ts — no longer a collision, but it added
@@ -289,8 +289,10 @@ note.
   recoveryState, timers). The startup gate is the in-memory analog of spawn
   reservation; no DB primitive warranted (single process, children die with the
   daemon).
-- **Impact/risk:** top in-window fix density — all three post-import fixes
-  touching the file are retry-path corrections (#2564, #2572, #2579); ~450
+- **Impact/risk:** three post-import fixes touch the file, two of them squarely
+  inside Chain B's scope (#2572 futile startup-retry skip, #2579 startup-timeout
+  failure hint; #2564 corrected deferred-permission application, adjacent to the
+  same lifecycle but outside the catch classification); ~450
   lines of nested classification become a readable
   table; teardown dedup removes four copies of the most error-prone code in the
   layer. Risk low-moderate: best test coverage in the layer. **Sequence after PR
@@ -494,15 +496,21 @@ servers (space-runtime-service.ts:787–805, :1473–1483, :1656–1658) — set
 
 **State machines:** (M1) orphan records hardcode
 `cancelReason:'agent_session_terminated'` while the event carries the real
-reason (ask-user-question-handler.ts:454–477 — pinned by test). (M2) superseded
-submit double-recorded submitted→cancelled (:303 vs :323). (M3)
-`setWaitingForInput` throw ⇒ deny **and** rethrow to SDK (:184–195). (M5)
+reason (ask-user-question-handler.ts:454–477 — pinned by test). (M5)
 model-switch TOCTOU: switch racing interrupt can resurrect a stopped query
 (model-switch-handler.ts:177–237). (M6) rollback never restarts the query;
-thinking-block strip not reverted (:258–300). (M7) `waiting_for_input` restored
-verbatim across restarts ⇒ zombie cards; recovery scattered
-(processing-state-manager.ts:105–106). (M8) `persistToDatabase` swallows errors
-— silent divergence (:116–125).
+thinking-block strip not reverted (:258–300). (Retractions: the earlier M2
+double-recording report is withdrawn — `resolvedQuestions` is keyed by
+toolUseId, so the later `cancelled` write patches the `submitted` entry in place
+(ask-user-question-handler.ts:594), exactly what the supersession test pins.
+The earlier M3 deny-and-rethrow report is withdrawn — on `setWaitingForInput`
+rejection the deny-resolve happens before the promise has been returned to any
+caller (:184–192), so the SDK observes only the thrown error. The earlier M7
+zombie-card report is withdrawn — a restored `waiting_for_input` card stays
+actionable after restart: `handleQuestionResponse`'s resolver-null branch routes
+into `deliverQueuedAnswer` (idle → production `ensureQueryStarted` →
+`tool_result` injection), cancellation uses the same recovery path, and the
+orphan sweep covers session teardown.)
 
 **Dispatch:** (S1) `handleResultMessage` success-only — error results skip
 fallback ack + errorClear + accounting (sdk-message-handler.ts:765, :927–930).
