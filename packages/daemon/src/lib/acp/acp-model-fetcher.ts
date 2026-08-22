@@ -23,6 +23,7 @@ export async function disposeAcpSessions(
   const { command, args } = parseAcpCommand(commandLine);
   const workspace = process.cwd();
   const owner = processTreeOwner ?? (await getAcpProcessTreeOwner());
+  if (signal?.aborted) return;
   const client = new AcpClient({
     command,
     args,

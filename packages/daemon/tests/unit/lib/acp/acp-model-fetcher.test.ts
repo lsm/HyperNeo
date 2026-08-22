@@ -210,6 +210,21 @@ describe('fetchAcpModels', () => {
     expect(calls).toEqual([]);
   });
 
+  test('rechecks the abort signal after the process owner lookup', async () => {
+    const controller = new AbortController();
+
+    const disposePromise = disposeAcpSessions(
+      'devin acp',
+      ['session-a'],
+      undefined,
+      controller.signal
+    );
+    controller.abort();
+    await disposePromise;
+
+    expect(calls).toEqual([]);
+  });
+
   test('bounds total discovery time and cancels the client when exceeded', async () => {
     let releaseInitialize: () => void;
     initializeGate = new Promise<void>((resolve) => {
