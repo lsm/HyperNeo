@@ -684,6 +684,10 @@ describe('ApiErrorCircuitBreaker', () => {
         await cb.checkMessage(connectionErrorMessage);
         expect(cb.getState().tripCount).toBe(1);
 
+        jest.setSystemTime(T0 + 500);
+        const whileOpen = await cb.checkMessage(connectionErrorMessage);
+        expect(whileOpen).toBe(false);
+
         jest.setSystemTime(T0 + 1001);
         expect(cb.isTripped()).toBe(false);
 
