@@ -83,6 +83,7 @@ export class SDKMessageHandler {
   private suppressedResultWaiter: {
     resolve: (confirmed: boolean) => void;
     timer: ReturnType<typeof setTimeout>;
+    expectedUserMessageUuid?: string;
   } | null = null;
 
   private eventsSinceContextRefresh: number = 0;
@@ -169,20 +170,37 @@ export class SDKMessageHandler {
     this.suppressIdleOnNextResult = true;
   }
 
-  waitForSuppressedResult(timeoutMs: number): Promise<boolean> {
+  waitForSuppressedResult(timeoutMs: number, expectedUserMessageUuid?: string): Promise<boolean> {
     this.settleSuppressedResultWaiter(false);
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => this.settleSuppressedResultWaiter(false), timeoutMs);
       if (typeof timer.unref === 'function') {
         timer.unref();
       }
-      this.suppressedResultWaiter = { resolve, timer };
+      this.suppressedResultWaiter = { resolve, timer, expectedUserMessageUuid };
     });
   }
 
   clearIdleSuppression(): void {
     this.suppressIdleOnNextResult = false;
     this.settleSuppressedResultWaiter(false);
+  }
+
+  private matchesArmedClearResult(message: SDKMessage): boolean {
+    if (!this.suppressIdleOnNextResult || !isSDKResultMessage(message)) {
+      return false;
+    }
+    const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
+      .parent_tool_use_id;
+    if (parentToolUseId !== null && parentToolUseId !== undefined) {
+      return false;
+    }
+    const expected = this.suppressedResultWaiter?.expectedUserMessageUuid;
+    if (expected === undefined) {
+      return true;
+    }
+    const userMessageUuid = (message as { user_message_uuid?: string }).user_message_uuid;
+    return userMessageUuid === undefined || userMessageUuid === expected;
   }
 
   private settleSuppressedResultWaiter(confirmed: boolean): void {
@@ -727,13 +745,13 @@ export class SDKMessageHandler {
 
     if (!deferredSuccessfully) {
       this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
-      if (isTopLevelResult && this.suppressIdleOnNextResult) {
+      if (this.matchesArmedClearResult(message)) {
         this.clearIdleSuppression();
       }
       return;
     }
 
-    if (isTopLevelResult && this.suppressIdleOnNextResult) {
+    if (this.matchesArmedClearResult(message)) {
       if (isSDKResultSuccess(message)) {
         this.settleSuppressedResultWaiter(true);
       } else {
@@ -935,9 +953,13 @@ export class SDKMessageHandler {
       sessionId: session.id,
     });
 
-    if (this.suppressIdleOnNextResult) {
+    if (this.matchesArmedClearResult(message)) {
       this.suppressIdleOnNextResult = false;
-    } else if (!this.usesSessionStateChangedTurnEnd && !this.expectsSessionStateIdleAfterResult) {
+    } else if (
+      !this.suppressIdleOnNextResult &&
+      !this.usesSessionStateChangedTurnEnd &&
+      !this.expectsSessionStateIdleAfterResult
+    ) {
       await this.finishTurn();
     }
   }

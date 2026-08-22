@@ -868,7 +868,9 @@ export class TaskAgentManager {
         const kickoffMessage = runtimeContract
           ? `${initialMessage}\n\n${runtimeContract}`
           : initialMessage;
-        await this.injectMessageIntoSession(spawned, kickoffMessage);
+        await this.withSessionInjectLock(spawned.session.id, () =>
+          this.injectMessageIntoSession(spawned, kickoffMessage)
+        );
       }
       return actualSessionId;
     } catch (err) {
@@ -4049,7 +4051,9 @@ export class TaskAgentManager {
           `spawnPostApprovalSubSession: live session ${existingSessionId} for agent "${matchedSlot.name}" vanished before injection (task ${taskId})`
         );
       }
-      await this.injectMessageIntoSession(existing, kickoffMessage);
+      await this.withSessionInjectLock(existing.session.id, () =>
+        this.injectMessageIntoSession(existing, kickoffMessage)
+      );
       log.info(
         `TaskAgentManager.spawnPostApprovalSubSession: reused live session ${existingSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
       );
@@ -4135,7 +4139,9 @@ export class TaskAgentManager {
       phase: 'spawn',
     });
 
-    await this.injectMessageIntoSession(spawned, kickoffMessage);
+    await this.withSessionInjectLock(spawned.session.id, () =>
+      this.injectMessageIntoSession(spawned, kickoffMessage)
+    );
 
     log.info(
       `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`

@@ -26,6 +26,7 @@ import type {
   SystemPromptConfig,
 } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type { Database } from '../../storage/database';
 import { ErrorManager, type StructuredError } from '../error-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -762,9 +763,13 @@ export class AgentSession
 
     await this.lifecycleManager.ensureQueryStarted();
     this.messageHandler.suppressIdleForNextResult();
-    const confirmedClear = this.messageHandler.waitForSuppressedResult(this.clearConfirmTimeoutMs);
+    const clearMessageId = generateUUID();
+    const confirmedClear = this.messageHandler.waitForSuppressedResult(
+      this.clearConfirmTimeoutMs,
+      clearMessageId
+    );
     try {
-      await this.messageQueue.enqueue('/clear', true);
+      await this.messageQueue.enqueueWithId(clearMessageId, '/clear', true);
     } catch (err) {
       this.messageHandler.clearIdleSuppression();
       throw err;

@@ -743,6 +743,37 @@ describe('SDKMessageHandler', () => {
       expect(await wait).toBe(false);
     });
 
+    it('a result for another turn (e.g. /compact) does not confirm the correlated clear wait', async () => {
+      const result = (uuid: string, userMessageUuid?: string): SDKMessage =>
+        ({
+          type: 'result',
+          subtype: 'success',
+          uuid,
+          user_message_uuid: userMessageUuid,
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        }) as unknown as SDKMessage;
+
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      let settled: boolean | null = null;
+      void wait.then((confirmed) => {
+        settled = confirmed;
+      });
+
+      await handler.handleMessage(result('compact-result', 'compact-msg-id'));
+      expect(settled).toBe(null);
+
+      await handler.handleMessage(result('clear-result', 'clear-msg-id'));
+      expect(await wait).toBe(true);
+    });
+
     it('an error result resolves the wait unconfirmed and releases idle suppression', async () => {
       const errorResult: SDKMessage = {
         type: 'result',

@@ -63,16 +63,17 @@ function createAgentSession(
 
 function stubClearExternals(session: AgentSession): void {
   spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
-  spyOn(session.messageQueue, 'enqueue').mockResolvedValue('clear-msg-id');
+  spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
   spyOn(session.messageHandler, 'waitForSuppressedResult').mockResolvedValue(true);
 }
 
-function makeClearResult(uuid: string): SDKMessage {
+function makeClearResult(uuid: string, userMessageUuid?: string): SDKMessage {
   return {
     type: 'result',
     subtype: 'success',
     uuid,
     is_error: false,
+    ...(userMessageUuid ? { user_message_uuid: userMessageUuid } : {}),
     usage: {
       input_tokens: 10,
       output_tokens: 5,
@@ -109,16 +110,23 @@ describe('AgentSession.clearConversationContext', () => {
     spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockImplementation(async () => {
       order.push('ensureQueryStarted');
     });
-    spyOn(session.messageQueue, 'enqueue').mockImplementation(async () => {
-      order.push('enqueue');
-      return 'clear-msg-id';
-    });
+    spyOn(session.messageQueue, 'enqueueWithId').mockImplementation(
+      async (messageId: string, content: string | unknown[]) => {
+        expect(messageId).toBeTruthy();
+        expect(content).toBe('/clear');
+        order.push('enqueue');
+      }
+    );
     spyOn(session.messageHandler, 'waitForSuppressedResult').mockResolvedValue(true);
 
     await session.clearConversationContext();
 
     expect(order).toEqual(['ensureQueryStarted', 'enqueue']);
-    expect(session.messageQueue.enqueue).toHaveBeenCalledWith('/clear', true);
+    expect(session.messageQueue.enqueueWithId).toHaveBeenCalledWith(
+      expect.any(String),
+      '/clear',
+      true
+    );
   });
 
   it('arms idle suppression before /clear so its result cannot fire the completion callback early', async () => {
@@ -129,13 +137,17 @@ describe('AgentSession.clearConversationContext', () => {
     await session.clearConversationContext();
 
     expect(suppressSpy).toHaveBeenCalledTimes(1);
-    expect(session.messageQueue.enqueue).toHaveBeenCalledWith('/clear', true);
+    expect(session.messageQueue.enqueueWithId).toHaveBeenCalledWith(
+      expect.any(String),
+      '/clear',
+      true
+    );
   });
 
   it('releases the idle suppression and rethrows if /clear enqueue fails', async () => {
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
     spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
-    spyOn(session.messageQueue, 'enqueue').mockRejectedValue(new Error('queue closed'));
+    spyOn(session.messageQueue, 'enqueueWithId').mockRejectedValue(new Error('queue closed'));
     const releaseSpy = spyOn(session.messageHandler, 'clearIdleSuppression');
 
     await expect(session.clearConversationContext()).rejects.toThrow('queue closed');
@@ -166,7 +178,11 @@ describe('AgentSession.clearConversationContext', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(deliveredAfterClear).toBe(null);
 
-    await session.messageHandler.handleMessage(makeClearResult('clear-result'));
+    const clearMessageUuid = String(yielded.value?.message.uuid);
+    await session.messageHandler.handleMessage(makeClearResult('compact-result', 'compact-msg-id'));
+    expect(deliveredAfterClear).toBe(null);
+
+    await session.messageHandler.handleMessage(makeClearResult('clear-result', clearMessageUuid));
     await caller;
 
     expect(deliveredAfterClear).toBe('delivered');
@@ -349,7 +365,11 @@ describe('AgentSession.clearConversationContext', () => {
     await session.clearConversationContext();
 
     expect(db.updateSession).not.toHaveBeenCalled();
-    expect(session.messageQueue.enqueue).toHaveBeenCalledWith('/clear', true);
+    expect(session.messageQueue.enqueueWithId).toHaveBeenCalledWith(
+      expect.any(String),
+      '/clear',
+      true
+    );
   });
 
   it('keeps the NeoKai session id stable and preserves message history', async () => {
