@@ -170,12 +170,8 @@ interface RegisteredCompensation {
 const RESERVED_KEYS = new Set(['decision', 'next', 'then', '$outcome', '$unwind']);
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-function isThenable(value: unknown): value is Promise<unknown> {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    typeof (value as { then?: unknown }).then === 'function'
-  );
+function isPromise(value: unknown): value is Promise<unknown> {
+  return value instanceof Promise;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -226,7 +222,7 @@ type Deliver = (merge: Record<string, unknown> | Promise<Record<string, unknown>
 function deliverViaNext(view: Record<string, unknown>): Deliver {
   const next = view.next as (error?: unknown, value?: unknown) => void;
   return (merge) => {
-    if (isThenable(merge)) {
+    if (isPromise(merge)) {
       merge.then((resolved) => next(null, resolved));
       return;
     }
@@ -289,7 +285,7 @@ function buildGatherAdapter(
     };
     try {
       const gathered = stage.run(bodyView);
-      if (isThenable(gathered)) {
+      if (isPromise(gathered)) {
         gathered.then(
           (resolved) => {
             try {
@@ -323,7 +319,7 @@ function buildDecideAdapter(
     const apply = (
       stamped: unknown
     ): Record<string, unknown> | Promise<Record<string, unknown>> => {
-      if (isThenable(stamped)) {
+      if (isPromise(stamped)) {
         stamped.then(undefined, () => {});
         return fail(
           new StagedRunContractError(flow, `decide stage ${stage.name} must stay synchronous`)
@@ -408,7 +404,7 @@ function buildEffectAdapter(
     };
     try {
       const result = stage.run(bodyView);
-      if (isThenable(result)) {
+      if (isPromise(result)) {
         result.then(
           (resolved) => {
             try {
@@ -439,7 +435,7 @@ function buildHaltAdapter(
     const bodyView = stripUnwind(view);
     const fail = (error: unknown) => failureOutcome(flow, stage.name, error, stack, log);
     const apply = (result: unknown): Record<string, unknown> | Promise<Record<string, unknown>> => {
-      if (isThenable(result)) {
+      if (isPromise(result)) {
         return result.then(
           (value) => ({ $outcome: { status: 'completed', result: value } }),
           (error) => fail(error) as Promise<Record<string, unknown>>

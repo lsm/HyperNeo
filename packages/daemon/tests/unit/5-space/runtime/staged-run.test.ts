@@ -808,6 +808,27 @@ describe('stagedRun control flow', () => {
     ]);
     await expect(flow({})).resolves.toEqual({ status: 'completed', result: undefined });
   });
+
+  test('a halt result carrying a callable then field is delivered as a value', async () => {
+    let invoked = false;
+    const domain: Record<string, unknown> = { verdict: 'stopped' };
+    // biome-ignore lint/suspicious/noThenProperty: then-valued halt result is the pinned hazard
+    domain.then = () => {
+      invoked = true;
+      return undefined;
+    };
+    const flow = stagedRun<Box>('then-valued-result', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+      s.halt({
+        name: 'end',
+        run: () => domain,
+      }),
+    ]);
+    const outcome = await flow({});
+    expect(outcome.status).toBe('completed');
+    expect((outcome.result as { verdict: string }).verdict).toBe('stopped');
+    expect(invoked).toBe(false);
+  });
 });
 
 describe('stagedRun CAS outcome routing', () => {
