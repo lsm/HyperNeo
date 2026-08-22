@@ -87,6 +87,11 @@ export function isSDKResultError(msg: SDKMessage): msg is Extract<
   return msg.type === "result" && (msg as SDKResultMessage).subtype !== "success";
 }
 
+export function getSdkResultOriginKind(msg: SDKMessage): string | null {
+  if (!isSDKResultMessage(msg)) return null;
+  return msg.origin?.kind ?? null;
+}
+
 export function isSDKSystemMessage(
   msg: SDKMessage,
 ): msg is Extract<SDKMessage, { type: "system" }> {

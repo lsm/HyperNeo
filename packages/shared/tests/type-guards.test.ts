@@ -7,6 +7,7 @@ import {
   isSDKResultMessage,
   isSDKResultSuccess,
   isSDKResultError,
+  getSdkResultOriginKind,
   isSDKSystemMessage,
   isSDKSystemInit,
   isSDKCompactBoundary,
@@ -216,6 +217,41 @@ describe('isSDKResultError', () => {
       num_turns: 1,
     };
     expect(isSDKResultError(msg as unknown as SDKMessage)).toBe(false);
+  });
+});
+
+describe('getSdkResultOriginKind', () => {
+  test('should return the origin kind for result message with origin', () => {
+    const msg = {
+      ...baseProps,
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      num_turns: 2,
+      origin: { kind: 'task-notification' },
+    };
+    expect(getSdkResultOriginKind(msg as unknown as SDKMessage)).toBe('task-notification');
+  });
+
+  test('should return null for result message without origin', () => {
+    const msg = {
+      ...baseProps,
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      num_turns: 1,
+    };
+    expect(getSdkResultOriginKind(msg as unknown as SDKMessage)).toBeNull();
+  });
+
+  test('should return null for non-result message', () => {
+    const msg = {
+      ...baseProps,
+      type: 'user',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Hello' },
+    };
+    expect(getSdkResultOriginKind(msg as unknown as SDKMessage)).toBeNull();
   });
 });
 
