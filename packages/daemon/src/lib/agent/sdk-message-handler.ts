@@ -78,6 +78,8 @@ export interface SDKMessageHandlerContext {
     userMessageUuid?: string
   ): Promise<boolean>;
 
+  isLimitRecoveryPending?(): boolean;
+
   bumpDeliveryTurnActivity?(): void;
   reportFirstDeliverySDKResponse?(responseType: string): void;
 }
@@ -1028,6 +1030,11 @@ export class SDKMessageHandler {
 
     if (stateManager.getState().status === 'rate_limit_cooldown') {
       this.logger.info('Skipping turn-end idle and replay: rate limit cooldown is armed.');
+      return;
+    }
+
+    if (this.ctx.isLimitRecoveryPending?.() ?? false) {
+      this.logger.info('Skipping turn-end idle and replay: limit fallback recovery is pending.');
       return;
     }
 

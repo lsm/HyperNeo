@@ -667,14 +667,20 @@ export class AgentSession
   async startQueryAndEnqueue(
     messageId: string,
     messageContent: string | MessageContent[],
-    episodeGeneration?: number
+    episodeGeneration?: number,
+    options?: { prepend?: boolean }
   ): Promise<void> {
     if (episodeGeneration === undefined) {
       this.rateLimitWatchdog.cancel();
     } else {
       this.rateLimitWatchdog.clearPendingCooldown();
     }
-    await this.lifecycleManager.startQueryAndEnqueue(messageId, messageContent, episodeGeneration);
+    await this.lifecycleManager.startQueryAndEnqueue(
+      messageId,
+      messageContent,
+      episodeGeneration,
+      options
+    );
   }
 
   removeQueuedMessage(messageId: string): boolean {
@@ -867,7 +873,8 @@ export class AgentSession
       await this.startQueryAndEnqueue(
         lastUserMessage.uuid,
         lastUserMessage.content,
-        episodeGeneration
+        episodeGeneration,
+        { prepend: true }
       );
       return true;
     } catch (error) {

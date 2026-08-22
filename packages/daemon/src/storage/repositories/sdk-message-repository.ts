@@ -1651,6 +1651,7 @@ export class SDKMessageRepository {
               SELECT m.consumed_seq FROM sdk_messages m
                WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
             )
+            AND COALESCE(json_extract(r.sdk_message, '$.is_error'), 0) = 0
           LIMIT 1`
       )
       .get(sessionId, sessionId, uuid) as { 1: number } | undefined | null;

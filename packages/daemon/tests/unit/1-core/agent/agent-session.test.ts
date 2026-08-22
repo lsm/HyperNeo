@@ -2736,7 +2736,12 @@ describe('AgentSession', () => {
 
       await agentSession.startQueryAndEnqueue('msg-id', 'test content');
 
-      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', 'test content', undefined);
+      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith(
+        'msg-id',
+        'test content',
+        undefined,
+        undefined
+      );
     });
 
     it('should handle MessageContent array', async () => {
@@ -2749,7 +2754,7 @@ describe('AgentSession', () => {
       const content = [{ type: 'text', text: 'hello' }];
       await agentSession.startQueryAndEnqueue('msg-id', content);
 
-      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', content, undefined);
+      expect(startQueryAndEnqueueSpy).toHaveBeenCalledWith('msg-id', content, undefined, undefined);
     });
 
     it('cancels the in-flight recovery episode for genuine new input (undefined generation)', async () => {

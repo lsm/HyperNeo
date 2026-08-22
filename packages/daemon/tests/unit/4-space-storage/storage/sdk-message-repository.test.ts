@@ -2050,6 +2050,7 @@ describe('SDKMessageRepository', () => {
         terminal?: boolean;
         subtype?: string;
         sendStatus?: string;
+        sdkMessage?: string;
       }
     ): void {
       const effectiveStatus = opts.sendStatus ?? (type === 'user' ? 'consumed' : null);
@@ -2073,7 +2074,7 @@ describe('SDKMessageRepository', () => {
         sessionId,
         type,
         opts.subtype ?? (type === 'result' && opts.terminal ? 'success' : null),
-        '{}',
+        opts.sdkMessage ?? '{}',
         opts.timestamp,
         effectiveStatus,
         opts.terminal ? 1 : 0,
@@ -2104,6 +2105,25 @@ describe('SDKMessageRepository', () => {
         timestamp: '2026-08-11T15:25:53.000Z',
         terminal: true,
         subtype: 'error_during_execution',
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
+    });
+
+    it('is FALSE for a synthetic success result with is_error — intercepted limit turns stay recoverable', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-uuid',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+        subtype: 'success',
+        sdkMessage: JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          terminal_reason: 'api_error',
+        }),
       });
       expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
     });

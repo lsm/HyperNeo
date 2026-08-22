@@ -505,7 +505,8 @@ export class QueryLifecycleManager {
   async startQueryAndEnqueue(
     messageId: string,
     messageContent: string | MessageContent[],
-    episodeGeneration?: number
+    episodeGeneration?: number,
+    options?: { prepend?: boolean }
   ): Promise<void> {
     const { session, messageQueue, stateManager, internalEventBus } = this.ctx;
 
@@ -534,8 +535,10 @@ export class QueryLifecycleManager {
     await stateManager.setQueued(messageId);
 
     try {
-      void messageQueue
-        .enqueueWithId(messageId, messageContent)
+      const enqueuePromise = options?.prepend
+        ? messageQueue.enqueueWithId(messageId, messageContent, false, { prepend: true })
+        : messageQueue.enqueueWithId(messageId, messageContent);
+      void enqueuePromise
         .catch((error) => this.handleQueuedMessageFailure(messageId, messageContent, error))
         .catch((handlerError) => {
           this.logger.warn('Failed to handle queued message delivery error', handlerError);
