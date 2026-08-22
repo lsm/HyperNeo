@@ -266,7 +266,7 @@ export class AgentSession
   settingsManager: SettingsManager;
   readonly logger: Logger;
 
-  onMissingWorkflowMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
+  onMissingWorkflowMcpServers?: (session: AgentSession, missing: string[]) => Promise<void>;
 
   onMissingSpaceChatMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 

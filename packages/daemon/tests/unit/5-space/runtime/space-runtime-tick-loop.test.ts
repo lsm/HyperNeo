@@ -117,6 +117,7 @@ function makeMockTaskAgentManager(
     spawnWorkflowNodeAgent?: (task: unknown) => Promise<string>;
     isExecutionSpawning?: (executionId: string) => boolean;
     isSessionAlive?: (sessionId: string) => boolean;
+    isSessionInMemory?: (sessionId: string) => boolean;
     spawnWorkflowNodeAgentForExecution?: (
       task: unknown,
       space: unknown,
@@ -190,6 +191,7 @@ function makeMockTaskAgentManager(
     isTaskAgentAlive: overrides.isTaskAgentAlive ?? (() => false),
     spawnWorkflowNodeAgent: spawnImpl,
     isExecutionSpawning: overrides.isExecutionSpawning ?? (() => false),
+    isSessionInMemory: overrides.isSessionInMemory ?? (() => false),
     isSessionAlive:
       overrides.isSessionAlive ??
       ((sessionId: string) => {
@@ -1677,6 +1679,106 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(notifications.filter((n) => n.runId === run.id).length).toBeGreaterThanOrEqual(1);
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
       expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+    });
+
+    test('human-reopened task repairs blocked executions even after retries are exhausted', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: '[MCP invariant] Workflow sub-session still missing required MCP servers',
+        agentSessionId: 'session:ghost-after-restart',
+        completedAt: Date.now(),
+      });
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'blocked',
+        blockReason: 'execution_failed',
+        result: 'Workflow run stalled across daemon restart',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+      (rt as unknown as { blockedRetryCounts: Map<string, number> }).blockedRetryCounts.set(
+        run.id,
+        MAX_BLOCKED_RUN_RETRIES
+      );
+
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'in_progress',
+        blockReason: null,
+        result: null,
+      });
+
+      await rt.executeTick();
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      const repaired = nodeExecutionRepo.getById(execution.id);
+      expect(repaired?.status).toBe('in_progress');
+      expect(repaired?.agentSessionId).not.toBe('session:ghost-after-restart');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('in_progress');
+      expect(tam._spawned.length).toBeGreaterThanOrEqual(1);
+    });
+
+    test('human-reopened task drops bindings whose indexed session ended in an execution error', async () => {
+      const erroredSession = 'session:errored-worker';
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionInMemory: (sessionId) => sessionId === erroredSession,
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: 'Agent session failed',
+        agentSessionId: erroredSession,
+        completedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal)
+         VALUES (?, ?, 'result', 'error_during_execution', ?, ?, 'consumed', 'system', 1, 1)`
+      ).run(
+        'msg-errored-worker',
+        erroredSession,
+        JSON.stringify({
+          type: 'result',
+          subtype: 'error_during_execution',
+          is_error: true,
+        }),
+        new Date().toISOString()
+      );
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'blocked',
+        blockReason: 'execution_failed',
+        result: 'Agent session failed',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+      (rt as unknown as { blockedRetryCounts: Map<string, number> }).blockedRetryCounts.set(
+        run.id,
+        MAX_BLOCKED_RUN_RETRIES
+      );
+
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'in_progress',
+        blockReason: null,
+        result: null,
+      });
+
+      await rt.executeTick();
+      await rt.executeTick();
+
+      const repaired = nodeExecutionRepo.getById(execution.id);
+      expect(repaired?.agentSessionId).not.toBe(erroredSession);
+      expect(repaired?.status).toBe('in_progress');
+      expect(tam._spawned.length).toBeGreaterThanOrEqual(1);
     });
   });
 
