@@ -205,9 +205,16 @@ polling sources.
   erases the other's key. Route per-space config writes through a per-space promise
   queue — the extension's existing `webhookConfigQueues` idiom (`:289`); a
   store-level `json_patch`-style partial settings update is the alternative if the
-  queue proves insufficient. (Global config is already safe: all
-  four global writers spread — `app.ts:153`, `rpc-handlers/index.ts:252`,
-  `github-event-extension.ts:1636`/`:1649`.)
+  queue proves insufficient. **Global config needs the same serialization** (review
+  finding, PR #2723): spreading only protects single-writer sequences —
+  `setGlobalConfig` also replaces `settings_json` wholesale
+  (`extension-config-store.ts:75-100`), and the global-enabled RPC and
+  polling-capability writers each await a read before writing, so once A2 adds a
+  global suppression writer, a concurrent enable/disable or polling update can read
+  the old settings and erase the new flag. All `github` global config mutations
+  route through one source-scoped queue in the same PR (writers today:
+  `app.ts:153`, `rpc-handlers/index.ts:252`,
+  `github-event-extension.ts:1636`/`:1649`).
 - **PR A3 (surface):** expose the toggle through the `space.github.*` config RPCs and
   `SpaceExternalEventsSettings` UI, plus a suppression counter with its own gate-side
   storage (review finding, PR #2723): the existing health `eventTypes` machinery
@@ -237,7 +244,13 @@ polling sources.
   via REST (up to five pages — `resolveDeploymentPrNumbers :851-862`,
   `resolvePullRequestNumbersForCommit :951-985`) *before* normalization, so when
   every matched space denies the header event type, short-circuit before those
-  calls; the per-space post-normalization gate is retained for finer filters.
+  calls — **and `markWebhookReceived` on all matched targets first** (review
+  finding, PR #2723): the enrichment handlers otherwise mark only after PR
+  resolution and publication (`:845`, `:935`), so without the mark, installations
+  denying these types would show stale `lastWebhookAt` despite valid signed
+  deliveries arriving; the inactive-deployment branch (`:786-793`) is the existing
+  mark-before-return precedent. The per-space post-normalization gate is retained
+  for finer filters.
   Sequenced after chain A PR A2's settings-preservation fix, and its filter writes
   use the same merge-preserved `settings` mechanism — never a from-scratch settings
   object.
@@ -251,8 +264,21 @@ polling sources.
   `eventType`, `action`, `actor`, `repoOwner`, `repoName`, `prNumber`, `prUrl`,
   `body`, plus the per-type extras it copies) and the `replyHandle`/`resolveHandle`
   fields — can never be removed, so delivered messages keep basic context and agents
-  keep the handles they need to respond; `rawPayload` and other non-reserved extras
-  are freely projectable. This is the **P1 transform pipeline**
+  keep the handles they need to respond — **as must every key referenced by an
+  active goal-automation subscription filter** (review finding, PR #2723):
+  `findMatchingSubscription` calls `filterMatches(subscription.filter,
+  event.payload)` directly against the persisted payload
+  (`goal-automation-service.ts:308-316`), so removing a referenced key (e.g.
+  `actorType`) silently stops the automation from enqueueing while topic routing
+  still succeeds; validate projection configs at write time against the keys active
+  filters reference (or evaluate filters pre-projection) — silent match-stop is
+  unacceptable. Scope note (review finding, PR #2723): `rawPayload` is a single
+  opaque key holding the entire native object (`:1119`), so top-level projection
+  over it is all-or-nothing — B3 ships the binary `rawPayload` toggle plus
+  top-level projection of non-reserved extras, and nested-path extraction mappings
+  (dotted paths into `rawPayload`, e.g. labels or sender fields — the literal
+  "this one field" ask) are an explicit follow-up PR with a safe path-expression
+  vocabulary, not a B3 claim. This is the **P1 transform pipeline**
   pattern; it is also the moment the ADR's on-the-shelf `transformRun` idiom can earn
   extraction — but only if it is the ≈3rd real transform (github-normalizer
   composition, this projection, store delta application); otherwise a plain function,
