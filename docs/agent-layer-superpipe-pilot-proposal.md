@@ -316,14 +316,21 @@ note.
   begun, or generation replaced) return before queue-clear or any arm; as
   distinct routes (or shell-retained gates) those inputs cannot fall through to
   terminal handling |
-  rate_limit_handoff(scheduled | declined) — the awaited `onRateLimitExhausted`
+  rate_limit_handoff(scheduled | declined | **thrown**) — the awaited
+  `onRateLimitExhausted`
   outcome decides the post-effect route: `scheduled` suppresses terminal
   handling, while `declined` (no consumed prompt, exhausted watchdog budget)
   falls back to `beginTerminalIdle` + `errorManager` + `setIdle`
   (:1240–1289) — **after a generation resnapshot**: the handoff effect awaits
   (e.g. its no-prompt path awaits `setIdle`), so a replacement may have taken
   the session by the time `declined` returns, and a stale result must route to
-  superseded/no-op before applying the declined terminal actions; the handoff
+  superseded/no-op before applying the declined terminal actions — and
+  **`scheduleRetry` can reject** (it awaits fallback resolution and
+  `setRateLimitCooldown`, rate-limit-watchdog.ts:149–215): production then
+  exits the catch through `finally` *without* the declined branch's
+  terminal actions, so a thrown-effect outcome is modeled explicitly (or
+  exception propagation stays in the shell) rather than coercing the failure
+  into `declined`; the handoff
   interpreter carries this post-effect decision as a
   pinned branch rather than nested routing |
   api_validation(text) — a parseable API validation failure (e.g.
@@ -370,7 +377,11 @@ note.
   list. The backoff arm's
   sleep→revalidate→re-enqueue→recurse (:1066–1151) is a `stagedRun` candidate
   (async stages: sleep, re-check, re-enqueue) but sync-core-first per Decision
-  item 5; the existing generation guards inform the resnapshot stage but must not
+  item 5 — note the arm also **persists and publishes a retry notice** first
+  (`displayErrorAsAssistantMessage`, :1091–1096 → :1619–1643, a fresh UUID per
+  call): if staged, that write/publication is a reserved-and-compensable effect
+  with an idempotency key, or it stays in the shell, since a retried pass can
+  otherwise duplicate the notice; the existing generation guards inform the resnapshot stage but must not
   be presented as complete fencing — PR 1 pins the unfenced windows (transient
   arm :1024–1034 ahead of :1060; every arm's awaited `setIdle` ahead of its
   first guard; the message-not-found pointer consumption at :970 is *not* one —
@@ -544,7 +555,11 @@ note.
   can enqueue a duplicate or canceled delivery — and since `admitWithId`
   unconditionally appends, the staged effect additionally needs UUID/claim-keyed
   idempotence or an exact-entry compensation, because a retried pass under the
-  same still-current claim can otherwise double-admit);
+  same still-current claim can otherwise double-admit — **plus a durable
+  intent/reservation before admission**, since admission is an external
+  side effect under the ADR (:148–153) and a crash or failed compensation after
+  `admitWithId` leaves no durable record to deduplicate or reconcile a
+  replay);
   `reconcileStrandedDeliveries` stale-submitted sweep (:1977–1997); MessageQueue
   timeout policy (:105–128) as plain transform. Includes removing the
   production-dead module-level `reconcileStrandedDeliveries`
@@ -635,7 +650,12 @@ note.
   unconditional status update with no claim token or expected status, so a
   superseded claim can mark the replacement's members `submitted` and halt
   before admitting them, leaving rows the handler treats as already submitted.
-  A claim/expected-state-guarded transition or compensation covers both —
+  **Guarded writes are mandatory, not an alternative to compensation**: per the
+  stagedRun contract (ADR :169–177) every persistent write uses an atomic
+  primitive carrying its read preconditions, with compensation an additional
+  obligation — an unguarded update lets a stale pass mutate replacement-owned
+  rows before any unwind, and its compensation can then overwrite newer state.
+  Both effects take guarded writes **and** registered compensations —
   and the compensation must cover the **publication**, not just the row:
   `markDeliveryBatchSubmitted` fire-and-forgets a `messages.statusChanged`
   event (:1883–1896), so an unwind that restores rows to `enqueued` without a
