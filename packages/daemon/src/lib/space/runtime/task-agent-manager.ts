@@ -74,7 +74,6 @@ import {
   PermanentSpawnError,
   validateTaskAllowsSpawn,
 } from './workflow-node-execution-validation';
-import type { DbQueryMcpServer } from '../../db-query/tools';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
@@ -364,10 +363,7 @@ export class TaskAgentManager {
 
   private taskWorktreePaths = new Map<string, string>();
 
-  private taskDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly auditLogRepo: McpAuditLogRepository;
-
-  private eagerSubSessionIds = new Map<string, Map<string, string>>();
 
   private taskArchiveListenerUnsub: (() => void) | null = null;
   private rateLimitListenerUnsubs: Array<() => void> = [];
@@ -905,29 +901,10 @@ export class TaskAgentManager {
     if (memberInfo?.agentName) {
       const parentTask = this.config.taskRepo.getTask(taskId);
       if (parentTask?.workflowRunId) {
-        const eagerSessionId = this.eagerSubSessionIds.get(taskId)?.get(memberInfo.agentName);
-        let prevExec = this.config.nodeExecutionRepo
+        const prevExec = this.config.nodeExecutionRepo
           .listByWorkflowRun(parentTask.workflowRunId)
           .filter((e) => e.agentName === memberInfo.agentName && e.agentSessionId)
           .at(-1);
-        if (!prevExec && eagerSessionId) {
-          prevExec = {
-            id: '',
-            workflowRunId: parentTask.workflowRunId,
-            workflowNodeId: memberInfo.nodeId ?? '',
-            agentName: memberInfo.agentName,
-            agentId: memberInfo.agentId ?? null,
-            agentSessionId: eagerSessionId,
-            status: 'pending',
-            result: null,
-            data: null,
-            createdAt: 0,
-            startedAt: null,
-            completedAt: null,
-            updatedAt: 0,
-            lastActivityAt: null,
-          };
-        }
         if (prevExec?.agentSessionId) {
           const existing =
             this.agentSessionIndex.get(prevExec.agentSessionId) ??
@@ -2012,10 +1989,6 @@ export class TaskAgentManager {
     }
   }
 
-  isSpawning(_taskId: string): boolean {
-    return false;
-  }
-
   isExecutionSpawning(executionId: string): boolean {
     return this.spawningExecutionIds.has(executionId);
   }
@@ -2056,10 +2029,6 @@ export class TaskAgentManager {
       this.taskWorktreePaths.set(taskId, stored);
       return stored;
     }
-    return undefined;
-  }
-
-  getTaskAgent(_taskId: string): AgentSession | undefined {
     return undefined;
   }
 
@@ -2424,18 +2393,6 @@ export class TaskAgentManager {
 
     this.taskWorktreePaths.delete(taskId);
 
-    this.eagerSubSessionIds.delete(taskId);
-
-    const dbQueryServer = this.taskDbQueryServers.get(taskId);
-    if (dbQueryServer) {
-      try {
-        dbQueryServer.close();
-      } catch (err) {
-        log.warn(`TaskAgentManager: failed to close db-query server for task ${taskId}:`, err);
-      }
-      this.taskDbQueryServers.delete(taskId);
-    }
-
     log.info(`TaskAgentManager: shutdown complete for task ${taskId} (DB state preserved)`);
   }
 
@@ -2478,18 +2435,6 @@ export class TaskAgentManager {
     }
 
     this.taskWorktreePaths.delete(taskId);
-
-    this.eagerSubSessionIds.delete(taskId);
-
-    const dbQueryServer = this.taskDbQueryServers.get(taskId);
-    if (dbQueryServer) {
-      try {
-        dbQueryServer.close();
-      } catch (err) {
-        log.warn(`TaskAgentManager: failed to close db-query server for task ${taskId}:`, err);
-      }
-      this.taskDbQueryServers.delete(taskId);
-    }
 
     log.info(
       `TaskAgentManager: cleaned up in-memory state for task ${taskId} (reason: ${reason}, DB + worktree preserved)`
