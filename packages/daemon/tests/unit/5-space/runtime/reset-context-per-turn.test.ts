@@ -889,7 +889,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     status = 'idle';
     await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
 
-    expect(order).toEqual(['/clear', 'a human follow-up', '─── Message from coder ───']);
+    expect(order).toEqual(['a human follow-up', '/clear', '─── Message from coder ───']);
     expect(session.clearMock).toHaveBeenCalledTimes(1);
   });
 

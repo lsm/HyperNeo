@@ -639,7 +639,7 @@ describe('QueryModeHandler', () => {
       expect(enqueueWithIdSpy).toHaveBeenCalledTimes(3);
     });
 
-    it('clears ahead of a human-only backlog when a task input is pending behind it', async () => {
+    it('delivers a human-only backlog first and clears for the task input pending behind it', async () => {
       const order: string[] = [];
       const clearSpy = mock(async () => {
         order.push('clear');
@@ -665,7 +665,38 @@ describe('QueryModeHandler', () => {
       const result = await handler.handleQueryTrigger({ pendingTaskInput: true });
 
       expect(result).toEqual({ success: true, messageCount: 1 });
-      expect(order).toEqual(['clear', 'uuid-human']);
+      expect(order).toEqual(['uuid-human', 'clear']);
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('delivers leading human rows before the clear that fronts the task rows', async () => {
+      const order: string[] = [];
+      const clearSpy = mock(async () => {
+        order.push('clear');
+      });
+      enqueueWithIdSpy.mockImplementation(async (uuid: string) => {
+        order.push(uuid);
+      });
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          {
+            dbId: 'db-human',
+            uuid: 'uuid-human',
+            type: 'user',
+            isSynthetic: false,
+            inputKind: 'human',
+            message: { role: 'user', content: 'a human follow-up' },
+          },
+          ...deferredBatch(2),
+        ] as unknown as SDKMessage[])
+      );
+      resetSlotDb();
+
+      handler = new QueryModeHandler(resetSlotContext(clearSpy));
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 3 });
+      expect(order).toEqual(['uuid-human', 'clear', 'uuid-1', 'uuid-2']);
       expect(clearSpy).toHaveBeenCalledTimes(1);
     });
 

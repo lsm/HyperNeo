@@ -1,5 +1,5 @@
 import type { MessageContent, Session } from '@hyperneo/shared';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -47,7 +47,7 @@ export class QueryModeHandler {
     messageCount: number;
     error?: string;
   }> {
-    const { session, db, internalEventBus, messageQueue, logger } = this.ctx;
+    const { session, db, internalEventBus, logger } = this.ctx;
 
     const runFlush = async (): Promise<number> => {
       const { messages: allDeferred } = db.getUserMessagesByStatus(session.id, 'deferred');
@@ -83,18 +83,7 @@ export class QueryModeHandler {
       });
 
       if (!isMessageDeliveryV2Enabled()) {
-        await this.clearContextAheadOfFlush(flushMessages, options);
-        const v2Owned =
-          db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
-        await this.ctx.ensureQueryStarted();
-        for (const msg of deferredMessages) {
-          if (typeof msg.uuid !== 'string' || msg.uuid.length === 0) continue;
-          if (v2Owned.has(msg.uuid)) continue;
-          const replayContent = this.toReplayContent(msg.message.content);
-          if (replayContent) {
-            await messageQueue.enqueueWithId(msg.uuid, replayContent);
-          }
-        }
+        await this.deliverRowsViaMemoryQueue(deferredMessages, flushMessages, options);
       }
 
       return deferredMessages.length;
@@ -111,6 +100,41 @@ export class QueryModeHandler {
       logger.error('Failed to trigger query:', error);
       return { success: false, messageCount: 0, error: errorMessage };
     }
+  }
+
+  private async deliverRowsViaMemoryQueue(
+    messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>,
+    flushMessages: FlushMessage[],
+    options?: { skipContextReset?: boolean; pendingTaskInput?: boolean }
+  ): Promise<boolean> {
+    const session = this.ctx.session;
+    const v2Owned =
+      this.ctx.db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ??
+      new Set<string>();
+    const taskUuids = new Set(
+      flushMessages.filter((message) => message.isTaskInput).map((message) => message.uuid)
+    );
+    await this.ctx.ensureQueryStarted();
+    let clearAttempted = false;
+    let clearedContext = false;
+    const clearAheadOfTask = async (): Promise<void> => {
+      clearAttempted = true;
+      clearedContext = await this.clearContextAheadOfFlush(flushMessages, options);
+    };
+    for (const msg of messages) {
+      if (typeof msg.uuid !== 'string' || msg.uuid.length === 0) continue;
+      if (v2Owned.has(msg.uuid)) continue;
+      const replayContent = this.toReplayContent(msg.message.content);
+      if (!replayContent) continue;
+      if (!clearAttempted && taskUuids.has(msg.uuid)) {
+        await clearAheadOfTask();
+      }
+      await this.ctx.messageQueue.enqueueWithId(msg.uuid, replayContent);
+    }
+    if (!clearAttempted && options?.pendingTaskInput === true) {
+      await clearAheadOfTask();
+    }
+    return clearedContext;
   }
 
   private toFlushMessages(
@@ -232,17 +256,10 @@ export class QueryModeHandler {
           'recovery'
         );
       } else {
-        clearedContext = await this.clearContextAheadOfFlush(this.toFlushMessages(pendingMessages));
-        const v2Owned =
-          db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
-        await this.ctx.ensureQueryStarted();
-        for (const msg of pendingMessages) {
-          if (v2Owned.has((msg.uuid ?? '') as string)) continue;
-          const replayContent = this.toReplayContent(msg.message.content);
-          if (replayContent) {
-            await messageQueue.enqueueWithId(msg.uuid as string, replayContent);
-          }
-        }
+        clearedContext = await this.deliverRowsViaMemoryQueue(
+          pendingMessages,
+          this.toFlushMessages(pendingMessages)
+        );
       }
     };
 
