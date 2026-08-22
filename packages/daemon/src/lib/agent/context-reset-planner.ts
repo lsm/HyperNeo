@@ -45,9 +45,10 @@ export function planInjectContextReset(args: {
 
 export function planTurnEndFlushContextReset(args: {
   slotResetsContext: boolean;
-  deliverableCount: number;
+  hasPriorContext: boolean;
+  taskDeliverableCount: number;
 }): TurnEndFlushContextResetPlan {
-  if (args.slotResetsContext && args.deliverableCount > 0) {
+  if (args.slotResetsContext && args.hasPriorContext && args.taskDeliverableCount > 0) {
     return { action: 'clear_then_flush' };
   }
   return { action: 'flush_without_clear' };

@@ -26,6 +26,7 @@ import {
   deliverAndMarkQueued,
   deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
+  withSessionResetCoordination,
 } from '../../../lib/agent/message-delivery';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline';
 import { validateImageSizes } from '../../session/message-persistence';
@@ -350,8 +351,6 @@ export class TaskAgentManager {
   private agentSessionIndex = new Map<string, AgentSession>();
 
   private cancellingSessions = new Set<string>();
-
-  private readonly sessionInjectLocks = new Map<string, Promise<void>>();
 
   private readonly sessionRestoreLocks = new Map<string, Promise<void>>();
 
@@ -1057,7 +1056,7 @@ export class TaskAgentManager {
       subSession.mergeRuntimeMcpServers(subSessionInit.mcpServers);
     }
 
-    this.attachSlotContextReset(subSession);
+    this.reattachSlotContextReset(subSession);
 
     if (!this.subSessions.has(taskId)) {
       this.subSessions.set(taskId, new Map());
@@ -1425,23 +1424,8 @@ export class TaskAgentManager {
     return null;
   }
 
-  private async withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
-    const prev = this.sessionInjectLocks.get(sessionId) ?? Promise.resolve();
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const tail = prev.then(() => held);
-    this.sessionInjectLocks.set(sessionId, tail);
-    await prev;
-    try {
-      return await fn();
-    } finally {
-      release();
-      if (this.sessionInjectLocks.get(sessionId) === tail) {
-        this.sessionInjectLocks.delete(sessionId);
-      }
-    }
+  private withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+    return withSessionResetCoordination(sessionId, fn);
   }
 
   private async withSessionRestoreLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
@@ -1850,7 +1834,7 @@ export class TaskAgentManager {
     agentSession.onMissingWorkflowMcpServers = async (target: AgentSession, missing: string[]) => {
       await this.mcpSelfHeal(target, missing);
     };
-    this.attachSlotContextReset(agentSession);
+    this.reattachSlotContextReset(agentSession);
 
     if (!this.subSessions.has(taskId)) {
       this.subSessions.set(taskId, new Map());
@@ -2741,7 +2725,7 @@ export class TaskAgentManager {
     return slot?.resetContextPerTurn === true;
   }
 
-  private attachSlotContextReset(agentSession: AgentSession): void {
+  reattachSlotContextReset(agentSession: AgentSession): void {
     const sessionId = agentSession.session.id;
     agentSession.slotResetsContext = () => this.slotResetsContextForSession(sessionId);
   }
@@ -3050,7 +3034,7 @@ export class TaskAgentManager {
     agentSession.onMissingWorkflowMcpServers = async (target: AgentSession, missing: string[]) => {
       await this.mcpSelfHeal(target, missing);
     };
-    this.attachSlotContextReset(agentSession);
+    this.reattachSlotContextReset(agentSession);
 
     const pendingToolContinuations =
       this.config.toolContinuationRepo?.listPendingInboxForSession(subSessionId) ?? [];
@@ -3213,10 +3197,11 @@ export class TaskAgentManager {
     return this.config.db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).size > 0;
   }
 
-  private hasUnconsumedDeliveredWork(sessionId: string): boolean {
-    return (
-      this.config.db.getMessageCountByStatus(sessionId, 'enqueued') > 0 ||
-      this.config.db.getMessageCountByStatus(sessionId, 'deferred') > 0
+  private hasUnconsumedDeliveredWork(sessionId: string, excludeMessageId?: string): boolean {
+    return (['enqueued', 'deferred'] as const).some((status) =>
+      this.config.db
+        .getUserMessageIdsByStatus(sessionId, status)
+        .some((row) => row.uuid !== excludeMessageId)
     );
   }
 
@@ -3288,7 +3273,7 @@ export class TaskAgentManager {
       hasPriorContext: !!session.session.sdkSessionId,
       slotResetsContext: this.slotResetsContextForSession(sessionId),
       hasActiveDeliveryJob: this.hasActiveDeliveryJob(sessionId),
-      hasUnconsumedDeliveredWork: this.hasUnconsumedDeliveredWork(sessionId),
+      hasUnconsumedDeliveredWork: this.hasUnconsumedDeliveredWork(sessionId, messageId),
     });
 
     if (outcome.decision.action === 'noop') {
@@ -3342,6 +3327,7 @@ export class TaskAgentManager {
       const replay = await session.handleQueryTrigger({
         deliverIndividually: true,
         excludeMessageUuid: messageId,
+        skipResetCoordination: true,
       });
       if (!replay.success) {
         log.warn(

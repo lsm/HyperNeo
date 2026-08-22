@@ -1446,6 +1446,8 @@ export class SpaceRuntimeService {
 
     if (this.sessionBelongsToLongHorizonAgent(spaceId, session.id)) return;
 
+    this.taskAgentManager?.reattachSlotContextReset(agentSession);
+
     const mcpServer = this.buildMemberSpaceToolsMcpServer(space, session.id);
 
     const additional: Record<string, McpServerConfig> = {

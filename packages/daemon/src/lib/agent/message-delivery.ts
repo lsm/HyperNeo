@@ -414,6 +414,30 @@ export async function awaitDeliveryConsumption(args: {
 
 const sessionLocks = new Map<string, Promise<unknown>>();
 
+export const sessionResetCoordinationLocks = new Map<string, Promise<unknown>>();
+
+export async function withSessionResetCoordination<T>(
+  sessionId: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const prev = sessionResetCoordinationLocks.get(sessionId) ?? Promise.resolve();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = prev.then(() => held);
+  sessionResetCoordinationLocks.set(sessionId, tail);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (sessionResetCoordinationLocks.get(sessionId) === tail) {
+      sessionResetCoordinationLocks.delete(sessionId);
+    }
+  }
+}
+
 export function throwIfDeliveryAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError');
 }

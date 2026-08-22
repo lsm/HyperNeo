@@ -93,28 +93,36 @@ describe('planInjectContextReset', () => {
 });
 
 describe('planTurnEndFlushContextReset', () => {
-  test('a reset slot with deliverables clears once before the first message (#1085)', () => {
+  test('a reset slot with task deliverables clears once before the first message (#1085)', () => {
     expect(
       planTurnEndFlushContextReset({
         slotResetsContext: true,
-        deliverableCount: 3,
+        hasPriorContext: true,
+        taskDeliverableCount: 3,
       })
     ).toEqual({ action: 'clear_then_flush' });
   });
 
   test('a batch of any size gets exactly one clear plan, never per message', () => {
-    for (const deliverableCount of [1, 2, 8, 64]) {
-      expect(planTurnEndFlushContextReset({ slotResetsContext: true, deliverableCount })).toEqual({
+    for (const taskDeliverableCount of [1, 2, 8, 64]) {
+      expect(
+        planTurnEndFlushContextReset({
+          slotResetsContext: true,
+          hasPriorContext: true,
+          taskDeliverableCount,
+        })
+      ).toEqual({
         action: 'clear_then_flush',
       });
     }
   });
 
-  test('a non-reset slot flushes without a clear even with deliverables', () => {
+  test('a non-reset slot flushes without a clear even with task deliverables', () => {
     expect(
       planTurnEndFlushContextReset({
         slotResetsContext: false,
-        deliverableCount: 3,
+        hasPriorContext: true,
+        taskDeliverableCount: 3,
       })
     ).toEqual({ action: 'flush_without_clear' });
   });
@@ -123,7 +131,18 @@ describe('planTurnEndFlushContextReset', () => {
     expect(
       planTurnEndFlushContextReset({
         slotResetsContext: true,
-        deliverableCount: 0,
+        hasPriorContext: true,
+        taskDeliverableCount: 0,
+      })
+    ).toEqual({ action: 'flush_without_clear' });
+  });
+
+  test('a session without prior context flushes without a clear on the first turn', () => {
+    expect(
+      planTurnEndFlushContextReset({
+        slotResetsContext: true,
+        hasPriorContext: false,
+        taskDeliverableCount: 3,
       })
     ).toEqual({ action: 'flush_without_clear' });
   });

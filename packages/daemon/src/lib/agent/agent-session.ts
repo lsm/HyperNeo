@@ -1254,6 +1254,8 @@ export class AgentSession
   async handleQueryTrigger(options?: {
     deliverIndividually?: boolean;
     excludeMessageUuid?: string;
+    skipContextReset?: boolean;
+    skipResetCoordination?: boolean;
   }): Promise<{ success: boolean; messageCount: number; error?: string }> {
     return this.queryModeHandler.handleQueryTrigger(options);
   }

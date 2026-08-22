@@ -15,6 +15,7 @@ function makeFlushMessage(overrides: Partial<FlushMessage> = {}): FlushMessage {
   return {
     uuid: 'uuid-1',
     isUserMessage: true,
+    isTaskInput: true,
     flattenedText: 'hello',
     ...overrides,
   };

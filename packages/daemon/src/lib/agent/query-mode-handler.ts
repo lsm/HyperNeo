@@ -11,6 +11,7 @@ import {
   flattenDeliveryText,
   isMessageDeliveryV2Enabled,
   type MessageDeliveryOrigin,
+  withSessionResetCoordination,
 } from './message-delivery';
 import { decideTurnEndFlush, type TurnEndFlushPlan } from './message-delivery-pipeline';
 import type { FlushMessage } from './message-ownership-gates';
@@ -38,6 +39,8 @@ export class QueryModeHandler {
   async handleQueryTrigger(options?: {
     deliverIndividually?: boolean;
     excludeMessageUuid?: string;
+    skipContextReset?: boolean;
+    skipResetCoordination?: boolean;
   }): Promise<{
     success: boolean;
     messageCount: number;
@@ -45,14 +48,14 @@ export class QueryModeHandler {
   }> {
     const { session, db, internalEventBus, messageQueue, logger } = this.ctx;
 
-    try {
+    const runFlush = async (): Promise<number> => {
       const { messages: allDeferred } = db.getUserMessagesByStatus(session.id, 'deferred');
       const deferredMessages = options?.excludeMessageUuid
         ? allDeferred.filter((m) => m.uuid !== options.excludeMessageUuid)
         : allDeferred;
 
       if (deferredMessages.length === 0) {
-        return { success: true, messageCount: 0 };
+        return 0;
       }
 
       const dbIds = deferredMessages.map((m) => m.dbId);
@@ -79,7 +82,7 @@ export class QueryModeHandler {
       });
 
       if (!isMessageDeliveryV2Enabled()) {
-        await this.clearContextAheadOfFlush(flushMessages);
+        await this.clearContextAheadOfFlush(flushMessages, options);
         const v2Owned =
           db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
         await this.ctx.ensureQueryStarted();
@@ -93,7 +96,14 @@ export class QueryModeHandler {
         }
       }
 
-      return { success: true, messageCount: deferredMessages.length };
+      return deferredMessages.length;
+    };
+
+    try {
+      const messageCount = options?.skipResetCoordination
+        ? await runFlush()
+        : await withSessionResetCoordination(session.id, runFlush);
+      return { success: true, messageCount };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.error('Failed to trigger query:', error);
@@ -111,6 +121,7 @@ export class QueryModeHandler {
         return {
           uuid: msg.uuid as string,
           isUserMessage,
+          isTaskInput: (msg as { isSynthetic?: boolean }).isSynthetic === true,
           flattenedText: isUserMessage ? flattenDeliveryText(msg.message.content ?? '') : null,
         };
       });
@@ -124,10 +135,15 @@ export class QueryModeHandler {
       pendingInMemoryUuids: new Set<string>(),
       activeTurnInJobQueue: jobQueue.hasActiveTurnDeliveryJob(this.ctx.session.id),
       slotResetsContext: this.ctx.slotResetsContext?.() ?? false,
+      hasPriorContext: !!this.ctx.session.sdkSessionId,
     });
   }
 
-  private async clearContextAheadOfFlush(flushMessages: FlushMessage[]): Promise<void> {
+  private async clearContextAheadOfFlush(
+    flushMessages: FlushMessage[],
+    options?: { skipContextReset?: boolean }
+  ): Promise<void> {
+    if (options?.skipContextReset) return;
     if (!this.ctx.clearConversationContext) return;
     const plan = this.planFlush(flushMessages);
     if (plan.action === 'noop') return;
@@ -146,13 +162,13 @@ export class QueryModeHandler {
   private async deliverFlushUnderV2(
     flushMessages: FlushMessage[],
     origin: MessageDeliveryOrigin,
-    options?: { deliverIndividually?: boolean }
+    options?: { deliverIndividually?: boolean; skipContextReset?: boolean }
   ): Promise<void> {
     const jobQueue = this.ctx.db.getJobQueueRepo();
     const plan = this.planFlush(flushMessages);
     if (plan.action === 'noop') return;
     if (plan.contextReset.action === 'clear_then_flush') {
-      await this.clearContextAheadOfFlush(flushMessages);
+      await this.clearContextAheadOfFlush(flushMessages, options);
     }
     const deliverables = plan.action === 'batch' ? plan.uuids : plan.deliver;
     if (plan.action === 'batch' && !options?.deliverIndividually) {
@@ -176,10 +192,11 @@ export class QueryModeHandler {
     }
   }
 
-  async sendEnqueuedMessagesOnTurnEnd(): Promise<void> {
+  async sendEnqueuedMessagesOnTurnEnd(): Promise<boolean> {
     const { session, db, messageQueue, logger } = this.ctx;
+    let replayedWork = false;
 
-    try {
+    const runReplay = async (): Promise<void> => {
       const { messages: queuedMessages } = db.getUserMessagesByStatus(session.id, 'enqueued');
       const pendingMessages = queuedMessages.filter(
         (msg) => typeof msg.uuid === 'string' && !messageQueue.hasPendingOrInFlight(msg.uuid)
@@ -188,6 +205,7 @@ export class QueryModeHandler {
       if (pendingMessages.length === 0) {
         return;
       }
+      replayedWork = true;
 
       if (isMessageDeliveryV2Enabled()) {
         await this.deliverFlushUnderV2(this.toFlushMessages(pendingMessages), 'recovery');
@@ -204,14 +222,19 @@ export class QueryModeHandler {
           }
         }
       }
+    };
+
+    try {
+      await withSessionResetCoordination(session.id, runReplay);
     } catch (error) {
       logger.error('Failed to send enqueued messages on turn end:', error);
     }
+    return replayedWork;
   }
 
   async replayPendingMessagesForImmediateMode(): Promise<void> {
-    await this.sendEnqueuedMessagesOnTurnEnd();
-    await this.handleQueryTrigger();
+    const replayedWork = await this.sendEnqueuedMessagesOnTurnEnd();
+    await this.handleQueryTrigger({ skipContextReset: replayedWork });
   }
 
   private toReplayContent(

@@ -524,6 +524,7 @@ describe('QueryModeHandler', () => {
         dbId: `db-${i + 1}`,
         uuid: `uuid-${i + 1}`,
         type: 'user',
+        isSynthetic: true,
         message: { role: 'user', content: `message ${i + 1}` },
       })) as unknown as SDKMessage[];
     }
@@ -531,9 +532,21 @@ describe('QueryModeHandler', () => {
     function resetSlotContext(clearSpy: ReturnType<typeof mock>): QueryModeHandlerContext {
       return {
         ...createContext(),
+        session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
         slotResetsContext: () => true,
         clearConversationContext: clearSpy,
       };
+    }
+
+    function resetSlotDb(): void {
+      mockDb = {
+        getUserMessagesByStatus: getUserMessagesByStatusSpy,
+        updateMessageStatus: updateMessageStatusSpy,
+        getJobQueueRepo: () => ({
+          activeDeliveryMessageUuids: () => new Set<string>(),
+          hasActiveTurnDeliveryJob: () => false,
+        }),
+      } as unknown as Database;
     }
 
     it('clears exactly once before the first message of a deferred batch (v1)', async () => {
@@ -545,14 +558,7 @@ describe('QueryModeHandler', () => {
         order.push(uuid);
       });
       getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(deferredBatch(3)));
-      mockDb = {
-        getUserMessagesByStatus: getUserMessagesByStatusSpy,
-        updateMessageStatus: updateMessageStatusSpy,
-        getJobQueueRepo: () => ({
-          activeDeliveryMessageUuids: () => new Set<string>(),
-          hasActiveTurnDeliveryJob: () => false,
-        }),
-      } as unknown as Database;
+      resetSlotDb();
 
       handler = new QueryModeHandler(resetSlotContext(clearSpy));
       await handler.handleQueryTrigger();
@@ -570,14 +576,7 @@ describe('QueryModeHandler', () => {
         order.push(uuid);
       });
       getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(deferredBatch(2)));
-      mockDb = {
-        getUserMessagesByStatus: getUserMessagesByStatusSpy,
-        updateMessageStatus: updateMessageStatusSpy,
-        getJobQueueRepo: () => ({
-          activeDeliveryMessageUuids: () => new Set<string>(),
-          hasActiveTurnDeliveryJob: () => false,
-        }),
-      } as unknown as Database;
+      resetSlotDb();
 
       handler = new QueryModeHandler(resetSlotContext(clearSpy));
       await handler.sendEnqueuedMessagesOnTurnEnd();
@@ -589,14 +588,7 @@ describe('QueryModeHandler', () => {
     it('never clears for a slot that does not reset context', async () => {
       const clearSpy = mock(async () => {});
       getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(deferredBatch(3)));
-      mockDb = {
-        getUserMessagesByStatus: getUserMessagesByStatusSpy,
-        updateMessageStatus: updateMessageStatusSpy,
-        getJobQueueRepo: () => ({
-          activeDeliveryMessageUuids: () => new Set<string>(),
-          hasActiveTurnDeliveryJob: () => false,
-        }),
-      } as unknown as Database;
+      resetSlotDb();
 
       handler = new QueryModeHandler({
         ...createContext(),
@@ -609,6 +601,86 @@ describe('QueryModeHandler', () => {
       expect(enqueueWithIdSpy).toHaveBeenCalledTimes(3);
     });
 
+    it('never clears on the first turn before prior context exists', async () => {
+      const clearSpy = mock(async () => {});
+      getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(deferredBatch(3)));
+      resetSlotDb();
+
+      handler = new QueryModeHandler({
+        ...createContext(),
+        slotResetsContext: () => true,
+        clearConversationContext: clearSpy,
+      });
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 3 });
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(3);
+    });
+
+    it('never clears for human-only deliverables on a reset slot', async () => {
+      const clearSpy = mock(async () => {});
+      getUserMessagesByStatusSpy.mockReturnValue(
+        byStatusResult([
+          {
+            dbId: 'db-human',
+            uuid: 'uuid-human',
+            type: 'user',
+            isSynthetic: false,
+            message: { role: 'user', content: 'a human follow-up' },
+          },
+        ] as unknown as SDKMessage[])
+      );
+      resetSlotDb();
+
+      handler = new QueryModeHandler(resetSlotContext(clearSpy));
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 1 });
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-human', 'a human follow-up');
+    });
+
+    it('replays mixed pending states behind exactly one clear at the front (v1)', async () => {
+      const order: string[] = [];
+      const clearSpy = mock(async () => {
+        order.push('clear');
+      });
+      enqueueWithIdSpy.mockImplementation(async (uuid: string) => {
+        order.push(uuid);
+      });
+      getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
+        byStatusResult(
+          status === 'enqueued'
+            ? [
+                {
+                  dbId: 'db-enq',
+                  uuid: 'uuid-enq',
+                  type: 'user',
+                  isSynthetic: true,
+                  message: { role: 'user', content: 'queued task' },
+                },
+              ]
+            : [
+                {
+                  dbId: 'db-def',
+                  uuid: 'uuid-def',
+                  type: 'user',
+                  isSynthetic: true,
+                  message: { role: 'user', content: 'deferred task' },
+                },
+              ]
+        )
+      );
+      resetSlotDb();
+
+      handler = new QueryModeHandler(resetSlotContext(clearSpy));
+      await handler.replayPendingMessagesForImmediateMode();
+
+      expect(order).toEqual(['clear', 'uuid-enq', 'uuid-def']);
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('skips the clear when no message is deliverable', async () => {
       const clearSpy = mock(async () => {});
       getUserMessagesByStatusSpy.mockReturnValue(
@@ -617,10 +689,12 @@ describe('QueryModeHandler', () => {
             dbId: 'db-owned',
             uuid: 'uuid-owned',
             type: 'user',
+            isSynthetic: true,
             message: { role: 'user', content: 'owned by the durable queue' },
           },
         ] as unknown as SDKMessage[])
       );
+      resetSlotDb();
       mockDb = {
         getUserMessagesByStatus: getUserMessagesByStatusSpy,
         updateMessageStatus: updateMessageStatusSpy,
@@ -642,14 +716,7 @@ describe('QueryModeHandler', () => {
         throw new Error('MessageQueueTimeoutError: /clear delivery timed out');
       });
       getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(deferredBatch(3)));
-      mockDb = {
-        getUserMessagesByStatus: getUserMessagesByStatusSpy,
-        updateMessageStatus: updateMessageStatusSpy,
-        getJobQueueRepo: () => ({
-          activeDeliveryMessageUuids: () => new Set<string>(),
-          hasActiveTurnDeliveryJob: () => false,
-        }),
-      } as unknown as Database;
+      resetSlotDb();
 
       handler = new QueryModeHandler(resetSlotContext(clearSpy));
       const result = await handler.handleQueryTrigger();
@@ -666,14 +733,7 @@ describe('QueryModeHandler', () => {
         throw new ClearConversationCancelledError();
       });
       getUserMessagesByStatusSpy.mockReturnValue(byStatusResult(deferredBatch(3)));
-      mockDb = {
-        getUserMessagesByStatus: getUserMessagesByStatusSpy,
-        updateMessageStatus: updateMessageStatusSpy,
-        getJobQueueRepo: () => ({
-          activeDeliveryMessageUuids: () => new Set<string>(),
-          hasActiveTurnDeliveryJob: () => false,
-        }),
-      } as unknown as Database;
+      resetSlotDb();
 
       handler = new QueryModeHandler(resetSlotContext(clearSpy));
       const result = await handler.handleQueryTrigger();
@@ -1067,12 +1127,25 @@ describe('QueryModeHandler', () => {
       });
       getUserMessagesByStatusSpy.mockReturnValue(
         byStatusResult([
-          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-          { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
+          {
+            dbId: 'db-1',
+            uuid: 'uuid-1',
+            type: 'user',
+            isSynthetic: true,
+            message: { role: 'user', content: 'one' },
+          },
+          {
+            dbId: 'db-2',
+            uuid: 'uuid-2',
+            type: 'user',
+            isSynthetic: true,
+            message: { role: 'user', content: 'two' },
+          },
           {
             dbId: 'db-3',
             uuid: 'uuid-3',
             type: 'user',
+            isSynthetic: true,
             message: { role: 'user', content: 'three' },
           },
         ] as unknown as SDKMessage[])
@@ -1080,6 +1153,7 @@ describe('QueryModeHandler', () => {
 
       handler = new QueryModeHandler({
         ...createContext(),
+        session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
         slotResetsContext: () => true,
         clearConversationContext: clearSpy,
       });

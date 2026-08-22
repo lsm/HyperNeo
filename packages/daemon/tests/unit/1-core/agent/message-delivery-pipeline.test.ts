@@ -59,7 +59,13 @@ function makeInjectCtx(overrides: Partial<InjectDeliveryInput> = {}): InjectDeli
 }
 
 function makeFlushMessage(overrides: Partial<FlushMessage> = {}): FlushMessage {
-  return { uuid: 'uuid-1', isUserMessage: true, flattenedText: 'hello', ...overrides };
+  return {
+    uuid: 'uuid-1',
+    isUserMessage: true,
+    isTaskInput: true,
+    flattenedText: 'hello',
+    ...overrides,
+  };
 }
 
 function makeFlushInput(overrides: Partial<TurnEndFlushInput> = {}): TurnEndFlushInput {
@@ -72,6 +78,7 @@ function makeFlushInput(overrides: Partial<TurnEndFlushInput> = {}): TurnEndFlus
     pendingInMemoryUuids: new Set<string>(),
     activeTurnInJobQueue: false,
     slotResetsContext: true,
+    hasPriorContext: true,
     ...overrides,
   };
 }
@@ -392,6 +399,39 @@ describe('message turn-end flush decision pipeline', () => {
         contextReset: { action: 'clear_then_flush' },
       },
     ],
+    [
+      'human-only deliverables on a reset slot flush without a clear',
+      {
+        messages: [
+          makeFlushMessage({ uuid: 'human-1', isTaskInput: false }),
+          makeFlushMessage({ uuid: 'human-2', isTaskInput: false, flattenedText: 'follow-up' }),
+        ],
+      },
+      {
+        action: 'batch',
+        uuids: ['human-1', 'human-2'],
+        contextReset: { action: 'flush_without_clear' },
+      },
+    ],
+    [
+      'a mixed human and task batch plans one clear ahead of the batch',
+      {
+        messages: [
+          makeFlushMessage({ uuid: 'human-1', isTaskInput: false }),
+          makeFlushMessage({ uuid: 'task-1', flattenedText: 'handoff' }),
+        ],
+      },
+      {
+        action: 'batch',
+        uuids: ['human-1', 'task-1'],
+        contextReset: { action: 'clear_then_flush' },
+      },
+    ],
+    [
+      'a session without prior context flushes without a clear on the first turn',
+      { hasPriorContext: false },
+      { action: 'batch', uuids: ['a', 'b'], contextReset: { action: 'flush_without_clear' } },
+    ],
   ];
 
   for (const [label, overrides, expected] of cases) {
@@ -442,7 +482,11 @@ describe('message turn-end flush decision pipeline', () => {
       const ownershipCtx = applyFlushOwnershipGate(makeFlushCtx({}));
       const ctx = applyFlushContextResetGate(ownershipCtx);
       expect(ctx.contextReset).toEqual(
-        planTurnEndFlushContextReset({ slotResetsContext: true, deliverableCount: 2 })
+        planTurnEndFlushContextReset({
+          slotResetsContext: true,
+          hasPriorContext: true,
+          taskDeliverableCount: 2,
+        })
       );
       expect(ctx.decision).toBeNull();
     });
@@ -482,12 +526,12 @@ describe('message turn-end flush decision pipeline', () => {
           pendingInMemoryUuids: input.pendingInMemoryUuids,
           activeTurnInJobQueue: input.activeTurnInJobQueue,
         });
-        const deliverableCount =
-          core.action === 'batch'
-            ? core.uuids.length
-            : core.action === 'each'
-              ? core.deliver.length
-              : 0;
+        const deliverables =
+          core.action === 'batch' ? core.uuids : core.action === 'each' ? core.deliver : [];
+        const deliverableSet = new Set(deliverables);
+        const taskDeliverableCount = input.messages.filter(
+          (message) => deliverableSet.has(message.uuid) && message.isTaskInput
+        ).length;
         const expected =
           core.action === 'noop'
             ? ({ action: 'noop' } as TurnEndFlushPlan)
@@ -495,7 +539,8 @@ describe('message turn-end flush decision pipeline', () => {
                 ...core,
                 contextReset: planTurnEndFlushContextReset({
                   slotResetsContext: input.slotResetsContext,
-                  deliverableCount,
+                  hasPriorContext: input.hasPriorContext,
+                  taskDeliverableCount,
                 }),
               };
         expect(decideTurnEndFlush(input)).toEqual(expected);

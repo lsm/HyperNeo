@@ -2,7 +2,10 @@ import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { ClearConversationCancelledError } from '../../../../src/lib/agent/agent-session.ts';
-import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
+import {
+  sessionResetCoordinationLocks,
+  signalDeliveryConsumed,
+} from '../../../../src/lib/agent/message-delivery';
 import {
   QueryModeHandler,
   type QueryModeHandlerContext,
@@ -53,8 +56,12 @@ function makeManager(opts: {
   const reopenDeliveryByUuid = mock(() => opts.reopenDbId ?? null);
   const markDeliveryDeferredByUuid = mock(() => null);
   const markDeliveryFailedByUuid = mock(() => opts.failedDbId ?? null);
-  const getMessageCountByStatus = mock(
-    (_sessionId: string, status: string) => opts.unconsumedCounts?.[status] ?? 0
+  const getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
+    Array.from({ length: opts.unconsumedCounts?.[status] ?? 0 }, (_, i) => ({
+      dbId: `db-${status}-${i}`,
+      uuid: `uuid-${status}-${i}`,
+      timestamp: 0,
+    }))
   );
   const publishStatusChanged = mock(async () => {});
 
@@ -84,7 +91,7 @@ function makeManager(opts: {
     db: {
       getDatabase: () => ({}),
       saveUserMessage,
-      getMessageCountByStatus,
+      getUserMessageIdsByStatus,
       getSDKMessageRepo: () => ({
         getDeliveryContent: () => opts.deliveryContent ?? null,
         reopenDeliveryByUuid,
@@ -142,7 +149,7 @@ function makeManager(opts: {
       reopenDeliveryByUuid,
       markDeliveryDeferredByUuid,
       markDeliveryFailedByUuid,
-      getMessageCountByStatus,
+      getUserMessageIdsByStatus,
       publishStatusChanged,
     },
   };
@@ -601,9 +608,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
 
     await manager.injectSubSessionMessage(SESSION_ID, 'msg', true);
 
-    const locks = (manager as unknown as { sessionInjectLocks: Map<string, unknown> })
-      .sessionInjectLocks;
-    expect(locks.size).toBe(0);
+    expect(sessionResetCoordinationLocks.size).toBe(0);
   });
 
   it('turn-end flush clears before the deferred handoff and a later inject never clears over it (#1085)', async () => {
@@ -658,14 +663,90 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(context).toEqual(['handoff']);
 
     status = 'idle';
-    session.getMessageCountByStatus.mockImplementation((_sessionId: string, sendStatus: string) =>
-      sendStatus === 'enqueued' ? 1 : 0
+    session.getUserMessageIdsByStatus.mockImplementation(
+      (_sessionId: string, sendStatus: string) =>
+        sendStatus === 'enqueued'
+          ? [{ dbId: 'db-handoff', uuid: 'uuid-handoff', timestamp: 1 }]
+          : []
     );
     await manager.injectSubSessionMessage(SESSION_ID, 'later task', true);
 
     expect(order).toEqual(['/clear', 'handoff', 'later task']);
     expect(context).toEqual(['handoff', 'later task']);
     expect(session.clearMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes the flush clear against concurrent injections so the clear never wipes a delivered task (#1085)', async () => {
+    const { manager, session } = makeManager({ slotResets: true });
+    let status = 'processing';
+    const context: string[] = [];
+    const order: string[] = [];
+    let clearReleased = false;
+    let releaseClear!: () => void;
+    const clearGate = new Promise<void>((resolve) => {
+      releaseClear = resolve;
+    });
+    session.enqueueMock.mockImplementation(async (_uuid: string, content: string) => {
+      order.push(content);
+      context.push(content);
+    });
+    session.clearMock.mockImplementation(async () => {
+      order.push('/clear');
+      context.length = 0;
+      if (!clearReleased) await clearGate;
+    });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, 'handoff', true, undefined, 'defer');
+    const deferred = session.saveUserMessage.mock.calls[0][1] as SDKMessage;
+    const flush = new QueryModeHandler({
+      session: live.session,
+      db: {
+        getUserMessagesByStatus: mock(() => ({
+          messages: [{ ...deferred, dbId: 'db-handoff', timestamp: 1 }],
+          total: 1,
+        })),
+        updateMessageStatus: mock(() => {}),
+        getJobQueueRepo: mock(() => ({
+          activeDeliveryMessageUuids: () => new Set<string>(),
+          hasActiveTurnDeliveryJob: () => false,
+        })),
+      },
+      internalEventBus: { publish: mock(async () => {}) },
+      messageQueue: live.messageQueue,
+      logger: { error: mock(() => {}) },
+      ensureQueryStarted: session.ensureStartedMock,
+      slotResetsContext: () => true,
+      clearConversationContext: session.clearMock,
+    } as unknown as QueryModeHandlerContext);
+
+    status = 'idle';
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+    const flushPromise = flush.handleQueryTrigger();
+    await settle();
+    await settle();
+
+    const injectPromise = manager.injectSubSessionMessage(SESSION_ID, 'urgent task', true);
+    await settle();
+    await settle();
+
+    expect(order).toEqual(['/clear']);
+    expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
+
+    clearReleased = true;
+    releaseClear();
+    await Promise.all([flushPromise, injectPromise]);
+
+    expect(order).toEqual(['/clear', 'handoff', '/clear', 'urgent task']);
+    expect(context).toEqual(['urgent task']);
   });
 
   it('does NOT clear on inject while unconsumed delivered work is pending (#1085)', async () => {
@@ -708,6 +789,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(session.replayMock).toHaveBeenCalledWith({
       deliverIndividually: true,
       excludeMessageUuid: expect.any(String),
+      skipResetCoordination: true,
     });
     expect(session.saveUserMessage).toHaveBeenCalled();
     expect(session.enqueueMock).toHaveBeenCalled();
