@@ -827,7 +827,15 @@ note.
      `firstMessageReceived`/`receivedAcpMessageDuringRun`, persists
      `acpInstructionsSent`, and its timer-clear path at `:1124`), so its
      generation check also runs immediately after its iterator yields, with
-     the ACP late-first-message interleaving pinned. **Permission callbacks
+     the ACP late-first-message interleaving pinned — **and revalidation
+     repeats after the prompt-setup awaits downstream of the yield**:
+     `stateManager.setProcessing()` (`:611`) and
+     `applyStoredAcpThinkingLevel()` (`:618`) both await after the post-yield
+     check has passed, and a stale continuation resuming there overwrites
+     `_lastConsumedUserMessage`, creates an adapter, assigns it to the
+     replacement-owned `ctx.queryObject`, and installs a startup timer;
+     lifecycle is revalidated after each of those awaits and before the
+     shared writes. **Permission callbacks
      are fenced too**: both runs install a generationless
      `createCanUseToolCallback` (`:517–519`, acp `:438`), and ACP permission
      notifications invoke it out-of-band (`:547` → `:281–298`) — a late
