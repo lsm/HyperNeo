@@ -164,9 +164,15 @@ polling sources.
   `external-events/github/github-ingestion-gates.ts`:
   `decideIngestion({ event, selfLogin, config }) → admit | drop{reason:'self_event'}`.
   Suppression keys on a **new causal `initiator` field** on `NormalizedGitHubEvent`
-  (webhook `sender`, or the artifact author only where the artifact *is* the action —
-  comments, reviews, review comments, reactions), never on `actor` alone, and only
-  for event kinds where the causal identity is reliable; polling `pulls` rows are
+  — the webhook `sender` for **every** webhook event (review finding, PR #2723:
+  GitHub sets `sender` to the user who triggered the delivery, so it is uniformly
+  causal; artifact-author inference is wrong for `pull_request_review.dismissed`,
+  where the review author and the dismisser differ — the normalizer accepts every
+  review action and reads `review.user` (`github-normalizer.ts:230-250`), so an
+  author-keyed rule would false-drop another user's dismissal of a self-authored
+  review and miss a self-dismissal of another's), never on `actor` alone, and only
+  for event kinds where the causal identity is reliable. Artifact-author inference
+  is reserved for sources that lack a causal sender: polling `pulls` rows are
   excluded (initiator indeterminable), and polling comment rows are reliable **only
   for unedited rows** (`created_at === updated_at` — review finding, PR #2723): the
   poller requests the comment endpoints with `since` (`:2270-2274`, `:2317-2325`),
