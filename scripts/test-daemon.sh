@@ -390,7 +390,7 @@ shard_paths() {
 		migration_shard_paths 1
 		;;
 	5-space-agent-other)
-		printf '%s\n' "$TEST_ROOT/5-space"/*.test.ts "$TEST_ROOT/5-space/agent" "$TEST_ROOT/5-space/other" "$TEST_ROOT/5-space/tools" "$TEST_ROOT/5-space/workflow"
+		printf '%s\n' "$TEST_ROOT/5-space"/*.test.ts "$TEST_ROOT/5-space/agent" "$TEST_ROOT/5-space/goals" "$TEST_ROOT/5-space/other" "$TEST_ROOT/5-space/tools" "$TEST_ROOT/5-space/workflow"
 		;;
 	# 5-space-runtime-a/b are resolved by hash_split_resolve above (stable hash
 	# over the full 5-space/runtime tree, so no file is ever hand-listed or dropped).
