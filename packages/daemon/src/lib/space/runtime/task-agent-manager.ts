@@ -1916,10 +1916,22 @@ export class TaskAgentManager {
       execution
     );
     const timeoutMs = 30_000;
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<null>((resolve) => {
-      setTimeout(() => resolve(null), timeoutMs);
+      timeoutTimer = setTimeout(() => resolve(null), timeoutMs);
+      timeoutTimer.unref();
     });
-    const sessionId = await Promise.race([spawnPromise, timeoutPromise]);
+    spawnPromise.catch((err) => {
+      log.warn(
+        `TaskAgentManager.activateTargetSessionsForMessage: spawn of agent "${agentName}" for run ${workflowRunId} failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    });
+    let sessionId: string | null;
+    try {
+      sessionId = await Promise.race([spawnPromise, timeoutPromise]);
+    } finally {
+      clearTimeout(timeoutTimer);
+    }
     if (!sessionId) {
       log.warn(
         `TaskAgentManager.activateTargetSessionsForMessage: timed out after ${timeoutMs}ms activating agent "${agentName}" for run ${workflowRunId}`
