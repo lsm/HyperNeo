@@ -327,6 +327,8 @@ note.
      classification covering **every declared classifier input as a dimension**
      (error class × subtype × attempt × retry-cap exhaustion × lifecycle
      interrupted/cleaning-up × prompt redeliverability × billing-non-resettable ×
+     provider family — an exhausted 503 is `PROVIDER_UNAVAILABLE` on
+     non-Anthropic/non-GLM providers but `SYSTEM` under Anthropic, :1169–1229 ×
      recoveryState/supersede flags → arm) — e.g. a configured cap of zero, an
      attempt-zero startup timeout with no prompt, and a billing-flavored 429 are
      all pinned rows — incl. the 429-handoff suppression contract (`rateLimitCooldownScheduled`
