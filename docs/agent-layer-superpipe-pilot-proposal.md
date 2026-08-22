@@ -83,7 +83,7 @@ concurrent sessions by default, so two overlapping sessions corrupt each other
 regardless of generations (A applies, B snapshots A while applying B, A
 restores the daemon baseline, B then restores "A" — leaving provider A's
 credentials in `process.env`); the remedy is **daemon-wide serialization of
-the entire environment-dependent window — **credential reads through**
+the entire environment-dependent window — credential reads through
 apply through spawn/use — or
 eliminating the shared mutation** (per-session env passed to the spawn rather
 than `process.env`). Stack/restore ownership alone is *not* an acceptable
