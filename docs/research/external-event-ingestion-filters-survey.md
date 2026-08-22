@@ -273,7 +273,15 @@ polling sources.
   the old settings and erase the new flag. All `github` global config mutations
   route through one source-scoped queue in the same PR (writers today:
   `app.ts:153`, `rpc-handlers/index.ts:252`,
-  `github-event-extension.ts:1636`/`:1649`).
+  `github-event-extension.ts:1636`/`:1649`). The queue must cover the
+  **complete enable/disable operation, not just the store mutation** (review
+  finding, PR #2723): `setGlobalEnabled(false)` awaits `stopExtension` before its
+  config write while enablement writes first and then awaits `startExtension`
+  (`rpc-handlers/index.ts:250-284`), so queueing only the writes lets a concurrent
+  enable write `true`, wait out an in-flight stop, resume starting, and lose to
+  the disable's later `false` — leaving the extension running (possibly with
+  polling active) under disabled persisted config. Lifecycle effects and
+  rollback ride inside the queued operation.
 - **PR A3 (surface):** expose the toggle through the `space.github.*` config RPCs and
   `SpaceExternalEventsSettings` UI, plus a suppression counter with its own gate-side
   storage (review finding, PR #2723): the existing health `eventTypes` machinery
@@ -334,15 +342,19 @@ polling sources.
   independent paths — `evolution.scope.update` merges subscription-bearing policy
   patches with no knowledge of projection config (`mergeEvolutionPolicy`,
   `evolution-scope-service.ts:44`, `:263`) — so a later filter on an
-  already-projected key would silently stop matching. B3 therefore mandates
-  **pre-projection evaluation**: goal-automation filters run against the full
-  pre-projection payload (review finding, PR #2723) — persisted payloads must not
-  depend on transient subscriber state, since gathering live filter keys as a
-  projection-time input would make persistence nondeterministic under identical
-  config (adding/removing a subscription changes what is stored) and unrecoverable
-  for subscriptions created later, contradicting §4's config-driven-only rule; a
-  stable configuration-defined reserved field set is the fallback if pre-projection
-  evaluation proves impractical. Silent match-stop is unacceptable. Scope note (review finding, PR #2723): `rawPayload` is a single
+  already-projected key would silently stop matching. Downstream pre-projection
+  evaluation is **not implementable** at B3's placement (review finding, PR #2723):
+  projection runs before `ExternalEventService.publish`, the bus payload is built
+  from the canonical event's already-projected `payload`, and retryable duplicates
+  republish only the stored row — no full payload exists downstream, and a
+  transient side channel would not survive retries. B3 therefore uses
+  **bidirectional write-time validation** (persistence stays deterministic —
+  never subscriber-driven, per §4): projection writes validate against the keys
+  active filters reference, and every subscription/policy write — including
+  `evolution.scope.update`'s `mergeEvolutionPolicy` — validates against the active
+  projection config, **rejecting** any filter that references a key the projection
+  would strip. Silent match-stop is unacceptable; an invalid filter is refused at
+  creation instead. Scope note (review finding, PR #2723): `rawPayload` is a single
   opaque key holding the entire native object (`:1119`), so top-level projection
   over it is all-or-nothing — B3 ships the binary `rawPayload` toggle plus
   top-level projection of non-reserved extras, and nested-path extraction mappings
@@ -424,7 +436,13 @@ polling sources.
    webhook handlers, so a handler that passed the initial read can still reach
    `publishEvent` after `externalEvents.extensions.setGlobalEnabled(false)` has
    completed; the seam chains A/B open in `publishEvent` rechecks both
-   immediately before persistence.
+   immediately before persistence — and the check must be **serialized with
+   disablement** (review finding, PR #2723): a bare final read narrows but does
+   not close the window (the webhook can observe both configs enabled, then the
+   disable commits and returns before the insert executes; the settings queues
+   serialize writers, not ingestion). Put the final check and admission in the
+   same per-source/per-space critical section as disablement, or have disablement
+   invalidate and await in-flight publishers.
 5. `normalizeGitHubWebhook` falls back to `Date.now()` for `occurredAt` (`:205`) —
    nondeterministic timestamps for malformed payloads (pre-existing).
 6. ADR-0004 Pilot 5's gather-layer asymmetry applies here too: don't repeat the
