@@ -566,7 +566,18 @@ polling sources.
    hold it while awaiting `stop()`, which awaits `activePollCycle`
    (`:337`), and the poll cycle can be blocked in `publishEvent` waiting to
    enter it), while the per-dedupe-key section cannot synchronize disablement
-   because a config mutation knows no dedupe keys.
+   because a config mutation knows no dedupe keys. "Await" covers **in-flight
+   webhook publishers too**, not only polling (review finding, PR #2723):
+   `stop()` waits only for polling and reconciliation (`:333-339`), so a
+   publisher that passed its final epoch check and inserted just before the bump
+   can yield in `ExternalEventService._publishBusEvent`, letting the disable RPC
+   return before that already-inserted event is broadcast and injected.
+   Disablement tracks in-flight publications — an in-flight publisher set or a
+   publish-completion hook on the ingestion seam — invalidates them via the
+   epoch, then awaits their completion after the epoch write while holding only
+   the source-config queue, never a publisher lock; publishers already past the
+   re-verify complete their current publication, later ones observe the new
+   config.
 5. `normalizeGitHubWebhook` falls back to `Date.now()` for `occurredAt` (`:205`) —
    nondeterministic timestamps for malformed payloads (pre-existing).
 6. ADR-0004 Pilot 5's gather-layer asymmetry applies here too: don't repeat the
