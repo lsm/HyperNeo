@@ -142,19 +142,19 @@ export class LimitErrorLlmClassifier {
     if (pending) {
       return signal ? this.raceWithAbort(pending, signal) : pending;
     }
-    const task = runSerialized(() => {
-      if (signal?.aborted) return Promise.resolve(null);
-      return this.classifyUncached(rawText, now, signal);
-    }).finally(() => {
-      inflightClassifications.delete(key);
-    });
+    const task = runSerialized(() => this.classifyUncached(rawText, now))
+      .then((assessment) => {
+        evictExpiredAssessments(Date.now());
+        if (assessment && !assessment.relative) {
+          assessmentCache.set(key, { assessment, expiresAt: Date.now() + CACHE_TTL_MS });
+        }
+        return assessment;
+      })
+      .finally(() => {
+        inflightClassifications.delete(key);
+      });
     inflightClassifications.set(key, task);
-    const assessment = await (signal ? this.raceWithAbort(task, signal) : task);
-    evictExpiredAssessments(Date.now());
-    if (assessment && !assessment.relative) {
-      assessmentCache.set(key, { assessment, expiresAt: Date.now() + CACHE_TTL_MS });
-    }
-    return assessment;
+    return signal ? this.raceWithAbort(task, signal) : task;
   }
 
   private raceWithAbort(
@@ -181,13 +181,8 @@ export class LimitErrorLlmClassifier {
     });
   }
 
-  private async classifyUncached(
-    rawText: string,
-    now: number,
-    signal?: AbortSignal
-  ): Promise<LlmLimitAssessment | null> {
+  private async classifyUncached(rawText: string, now: number): Promise<LlmLimitAssessment | null> {
     try {
-      if (signal?.aborted) return null;
       const providerId = await this.resolveClassifierProvider();
       if (!providerId) return null;
 
@@ -198,11 +193,6 @@ export class LimitErrorLlmClassifier {
         models.providerModelId
       );
       const abortController = new AbortController();
-      const onOuterAbort = () => abortController.abort();
-      if (signal) {
-        signal.addEventListener('abort', onOuterAbort, { once: true });
-        if (signal.aborted) onOuterAbort();
-      }
       const abortTimer = setTimeout(
         () => abortController.abort(),
         this.deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -263,9 +253,6 @@ export class LimitErrorLlmClassifier {
         return parseAssessment(payload);
       } finally {
         clearTimeout(abortTimer);
-        if (signal) {
-          signal.removeEventListener('abort', onOuterAbort);
-        }
         providerService.restoreEnvVars(originalEnv);
       }
     } catch (error) {

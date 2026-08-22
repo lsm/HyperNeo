@@ -143,7 +143,7 @@ describe('LimitErrorLlmClassifier', () => {
     expect(prompts).toHaveLength(1);
   });
 
-  it('skips the query when the caller aborts during provider setup', async () => {
+  it('unblocks the caller immediately when it aborts during provider setup', async () => {
     let releaseSetup: () => void = () => {};
     const setupGate = new Promise<void>((resolve) => {
       releaseSetup = resolve;
@@ -176,13 +176,18 @@ describe('LimitErrorLlmClassifier', () => {
     const pending = classifier.classify('setup abort wall', controller.signal);
     await new Promise((resolve) => setTimeout(resolve, 5));
     controller.abort();
-    releaseSetup();
 
     expect(await pending).toBeNull();
-    expect(prompts).toHaveLength(0);
+    releaseSetup();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(prompts).toHaveLength(1);
+    const cached = await classifier.classify('setup abort wall');
+    expect(cached?.kind).toBe('rate_limit');
+    expect(prompts).toHaveLength(1);
   });
 
-  it('unblocks the caller and skips the query when a queued lookup is aborted mid-queue', async () => {
+  it('keeps a shared lookup alive for later callers when one waiter aborts mid-queue', async () => {
     let releaseFirst: () => void = () => {};
     const firstGate = new Promise<void>((resolve) => {
       releaseFirst = resolve;
@@ -214,6 +219,9 @@ describe('LimitErrorLlmClassifier', () => {
     releaseFirst();
     expect(await first).not.toBeNull();
     expect(prompts).toHaveLength(1);
+    const retried = await classifier.classify('second distinct queued waf block');
+    expect(retried?.notALimit).toBe(true);
+    expect(prompts).toHaveLength(2);
   });
 
   it('preserves the Kimi title thinking config when Kimi classifies', async () => {

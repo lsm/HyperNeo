@@ -219,7 +219,10 @@ export class ProviderService {
   ): Promise<{ providerModelId: string; sdkModelId: string }> {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
-    const providerModelId = provider?.getTitleGenerationModel?.() ?? sessionModelId;
+    const providerModelId =
+      provider?.getTitleGenerationModel?.() ??
+      provider?.getModelForTier?.('haiku') ??
+      sessionModelId;
     let sdkModelId = provider?.translateModelIdForSdk?.(providerModelId) ?? providerModelId;
     try {
       const sdkConfig = provider?.buildSdkConfig(providerModelId);
