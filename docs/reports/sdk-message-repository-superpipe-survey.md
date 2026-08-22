@@ -263,7 +263,16 @@ ADR sanctions pure-function admission gates from pilots 1/5).
   current `MAX(conversation_turn_index)` per task — including the shared-turn
   base map — inside the transaction (:1326–1352); pre-transaction allocation
   of either axis would make planning effectful or let a concurrent writer
-  advancing the same task invalidate the plan); the transaction shell applies.
+  advancing the same task invalidate the plan); the transaction shell applies,
+  revalidating every planned row first: each applied transition carries an
+  expected-status guard (`… AND send_status IN (<planned-from statuses>)`) so
+  a concurrent delivery change between snapshot and apply fails that row
+  instead of executing stale timestamp/turn/sequence instructions — the
+  read → plan → CAS-within-transaction → apply contract of ADR Phase 4
+  (`docs/adr/0004-superpipe-decision-pipelines.md:701–703`). Today's
+  unconditional `WHERE id IN` update keeps this window theoretical only
+  because the connection is synchronous and single-threaded; the
+  plan/interpret boundary must not widen it.
 - **PR B5 (cleanup + ADR note).**
 
 ### Chain C — FTS admission gates + delivery-status routing (rank 3: low risk, medium impact)
