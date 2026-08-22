@@ -50,7 +50,7 @@ interface PendingQuestionResolver {
 export const QUESTION_CANCEL_MESSAGE =
   'User cancelled: The user chose not to answer this question. Please proceed accordingly or ask a different question if needed.';
 
-const MAX_QUESTION_STRING_LENGTH = 2000;
+export const MAX_QUESTION_STRING_LENGTH = 2000;
 
 const MAX_QUESTIONS = 4;
 const MAX_OPTIONS = 4;

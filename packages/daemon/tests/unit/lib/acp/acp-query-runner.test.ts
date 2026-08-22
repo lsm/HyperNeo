@@ -1299,6 +1299,29 @@ describe('AcpQueryRunner', () => {
     expect(canUseTool).not.toHaveBeenCalled();
   });
 
+  test('rejects terminal commands too long to display for approval', async () => {
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture({ client });
+
+    try {
+      await runner.start();
+      await promptStarted;
+
+      await expect(
+        constructorOptions[0].onTerminalCreate?.({
+          sessionId: 'acp-session-1',
+          command: process.execPath,
+          args: ['a'.repeat(2100)],
+        })
+      ).rejects.toThrow('ACP permission request is too long to display for approval');
+      expect(canUseTool).not.toHaveBeenCalled();
+      releasePrompt();
+      await ctx.queryPromise;
+    } finally {
+      releasePrompt();
+    }
+  });
+
   test('does not create terminals denied by the permission callback', async () => {
     const { client, promptStarted, releasePrompt } = createHeldPromptClient();
     const { runner, ctx, constructorOptions } = createRunnerFixture({

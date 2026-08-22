@@ -26,6 +26,7 @@ import type {
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery';
+import { MAX_QUESTION_STRING_LENGTH } from '../agent/ask-user-question-handler';
 import type { AgentSession } from '../agent/agent-session';
 import {
   type QueryRunnerContext,
@@ -396,6 +397,9 @@ async function handleAcpPermissionRequest(
     return { outcome: { outcome: 'cancelled' } };
   }
   const question = acpPermissionQuestion(params);
+  if (question.length > MAX_QUESTION_STRING_LENGTH) {
+    throw new Error('ACP permission request is too long to display for approval');
+  }
   const permission = canUseTool('AskUserQuestion', acpPermissionQuestionInput(params), {
     signal: permissionSignal,
     toolUseID: params.toolCall.toolCallId,
