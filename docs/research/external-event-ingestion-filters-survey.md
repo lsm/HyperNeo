@@ -395,8 +395,13 @@ polling sources.
   GitHub projection and must not veto it.
   Every subscription/policy write — including
   `evolution.scope.update`'s `mergeEvolutionPolicy` — validates against the active
-  projection config, **rejecting** any filter that references a key the projection
-  would strip. Silent match-stop is unacceptable; an invalid filter is refused at
+  projection config, **rejecting** any filter **that can match a projected GitHub
+  event and** references a key the projection
+  would strip — the same matchability condition as the projection-write side
+  (review finding, PR #2723): a `source: 'slack'` or non-matching-topic
+  subscription whose keys collide with a GitHub deny-list key is never refused,
+  since `findMatchingSubscription` could not evaluate it against a GitHub event
+  (`:312-315`). Silent match-stop is unacceptable; an invalid filter is refused at
   creation instead. Both validation sides run **inside the same per-space mutation
   queue** (review finding, PR #2723): a projection write removing key K and a
   subscription write starting to filter on K can otherwise each validate against
