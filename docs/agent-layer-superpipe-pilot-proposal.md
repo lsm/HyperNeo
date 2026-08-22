@@ -350,9 +350,12 @@ note.
   **and still performs the idle transitions**: `beginTerminalIdle()` before the
   display and the common `setIdle()` afterward (:1287–1289), so an interpreter
   following only display-and-skip would strand the session in processing —
-  and like the declined handoff, the route takes a **post-display generation
-  resnapshot**: the display is awaited (`:1161–1165`), so a replacement may
-  hold the session by the time `setIdle()` runs, and a stale post-display
+  and like the declined handoff, the route takes a **post-display full
+  lifecycle resnapshot** (generation plus cleaning-up/processing-status/
+  abort-signal — cleanup can begin without a generation bump, § above): the
+  display is awaited (`:1161–1165`), so a replacement may
+  hold the session or teardown may be underway by the time `setIdle()` runs,
+  and a stale post-display
   result routes to superseded/no-op before idling the replacement;
   folding it into `terminal(category)` would replace the actionable validation
   text with generic category handling |
@@ -418,7 +421,11 @@ note.
   (generation **and** cleaning-up/processing-status/abort-signal —
   `QueryLifecycleManager.cleanup()` sets the cleanup flag and enters `stop()`
   *without* incrementing the query generation, query-lifecycle-manager.ts:652–663,
-  :180–243, so a generation-only check can pass while teardown is in progress)
+  :180–243, so a generation-only check can pass while teardown is in progress —
+  and **queue-running state** joins the resnapshot: the queue is stopped at
+  :188 before any generation bump, and the provider-backoff revalidation
+  itself cancels when `messageQueue.isRunning()` is false (:1127–1133), so a
+  backoff sleep can finish mid-teardown with every other field still current)
   **immediately after each awaited `setIdle` — before reading or re-enqueueing
   the consumed message** (the transient arm's `:1027–1034` re-enqueue sits
   between its awaited `setIdle` and the `:1060` guard, so a stale arm could
@@ -621,7 +628,11 @@ note.
 - **PR sketch:**
   1. **PR 1 (pins):** pilot-1-style transcript parity harness for
      `driveDeliveryTurn` + `feedDeliverySteer` + the job handler (instrument
-     queue admits, DB marks, job mutations per scenario); **call-site
+     queue admits **and removals** — the content-mismatch path calls
+     `messageQueue.remove(messageUuid)` before aborting and that removal
+     resolves the entry's acknowledgement (:1467–1473 → message-queue.ts:165–178)
+     — plus DB marks and job mutations per scenario, with removal-triggered
+     acknowledgement resolution in the staged-effect inventory); **call-site
      characterization for role arbitration before PR 3 rewires
      `deliverMessage`/outbox through `resolveDeliveryRole`** — existing role ×
      requested role × UNIQUE outcome × entrypoint, since the two sites
