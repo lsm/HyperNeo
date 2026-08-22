@@ -261,7 +261,11 @@ function buildGatherAdapter(
       if (!isPlainObject(gathered)) {
         return fail(new StagedRunContractError(flow, `stage ${stage.name} must return an object`));
       }
-      const keys = Object.keys(gathered).sort();
+      const materialized: Record<string, unknown> = {};
+      for (const key of Object.keys(gathered)) {
+        materialized[key] = gathered[key];
+      }
+      const keys = Object.keys(materialized).sort();
       const expected = provides.join(',');
       if (keys.join(',') !== expected) {
         return fail(
@@ -272,7 +276,7 @@ function buildGatherAdapter(
         );
       }
       for (const key of keys) {
-        if (gathered[key] === undefined) {
+        if (materialized[key] === undefined) {
           return fail(
             new StagedRunContractError(
               flow,
@@ -281,7 +285,7 @@ function buildGatherAdapter(
           );
         }
       }
-      return { ...gathered };
+      return materialized;
     };
     try {
       const gathered = stage.run(bodyView);
@@ -328,9 +332,15 @@ function buildDecideAdapter(
       if (!isPlainObject(stamped)) {
         return fail(new StagedRunContractError(flow, `stage ${stage.name} must return an object`));
       }
-      if (stamped.decision === undefined) {
+      if (
+        stamped.decision === undefined ||
+        !Object.prototype.propertyIsEnumerable.call(stamped, 'decision')
+      ) {
         return fail(
-          new StagedRunContractError(flow, `stage ${stage.name} must stamp a defined decision`)
+          new StagedRunContractError(
+            flow,
+            `stage ${stage.name} must stamp a defined decision as an own enumerable property`
+          )
         );
       }
       let activated = 0;

@@ -679,6 +679,30 @@ describe('stagedRun snapshot contract', () => {
     ]);
     await expect(flow({})).resolves.toEqual({ status: 'completed', result: 11 });
   });
+
+  test('accessor-backed gathers merge the value that was validated', async () => {
+    let reads = 0;
+    const shifting: Record<string, unknown> = {};
+    Object.defineProperty(shifting, 'value', {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return reads === 1 ? 41 : 99;
+      },
+    });
+    const flow = stagedRun<Box>('shifting-getter', (s) => [
+      s.snapshot({
+        name: 'load',
+        provides: ['value'],
+        run: () => shifting as Partial<Box>,
+      }),
+      s.halt({ name: 'end', reads: ['value'], run: ({ value }) => value }),
+    ]);
+    const outcome = await flow({});
+    expect(outcome.status).toBe('completed');
+    expect(outcome.result).toBe(41);
+    expect(reads).toBe(1);
+  });
 });
 
 describe('stagedRun decide contract', () => {
@@ -762,6 +786,27 @@ describe('stagedRun decide contract', () => {
     expect(outcome.stage).toBe('bad');
     expect(String(outcome.error)).toContain('synchronous');
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+
+  test('an inherited decision stamp is a contract violation', async () => {
+    const flow = stagedRun<Box>('inherited-decision', (s) => [
+      s.snapshot({ name: 'load', provides: ['value'], run: () => ({ value: 1 }) }),
+      s.decide({
+        name: 'first',
+        reads: ['value'],
+        run: ({ value }) => ({ decision: value }),
+      }),
+      s.decide({
+        name: 'bad',
+        reads: ['value'],
+        run: ({ value }) => Object.create({ decision: value }) as { decision: unknown },
+      }),
+      s.halt({ name: 'end', run: () => 'done' }),
+    ]);
+    const outcome = await flow({});
+    expect(outcome.status).toBe('error');
+    expect(outcome.stage).toBe('bad');
+    expect(String(outcome.error)).toContain('own enumerable property');
   });
 
   test('stamping an undeclared branch key is a contract violation', async () => {
