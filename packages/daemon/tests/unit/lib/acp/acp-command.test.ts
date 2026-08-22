@@ -98,6 +98,12 @@ describe('getAcpCommandIdentityDigest', () => {
     expect(getAcpCommandIdentityDigest('devin acp --auth-token=a')).toBe(
       getAcpCommandIdentityDigest('devin acp --auth-token=b')
     );
+    expect(getAcpCommandIdentityDigest('agent --token -abc')).toBe(
+      getAcpCommandIdentityDigest('agent --token -xyz')
+    );
+    expect(
+      getAcpCommandIdentityDigest('curl -H "Authorization: Bearer topsecret" https://api')
+    ).toBe(getAcpCommandIdentityDigest('curl -H "Authorization: Bearer othersafe" https://api'));
   });
 
   test('still distinguishes commands that differ outside secret arguments', () => {

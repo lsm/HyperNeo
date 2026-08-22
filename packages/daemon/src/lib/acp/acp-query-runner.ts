@@ -1517,6 +1517,8 @@ export class AcpQueryRunner {
           }
         }
         clearDrainTimer?.();
+      }
+      if (signal.aborted) {
         try {
           const settled = new Promise<void>((resolve) => {
             const timer = setTimeout(resolve, POST_ABORT_DRAIN_TIMEOUT_MS);
