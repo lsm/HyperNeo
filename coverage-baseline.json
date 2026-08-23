@@ -13,11 +13,11 @@
       "percent": 86.81
     },
     "web": {
-      "covered": 17160,
+      "covered": 17161,
       "total": 20870,
-      "percent": 82.22
+      "percent": 82.23
     }
   },
-  "sourceCommit": "6a3950a88679c32cdde174b02875752f9f3a80bb",
-  "generatedAt": "2026-08-23T14:11:25.035Z"
+  "sourceCommit": "d8e3bf2930214f76820bf5285a89bae0d2adc811",
+  "generatedAt": "2026-08-23T14:19:16.635Z"
 }
