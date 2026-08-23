@@ -7474,9 +7474,14 @@ export class SpaceRuntime {
   private isPromptTooLongResultError(message: {
     terminal_reason?: string;
     errors?: string[];
+    result?: string;
   }): boolean {
     if (message.terminal_reason === 'prompt_too_long') return true;
-    return (message.errors ?? []).some((entry) => /prompt is too long/i.test(entry));
+    const text = [
+      ...(message.errors ?? []),
+      typeof message.result === 'string' ? message.result : '',
+    ].join('\n');
+    return /prompt is too long/i.test(text);
   }
 
   private buildTerminalErrorContinueMessage(

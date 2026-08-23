@@ -517,6 +517,23 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     ).toHaveLength(0);
   });
 
+  test('prompt-too-long text on an api-error success result is skipped (deferred to the ptl path)', async () => {
+    seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: prompt is too long: 205616 tokens > 200000 maximum',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(
+      tam._injected.filter((m) => m.message.includes('[Runtime recovery — terminal error]'))
+    ).toHaveLength(0);
+  });
+
   test('dead terminal-error session is reset for a FRESH re-spawn (stale session cleared)', async () => {
     const { executionId } = seedIdleErrorRun({
       subtype: 'error_during_execution',
