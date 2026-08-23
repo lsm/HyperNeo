@@ -393,6 +393,7 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('an emptied gate set there is a blocker');
     expect(CODER_ONLY_PROMPT).not.toContain('there is no internal backstop');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('internal fallback review');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('BOTH gates must re-run');
   });
 
   test('shared review policy vocabulary and external bot gate reach every consumer', () => {
@@ -414,6 +415,8 @@ describe('coder-only workflow template', () => {
       'the run-scoped `gh api graphql` lookup is permitted by your contract'
     );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('BOTH conditions must hold');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('reaction-only signaling must not read as');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('with NOTHING reported is a clean verdict');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('logins that are REVIEW bots');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('are NOT review bots');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
@@ -442,7 +445,10 @@ describe('coder-only workflow template', () => {
     expect(RESEARCH_PROMPT).toContain('always send the gated PR handoff to Review');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('never substitutes for the review source');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
-      'retargeting a PR changes the reviewed diff WITHOUT changing'
+      'Retargeting a PR changes the reviewed diff WITHOUT changing'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'or for internal modes the baseRefName you captured'
     );
   });
 
