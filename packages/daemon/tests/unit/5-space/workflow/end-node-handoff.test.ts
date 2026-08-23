@@ -172,6 +172,15 @@ describe('Implementer merge template (verify current-head approval, then gh pr m
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('reason: "merge_blocked"');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('reason: "merge_fix_pushed"');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'the changed PR must go through Review BEFORE any re-approval'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'Review re-reviews the changed head first, then {{approval_authority}} re-approves'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      "never substitutes for the review source's gate on a changed head"
+    );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('headRefOid');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
       'until {{approval_authority}} tells you to continue'

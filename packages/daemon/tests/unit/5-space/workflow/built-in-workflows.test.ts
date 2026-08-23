@@ -401,6 +401,8 @@ describe('coder-only workflow template', () => {
     );
     expect(CODER_ONLY_PROMPT).toContain('an emptied gate set there is a blocker');
     expect(CODER_ONLY_PROMPT).not.toContain('there is no internal backstop');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('internal fallback review');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('BOTH gates must re-run');
   });
 
   test('shared review policy vocabulary and external bot gate reach every consumer', () => {
@@ -460,6 +462,18 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT.indexOf('Do this once per PR')).toBe(
       CODER_ONLY_PROMPT.lastIndexOf('Do this once per PR')
     );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('the internal fallback review is the gate');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'the two gates are separate records under separate keys, and `both` requires both of them'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'external under "gate", internal under "internal" — never overwrite one with the other'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('the internal artifact IS the gate of record');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('validate ONLY that internal artifact');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'a re-triggered bot that engages but produces no verdict within its window'
+    );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(REVIEW_POLICY_GUIDANCE);
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(EXTERNAL_REVIEW_BOTS_GUIDANCE);
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('always send the gated PR handoff');
@@ -467,10 +481,25 @@ describe('coder-only workflow template', () => {
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
       "the Reviewer's backup role covers exactly this failure"
     );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('kind: "review-base", key: "base"');
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'the post-approval merge runs in a separate session that never sees that handoff'
+    );
     expect(CODER_OWNED_MERGE_PROMPT).toContain(CODER_EXTERNAL_GATE_BLOCK);
     expect(CODING_WORKFLOW.nodes[0]!.agents[0]!.customPrompt!.value).toBe(CODER_OWNED_MERGE_PROMPT);
     expect(RESEARCH_PROMPT).toContain(CODER_EXTERNAL_GATE_BLOCK);
     expect(RESEARCH_PROMPT).toContain('always send the gated PR handoff to Review');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('never substitutes for the review source');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'Retargeting a PR changes the reviewed diff WITHOUT changing'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'the `base_ref` recorded in your `review-base` note artifact (key "base")'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('route the revalidation back through Review');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      "the Reviewer's backup re-review stands in for that bot's pass"
+    );
   });
 
   test('merge instructions sync fork PRs from the base repository remote', () => {
