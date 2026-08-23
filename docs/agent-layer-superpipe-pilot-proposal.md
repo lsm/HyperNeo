@@ -1528,8 +1528,8 @@ refresh can publish after teardown (:794).
 ## Recommendation
 
 **Task-sizing update (2026-08-23, §8):** every PR below is decomposed into
-sub-PRs at a ≤200-line review budget — 16 tracked PRs → **45 PR-sized tasks**
-(PR 0 → 0a–0f, chains per §8). Gates moved since the survey: **#2661 merged**
+sub-PRs at a ≤200-line review budget — 16 tracked PRs → **51 PR-sized tasks**
+(PR 0 → 0a–0g, chains per §8). Gates moved since the survey: **#2661 merged**
 (Chain B apply PRs unblocked), **#2543 still open** (Chain A held), and the
 watchdog owner's stream is active (#2772 pins, #2779 open extraction) so B5d
 coordinates with it. §8 anchors are current dev (`c7638c276`).
@@ -1546,7 +1546,12 @@ synchronously spawns `AcpClient` at `:539–548`, but restores only in the
 finalizer (`:760–764`), so a full-lifetime lease would block every other
 session indefinitely; the ACP lease spans only through the transport's
 process-environment snapshot/spawn, then restores and releases before the
-handshake/message loop, with a concurrent-session pin. Bounded use-time leases
+handshake/message loop, with a concurrent-session pin — and the lease
+**begins before the ambient reads**: `isAvailable()` and
+`optionsBuilder.build()` run ahead of the apply and capture ambient
+credentials/routing into `queryOptions.env` that the later refresh
+preserves, so starting at the apply snapshot alone would let an overlapping
+session's window contaminate the launch. Bounded use-time leases
 apply only to direct SDK paths that do not snapshot an environment), enrolls
 every owner and reader in the inventory — both
 runners, the four ProviderService services, the Anthropic model loader, the
@@ -1588,7 +1593,9 @@ user-supplied condition expressions via `Bun.spawn(['sh','-c',…])`
 (workflow-executor.ts:32–37, :127–137) — inherit the active session's API
 keys, tokens, and routing variables during the lease window; every such spawn
 is enrolled, sanitized, or the ambient reads move to an immutable baseline so
-the mutation window can no longer span awaits.
+the mutation window can no longer span awaits — §8.1's 0f/0g split carries
+the repo-wide inventory and its mechanical application (the sweep there finds
+ten-plus sites beyond the workflow executor and github agents).
 
 Create chain B first (sequence its apply PRs after #2661 merges), chain C in
 parallel once #2661/#2543 clear, chain A as the wave-2 capstone after #2543
@@ -1605,17 +1612,21 @@ chain PRs: B1–B6, C1–C4, A1–A5; 17 counting the `output-limiter-hook.ts`
 policy-core addition, which stays a single small task in that series).
 Question answered: is each PR the smallest unit that fits a focused review?
 Verdict: **only 4 were already at budget (B4, B6, C4, A5); the other 12
-decompose into 41 slices — 45 PR-sized tasks in all** — PR 0 → 6, B1 → 4,
-B2 → 2, B3 → 3, B5 → 5, C1 → 3, C2 → 2, C3 → 3, A1 → 4, A2 → 4, A3 → 3,
-A4 → 2, plus the 4 unsplit parents.
+decompose into 47 slices — 51 PR-sized tasks in all** — PR 0 → 7, B1 → 4,
+B2 → 2, B3 → 3, B5 → 10, C1 → 3, C2 → 2, C3 → 3, A1 → 4, A2 → 4, A3 → 3,
+A4 → 2, plus the 4 unsplit parents (52 tasks counting the separate
+output-limiter addition).
 
 Budget rule per sub-PR: production Δ ≲100 lines (hard cap ~150 only for
 types-dominated additive cores), prose/ADR Δ ≲150, test Δ ≲350 — table rows
 are mechanical, so a pins PR that would exceed ~350 test lines splits by
 dimension family, never by truncating rows. **Flagged assumption: tests are
 counted separately from production code.** If tests must also fit inside the
-200-line total, only the pins PRs change — each splits another 2–3× by
-dimension family — while core/apply/cleanup PRs already fit as-is.
+200-line total, the pins PRs split another 2–3× by dimension family, and the
+larger additive-core/enrollment slices whose prod+test exceeds ~200 (0a, 0b,
+0c, B2a, B5a, B5e, A2a, A2b, A4b) split their full table suites into
+companion pins PRs that immediately follow; the apply/cleanup slices already
+fit as-is.
 
 Sub-PR IDs are letter suffixes on the reviewed parent (B5a = first slice of
 B5), so §5's reviewed scope carries over unchanged. **Namespace task titles
@@ -1648,21 +1659,24 @@ surveys (#2766/#2767/#2771), which collide with bare letter IDs.
   :1158–1273, finishTurn :1234, cost :1071. Agent-session: driveDeliveryTurn
   :1434, feedDeliverySteer :1847, reconcile :2112.
 
-### 8.1 Prerequisite PR 0 → six sub-PRs
+### 8.1 Prerequisite PR 0 → seven sub-PRs
 
 | sub-PR | scope (current anchor) | prod Δ | test Δ |
 |---|---|---|---|
 | 0a | `provider-env-coordinator.ts` additive core: lease token, acquire/release, owner/reader registry — unwired | ~110 | ~120 |
 | 0b | QueryRunner enrollment: lease around :492–525 credential read/apply + :688 immutable copy; full lifecycle resnapshot after every awaited setup op (:462–639 effects) | ~85 | ~200 |
-| 0c | ACP enrollment: :459 pre-apply snapshot, lease through :551 transport spawn, restore+release before handshake; replacement-during-lease pin | ~70 | ~120 |
+| 0c | ACP enrollment: **lease begins before the ambient reads** — `isAvailable()` (:421) and `optionsBuilder.build()` (:441) run before the `:456–459` preCleanupAuth snapshot, and build() captures ambient credentials/routing into `queryOptions.env` which the `:530` refresh then preserves, so a lease starting at the snapshot can still launch ACP with another session's credentials; lease spans reads → apply → acpEnv (:530–544) → spawn (:551), restore+release before handshake; cross-session contamination-at-build + replacement-during-lease pins | ~80 | ~140 |
 | 0d | ProviderService services: restore/release immediately after `mergeProviderEnvVars` at the five readers — session-lifecycle :1085, evolution-episode :774, evolution-conversation-analysis, llm-workflow-selector, limit-error-llm-classifier (new since survey) | ~60 | ~80 |
 | 0e | Ambient readers + Anthropic model loader enrollment (isAvailable/AuthManager/EnvManager/logout) | ~40 | ~40 |
-| 0f | Env-less spawn sanitization: workflow-executor :33/:127 `sh -c` spawns + github security/router partial swaps | ~40 | ~40 |
+| 0f | Env-less spawn **inventory** as the reviewable artifact + the enroll/sanitize/immutable-baseline decision — the Recommendation names workflow-executor :33/:127 and the github agents, but a current-dev sweep finds env-inheriting launches in at least: dialog-handlers :70, hook-executor :301, sdk-cli-resolver curl :205/:228, copilot bun-node-wrapper :13, worktree-manager :544, space-worktree-manager (10 execFileSync sites), artifact-git-ops :35, space-manager exec, process-watchdog, credential-discovery :4, connector spawner seams (github-connector :18, presets :19/:62) | ~25 | ~30 |
+| 0g | Mechanical application of 0f's decision across every inventoried site (sanitized env or immutable baseline); query-runner's SDK `nodeSpawn` and the ACP transport spawn are explicitly env'd and get verification rows, not changes | ~90 | ~60 |
 
-Order: 0a → (0b ∥ 0c ∥ 0d) → 0e, 0f. 0b/0c carry the Recommendation's
-post-acquisition revalidation passes; 0d–0f are independent leaves.
+Order: 0a → (0b ∥ 0c ∥ 0d) → 0e; 0f → 0g. 0b/0c carry the Recommendation's
+post-acquisition revalidation passes (including the ACP setup-window
+revalidation that closes the stale-spawn-never-closed gap); 0d–0g are
+independent leaves.
 
-### 8.2 Chain B → sixteen sub-PRs
+### 8.2 Chain B → twenty-one sub-PRs
 
 | sub-PR | scope (current anchor) | prod Δ | test Δ |
 |---|---|---|---|
@@ -1679,20 +1693,29 @@ post-acquisition revalidation passes; 0d–0f are independent leaves.
 | B5a | attempt-token primitive: invalidated before retry recursion (:1150); PreToolUse hook binds to it (:518 region) | ~70 | ~90 |
 | B5b | owned-terminal-fence cancellation: query-runner terminal/validation/handoff routes (beginTerminalIdle owners :1185/:1267) | ~60 | ~80 |
 | B5c | ACP terminal: full lifecycle resnapshot before beginTerminalIdle (:938) + post-effect resnapshot/fence-cancel before setIdle (:953) | ~50 | ~70 |
-| B5d | cooldown-write fencing at the watchdog boundary — lands on #2779's pure gates; owner coordination, excluded-module rule holds | ~30 | ~50 |
-| B5e | owner-scoped idle in PSM: beginTerminalIdle owner filter (:86), setIdle waiter-consume scoping (:143), releaseIdleWaiters episode filter (:79) | ~80 | ~100 |
+| B5d | **all** post-await watchdog-write fencing at the watchdog boundary — `scheduleCooldown` :233–237 pre-generation-check write, `triedKeys`/`chain` :149–176, detached `fireImmediateFallback` finally :346–355 — lands on #2779's pure gates; owner coordination, excluded-module rule holds | ~30 | ~50 |
+| B5e | owner-scoped idle in PSM: beginTerminalIdle owner filter (:86), setIdle waiter-consume scoping (:143) incl. the post-publication `onIdleCallback` (:157–160 region), releaseIdleWaiters episode filter (:79); replacement-during-publish pin | ~80 | ~100 |
+| B5f | ownership-fenced SDK dispatch **for both runners**: generation/owner token propagated through `handleSDKMessage` into the shared handler context and validated before its fence; `isCleaningUp()` joins dispatch-entry validation (cleanup-without-replacement); ACP's generationless dispatch (:925–929 region) fenced identically; late old-generation result pin | ~70 | ~90 |
+| B5g | ACP adapter generation binding: `onAccepted`/`onConfigOptionsUpdate` pre-yield callbacks (acp-query-adapter :53–68), `onMessageEnqueued` (:485) + startup-timer (:487–493) close only the owned query object (:491–520); the adapter's unconditional finally (:701–704) is generation/claim-fenced so a stopped adapter cannot `markACPDeliveryFailed` the replacement's re-enqueued row; enqueue-during-stale-handshake + adapter-exit-after-replacement pins | ~60 | ~80 |
+| B5h | ACP retry-arm revalidation: entry check (:802–804 region) stale after awaited setIdle/process-exit — revalidate after each retry await and before the re-enqueue/queryObject-close/process-exit-reset/recursion (:839–858); replacement-during-ACP-retry pin | ~50 | ~70 |
+| B5i | whole-catch ownership fencing in both runners: revalidate before the entire catch — QueryRunner `errorManager.handleError` (:838 region) and ACP's own catch (:679–693) with its unscoped drain; `drainDeliveryWaitersOnTerminalSDKMessage` (:804–812) skips or owner-scopes when the emitting generation no longer owns the session; stale-handler-publishes-nothing pin | ~60 | ~80 |
+| B5j | notice-publication fallback: error-display helpers that return false on a failed persist (save ignored, emit-only path) publish a non-persisted `session.error` fallback — the `api_validation` route skips `errorManager` by design, so a gated save failure must not silence the session; returned-false pins for both callers | ~30 | ~40 |
 | B6 | cleanup + ADR note | ~15 | doc ~40 |
 
 Order: B1\* → B2\* → B3\* (B3c is region-independent of B3a/b and can lead);
-B4 after B3; **B5a ∥ B5e first, then B5b, B5c, B5d** (the routes consume the
-token and owner-scoped-idle primitives). Chain C apply PRs still follow B5e
-(shared idle-transition contract, §5).
+B4 after B3; **B5a ∥ B5e first (primitives), then B5f (dispatch consumes the
+token), then B5b, B5c, B5g, B5h, B5i in parallel; B5d coordinates with #2779;
+B5j is an independent leaf**. B5's setup-window revalidation (stale ACP spawn
+after `stop()`'s snapshot) is owned by 0c, not duplicated here. Chain C apply
+PRs follow the **complete B5 series (B5a–B5j)** — C's exceptional-exit
+contract consumes the dispatch/catch fencing of B5f/B5i, not only B5e's
+owner-scoped idle (§5).
 
 ### 8.3 Chain C → nine sub-PRs
 
 | sub-PR | scope (current anchor) | prod Δ | test Δ |
 |---|---|---|---|
-| C1a | pins: flag-machine truth table — suppress × mode × expectsIdle × lastResultWasSuccess × result kind × top-level-result bit × queryMode, `next_flags` asserted on every row; manual-mode no-replay gate (:1234) | 0 | ~350 |
+| C1a | pins: flag-machine truth table — suppress × mode × expectsIdle × lastResultWasSuccess × result kind × top-level-result bit × queryMode × **current session-state event kind/state (idle event calls finishTurn/replay/flag-reset; non-idle only arms the expectation; no-event rows too — or the §5 shell-retention alternative, stated explicitly)**, `next_flags` asserted on every row; manual-mode no-replay gate (:1234) | 0 | ~350 |
 | C1b | pins: ack-selection table — sendStatus × durable ownership × yielded/claimed × pending-in-memory × active-message equality (:392–440, :639) | 0 | ~250 |
 | C1c | pins: cost-reset table (:1071–1150) + legacy-fragility characterization (terminal-fence + double-setIdle; stale lastResultWasSuccess window) | 0 | ~150 |
 | C2a | `turn-end-routing.ts` pure core (flag machine + finish/replay gates) | ~90 | ~60 |
@@ -1702,7 +1725,10 @@ token and owner-scoped-idle primitives). Chain C apply PRs still follow B5e
 | C3c | apply usage accounting at :1071–1150 | ~40 | ~30 |
 | C4 | cleanup + ADR note | ~10 | doc ~35 |
 
-Order: C1\* → C2\* → C3\*; C2a ∥ C2b; C3 apply after B5e (§8.2).
+Order: C1\* → C2\* → C3\*; C2a ∥ C2b; **C3 apply after the complete B5
+series (B5a–B5j)**, whose dispatch/catch fencing the exceptional-exit
+contract consumes — owner-scoped idle (B5e) alone does not stop a stale
+handler resuming after an awaited publish (§8.2).
 
 ### 8.4 Chain A → fourteen sub-PRs
 
