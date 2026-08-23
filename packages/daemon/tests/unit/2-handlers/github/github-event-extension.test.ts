@@ -9825,6 +9825,83 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       const verdicts = received.filter((item) => item.topic.endsWith('.review_submitted'));
       expect(verdicts).toHaveLength(1);
       expect(verdicts[0].payload.state).toBe('APPROVED');
+      const cursor = extension.repo.getWatchedRepoById(extension.repo.listPollingRepos()[0].id)!
+        .pollCursor!;
+      expect(cursor.reviewEtags?.[7]).toBeUndefined();
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('single-page review scans cache the ETag and stop on 304; page-full scans stop at the rate floor', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const calls: string[] = [];
+    const singlePageReviews = [
+      {
+        id: 801,
+        state: 'APPROVED',
+        submitted_at: '2026-01-05T00:00:00Z',
+        user: { login: 'devin-ai-integration[bot]', type: 'Bot' },
+      },
+    ];
+    const fullFirstPage = Array.from({ length: 100 }, (_, index) => ({
+      id: 6000 + index,
+      state: 'COMMENTED',
+      submitted_at: '2026-01-05T00:00:00Z',
+      user: { login: 'reviewer', type: 'User' },
+    }));
+    let mode: 'single' | 'floor' = 'single';
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const requestUrl = String(url);
+      calls.push(requestUrl);
+      const path = new URL(requestUrl).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/pulls/7')) {
+        return pollingResponse({
+          ...createPullRequestRow(7),
+          mergeable: true,
+          mergeable_state: 'clean',
+        });
+      }
+      if (path.endsWith('/pulls/7/reviews')) {
+        if (mode === 'single') {
+          return pollingResponseWithHeaders(singlePageReviews, { ETag: '"reviews-v1"' });
+        }
+        return pollingResponseWithHeaders(fullFirstPage, {
+          'X-RateLimit-Remaining': '50',
+        });
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      let cursor = extension.repo.getWatchedRepoById(repo.id)!.pollCursor!;
+      expect(cursor.reviewEtags?.[7]).toBe('"reviews-v1"');
+
+      mode = 'floor';
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const reviewCallsAfterFloor = calls.filter((url) => url.includes('/pulls/7/reviews?'));
+      expect(reviewCallsAfterFloor.some((url) => url.includes('page=2'))).toBe(false);
+      cursor = extension.repo.getWatchedRepoById(repo.id)!.pollCursor!;
+      expect(cursor.reviewEtags?.[7]).toBeUndefined();
+      expect(cursor.lastPartialPollError).toBeTruthy();
     } finally {
       await extension.stop();
     }

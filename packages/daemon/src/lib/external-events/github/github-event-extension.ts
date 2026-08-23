@@ -2883,6 +2883,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       const reviewQuery = new URLSearchParams({ per_page: '100' });
       let reviewPage = 1;
+      let reviewScanComplete = false;
+      let reviewScanSinglePage = false;
+      let reviewPendingEtag: string | null = null;
       while (true) {
         const reviewHeaders = gitHubPollingHeaders(token);
         if (reviewPage === 1 && reviewEtags[prNumber]) {
@@ -2907,7 +2910,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         }
         const reviewRateLimit = parseRateLimitHeaders(reviewResponse);
         latestRateLimit = mergeRateLimitInfo(latestRateLimit, reviewRateLimit);
-        if (reviewResponse.status === 304) break;
+        if (reviewResponse.status === 304) {
+          reviewScanComplete = true;
+          reviewScanSinglePage = true;
+          break;
+        }
         if (reviewRateLimit.limited) {
           if (
             reviewResponse.status === 429 &&
@@ -2951,10 +2958,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           partialScan = true;
           break;
         }
-        const reviewEtag = reviewResponse.headers.get('ETag');
-        if (reviewPage === 1 && reviewEtag) reviewEtags[prNumber] = reviewEtag;
+        if (reviewPage === 1) {
+          reviewPendingEtag = reviewResponse.headers.get('ETag');
+        }
         const reviews = await reviewResponse.json();
-        if (!Array.isArray(reviews) || reviews.length === 0) break;
+        if (!Array.isArray(reviews) || reviews.length === 0) {
+          reviewScanComplete = true;
+          reviewScanSinglePage = reviewPage === 1;
+          break;
+        }
         for (const review of reviews) {
           const reviewId = reviewRowIdFrom(review);
           if (!reviewId || seenReviewIds[reviewId]) continue;
@@ -2968,8 +2980,21 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           seenReviewIds[reviewId] = true;
           count++;
         }
-        if (reviews.length < 100) break;
+        if (reviews.length < 100) {
+          reviewScanComplete = true;
+          reviewScanSinglePage = reviewPage === 1;
+          break;
+        }
+        if (!canPollReactions(reviewRateLimit.remaining)) {
+          partialScan = true;
+          break;
+        }
         reviewPage++;
+      }
+      if (reviewScanComplete && reviewScanSinglePage && reviewPendingEtag) {
+        reviewEtags[prNumber] = reviewPendingEtag;
+      } else {
+        delete reviewEtags[prNumber];
       }
       if (partialScan) break;
       if (
