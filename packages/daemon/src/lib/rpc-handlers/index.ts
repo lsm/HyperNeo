@@ -466,6 +466,43 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         }
       }
     },
+    onOutcomeNotification: (notification) => {
+      try {
+        const goal = spaceGoalRepo.getById(notification.goalId);
+        if (!goal) return;
+        const resolution = longHorizonAgentRepo.getPrimaryGoalOwner(goal.id, goal.spaceId);
+        let targetAgentId: string | null = null;
+        if (resolution.action === 'resolved') {
+          targetAgentId = resolution.owner.agentId;
+        } else if (resolution.action === 'degraded') {
+          targetAgentId = longHorizonAgentRepo.ensureCoordinator(goal.spaceId).id;
+        } else if (resolution.action === 'coordinator_fallback') {
+          targetAgentId = resolution.coordinatorAgentId;
+        }
+        if (!targetAgentId) {
+          log.warn(
+            `Goal outcome notification ${notification.id} has no owner or coordinator to wake`
+          );
+          return;
+        }
+        const { summary, taskStatus, taskTitle, goalTitle } = notification.payload;
+        const detail = summary ? ` ${summary}` : '';
+        spaceAgentInboxRepo.enqueue({
+          spaceId: goal.spaceId,
+          targetAgentId,
+          sourceActorId: `agent:coordinator:${goal.spaceId}`,
+          message: `Goal outcome ready for review: "${goalTitle}". Task "${taskTitle}" reached ${taskStatus}.${detail}`,
+          idempotencyKey: `goal-outcome:${notification.id}`,
+        });
+        log.info(
+          `goal.outcome.wake: goalId=${goal.id} taskId=${notification.taskId} target=${targetAgentId}`
+        );
+      } catch (err) {
+        log.warn(
+          `Goal outcome wake delivery threw for notification "${notification.id}": ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    },
   });
   const goalAutomationService = new GoalAutomationService({
     goalRepo: spaceGoalRepo,
