@@ -85,6 +85,7 @@ import { CompletionDetector } from './completion-detector';
 import {
   DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
   DEFAULT_AGENT_STUCK_NAG_GRACE_MS,
+  DEFAULT_SILENT_STALL_ATTENTION_THRESHOLD_MS,
   DEFAULT_TOOL_USE_ACTIVE_TTL_MS,
   MAX_AGENT_STUCK_NAGS,
   MAX_AGENT_STUCK_RESTARTS,
@@ -185,6 +186,7 @@ export interface SpaceRuntimeConfig {
   taskAgentManager?: TaskAgentManager;
   tickIntervalMs?: number;
   agentNoProgressThresholdMs?: number;
+  silentStallAttentionThresholdMs?: number;
   agentStuckNagGraceMs?: number;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   commandBus?: InternalCommandBus<DaemonCommandMap>;
@@ -380,6 +382,7 @@ interface TerminalErrorContinueState {
 
 const NON_TERMINAL_IDLE_FAILED_NUDGE_RETRY_MS = 60 * 1000;
 const NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS = 5 * 60 * 1000;
+const SILENT_STALL_ATTENTION_LOG_COOLDOWN_MS = 5 * 60 * 1000;
 const EXTERNAL_EVENT_RETRY_DELAY_MS = 1000;
 const EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS = 5;
 const EXTERNAL_EVENT_RATE_WINDOW_MS = 60_000;
@@ -669,6 +672,8 @@ export class SpaceRuntime {
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
   private nonTerminalIdleStates = new Map<string, NonTerminalIdleState>();
+
+  private silentStallAttentionLogAt = new Map<string, number>();
 
   private terminalErrorContinueStates = new Map<string, TerminalErrorContinueState>();
 
@@ -5462,6 +5467,7 @@ export class SpaceRuntime {
         this.terminalErrorContinueStates.delete(key);
       }
     }
+    this.silentStallAttentionLogAt.delete(runId);
   }
 
   private getAgentNoProgressThresholdMs(workflow: SpaceWorkflow, execution: NodeExecution): number {
@@ -6240,6 +6246,8 @@ export class SpaceRuntime {
       return;
     }
     nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+
+    this.detectSilentStallForAttention(runId, canonicalTask, space);
 
     if (
       canonicalTask.status === 'done' ||
@@ -7355,6 +7363,67 @@ export class SpaceRuntime {
       }
     }
     return 'none';
+  }
+
+  private detectSilentStallForAttention(
+    runId: string,
+    canonicalTask: SpaceTask,
+    space?: Space | null
+  ): void {
+    if (space?.paused || space?.stopped) return;
+    if (
+      canonicalTask.reportedStatus !== null ||
+      canonicalTask.status === 'review' ||
+      canonicalTask.status === 'approved' ||
+      canonicalTask.status === 'done' ||
+      canonicalTask.status === 'cancelled' ||
+      canonicalTask.status === 'archived' ||
+      canonicalTask.status === 'stopped'
+    ) {
+      return;
+    }
+
+    const executions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+    if (executions.length === 0) return;
+    if (!executions.every((execution) => execution.status === 'idle')) return;
+    if (
+      executions.some(
+        (execution) =>
+          this.toolContinuationRepo.hasActiveToolUseForExecution(execution.id) ||
+          this.toolContinuationRepo.listPendingInboxForExecution(execution.id).length > 0
+      )
+    ) {
+      return;
+    }
+
+    const now = Date.now();
+    const lastActivityAt = Math.max(
+      ...executions.map((execution) => execution.lastActivityAt ?? execution.startedAt ?? now)
+    );
+    const thresholdMs =
+      this.config.silentStallAttentionThresholdMs ?? DEFAULT_SILENT_STALL_ATTENTION_THRESHOLD_MS;
+    if (now - lastActivityAt <= thresholdMs) return;
+
+    const lastLogAt = this.silentStallAttentionLogAt.get(runId);
+    if (lastLogAt !== undefined && now - lastLogAt < SILENT_STALL_ATTENTION_LOG_COOLDOWN_MS) {
+      return;
+    }
+    this.silentStallAttentionLogAt.set(runId, now);
+
+    const idleMinutes = Math.round((now - lastActivityAt) / 60_000);
+    const executionSummary = executions
+      .map(
+        (execution) =>
+          `${execution.id}(node=${execution.workflowNodeId} agent=${execution.agentName} ` +
+          `session=${execution.agentSessionId ?? 'none'})`
+      )
+      .join(' ');
+    log.warn(
+      `Run ${runId} task ${canonicalTask.id} (${canonicalTask.status}) has every node execution idle for ` +
+        `${idleMinutes}m while the task never reached a terminal status, even though the session's last message ` +
+        `looks terminal; needs attention: lastActivityAt=${new Date(lastActivityAt).toISOString()} ` +
+        `executions=${executionSummary}`
+    );
   }
 
   private detachSessionFromAllExecutions(runId: string, sessionId: string): void {
