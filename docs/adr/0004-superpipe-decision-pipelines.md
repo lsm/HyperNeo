@@ -918,11 +918,22 @@ verified flow binds it as an effect dep rather than converting its callers);
 the gather guards of caveat 2; `post-approval-router.ts`'s
 `SessionLivenessProbe` — a boolean session-presence check, a different
 concept from the processing-state/pid liveness ladder and never a gates
-consumer despite the name; `SessionManager.interruptInMemorySession` with
-`preserveRootPids` — interrupt, cleanup, and pid bookkeeping without a
-verification ladder (the main-session surface); and the `app.ts` status
-reporting that reads `getTrackedAgentRootPidsSplit` for display, not
-decision.
+consumer despite the name; `SessionManager.preserveRootPids` — the pid
+bookkeeping under `unregisterSession` (its host
+`interruptInMemorySession`, interrupt and cleanup without a verification
+ladder, is production-unreferenced — its only callers are its own unit
+tests, so it is recorded here after review as pre-existing dead machinery
+outside chain S's conversion, a removal candidate for a code-change PR
+rather than something this docs-only sweep deletes); and the `app.ts`
+process-watchdog callback, which folds `getTrackedAgentRootPidsSplit`
+from both managers into `cleanupSuspiciousProcesses` — the split
+determines the daemon-owned descendant set and therefore which
+long-running owned processes (`bun test` past 15 minutes, `make dev`
+past 24 hours) are SIGTERMed with their process groups. That last one is
+an operational decision surface, not status reporting (corrected after
+review): a third consumer of the same pid split whose ownership question
+differs from the ladder's liveness question, and any later consolidation
+must respect both.
 
 **Costs:** production +315 across the chain — gates +92, flow +268,
 `task-agent-manager.ts` net −45 (S3 +62/−44, S4 +54, S5 +1/−118) — on top of
