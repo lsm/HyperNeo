@@ -382,9 +382,9 @@ describe('SpaceGoalService', () => {
     spaceRepo.pauseSpace(spaceId);
     taskRepo.updateTask(first.task!.id, { status: 'done' });
 
-    expect(() => service.handleTaskTerminal(first.task!.id)).toThrow(
-      'Cannot create goal task in a non-active space'
-    );
+    const terminal = service.handleTaskTerminal(first.task!.id);
+    expect(terminal?.nextTask).toBeNull();
+    expect(goalRepo.getById(autoGoal.id)?.activeTaskId).toBeNull();
     expect(taskRepo.listBySpace(spaceId).map((task) => task.id)).toEqual([first.task!.id]);
   });
 

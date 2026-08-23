@@ -211,7 +211,10 @@ export interface SpaceRuntimeConfig {
     run: SpaceWorkflowRun;
   }) => Promise<void> | void;
   selectWorkflowWithLlm?: SelectWorkflowWithLlm;
-  goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
+  goalService?: Pick<
+    import('../goals/goal-service').SpaceGoalService,
+    'handleTaskTerminal' | 'supersedeOutcomeNotificationsForTask'
+  >;
   evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
   actorRegistry?: SpaceActorRegistryAdapter;
   spaceAgentInboxRepo?: SpaceAgentInboxRepository;
@@ -8185,7 +8188,8 @@ export class SpaceRuntime {
         this.config.db,
         spaceId,
         this.config.reactiveDb,
-        this.config.evolutionScopeService
+        this.config.evolutionScopeService,
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
       );
       this.taskManagers.set(spaceId, manager);
     }

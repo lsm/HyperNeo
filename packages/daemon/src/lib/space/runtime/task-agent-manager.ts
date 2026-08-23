@@ -4133,7 +4133,8 @@ export class TaskAgentManager {
       this.config.db.getDatabase(),
       spaceId,
       this.config.reactiveDb,
-      this.config.evolutionScopeService
+      this.config.evolutionScopeService,
+      (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
     );
     const endNodeHandlers = isEndNode
       ? createEndNodeHandlers({
