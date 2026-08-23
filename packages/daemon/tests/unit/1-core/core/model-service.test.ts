@@ -1191,7 +1191,7 @@ describe('Model Service', () => {
       } as ProviderLike);
 
       const testCache = new Map<string, ModelInfo[]>();
-      testCache.set(cacheKey, mockModels);
+      testCache.set(cacheKey, [mockModels[0]]);
       setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000);
 
       getAvailableModels(cacheKey);
@@ -1204,6 +1204,41 @@ describe('Model Service', () => {
       const models = getAvailableModels(cacheKey);
       expect(models.length).toBeGreaterThan(0);
       expect(models.some((m) => m.id === 'bg-model-2')).toBe(true);
+    });
+
+    it('should retain previous models when background refresh returns fewer models', async () => {
+      const cacheKey = 'bg-shrink-test';
+
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const getModels = mock(async () => [
+        {
+          id: 'bg-model-3',
+          name: 'BG Model 3',
+          family: 'test',
+          provider: 'test-provider-bg3',
+          contextWindow: 100000,
+        },
+      ]);
+      registry.register({
+        id: 'test-provider-bg3',
+        getModels,
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      const testCache = new Map<string, ModelInfo[]>();
+      testCache.set(cacheKey, mockModels);
+      setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000);
+
+      getAvailableModels(cacheKey);
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      expect(getModels).toHaveBeenCalled();
+      const models = getAvailableModels(cacheKey);
+      expect(models).toEqual(mockModels);
+      expect(models.some((m) => m.id === 'bg-model-3')).toBe(false);
     });
 
     it('should drop stale result when clearModelsCache is called during foreground refresh', async () => {
