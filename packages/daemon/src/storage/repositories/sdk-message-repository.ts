@@ -1615,14 +1615,10 @@ export class SDKMessageRepository {
 
     return rows.map((row) => {
       const msg = JSON.parse(row.sdk_message) as Record<string, unknown>;
-      const text = this.extractAssistantText(msg);
+      const text = extractVisibleText(msg);
       const toolCallNames = extractToolCallNames(msg);
       return { id: row.id, text, toolCallNames };
     });
-  }
-
-  private extractAssistantText(msg: Record<string, unknown>): string {
-    return extractVisibleText(msg);
   }
 
   countMessagesAfter(sessionId: string, afterTimestamp: number): number {

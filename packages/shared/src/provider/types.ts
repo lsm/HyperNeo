@@ -70,6 +70,8 @@ export interface Provider {
 
   getModels(): Promise<ModelInfo[]>;
 
+  getCachedModels?(): ModelInfo[] | null;
+
   ownsModel(modelId: string): boolean;
 
   getModelForTier(tier: ModelTier): string | undefined;

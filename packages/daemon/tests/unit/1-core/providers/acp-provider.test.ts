@@ -476,6 +476,67 @@ describe('AcpProvider', () => {
     });
   });
 
+  describe('getCachedModels', () => {
+    it('should return null when no command is configured', () => {
+      expect(provider.getCachedModels()).toBeNull();
+    });
+
+    it('should synthesize the default entry for command-only configs', () => {
+      provider.setAcpCommand('devin acp');
+
+      const models = provider.getCachedModels();
+
+      expect(models?.map((m) => m.id)).toEqual(['acp-default']);
+      expect(models?.[0].provider).toBe('acp');
+      expect(models?.[0].contextWindow).toBe(200000);
+    });
+
+    it('should use the configured context window in the synthesized entry', () => {
+      provider.setAcpCommand('devin acp');
+      process.env.HYPERNEO_ACP_CONTEXT_WINDOW = '64000';
+
+      expect(provider.getCachedModels()?.[0].contextWindow).toBe(64000);
+    });
+
+    it('should synthesize the default entry after curated models are cleared', () => {
+      provider.setAcpCommand('devin acp');
+      provider.setAcpModels([{ id: 'devin-model-a' }]);
+      expect(provider.getCachedModels()?.map((m) => m.id)).toEqual(['devin-model-a']);
+
+      provider.setAcpModels(undefined);
+
+      expect(provider.getCachedModels()?.map((m) => m.id)).toEqual(['acp-default']);
+    });
+
+    it('should prefer cached models over the synthesized default', () => {
+      provider.setAcpCommand('devin acp');
+      provider.setCachedModels([
+        {
+          id: 'acp-cached',
+          name: 'ACP Cached',
+          family: 'acp',
+          provider: 'acp',
+          contextWindow: 100000,
+          available: true,
+        },
+      ]);
+
+      expect(provider.getCachedModels()?.map((m) => m.id)).toEqual(['acp-cached']);
+    });
+
+    it('should match the healthy getModels tail for command-only configs', async () => {
+      provider.setAcpCommand('devin acp');
+
+      expect(provider.getCachedModels()).toEqual(await provider.getModels());
+    });
+
+    it('should return null for a malformed ambient command', () => {
+      process.env.HYPERNEO_ACP_COMMAND = "devin 'acp";
+
+      expect(provider.getCachedModels()).toBeNull();
+    });
+  });
+
   describe('ownsModel', () => {
     it('should own acp model IDs', () => {
       expect(provider.ownsModel('acp')).toBe(true);

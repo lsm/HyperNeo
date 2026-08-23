@@ -12,6 +12,7 @@ import {
   createOllamaAnthropicBridgeServer,
   type OllamaBridgeServer,
 } from './ollama-bridge-server.js';
+import { DEFAULT_PROBE_TIMEOUT_MS } from './shared/credential-probe.js';
 
 type OllamaProviderKind = 'local' | 'cloud';
 
@@ -107,6 +108,7 @@ export class OllamaProvider implements Provider {
     try {
       const response = await this.fetchImpl(`${this.getBaseUrl()}/api/tags`, {
         headers: this.getApiKey() ? { Authorization: `Bearer ${this.getApiKey()}` } : undefined,
+        signal: AbortSignal.timeout(DEFAULT_PROBE_TIMEOUT_MS),
       });
       if (response.status === 401 || response.status === 403) {
         this.lastAuthError = 'Ollama API key was rejected. Check OLLAMA_API_KEY.';
