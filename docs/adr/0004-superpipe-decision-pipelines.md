@@ -1252,16 +1252,26 @@ later collapsed into one `deleteMessagesFromTimestamp` (interleaved #2812,
 finishing B3's unification).
 
 **B4 — the Phase 4 transaction sandwich at the storage layer.**
-`updateMessageStatus` gathers the pending-row snapshot, plans, and applies
-inside one transaction: read → plan → CAS-within-transaction → apply. Two
-disciplines carried structurally. First, *concrete values never appear in
-the plan*: turn promotion reads the live `MAX(conversation_turn_index)` per
-task (a shared-turn base frozen once per task inside the transaction), and
+`updateMessageStatus` gathers the pending-row snapshot and plans *before*
+opening the transaction, then applies inside it — read → plan →
+CAS-within-transaction → apply, with only the instruction application and
+the badge recompute transactional. That snapshot-to-apply gap is exactly
+why the expected-status guards below exist, and the synchronous
+single-threaded connection is why it stays theoretical today; the
+plan/interpret boundary must not widen it. Two disciplines carried
+structurally. First, *newly allocated values never appear in the plan*:
+turn promotion reads the live `MAX(conversation_turn_index)` per task (a
+shared-turn base frozen once per task inside the transaction), and a fresh
 `consumed_seq` comes from the atomic single-row `UPDATE … RETURNING`
 allocator — both invoked by the interpreter inside the open transaction,
 because pre-transaction allocation of either axis would make planning
 effectful or let a concurrent writer advancing the same task invalidate the
-plan. Second, *every applied transition carries an expected-status guard*
+plan. The one deliberate exception is a caller-provided sequence:
+`markDeliveriesConsumedAtTurnEnd` passes the result row's existing
+`consumed_seq` as `options.consumedSeq`, the planner stores it in each
+`allocate-consumed-seq` instruction as `providedSeq`, and the interpreter
+reuses it without spending an atomic allocation — pinned as such. Second,
+*every applied transition carries an expected-status guard*
 (`AND send_status IN (pending set)`): a row that left the pending window
 between snapshot and apply fails its whole transition — no stale timestamp,
 turn, or sequence instruction executes on it — and (the PR-review fix) the
@@ -1286,13 +1296,19 @@ wrappers; the `Database` facade exposes the 2-arg form only.
    drift — but a change to either predicate must be mirrored in the other,
    or recompute silently "repairs" the counter toward a different definition
    of visible.
-2. **Admission placement diverges by site, preserved.** The SDK variant
-   computes its record before its transaction; the user variant computes it
-   inside the composed transaction (the `saveUserMessage` wrapper and the
-   delivery outbox both call `saveUserMessageCore` transactionally). The
-   admission inputs therefore have different freshness horizons at the two
-   sites — pre-chain behavior, deliberately not unified, because relocating
-   either computation is an explicit plan-input change at live callers.
+2. **Admission placement diverges by site, preserved — and the placement is
+   not itself an invariant.** The SDK variant computes its record before its
+   transaction; the user variant computes it inside the composed transaction
+   (the `saveUserMessage` wrapper and the delivery outbox both call
+   `saveUserMessageCore` transactionally). The derivation reads only the
+   in-scope message and its options — no repository, clock, or other
+   mutable state — so the two placements cannot observe different inputs;
+   nothing about admission freshness pins the code where it is. What the
+   placement is load-bearing for is composition shape: the user core is
+   itself the transactional unit its callers compose (core inside the
+   transaction, `runPostSaveSideEffects` after commit), so hoisting its
+   admission computation out would change that seam, not correctness.
+   Recorded so the divergence is not read as a discipline.
 3. **The normalized input is a type seam.** Folding `HyperNeoActionMessage`
    into a synthetic `SDKMessage` is an `as unknown as SDKMessage` cast; the
    core reads only `type`, `subtype`, and `uuid` off it, but the seam is why
@@ -1307,18 +1323,24 @@ wrappers; the `Database` facade exposes the 2-arg form only.
 
 **Worker and recovery-script contracts, verified by this sweep.** The
 constructor stays `(db, reactiveDb?)`: the message-search worker constructs
-the repository on a read-only connection with no reactive database
-(`message-search-worker.ts:29`), and the recovery script does the same
-(`scripts/recover-messages.ts:276`); every reactive notification is a `?.`
-no-op without it, and `recomputeVisibleMessageCount` is the script's public
-entry. The module tops stay pure — constants and SQL strings only, no
-module-scope initialization — across the repository and every module it now
-imports, which is what the worker's import graph requires. The facade
+the repository on a read-only connection (`{readonly: true}` plus
+`PRAGMA query_only`, `message-search-worker.ts:29`), while the recovery
+script constructs it on a writable one whose writes include the recompute's
+`UPDATE` (`scripts/recover-messages.ts:276`) — what the two share is the
+absence of a reactive database, against which every notification is a `?.`
+no-op, and `recomputeVisibleMessageCount` is the script's public entry. The
+module tops stay pure — constants and SQL strings only, no module-scope
+initialization — across the repository and every module it now imports,
+which is what the worker's import graph requires. The facade
 (`storage/index.ts`) and the reactive proxy's `METHOD_TABLE_MAP` were not
-touched by any chain B PR: the proxy dispatches with `.apply(target, args)`,
-so the interpreter-era optional third parameter of `updateMessageStatus`
-passes through transparently, and the interleaved `willEmitTableChange`
-addition (#2814) was that PR's own incident fix, not chain B's.
+touched by any chain B PR. The proxy dispatches with `.apply(target, args)`,
+but the proxied facade method is itself 2-arg — `Database.updateMessageStatus`
+forwards `(messageIds, newStatus)` and would discard a third — so the
+options-bearing callers work because they are repository-internal wrappers
+calling `this.updateMessageStatus` directly, bypassing the facade; that
+narrowing is the recorded shape, not transparent passthrough. The
+interleaved `willEmitTableChange` addition (#2814) was that PR's own
+incident fix, not chain B's.
 
 **The closing sweep found no dead inline admission derivations.** B2
 deleted the inline copies as it landed — `isVisibleBadgeRow`, the per-site
