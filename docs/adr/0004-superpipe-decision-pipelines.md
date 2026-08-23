@@ -1183,9 +1183,11 @@ call sites with the spawn seam and was sequenced behind the P5 apply.
 ## Pilot 10 — chain B: save admission, badge instruction set, status-plan interpreter (2026-08-23)
 
 Chain B is the write-side chain of the `sdk_messages` superpipe survey (task
-#1249, #2713): the three save paths and the delivery-status flip of
-`SDKMessageRepository` extracted as pure cores, the repository keeping every
-SQL statement, write, and notification. Five PRs: B1 the save-admission
+#1249, #2713): the three save paths' admission and badge decisions extracted
+as pure cores, and the delivery-status flip extracted as a pure planner plus
+a transaction-shell interpreter that owns its own SQL — the repository
+keeping the surrounding reads, transactions, and notifications. Five PRs:
+B1 the save-admission
 drift pins (#2736), B2 the admission core (#2767), B3 the badge instruction
 set (#2794), B4 the `updateMessageStatus` plan/interpret (#2815), and this
 closing sweep. The chain ran interleaved with chains A (read projections)
@@ -1208,7 +1210,10 @@ Extracted:
   over the pending-row snapshot, producing the ordered instruction list
   (`touch-timestamp` / `promote-turn` / `allocate-consumed-seq`), and
   `applyMessageStatusPlan`, the transaction-shell interpreter with the
-  expected-status guards.
+  expected-status guards. The module's halves differ in kind: the planner is
+  pure, the interpreter is not — it prepares its own statements, reads the
+  clock, invokes the sequence allocator, and writes — so this module is a
+  planner/interpreter pair, not a third pure core.
 
 **Shape call: pure function, not `decisionRun`.** The save gates are
 independent derivations off one message — renderability, terminality,
@@ -1226,7 +1231,9 @@ site-local code:
 - **Anchor status gate.** `isConversationAnchor` requires `sendStatus`
   `consumed`/`failed` on the user variant only; the SDK variant takes no send
   status (the INSERT omits the column, so the schema default `'consumed'`
-  applies) and anchors unconditionally.
+  applies) and bypasses only that send-status arm — renderability and
+  user-type still gate the anchor, so non-user or non-renderable SDK rows
+  anchor exactly as they would on the user path.
 - **`consumed_seq` at insert.** The SDK variant allocates a sequence for
   terminal results inside its insert transaction; the user variant leaves the
   column NULL at insert and allocates only at the consumed flip. B1 pinned
@@ -1310,10 +1317,15 @@ wrappers; the `Database` facade exposes the 2-arg form only.
    admission computation out would change that seam, not correctness.
    Recorded so the divergence is not read as a discipline.
 3. **The normalized input is a type seam.** Folding `HyperNeoActionMessage`
-   into a synthetic `SDKMessage` is an `as unknown as SDKMessage` cast; the
-   core reads only `type`, `subtype`, and `uuid` off it, but the seam is why
-   the disjoint shape crosses at all, and a new admission fact reading deeper
-   message structure needs the normalizer extended, not just the core.
+   into a synthetic `SDKMessage` is an `as unknown as SDKMessage` cast. The
+   core reads `type`, `subtype`, and `uuid` off every input, and additionally
+   `message.content` (renderability), `parent_tool_use_id`, and
+   `supersedes`/`retracted_message_uuids` (replacement edges) where present —
+   the synthetic object omits all of those, and the omissions are
+   load-bearing defaults (non-array content renders, no parent, no edges). A
+   new admission fact reading deeper structure must extend the normalizer's
+   synthetic shape or its omissions become silent defaults; the seam is why
+   the disjoint shape crosses at all.
 4. **The repository re-export block is suite-pinned.** `computeIsRenderable`,
    `computeIsTerminal`, `extractParentToolUseId`, and `extractReplacementEdges`
    re-export from `sdk-message-repository.ts` for the helpers suite, which
@@ -1355,7 +1367,8 @@ shape (queued content blocks, not an `SDKMessage`), never a core consumer
 despite the name; and the per-variant admission placement of caveat 2.
 
 **Costs:** production +418/−203 across B2–B4, chain-B-attributable only —
-three pure modules +322 (169 + 16 + 137), the repository itself +96/−203
+three extracted modules +322 (169 + 16 + 137: two pure cores plus the
+planner/interpreter pair), the repository itself +96/−203
 (net −107; the survey's 2,199-line file was simultaneously shrinking under
 chains A and C). Tests +1,321: B1's drift matrix and task-id-resolution
 reactive harness +618, the admission suite +202, the badge suite +193, the
