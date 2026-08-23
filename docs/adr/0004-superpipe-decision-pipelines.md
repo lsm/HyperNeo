@@ -1214,10 +1214,17 @@ Interpreters: `upsertMessageSearchRow` keeps the delete-then-decide order and
 the body-extraction-first placement the C1 pins protect (a JSON-valid but
 invalid payload throws inside the flush transaction, so the pending row is
 retained for retry; syntactically invalid JSON returns before the old-row
-delete). The ten `markDelivery*`/`reopenDelivery*` wrappers plus the
-dbId-keyed `deferEnqueuedUserMessage` interpolate `deliveryTransitionRule`'s
-window into their SELECT and UPDATE; `updateMessageStatus` remains the shared
-effect underneath them — chain B's B4 plan/interpret material, untouched here.
+delete). The ten `markDelivery*`/`reopenDelivery*` wrappers select their
+target row through `deliveryTransitionRule`'s window — `send_status IN
+(acceptedFrom)` in the SELECT only — and then flip it through the shared
+`updateMessageStatus`, whose UPDATE matches by id alone with no status
+predicate: the select-to-update window between the two is theoretical only
+while the connection stays synchronous and single-threaded (the survey's B4
+note), and closing it with an expected-status guard is B4's plan/interpret
+work, untouched here. The dbId-keyed `deferEnqueuedUserMessage` is the one
+path that guards its own UPDATE (`AND send_status = ?`) instead of going
+through the shared effect — its distinct lookup, return shape, and
+conditional-update semantics preserved.
 
 **The session-rebuild outcome: routed vocabulary, deliberate residual.** The
 survey flagged `SessionRepository.rebuildMessageSearchRows` as a second
