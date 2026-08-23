@@ -15,12 +15,14 @@ export interface ClaimAdmissionCtx {
   actorAgentId: string | null;
   ownerAgentIds: string[];
   coordinatorAgentId: string | null;
+  coordinatorIsFallback: boolean;
   humanAdmissionAllowed: boolean;
   notificationStatus: SpaceGoalOutcomeNotificationStatus;
   notificationGoalId: string;
   notificationTaskId: string;
   claimedGoalId: string;
-  claimedTaskId: string | null;
+  claimedTaskId: string;
+  mutatesGoalState: boolean;
   observedGoalRevision: number;
   currentGoalRevision: number;
   decision: ClaimAdmissionDecision | null;
@@ -34,9 +36,8 @@ function decided(ctx: ClaimAdmissionCtx, decision: ClaimAdmissionDecision): Clai
 
 function isAuthorizedActor(ctx: ClaimAdmissionCtx): boolean {
   if (ctx.actorAgentId === null) return ctx.humanAdmissionAllowed;
-  return (
-    ctx.ownerAgentIds.includes(ctx.actorAgentId) || ctx.actorAgentId === ctx.coordinatorAgentId
-  );
+  if (ctx.ownerAgentIds.includes(ctx.actorAgentId)) return true;
+  return ctx.actorAgentId === ctx.coordinatorAgentId && ctx.coordinatorIsFallback;
 }
 
 export function applyAuthorizedGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCtx {
@@ -50,7 +51,7 @@ export function applyUnsupersededGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCtx
 }
 
 export function applyIdentityBoundGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCtx {
-  const taskMatches = ctx.claimedTaskId === null || ctx.claimedTaskId === ctx.notificationTaskId;
+  const taskMatches = ctx.claimedTaskId === ctx.notificationTaskId;
   const goalMatches = ctx.claimedGoalId === ctx.notificationGoalId;
   return goalMatches && taskMatches
     ? ctx
@@ -58,6 +59,7 @@ export function applyIdentityBoundGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCt
 }
 
 export function applyRevisionMatchGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCtx {
+  if (!ctx.mutatesGoalState) return ctx;
   return ctx.observedGoalRevision === ctx.currentGoalRevision
     ? ctx
     : decided(ctx, { action: 'deny', reason: 'stale_revision' });

@@ -9,12 +9,14 @@ function input(overrides: Partial<ClaimAdmissionInput> = {}): ClaimAdmissionInpu
     actorAgentId: 'owner-1',
     ownerAgentIds: ['owner-1'],
     coordinatorAgentId: 'coordinator-1',
+    coordinatorIsFallback: false,
     humanAdmissionAllowed: false,
     notificationStatus: 'pending',
     notificationGoalId: 'goal-1',
     notificationTaskId: 'task-1',
     claimedGoalId: 'goal-1',
     claimedTaskId: 'task-1',
+    mutatesGoalState: true,
     observedGoalRevision: 1,
     currentGoalRevision: 1,
     ...overrides,
@@ -27,10 +29,19 @@ describe('decideClaimAdmission', () => {
       expect(decideClaimAdmission(input())).toEqual({ action: 'admit' });
     });
 
-    test('admits the coordinator fallback', () => {
+    test('admits the coordinator when it is the resolved fallback', () => {
       expect(
-        decideClaimAdmission(input({ actorAgentId: 'coordinator-1', ownerAgentIds: [] }))
+        decideClaimAdmission(
+          input({ actorAgentId: 'coordinator-1', ownerAgentIds: [], coordinatorIsFallback: true })
+        )
       ).toEqual({ action: 'admit' });
+    });
+
+    test('denies the coordinator while an active owner exists', () => {
+      expect(decideClaimAdmission(input({ actorAgentId: 'coordinator-1' }))).toEqual({
+        action: 'deny',
+        reason: 'unauthorized',
+      });
     });
 
     test('admits a human operator when human admission is allowed', () => {
@@ -91,12 +102,6 @@ describe('decideClaimAdmission', () => {
         reason: 'identity_mismatch',
       });
     });
-
-    test('accepts a goal-scoped claim that omits the task', () => {
-      expect(decideClaimAdmission(input({ claimedTaskId: null }))).toEqual({
-        action: 'admit',
-      });
-    });
   });
 
   describe('revision-match gate', () => {
@@ -112,6 +117,12 @@ describe('decideClaimAdmission', () => {
         action: 'deny',
         reason: 'stale_revision',
       });
+    });
+
+    test('skips the CAS for terminal-only dispositions that do not mutate goal state', () => {
+      expect(
+        decideClaimAdmission(input({ observedGoalRevision: 0, mutatesGoalState: false }))
+      ).toEqual({ action: 'admit' });
     });
   });
 
