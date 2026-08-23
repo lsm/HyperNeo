@@ -4148,6 +4148,7 @@ export class SpaceRuntime {
         postApprovalSourceNodeId: null,
         reportedStatus: null,
         reportedSummary: null,
+        ...(targetStatus === 'open' ? { startedAt: null } : {}),
         ...(options.description !== undefined ? { description: options.description } : {}),
       });
       if (!updatedTask) throw new Error(`Failed to update task: ${task.id}`);
