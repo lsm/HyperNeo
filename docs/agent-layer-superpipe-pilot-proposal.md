@@ -1614,7 +1614,7 @@ Question answered: is each PR the smallest unit that fits a focused review?
 Verdict: **only 4 were already at budget (B4, B6, C4, A5); the other 12
 decompose into 52 slices — 56 PR-sized tasks in all** — PR 0 → 7, B1 → 5,
 B2 → 2, B3 → 4, B5 → 12, C1 → 3, C2 → 3, C3 → 3, A1 → 4, A2 → 4, A3 → 3,
-A4 → 2, plus the 4 unsplit parents (56 tasks counting the separate
+A4 → 2, plus the 4 unsplit parents (57 tasks counting the separate
 output-limiter addition).
 
 Budget rule per sub-PR: production Δ ≲100 lines (hard cap ~150 only for
