@@ -683,10 +683,7 @@ export class AgentSession
 
   async replayPendingMessagesForImmediateMode(): Promise<void> {
     this.reconcilerProvisioned = true;
-    if (this.session.config.queryMode === 'manual') return;
-    const restoredState = this.stateManager.getState();
-    if (restoredState.status === 'waiting_for_input') return;
-    await this.queryModeHandler.replayPendingMessagesForImmediateMode();
+    await this.queryModeHandler.replayPendingMessagesForAutomaticTurnEnd();
   }
 
   async replayAllPendingMessages(): Promise<void> {

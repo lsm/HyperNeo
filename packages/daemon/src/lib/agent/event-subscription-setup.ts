@@ -103,7 +103,7 @@ export class EventSubscriptionSetup {
     const unsubQueryTrigger = internalEventBus.subscribe(
       'query.trigger',
       async () => {
-        await queryModeHandler.replayPendingMessagesForImmediateMode();
+        await queryModeHandler.replayPendingMessagesForAutomaticTurnEnd();
       },
       { sessionId, subscriberName: 'EventSubscriptionSetup.queryTrigger' }
     );

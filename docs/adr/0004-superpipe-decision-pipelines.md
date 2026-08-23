@@ -46,8 +46,15 @@ routing table under `src/storage/` — the first pilot whose cores live in the
 repository layer — with the second production FTS admission implementation
 (`SessionRepository.rebuildMessageSearchRows`) aligned to the extracted
 vocabulary and parity-pinned. See "Pilot 9" below for the lazy-fact caveats
-and the deliberate rebuild residual. (Pilot 8 is reserved for chain I, the
-pending-queue drain + injection shell, by Pilot 7's closing note.)
+and the deliberate rebuild residual.
+
+Validated further by pilot 10 / chain A (2026-08-23): the `sdk_messages`
+read-projection layer of `SDKMessageRepository` extracted as pure transforms
+into `sdk-message-projections.ts` — the widened scope's P1 pure-transform form
+applied below the runtime, at the persistence boundary. See "Pilot 10" below
+for the policy-parameterization discipline the chain settled on and its
+closing sweep. (Pilot 8 is reserved for chain I, the pending-queue drain +
+injection shell, by Pilot 7's closing note; pilot 9 is chain C's.)
 
 Revised 2026-08-20 after owner review: scope widened from decision cores to pure
 pipelines generally — decisions, multi-step transforms (rendering/projection), and
@@ -1305,9 +1312,9 @@ types intra-module.
 
 **Costs:** production +167 across C2–C4 — the two cores +207 (160 + 47),
 `sdk-message-repository.ts` net −78 from chain C's own PRs (1,943 lines at
-the chain's close, 1,898 after dev's interleaved extractions — chain A PR 4
-and the rewind-operator dedup — landed beside it; chains A and B account for
-the rest of the shrink from the survey's 2,199-line base),
+the chain's close, 1,867 after dev's interleaved extractions — chain A PRs
+4–5 and the rewind-operator dedup — landed beside it; chains A and B account
+for the rest of the shrink from the survey's 2,199-line base),
 `session-repository.ts` +38 for the vocabulary interpolation and
 parameterized cutoffs. Tests +1,648:
 C1's pins +585 net (window matrix, turn-end batch semantics, flush boundary),
@@ -1317,10 +1324,103 @@ now), the routing suite +98, the parity matrix +684 —
 again the value is testability, and here the parity matrix paid for itself by
 surfacing the five rebuild divergences on identical rows.
 
-Pilot 9 PRs: #2755, #2771, #2791, #2804, plus this closing sweep. Chains A
-(read projections) and B (save admission) from the same survey are still in
-flight and land their own notes.
+Pilot 9 PRs: #2755, #2771, #2791, #2804, plus this closing sweep. Chain A
+landed beside this chain as pilot 10; chain B (save admission) from the same
+survey remains in flight and lands its own note.
 
+
+## Pilot 10 — chain A: sdk-message read projections (2026-08-23)
+
+Chain A applied the widened scope (pure transforms, P1) to the persistence
+read layer: every `sdk_messages` row → projected-message transform in
+`SDKMessageRepository`
+(`packages/daemon/src/storage/repositories/sdk-message-repository.ts`) moved
+into the pure, SQL-free `sdk-message-projections.ts` beside it. The repository
+keeps all SQL, writes, badge maintenance, and delivery transitions; the module
+holds row parsing, projection, text/content shaping, and page composition.
+Five PRs: A1 the characterization pin (#2730 — 794 lines pinning the
+repository's read-projection behavior before any extraction, including the
+per-reader malformed-row policy table and the user-content shaper split), A2
+the parse/inflate layer (#2766), A3 text/content projections plus the
+renderable-text predicate (#2793), A4 page composition (#2811), and A5 this
+closing sweep.
+
+Extracted surface, grouped by A2–A4 stratum:
+
+- **Parse/inflate (A2):** `parseSdkMessageRow` plus
+  `projectTopLevelMessageRow`, `projectSubagentMessageRow`,
+  `projectBackgroundTaskMessageRow`, `inflatePersistedMessage`.
+- **Text/content (A3):** `extractVisibleText`, `extractFirstTextBlockContent`,
+  `extractToolCallNames`, `projectRenderableTextRow`, and the
+  batch-size/scan-budget constants.
+- **Page composition (A4):** `composeMessagePage`, `collectToolUseIds`,
+  `buildRowIdHydrationBatches`, `orderHydratedMessages`.
+
+**Policy parameterization, not normalization — the chain's recorded idiom.**
+Where A1 characterized two readers or shapers as the same walk diverging only
+by a policy, the extraction shares one primitive behind an *explicit* policy
+parameter instead of either collapsing to a single unparameterized function or
+keeping two copies. Two instances. First, `parseSdkMessageRow(raw, policy)`
+carries the per-reader malformed-row policy A1 pinned (`synthesize`, `skip`,
+`throw`, `null`) rather than normalizing all callers to one behavior —
+`getAssistantMessagesSince` still throws on a malformed row while the page
+composers synthesize, exactly as before. Second, A5 (this sweep): the two
+user-content shapers — `extractVisibleText` (join-all) and
+`extractFirstTextBlockContent` (first-block-only) — had grown the identical
+`message.content` block walk; both now delegate to
+`extractTextBlockContents(msg, 'first-block-only' | 'join-all')`. The named
+shapers remain as the policy selections call sites actually want (never one
+unparameterized shaper): the parameter is required, and each shaper's output
+policy stays visible at its own boundary.
+
+Boundary caveats, recorded in the same spirit as pilot 3's:
+
+1. **The shapers differ beyond the block policy.** Join-all additionally
+   appends the `result` field for `result`-type messages, joins blocks with
+   blank lines, and trims the outer boundary; first-block-only returns the
+   first text block verbatim, interior and outer whitespace preserved (A1/A3
+   pin `' Padded first '` round-tripping and `'Alpha\n\nBeta'` from
+   `' Alpha'`/`'Beta '`). The shared primitive carries only the common
+   content walk; output shaping stays per-shaper, so the policy parameter is
+   the *stop* decision, not the whole difference.
+2. **One predicate now serves both policies.** The first-block-only shaper
+   previously matched `type === 'text'` and coerced a missing `text` to `''`;
+   the shared walk applies the join-all predicate
+   (`type === 'text' && typeof text === 'string'`) under both policies, so a
+   malformed text block without string `text` is skipped rather than returned
+   as empty. The divergence is reachable only on input violating the SDK's
+   content-block types (`text: string`) and is pinned by no A1 case.
+3. **Three content answers coexist on purpose.** `getUserMessageContentByUuid`
+   returns stored content verbatim (raw blocks or string) — a third projection
+   that is neither shaper, pinned by A1 as deliberately unshaped; the shapers
+   serve `getUserMessages`/`parseUserMessageRow` (first-block-only) and the
+   renderable/assistant readers (join-all). Unifying them would be a behavior
+   change, not a dedup.
+4. **Deliberate near-duplicate not folded:** `extractVisibleSearchText`
+   (`message-search.ts`) repeats the block walk but also indexes `thinking`
+   blocks and `hyperneo_action` title/message/question/prompt/action fields,
+   trimming per part before joining — a search-indexing shape, not a
+   user-content shaper, and out of this chain's scope.
+
+**The closing sweep found one dead copy and deleted it.** The private
+`extractAssistantText` method on the repository — an A3-era one-line
+delegation to `extractVisibleText` — is gone; its single caller uses the
+shaper directly. No other inline copies of the extracted walks remain in the
+repository. Every module export is production-consumed by the repository or
+pinned by the projections/repository suites; the in-module-consumed function
+exports (`parseSdkMessageRow`, `projectTopLevelMessageRow`,
+`projectSubagentMessageRow`, `collectToolUseIds`, `extractTextBlockContents`)
+are test-pinned directly, and the in-module type exports
+(`MalformedSdkRowPolicy`, `TextBlockExtractionPolicy`) are companions of
+those pinned signatures. knip (files/dependencies/exports), oxlint, and
+`tsc --noEmit` are clean.
+
+Costs: `sdk-message-repository.ts` 2,236 → 1,896 lines across A2–A5
+(A2 −61, A3 −225, A4 −50, A5 −4) against a 264-line projections module;
+tests net ≈ +1,457 (A1 +794 characterization pins; projections suite +204
+A2, +163 A3, +246 A4, +50 A5). As in pilots 3–7, the value is testability:
+the A1 pins run against pure functions, no database fixture required for the
+policy tables.
 ## Roadmap
 
 - **Done (pilot):** admission gates extracted as pure functions (no superpipe
@@ -1350,7 +1450,14 @@ flight and land their own notes.
   (`decisionRun`) and the delivery-status routing table under
   `src/storage/repositories/`, with the session-rebuild parity alignment —
   see "Pilot 9" above for the lazy-fact caveats and the deliberate rebuild
-  residual. Chains A and B from the same survey remain in flight.
+  residual. Chain B (save admission) from the same survey remains in flight.
+- **Done (chain A / pilot 10):** the `sdk_messages` read-projection layer of
+  `SDKMessageRepository` extracted as the pure `sdk-message-projections.ts`
+  (parse/inflate, text/content shapers over an explicit first-block-only /
+  join-all policy parameter, renderable-text projection, page composition) —
+  see "Pilot 10" above for the policy-parameterization idiom and the closing
+  sweep. The repository's read projections are done; the write/admission side
+  is chain C's (pilot 9), not revisited here.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
@@ -1460,5 +1567,11 @@ flight and land their own notes.
   `session-repository.ts` (`rebuildMessageSearchRows`); survey and C4 outcome
   in `docs/reports/sdk-message-repository-superpipe-survey.md`. Pilot 9 PRs:
   #2755, #2771, #2791, #2804, plus this closing sweep.
+- Pilot 10 (chain A) files:
+  `packages/daemon/src/storage/repositories/sdk-message-projections.ts`;
+  consumer in `sdk-message-repository.ts`. Characterization pins in
+  `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository.test.ts`
+  (A1), module suite in `sdk-message-projections.test.ts`. Pilot 10 PRs:
+  #2730, #2766, #2793, #2811, plus this closing sweep.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.

@@ -359,6 +359,12 @@ export class QueryModeHandler {
     return { replayedWork, clearedContext, replayFailed };
   }
 
+  async replayPendingMessagesForAutomaticTurnEnd(): Promise<void> {
+    if (this.ctx.session.config.queryMode === 'manual') return;
+    if (this.ctx.stateManager?.getState().status === 'waiting_for_input') return;
+    await this.replayPendingMessagesForImmediateMode();
+  }
+
   async replayPendingMessagesForImmediateMode(): Promise<void> {
     const { clearedContext, replayFailed } = await this.sendEnqueuedMessagesOnTurnEnd();
     if (replayFailed) return;
