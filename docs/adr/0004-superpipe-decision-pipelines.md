@@ -901,11 +901,15 @@ whole ladder — the inline loop, `gatherStopVerificationSnapshot`,
 and no reference to any of them remains. knip (files/dependencies/exports),
 oxlint, and `tsc --noEmit` are clean. Every core export is
 production-consumed or pinned directly by the gate suites (Decision item 6):
-`decideStopVerification`, `inspectSessionLiveness`,
-`isStopDownProcessingStatus`, `assembleVerifiedStopResult`,
-`VERIFIED_STOP_MAX_INTERRUPT_ATTEMPTS`, and the snapshot/assembly types are
-consumed by `verified-stop-flow.ts` and pinned by
-`stop-verification-gates.test.ts`; `runVerifiedStopFlow` /
+`decideStopVerification`, `isStopDownProcessingStatus`,
+`assembleVerifiedStopResult`, and the `SessionLivenessSnapshot` /
+`StopVerificationDecision` types are consumed by `verified-stop-flow.ts`;
+`inspectSessionLiveness`, `VERIFIED_STOP_MAX_INTERRUPT_ATTEMPTS`, and the
+remaining snapshot/assembly types are pinned by
+`stop-verification-gates.test.ts` alone — the flow pins the attempt bound
+and ladder position as literals and reaches the liveness inspection only
+through `decideStopVerification`, which wraps the inspector (caveats 1–2);
+`runVerifiedStopFlow` /
 `VerifiedStopFlowDeps` by `task-agent-manager.ts` and both flow suites; the
 combinator's `stagedRun` / `StagedRunOutcome` by both production flows
 (`verified-stop-flow.ts`, chain P's `spawn-flow.ts`);
