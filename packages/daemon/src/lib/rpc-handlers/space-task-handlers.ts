@@ -484,20 +484,6 @@ export function setupSpaceTaskHandlers(
               });
             }
           } else {
-            const {
-              status: _s,
-              result: _r,
-              approvalReason: _ar,
-              cancelReason: _cr,
-              ...otherFields
-            } = updateParams;
-            if (Object.keys(otherFields).length > 0) {
-              await ensureWorkflowOverridesStillUnlocked(otherFields);
-              await taskManager.updateTask(taskId, otherFields, {
-                onCascadedTasks: emitCascadedTasks,
-              });
-            }
-
             const mappedReason =
               updateParams.status === 'cancelled'
                 ? (updateParams.cancelReason ?? updateParams.approvalReason ?? undefined)
@@ -526,6 +512,20 @@ export function setupSpaceTaskHandlers(
                 },
                 { onCascadedTasks: emitCascadedTasks }
               );
+            }
+
+            const {
+              status: _s,
+              result: _r,
+              approvalReason: _ar,
+              cancelReason: _cr,
+              ...otherFields
+            } = updateParams;
+            if (Object.keys(otherFields).length > 0) {
+              await ensureWorkflowOverridesStillUnlocked(otherFields);
+              task = await taskManager.updateTask(taskId, otherFields, {
+                onCascadedTasks: emitCascadedTasks,
+              });
             }
           }
         }
