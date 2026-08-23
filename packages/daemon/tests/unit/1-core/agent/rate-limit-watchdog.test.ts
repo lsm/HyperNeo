@@ -1563,6 +1563,10 @@ describe('RateLimitWatchdog', () => {
       watchdog.cancel();
     });
 
+    it('the ladder policy values themselves are 10 then 30 minutes', () => {
+      expect(BACKOFF_LADDER_MS.slice(0, 2)).toEqual([10 * 60 * 1000, 30 * 60 * 1000]);
+    });
+
     it('ignores an LLM-refined reset in the past and keeps the ladder cooldown', async () => {
       const classify = mock(async () => ({
         resetAtMs: Date.now() - 60 * 1000,
