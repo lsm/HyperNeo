@@ -1055,7 +1055,11 @@ is already-resolved for settlement, so only a fresh human approval
 re-dispatches). Review rounds added
 the finer pins: the bind guards on the admission-observed status (a
 mid-spawn quiesce to `idle` is not laundered by an inner pre-bind), the
-identity guard (a foreign binding cannot be overwritten), and the
+identity guard on the post-create bind (it predicates on the
+admission-observed binding, so a foreign binding cannot be overwritten
+there; the live-session rebind guards on status only — a pointer-only
+change by another path while the observed status holds can still be
+overwritten by the stale rebind), and the
 `freshSessionOnly` descope (a reused session is never transferred). The
 50 ms DB-polling concurrent-spawn waiter became an explicit promise
 handoff with the same three outcome classes (resolved/failed/timeout):
@@ -1116,7 +1120,11 @@ the spawn call and the 30 s timeout race as shell effects: core-only
 extraction, no `stagedRun` composition, deliberately. Sixth, the waiter
 map and the flow compensations are in-memory only, consistent with
 `DEFERRED_DURABLE_COMPENSATION_ARMS`: a daemon crash mid-spawn is covered
-by first-tick `clearAllSpawnReservations` + reconcile, not durable arms.
+only for reservation liveness — first-tick `clearAllSpawnReservations`
+releases the token so another spawn can proceed — while a session row
+persisted before the outer bind stays orphaned (rehydration keys on
+`execution.agentSessionId`, so nothing picks it up); that session cleanup
+remains a deferred durable-compensation gap, not recovered state.
 
 **The closing sweep found no dead inline copies.** Each conversion PR
 removed its inline copy as it landed — the admission cascade, the
