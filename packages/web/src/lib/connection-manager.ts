@@ -182,6 +182,8 @@ export class ConnectionManager {
 
       if (state === 'connected') {
         reconnectAttemptCount.value = 0;
+        startAutoFlush();
+        startVoiceTranscriptOutboxFlush();
         this.notifyConnectionHandlers();
       }
 

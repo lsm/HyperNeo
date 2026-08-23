@@ -541,6 +541,48 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
   });
 
   describe('Automatic Reconnection', () => {
+    it('should ignore late close events from superseded sockets', async () => {
+      transport = new WebSocketClientTransport({
+        url: 'ws://localhost:9999',
+        autoReconnect: true,
+        maxReconnectAttempts: 5,
+        reconnectDelay: 100,
+      });
+
+      await transport.initialize();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(transport.isReady()).toBe(true);
+
+      const superseded = mockWebSocketInstance;
+      if (superseded) {
+        superseded.close = () => {
+          superseded.readyState = MockWebSocket.CLOSED;
+        };
+      }
+
+      const replacementWebSocket = vi.fn(function (url: string) {
+        return new MockWebSocket(url) as unknown as WebSocket;
+      });
+      (replacementWebSocket as unknown as { CONNECTING: number }).CONNECTING = 0;
+      (replacementWebSocket as unknown as { OPEN: number }).OPEN = 1;
+      (replacementWebSocket as unknown as { CLOSING: number }).CLOSING = 2;
+      (replacementWebSocket as unknown as { CLOSED: number }).CLOSED = 3;
+      global.WebSocket = replacementWebSocket as unknown as typeof WebSocket;
+
+      transport.forceReconnect();
+
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(transport.isReady()).toBe(true);
+      expect(transport.getState()).toBe('connected');
+
+      if (superseded) {
+        superseded.onclose?.(new CloseEvent('close'));
+      }
+
+      expect(transport.getState()).toBe('connected');
+      expect(transport.isReady()).toBe(true);
+    });
+
     it('should cancel a pending reconnect timer before scheduling a new attempt', async () => {
       transport = new WebSocketClientTransport({
         url: 'ws://localhost:9999',
