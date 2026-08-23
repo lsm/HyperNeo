@@ -712,7 +712,7 @@ describe('ProvidersSettings', () => {
     });
   });
 
-  it('loses the mount-vs-connect race: fetches at mount while the WebSocket connect is pending', async () => {
+  it('fetches immediately on mount without gating on connection readiness', async () => {
     let connectSettled = false;
     let resolveConnect: () => void;
     new Promise<void>((resolve) => {
