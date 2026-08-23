@@ -1104,6 +1104,20 @@ describe('SpaceGoalService', () => {
     expect(pending[0]!.status).toBe('pending');
   });
 
+  it('does not re-run terminal bookkeeping for an already-notified generation', () => {
+    const goal = service.createGoal({ spaceId, title: 'Idempotent goal' });
+    const task = service.createImmediateTask(goal.id);
+    expect(task.task).not.toBeNull();
+    taskRepo.updateTask(task.task!.id, { status: 'in_progress' });
+    taskRepo.updateTask(task.task!.id, { status: 'done' });
+    service.handleTaskTerminal(task.task!.id);
+    service.handleTaskTerminal(task.task!.id);
+
+    expect(notificationRepo.listPendingByGoal(goal.id)).toHaveLength(1);
+    const events = goalEventRepo.listByGoal(goal.id);
+    expect(events.filter((event) => event.eventType === 'task_terminal')).toHaveLength(1);
+  });
+
   it('rolls back the terminal write and notification together when notification creation fails', () => {
     const goal = service.createGoal({ spaceId, title: 'Atomic goal' });
     const task = service.createImmediateTask(goal.id);

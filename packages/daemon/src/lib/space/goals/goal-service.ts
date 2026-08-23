@@ -338,6 +338,19 @@ export class SpaceGoalService {
           notification: null as SpaceGoalOutcomeNotification | null,
         };
       }
+      const terminalGeneration = task.terminalGeneration;
+      if (
+        this.deps.outcomeNotificationRepo
+          ?.listPendingByGoal(goal.id)
+          .some((n) => n.taskId === taskId && n.terminalGeneration === terminalGeneration)
+      ) {
+        return {
+          goal,
+          nextTask: null as SpaceTask | null,
+          terminalGeneration,
+          notification: null as SpaceGoalOutcomeNotification | null,
+        };
+      }
       this.deps.goalRepo.clearActiveTaskIfMatches(goal.id, taskId);
       const fresh = this.requireGoal(goal.id);
       this.recordGoalEvent(fresh, 'task_terminal', goal, fresh, {
@@ -355,7 +368,6 @@ export class SpaceGoalService {
         }
         this.deps.goalAutomationService?.onTaskCompleted(taskId);
       }
-      const terminalGeneration = task.terminalGeneration;
       let nextTask: SpaceTask | null = null;
       let postBookkeeping: SpaceGoal = fresh;
       if (fresh.autoTriggerNext && fresh.pendingNextRun && fresh.status === 'active') {
