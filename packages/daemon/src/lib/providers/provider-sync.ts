@@ -137,12 +137,15 @@ export async function syncAllProviders(
   }
 }
 
-export async function removeProviderFromRegistry(providerId: string): Promise<void> {
+export async function removeProviderFromRegistry(
+  providerId: string,
+  options: { preserveCredentials?: boolean } = {}
+): Promise<void> {
   const registry = getProviderRegistry();
   const provider = registry.get(providerId);
   if (!provider) return;
 
-  if (provider.logout) {
+  if (provider.logout && !options.preserveCredentials) {
     try {
       await provider.logout();
     } catch (err) {

@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { AnthropicToCopilotBridgeProvider } from '../../../../../src/lib/providers/anthropic-copilot/index';
 import {
   initializeProviders,
@@ -9,6 +12,7 @@ import {
   getProviderRegistry,
   resetProviderRegistry,
 } from '../../../../../src/lib/providers/registry';
+import { removeProviderFromRegistry } from '../../../../../src/lib/providers/provider-sync';
 
 describe('AnthropicToCopilotBridgeProvider', () => {
   let provider: AnthropicToCopilotBridgeProvider;
@@ -834,6 +838,63 @@ describe('logout()', () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
     await p.logout();
     await expect(p.logout()).resolves.toBeUndefined();
+  });
+});
+
+describe('disable path preserves OAuth credentials', () => {
+  let authDir: string;
+
+  beforeEach(() => {
+    authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-auth-'));
+    resetProviderRegistry();
+    resetProviderFactory();
+  });
+
+  afterEach(() => {
+    resetProviderRegistry();
+    resetProviderFactory();
+    fs.rmSync(authDir, { recursive: true, force: true });
+  });
+
+  function writeAuthJson(data: Record<string, unknown>): void {
+    fs.writeFileSync(path.join(authDir, 'auth.json'), JSON.stringify(data, null, 2));
+  }
+
+  function readAuthJson(): Record<string, unknown> {
+    return JSON.parse(fs.readFileSync(path.join(authDir, 'auth.json'), 'utf-8')) as Record<
+      string,
+      unknown
+    >;
+  }
+
+  it('registry removal with preserveCredentials keeps the github-copilot entry and re-enable recovers from it', async () => {
+    writeAuthJson({ 'github-copilot': { refresh: 'gho_disable_tok' } });
+    const provider = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);
+    getProviderRegistry().register(provider);
+
+    await removeProviderFromRegistry('anthropic-copilot', { preserveCredentials: true });
+
+    expect(getProviderRegistry().has('anthropic-copilot')).toBe(false);
+    expect(readAuthJson()['github-copilot']).toEqual({ refresh: 'gho_disable_tok' });
+
+    const reEnabled = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);
+    expect(await reEnabled.getCredentials()).toEqual({
+      type: 'oauth',
+      accessToken: 'gho_disable_tok',
+    });
+    expect((await reEnabled.getAuthStatus()).isAuthenticated).toBe(true);
+  });
+
+  it('registry removal without preserveCredentials deletes the github-copilot entry', async () => {
+    writeAuthJson({ 'github-copilot': { refresh: 'gho_tok' }, 'other-provider': { token: 'x' } });
+    const provider = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);
+    getProviderRegistry().register(provider);
+
+    await removeProviderFromRegistry('anthropic-copilot');
+
+    const data = readAuthJson();
+    expect(data['github-copilot']).toBeUndefined();
+    expect(data['other-provider']).toEqual({ token: 'x' });
   });
 });
 
