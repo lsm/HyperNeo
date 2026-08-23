@@ -31,8 +31,9 @@ gates — the combinator's first composed-then-swapped production flow. See
 closing sweep.
 
 Validated further by pilot 7 (2026-08-23, Chain P): the workflow-node spawn
-seam and the lazy-activation path as staged interpreters over extracted
-admission/routing cores — and the first production consumer of
+seam applied as a staged interpreter over extracted cores and the
+lazy-activation path as an inline interpreter over its pure routing core —
+and the first production consumer of
 `casExecutionStatus` and the spawn reservation, whose superseded outcomes
 replace previously tolerated racy writes (the other Phase 0 primitives had
 already gained consumers just before the chain: transition-table enforcement
@@ -1041,10 +1042,12 @@ landing mid-spawn-pass
 fails the next execution's reservation, so the remainder does not spawn
 onto the parked task, and the trailing promotion CAS-loses instead of
 resurrecting it (pinned in the tick-loop suite); a mid-spawn cancel loses
-nothing — the bind CAS supersedes, the spawned session is compensated
-(cancelled and unregistered under preserve-DB semantics: only the direct
+nothing — the bind CAS supersedes, the spawned session is cancelled
+best-effort (the compensation's `cancelBySessionId` is fire-and-forget: a
+rejected strict stop logs and leaves the session-manager registration and
+`subSessions` entry in place; only the direct
 `createSubSession` inner-bind abort deletes the never-streamed row), the
-cancelled row is not resurrected, and no rejection goes unhandled; a
+cancelled execution row is not resurrected, and no rejection goes unhandled; a
 superseded spawn is skipped — not classified — by the tick spawn loop,
 queued-handoff repair, and the activation path, while the post-approval
 router maps it to a benign skipped route that persists
@@ -1063,9 +1066,14 @@ overwritten by the stale rebind), and the
 `freshSessionOnly` descope (a reused session is never transferred). The
 50 ms DB-polling concurrent-spawn waiter became an explicit promise
 handoff with the same three outcome classes (resolved/failed/timeout):
-waiters settle at the winning bind, re-check the DB before rejecting on
-peer failure, remove themselves on timeout, and are settled by
-`cleanupAll`. A new real-repository suite (`task-agent-manager-spawn-cas.test.ts`)
+waiters already registered settle at the winning bind, a failed peer's
+waiter re-checks the DB before rejecting, waiters remove themselves on
+timeout, and `cleanupAll` settles stragglers — but registration is not
+wake-up-safe: a caller paused between its `spawningExecutionIds` check
+and waiter insertion watches the winner settle both calls and clear the
+map, then waits out the full 30 s despite the successful binding (the pin
+registers its waiter before releasing the winner, so this window is
+recorded here, not pinned). A new real-repository suite (`task-agent-manager-spawn-cas.test.ts`)
 drives `spawnWorkflowNodeAgentForExecution` directly against real task and
 execution repositories — session creation and attachment stubbed — to pin
 the mid-spawn-loop park and cancel races at the flow level; the tick-loop
@@ -1225,7 +1233,7 @@ call sites with the spawn seam and was sequenced behind the P5 apply.
 
   | Phase | Scope | Notes |
   | --- | --- | --- |
-  | 0 | Task CAS (`casStatus`), transition-table enforcement in `updateTaskAndEmit`, spawn reservation, run/execution CAS, durable intent/outbox + compensation-record repositories | Product behavior change, not refactor; needs characterization pins. The `update_task` tool layer delegates to the repo-layer table — one source of truth (aligns with Pilot 5). Consumption so far: transition-table enforcement (#2682); `casStatus` (#2684 recovery blocked-write; Pilot 7 added the trailing promotion); `casExecutionStatus` across the spawn seam and the spawn reservation (Pilot 7 — its consumers carry the before/after pins). Still unconsumed: the run CAS (`casRunStatus`) and durable intent/outbox + compensation-record repositories. |
+  | 0 | Task CAS (`casStatus`), transition-table enforcement in `updateTaskAndEmit`, spawn reservation, run/execution CAS, durable intent/outbox + compensation-record repositories | Product behavior change, not refactor; needs characterization pins. The `update_task` tool layer delegates to the repo-layer table — one source of truth (aligns with Pilot 5). Consumption so far: transition-table enforcement (#2682); `casStatus` (#2684 recovery blocked-write; Pilot 7 added the trailing promotion); `casExecutionStatus` across the spawn seam and the spawn reservation (Pilot 7 — its consumers carry the before/after pins). Implemented but unconsumed: the run CAS (`casRunStatus`). Not yet implemented at all: the durable intent/outbox and compensation-record repositories for Space flows (only the unrelated message-delivery outbox exists), so those rows name future primitives, not dormant code. |
   | 1 | `repairQueuedWorkflowNodeHandoffs` as a staged sub-pipeline | Proves the pattern on one opaque effect. |
   | 2 | `handleAliveStuckExecutions` + crash reset | First recovery handler; the `withSignal` candidate lands here only if a test demonstrates the race. |
   | 3 | `handleWaitingRebindExecutions` | |
