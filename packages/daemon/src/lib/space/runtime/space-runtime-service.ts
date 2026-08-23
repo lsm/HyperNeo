@@ -323,6 +323,8 @@ export class SpaceRuntimeService {
     actor: ActorRef,
     message: MessageRecord
   ): Promise<string | null> {
+    const session = await this.ensureLongTermAgentSession(actor);
+    if (!session) return null;
     if (message.idempotencyKey?.startsWith('goal-outcome:')) {
       const notificationId = message.idempotencyKey.slice('goal-outcome:'.length);
       const notification = this.config.outcomeNotificationRepo?.getById(notificationId);
@@ -330,8 +332,6 @@ export class SpaceRuntimeService {
       const space = await this.config.spaceManager.getSpace(actor.spaceId);
       if (!space || space.status !== 'active' || space.paused || space.stopped) return null;
     }
-    const session = await this.ensureLongTermAgentSession(actor);
-    if (!session) return null;
     await this.injectLongTermAgentMessage(
       session,
       message.body,
