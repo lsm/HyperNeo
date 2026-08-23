@@ -7406,6 +7406,7 @@ export class SpaceRuntime {
     }
 
     const now = Date.now();
+    const continueGraceMs = this.config.agentStuckNagGraceMs ?? DEFAULT_AGENT_STUCK_NAG_GRACE_MS;
     const silenceSignals: number[] = [];
     for (const execution of executions) {
       if (typeof execution.lastActivityAt === 'number') {
@@ -7415,6 +7416,14 @@ export class SpaceRuntime {
       if (!sessionId) {
         if (typeof execution.startedAt === 'number') silenceSignals.push(execution.startedAt);
         continue;
+      }
+      const continueState = this.terminalErrorContinueStates.get(`${runId}:${execution.id}`);
+      if (
+        continueState?.lastContinueAt !== null &&
+        continueState?.lastContinueAt !== undefined &&
+        now - continueState.lastContinueAt < continueGraceMs
+      ) {
+        return;
       }
       const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
       if (lastMessage) silenceSignals.push(lastMessage.timestamp);

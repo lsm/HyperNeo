@@ -460,6 +460,52 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
       runDetector(rt, runId, taskId);
       expect(silentStallWarnings()).toHaveLength(1);
     });
+
+    test('stays quiet while a terminal-error runtime continue is within its grace window', () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+      ]);
+      const { runId, taskId } = seedRun(workflow, 'Continue Grace Run');
+      const execution = seedExec(runId, STEP_A, 'Coding', 'idle', {
+        agentSessionId: 'continue-grace-session',
+        lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
+      });
+      saveTerminalResultMessage('continue-grace-session', threeHoursAgo());
+
+      const rt = makeRuntime();
+      (rt as any).terminalErrorContinueStates.set(`${runId}:${execution.id}`, {
+        lastSessionId: 'continue-grace-session',
+        continueCount: 1,
+        lastRetriedErrorSignature: 'sig-continue-grace',
+        lastContinueAt: Date.now() - 30_000,
+        failedInjectionCount: 0,
+      });
+      runDetector(rt, runId, taskId);
+      expect(silentStallWarnings()).toHaveLength(0);
+    });
+
+    test('fires once the terminal-error runtime continue grace window has elapsed', () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+      ]);
+      const { runId, taskId } = seedRun(workflow, 'Continue Grace Elapsed Run');
+      const execution = seedExec(runId, STEP_A, 'Coding', 'idle', {
+        agentSessionId: 'continue-grace-elapsed-session',
+        lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
+      });
+      saveTerminalResultMessage('continue-grace-elapsed-session', threeHoursAgo());
+
+      const rt = makeRuntime();
+      (rt as any).terminalErrorContinueStates.set(`${runId}:${execution.id}`, {
+        lastSessionId: 'continue-grace-elapsed-session',
+        continueCount: 1,
+        lastRetriedErrorSignature: 'sig-continue-grace-elapsed',
+        lastContinueAt: Date.now() - 3 * 60 * 1000,
+        failedInjectionCount: 0,
+      });
+      runDetector(rt, runId, taskId);
+      expect(silentStallWarnings()).toHaveLength(1);
+    });
   });
 
   describe('rate limiting', () => {
