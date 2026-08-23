@@ -266,6 +266,9 @@ function applyProviderLoadOutcome(result: ModelsLoadResult): void {
     clearProviderFailure(providerId);
   }
   for (const failure of result.failures) {
+    if (!registry.has(failure.providerId)) {
+      continue;
+    }
     recordClassifiedProviderFailure(failure.providerId, failure);
   }
 }
@@ -297,12 +300,14 @@ export async function initializeModels(): Promise<void> {
     return;
   }
 
-  initializeProviders();
-  await waitForOptionalProviderRegistration();
-
   const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
 
   const refreshPromise = (async () => {
+    initializeProviders();
+    await waitForOptionalProviderRegistration();
+    if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
+      return;
+    }
     try {
       const result = await loadModelsFromProviders();
       const isCurrentGeneration = (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart;

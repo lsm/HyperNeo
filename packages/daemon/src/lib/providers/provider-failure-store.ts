@@ -110,6 +110,10 @@ export function subscribeProviderFailureChanges(
   };
 }
 
+export function clearProviderFailureRecords(): void {
+  providerFailures.clear();
+}
+
 /** @public */
 export function resetProviderFailureStore(): void {
   providerFailures.clear();

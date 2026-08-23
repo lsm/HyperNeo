@@ -52,7 +52,10 @@ import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler
 import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
 import { KeychainUnavailableError } from './lib/credentials/credential-store.js';
 import { syncAllProviders } from './lib/providers/provider-sync.js';
-import { subscribeProviderFailureChanges } from './lib/providers/provider-failure-store.js';
+import {
+  clearProviderFailureRecords,
+  subscribeProviderFailureChanges,
+} from './lib/providers/provider-failure-store.js';
 import {
   backfillDeepSeekProvider,
   migrateProvidersIfNeeded,
@@ -214,6 +217,7 @@ async function invalidateInFlightModelLoads(): Promise<void> {
   try {
     const { clearModelsCache } = await import('./lib/model-service');
     clearModelsCache();
+    clearProviderFailureRecords();
   } catch {}
 }
 

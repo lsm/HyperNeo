@@ -1460,6 +1460,7 @@ describe('Model Service', () => {
       error?: Error;
       rejectDelayMs?: number;
       onFirstProbe?: () => void;
+      unregisterDuringGetModels?: boolean;
     }
 
     async function registerProvider(id: string, behavior: MockProviderBehavior): Promise<void> {
@@ -1470,6 +1471,9 @@ describe('Model Service', () => {
         getModels: async () => {
           if (behavior.rejectDelayMs) {
             await new Promise((resolve) => setTimeout(resolve, behavior.rejectDelayMs));
+          }
+          if (behavior.unregisterDuringGetModels) {
+            getProviderRegistry().unregister(id);
           }
           if (behavior.error) throw behavior.error;
           return behavior.models ?? [];
@@ -1663,6 +1667,20 @@ describe('Model Service', () => {
       await refreshProviderModels();
 
       expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
+    it('does not record failures for providers unregistered during the load', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai probe failed (HTTP 503)'),
+        models: mockModels,
+        unregisterDuringGetModels: true,
+      });
+      await registerProvider('kimi', { models: mockModels });
+
+      await refreshProviderModels();
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+      expect(getProviderFailure('kimi')).toBeUndefined();
     });
   });
 
