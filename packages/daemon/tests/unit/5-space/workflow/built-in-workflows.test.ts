@@ -470,6 +470,13 @@ describe('coder-only workflow template', () => {
       'external under "gate", internal under "internal" — never overwrite one with the other'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('the internal artifact IS the gate of record');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'proceed without a new review round and without asking for fresh sign-off'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      're-runs ONLY the internal fallback review (never a bot loop'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('report the gate that actually ran');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('validate ONLY that internal artifact');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'a re-triggered bot that engages but produces no verdict within its window'
@@ -494,8 +501,15 @@ describe('coder-only workflow template', () => {
       'Retargeting a PR changes the reviewed diff WITHOUT changing'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
-      'the `base_ref` recorded in your `review-base` note artifact (key "base")'
+      'the `base_ref` and `head_oid` recorded in your `review-base` note artifact (key "base")'
     );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'a mismatch in EITHER value invalidates the gate'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'revalidate it BEFORE requesting any re-approval'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('source: "<external|internal|both|auto>"');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('route the revalidation back through Review');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
       "the Reviewer's backup re-review stands in for that bot's pass"
