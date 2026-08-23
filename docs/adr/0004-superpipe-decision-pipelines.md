@@ -18,6 +18,12 @@ Validated further by pilot 5 (2026-08-21): the eight task-mutation MCP tools in
 admission/routing cores — see "Pilot 5" below for the recorded asymmetries and
 the group roadmap.
 
+Validated further by pilot 4 (2026-08-21): the agent message-delivery chain —
+inject admission and turn-end flush as `decisionRun` pipelines, turn-outcome
+and reconcile as point decisions — with the closing PRs fixing the two live
+incident bugs the decision-table pins surfaced; see "Pilot 4" below for the two
+design lessons it added to the record.
+
 Validated further by pilot 7 (2026-08-23, Chain P): the workflow-node spawn
 seam and the lazy-activation path as staged interpreters over extracted
 admission/routing cores — and the first production consumers of the Phase 0
@@ -478,6 +484,108 @@ gate, spawn-failure outcomes). The review round also surfaced pre-existing
 production-unreachable defensive code outside the sweep's PR-6 scope — the
 `workflowRunId` rebind guard — recorded above rather than removed.
 
+## Pilot 4 — agent message-delivery cores (2026-08-21)
+
+Pilot 4 carried the pattern below the Space runtime, into the agent layer's
+message-delivery chain (`packages/daemon/src/lib/agent/`). Four cores were
+extracted over PRs 2–5 from decision-table pins written in PR 1, wired into
+the four production call sites in PR 6, and the two live incident bugs the
+pins surfaced were fixed in PRs 7–8:
+
+- `message-ownership-gates.ts` — `resolveMessageOwnership` (the typed
+  ownership answer: durable job queue / in-memory queue / unowned), flush
+  planning (`planFlushDelivery`), role resolution (`resolveDeliveryRole`), and
+  defer admission (`decideDeferAdmission`).
+- `context-reset-planner.ts` — `planInjectContextReset` and
+  `planTurnEndFlushContextReset`: whether a delivery clears conversation
+  context first, and — as a typed reason — why not.
+- `turn-outcome-classification.ts` — `classifyTurnCompletion` (the
+  completed / terminal-error / recoverable-error taxonomy with detail
+  fallbacks), `shouldRearmSpuriousTurnEnd`, and the reconcile pair
+  (`decideReconcileAdmission`, `selectStrandedDeliveries`).
+- `message-delivery-pipeline.ts` — the two `decisionRun` compositions:
+  `decideInjectDelivery` (consumed → failed-reopen → defer admission →
+  context reset → deliver) and `decideTurnEndFlush` (empty → ownership →
+  context reset → final), each stamped as a typed plan the shell interprets.
+
+The two main pipelines are interpreted at `injectMessageIntoSession`
+(`runtime/task-agent-manager.ts`) and the turn-end flush
+(`query-mode-handler.ts`: `handleQueryTrigger` and
+`sendEnqueuedMessagesOnTurnEnd`'s V2 paths); the point decisions at
+`driveDeliveryTurn`'s tail and `reconcileStrandedDeliveries`
+(`agent-session.ts`), where the throws, reopens, and re-enqueues stay inline
+as effects. `deliverMessage`'s role resolution stayed inline deliberately —
+rewiring it to `resolveDeliveryRole` would have added churn without clarity —
+so that core function ships as a pinned decision table without a production
+caller, the pilot-4 instance of pilot 3's shadowed-arms phenomenon.
+
+**Lesson (a): OWNERSHIP MUST HAVE ONE TYPED ANSWER.** The duplicate-delivery
+bug after a model switch (#2598, Space task #1101, fixed just before the
+pilot) was two partial ownership sources — the durable job queue and the
+in-memory `MessageQueue` — each consulted by different code paths with no
+unified resolution, so turn-end replay and stranded-delivery reconciliation
+could each re-enqueue a message the other still owned. The pilot's answer is
+the `MessageOwnership` union: reconcile routes both sources through
+`selectStrandedDeliveries` (the durable set plus the in-flight predicate),
+while the flush planner runs `resolveMessageOwnership` per message — its
+interpreter still resolves memory-queue ownership caller-side, pre-filtering
+on `hasPendingOrInFlight` and feeding the planner an empty in-memory set, so
+the typed `memory_queue` arm fires only in the pinned decision tables — and a
+message's owner is a typed value, not whichever set the surrounding code
+happened to check.
+
+**Lesson (b): ORDERING CONSTRAINTS BELONG IN THE PLANNER, NOT THE CALLERS.**
+The wiped-handoff incident (#1085, fixed in PRs 7–8) was clear-vs-batch
+ordering implicit in call order across two modules: the turn-end flush
+delivered a task's handoff and a later idle clear wiped it, because nothing
+anywhere stated "the clear precedes the batch". `planTurnEndFlushContextReset`
+now decides `clear_then_flush` as data — and refuses to clear over
+unconsumed delivered work (`unconsumed_work_pending` on the inject side) —
+while the interpreter emits the confirmed clear at the front of the flush
+batch, with PR 7 making `clearConversationContext` resolve only on the SDK
+result event so "confirmed" is real. An ordering a caller must maintain by
+statement placement is a decision the planner owes a field for.
+
+**The pattern was already half-landed.** `message-delivery.ts` entered the
+pilot with typed outcome unions (`DriveTurnOutcome`, `FeedSteerOutcome`) and
+pure classifiers (`isTerminalTurnError`, `isRetryableErrorResultSubtype`,
+`classifyReclaimTermination`); the pilot finished the file's own trajectory
+rather than importing a foreign style — decisions as pinned tables, effects in
+the shells, and the cores import those classifiers instead of re-deriving
+them.
+
+Deliberate non-goals: `driveDeliveryTurn`'s lock/admission/batch-narrowing/
+stall-watchdog mechanics remain as-is (loop mechanics, locking, and the stall
+watchdog are the shell's job), and the V1 env-gated legacy path
+(`HYPERNEO_MESSAGE_DELIVERY_V2=0` → memory-queue delivery) is untouched, so
+`deliverRowsViaMemoryQueue` keeps its own guards.
+
+The closing sweep found no dead copies at the call sites — PR 6 had already
+deleted the inline active-set filter (`deliverEachUnderV2`) it replaced with
+the flush plan's skip list, and the role-resolution and taxonomy candidates
+were the deliberate-inline cases above. One production-dead duplicate
+remained elsewhere: the standalone `reconcileStrandedDeliveries` export in
+`message-delivery.ts` (carried through PR 6 for its pinned outbox tests)
+duplicated the stranded-selection loop; it now composes
+`selectStrandedDeliveries` like the live `agent-session` method. Every core
+export is production-consumed or pinned by the decision-table suites; knip
+(files/dependencies/exports), oxlint, and `tsc --noEmit` are clean.
+
+Costs: 490 lines of new pure modules (126 + 64 + 104 + 196). The four sites
+were not shrunk — `injectMessageIntoSession` 125 → 223 lines, the
+`query-mode-handler` flush cluster 134 → 286 across its methods,
+`driveDeliveryTurn` 337 → 368, `reconcileStrandedDeliveries` 43 → 54 — but
+most of the growth is the PR 7–8 fix interpretation, not refactor overhead;
+the behavior-neutral wiring PR netted +32 daemon src lines. Daemon totals
+across PRs 1–8: src +1,512/−330, tests +4,714/−101. As in pilot 3, the value
+is testability, and here it was incident-shaped: writing the pins surfaced
+two live bugs (the pre-pilot #2598 ownership race and #1085's wiped handoff)
+that the old inline cascades kept invisible.
+
+Pilot 4 PRs: #2618 (decision-table pins), #2622, #2636, #2639, #2648
+(extraction), #2662 (call-site interpretation), #2694 + #2728 (incident
+fixes), plus this closing sweep.
+
 ## Pilot 5 — MCP tool-handler staged pipelines (2026-08-21)
 
 Pilot 5 carried the pattern from the runtime into the Space MCP tool surface. All
@@ -866,6 +974,9 @@ call sites with the spawn seam and was sequenced behind the P5 apply.
   combinator; interpreter dedup.
 - **Done (pilot 3):** run-tick admission/settlement/spawn cores and the
   `processRunTick` staged interpreter — see "Pilot 3" above.
+- **Done (pilot 4):** the agent message-delivery cores — inject admission and
+  turn-end flush `decisionRun` pipelines plus the turn-outcome/reconcile point
+  decisions, with both incident bugs fixed — see "Pilot 4" above.
 - **Done (pilot 5):** the eight task-mutation MCP tools as staged pipelines
   over `tool-admission-gates` / `task-transition-routing` /
   `space-tool-pipeline` — see "Pilot 5" above, which also records the group
@@ -942,6 +1053,12 @@ call sites with the spawn seam and was sequenced behind the P5 apply.
   run-tick-decision-pipeline, run-completion-settlement, run-spawn-decisions}.ts`;
   interpreter in `space-runtime.ts` (`processRunTick`). Pilot 3 PRs: #2601,
   #2604, #2620, #2624, #2629, #2641.
+- Pilot 4 files: `packages/daemon/src/lib/agent/{message-ownership-gates,
+  context-reset-planner,turn-outcome-classification,message-delivery-pipeline}.ts`;
+  interpreters in `runtime/task-agent-manager.ts` (`injectMessageIntoSession`),
+  `query-mode-handler.ts` (turn-end flush), and `agent-session.ts`
+  (`driveDeliveryTurn` tail, `reconcileStrandedDeliveries`). Pilot 4 PRs:
+  #2618, #2622, #2636, #2639, #2648, #2662, #2694, #2728.
 - Pilot 5 files: `packages/daemon/src/lib/space/tools/{tool-admission-gates,
   task-transition-routing,space-tool-pipeline}.ts`; interpreters in
   `space-agent-tools.ts` (the eight task-mutation handlers). Pilot 5 PRs:
