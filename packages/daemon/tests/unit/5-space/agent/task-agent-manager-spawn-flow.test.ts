@@ -105,6 +105,7 @@ export interface CasCall {
     startedAt?: number | null;
     completedAt?: number | null;
   };
+  guards?: { expectAgentSessionId?: string | null };
 }
 
 interface SpawnFlowHarnessOptions {
@@ -118,7 +119,6 @@ interface SpawnFlowHarnessOptions {
   kickoffGate?: Promise<void>;
   failEnsure?: boolean;
   bindCasOutcome?: 'won' | 'superseded';
-  sessionReused?: boolean;
 }
 
 interface SpawnFlowHarness {
@@ -130,6 +130,7 @@ interface SpawnFlowHarness {
   reservations: string[];
   reservationReleases: string[];
   spawningIds: () => Set<string>;
+  setExecutionSessionId: (sessionId: string | null) => void;
   spawn: () => Promise<string>;
 }
 
@@ -178,12 +179,19 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
         id: string,
         expected: readonly string[] | string,
         next: string,
-        payload?: CasCall['payload']
+        payload?: CasCall['payload'],
+        guards?: { expectAgentSessionId?: string | null }
       ): 'won' | 'superseded' => {
         const expectedList = Array.isArray(expected) ? [...expected] : [expected];
-        casCalls.push({ id, expected: expectedList, next, payload });
+        casCalls.push({ id, expected: expectedList, next, payload, guards });
         if (options.bindCasOutcome && next === 'in_progress' && payload?.agentSessionId) {
           return options.bindCasOutcome;
+        }
+        if (
+          guards?.expectAgentSessionId !== undefined &&
+          dbRow.agentSessionId !== guards.expectAgentSessionId
+        ) {
+          return 'superseded';
         }
         if (id !== row.id || !expectedList.includes(dbRow.status)) return 'superseded';
         dbRow.status = next as NodeExecution['status'];
@@ -215,12 +223,8 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
     buildNodeAgentMcpServerForSession: (...args: unknown[]) => unknown;
     spawningExecutionIds: Set<string>;
   };
-  internal.createSubSession = async (...args: unknown[]) => {
+  internal.createSubSession = async () => {
     order.push('createSubSession');
-    if (options.sessionReused) {
-      const memberInfo = args[3] as { onSessionReused?: (id: string) => void } | undefined;
-      memberInfo?.onSessionReused?.(SPAWNED_SESSION_ID);
-    }
     return SPAWNED_SESSION_ID;
   };
   internal.getSubSession = (id: string) =>
@@ -259,6 +263,9 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
     reservations,
     reservationReleases,
     spawningIds: () => internal.spawningExecutionIds,
+    setExecutionSessionId: (sessionId) => {
+      dbRow.agentSessionId = sessionId;
+    },
     spawn: () =>
       tam.spawnWorkflowNodeAgentForExecution(
         task,
@@ -427,6 +434,28 @@ describe('spawnWorkflowNodeAgentForExecution — staged spawn interpreter', () =
     expect(h.cancels).toEqual([SPAWNED_SESSION_ID]);
     expect(h.spawningIds().has('exec-1')).toBe(false);
     expect(h.reservationReleases).toEqual([TASK_ID]);
+  });
+
+  test('a foreign session binding landing mid-spawn fails the bind identity guard: no overwrite, session compensated, foreign binding survives (PR #2770 review)', async () => {
+    const h = makeSpawnFlowHarness({ kickoff: false });
+    const internal = h.tam as unknown as {
+      createSubSession: (...args: unknown[]) => Promise<string>;
+    };
+    const originalCreate = internal.createSubSession.bind(internal);
+    internal.createSubSession = async (...args: unknown[]) => {
+      const sessionId = await originalCreate(...args);
+      h.setExecutionSessionId('foreign-direct-session');
+      return sessionId;
+    };
+
+    const spawnPromise = h.spawn();
+
+    await expect(spawnPromise).rejects.toThrow('superseded at stage bind-execution-session');
+    expect(h.cancels).toEqual([SPAWNED_SESSION_ID]);
+    expect(h.order).not.toContain('ensureNodeAgentAttached');
+    expect(h.casCalls.some((c) => c.payload?.agentSessionId === 'foreign-direct-session')).toBe(
+      false
+    );
   });
 
   test('a failure after session creation cancels the spawned session, releases the reservation, and rethrows', async () => {

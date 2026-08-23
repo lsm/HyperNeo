@@ -121,6 +121,7 @@ export interface SpawnAdmissionCasCall {
     startedAt?: number | null;
     completedAt?: number | null;
   };
+  guards?: { expectAgentSessionId?: string | null };
 }
 
 interface SpawnHarness {
@@ -183,10 +184,11 @@ function makeSpawnHarness(options: SpawnHarnessOptions = {}): SpawnHarness {
         id: string,
         expected: readonly string[] | string,
         next: string,
-        payload?: SpawnAdmissionCasCall['payload']
+        payload?: SpawnAdmissionCasCall['payload'],
+        guards?: { expectAgentSessionId?: string | null }
       ): 'won' | 'superseded' => {
         const expectedList = Array.isArray(expected) ? [...expected] : [expected];
-        casCalls.push({ id, expected: expectedList, next, payload });
+        casCalls.push({ id, expected: expectedList, next, payload, guards });
         if (next === 'in_progress' && payload?.agentSessionId === 'live-session') {
           return options.rebindCasOutcome ?? 'won';
         }
@@ -623,6 +625,7 @@ describe('spawnWorkflowNodeAgentForExecution — post-create execution binding',
         startedAt: expect.any(Number),
         completedAt: null,
       },
+      guards: { expectAgentSessionId: null },
     });
   });
 
@@ -714,6 +717,7 @@ describe('spawnWorkflowNodeAgentForExecution — CAS-guarded spawn writes (AFTER
         startedAt: expect.any(Number),
         completedAt: null,
       },
+      guards: { expectAgentSessionId: null },
     });
   });
 });
@@ -770,10 +774,11 @@ function makeActivateHarness(
         id: string,
         expected: readonly string[] | string,
         next: string,
-        payload?: SpawnAdmissionCasCall['payload']
+        payload?: SpawnAdmissionCasCall['payload'],
+        guards?: { expectAgentSessionId?: string | null }
       ): 'won' | 'superseded' => {
         const expectedList = Array.isArray(expected) ? [...expected] : [expected];
-        casCalls.push({ id, expected: expectedList, next, payload });
+        casCalls.push({ id, expected: expectedList, next, payload, guards });
         if (next === 'pending' && options.resetCasOutcome) {
           return options.resetCasOutcome;
         }

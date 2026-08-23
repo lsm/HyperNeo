@@ -838,6 +838,24 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
     expect(boundPriorOwner.status).toBe('in_progress');
   });
 
+  test('freshSessionOnly is honored: a seeded prior live session is NOT reused — a fresh session is created (PR #2770 review)', async () => {
+    const { tam, updates } = makeRecordingManager([makeExecutionRow()]);
+    seedLiveSession(tam);
+    stubReusePathHelpers(tam);
+
+    const actual = await tam.createSubSession(TASK_ID, 'fresh-only-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: 'node-prior',
+      freshSessionOnly: true,
+    });
+
+    expect(actual).toBe('fresh-only-id');
+    expect(actual).not.toBe(REVIEWER_SESSION_ID);
+    expect(fromInitSpy).toHaveBeenCalledTimes(1);
+    expect(updates.find((u) => u.payload?.agentSessionId === REVIEWER_SESSION_ID)).toBeUndefined();
+  });
+
   test('a deferred reuse skips the inner flush — the flow flushes once after the outer bind (PR #2770 review)', async () => {
     const priorBound = makeExecutionRow({
       id: 'exec-prior-flush',
