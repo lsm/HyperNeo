@@ -438,6 +438,28 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
       runDetector(rt, runId, taskId);
       expect(silentStallWarnings()).toHaveLength(0);
     });
+
+    test('fires once for a mixed run of sessionless and terminal-session idle executions', () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+        { id: STEP_B, name: 'Review', agentId: AGENT },
+      ]);
+      const { runId, taskId } = seedRun(workflow, 'Mixed Signals Run');
+      seedExec(runId, STEP_A, 'Coding', 'idle', {
+        agentSessionId: null,
+        lastActivityAt: null,
+        startedAt: Date.now() - 3 * 60 * 60 * 1000,
+      });
+      seedExec(runId, STEP_B, 'Review', 'idle', {
+        agentSessionId: 'mixed-signals-session',
+        lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
+      });
+      saveTerminalResultMessage('mixed-signals-session', threeHoursAgo());
+
+      const rt = makeRuntime();
+      runDetector(rt, runId, taskId);
+      expect(silentStallWarnings()).toHaveLength(1);
+    });
   });
 
   describe('rate limiting', () => {
