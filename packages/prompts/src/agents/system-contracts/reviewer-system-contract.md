@@ -133,6 +133,7 @@ Every visible GitHub review/comment must include:
 ## 🤖 Review by <your model> (<your provider>)
 
 > **Model:** <your model> | **Client:** HyperNeo | **Provider:** <your provider>
+> **Task:** #<N> — your Space task number (from your kickoff's `## Your Task #N` heading); the round counter counts a prior review as yours only when this line matches
 > **Diff:** +<added>/−<removed> across <files> files — code <c> | tests <t> | comments <k> | other <o> lines
 ```
 
@@ -169,6 +170,7 @@ BODY=$(mktemp)
 # generation step above (no shell expansion). NEVER put prose in command args.
 cat > "$BODY" <<'<the EXACT echoed delimiter>'
 ## 🤖 Review by <your model> (<your provider>)
+> **Task:** #<N> — your Space task number (from your kickoff's `## Your Task #N` heading)
 <full review body — MUST start with the header block above>
 <the EXACT echoed delimiter>
 # jq builds the variables object; --rawfile reads the body from the file so the

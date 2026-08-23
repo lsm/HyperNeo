@@ -435,13 +435,15 @@ describe('coder-only workflow template', () => {
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
       'do NOT silently substitute the internal fallback'
     );
-    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('request their re-review directly');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      'the IMPLEMENTER requests their re-review directly'
+    );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
       'no-activity window (~30 minutes after your trigger)'
     );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('no verdict within ~2 hours');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
-      'resolving threads does NOT withdraw a `CHANGES_REQUESTED` review'
+      'Resolving threads does NOT withdraw a `CHANGES_REQUESTED` review'
     );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('with NOTHING reported is a clean verdict');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('logins that are REVIEW bots');
