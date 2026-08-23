@@ -694,6 +694,10 @@ describe('ProvidersSettings', () => {
     releaseStaleLoad!(listFor('china'));
     await new Promise((resolve) => setTimeout(resolve, 0));
     await waitFor(() => expect(regionSelect().value).toBe('global'));
+    const saveButton = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Save')
+    ) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
   });
 
   it('updates API key for provider', async () => {
