@@ -71,15 +71,17 @@ export class Database extends DatabaseSync {
   }
 
   transaction<TArgs extends unknown[], TReturn>(
-    fn: (...args: TArgs) => TReturn
+    fn: (...args: TArgs) => TReturn,
+    mode: 'deferred' | 'immediate' | 'exclusive' = 'deferred'
   ): (...args: TArgs) => TReturn {
+    const beginSql = mode === 'deferred' ? 'BEGIN' : `BEGIN ${mode.toUpperCase()}`;
     return (...args: TArgs): TReturn => {
       const nested = this.txDepth > 0;
       const savepoint = nested ? `hyperneo_sp_${++this.txSavepointSeq}` : null;
       if (nested) {
         this.exec(`SAVEPOINT ${savepoint}`);
       } else {
-        this.exec('BEGIN');
+        this.exec(beginSql);
       }
       this.txDepth++;
       try {

@@ -220,28 +220,85 @@ describe('AnthropicToCopilotBridgeProvider', () => {
         p as unknown as Record<string, unknown>,
         'loadStoredGitHubToken' as never
       ).mockResolvedValue(undefined as never);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        undefined as never
+      );
       const status = await p.getAuthStatus();
       expect(status.isAuthenticated).toBe(false);
     });
 
-    it('reports not authenticated when COPILOT_GITHUB_TOKEN env var is set but no auth.json token', async () => {
+    it('reports authenticated when COPILOT_GITHUB_TOKEN env var is set (same discovery chain as isAvailable)', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
       spyOn(
         p as unknown as Record<string, unknown>,
         'loadStoredGitHubToken' as never
       ).mockResolvedValue(undefined as never);
       const status = await p.getAuthStatus();
-      expect(status.isAuthenticated).toBe(false);
+      expect(status.isAuthenticated).toBe(true);
     });
 
-    it('reports not authenticated when GH_TOKEN env var is set but no auth.json token', async () => {
+    it('reports authenticated when GH_TOKEN env var is set (same discovery chain as isAvailable)', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', { GH_TOKEN: 'gho_tok' });
       spyOn(
         p as unknown as Record<string, unknown>,
         'loadStoredGitHubToken' as never
       ).mockResolvedValue(undefined as never);
       const status = await p.getAuthStatus();
+      expect(status.isAuthenticated).toBe(true);
+    });
+
+    it('reports authenticated when only a gh CLI token is discoverable', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        'gho_cli_tok' as never
+      );
+      const status = await p.getAuthStatus();
+      expect(status.isAuthenticated).toBe(true);
+    });
+
+    it('reports authenticated when only a hosts.yml token is discoverable', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        'gho_hosts_tok' as never
+      );
+      const status = await p.getAuthStatus();
+      expect(status.isAuthenticated).toBe(true);
+    });
+
+    it('agrees with isAvailable for env-token installs (both resolve the same chain)', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+      expect(await p.isAvailable()).toBe(true);
+      expect((await p.getAuthStatus()).isAuthenticated).toBe(true);
+    });
+
+    it('rejects classic PATs (ghp_ prefix) from env vars with an actionable error', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'ghp_pat' });
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+      const status = await p.getAuthStatus();
       expect(status.isAuthenticated).toBe(false);
+      expect(status.error).toContain('Classic PATs');
+      expect(status.error).toContain('fine-grained PAT');
     });
 
     it('reports authenticated when auth.json has a stored fine-grained token (gho_ prefix)', async () => {
@@ -287,6 +344,12 @@ describe('AnthropicToCopilotBridgeProvider', () => {
         p as unknown as Record<string, unknown>,
         'loadStoredGitHubToken' as never
       ).mockResolvedValue(undefined as never);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        undefined as never
+      );
       const status = await p.getAuthStatus();
       expect(status.isAuthenticated).toBe(false);
     });
@@ -777,14 +840,10 @@ describe('tryGhHostsToken', () => {
     spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
       'hosts-token-xyz' as never
     );
-    spyOn(
-      p as unknown as Record<string, unknown>,
-      'validateCopilotToken' as never
-    ).mockResolvedValue(true as never);
     expect(await p.isAvailable()).toBe(true);
   });
 
-  it('invalid hosts.yml token (validateCopilotToken=false) does not grant access', async () => {
+  it('hosts.yml token grants availability by presence alone — no subprocess token validation', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
     spyOn(
       p as unknown as Record<string, unknown>,
@@ -796,11 +855,19 @@ describe('tryGhHostsToken', () => {
     spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
       'bad-token' as never
     );
+    expect(await p.isAvailable()).toBe(true);
+  });
+
+  it('gh CLI token (keyring-backed installs) grants availability by presence alone', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
     spyOn(
       p as unknown as Record<string, unknown>,
-      'validateCopilotToken' as never
-    ).mockResolvedValue(false as never);
-    expect(await p.isAvailable()).toBe(false);
+      'loadStoredGitHubToken' as never
+    ).mockResolvedValue(undefined as never);
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      'gho_cli_tok' as never
+    );
+    expect(await p.isAvailable()).toBe(true);
   });
 });
 
@@ -811,6 +878,12 @@ describe('logout()', () => {
       p as unknown as Record<string, unknown>,
       'loadStoredGitHubToken' as never
     ).mockResolvedValue('gho_stored_tok' as never);
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
     expect(await p.isAvailable()).toBe(true);
     expect((p as unknown as Record<string, unknown>)['tokenCache']).toBeDefined();
     await p.logout();
@@ -835,8 +908,150 @@ describe('logout()', () => {
   });
 
   it('is safe to call twice (idempotent)', async () => {
-    const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
     await p.logout();
+    await expect(p.logout()).resolves.toBeUndefined();
+  });
+
+  it('rejects logout with an actionable error while COPILOT_GITHUB_TOKEN manages credentials', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
+    await expect(p.logout()).rejects.toThrow('COPILOT_GITHUB_TOKEN');
+  });
+
+  it('rejects logout with an actionable error while GH_TOKEN manages credentials', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', { GH_TOKEN: 'gho_tok' });
+    await expect(p.logout()).rejects.toThrow('GH_TOKEN');
+  });
+
+  it('rejects logout with an actionable error while a gh CLI token manages credentials', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      'gho_cli_tok' as never
+    );
+    await expect(p.logout()).rejects.toThrow('gh CLI');
+  });
+
+  it('clears owned credentials even when an external source keeps the provider authenticated', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
+    p.setCredentials({ type: 'oauth', accessToken: 'gho_stored_tok' });
+    await expect(p.logout()).rejects.toThrow('COPILOT_GITHUB_TOKEN');
+    expect((p as unknown as Record<string, unknown>)['storedCredentialToken']).toBeNull();
+    expect((p as unknown as Record<string, unknown>)['tokenCache']).toBeNull();
+  });
+
+  it('does not block logout for an unusable classic PAT (ghp_) in COPILOT_GITHUB_TOKEN', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'ghp_classic' });
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    await expect(p.logout()).resolves.toBeUndefined();
+  });
+
+  it('does not block logout when a ghp_ COPILOT_GITHUB_TOKEN shadows a usable GH_TOKEN (discovery precedence)', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {
+      COPILOT_GITHUB_TOKEN: 'ghp_classic',
+      GH_TOKEN: 'gho_valid',
+    });
+    await expect(p.logout()).resolves.toBeUndefined();
+  });
+
+  it('does not block logout for an unusable classic PAT (ghp_) from the gh CLI', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      'ghp_cli_classic' as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    await expect(p.logout()).resolves.toBeUndefined();
+  });
+
+  it('refuses logout using cached gh-token provenance when the live gh CLI lookup transiently fails', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    (p as unknown as Record<string, unknown>)['tokenCache'] = {
+      token: 'gho_cli_tok',
+      expiresAt: Date.now() + 60_000,
+      source: 'gh-cli',
+    };
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    await expect(p.logout()).rejects.toThrow('gh CLI');
+  });
+
+  it('does not refuse logout from cached provenance when the cached source is the auth file', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    (p as unknown as Record<string, unknown>)['tokenCache'] = {
+      token: 'gho_file_tok',
+      expiresAt: Date.now() + 60_000,
+      source: 'auth-file',
+    };
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    await expect(p.logout()).resolves.toBeUndefined();
+  });
+
+  it('ignores expired cached provenance when the live lookup finds no external source', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    (p as unknown as Record<string, unknown>)['tokenCache'] = {
+      token: 'gho_cli_tok',
+      expiresAt: Date.now() - 1,
+      source: 'gh-cli',
+    };
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    await expect(p.logout()).resolves.toBeUndefined();
+  });
+
+  it('does not refuse logout from cached provenance when discovery cached no token', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    (p as unknown as Record<string, unknown>)['tokenCache'] = {
+      token: undefined,
+      expiresAt: Date.now() + 60_000,
+      source: 'hosts',
+    };
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    await expect(p.logout()).resolves.toBeUndefined();
+  });
+
+  it('does not refuse logout from cached provenance when the cached token is an unusable classic PAT', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    (p as unknown as Record<string, unknown>)['tokenCache'] = {
+      token: 'ghp_cli_classic',
+      expiresAt: Date.now() + 60_000,
+      source: 'gh-cli',
+    };
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
     await expect(p.logout()).resolves.toBeUndefined();
   });
 });

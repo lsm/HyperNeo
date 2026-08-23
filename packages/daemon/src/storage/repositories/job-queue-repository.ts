@@ -1,4 +1,5 @@
 import { generateUUID } from '@hyperneo/shared';
+import { withBusyRetry } from '../busy-retry';
 import type { Database as BunDatabase } from '../sqlite-compat';
 
 export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'dead';
@@ -60,33 +61,37 @@ export class JobQueueRepository {
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
-    stmt.run(
-      id,
-      params.queue,
-      'pending',
-      JSON.stringify(params.payload),
-      null,
-      null,
-      params.priority ?? 0,
-      params.maxRetries ?? 3,
-      0,
-      params.runAt ?? now,
-      now,
-      null,
-      null,
-      null
+    withBusyRetry(() =>
+      stmt.run(
+        id,
+        params.queue,
+        'pending',
+        JSON.stringify(params.payload),
+        null,
+        null,
+        params.priority ?? 0,
+        params.maxRetries ?? 3,
+        0,
+        params.runAt ?? now,
+        now,
+        null,
+        null,
+        null
+      )
     );
 
     return this.getJob(id)!;
   }
 
   enqueueUniquePending(params: EnqueueUniquePendingParams): Job | null {
-    return this.db.transaction(() => {
-      if (this.findMatchingActiveJob(params.queue, params.matchPayload, params.activeStatuses)) {
-        return null;
-      }
-      return this.enqueue(params);
-    })();
+    return withBusyRetry(() =>
+      this.db.transaction(() => {
+        if (this.findMatchingActiveJob(params.queue, params.matchPayload, params.activeStatuses)) {
+          return null;
+        }
+        return this.enqueue(params);
+      }, 'immediate')()
+    );
   }
 
   dequeue(queue: string, limit: number = 1, exclude?: PayloadMatch, excludeIds?: string[]): Job[] {
@@ -108,9 +113,9 @@ export class JobQueueRepository {
 
       const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
       this.claimRows(rows, claimed);
-    });
+    }, 'immediate');
 
-    txn();
+    withBusyRetry(() => txn());
     return claimed;
   }
 
@@ -135,9 +140,9 @@ export class JobQueueRepository {
       params.push(limit);
       const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
       this.claimRows(rows, claimed);
-    });
+    }, 'immediate');
 
-    txn();
+    withBusyRetry(() => txn());
     return claimed;
   }
 
@@ -164,7 +169,7 @@ export class JobQueueRepository {
         WHERE id = ? AND status = 'processing'
           AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
     );
-    const res = stmt.run(runAt, jobId, claimToken ?? null, claimToken ?? null);
+    const res = withBusyRetry(() => stmt.run(runAt, jobId, claimToken ?? null, claimToken ?? null));
     if (res.changes === 0) return null;
     return this.getJob(jobId);
   }
@@ -185,45 +190,48 @@ export class JobQueueRepository {
        WHERE id = ? AND status = 'processing'
          AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
     );
-    const res = stmt.run(runAt, jobId, claimToken ?? null, claimToken ?? null);
+    const res = withBusyRetry(() => stmt.run(runAt, jobId, claimToken ?? null, claimToken ?? null));
     if (res.changes === 0) return null;
     return this.getJob(jobId);
   }
 
   requeueAs(jobId: string, role: string, runAt: number, claimToken?: string | null): Job | null {
-    const res = this.db
-      .prepare(
-        `UPDATE job_queue
-           SET status = 'pending',
-               payload = json_set(payload, '$.role', ?),
-               run_at = ?,
-               started_at = NULL,
-               heartbeat_at = NULL
-         WHERE id = ? AND status = 'processing'
-           AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
-      )
-      .run(role, runAt, jobId, claimToken ?? null, claimToken ?? null);
+    const stmt = this.db.prepare(
+      `UPDATE job_queue
+         SET status = 'pending',
+             payload = json_set(payload, '$.role', ?),
+             run_at = ?,
+             started_at = NULL,
+             heartbeat_at = NULL
+       WHERE id = ? AND status = 'processing'
+         AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
+    );
+    const res = withBusyRetry(() =>
+      stmt.run(role, runAt, jobId, claimToken ?? null, claimToken ?? null)
+    );
     if (res.changes === 0) return null;
     return this.getJob(jobId);
   }
 
   requeueAllProcessing(queue: string, runAt: number): string[] {
-    return this.db.transaction(() => {
-      const rows = this.db
-        .prepare(`SELECT id FROM job_queue WHERE queue = ? AND status = 'processing'`)
-        .all(queue) as Array<{ id: string }>;
-      const requeued: string[] = [];
-      for (const row of rows) {
-        const res = this.db
-          .prepare(
-            `UPDATE job_queue SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL
-              WHERE id = ? AND status = 'processing'`
-          )
-          .run(runAt, row.id);
-        if (res.changes > 0) requeued.push(row.id);
-      }
-      return requeued;
-    })();
+    return withBusyRetry(() =>
+      this.db.transaction(() => {
+        const rows = this.db
+          .prepare(`SELECT id FROM job_queue WHERE queue = ? AND status = 'processing'`)
+          .all(queue) as Array<{ id: string }>;
+        const requeued: string[] = [];
+        for (const row of rows) {
+          const res = this.db
+            .prepare(
+              `UPDATE job_queue SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL
+                  WHERE id = ? AND status = 'processing'`
+            )
+            .run(runAt, row.id);
+          if (res.changes > 0) requeued.push(row.id);
+        }
+        return requeued;
+      }, 'immediate')()
+    );
   }
 
   reschedulePending(jobId: string, runAt: number): boolean {
@@ -235,13 +243,15 @@ export class JobQueueRepository {
 
   heartbeat(jobId: string, claimToken: string | null): boolean {
     if (!claimToken) return false;
-    const result = this.db
-      .prepare(
-        `UPDATE job_queue SET heartbeat_at = ?
-          WHERE id = ? AND status = 'processing'
-            AND json_extract(payload, '$.__claimToken') = ?`
-      )
-      .run(Date.now(), jobId, claimToken);
+    const result = withBusyRetry(() =>
+      this.db
+        .prepare(
+          `UPDATE job_queue SET heartbeat_at = ?
+            WHERE id = ? AND status = 'processing'
+              AND json_extract(payload, '$.__claimToken') = ?`
+        )
+        .run(Date.now(), jobId, claimToken)
+    );
     return result.changes > 0;
   }
 
@@ -272,53 +282,55 @@ export class JobQueueRepository {
   }
 
   cancelForSessionWithMessages(sessionId: string, queue: string = 'message_delivery'): string[] {
-    return this.db.transaction(() => {
-      const rows = this.db
-        .prepare(
-          `SELECT json_extract(payload, '$.messageUuid') AS message_uuid
-             FROM job_queue
-            WHERE queue = ?
-              AND json_extract(payload, '$.sessionId') = ?
-              AND status IN ('pending', 'processing')`
-        )
-        .all(queue, sessionId) as Array<{ message_uuid: string | null }>;
-      const batchRows = this.db
-        .prepare(
-          `SELECT je.value AS message_uuid
-             FROM job_queue, json_each(
-                  CASE WHEN json_type(payload, '$.batchUuids') = 'array'
-                       THEN json_extract(payload, '$.batchUuids') ELSE '[]' END
-                ) AS je
-            WHERE queue = ?
-              AND json_extract(payload, '$.sessionId') = ?
-              AND status IN ('pending', 'processing')
-            UNION
-            SELECT jd.value AS message_uuid
-             FROM job_queue, json_each(
-                  CASE WHEN json_type(payload, '$.droppedBatchUuids') = 'array'
-                       THEN json_extract(payload, '$.droppedBatchUuids') ELSE '[]' END
-                ) AS jd
-            WHERE queue = ?
-              AND json_extract(payload, '$.sessionId') = ?
-              AND status IN ('pending', 'processing')`
-        )
-        .all(queue, sessionId, queue, sessionId) as Array<{ message_uuid: string | null }>;
-      this.db
-        .prepare(
-          `DELETE FROM job_queue
-            WHERE queue = ?
-              AND json_extract(payload, '$.sessionId') = ?
-              AND status IN ('pending', 'processing')`
-        )
-        .run(queue, sessionId);
-      return [...rows, ...batchRows].flatMap((row) =>
-        typeof row.message_uuid === 'string' ? [row.message_uuid] : []
-      );
-    })();
+    return withBusyRetry(() =>
+      this.db.transaction(() => {
+        const rows = this.db
+          .prepare(
+            `SELECT json_extract(payload, '$.messageUuid') AS message_uuid
+                 FROM job_queue
+                WHERE queue = ?
+                  AND json_extract(payload, '$.sessionId') = ?
+                  AND status IN ('pending', 'processing')`
+          )
+          .all(queue, sessionId) as Array<{ message_uuid: string | null }>;
+        const batchRows = this.db
+          .prepare(
+            `SELECT je.value AS message_uuid
+                 FROM job_queue, json_each(
+                      CASE WHEN json_type(payload, '$.batchUuids') = 'array'
+                           THEN json_extract(payload, '$.batchUuids') ELSE '[]' END
+                    ) AS je
+                WHERE queue = ?
+                  AND json_extract(payload, '$.sessionId') = ?
+                  AND status IN ('pending', 'processing')
+                UNION
+                SELECT jd.value AS message_uuid
+                 FROM job_queue, json_each(
+                      CASE WHEN json_type(payload, '$.droppedBatchUuids') = 'array'
+                           THEN json_extract(payload, '$.droppedBatchUuids') ELSE '[]' END
+                    ) AS jd
+                WHERE queue = ?
+                  AND json_extract(payload, '$.sessionId') = ?
+                  AND status IN ('pending', 'processing')`
+          )
+          .all(queue, sessionId, queue, sessionId) as Array<{ message_uuid: string | null }>;
+        this.db
+          .prepare(
+            `DELETE FROM job_queue
+                WHERE queue = ?
+                  AND json_extract(payload, '$.sessionId') = ?
+                  AND status IN ('pending', 'processing')`
+          )
+          .run(queue, sessionId);
+        return [...rows, ...batchRows].flatMap((row) =>
+          typeof row.message_uuid === 'string' ? [row.message_uuid] : []
+        );
+      }, 'immediate')()
+    );
   }
 
   cancelDelivery(sessionId: string, messageUuid: string): boolean {
-    return (
+    const result = withBusyRetry(() =>
       this.db
         .prepare(
           `DELETE FROM job_queue
@@ -327,8 +339,9 @@ export class JobQueueRepository {
               AND json_extract(payload, '$.messageUuid') = ?
               AND status IN ('pending', 'processing')`
         )
-        .run(sessionId, messageUuid).changes > 0
+        .run(sessionId, messageUuid)
     );
+    return result.changes > 0;
   }
 
   getActiveDeliveryRole(sessionId: string, messageUuid: string): 'turn' | 'steer' | null {
@@ -390,19 +403,21 @@ export class JobQueueRepository {
     const dropped = current.filter((uuid) => !admittedSet.has(uuid));
     const settleableDropped =
       dropped.length > 0 ? this.settleableBatchMembers(sessionId, dropped) : [];
-    const res = this.db
-      .prepare(
-        `UPDATE job_queue
-            SET payload = json_set(
-                  json_set(payload, '$.batchUuids', json(?)),
-                  '$.droppedBatchUuids', json(?)
-                )
-          WHERE queue = 'message_delivery'
-            AND json_extract(payload, '$.sessionId') = ?
-            AND json_extract(payload, '$.messageUuid') = ?
-            AND status IN ('pending', 'processing')`
-      )
-      .run(JSON.stringify(admitted), JSON.stringify(settleableDropped), sessionId, kickoffUuid);
+    const res = withBusyRetry(() =>
+      this.db
+        .prepare(
+          `UPDATE job_queue
+              SET payload = json_set(
+                    json_set(payload, '$.batchUuids', json(?)),
+                    '$.droppedBatchUuids', json(?)
+                  )
+            WHERE queue = 'message_delivery'
+              AND json_extract(payload, '$.sessionId') = ?
+              AND json_extract(payload, '$.messageUuid') = ?
+              AND status IN ('pending', 'processing')`
+        )
+        .run(JSON.stringify(admitted), JSON.stringify(settleableDropped), sessionId, kickoffUuid)
+    );
     return res.changes > 0;
   }
 
@@ -490,12 +505,14 @@ export class JobQueueRepository {
         WHERE id = ? AND status = 'processing'
           AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
     );
-    const res = stmt.run(
-      Date.now(),
-      result !== undefined ? JSON.stringify(result) : null,
-      jobId,
-      claimToken ?? null,
-      claimToken ?? null
+    const res = withBusyRetry(() =>
+      stmt.run(
+        Date.now(),
+        result !== undefined ? JSON.stringify(result) : null,
+        jobId,
+        claimToken ?? null,
+        claimToken ?? null
+      )
     );
 
     if (res.changes === 0) return null;
@@ -519,25 +536,29 @@ export class JobQueueRepository {
     let result: { changes: number };
     if (retryCount < maxRetries) {
       const delay = 2 ** retryCount * 1000;
-      result = this.db
-        .prepare(
-          `UPDATE job_queue
-              SET retry_count = retry_count + 1, status = 'pending', error = ?,
-                  run_at = ?, started_at = NULL, heartbeat_at = NULL
-            WHERE id = ?
-              AND (? IS NULL OR (status = 'processing'
-                AND json_extract(payload, '$.__claimToken') = ?))`
-        )
-        .run(error, Date.now() + delay, jobId, claimToken ?? null, claimToken ?? null);
+      result = withBusyRetry(() =>
+        this.db
+          .prepare(
+            `UPDATE job_queue
+                SET retry_count = retry_count + 1, status = 'pending', error = ?,
+                    run_at = ?, started_at = NULL, heartbeat_at = NULL
+              WHERE id = ?
+                AND (? IS NULL OR (status = 'processing'
+                  AND json_extract(payload, '$.__claimToken') = ?))`
+          )
+          .run(error, Date.now() + delay, jobId, claimToken ?? null, claimToken ?? null)
+      );
     } else {
-      result = this.db
-        .prepare(
-          `UPDATE job_queue SET status = 'dead', error = ?, completed_at = ?, heartbeat_at = NULL
-            WHERE id = ?
-              AND (? IS NULL OR (status = 'processing'
-                AND json_extract(payload, '$.__claimToken') = ?))`
-        )
-        .run(error, Date.now(), jobId, claimToken ?? null, claimToken ?? null);
+      result = withBusyRetry(() =>
+        this.db
+          .prepare(
+            `UPDATE job_queue SET status = 'dead', error = ?, completed_at = ?, heartbeat_at = NULL
+              WHERE id = ?
+                AND (? IS NULL OR (status = 'processing'
+                  AND json_extract(payload, '$.__claimToken') = ?))`
+          )
+          .run(error, Date.now(), jobId, claimToken ?? null, claimToken ?? null)
+      );
     }
 
     return result.changes > 0 ? this.getJob(jobId) : null;
@@ -552,14 +573,16 @@ export class JobQueueRepository {
       const payload = JSON.parse(row.payload as string) as Record<string, unknown>;
       if (row.status !== 'processing' || payload.__claimToken !== claimToken) return null;
     }
-    const result = this.db
-      .prepare(
-        `UPDATE job_queue SET status = 'dead', error = ?, completed_at = ?, heartbeat_at = NULL
-          WHERE id = ?
-            AND (? IS NULL OR (status = 'processing'
-              AND json_extract(payload, '$.__claimToken') = ?))`
-      )
-      .run(error, Date.now(), jobId, claimToken ?? null, claimToken ?? null);
+    const result = withBusyRetry(() =>
+      this.db
+        .prepare(
+          `UPDATE job_queue SET status = 'dead', error = ?, completed_at = ?, heartbeat_at = NULL
+            WHERE id = ?
+              AND (? IS NULL OR (status = 'processing'
+                AND json_extract(payload, '$.__claimToken') = ?))`
+        )
+        .run(error, Date.now(), jobId, claimToken ?? null, claimToken ?? null)
+    );
     return result.changes > 0 ? this.getJob(jobId) : null;
   }
 
@@ -696,54 +719,56 @@ export class JobQueueRepository {
   }
 
   reclaimStale(staleBefore: number, queues?: string[]): ReclaimedJobClaim[] {
-    return this.db.transaction(() => {
-      let candidateSql = `SELECT id, queue,
-                  json_extract(payload, '$.__claimToken') AS claim_token,
-                  json_extract(payload, '$.sessionId') AS session_id,
-                  json_extract(payload, '$.messageUuid') AS message_uuid,
-                  json_extract(payload, '$.role') AS role
-             FROM job_queue
-            WHERE status = 'processing' AND COALESCE(heartbeat_at, started_at) < ?`;
-      const candidateParams: (string | number | null)[] = [staleBefore];
-      if (queues) {
-        candidateSql += ` AND queue IN (${queues.map(() => '?').join(',')})`;
-        candidateParams.push(...queues);
-      }
-      const candidates = this.db.prepare(candidateSql).all(...candidateParams) as Array<{
-        id: string;
-        queue: string;
-        claim_token: string | null;
-        session_id: string | null;
-        message_uuid: string | null;
-        role: string | null;
-      }>;
-      const reclaimed: ReclaimedJobClaim[] = [];
-
-      for (const candidate of candidates) {
-        const result = this.db
-          .prepare(
-            `UPDATE job_queue
-                SET status = 'pending', started_at = NULL, heartbeat_at = NULL
-              WHERE id = ? AND status = 'processing'
-                AND COALESCE(heartbeat_at, started_at) < ?
-                AND ((? IS NULL AND json_extract(payload, '$.__claimToken') IS NULL)
-                  OR json_extract(payload, '$.__claimToken') = ?)`
-          )
-          .run(candidate.id, staleBefore, candidate.claim_token, candidate.claim_token);
-        if (result.changes > 0) {
-          reclaimed.push({
-            jobId: candidate.id,
-            claimToken: candidate.claim_token,
-            queue: candidate.queue,
-            sessionId: candidate.session_id,
-            messageUuid: candidate.message_uuid,
-            role: candidate.role,
-          });
+    return withBusyRetry(() =>
+      this.db.transaction(() => {
+        let candidateSql = `SELECT id, queue,
+                      json_extract(payload, '$.__claimToken') AS claim_token,
+                      json_extract(payload, '$.sessionId') AS session_id,
+                      json_extract(payload, '$.messageUuid') AS message_uuid,
+                      json_extract(payload, '$.role') AS role
+                 FROM job_queue
+                WHERE status = 'processing' AND COALESCE(heartbeat_at, started_at) < ?`;
+        const candidateParams: (string | number | null)[] = [staleBefore];
+        if (queues) {
+          candidateSql += ` AND queue IN (${queues.map(() => '?').join(',')})`;
+          candidateParams.push(...queues);
         }
-      }
+        const candidates = this.db.prepare(candidateSql).all(...candidateParams) as Array<{
+          id: string;
+          queue: string;
+          claim_token: string | null;
+          session_id: string | null;
+          message_uuid: string | null;
+          role: string | null;
+        }>;
+        const reclaimed: ReclaimedJobClaim[] = [];
 
-      return reclaimed;
-    })();
+        for (const candidate of candidates) {
+          const result = this.db
+            .prepare(
+              `UPDATE job_queue
+                    SET status = 'pending', started_at = NULL, heartbeat_at = NULL
+                  WHERE id = ? AND status = 'processing'
+                    AND COALESCE(heartbeat_at, started_at) < ?
+                    AND ((? IS NULL AND json_extract(payload, '$.__claimToken') IS NULL)
+                      OR json_extract(payload, '$.__claimToken') = ?)`
+            )
+            .run(candidate.id, staleBefore, candidate.claim_token, candidate.claim_token);
+          if (result.changes > 0) {
+            reclaimed.push({
+              jobId: candidate.id,
+              claimToken: candidate.claim_token,
+              queue: candidate.queue,
+              sessionId: candidate.session_id,
+              messageUuid: candidate.message_uuid,
+              role: candidate.role,
+            });
+          }
+        }
+
+        return reclaimed;
+      }, 'immediate')()
+    );
   }
 
   private rowToJob(row: Record<string, unknown>): Job {

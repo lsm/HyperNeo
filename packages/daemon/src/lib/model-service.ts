@@ -221,6 +221,34 @@ interface ModelsLoadResult {
   failures: ProviderLoadFailure[];
 }
 
+type ProviderModelLoadResult =
+  | { status: 'loaded'; models: ModelInfo[] }
+  | { status: 'unavailable'; models: ModelInfo[] }
+  | { status: 'failed'; models: ModelInfo[]; error?: unknown };
+
+function fallbackModelsFor(provider: Provider): ModelInfo[] {
+  const cached = provider.getCachedModels?.();
+  if (cached && cached.length > 0) {
+    return cached;
+  }
+  return STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id);
+}
+
+async function loadProviderModels(provider: Provider): Promise<ProviderModelLoadResult> {
+  try {
+    if (!(await provider.isAvailable())) {
+      return { status: 'unavailable', models: [] };
+    }
+    const models = await provider.getModels();
+    if (models.length > 0) {
+      return { status: 'loaded', models };
+    }
+    return { status: 'failed', models: fallbackModelsFor(provider) };
+  } catch (error) {
+    return { status: 'failed', models: fallbackModelsFor(provider), error };
+  }
+}
+
 async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
   const registry = getProviderRegistry();
   if (registry.size === 0) {
@@ -232,11 +260,7 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
   const providers = getAvailableProviders();
 
   const results = await Promise.allSettled(
-    providers.map(async (provider) => {
-      const available = await provider.isAvailable();
-      if (!available) return [];
-      return provider.getModels();
-    })
+    providers.map((provider) => loadProviderModels(provider))
   );
 
   const allModels: ModelInfo[] = [];
@@ -244,11 +268,13 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
   const failures: ProviderLoadFailure[] = [];
   results.forEach((result, index) => {
     const provider = providers[index];
-    if (result.status === 'fulfilled') {
-      succeededProviderIds.push(provider.id);
-      allModels.push(...result.value);
+    /* v8 ignore next 2 */
+    if (result.status !== 'fulfilled') return;
+    allModels.push(...result.value.models);
+    if (result.value.status === 'failed' && result.value.error !== undefined) {
+      failures.push({ providerId: provider.id, ...classifyProviderFailure(result.value.error) });
     } else {
-      failures.push({ providerId: provider.id, ...classifyProviderFailure(result.reason) });
+      succeededProviderIds.push(provider.id);
     }
   });
 

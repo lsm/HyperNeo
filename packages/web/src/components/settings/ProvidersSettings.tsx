@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
 import type { ProviderRecord, CredentialStoreStatus } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
@@ -92,6 +92,8 @@ export function ProvidersSettings() {
     envBacked?: boolean;
   } | null>(null);
   const [kimiRegions, setKimiRegions] = useState<Record<string, 'china' | 'global'>>({});
+  const lastSyncedKimiRegions = useRef<Record<string, 'china' | 'global'>>({});
+  const providerLoadGeneration = useRef(0);
   const [customEditor, setCustomEditor] = useState<EditorState | null>(null);
   const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
   const [savingCustom, setSavingCustom] = useState(false);
@@ -106,6 +108,7 @@ export function ProvidersSettings() {
     useFetchModels(customEditor);
 
   const loadProviders = async () => {
+    const generation = ++providerLoadGeneration.current;
     try {
       setLoading(true);
       const [{ providers: records }, authResponse] = await Promise.all([
@@ -115,6 +118,7 @@ export function ProvidersSettings() {
           return { providers: [] as ProviderAuthStatus[] };
         }),
       ]);
+      if (generation !== providerLoadGeneration.current) return;
       const authById = new Map(authResponse.providers.map((a) => [a.id, a]));
       const enriched = records.map((r) => ({
         ...r,
@@ -127,7 +131,17 @@ export function ProvidersSettings() {
           nextRegions[p.id] = readKimiRegion(p);
         }
       }
-      setKimiRegions((prev) => ({ ...nextRegions, ...prev }));
+      const syncedRegions = lastSyncedKimiRegions.current;
+      setKimiRegions((prev) => {
+        const merged: Record<string, 'china' | 'global'> = { ...nextRegions };
+        for (const [id, edited] of Object.entries(prev)) {
+          if (id in nextRegions && edited !== syncedRegions[id]) {
+            merged[id] = edited;
+          }
+        }
+        return merged;
+      });
+      lastSyncedKimiRegions.current = nextRegions;
       if (oauthFlow && !enriched.some((p) => p.providerId === oauthFlow.providerId)) {
         setOauthFlow(null);
       }
@@ -242,6 +256,10 @@ export function ProvidersSettings() {
       await updateProvider(provider.id, {
         configJson: JSON.stringify({ region }),
       });
+      lastSyncedKimiRegions.current = {
+        ...lastSyncedKimiRegions.current,
+        [provider.id]: region,
+      };
       toast.success(`${provider.displayName} region set to ${KIMI_REGION_LABELS[region]}`);
       await loadProviders();
     } catch (err) {

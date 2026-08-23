@@ -346,6 +346,84 @@ describe('Custom Endpoint RPC handlers', () => {
       expect(callCount).toBe(1);
     });
 
+    it('bypasses a fresh cache entry when force is true', async () => {
+      let callCount = 0;
+      global.fetch = mock(async () => {
+        callCount++;
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ id: `m${callCount}`, object: 'model' }],
+          }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const first = (await handler({ baseUrl: 'http://localhost:1234/v1' }, {})) as {
+        fromCache: boolean;
+      };
+      expect(first.fromCache).toBe(false);
+      expect(callCount).toBe(1);
+
+      const forced = (await handler({ baseUrl: 'http://localhost:1234/v1', force: true }, {})) as {
+        models: Array<{ id: string }>;
+        fromCache: boolean;
+      };
+      expect(forced.fromCache).toBe(false);
+      expect(callCount).toBe(2);
+      expect(forced.models).toHaveLength(1);
+      expect(forced.models[0].id).toBe('m2');
+    });
+
+    it('persists a forced refresh as the new cache entry', async () => {
+      let callCount = 0;
+      global.fetch = mock(async () => {
+        callCount++;
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ id: `m${callCount}`, object: 'model' }],
+          }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler({ baseUrl: 'http://localhost:1234/v1' }, {});
+      await handler({ baseUrl: 'http://localhost:1234/v1', force: true }, {});
+
+      const afterForce = (await handler({ baseUrl: 'http://localhost:1234/v1' }, {})) as {
+        models: Array<{ id: string }>;
+        fromCache: boolean;
+      };
+      expect(afterForce.fromCache).toBe(true);
+      expect(callCount).toBe(2);
+      expect(afterForce.models[0].id).toBe('m2');
+    });
+
+    it('propagates fetch failures under force instead of serving the fresh cache', async () => {
+      let fail = false;
+      global.fetch = mock(async () => {
+        if (fail) throw new Error('Connection refused');
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ id: 'm1', object: 'model' }],
+          }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const first = (await handler({ baseUrl: 'http://localhost:1234/v1' }, {})) as {
+        fromCache: boolean;
+      };
+      expect(first.fromCache).toBe(false);
+
+      fail = true;
+      await expect(
+        handler({ baseUrl: 'http://localhost:1234/v1', force: true }, {})
+      ).rejects.toThrow(/Connection refused/);
+    });
+
     it('throws on HTTP error', async () => {
       global.fetch = mock(async () => ({
         ok: false,

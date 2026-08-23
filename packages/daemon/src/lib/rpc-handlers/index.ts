@@ -680,6 +680,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       log.error('schedule recovery after space resume failed (non-fatal)', err);
     }
     spaceRuntimeService.recoverStalledWorkflowRunsAfterSpaceResume(spaceId);
+    spaceRuntimeService.recoverLongTermAgentInboxForSpace(spaceId);
   });
 
   setupSpaceAgentHandlers(
