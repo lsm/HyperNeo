@@ -477,6 +477,9 @@ describe('coder-only workflow template', () => {
       're-runs ONLY the internal fallback review (never a bot loop'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('report the gate that actually ran');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'the single fresh human sign-off covers both halves'
+    );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('validate ONLY that internal artifact');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'a re-triggered bot that engages but produces no verdict within its window'
@@ -509,7 +512,20 @@ describe('coder-only workflow template', () => {
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
       'revalidate it BEFORE requesting any re-approval'
     );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'treat the note as stale and re-send the gated PR handoff under the current source'
+    );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('source: "<external|internal|both|auto>"');
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'A source switch itself triggers that next handoff'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'treats the note as stale and refreshes it the same way'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'the base the REVIEWER actually inspected, not merely the base at dispatch'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('(`Reviewed base: <name>`');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('note artifact (key "base") in EVERY mode');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
       'a dead bot is a reported blocker to escalate, never substituted'
