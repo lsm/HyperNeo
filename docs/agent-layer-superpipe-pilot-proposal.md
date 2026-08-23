@@ -1707,9 +1707,11 @@ independent leaves. **0c holds the ACP split 8/10 coordination gate** (the split
 | B6 | cleanup + ADR note | ~15 | doc ~40 |
 
 Order: B1\* → B2\* → B3\* (B3c is region-independent of B3a/b and can lead);
-B4 after B3; **B5a ∥ B5e first (primitives), then B5f (dispatch consumes the
-token), then B5b, then B5c (consumes B5b's owned-fence cancellation
-primitive), then B5g, B5h, B5i, B5k, B5l in parallel; B5d coordinates
+B4 after B3; **B5a ∥ B5e first (primitives), then B5b (owned-fence
+cancellation primitive — PSM today exposes only `beginTerminalIdle()` and
+fence consumption via `setIdle()`, so nothing downstream can cancel a fence
+until this lands), then B5f and B5c (both consume B5b's primitive; B5f also
+consumes B5a's token), then B5g, B5h, B5i, B5k, B5l in parallel; B5d coordinates
 with #2779; B5j is an independent leaf behind the #2543 gate and sequences
 after B5f's handler-context owner primitive**. The B5 slices that edit `sdk-message-handler.ts` or `acp-query-runner.ts` (B5f–B5i, B5k, B5l — **and B5j**, whose circuit-breaker callback edits the same handler) hold §5's coordination gate on open #2543 alongside the #2779 coordination for B5d. B5's setup-window revalidation
 (stale ACP spawn after `stop()`'s snapshot) is owned by 0c, not duplicated
