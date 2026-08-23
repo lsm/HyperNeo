@@ -561,7 +561,7 @@ export function ModelsSettings() {
       await fetchModels(forceRefresh);
     } catch {
     } finally {
-      setLoading(false);
+      if (!fetchInFlightRef.current) setLoading(false);
     }
   };
 
