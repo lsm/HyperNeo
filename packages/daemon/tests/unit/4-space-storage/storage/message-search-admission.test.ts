@@ -247,31 +247,35 @@ describe('gate pass-through identity (ADR 0004 Decision item 6b)', () => {
   });
 
   test('each deciding gate stamps its skip reason on a copied ctx', () => {
-    expect(applySupersededGate(gateCtx({ isSuperseded: true }))).toEqual({
-      ...gateCtx(),
+    const superseded = gateCtx({ isSuperseded: true });
+    expect(applySupersededGate(superseded)).toEqual({
+      ...superseded,
       decision: { action: 'skip', reason: 'superseded' },
     });
-    expect(applySearchableTypeGate(gateCtx({ messageType: 'result' }))).toEqual({
-      ...gateCtx(),
+    const nonSearchable = gateCtx({ messageType: 'result' });
+    expect(applySearchableTypeGate(nonSearchable)).toEqual({
+      ...nonSearchable,
       decision: { action: 'skip', reason: 'non_searchable_type' },
     });
-    expect(
-      applyEligibilityGate(gateCtx({ eligibility: eligibleRow({ session_status: 'archived' }) }))
-    ).toEqual({ ...gateCtx(), decision: { action: 'skip', reason: 'ineligible' } });
-    expect(applyBodyNonemptyGate(gateCtx({ body: '' }))).toEqual({
-      ...gateCtx(),
+    const ineligible = gateCtx({ eligibility: eligibleRow({ session_status: 'archived' }) });
+    expect(applyEligibilityGate(ineligible)).toEqual({
+      ...ineligible,
+      decision: { action: 'skip', reason: 'ineligible' },
+    });
+    const emptyBody = gateCtx({ body: '' });
+    expect(applyBodyNonemptyGate(emptyBody)).toEqual({
+      ...emptyBody,
       decision: { action: 'skip', reason: 'empty_body' },
     });
-    expect(applyUserStatusGate(gateCtx({ isSearchableUserStatus: false }))).toEqual({
-      ...gateCtx(),
+    const unsearchableStatus = gateCtx({ isSearchableUserStatus: false });
+    expect(applyUserStatusGate(unsearchableStatus)).toEqual({
+      ...unsearchableStatus,
       decision: { action: 'skip', reason: 'user_status_not_searchable' },
     });
   });
 
   test('the index gate always decides', () => {
-    expect(applyIndexGate(gateCtx())).toEqual({
-      ...gateCtx(),
-      decision: { action: 'index' },
-    });
+    const ctx = gateCtx();
+    expect(applyIndexGate(ctx)).toEqual({ ...ctx, decision: { action: 'index' } });
   });
 });
