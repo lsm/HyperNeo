@@ -73,7 +73,11 @@ describe('ModelsSettings — load failure surfacing', () => {
       models: [{ id: 'claude-sonnet-5', display_name: 'Sonnet', description: '' }],
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    const retry = screen.getByRole('button', { name: 'Retry' }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(retry.disabled).toBe(false);
+    });
+    fireEvent.click(retry);
 
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
@@ -119,25 +123,27 @@ describe('ModelsSettings — load failure surfacing', () => {
 
   it('retries with forceRefresh after a failed explicit refresh', async () => {
     mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-    mockRequest
-      .mockResolvedValueOnce({ models: [] })
-      .mockRejectedValueOnce(new Error('refresh failed'));
+    mockRequest.mockResolvedValueOnce({ models: [] });
 
     render(<ModelsSettings />);
     await waitFor(() => {
       expect(mockRequest).toHaveBeenCalledTimes(1);
     });
+    const refresh = screen.getByRole('button', { name: 'Refresh models' }) as HTMLButtonElement;
     await waitFor(() => {
-      expect(
-        (screen.getByRole('button', { name: 'Refresh models' }) as HTMLButtonElement).disabled
-      ).toBe(false);
+      expect(refresh.disabled).toBe(false);
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh models' }));
+    mockRequest.mockRejectedValueOnce(new Error('refresh failed'));
+    fireEvent.click(refresh);
     await screen.findByRole('alert');
 
-    mockRequest.mockResolvedValue({ models: [] });
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    const retry = screen.getByRole('button', { name: 'Retry' }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(retry.disabled).toBe(false);
+    });
+    mockRequest.mockResolvedValueOnce({ models: [] });
+    fireEvent.click(retry);
 
     await waitFor(() => {
       expect(mockRequest).toHaveBeenLastCalledWith('models.list', { forceRefresh: true });
@@ -160,11 +166,60 @@ describe('ModelsSettings — load failure surfacing', () => {
     );
 
     const retry = screen.getByRole('button', { name: 'Retry' }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(retry.disabled).toBe(false);
+    });
     fireEvent.click(retry);
 
     await waitFor(() => {
       expect(retry.disabled).toBe(true);
     });
+    resolveRequest({ models: [] });
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+  });
+
+  it('auto-retries once when a load error lands while already connected', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest
+      .mockRejectedValueOnce(new Error('request timed out'))
+      .mockResolvedValue({ models: [] });
+
+    render(<ModelsSettings />);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+    expect(mockRequest).toHaveBeenCalledTimes(2);
+    expect(mockRequest).toHaveBeenLastCalledWith('models.list', { useCache: true });
+  });
+
+  it('disables Retry while an explicit Refresh models is in flight', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockRejectedValue(new Error('load failed'));
+
+    render(<ModelsSettings />);
+    await screen.findByRole('alert');
+    const refresh = screen.getByRole('button', { name: 'Refresh models' }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(refresh.disabled).toBe(false);
+    });
+
+    let resolveRequest: (value: { models: unknown[] }) => void = () => {};
+    mockRequest.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRequest = resolve;
+      })
+    );
+
+    fireEvent.click(refresh);
+    const retry = screen.getByRole('button', { name: 'Retry' }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(retry.disabled).toBe(true);
+    });
+    expect(mockRequest).toHaveBeenLastCalledWith('models.list', { forceRefresh: true });
+
     resolveRequest({ models: [] });
     await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();

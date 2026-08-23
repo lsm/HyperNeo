@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { FallbackModelEntry, ModelInfo } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 import { connectionState, globalSettings } from '../../lib/state.ts';
@@ -450,6 +450,7 @@ export function ModelsSettings() {
   const [loadError, setLoadError] = useState<{ message: string; forceRefresh: boolean } | null>(
     null
   );
+  const autoRetriedErrorRef = useRef<string | null>(null);
 
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -558,9 +559,11 @@ export function ModelsSettings() {
 
   useEffect(() => {
     if (!isConnected || !loadError) return;
+    if (autoRetriedErrorRef.current === loadError.message) return;
+    autoRetriedErrorRef.current = loadError.message;
     void loadModels(loadError.forceRefresh);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected]);
+  }, [isConnected, loadError]);
 
   const saveFallbackModels = async (models: FallbackModelEntry[]) => {
     setIsUpdating(true);
@@ -697,6 +700,7 @@ export function ModelsSettings() {
             variant="ghost"
             size="xs"
             loading={loading}
+            disabled={refreshing}
             onClick={() => void loadModels(loadError.forceRefresh)}
           >
             Retry
