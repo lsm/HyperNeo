@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   computeIsRenderable,
   computeIsTerminal,
   extractParentToolUseId,
+  extractReplacementEdges,
+  extractSdkUuid,
 } from '../../../../src/storage/repositories/sdk-message-repository';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 const asMsg = (payload: Record<string, unknown>): SDKMessage => payload as unknown as SDKMessage;
 
@@ -227,5 +229,112 @@ describe('extractParentToolUseId', () => {
 
   test('returns null for empty/undefined message', () => {
     expect(extractParentToolUseId(asMsg({}))).toBeNull();
+  });
+});
+
+describe('extractSdkUuid', () => {
+  test('returns the string when present', () => {
+    expect(extractSdkUuid(asMsg({ type: 'user', uuid: 'uuid-abc' }))).toBe('uuid-abc');
+  });
+
+  test('returns null when missing', () => {
+    expect(extractSdkUuid(asMsg({ type: 'user' }))).toBeNull();
+  });
+
+  test('returns null when explicitly null', () => {
+    expect(extractSdkUuid(asMsg({ type: 'user', uuid: null }))).toBeNull();
+  });
+
+  test('returns null for non-string values', () => {
+    expect(extractSdkUuid(asMsg({ type: 'user', uuid: 42 }))).toBeNull();
+  });
+
+  test('returns null for empty strings — only non-empty strings are uuids', () => {
+    expect(extractSdkUuid(asMsg({ type: 'user', uuid: '' }))).toBeNull();
+  });
+});
+
+describe('extractReplacementEdges', () => {
+  test('maps supersedes entries to superseded edges in array order', () => {
+    expect(
+      extractReplacementEdges(asMsg({ type: 'assistant', supersedes: ['old-1', 'old-2'] }))
+    ).toEqual([
+      { targetUuid: 'old-1', kind: 'superseded' },
+      { targetUuid: 'old-2', kind: 'superseded' },
+    ]);
+  });
+
+  test('skips non-string and empty-string entries', () => {
+    expect(
+      extractReplacementEdges(
+        asMsg({ type: 'assistant', supersedes: ['', 42, null, {}, 'keep-me'] })
+      )
+    ).toEqual([{ targetUuid: 'keep-me', kind: 'superseded' }]);
+  });
+
+  test('dedupes repeated targets within a kind', () => {
+    expect(
+      extractReplacementEdges(asMsg({ type: 'assistant', supersedes: ['old-1', 'old-1'] }))
+    ).toEqual([{ targetUuid: 'old-1', kind: 'superseded' }]);
+  });
+
+  test('keeps the same target under both kinds — dedupe is per (kind, uuid)', () => {
+    expect(
+      extractReplacementEdges(
+        asMsg({
+          type: 'system',
+          subtype: 'model_refusal_fallback',
+          supersedes: ['shared'],
+          retracted_message_uuids: ['shared'],
+        })
+      )
+    ).toEqual([
+      { targetUuid: 'shared', kind: 'superseded' },
+      { targetUuid: 'shared', kind: 'retracted' },
+    ]);
+  });
+
+  test('reads retracted edges only for the model_refusal_fallback subtype', () => {
+    expect(
+      extractReplacementEdges(
+        asMsg({
+          type: 'system',
+          subtype: 'model_refusal_fallback',
+          retracted_message_uuids: ['gone-1'],
+        })
+      )
+    ).toEqual([{ targetUuid: 'gone-1', kind: 'retracted' }]);
+  });
+
+  test('ignores retracted_message_uuids outside the refusal subtype', () => {
+    expect(
+      extractReplacementEdges(
+        asMsg({
+          type: 'system',
+          subtype: 'other_subtype',
+          retracted_message_uuids: ['gone-1'],
+        })
+      )
+    ).toEqual([]);
+    expect(
+      extractReplacementEdges(asMsg({ type: 'system', retracted_message_uuids: ['gone-1'] }))
+    ).toEqual([]);
+  });
+
+  test('supersedes has no subtype gate — a refusal carrier still supersedes', () => {
+    expect(
+      extractReplacementEdges(
+        asMsg({ type: 'assistant', subtype: 'other_subtype', supersedes: ['old-1'] })
+      )
+    ).toEqual([{ targetUuid: 'old-1', kind: 'superseded' }]);
+  });
+
+  test('returns [] when neither field is an array', () => {
+    expect(
+      extractReplacementEdges(
+        asMsg({ type: 'assistant', supersedes: 'single', retracted_message_uuids: 7 })
+      )
+    ).toEqual([]);
+    expect(extractReplacementEdges(asMsg({ type: 'assistant' }))).toEqual([]);
   });
 });
