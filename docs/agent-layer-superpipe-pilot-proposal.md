@@ -1633,7 +1633,7 @@ next paragraph rather than left open. If tests must also fit inside the
 200-line total, the pins PRs split another 2–3× by dimension family, and any
 additive-core/enrollment slice whose prod+test estimate exceeds ~200 splits
 its full table suite into a companion pins PR that immediately follows —
-under the current table estimates that is 0a (~245), 0b (~285), 0c (~220),
+under the current table estimates that is 0a (~245), 0b (~300), 0c (~230),
 A4b (~220), B5e (~210), and B5f (~205); every other core/apply/cleanup slice already fits as-is.
 
 Sub-PR IDs are letter suffixes on the reviewed parent (B5a = first slice of
