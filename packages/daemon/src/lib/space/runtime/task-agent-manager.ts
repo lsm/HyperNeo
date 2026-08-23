@@ -53,6 +53,7 @@ export interface SubSessionMemberInfo {
   agentId?: string;
   agentName?: string;
   nodeId?: string;
+  deferExecutionBind?: boolean;
 }
 
 export interface VerifiedSessionStop {
@@ -882,6 +883,7 @@ export class TaskAgentManager {
             agentId: request.slot.agentId,
             agentName: request.execution.agentName,
             nodeId: request.execution.workflowNodeId,
+            deferExecutionBind: true,
           }
         );
 
@@ -893,9 +895,7 @@ export class TaskAgentManager {
       },
       bindExecutionToSession: (execution, sessionId) => {
         const expected = SPAWN_BINDABLE_EXECUTION_STATUSES.includes(execution.status)
-          ? execution.status === 'in_progress'
-            ? (['in_progress'] as const)
-            : ([execution.status, 'in_progress'] as const)
+          ? ([execution.status] as const)
           : ([] as const);
         const outcome = this.config.nodeExecutionRepo.casExecutionStatus(
           execution.id,
@@ -1041,10 +1041,10 @@ export class TaskAgentManager {
                   (e) =>
                     e.agentName === memberInfo.agentName && e.agentSessionId === existingSessionId
                 );
-              if (match) {
+              if (match && !memberInfo.deferExecutionBind) {
                 const outcome = this.config.nodeExecutionRepo.casExecutionStatus(
                   match.id,
-                  SPAWN_BINDABLE_EXECUTION_STATUSES,
+                  [match.status],
                   'in_progress',
                   {
                     agentSessionId: existingSessionId,
@@ -1198,10 +1198,10 @@ export class TaskAgentManager {
           memberInfo.nodeId
         );
         const match = nodeExecs.find((e) => e.agentName === memberInfo.agentName);
-        if (match && !match.agentSessionId) {
+        if (match && !match.agentSessionId && !memberInfo.deferExecutionBind) {
           const outcome = this.config.nodeExecutionRepo.casExecutionStatus(
             match.id,
-            SPAWN_BINDABLE_EXECUTION_STATUSES,
+            [match.status],
             'in_progress',
             {
               agentSessionId: sessionId,

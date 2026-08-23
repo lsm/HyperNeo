@@ -550,7 +550,7 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
         agentSessionId: REVIEWER_SESSION_ID,
         startedAt: 1,
         completedAt: null,
-        __cas: ['pending', 'in_progress', 'idle', 'waiting_rebind'],
+        __cas: ['in_progress'],
       },
     });
   });
@@ -730,6 +730,29 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
     expect(pendingExec.agentSessionId).toBeNull();
   });
 
+  test('deferExecutionBind leaves the target row to the guarded outer bind: no inner write, session still created (PR #2770 review)', async () => {
+    const pendingExec = makeExecutionRow({
+      id: 'exec-deferred',
+      agentSessionId: null,
+      status: 'pending',
+      startedAt: null,
+    });
+    const { tam, updates } = makeRecordingManager([pendingExec]);
+
+    const actual = await tam.createSubSession(TASK_ID, 'deferred-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+      deferExecutionBind: true,
+    });
+
+    expect(actual).toBe('deferred-id');
+    expect(fromInitSpy).toHaveBeenCalledTimes(1);
+    expect(updates.find((u) => u.id === 'exec-deferred')).toBeUndefined();
+    expect(pendingExec.status).toBe('pending');
+    expect(pendingExec.agentSessionId).toBeNull();
+  });
+
   test('fresh create binds the new session to the matching pending execution through the bindable-status CAS', async () => {
     const pendingExec = makeExecutionRow({
       id: 'exec-pending',
@@ -754,7 +777,7 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
         agentSessionId: 'fresh-id',
         startedAt: expect.any(Number),
         completedAt: null,
-        __cas: ['pending', 'in_progress', 'idle', 'waiting_rebind'],
+        __cas: ['pending'],
       },
     });
   });

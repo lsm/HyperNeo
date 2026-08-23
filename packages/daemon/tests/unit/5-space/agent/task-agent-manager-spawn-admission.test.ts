@@ -616,7 +616,7 @@ describe('spawnWorkflowNodeAgentForExecution — post-create execution binding',
     );
     expect(bind).toEqual({
       id: 'exec-1',
-      expected: ['pending', 'in_progress'],
+      expected: ['pending'],
       next: 'in_progress',
       payload: {
         agentSessionId: SPAWNED_SESSION_ID,
@@ -707,7 +707,7 @@ describe('spawnWorkflowNodeAgentForExecution — CAS-guarded spawn writes (AFTER
     );
     expect(bind).toEqual({
       id: 'exec-1',
-      expected: ['pending', 'in_progress'],
+      expected: ['pending'],
       next: 'in_progress',
       payload: {
         agentSessionId: SPAWNED_SESSION_ID,

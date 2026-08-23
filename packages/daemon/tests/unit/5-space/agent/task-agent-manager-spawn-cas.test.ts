@@ -257,6 +257,31 @@ describe('spawnWorkflowNodeAgentForExecution — concurrent park/cancel during s
     process.off('unhandledRejection', onUnhandled);
   });
 
+  test('a mid-spawn quiesce to idle is not laundered by an inner pre-bind: the flow path defers to the observed-status outer bind (PR #2770 review)', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (err: unknown) => unhandled.push(err);
+    process.on('unhandledRejection', onUnhandled);
+    const h = makeRealRepoHarness();
+    const execution = makeExecutionRow(h.execRepo, h.runId);
+    const spawnPromise = h.spawn(execution);
+    const spawnMessage = spawnPromise.then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : String(err))
+    );
+
+    h.execRepo.updateStatus(execution.id, 'idle');
+    h.releaseWorkspaceGate({ path: '/tmp/wt-1241' });
+
+    expect(await spawnMessage).toContain('superseded at stage bind-execution-session');
+    expect(h.cancels).toEqual([SPAWNED_SESSION_ID]);
+    const row = h.execRepo.getById(execution.id);
+    expect(row?.status).toBe('idle');
+    expect(row?.agentSessionId).toBeNull();
+    expect(h.order).not.toContain('ensureNodeAgentAttached');
+    expect(unhandled).toEqual([]);
+    process.off('unhandledRejection', onUnhandled);
+  });
+
   test('a spawned execution binds through CAS and the task reservation is released on success', async () => {
     const h = makeRealRepoHarness();
     const execution = makeExecutionRow(h.execRepo, h.runId);
