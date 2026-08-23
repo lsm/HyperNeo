@@ -272,23 +272,41 @@ export async function initializeModels(): Promise<void> {
   initializeProviders();
   await waitForOptionalProviderRegistration();
 
-  try {
-    const result = await loadModelsFromProviders();
-    applyProviderLoadOutcome(result);
-    const { models } = result;
-    if (models.length > 0) {
-      const mergedModels = mergeWithFallbackModels(models);
-      modelsCache.set(cacheKey, mergedModels);
+  const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
+
+  const refreshPromise = (async () => {
+    try {
+      const result = await loadModelsFromProviders();
+      const isCurrentGeneration = (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart;
+      if (!isCurrentGeneration) {
+        return;
+      }
+      applyProviderLoadOutcome(result);
+      if (result.models.length > 0) {
+        const mergedModels = mergeWithFallbackModels(result.models);
+        modelsCache.set(cacheKey, mergedModels);
+        cacheTimestamps.set(cacheKey, Date.now());
+      } else {
+        throw new Error('No models returned from providers');
+      }
+    } catch {
+      if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
+        return;
+      }
+      const registry = getProviderRegistry();
+      const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
+      modelsCache.set(cacheKey, filteredFallbacks);
       cacheTimestamps.set(cacheKey, Date.now());
-    } else {
-      throw new Error('No models returned from providers');
+    } finally {
+      refreshInProgress.delete(cacheKey);
+      if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
+        cacheGeneration.delete(cacheKey);
+      }
     }
-  } catch {
-    const registry = getProviderRegistry();
-    const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
-    modelsCache.set(cacheKey, filteredFallbacks);
-    cacheTimestamps.set(cacheKey, Date.now());
-  }
+  })();
+
+  refreshInProgress.set(cacheKey, refreshPromise);
+  await refreshPromise;
 }
 
 function clearProviderModelCaches(): void {

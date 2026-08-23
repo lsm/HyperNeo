@@ -213,6 +213,7 @@ export interface DaemonAppContext {
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
   const { config, verbose = true, standalone = false } = options;
   let startupLogCaptureCleanup: (() => void) | null = null;
+  let unsubscribeProviderFailureChanges: (() => void) | null = null;
   await releaseStartupFileLogCapture().catch(() => {});
   const structuredLogSink = config.structuredLogFilePath
     ? new StructuredLogFileSink({
@@ -443,7 +444,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     messageHub.registerTransport(transport);
 
     const internalEventBus = createDaemonInternalEventBus();
-    const unsubscribeProviderFailureChanges = subscribeProviderFailureChanges(() => {
+    unsubscribeProviderFailureChanges = subscribeProviderFailureChanges(() => {
       internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
     });
     const logEvidenceService = earlyLogEvidenceService;
@@ -1124,7 +1125,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
-        unsubscribeProviderFailureChanges();
+        unsubscribeProviderFailureChanges?.();
 
         db.close();
 
@@ -1133,7 +1134,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logError('Error during cleanup:', error);
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
-        unsubscribeProviderFailureChanges();
+        unsubscribeProviderFailureChanges?.();
         throw error;
       } finally {
         await closeFileLogCapture();
@@ -1175,6 +1176,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     };
   } catch (error) {
     startupLogCaptureCleanup?.();
+    unsubscribeProviderFailureChanges?.();
     abortAgentMemoryEmbeddingModelPrefetch();
     restoreConsoleCapture();
     strandedStartupFileLogCapture = closeFileLogCapture;
