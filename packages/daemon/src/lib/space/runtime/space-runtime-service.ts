@@ -434,6 +434,8 @@ export class SpaceRuntimeService {
       .then(async () => {
         const session = await this.ensureLongTermAgentSession(actor);
         if (!session) return;
+        const resumed = await this.config.spaceManager.getSpace(actor.spaceId);
+        if (!resumed || resumed.status !== 'active' || resumed.paused || resumed.stopped) return;
         await this.flushLongTermAgentInbox(actor, session, queuedMessageId);
       });
     this.longTermAgentFlushes.set(lockKey, current);
