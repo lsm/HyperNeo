@@ -120,6 +120,7 @@ import { EvolutionScopeService } from '../space/evolution-scope-service';
 import { EvolutionTraceEvidenceService } from '../space/evolution-trace-evidence-service';
 import { ScheduleService } from '../space/schedule/schedule-service';
 import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository';
+import { SpaceGoalOutcomeNotificationRepository } from '../../storage/repositories/space-goal-outcome-notification-repository';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import { SpaceGoalService } from '../space/goals/goal-service';
 import { ExternalEventExtensionConfigStore } from '../external-events/extension-config-store';
@@ -411,33 +412,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const spaceGoalRepo = new SpaceGoalRepository(deps.db.getDatabase(), deps.reactiveDb);
   const spaceGoalEventRepo = new SpaceGoalEventRepository(deps.db.getDatabase(), deps.reactiveDb);
   const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(deps.db.getDatabase());
-  const spaceGoalService = new SpaceGoalService({
-    goalRepo: spaceGoalRepo,
-    goalEventRepo: spaceGoalEventRepo,
-    taskRepo: spaceTaskRepo,
-    spaceRepo,
-    scheduleService,
-    db: deps.db.getDatabase(),
-    longHorizonAgentRepo,
-    eventHub: {
-      publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
-    },
-    onGoalResumed: (goalId, spaceId) => {
-      for (const scope of deps.db.evolution.listScopes({ spaceId, spaceGoalId: goalId })) {
-        try {
-          syncGoalAutomationSelfNagScheduleForScope({
-            goalRepo: spaceGoalRepo,
-            scheduleService,
-            scope,
-            db: deps.db.getDatabase(),
-          });
-        } catch (err) {
-          log.warn('could not sync self-nag schedule on goal resume', err);
-        }
-      }
-    },
-  });
-
+  const outcomeNotificationRepo = new SpaceGoalOutcomeNotificationRepository(deps.db.getDatabase());
   const evolutionTraceEvidenceService = new EvolutionTraceEvidenceService({
     db: deps.db.getDatabase(),
     evolutionRepo: deps.db.evolution,
@@ -462,6 +437,34 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     artifactRepo,
     traceEvidenceService: evolutionTraceEvidenceService,
     jobQueue: deps.jobQueue,
+  });
+  const spaceGoalService = new SpaceGoalService({
+    goalRepo: spaceGoalRepo,
+    goalEventRepo: spaceGoalEventRepo,
+    taskRepo: spaceTaskRepo,
+    spaceRepo,
+    scheduleService,
+    db: deps.db.getDatabase(),
+    longHorizonAgentRepo,
+    outcomeNotificationRepo,
+    evolutionScopeService,
+    eventHub: {
+      publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
+    },
+    onGoalResumed: (goalId, spaceId) => {
+      for (const scope of deps.db.evolution.listScopes({ spaceId, spaceGoalId: goalId })) {
+        try {
+          syncGoalAutomationSelfNagScheduleForScope({
+            goalRepo: spaceGoalRepo,
+            scheduleService,
+            scope,
+            db: deps.db.getDatabase(),
+          });
+        } catch (err) {
+          log.warn('could not sync self-nag schedule on goal resume', err);
+        }
+      }
+    },
   });
   const goalAutomationService = new GoalAutomationService({
     goalRepo: spaceGoalRepo,
@@ -499,7 +502,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       deps.db.getDatabase(),
       spaceId,
       deps.reactiveDb,
-      evolutionScopeService
+      evolutionScopeService,
+      (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId)
     );
   };
 
@@ -942,7 +946,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       deps.db.getDatabase(),
       spaceId,
       deps.reactiveDb,
-      evolutionScopeService
+      evolutionScopeService,
+      (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId)
     );
   };
   const hookStateRepo = new WorkflowHookStateRepository(deps.db.getDatabase());

@@ -115,10 +115,10 @@ export function createMarkCompleteHandler(
     assertPrMerged,
   } = deps;
 
-  const handleGoalTerminal = (task: SpaceTask): void => {
+  const handleGoalTerminal = (task: SpaceTask, fromStatus: SpaceTask['status']): void => {
     if (!goalService) return;
     try {
-      goalService.handleTaskTerminal(task.id);
+      goalService.handleTaskTerminal(task.id, { fromStatus });
     } catch (err) {
       log.warn(
         `Goal terminal handling threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
@@ -223,7 +223,7 @@ export function createMarkCompleteHandler(
           { source: 'workflow_node_agent', sourceTaskId: taskId }
         );
       }
-      handleGoalTerminal(updated);
+      handleGoalTerminal(updated, task.status);
       emitTaskUpdated(updated);
       log.info(
         `post-approval.complete: spaceId=${spaceId} taskId=${taskId} outcome=done mode=${task.postApprovalSessionId ? 'spawn' : 'inline'}`

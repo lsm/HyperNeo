@@ -8,7 +8,10 @@ import type {
   SpaceGoalEventSource,
   SpaceGoalEventType,
   SpaceGoalListParams,
+  SpaceGoalOutcomeNotification,
   SpaceTask,
+  SpaceTaskStatus,
+  InternalUpdateSpaceTaskParams,
   UpdateSpaceGoalParams,
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
@@ -16,11 +19,16 @@ import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type { SpaceRepository } from '../../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository';
+import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository';
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { ScheduleService } from '../schedule/schedule-service';
+import { Logger } from '../../logger';
 import type { GoalAutomationService } from './goal-automation-service';
 import { pauseScheduleStrict } from './goal-automation-schedule-sync';
+import { decideReportableTerminal } from './reportable-terminal-gates';
+
+const log = new Logger('space-goal-service');
 
 export type PublicSpaceGoalUpdateParams = Pick<
   UpdateSpaceGoalParams,
@@ -60,6 +68,12 @@ export interface SpaceGoalServiceDeps {
   goalAutomationService?: Pick<GoalAutomationService, 'onTaskCompleted'>;
   onGoalResumed?: (goalId: string, spaceId: string) => void;
   longHorizonAgentRepo?: Pick<SpaceLongHorizonAgentRepository, 'assignGoal'>;
+  outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
+  onOutcomeNotification?: (notification: SpaceGoalOutcomeNotification) => void;
+  evolutionScopeService?: Pick<
+    import('../evolution-scope-service').EvolutionScopeService,
+    'captureCompletedTaskEvidence'
+  >;
 }
 
 export class SpaceGoalService {
@@ -290,27 +304,140 @@ export class SpaceGoalService {
   }
 
   handleTaskTerminal(
-    taskId: string
-  ): { goal: SpaceGoal; nextTask: SpaceTask | null; terminalGeneration: number } | null {
-    const task = this.deps.taskRepo.getTask(taskId);
-    if (!task?.goalId) return null;
-    if (!isTerminalTaskStatus(task.status)) return null;
-    const goal = this.deps.goalRepo.getById(task.goalId);
-    if (!goal || goal.spaceId !== task.spaceId) return null;
-    this.deps.goalRepo.clearActiveTaskIfMatches(goal.id, taskId);
-    const fresh = this.requireGoal(goal.id);
-    this.recordGoalEvent(fresh, 'task_terminal', goal, fresh, {
-      source: 'system',
-      sourceTaskId: taskId,
-      note: `Task reached terminal status: ${task.status}`,
-    });
-    if (task.status === 'done') this.deps.goalAutomationService?.onTaskCompleted(taskId);
-    const terminalGeneration = task.terminalGeneration;
-    if (!fresh.autoTriggerNext || !fresh.pendingNextRun || fresh.status !== 'active') {
-      return { goal: fresh, nextTask: null, terminalGeneration };
+    taskId: string,
+    transition?: { fromStatus?: SpaceTaskStatus | null; updates?: InternalUpdateSpaceTaskParams }
+  ): {
+    goal: SpaceGoal;
+    nextTask: SpaceTask | null;
+    terminalGeneration: number;
+    notification: SpaceGoalOutcomeNotification | null;
+  } | null {
+    const existing = this.deps.taskRepo.getTask(taskId);
+    if (!existing?.goalId) return null;
+    const goal = this.deps.goalRepo.getById(existing.goalId);
+    if (!goal || goal.spaceId !== existing.spaceId) return null;
+    const nextStatus = transition?.updates?.status ?? existing.status;
+    if (!isTerminalTaskStatus(nextStatus)) {
+      return {
+        goal,
+        nextTask: null as SpaceTask | null,
+        terminalGeneration: existing.terminalGeneration,
+        notification: null as SpaceGoalOutcomeNotification | null,
+      };
     }
-    const created = this.createImmediateTask(fresh.id, { source: 'system' });
-    return { goal: created.goal, nextTask: created.task, terminalGeneration };
+    const result = this.runAtomic(() => {
+      const task =
+        transition?.updates && Object.keys(transition.updates).length > 0
+          ? (this.deps.taskRepo.updateTask(taskId, transition.updates) as SpaceTask)
+          : existing;
+      if (!isTerminalTaskStatus(task.status)) {
+        return {
+          goal,
+          nextTask: null as SpaceTask | null,
+          terminalGeneration: task.terminalGeneration,
+          notification: null as SpaceGoalOutcomeNotification | null,
+        };
+      }
+      const terminalGeneration = task.terminalGeneration;
+      if (
+        this.deps.outcomeNotificationRepo
+          ?.listByTask(taskId)
+          .some((n) => n.terminalGeneration === terminalGeneration)
+      ) {
+        return {
+          goal,
+          nextTask: null as SpaceTask | null,
+          terminalGeneration,
+          notification: null as SpaceGoalOutcomeNotification | null,
+        };
+      }
+      this.deps.goalRepo.clearActiveTaskIfMatches(goal.id, taskId);
+      const fresh = this.requireGoal(goal.id);
+      this.recordGoalEvent(fresh, 'task_terminal', goal, fresh, {
+        source: 'system',
+        sourceTaskId: taskId,
+        note: `Task reached terminal status: ${task.status}`,
+      });
+      if (task.status === 'done') {
+        try {
+          this.deps.evolutionScopeService?.captureCompletedTaskEvidence({ taskId });
+        } catch (err) {
+          log.warn(
+            `Forge evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+        this.deps.goalAutomationService?.onTaskCompleted(taskId);
+      }
+      let nextTask: SpaceTask | null = null;
+      let postBookkeeping: SpaceGoal = fresh;
+      if (fresh.autoTriggerNext && fresh.pendingNextRun && fresh.status === 'active') {
+        try {
+          const created = this.createImmediateTaskInternal(
+            fresh.id,
+            { source: 'system' },
+            { emitTaskCreated: false }
+          );
+          postBookkeeping = created.goal;
+          nextTask = created.task;
+        } catch (err) {
+          log.warn(
+            `Next goal task creation threw for "${taskId}" after terminal: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+      const notification = this.recordOutcomeNotification(
+        task,
+        postBookkeeping,
+        terminalGeneration,
+        {
+          fromStatus: transition?.fromStatus ?? null,
+        }
+      );
+      return { goal: postBookkeeping, nextTask, terminalGeneration, notification };
+    });
+    if (result.nextTask) this.emitTaskCreated(result.nextTask);
+    if (result.notification) this.deps.onOutcomeNotification?.(result.notification);
+    return result;
+  }
+
+  supersedeOutcomeNotificationsForTask(taskId: string): void {
+    this.deps.outcomeNotificationRepo?.supersedeForTask(taskId);
+  }
+
+  private recordOutcomeNotification(
+    task: SpaceTask,
+    goal: SpaceGoal,
+    terminalGeneration: number,
+    transition: { fromStatus?: SpaceTaskStatus | null }
+  ): SpaceGoalOutcomeNotification | null {
+    if (!this.deps.outcomeNotificationRepo) return null;
+    const hasStartGeneration = task.startedAt !== null;
+    const priorPending = this.deps.outcomeNotificationRepo
+      .listPendingByGoal(goal.id)
+      .filter((n) => n.taskId === task.id);
+    const decision = decideReportableTerminal({
+      fromStatus: transition.fromStatus ?? null,
+      toStatus: task.status,
+      hasStartGeneration,
+      hasPriorTerminalGeneration: priorPending.length > 0,
+    });
+    if (decision.action === 'none') return null;
+    if (decision.action === 'supersede_notify') {
+      this.deps.outcomeNotificationRepo.supersedeForTaskOlderThan(task.id, terminalGeneration);
+    }
+    return this.deps.outcomeNotificationRepo.create({
+      spaceId: goal.spaceId,
+      goalId: goal.id,
+      taskId: task.id,
+      terminalGeneration,
+      goalRevision: goal.revision,
+      payload: {
+        summary: (task.reportedSummary ?? task.result ?? '').slice(0, 400),
+        taskStatus: task.status,
+        taskTitle: task.title.slice(0, 200),
+        goalTitle: goal.title.slice(0, 200),
+      },
+    });
   }
 
   canClaimScheduledTask(task: Pick<SpaceTask, 'spaceId' | 'goalId'>): {

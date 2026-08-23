@@ -447,6 +447,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(203), () => runMigration203(db));
 
   run(migrationMarkerKey(204), () => runMigration204(db));
+
+  run(migrationMarkerKey(205), () => runMigration205(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -9559,4 +9561,31 @@ export function runMigration204(db: BunDatabase): void {
   if (tableExists(db, 'space_tasks') && !tableHasColumn(db, 'space_tasks', 'terminal_generation')) {
     db.exec(`ALTER TABLE space_tasks ADD COLUMN terminal_generation INTEGER NOT NULL DEFAULT 0`);
   }
+}
+
+export function runMigration205(db: BunDatabase): void {
+  if (!tableExists(db, 'space_goals')) return;
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS space_goal_outcome_notifications (
+      id TEXT PRIMARY KEY,
+      space_id TEXT NOT NULL,
+      goal_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      terminal_generation INTEGER NOT NULL DEFAULT 0,
+      goal_revision INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending', 'superseded', 'acknowledged', 'rejected')),
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(goal_id, task_id, terminal_generation),
+      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+      FOREIGN KEY (goal_id) REFERENCES space_goals(id) ON DELETE CASCADE,
+      FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_goal_pending
+    ON space_goal_outcome_notifications(goal_id, status, created_at)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_task
+    ON space_goal_outcome_notifications(task_id, terminal_generation)`);
 }

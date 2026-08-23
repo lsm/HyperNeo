@@ -203,6 +203,7 @@ export interface SpaceRuntimeConfig {
     spaceId: string;
     task: SpaceTask;
     archiveSource?: 'user' | 'system_reconcile';
+    fromStatus?: SpaceTaskStatus | null;
   }) => Promise<void> | void;
   onWorkflowRunCreated?: (payload: {
     spaceId: string;
@@ -213,7 +214,10 @@ export interface SpaceRuntimeConfig {
     run: SpaceWorkflowRun;
   }) => Promise<void> | void;
   selectWorkflowWithLlm?: SelectWorkflowWithLlm;
-  goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
+  goalService?: Pick<
+    import('../goals/goal-service').SpaceGoalService,
+    'handleTaskTerminal' | 'supersedeOutcomeNotificationsForTask'
+  >;
   evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
   actorRegistry?: SpaceActorRegistryAdapter;
   spaceAgentInboxRepo?: SpaceAgentInboxRepository;
@@ -3236,12 +3240,17 @@ export class SpaceRuntime {
   private async safeOnTaskUpdated(
     spaceId: string,
     task: SpaceTask,
-    opts?: { archiveSource?: 'user' | 'system_reconcile' }
+    opts?: { archiveSource?: 'user' | 'system_reconcile'; fromStatus?: SpaceTaskStatus | null }
   ): Promise<void> {
     const handler = this.config.onTaskUpdated;
     if (!handler) return;
     try {
-      await handler({ spaceId, task, archiveSource: opts?.archiveSource });
+      await handler({
+        spaceId,
+        task,
+        archiveSource: opts?.archiveSource,
+        fromStatus: opts?.fromStatus,
+      });
     } catch (err) {
       log.warn(
         `[SpaceRuntime] onTaskUpdated threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
@@ -3619,7 +3628,10 @@ export class SpaceRuntime {
         }
       }
       if (emitUpdated) {
-        await this.safeOnTaskUpdated(spaceId, updated, opts);
+        await this.safeOnTaskUpdated(spaceId, updated, {
+          ...opts,
+          fromStatus: previous?.status ?? null,
+        });
       }
     }
     return updated;
@@ -8297,7 +8309,8 @@ export class SpaceRuntime {
         this.config.db,
         spaceId,
         this.config.reactiveDb,
-        this.config.evolutionScopeService
+        this.config.evolutionScopeService,
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
       );
       this.taskManagers.set(spaceId, manager);
     }

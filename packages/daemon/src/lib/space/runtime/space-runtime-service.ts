@@ -181,9 +181,9 @@ export class SpaceRuntimeService {
       queueHealthMetrics: this.queueHealthMetrics,
       selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
       internalEventBus: config.internalEventBus,
-      onTaskUpdated: async ({ spaceId, task, archiveSource }) => {
+      onTaskUpdated: async ({ spaceId, task, archiveSource, fromStatus }) => {
         try {
-          this.config.goalService?.handleTaskTerminal(task.id);
+          this.config.goalService?.handleTaskTerminal(task.id, { fromStatus: fromStatus ?? null });
         } catch (err) {
           log.warn(`goal terminal handling failed for task ${task.id}:`, err);
         }
@@ -892,7 +892,8 @@ export class SpaceRuntimeService {
         this.config.db,
         space.id,
         this.config.reactiveDb,
-        this.config.evolutionScopeService
+        this.config.evolutionScopeService,
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -1393,7 +1394,8 @@ export class SpaceRuntimeService {
         this.config.db,
         space.id,
         this.config.reactiveDb,
-        this.config.evolutionScopeService
+        this.config.evolutionScopeService,
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -1564,7 +1566,8 @@ export class SpaceRuntimeService {
         db,
         space.id,
         this.config.reactiveDb,
-        this.config.evolutionScopeService
+        this.config.evolutionScopeService,
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
       ),
       spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -1821,6 +1824,7 @@ export class SpaceRuntimeService {
       targetStatus,
       options
     );
+    this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
     return recovered.task;
   }
 

@@ -78,7 +78,8 @@ export class SpaceTaskManager {
     private db: BunDatabase,
     private spaceId: string,
     private reactiveDb?: ReactiveDatabase,
-    private evolutionScopeService?: EvolutionScopeService
+    private evolutionScopeService?: EvolutionScopeService,
+    private onTaskReopened?: (taskId: string) => void
   ) {
     this.taskRepo = new SpaceTaskRepository(db, reactiveDb);
   }
@@ -252,18 +253,30 @@ export class SpaceTaskManager {
       updates.postApprovalSourceNodeId = null;
     }
 
-    const updated = this.taskRepo.updateTask(taskId, updates);
-    if (!updated) {
-      throw new Error(`Failed to update task: ${taskId}`);
+    const reopened = isTerminalTaskStatus(task.status) && !isTerminalTaskStatus(newStatus);
+    if (reopened && newStatus === 'open') {
+      updates.startedAt = null;
     }
+    const updated = this.db.transaction(() => {
+      const result = this.taskRepo.updateTask(taskId, updates);
+      if (!result) {
+        throw new Error(`Failed to update task: ${taskId}`);
+      }
+      if (reopened) {
+        this.onTaskReopened?.(taskId);
+      }
+      return result;
+    })();
 
     if (newStatus === 'done') {
-      try {
-        this.evolutionScopeService?.captureCompletedTaskEvidence({ taskId });
-      } catch (err) {
-        log.warn(
-          `Forge evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
-        );
+      if (!task.goalId) {
+        try {
+          this.evolutionScopeService?.captureCompletedTaskEvidence({ taskId });
+        } catch (err) {
+          log.warn(
+            `Forge evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
       try {
         const unblocked = await this.unblockDependentTasks(taskId);
@@ -632,4 +645,10 @@ export class SpaceTaskManager {
     }
     return false;
   }
+}
+
+function isTerminalTaskStatus(status: SpaceTaskStatus): boolean {
+  return (
+    status === 'done' || status === 'blocked' || status === 'cancelled' || status === 'archived'
+  );
 }

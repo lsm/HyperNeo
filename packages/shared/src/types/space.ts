@@ -528,6 +528,32 @@ export interface PaginatedSpaceTaskResult {
   total: number;
 }
 
+export type SpaceGoalOutcomeNotificationStatus =
+  | 'pending'
+  | 'superseded'
+  | 'acknowledged'
+  | 'rejected';
+
+export interface SpaceGoalOutcomeNotification {
+  id: string;
+  spaceId: string;
+  goalId: string;
+  taskId: string;
+  terminalGeneration: number;
+  goalRevision: number;
+  status: SpaceGoalOutcomeNotificationStatus;
+  payload: SpaceGoalOutcomeNotificationPayload;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SpaceGoalOutcomeNotificationPayload {
+  summary: string;
+  taskStatus: SpaceTaskStatus;
+  taskTitle: string;
+  goalTitle: string;
+}
+
 export interface SpaceTaskCompact {
   id: string;
   taskNumber: number;
