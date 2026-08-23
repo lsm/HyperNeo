@@ -67,9 +67,19 @@ interface DeviceFlowResponse {
   interval: number;
 }
 
+type TokenSource = 'auth-file' | 'copilot-env' | 'gh-env' | 'gh-cli' | 'hosts';
+
+const EXTERNAL_SOURCE_LABELS: Partial<Record<TokenSource, string>> = {
+  'copilot-env': 'the COPILOT_GITHUB_TOKEN environment variable',
+  'gh-env': 'the GH_TOKEN environment variable',
+  'gh-cli': 'the gh CLI (gh auth logout)',
+  hosts: 'the gh CLI hosts.yml oauth_token',
+};
+
 interface TokenCacheEntry {
   token: string | undefined;
   expiresAt: number;
+  source?: TokenSource;
 }
 
 const TOKEN_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -251,7 +261,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     try {
-      const token = this.storedCredentialToken ?? (await this.loadStoredGitHubToken());
+      const token = await this.resolveGitHubToken();
       if (!token) {
         return {
           isAuthenticated: false,
@@ -319,6 +329,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   async logout(): Promise<void> {
+    const cachedExternalSource = this.freshCachedExternalSource();
     this.storedCredentialToken = null;
     this.tokenCache = null;
 
@@ -333,6 +344,40 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         await fs.writeFile(this.authPath, JSON.stringify(data, null, 2), { mode: 0o600 });
       }
     } catch {}
+
+    const externalSource = (await this.findExternalCredentialSource()) ?? cachedExternalSource;
+    if (externalSource) {
+      throw new Error(
+        `GitHub Copilot credentials are managed by ${externalSource}. ` +
+          'Remove that source to log out.'
+      );
+    }
+  }
+
+  private freshCachedExternalSource(): string | undefined {
+    if (!this.tokenCache || Date.now() >= this.tokenCache.expiresAt) return undefined;
+    const { token, source } = this.tokenCache;
+    if (!token || token.startsWith('ghp_') || !source) return undefined;
+    return EXTERNAL_SOURCE_LABELS[source];
+  }
+
+  private async findExternalCredentialSource(): Promise<string | undefined> {
+    const envToken = this.env.COPILOT_GITHUB_TOKEN || this.env.GH_TOKEN;
+    if (envToken) {
+      if (envToken.startsWith('ghp_')) return undefined;
+      return this.env.COPILOT_GITHUB_TOKEN
+        ? EXTERNAL_SOURCE_LABELS['copilot-env']
+        : EXTERNAL_SOURCE_LABELS['gh-env'];
+    }
+    const ghCliToken = await this.tryGhCliToken();
+    if (ghCliToken) {
+      return ghCliToken.startsWith('ghp_') ? undefined : EXTERNAL_SOURCE_LABELS['gh-cli'];
+    }
+    const hostsToken = await this.tryGhHostsToken();
+    if (hostsToken) {
+      return hostsToken.startsWith('ghp_') ? undefined : EXTERNAL_SOURCE_LABELS['hosts'];
+    }
+    return undefined;
   }
 
   async shutdown(): Promise<void> {
@@ -376,32 +421,25 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       return this.tokenCache.token;
     }
 
-    const token = await this.discoverGitHubToken();
-    this.tokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_TTL_MS };
+    const { token, source } = await this.discoverGitHubToken();
+    this.tokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_TTL_MS, source };
     return token;
   }
 
-  private async discoverGitHubToken(): Promise<string | undefined> {
+  private async discoverGitHubToken(): Promise<{ token: string | undefined; source: TokenSource }> {
     const stored = await this.loadStoredGitHubToken();
-    if (stored) return stored;
+    if (stored) return { token: stored, source: 'auth-file' };
 
-    if (this.env.COPILOT_GITHUB_TOKEN) return this.env.COPILOT_GITHUB_TOKEN;
+    if (this.env.COPILOT_GITHUB_TOKEN) {
+      return { token: this.env.COPILOT_GITHUB_TOKEN, source: 'copilot-env' };
+    }
 
-    if (this.env.GH_TOKEN) return this.env.GH_TOKEN;
+    if (this.env.GH_TOKEN) return { token: this.env.GH_TOKEN, source: 'gh-env' };
 
     const ghCliToken = await this.tryGhCliToken();
-    if (ghCliToken) {
-      const valid = await this.validateCopilotToken(ghCliToken);
-      if (valid) return ghCliToken;
-    }
+    if (ghCliToken) return { token: ghCliToken, source: 'gh-cli' };
 
-    const hostsToken = await this.tryGhHostsToken();
-    if (hostsToken && hostsToken !== ghCliToken) {
-      const valid = await this.validateCopilotToken(hostsToken);
-      if (valid) return hostsToken;
-    }
-
-    return undefined;
+    return { token: await this.tryGhHostsToken(), source: 'hosts' };
   }
 
   private async loadStoredGitHubToken(): Promise<string | undefined> {
@@ -434,33 +472,6 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       return match?.[1] || undefined;
     } catch {
       return undefined;
-    }
-  }
-
-  private async validateCopilotToken(token: string): Promise<boolean> {
-    const TIMEOUT_MS = 20_000;
-    const client = new CopilotClient({
-      useStdio: true,
-      logLevel: 'error',
-      env: buildCopilotEnv({ ...this.env, COPILOT_GITHUB_TOKEN: token }),
-    });
-    try {
-      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-      const models = await Promise.race([
-        client.listModels(),
-        new Promise<never>((_, reject) => {
-          timeoutHandle = setTimeout(
-            () => reject(new Error('validateCopilotToken timed out')),
-            TIMEOUT_MS
-          );
-        }),
-      ]);
-      clearTimeout(timeoutHandle);
-      return models.length > 0;
-    } catch {
-      return false;
-    } finally {
-      await client.stop().catch(() => {});
     }
   }
 
