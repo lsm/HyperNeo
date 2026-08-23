@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { AnthropicProvider } from '../../../../src/lib/providers/anthropic-provider';
+import {
+  recordProviderFailure,
+  resetProviderFailureStore,
+} from '../../../../src/lib/providers/provider-failure-store';
 
 describe('AnthropicProvider', () => {
   let provider: AnthropicProvider;
@@ -10,10 +14,12 @@ describe('AnthropicProvider', () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
+    resetProviderFailureStore();
     provider = new AnthropicProvider();
   });
 
   afterEach(() => {
+    resetProviderFailureStore();
     process.env = originalEnv;
   });
 
@@ -202,7 +208,7 @@ describe('AnthropicProvider', () => {
       expect(models.map((model) => model.id)).toEqual(['sonnet']);
     });
 
-    it('should return empty array when SDK loading fails', async () => {
+    it('should propagate SDK loading failures instead of swallowing them', async () => {
       process.env.ANTHROPIC_API_KEY = 'test-key';
 
       class MockMcpServer {
@@ -213,7 +219,7 @@ describe('AnthropicProvider', () => {
       let _toolBatch: Array<{ name: string; def: object }> = [];
       mock.module('@anthropic-ai/claude-agent-sdk', () => ({
         query: async () => ({
-          interrupt: () => {},
+          interrupt: async () => {},
           supportedModels: async () => {
             throw new Error('SDK unavailable');
           },
@@ -246,9 +252,43 @@ describe('AnthropicProvider', () => {
       const providerWithCreds = new AnthropicProvider();
       providerWithCreds.clearModelCache();
 
-      const models = await providerWithCreds.getModels();
+      await expect(providerWithCreds.getModels()).rejects.toThrow('SDK unavailable');
+    });
+  });
 
-      expect(models).toEqual([]);
+  describe('getAuthStatus', () => {
+    it('reports plain credential presence when no failure is recorded', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-key';
+
+      const status = await provider.getAuthStatus();
+
+      expect(status).toEqual({
+        isAuthenticated: true,
+        method: 'api_key',
+        error: undefined,
+      });
+    });
+
+    it('surfaces a recorded credential failure as unauthenticated', async () => {
+      process.env.ANTHROPIC_API_KEY = 'revoked-key';
+      recordProviderFailure('anthropic', new Error('SDK credential rejected (HTTP 401)'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(false);
+      expect(status.errorKind).toBe('credential');
+      expect(status.error).toBe('SDK credential rejected (HTTP 401)');
+    });
+
+    it('stays authenticated but degraded for a recorded transient failure', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-key';
+      recordProviderFailure('anthropic', new Error('SDK model load timeout'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(true);
+      expect(status.errorKind).toBe('transient');
+      expect(status.error).toBe('SDK model load timeout');
     });
   });
 

@@ -81,6 +81,7 @@ export function setupAuthHandlers(
               needsRefresh: status.needsRefresh,
               user: status.user,
               error: status.error,
+              errorKind: status.errorKind,
             };
           } else {
             const available = await provider.isAvailable();

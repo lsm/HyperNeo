@@ -5,6 +5,10 @@ import {
   KimiProvider,
   resolveKimiRegion,
 } from '../../../../src/lib/providers/kimi-provider';
+import {
+  recordProviderFailure,
+  resetProviderFailureStore,
+} from '../../../../src/lib/providers/provider-failure-store';
 
 describe('KimiProvider', () => {
   let provider: KimiProvider;
@@ -1011,7 +1015,12 @@ describe('KimiProvider', () => {
 
   describe('getAuthStatus', () => {
     beforeEach(() => {
+      resetProviderFailureStore();
       provider = new KimiProvider();
+    });
+
+    afterEach(() => {
+      resetProviderFailureStore();
     });
 
     it('should return authenticated when API key is set', async () => {
@@ -1026,6 +1035,28 @@ describe('KimiProvider', () => {
       const status = await provider.getAuthStatus();
       expect(status.isAuthenticated).toBe(false);
       expect(status.error).toContain('KIMI_API_KEY');
+    });
+
+    it('should surface a recorded credential failure as unauthenticated', async () => {
+      process.env.KIMI_API_KEY = 'invalid-key';
+      recordProviderFailure('kimi', new Error('Kimi API key rejected (HTTP 401)'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(false);
+      expect(status.errorKind).toBe('credential');
+      expect(status.error).toBe('Kimi API key rejected (HTTP 401)');
+    });
+
+    it('should stay authenticated but degraded for a recorded transient failure', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      recordProviderFailure('kimi', new Error('Kimi probe timed out after 5000ms'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(true);
+      expect(status.errorKind).toBe('transient');
+      expect(status.error).toBe('Kimi probe timed out after 5000ms');
     });
   });
 

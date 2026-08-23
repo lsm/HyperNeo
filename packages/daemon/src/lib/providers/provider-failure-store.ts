@@ -1,4 +1,4 @@
-import type { ProviderFailureErrorKind } from '@hyperneo/shared/provider';
+import type { ProviderAuthStatusInfo, ProviderFailureErrorKind } from '@hyperneo/shared/provider';
 
 export interface ProviderFailureRecord {
   readonly providerId: string;
@@ -112,6 +112,24 @@ export function subscribeProviderFailureChanges(
 
 export function clearProviderFailureRecords(): void {
   providerFailures.clear();
+}
+
+/** @public */
+export function applyRecordedFailureToAuthStatus(
+  providerId: string,
+  status: ProviderAuthStatusInfo
+): ProviderAuthStatusInfo {
+  const failure = providerFailures.get(providerId);
+  if (!failure) {
+    return status;
+  }
+  if (failure.errorKind === 'credential') {
+    return { ...status, isAuthenticated: false, error: failure.message, errorKind: 'credential' };
+  }
+  if (!status.isAuthenticated) {
+    return status;
+  }
+  return { ...status, error: failure.message, errorKind: 'transient' };
 }
 
 /** @public */

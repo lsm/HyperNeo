@@ -1568,6 +1568,24 @@ describe('Model Service', () => {
       expect(getProviderFailure('glm')).toBeUndefined();
     });
 
+    it('propagates a recorded probe rejection into the provider auth status', async () => {
+      const fetchImpl = mock(
+        async () => new Response('unauthorized', { status: 401 })
+      ) as unknown as typeof fetch;
+      const glm = new GlmProvider({ GLM_API_KEY: 'invalid-key' }, fetchImpl);
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().register(glm);
+
+      await refreshProviderModels();
+
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const status = await glm.getAuthStatus();
+      expect(status.isAuthenticated).toBe(false);
+      expect(status.errorKind).toBe('credential');
+      expect(status.error).toBe('Z.ai API key rejected (HTTP 401)');
+    });
+
     it('notifies failure-change listeners once per transition during refreshes', async () => {
       const changes: ProviderFailureChange[] = [];
       subscribeProviderFailureChanges((change) => changes.push(change));

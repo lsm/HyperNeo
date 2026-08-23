@@ -8,6 +8,7 @@ import type {
   ProviderSdkConfig,
   ProviderSessionConfig,
 } from '@hyperneo/shared/provider';
+import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
 
 export class DeepSeekProvider implements Provider {
@@ -86,11 +87,11 @@ export class DeepSeekProvider implements Provider {
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     const apiKey = this.getApiKey();
-    return {
+    return applyRecordedFailureToAuthStatus(this.id, {
       isAuthenticated: !!apiKey,
       method: 'api_key',
       error: apiKey ? undefined : 'Set DEEPSEEK_API_KEY to enable DeepSeek models.',
-    };
+    });
   }
 
   private async verifyCredentials(baseUrl: string, apiKey: string): Promise<void> {
