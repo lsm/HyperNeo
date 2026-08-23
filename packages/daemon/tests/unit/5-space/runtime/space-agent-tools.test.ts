@@ -2623,6 +2623,59 @@ describe('createSpaceAgentToolHandlers — review_goal_outcome', () => {
     expect(out.success).toBe(false);
     expect(out.error).toContain('disposition');
   });
+
+  test('updates goal state through the acknowledge disposition and applies once', async () => {
+    const { agent, goal, task, notification } = await makeReviewerGoal();
+    const handlers = makeHandlers(ctx, {
+      goalService,
+      callerRole: 'long_term_agent',
+      myAgentId: agent.id,
+    });
+    const params = {
+      goal_id: goal.id,
+      task_id: task.id,
+      notification_id: notification.id,
+      summary: 'Reviewed',
+      metrics: { activated: 5 },
+      observations: [{ key: 'activated', value: 2 }],
+      next_steps: ['Next'],
+    };
+
+    const out = JSON.parse((await handlers.review_goal_outcome(params)).content[0].text);
+    expect(out.success).toBe(true);
+    expect(out.status).toBe('claimed');
+    expect(out.goal.summary).toBe('Reviewed');
+    expect(out.goal.metrics.activated).toBe(7);
+    expect(out.goal.nextSteps).toEqual(['Next']);
+    expect(notifRepo.getById(notification.id)?.status).toBe('acknowledged');
+
+    const retry = JSON.parse((await handlers.review_goal_outcome(params)).content[0].text);
+    expect(retry.status).toBe('already_applied');
+    expect(goalService.getGoal(goal.id)?.metrics.activated).toBe(7);
+  });
+
+  test('rejects goal-state updates with a non-acknowledge disposition', async () => {
+    const { agent, goal, task, notification } = await makeReviewerGoal();
+    const handlers = makeHandlers(ctx, {
+      goalService,
+      callerRole: 'long_term_agent',
+      myAgentId: agent.id,
+    });
+
+    const out = JSON.parse(
+      (
+        await handlers.review_goal_outcome({
+          goal_id: goal.id,
+          task_id: task.id,
+          notification_id: notification.id,
+          disposition: 'reject',
+          summary: 'Reviewed',
+        })
+      ).content[0].text
+    );
+    expect(out.success).toBe(false);
+    expect(out.error).toContain('acknowledge');
+  });
 });
 
 describe('createSpaceAgentToolHandlers — Forge tools', () => {
