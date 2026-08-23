@@ -142,20 +142,42 @@ function getAvailableProviders(): Provider[] {
   return registry.getAll();
 }
 
+function applyRefreshedModels(
+  cacheKey: string,
+  fetchedModels: ModelInfo[],
+  previousModels: ModelInfo[] | undefined
+): void {
+  if (fetchedModels.length > 0) {
+    const mergedModels = mergeWithFallbackModels(fetchedModels);
+    if (previousModels && previousModels.length > mergedModels.length) {
+      modelsCache.set(cacheKey, previousModels);
+    } else {
+      modelsCache.set(cacheKey, mergedModels);
+    }
+    cacheTimestamps.set(cacheKey, Date.now());
+    return;
+  }
+  if (!previousModels || previousModels.length === 0) {
+    const registry = getProviderRegistry();
+    const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
+    modelsCache.set(cacheKey, filteredFallbacks);
+    cacheTimestamps.set(cacheKey, Date.now());
+  }
+}
+
 async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
   if (refreshInProgress.has(cacheKey)) {
     return;
   }
 
   const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
+  const previousModels = modelsCache.get(cacheKey);
 
   const refreshPromise = (async () => {
     try {
       const models = await loadModelsFromProviders();
-      if (models.length > 0 && (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart) {
-        const mergedModels = mergeWithFallbackModels(models);
-        modelsCache.set(cacheKey, mergedModels);
-        cacheTimestamps.set(cacheKey, Date.now());
+      if ((cacheGeneration.get(cacheKey) ?? 0) === generationAtStart) {
+        applyRefreshedModels(cacheKey, models, previousModels);
       }
       /* v8 ignore next 2 */
     } catch {
@@ -319,21 +341,7 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
       if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
         return;
       }
-      if (models.length > 0) {
-        const mergedModels = mergeWithFallbackModels(models);
-        if (previousModels && previousModels.length > mergedModels.length) {
-          modelsCache.set(cacheKey, previousModels);
-          cacheTimestamps.set(cacheKey, Date.now());
-          return;
-        }
-        modelsCache.set(cacheKey, mergedModels);
-        cacheTimestamps.set(cacheKey, Date.now());
-      } else if (!previousModels || previousModels.length === 0) {
-        const registry = getProviderRegistry();
-        const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
-        modelsCache.set(cacheKey, filteredFallbacks);
-        cacheTimestamps.set(cacheKey, Date.now());
-      }
+      applyRefreshedModels(cacheKey, models, previousModels);
     } finally {
       refreshInProgress.delete(cacheKey);
       if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
