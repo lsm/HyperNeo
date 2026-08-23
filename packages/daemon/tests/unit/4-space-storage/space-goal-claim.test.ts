@@ -12,7 +12,6 @@ import { SpaceTaskRepository } from '../../../src/storage/repositories/space-tas
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import type { SpaceGoal, SpaceGoalOutcomeNotification, SpaceTask } from '@hyperneo/shared';
 import type { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
-import { coordinatorLongHorizonAgentId } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { createSpaceTables } from '../helpers/space-test-db';
 
 describe('SpaceGoalService.claimOutcomeNotification', () => {
@@ -25,6 +24,7 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
   let task: SpaceTask;
   let notification: SpaceGoalOutcomeNotification;
   let resolution: GoalOwnerResolutionDecision;
+  let coordinatorAgent: { id: string; handle: string } | null;
 
   function claimParams(
     overrides: Partial<ClaimOutcomeNotificationParams> = {}
@@ -55,9 +55,11 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       owner: { agentId: 'agent-1', relationship: 'owner', createdAt: Date.now() },
       conflicts: [],
     };
+    coordinatorAgent = { id: 'coordinator-1', handle: 'coordinator' };
     const longHorizonAgentRepo = {
       assignGoal: mock(() => null),
       getPrimaryGoalOwner: mock(() => resolution),
+      getCoordinator: mock(() => coordinatorAgent),
     } as unknown as SpaceGoalServiceDeps['longHorizonAgentRepo'];
     service = new SpaceGoalService({
       goalRepo,
@@ -202,7 +204,7 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
     expect(result).toMatchObject({ status: 'claimed' });
   });
 
-  it('admits the coordinator identity without provisioning when resolution is degraded', () => {
+  it('admits the existing coordinator when the owner is degraded', () => {
     resolution = {
       action: 'degraded',
       reason: 'paused',
@@ -210,11 +212,23 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       conflicts: [],
     };
 
-    const result = service.claimOutcomeNotification(
-      claimParams({ actorAgentId: coordinatorLongHorizonAgentId(goal.spaceId) })
-    );
+    const result = service.claimOutcomeNotification(claimParams({ actorAgentId: 'coordinator-1' }));
 
     expect(result).toMatchObject({ status: 'claimed' });
+  });
+
+  it('denies a degraded-owner claim when no coordinator exists', () => {
+    resolution = {
+      action: 'degraded',
+      reason: 'archived',
+      owner: { agentId: 'agent-1', relationship: 'owner', createdAt: Date.now() },
+      conflicts: [],
+    };
+    coordinatorAgent = null;
+
+    const result = service.claimOutcomeNotification(claimParams({ actorAgentId: 'coordinator-1' }));
+
+    expect(result).toMatchObject({ status: 'denied', reason: 'unauthorized' });
   });
 
   it('rejects an already-applied notification claimed by an unauthorized actor', () => {

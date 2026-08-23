@@ -21,7 +21,6 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository';
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
-import { coordinatorLongHorizonAgentId } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { ScheduleService } from '../schedule/schedule-service';
 import { Logger } from '../../logger';
@@ -95,7 +94,7 @@ export interface SpaceGoalServiceDeps {
   onGoalResumed?: (goalId: string, spaceId: string) => void;
   longHorizonAgentRepo?: Pick<
     SpaceLongHorizonAgentRepository,
-    'assignGoal' | 'getPrimaryGoalOwner'
+    'assignGoal' | 'getPrimaryGoalOwner' | 'getCoordinator'
   >;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   onOutcomeNotification?: (notification: SpaceGoalOutcomeNotification) => void;
@@ -611,7 +610,8 @@ export class SpaceGoalService {
     const resolution = repo.getPrimaryGoalOwner(goal.id, goal.spaceId);
     if (resolution.action === 'resolved') return [resolution.owner.agentId];
     if (resolution.action === 'coordinator_fallback') return [resolution.coordinatorAgentId];
-    return [coordinatorLongHorizonAgentId(goal.spaceId)];
+    const coordinator = repo.getCoordinator(goal.spaceId);
+    return coordinator ? [coordinator.id] : [];
   }
 
   claimScheduledTask(
