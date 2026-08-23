@@ -39,6 +39,8 @@ export interface ProviderSessionConfig {
   [key: string]: unknown;
 }
 
+export type ProviderFailureErrorKind = 'transient' | 'credential';
+
 export interface ProviderAuthStatusInfo {
   isAuthenticated: boolean;
   method?: 'api_key' | 'oauth';
@@ -49,6 +51,7 @@ export interface ProviderAuthStatusInfo {
     name?: string;
   };
   error?: string;
+  errorKind?: ProviderFailureErrorKind;
 }
 
 export interface ProviderOAuthFlowData {

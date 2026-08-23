@@ -18,6 +18,12 @@ import {
 import type { ModelInfo } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import {
+  getProviderFailure,
+  resetProviderFailureStore,
+  subscribeProviderFailureChanges,
+  type ProviderFailureChange,
+} from '../../../../src/lib/providers/provider-failure-store';
 import { MinimaxProvider } from '../../../../src/lib/providers/minimax-provider';
 import { COPILOT_ANTHROPIC_MODELS } from '../../../../src/lib/providers/anthropic-copilot/models';
 import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
@@ -63,12 +69,14 @@ describe('Model Service', () => {
     clearModelsCache();
     resetProviderRegistry();
     resetProviderFactory();
+    resetProviderFailureStore();
   });
 
   afterEach(() => {
     clearModelsCache();
     resetProviderRegistry();
     resetProviderFactory();
+    resetProviderFailureStore();
   });
 
   describe('stranded-provider retry tracking', () => {
@@ -1442,6 +1450,237 @@ describe('Model Service', () => {
       await refreshPromise;
 
       expect(getAvailableModels('global')).toEqual([]);
+    });
+  });
+
+  describe('per-provider failure recording', () => {
+    interface MockProviderBehavior {
+      available?: boolean;
+      models?: ModelInfo[];
+      error?: Error;
+      rejectDelayMs?: number;
+      onFirstProbe?: () => void;
+      unregisterDuringGetModels?: boolean;
+    }
+
+    async function registerProvider(id: string, behavior: MockProviderBehavior): Promise<void> {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id,
+        getModels: async () => {
+          if (behavior.rejectDelayMs) {
+            await new Promise((resolve) => setTimeout(resolve, behavior.rejectDelayMs));
+          }
+          if (behavior.unregisterDuringGetModels) {
+            getProviderRegistry().unregister(id);
+          }
+          if (behavior.error) throw behavior.error;
+          return behavior.models ?? [];
+        },
+        isAvailable: async () => {
+          behavior.onFirstProbe?.();
+          return behavior.available ?? true;
+        },
+      } as ProviderLike);
+    }
+
+    async function refreshProviderModels(): Promise<void> {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+    }
+
+    it('records a credential failure when getModels rejects with a 401 probe error', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai API key rejected (HTTP 401)'),
+        models: mockModels,
+      });
+
+      await refreshProviderModels();
+
+      const failure = getProviderFailure('glm');
+      expect(failure?.errorKind).toBe('credential');
+      expect(failure?.message).toBe('Z.ai API key rejected (HTTP 401)');
+      expect(failure?.firstRecordedAt).toBeGreaterThan(0);
+    });
+
+    it('records a transient failure when getModels rejects with a 5xx probe error', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai probe failed (HTTP 503)'),
+        models: mockModels,
+      });
+
+      await refreshProviderModels();
+
+      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+    });
+
+    it('records a failure when isAvailable itself rejects', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'broken-provider',
+        getModels: async () => [],
+        isAvailable: async () => {
+          throw new Error('Codex probe timed out after 8000ms');
+        },
+      } as ProviderLike);
+
+      await refreshProviderModels();
+
+      expect(getProviderFailure('broken-provider')?.errorKind).toBe('transient');
+    });
+
+    it('does not record a failure for an unavailable provider', async () => {
+      await registerProvider('glm', { available: false, models: mockModels });
+
+      await refreshProviderModels();
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
+    it('records failures even while the provider has models in the cache', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai probe failed (HTTP 503)'),
+        models: mockModels,
+      });
+      const glmModels: ModelInfo[] = mockModels.map((m) => ({ ...m, provider: 'glm' }));
+      setModelsCache(new Map([['global', glmModels]]));
+
+      await refreshProviderModels();
+
+      expect(getAvailableModels('global').some((m) => m.provider === 'glm')).toBe(true);
+      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+    });
+
+    it('clears a previously recorded failure once the provider succeeds', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai probe failed (HTTP 503)'),
+        models: mockModels,
+      });
+      await refreshProviderModels();
+      expect(getProviderFailure('glm')).toBeDefined();
+
+      resetProviderRegistry();
+      await registerProvider('glm', { models: mockModels });
+      await refreshProviderModels();
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
+    it('notifies failure-change listeners once per transition during refreshes', async () => {
+      const changes: ProviderFailureChange[] = [];
+      subscribeProviderFailureChanges((change) => changes.push(change));
+
+      await registerProvider('glm', {
+        error: new Error('Z.ai probe failed (HTTP 503)'),
+        models: mockModels,
+      });
+      await refreshProviderModels();
+      await refreshProviderModels();
+
+      expect(changes).toHaveLength(1);
+      expect(changes[0]?.providerId).toBe('glm');
+
+      resetProviderRegistry();
+      await registerProvider('glm', { models: mockModels });
+      await refreshProviderModels();
+
+      expect(changes).toHaveLength(2);
+      expect(changes[1]).toEqual({ providerId: 'glm', record: null });
+    });
+
+    it('does not apply failure writes from a superseded refresh generation', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai API key rejected (HTTP 401)'),
+        models: mockModels,
+        rejectDelayMs: 150,
+      });
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const supersededRefresh = refreshModels();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      clearModelsCache();
+      await supersededRefresh;
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
+    it('does not apply failure writes from a superseded initialization', async () => {
+      const { initializeProviders } = await import('../../../../src/lib/providers/factory');
+      initializeProviders();
+      let signalFirstProbe: () => void = () => {};
+      const firstProbeStarted = new Promise<void>((resolve) => {
+        signalFirstProbe = resolve;
+      });
+      await registerProvider('stub-failing-provider', {
+        error: new Error('Z.ai API key rejected (HTTP 401)'),
+        models: mockModels,
+        rejectDelayMs: 150,
+        onFirstProbe: signalFirstProbe,
+      });
+
+      const { initializeModels } = await import('../../../../src/lib/model-service');
+      const initialization = initializeModels();
+      await firstProbeStarted;
+      clearModelsCache();
+      await initialization;
+
+      expect(getProviderFailure('stub-failing-provider')).toBeUndefined();
+    });
+
+    it('preserves replacement refresh state when a superseded initialization settles', async () => {
+      const { initializeProviders } = await import('../../../../src/lib/providers/factory');
+      initializeProviders();
+      let signalFirstProbe: () => void = () => {};
+      const firstProbeStarted = new Promise<void>((resolve) => {
+        signalFirstProbe = resolve;
+      });
+      await registerProvider('stub-failing-provider', {
+        error: new Error('Z.ai API key rejected (HTTP 401)'),
+        models: mockModels,
+        rejectDelayMs: 150,
+        onFirstProbe: signalFirstProbe,
+      });
+
+      const { initializeModels, refreshModels } = await import('../../../../src/lib/model-service');
+      const initialization = initializeModels();
+      await firstProbeStarted;
+      clearModelsCache();
+      const replacement = refreshModels();
+      await initialization;
+      await replacement;
+
+      expect(getProviderFailure('stub-failing-provider')?.errorKind).toBe('credential');
+    });
+
+    it('drops failure records for providers no longer in the registry', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai probe failed (HTTP 503)'),
+        models: mockModels,
+      });
+      await refreshProviderModels();
+      expect(getProviderFailure('glm')).toBeDefined();
+
+      resetProviderRegistry();
+      await registerProvider('kimi', { models: mockModels });
+      await refreshProviderModels();
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
+    it('does not record failures for providers unregistered during the load', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai probe failed (HTTP 503)'),
+        models: mockModels,
+        unregisterDuringGetModels: true,
+      });
+      await registerProvider('kimi', { models: mockModels });
+
+      await refreshProviderModels();
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+      expect(getProviderFailure('kimi')).toBeUndefined();
     });
   });
 

@@ -3,6 +3,7 @@ export type {
   ProviderCapabilities,
   ProviderContext,
   ProviderCredentials,
+  ProviderFailureErrorKind,
   ProviderId,
   ProviderInfo,
   ProviderSdkConfig,
