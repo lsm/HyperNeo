@@ -5,10 +5,7 @@ import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { Provider } from '@hyperneo/shared/provider';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
-import {
-  ExternallyManagedCredentialsError,
-  KeychainUnavailableError,
-} from '../../../../src/lib/credentials/credential-store';
+import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -461,7 +458,7 @@ describe('Auth RPC Handlers', () => {
       expect(credentialManager.removeCredentials).not.toHaveBeenCalled();
     });
 
-    it('preserves stored credentials when provider refuses externally managed logout', async () => {
+    it('surfaces externally-managed message and completes app-side cleanup on refused external logout', async () => {
       const credentialManager = {
         getCredentials: mock(async () => ({ type: 'oauth' as const, accessToken: 'gho_stored' })),
         removeCredentials: mock(async () => {}),
@@ -474,7 +471,7 @@ describe('Auth RPC Handlers', () => {
       );
       const mockProvider = createMockProvider({
         logout: mock(async () => {
-          throw new ExternallyManagedCredentialsError(
+          throw new Error(
             'GitHub Copilot credentials are managed by the COPILOT_GITHUB_TOKEN environment variable. Remove that source to log out.'
           );
         }),
@@ -491,7 +488,7 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('COPILOT_GITHUB_TOKEN');
-      expect(credentialManager.removeCredentials).not.toHaveBeenCalled();
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 
     it('surfaces keychain guidance when locked-read returns null and provider has no logout', async () => {

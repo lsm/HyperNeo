@@ -933,14 +933,12 @@ describe('logout()', () => {
     await expect(p.logout()).rejects.toThrow('gh CLI');
   });
 
-  it('performs no credential cleanup when logout is refused', async () => {
+  it('clears owned credentials even when an external source keeps the provider authenticated', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
     p.setCredentials({ type: 'oauth', accessToken: 'gho_stored_tok' });
-    await expect(p.logout()).rejects.toThrow();
-    expect((p as unknown as Record<string, unknown>)['storedCredentialToken']).toBe(
-      'gho_stored_tok'
-    );
-    expect((p as unknown as Record<string, unknown>)['tokenCache']).not.toBeNull();
+    await expect(p.logout()).rejects.toThrow('COPILOT_GITHUB_TOKEN');
+    expect((p as unknown as Record<string, unknown>)['storedCredentialToken']).toBeNull();
+    expect((p as unknown as Record<string, unknown>)['tokenCache']).toBeNull();
   });
 
   it('does not block logout for an unusable classic PAT (ghp_) in COPILOT_GITHUB_TOKEN', async () => {
@@ -954,10 +952,66 @@ describe('logout()', () => {
     await expect(p.logout()).resolves.toBeUndefined();
   });
 
+  it('does not block logout when a ghp_ COPILOT_GITHUB_TOKEN shadows a usable GH_TOKEN (discovery precedence)', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {
+      COPILOT_GITHUB_TOKEN: 'ghp_classic',
+      GH_TOKEN: 'gho_valid',
+    });
+    await expect(p.logout()).resolves.toBeUndefined();
+  });
+
   it('does not block logout for an unusable classic PAT (ghp_) from the gh CLI', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
     spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
       'ghp_cli_classic' as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    await expect(p.logout()).resolves.toBeUndefined();
+  });
+
+  it('refuses logout using cached gh-token provenance when the live gh CLI lookup transiently fails', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    (p as unknown as Record<string, unknown>)['tokenCache'] = {
+      token: 'gho_cli_tok',
+      expiresAt: Date.now() + 60_000,
+      source: 'gh-cli',
+    };
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    await expect(p.logout()).rejects.toThrow('gh CLI');
+  });
+
+  it('does not refuse logout from cached provenance when the cached source is the auth file', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    (p as unknown as Record<string, unknown>)['tokenCache'] = {
+      token: 'gho_file_tok',
+      expiresAt: Date.now() + 60_000,
+      source: 'auth-file',
+    };
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    await expect(p.logout()).resolves.toBeUndefined();
+  });
+
+  it('ignores expired cached provenance when the live lookup finds no external source', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    (p as unknown as Record<string, unknown>)['tokenCache'] = {
+      token: 'gho_cli_tok',
+      expiresAt: Date.now() - 1,
+      source: 'gh-cli',
+    };
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
     );
     spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
       undefined as never

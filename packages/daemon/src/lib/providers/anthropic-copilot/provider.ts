@@ -19,7 +19,6 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { Logger } from '../../logger.js';
 import { buildCopilotEnv } from './bun-node-wrapper.js';
-import { ExternallyManagedCredentialsError } from '../../credentials/credential-store.js';
 
 const execFileAsync = promisify(execFile);
 const logger = new Logger('anthropic-copilot-provider');
@@ -147,9 +146,19 @@ interface DeviceFlowResponse {
   interval: number;
 }
 
+type TokenSource = 'auth-file' | 'copilot-env' | 'gh-env' | 'gh-cli' | 'hosts';
+
+const EXTERNAL_SOURCE_LABELS: Partial<Record<TokenSource, string>> = {
+  'copilot-env': 'the COPILOT_GITHUB_TOKEN environment variable',
+  'gh-env': 'the GH_TOKEN environment variable',
+  'gh-cli': 'the gh CLI (gh auth logout)',
+  hosts: 'the gh CLI hosts.yml oauth_token',
+};
+
 interface TokenCacheEntry {
   token: string | undefined;
   expiresAt: number;
+  source?: TokenSource;
 }
 
 const TOKEN_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -399,14 +408,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   async logout(): Promise<void> {
-    const externalSource = await this.findExternalCredentialSource();
-    if (externalSource) {
-      throw new ExternallyManagedCredentialsError(
-        `GitHub Copilot credentials are managed by ${externalSource}. ` +
-          'Remove that source to log out.'
-      );
-    }
-
+    const cachedExternalSource = this.freshCachedExternalSource();
     this.storedCredentialToken = null;
     this.tokenCache = null;
 
@@ -421,20 +423,37 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         await fs.writeFile(this.authPath, JSON.stringify(data, null, 2), { mode: 0o600 });
       }
     } catch {}
+
+    const externalSource = (await this.findExternalCredentialSource()) ?? cachedExternalSource;
+    if (externalSource) {
+      throw new Error(
+        `GitHub Copilot credentials are managed by ${externalSource}. ` +
+          'Remove that source to log out.'
+      );
+    }
+  }
+
+  private freshCachedExternalSource(): string | undefined {
+    if (!this.tokenCache || Date.now() >= this.tokenCache.expiresAt) return undefined;
+    return this.tokenCache.source ? EXTERNAL_SOURCE_LABELS[this.tokenCache.source] : undefined;
   }
 
   private async findExternalCredentialSource(): Promise<string | undefined> {
-    const envSources: Array<[string | undefined, string]> = [
-      [this.env.COPILOT_GITHUB_TOKEN, 'the COPILOT_GITHUB_TOKEN environment variable'],
-      [this.env.GH_TOKEN, 'the GH_TOKEN environment variable'],
-    ];
-    for (const [token, label] of envSources) {
-      if (token && !token.startsWith('ghp_')) return label;
+    const envToken = this.env.COPILOT_GITHUB_TOKEN || this.env.GH_TOKEN;
+    if (envToken) {
+      if (envToken.startsWith('ghp_')) return undefined;
+      return this.env.COPILOT_GITHUB_TOKEN
+        ? EXTERNAL_SOURCE_LABELS['copilot-env']
+        : EXTERNAL_SOURCE_LABELS['gh-env'];
     }
     const ghCliToken = await this.tryGhCliToken();
-    if (ghCliToken && !ghCliToken.startsWith('ghp_')) return 'the gh CLI (gh auth logout)';
+    if (ghCliToken) {
+      return ghCliToken.startsWith('ghp_') ? undefined : EXTERNAL_SOURCE_LABELS['gh-cli'];
+    }
     const hostsToken = await this.tryGhHostsToken();
-    if (hostsToken && !hostsToken.startsWith('ghp_')) return 'the gh CLI hosts.yml oauth_token';
+    if (hostsToken) {
+      return hostsToken.startsWith('ghp_') ? undefined : EXTERNAL_SOURCE_LABELS['hosts'];
+    }
     return undefined;
   }
 
@@ -479,23 +498,25 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       return this.tokenCache.token;
     }
 
-    const token = await this.discoverGitHubToken();
-    this.tokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_TTL_MS };
+    const { token, source } = await this.discoverGitHubToken();
+    this.tokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_TTL_MS, source };
     return token;
   }
 
-  private async discoverGitHubToken(): Promise<string | undefined> {
+  private async discoverGitHubToken(): Promise<{ token: string | undefined; source: TokenSource }> {
     const stored = await this.loadStoredGitHubToken();
-    if (stored) return stored;
+    if (stored) return { token: stored, source: 'auth-file' };
 
-    if (this.env.COPILOT_GITHUB_TOKEN) return this.env.COPILOT_GITHUB_TOKEN;
+    if (this.env.COPILOT_GITHUB_TOKEN) {
+      return { token: this.env.COPILOT_GITHUB_TOKEN, source: 'copilot-env' };
+    }
 
-    if (this.env.GH_TOKEN) return this.env.GH_TOKEN;
+    if (this.env.GH_TOKEN) return { token: this.env.GH_TOKEN, source: 'gh-env' };
 
     const ghCliToken = await this.tryGhCliToken();
-    if (ghCliToken) return ghCliToken;
+    if (ghCliToken) return { token: ghCliToken, source: 'gh-cli' };
 
-    return this.tryGhHostsToken();
+    return { token: await this.tryGhHostsToken(), source: 'hosts' };
   }
 
   private async loadStoredGitHubToken(): Promise<string | undefined> {

@@ -67,13 +67,6 @@ export class KeychainUnavailableError extends Error {
   }
 }
 
-export class ExternallyManagedCredentialsError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ExternallyManagedCredentialsError';
-  }
-}
-
 export class KeychainCredentialStore implements CredentialStore {
   async get(service: string, account: string): Promise<string | null> {
     try {
