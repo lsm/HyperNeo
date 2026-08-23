@@ -206,12 +206,6 @@ export class ModelSwitchHandler {
       if (!this.isQueryActiveOrStarting()) {
         session.config.model = resolvedModel;
         session.config.provider = nextProvider;
-        if (clearAcpSessionId && previousAcpSessionId) {
-          await this.disposePreviousAcpSession(
-            previousAcpSessionId,
-            previousMetadata?.acpSessionCommand
-          );
-        }
         if (clearAcpSessionId) {
           session.acpSessionId = undefined;
           session.metadata = {
@@ -242,6 +236,13 @@ export class ModelSwitchHandler {
         });
 
         this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
+
+        if (clearAcpSessionId && previousAcpSessionId) {
+          await this.disposePreviousAcpSession(
+            previousAcpSessionId,
+            previousMetadata?.acpSessionCommand
+          );
+        }
       } else {
         session.config.model = resolvedModel;
         session.config.provider = nextProvider;

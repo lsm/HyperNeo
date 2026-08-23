@@ -653,6 +653,29 @@ describe('ModelSwitchHandler', () => {
         );
       });
 
+      it('does not dispose the remote ACP session when a pre-query switch rolls back', async () => {
+        const acpProvider = getProviderRegistry().get('acp') as AcpProvider;
+        acpProvider.setAcpCommand('devin acp');
+        const disposeAcpSessionsSpy = mock(async () => {});
+        emitSpy.mockRejectedValueOnce(new Error('Publish failed'));
+
+        mockSession.config.model = 'acp-default';
+        mockSession.config.provider = 'acp';
+        mockSession.acpSessionId = 'remote-acp-session';
+        mockSession.metadata = {
+          ...mockSession.metadata,
+          acpSessionCommand: 'old acp',
+        };
+
+        handler = createHandler({ queryObject: null, disposeAcpSessions: disposeAcpSessionsSpy });
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+        expect(result.success).toBe(false);
+        expect(disposeAcpSessionsSpy).not.toHaveBeenCalled();
+        expect(mockSession.acpSessionId).toBe('remote-acp-session');
+        expect(mockSession.metadata.acpSessionCommand).toBe('old acp');
+      });
+
       it('rollback restores the literal stored provider, not the guard inference (P1)', async () => {
         mockSession.config.model = 'gemini-3.1-pro-preview';
         (mockSession.config as Record<string, unknown>).provider = undefined;
