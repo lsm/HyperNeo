@@ -447,6 +447,7 @@ export function ModelsSettings() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -465,23 +466,32 @@ export function ModelsSettings() {
 
   const fetchModels = async (forceRefresh: boolean) => {
     const hub = connectionManager.getHubIfConnected();
-    if (!hub) return;
-
-    const [modelsResponse, authResponse] = await Promise.all([
-      hub.request(
-        'models.list',
-        forceRefresh ? { forceRefresh: true } : { useCache: true }
-      ) as Promise<{ models: RawModelEntry[] }>,
-      listProviderAuthStatus().catch(() => ({ providers: [] })),
-    ]);
-
-    setAvailableModels(mapRawModelsToModelInfos(modelsResponse.models));
-
-    const authMap = new Map<string, ProviderAuthStatus>();
-    for (const p of authResponse.providers) {
-      authMap.set(p.id, p);
+    if (!hub) {
+      setLoadError('Not connected to server');
+      return;
     }
-    setProviderAuthStatuses(authMap);
+
+    try {
+      const [modelsResponse, authResponse] = await Promise.all([
+        hub.request(
+          'models.list',
+          forceRefresh ? { forceRefresh: true } : { useCache: true }
+        ) as Promise<{ models: RawModelEntry[] }>,
+        listProviderAuthStatus().catch(() => ({ providers: [] })),
+      ]);
+
+      setAvailableModels(mapRawModelsToModelInfos(modelsResponse.models));
+
+      const authMap = new Map<string, ProviderAuthStatus>();
+      for (const p of authResponse.providers) {
+        authMap.set(p.id, p);
+      }
+      setProviderAuthStatuses(authMap);
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Failed to load models');
+      throw e;
+    }
   };
 
   const saveOpenRouterAllowlist = async () => {
@@ -524,17 +534,18 @@ export function ModelsSettings() {
     }
   };
 
+  const loadModels = async () => {
+    setLoading(true);
+    try {
+      await fetchModels(false);
+    } catch {
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      try {
-        await fetchModels(false);
-      } catch {
-      } finally {
-        setLoading(false);
-      }
-    };
-    void load();
+    void loadModels();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -663,6 +674,17 @@ export function ModelsSettings() {
           Refresh models
         </Button>
       </div>
+      {loadError && (
+        <div
+          class="flex items-center justify-between gap-3 rounded-lg border border-red-300/20 px-4 py-3 text-sm text-red-200"
+          role="alert"
+        >
+          <span>{loadError}</span>
+          <Button variant="ghost" size="xs" onClick={() => void loadModels()}>
+            Retry
+          </Button>
+        </div>
+      )}
       <div class="space-y-3">
         <div class="space-y-3 rounded-lg border border-white/[0.08] bg-white/[0.025] px-4 py-3">
           <div>
