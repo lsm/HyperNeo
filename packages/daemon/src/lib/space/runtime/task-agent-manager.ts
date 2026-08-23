@@ -116,7 +116,8 @@ import { buildCustomAgentTaskMessage, resolveAgentInit } from '../agents/custom-
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { Logger } from '../../logger';
 import { extractReplyToSessionId } from '../agent-message-envelope';
-import { derivePendingQueueTargetNames, selectDrainablePendingRows } from './pending-drain-gates';
+import { derivePendingQueueTargetNames } from './pending-drain-gates';
+import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline';
 import {
   formatPendingRowForNodeAgent,
   formatPendingRowForSpaceAgent,
@@ -1266,23 +1267,25 @@ export class TaskAgentManager {
       ? this.workflowNodeNameForRun(workflowRunId, execution.workflowNodeId)
       : null;
     const drainWorkflowNodeId = execution?.workflowNodeId ?? null;
-    const pending = selectDrainablePendingRows(
-      derivePendingQueueTargetNames(targetAgentName, workflowNodeName).map((targetName) => ({
-        targetName,
-        rows:
-          drainWorkflowNodeId != null
-            ? repo.listPendingForTarget(workflowRunId, targetName, drainWorkflowNodeId)
-            : repo.listPendingForTarget(workflowRunId, targetName),
-      })),
-      { executionPresent: !!execution, targetKind: 'node_agent' }
-    );
-    if (pending.length === 0) return;
+    const drain = decidePendingDrainAdmission({
+      listings: derivePendingQueueTargetNames(targetAgentName, workflowNodeName).map(
+        (targetName) => ({
+          targetName,
+          rows:
+            drainWorkflowNodeId != null
+              ? repo.listPendingForTarget(workflowRunId, targetName, drainWorkflowNodeId)
+              : repo.listPendingForTarget(workflowRunId, targetName),
+        })
+      ),
+      admission: { executionPresent: !!execution, targetKind: 'node_agent' },
+    });
+    if (drain.action === 'skip') return;
 
     log.info(
-      `TaskAgentManager: flushing ${pending.length} pending message(s) for agent=${targetAgentName} session=${sessionId}`
+      `TaskAgentManager: flushing ${drain.rows.length} pending message(s) for agent=${targetAgentName} session=${sessionId}`
     );
 
-    for (const row of pending) {
+    for (const row of drain.rows) {
       const isSyntheticMessage = !isHumanPendingSource(row.sourceAgentName);
       const message = formatPendingRowForNodeAgent(row, targetAgentName);
       try {
