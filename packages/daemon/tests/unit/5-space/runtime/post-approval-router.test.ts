@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpawnSupersededError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import {
   PostApprovalRouter,
   isPostApprovalRoutingEnabled,
@@ -152,6 +153,40 @@ describe('PostApprovalRouter.route', () => {
     const final = taskRepo.getTask(task.id);
     expect(final?.status).toBe('done');
     expect(delegates.spawned).toHaveLength(0);
+  });
+
+  test('a superseded spawn maps to a benign skipped route — task stays approved for a later tick (PR #2770 review)', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const delegates = makeDelegates();
+    const throwingSpawner = {
+      spawnPostApprovalSubSession: () => {
+        throw new SpawnSupersededError('exec-post-approval', 'fresh-create-bind');
+      },
+    };
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: throwingSpawner,
+      livenessProbe: delegates.liveness,
+    });
+
+    const workflow = stubWorkflow({
+      postApproval: {
+        targetAgent: 'deployer',
+        instructions: 'Deploy {{task_title}} now.',
+      },
+    });
+
+    const result = await router.route(task, workflow, {
+      approvalSource: 'agent',
+      task_title: task.title,
+      spaceId: SPACE_ID,
+    });
+
+    expect(result.mode).toBe('skipped');
+    if (result.mode === 'skipped') {
+      expect(result.reason).toContain('superseded');
+    }
+    expect(taskRepo.getTask(task.id)?.status).toBe('approved');
   });
 
   test('targetAgent pointing at node agent → spawn sub-session + stamp', async () => {

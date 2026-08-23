@@ -118,6 +118,7 @@ interface SpawnFlowHarnessOptions {
   kickoffGate?: Promise<void>;
   failEnsure?: boolean;
   bindCasOutcome?: 'won' | 'superseded';
+  sessionReused?: boolean;
 }
 
 interface SpawnFlowHarness {
@@ -214,8 +215,12 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
     buildNodeAgentMcpServerForSession: (...args: unknown[]) => unknown;
     spawningExecutionIds: Set<string>;
   };
-  internal.createSubSession = async () => {
+  internal.createSubSession = async (...args: unknown[]) => {
     order.push('createSubSession');
+    if (options.sessionReused) {
+      const memberInfo = args[3] as { onSessionReused?: (id: string) => void } | undefined;
+      memberInfo?.onSessionReused?.(SPAWNED_SESSION_ID);
+    }
     return SPAWNED_SESSION_ID;
   };
   internal.getSubSession = (id: string) =>
@@ -332,7 +337,7 @@ describe('spawnWorkflowNodeAgentForExecution — staged spawn interpreter', () =
     expect(result).toBe('live-session');
     expect(h.casCalls[0]).toEqual({
       id: 'exec-1',
-      expected: ['pending', 'in_progress', 'idle', 'waiting_rebind'],
+      expected: ['idle'],
       next: 'in_progress',
       payload: {
         agentSessionId: 'live-session',
@@ -429,6 +434,20 @@ describe('spawnWorkflowNodeAgentForExecution — staged spawn interpreter', () =
 
     await expect(h.spawn()).rejects.toThrow('attach boom');
     expect(h.cancels).toEqual([SPAWNED_SESSION_ID]);
+    expect(h.spawningIds().has('exec-1')).toBe(false);
+    expect(h.reservationReleases).toEqual([TASK_ID]);
+  });
+
+  test('a reused session is never cancelled by spawn compensation — it stays owned by its prior node (PR #2770 review)', async () => {
+    const h = makeSpawnFlowHarness({
+      kickoff: false,
+      bindCasOutcome: 'superseded',
+      sessionReused: true,
+    });
+    const spawnPromise = h.spawn();
+
+    await expect(spawnPromise).rejects.toThrow('superseded at stage bind-execution-session');
+    expect(h.cancels).toEqual([]);
     expect(h.spawningIds().has('exec-1')).toBe(false);
     expect(h.reservationReleases).toEqual([TASK_ID]);
   });

@@ -72,6 +72,7 @@ export interface SpawnExecutionFlowDeps {
   resolveWorkspacePath(task: SpaceTask, space: Space): Promise<string>;
   createSpawnedSession(request: SpawnSessionRequest): Promise<string>;
   bindExecutionToSession(execution: NodeExecution, sessionId: string): 'won' | 'superseded';
+  flushPendingMessagesForTarget(workflowRunId: string, agentName: string, sessionId: string): void;
   attachNodeAgent(request: AttachNodeAgentRequest): Promise<void>;
   registerSpawnCompletionCallback(taskId: string, workflowNodeId: string, sessionId: string): void;
   buildKickoffMessage(request: KickoffMessageRequest): Promise<string>;
@@ -293,6 +294,19 @@ export function runSpawnExecutionFlow(
         writes: [],
         run: (view) => {
           deps.releaseTaskSpawn(view.task.id);
+        },
+      }),
+      s.effect({
+        name: 'flush-pending-messages',
+        when: 'proceedFresh',
+        reads: ['workflowRun', 'execution', 'spawnedSessionId'],
+        writes: [],
+        run: (view) => {
+          deps.flushPendingMessagesForTarget(
+            view.workflowRun.id,
+            view.execution.agentName,
+            view.spawnedSessionId
+          );
         },
       }),
       s.effect({

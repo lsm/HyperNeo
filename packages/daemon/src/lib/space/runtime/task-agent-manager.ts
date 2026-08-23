@@ -5,6 +5,7 @@ import type {
   SpaceWorkflow,
   SpaceWorkflowRun,
   NodeExecution,
+  NodeExecutionStatus,
   MessageHub,
   McpServerConfig,
   MessageContent,
@@ -53,7 +54,9 @@ export interface SubSessionMemberInfo {
   agentId?: string;
   agentName?: string;
   nodeId?: string;
-  deferExecutionBind?: boolean;
+  deferFreshExecutionBind?: boolean;
+  executionBindObservedStatus?: NodeExecutionStatus;
+  onSessionReused?: (sessionId: string) => void;
 }
 
 export interface VerifiedSessionStop {
@@ -745,7 +748,7 @@ export class TaskAgentManager {
   }
 
   private buildSpawnExecutionFlowDeps(): SpawnExecutionFlowDeps {
-    const spawnState = { reservationHeld: false };
+    const spawnState = { reservationHeld: false, reusedSessionIds: new Set<string>() };
     return {
       getFreshTask: (taskId) => this.config.taskRepo.getTask(taskId),
       getNodeExecution: (executionId) => this.config.nodeExecutionRepo.getById(executionId),
@@ -779,13 +782,22 @@ export class TaskAgentManager {
         this.config.taskRepo.releaseSpawnReservation(taskId);
       },
       cancelSpawnedSession: (sessionId) => {
+        if (spawnState.reusedSessionIds.has(sessionId)) {
+          log.info(
+            `TaskAgentManager: spawn compensation skipped cancel for reused session ${sessionId} — it remains owned by its prior node`
+          );
+          return;
+        }
         this.cancelBySessionId(sessionId);
       },
       rebindLiveExecution: (execution, sessionId) => {
         const startedAt = execution.startedAt ?? Date.now();
+        const expected = SPAWN_BINDABLE_EXECUTION_STATUSES.includes(execution.status)
+          ? ([execution.status] as const)
+          : ([] as const);
         return this.config.nodeExecutionRepo.casExecutionStatus(
           execution.id,
-          SPAWN_BINDABLE_EXECUTION_STATUSES,
+          expected,
           'in_progress',
           {
             agentSessionId: sessionId,
@@ -883,7 +895,11 @@ export class TaskAgentManager {
             agentId: request.slot.agentId,
             agentName: request.execution.agentName,
             nodeId: request.execution.workflowNodeId,
-            deferExecutionBind: true,
+            deferFreshExecutionBind: true,
+            executionBindObservedStatus: request.execution.status,
+            onSessionReused: (sessionId) => {
+              spawnState.reusedSessionIds.add(sessionId);
+            },
           }
         );
 
@@ -895,7 +911,9 @@ export class TaskAgentManager {
       },
       bindExecutionToSession: (execution, sessionId) => {
         const expected = SPAWN_BINDABLE_EXECUTION_STATUSES.includes(execution.status)
-          ? ([execution.status] as const)
+          ? execution.status === 'in_progress'
+            ? (['in_progress'] as const)
+            : ([execution.status, 'in_progress'] as const)
           : ([] as const);
         const outcome = this.config.nodeExecutionRepo.casExecutionStatus(
           execution.id,
@@ -914,6 +932,15 @@ export class TaskAgentManager {
           });
         }
         return outcome;
+      },
+      flushPendingMessagesForTarget: (workflowRunId, agentName, sessionId) => {
+        void this.flushPendingMessagesForTarget(workflowRunId, agentName, sessionId).catch(
+          (err) => {
+            log.warn(
+              `TaskAgentManager: flushPendingMessagesForTarget failed for ${agentName} (session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        );
       },
       attachNodeAgent: async (request) => {
         const spawned = this.getSubSession(request.sessionId);
@@ -1030,6 +1057,8 @@ export class TaskAgentManager {
               `TaskAgentManager: reusing session ${existingSessionId} for agent "${memberInfo.agentName}" (task ${taskId}); skipping new session ${sessionId}`
             );
 
+            memberInfo.onSessionReused?.(existingSessionId);
+
             if (memberInfo.nodeId) {
               const nodeExecs = this.config.nodeExecutionRepo.listByNode(
                 parentTask.workflowRunId,
@@ -1041,10 +1070,14 @@ export class TaskAgentManager {
                   (e) =>
                     e.agentName === memberInfo.agentName && e.agentSessionId === existingSessionId
                 );
-              if (match && !memberInfo.deferExecutionBind) {
+              if (match) {
+                const observed = memberInfo.executionBindObservedStatus ?? match.status;
+                const expected = SPAWN_BINDABLE_EXECUTION_STATUSES.includes(observed)
+                  ? ([observed] as const)
+                  : ([] as const);
                 const outcome = this.config.nodeExecutionRepo.casExecutionStatus(
                   match.id,
-                  [match.status],
+                  expected,
                   'in_progress',
                   {
                     agentSessionId: existingSessionId,
@@ -1198,10 +1231,13 @@ export class TaskAgentManager {
           memberInfo.nodeId
         );
         const match = nodeExecs.find((e) => e.agentName === memberInfo.agentName);
-        if (match && !match.agentSessionId && !memberInfo.deferExecutionBind) {
+        if (match && !match.agentSessionId && !memberInfo.deferFreshExecutionBind) {
+          const expected = SPAWN_BINDABLE_EXECUTION_STATUSES.includes(match.status)
+            ? ([match.status] as const)
+            : ([] as const);
           const outcome = this.config.nodeExecutionRepo.casExecutionStatus(
             match.id,
-            [match.status],
+            expected,
             'in_progress',
             {
               agentSessionId: sessionId,
@@ -1212,14 +1248,24 @@ export class TaskAgentManager {
           if (outcome === 'superseded') {
             this.subSessions.get(taskId)?.delete(sessionId);
             this.agentSessionIndex.delete(sessionId);
-            void this.config.sessionManager.unregisterSession(sessionId).catch(() => {});
+            this.cancelBySessionId(sessionId);
+            try {
+              this.config.db
+                .getDatabase()
+                .prepare('DELETE FROM sessions WHERE id = ?')
+                .run(sessionId);
+            } catch (err) {
+              log.warn(
+                `TaskAgentManager: failed to delete never-streamed session row ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+              );
+            }
             throw new SpawnSupersededError(match.id, 'fresh-create-bind');
           }
         } else if (match && match.agentSessionId) {
           log.warn(
             `TaskAgentManager: NodeExecution ${match.id} already has agentSessionId ${match.agentSessionId}; skipping update for new session ${sessionId}`
           );
-        } else {
+        } else if (!memberInfo.deferFreshExecutionBind) {
           log.warn(
             `TaskAgentManager: no matching NodeExecution found for (run=${parentTask.workflowRunId}, node=${memberInfo.nodeId}, agent=${memberInfo.agentName})`
           );
@@ -1233,7 +1279,7 @@ export class TaskAgentManager {
 
     await subSession.startStreamingQuery();
 
-    if (memberInfo?.agentName) {
+    if (memberInfo?.agentName && !memberInfo.deferFreshExecutionBind) {
       const parentTask = this.config.taskRepo.getTask(taskId);
       const runId = parentTask?.workflowRunId;
       if (runId) {

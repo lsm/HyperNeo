@@ -177,6 +177,9 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
       binds.push({ executionId: row.id, sessionId });
       return 'won';
     },
+    flushPendingMessagesForTarget: (workflowRunId, agentName) => {
+      calls.push(`flush-pending:${workflowRunId}:${agentName}`);
+    },
     attachNodeAgent: async (request) => {
       calls.push('attach');
       attaches.push(request.execution);
@@ -255,6 +258,7 @@ describe('spawn flow — proceed_fresh path', () => {
       'create',
       `bind:${SPAWNED_SESSION_ID}`,
       `release-task:${TASK_ID}`,
+      `flush-pending:${RUN_ID}:${AGENT_NAME}`,
       'attach',
       `register:${TASK_ID}:${NODE_ID}:${SPAWNED_SESSION_ID}`,
       'kickoff-message',
@@ -279,6 +283,7 @@ describe('spawn flow — proceed_fresh path', () => {
       'create',
       `bind:${SPAWNED_SESSION_ID}`,
       `release-task:${TASK_ID}`,
+      `flush-pending:${RUN_ID}:${AGENT_NAME}`,
       'attach',
       `register:${TASK_ID}:${NODE_ID}:${SPAWNED_SESSION_ID}`,
     ]);

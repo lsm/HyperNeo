@@ -694,6 +694,7 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
       db: { getDatabase: () => new BunDatabase(':memory:') },
       sessionManager: {
         registerSession: () => {},
+        getCachedSession: () => undefined,
         unregisterSession: async (id: string) => {
           unregistered.push(id);
         },
@@ -730,7 +731,114 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
     expect(pendingExec.agentSessionId).toBeNull();
   });
 
-  test('deferExecutionBind leaves the target row to the guarded outer bind: no inner write, session still created (PR #2770 review)', async () => {
+  test('a cancelled fresh target observed by a direct caller supersedes into the abort — no resurrection (PR #2770 review)', async () => {
+    const cancelledExec = makeExecutionRow({
+      id: 'exec-cancelled-observed',
+      agentSessionId: null,
+      status: 'cancelled',
+      startedAt: null,
+    });
+    const casCalls: Array<{ expected: string[]; next: string }> = [];
+    const tam = new TaskAgentManager({
+      db: { getDatabase: () => new BunDatabase(':memory:') },
+      sessionManager: {
+        registerSession: () => {},
+        getCachedSession: () => undefined,
+        unregisterSession: async () => {},
+      },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      taskRepo: {
+        getTask: () => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'T' }),
+      },
+      nodeExecutionRepo: {
+        listByWorkflowRun: () => [cancelledExec],
+        listByNode: () => [cancelledExec],
+        listByAgentSessionId: () => [],
+        update: () => null,
+        casExecutionStatus: (
+          _id: string,
+          expected: readonly string[],
+          next: string
+        ): 'won' | 'superseded' => {
+          casCalls.push({ expected: [...expected], next });
+          return expected.includes(cancelledExec.status) ? 'won' : 'superseded';
+        },
+      },
+      spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+    } as unknown as TaskAgentManagerConfig);
+
+    const spawnPromise = tam.createSubSession(TASK_ID, 'cancelled-target-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    await expect(spawnPromise).rejects.toThrow('superseded at stage fresh-create-bind');
+    expect(casCalls).toEqual([{ expected: [], next: 'in_progress' }]);
+    expect(cancelledExec.status).toBe('cancelled');
+  });
+
+  test('a cancelled reuse target observed by a direct caller supersedes into the abort before any transfer (PR #2770 review)', async () => {
+    const cancelledTarget = makeExecutionRow({
+      id: 'exec-cancelled-reuse',
+      agentSessionId: null,
+      status: 'cancelled',
+      startedAt: null,
+    });
+    const boundPriorOwner = makeExecutionRow({
+      id: 'exec-prior-owner-cancel',
+      workflowNodeId: 'node-prior',
+      status: 'in_progress',
+    });
+    const updates: Array<{ id: string; payload: Record<string, unknown> }> = [];
+    const casCalls: Array<{ expected: string[]; next: string }> = [];
+    const tam = new TaskAgentManager({
+      db: { getDatabase: () => new BunDatabase(':memory:') },
+      sessionManager: {
+        registerSession: () => {},
+        getCachedSession: () => undefined,
+        unregisterSession: async () => {},
+      },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      taskRepo: {
+        getTask: () => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'T' }),
+      },
+      nodeExecutionRepo: {
+        listByWorkflowRun: () => [cancelledTarget, boundPriorOwner],
+        listByNode: (_runId: string, nodeId: string) =>
+          nodeId === REVIEWER_NODE_ID ? [cancelledTarget] : [],
+        listByAgentSessionId: () => [boundPriorOwner],
+        update: (id: string, payload: Record<string, unknown>) => {
+          updates.push({ id, payload });
+          return null;
+        },
+        casExecutionStatus: (
+          _id: string,
+          expected: readonly string[],
+          next: string
+        ): 'won' | 'superseded' => {
+          casCalls.push({ expected: [...expected], next });
+          return 'superseded';
+        },
+      },
+      spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+    } as unknown as TaskAgentManagerConfig);
+    seedLiveSession(tam);
+    stubReusePathHelpers(tam);
+
+    const spawnPromise = tam.createSubSession(TASK_ID, 'cancelled-reuse-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    await expect(spawnPromise).rejects.toThrow('superseded at stage reuse-target-bind');
+    expect(casCalls).toEqual([{ expected: [], next: 'in_progress' }]);
+    expect(updates).toEqual([]);
+    expect(boundPriorOwner.status).toBe('in_progress');
+  });
+
+  test('deferFreshExecutionBind leaves the fresh target row to the guarded outer bind: no inner write, session still created (PR #2770 review)', async () => {
     const pendingExec = makeExecutionRow({
       id: 'exec-deferred',
       agentSessionId: null,
@@ -743,7 +851,7 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
       agentId: 'agent-reviewer',
       agentName: REVIEWER_AGENT,
       nodeId: REVIEWER_NODE_ID,
-      deferExecutionBind: true,
+      deferFreshExecutionBind: true,
     });
 
     expect(actual).toBe('deferred-id');

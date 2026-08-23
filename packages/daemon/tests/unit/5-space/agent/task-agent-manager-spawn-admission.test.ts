@@ -306,7 +306,7 @@ describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
     expect(h.casCalls).toHaveLength(1);
     expect(h.casCalls[0]).toEqual({
       id: 'exec-1',
-      expected: ['pending', 'in_progress', 'idle', 'waiting_rebind'],
+      expected: ['idle'],
       next: 'in_progress',
       payload: {
         agentSessionId: 'live-session',
@@ -616,7 +616,7 @@ describe('spawnWorkflowNodeAgentForExecution — post-create execution binding',
     );
     expect(bind).toEqual({
       id: 'exec-1',
-      expected: ['pending'],
+      expected: ['pending', 'in_progress'],
       next: 'in_progress',
       payload: {
         agentSessionId: SPAWNED_SESSION_ID,
@@ -687,7 +687,7 @@ describe('spawnWorkflowNodeAgentForExecution — CAS-guarded spawn writes (AFTER
     const spawnPromise = h.spawn();
 
     await expect(spawnPromise).rejects.toThrow('superseded at stage rebind-live-session');
-    expect(h.casCalls[0]?.expected).toEqual(['pending', 'in_progress', 'idle', 'waiting_rebind']);
+    expect(h.casCalls[0]?.expected).toEqual(['in_progress']);
     expect(h.casCalls[0]?.payload).toEqual({
       agentSessionId: 'live-session',
       startedAt: 42,
@@ -707,7 +707,7 @@ describe('spawnWorkflowNodeAgentForExecution — CAS-guarded spawn writes (AFTER
     );
     expect(bind).toEqual({
       id: 'exec-1',
-      expected: ['pending'],
+      expected: ['pending', 'in_progress'],
       next: 'in_progress',
       payload: {
         agentSessionId: SPAWNED_SESSION_ID,
