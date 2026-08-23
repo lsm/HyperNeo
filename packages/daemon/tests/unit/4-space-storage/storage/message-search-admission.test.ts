@@ -1,8 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  applyBodyNonemptyGate,
+  applyEligibilityGate,
+  applyIndexGate,
+  applySearchableTypeGate,
+  applySupersededGate,
+  applyUserStatusGate,
   decideMessageSearchAdmission,
   isMessageSearchIndexEligible,
   isOlderThanMessageSearchTtl,
+  type MessageSearchAdmissionCtx,
   type MessageSearchAdmissionInput,
   type MessageSearchEligibilityRow,
 } from '../../../../src/storage/repositories/message-search-admission';
@@ -208,5 +215,63 @@ describe('isMessageSearchIndexEligible', () => {
     });
     expect(isMessageSearchIndexEligible(row, NOW)).toBe(false);
     expect(isMessageSearchIndexEligible(row, NOW - 2 * DAY_MS)).toBe(true);
+  });
+});
+
+describe('gate pass-through identity (ADR 0004 Decision item 6b)', () => {
+  function gateCtx(overrides: Partial<MessageSearchAdmissionCtx> = {}): MessageSearchAdmissionCtx {
+    return {
+      messageType: 'user',
+      body: 'searchable body',
+      now: NOW,
+      eligibility: eligibleRow(),
+      isSuperseded: false,
+      isSearchableUserStatus: true,
+      decision: null,
+      ...overrides,
+    };
+  }
+
+  test('passing gates return the ctx unchanged by reference', () => {
+    const passingGates = [
+      applySupersededGate,
+      applySearchableTypeGate,
+      applyEligibilityGate,
+      applyBodyNonemptyGate,
+      applyUserStatusGate,
+    ];
+    for (const gate of passingGates) {
+      const ctx = gateCtx();
+      expect(gate(ctx)).toBe(ctx);
+    }
+  });
+
+  test('each deciding gate stamps its skip reason on a copied ctx', () => {
+    expect(applySupersededGate(gateCtx({ isSuperseded: true }))).toEqual({
+      ...gateCtx(),
+      decision: { action: 'skip', reason: 'superseded' },
+    });
+    expect(applySearchableTypeGate(gateCtx({ messageType: 'result' }))).toEqual({
+      ...gateCtx(),
+      decision: { action: 'skip', reason: 'non_searchable_type' },
+    });
+    expect(
+      applyEligibilityGate(gateCtx({ eligibility: eligibleRow({ session_status: 'archived' }) }))
+    ).toEqual({ ...gateCtx(), decision: { action: 'skip', reason: 'ineligible' } });
+    expect(applyBodyNonemptyGate(gateCtx({ body: '' }))).toEqual({
+      ...gateCtx(),
+      decision: { action: 'skip', reason: 'empty_body' },
+    });
+    expect(applyUserStatusGate(gateCtx({ isSearchableUserStatus: false }))).toEqual({
+      ...gateCtx(),
+      decision: { action: 'skip', reason: 'user_status_not_searchable' },
+    });
+  });
+
+  test('the index gate always decides', () => {
+    expect(applyIndexGate(gateCtx())).toEqual({
+      ...gateCtx(),
+      decision: { action: 'index' },
+    });
   });
 });

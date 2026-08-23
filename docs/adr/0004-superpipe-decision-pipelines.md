@@ -1260,10 +1260,12 @@ Boundary caveats, recorded for the same reason as pilot 3's:
 2. **The gates are wiring, not surface.** The six `applyXGate` functions are
    consumed only intra-module, composed into the run that
    `decideMessageSearchAdmission` executes; knip's `ignoreExportsUsedInFile`
-   admits them, and the suite pins the decision table through the composed
-   run's precedence ("superseded wins over every later gate") rather than
-   per-gate pass-through identity tests. The run is the production surface;
-   adding per-gate identity pins would test the combinator, not the policy.
+   admits them. The suite pins the decision table through the composed run's
+   precedence ("superseded wins over every later gate") *and* the per-gate
+   pass-through identity of Decision item 6(b) — the identity pin is the one
+   part the composed run cannot prove: a gate returning a spread copy instead
+   of the same ctx reference still composes, so only the per-gate
+   `gate(ctx) === ctx` assertion catches it.
 3. **The fact suppliers stay repo-private.** `isMessageSuperseded` and
    `isSearchableUserMessageStatus` remain private methods — the reads the core
    delegates. The searchable-user-status policy also survives as SQL
@@ -1293,8 +1295,8 @@ routing suite, `deliveryTransitionRule` by the four wrapper call sites and the
 suite, `DeliveryTransitionAction` by the wrapper signatures, and the remaining
 types intra-module.
 
-**Costs:** production +166 across C2–C4 — the two cores +207 (160 + 47),
-`sdk-message-repository.ts` net −79 from chain C's own PRs (1,943 lines at
+**Costs:** production +167 across C2–C4 — the two cores +207 (160 + 47),
+`sdk-message-repository.ts` net −78 from chain C's own PRs (1,943 lines at
 the chain's close, 1,898 after dev's interleaved extractions — chain A PR 4
 and the rewind-operator dedup — landed beside it; chains A and B account for
 the rest of the shrink from the survey's 2,199-line base),
