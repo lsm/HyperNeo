@@ -1225,16 +1225,17 @@ delete). The ten `markDelivery*`/`reopenDelivery*` wrappers select their
 target row through `deliveryTransitionRule`'s window — `send_status IN
 (acceptedFrom)` in the SELECT — and then flip it through the shared
 `updateMessageStatus`, which chain B's B4 (landed beside this chain's merge)
-has since rebuilt as plan/interpret with a mixed guarded/unguarded shape:
-wrapper rows still pending when the plan is built are *planned*, and both
-their status UPDATE and their turn/seq side-effect statements carry the
-expected-status guard, while rows that left the pending window in between
-fall to the unplanned branch, which still updates by id alone — the
-select-to-update window is closed for the planned arm and remains, in
-theory, only in that fall-through. The dbId-keyed `deferEnqueuedUserMessage`
-keeps its own guarded UPDATE (`AND send_status = ?`) rather than going
-through the shared effect — its distinct lookup, return shape, and
-conditional-update semantics preserved.
+has since rebuilt as plan/interpret whose guard splits by action family:
+only consumed/failed targets build planned rows, so only the fail and
+consume wrappers get the expected-status guard on their status UPDATE and
+turn/seq statements, while the submit, reopen, retry, and uuid-keyed defer
+wrappers target statuses that never plan and always take the unplanned
+by-id update; a row that leaves the pending window between selection and
+plan joins them there. The select-to-update window is closed for the planned
+arm and remains, in theory, everywhere else. The dbId-keyed
+`deferEnqueuedUserMessage` keeps its own guarded UPDATE
+(`AND send_status = ?`) rather than going through the shared effect — its
+distinct lookup, return shape, and conditional-update semantics preserved.
 
 **The session-rebuild outcome: routed vocabulary, deliberate residual.** The
 survey flagged `SessionRepository.rebuildMessageSearchRows` as a second
